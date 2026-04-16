@@ -3,9 +3,9 @@ import typing_extensions as _tx
 from enum import Enum
 
 from brainhope.struct import Struct
-from brainhops.transforms.axes import SpatialAxis
-from brainhops.transforms.base import Affine
-from brainhops.transforms.systems import Spatial3dCoordinateSystem
+from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.base import Affine
+from brainhops.datamodel.systems import Spatial3dCoordinateSystem
 
 
 class LTAType(int, Enum):

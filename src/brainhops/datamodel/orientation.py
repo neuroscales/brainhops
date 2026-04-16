@@ -1,12 +1,12 @@
-from typing import Optional
+import typing_extensions as _tx
 
 from brainhops.struct import ClassVar
 from .struct import SpecializedStruct
 
 
 class Orientation(SpecializedStruct):
-    type: Optional[str] = None
-    value: Optional[str] = None
+    type: _tx.Optional[str] = None
+    value: _tx.Optional[str] = None
 
 
 class AnatomicalOrientation(Orientation):

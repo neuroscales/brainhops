@@ -57,9 +57,9 @@ class SuperiorToInferiorAxis(SpatialAxis):
     orientation: ClassVar[Orientation] = Orientation("superior-to-inferior")
 
 
-L = leftToRightAxis = LeftToRightAxis()
-R = rightToLeftAxis = RightToLeftAxis()
-A = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
-P = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
-I = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
-S = superiorToInferiorAxis = SuperiorToInferiorAxis()
+R = leftToRightAxis = LeftToRightAxis()
+L = rightToLeftAxis = RightToLeftAxis()
+P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
+A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
+S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
+I = superiorToInferiorAxis = SuperiorToInferiorAxis()

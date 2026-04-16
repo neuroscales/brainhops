@@ -117,7 +117,7 @@ class Translation(Transform):
     type: ClassVar[str] = "translation"
 
 
-class Sequence(Transform, _tx.List[Transform]):
+class Sequence(Transform):
     transforms: _tx.Optional[_tx.List[Transform]] = None
     type: ClassVar[str] = "sequence"
 

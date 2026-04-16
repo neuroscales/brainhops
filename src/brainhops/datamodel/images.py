@@ -2,7 +2,7 @@ import typing_extensions as _tx
 
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
-from .base import Transform
+from .transforms import Transform
 
 
 class Image(SpecializedStruct):
