@@ -187,6 +187,19 @@ class TypeValidator(HintValidator[T]):
         return value
 
 
+@_register(object)
+class ObjectValidator(HintValidator[object]):
+
+    def _init_check(self, type):
+        return issubclass(type, object)
+
+    def _validate(self, value: _tx.Any) -> object:
+        if not isinstance(value, self.type):
+            raise ValueError(
+                f"Value {value} is not an instance of {self.type}"
+            )
+        return value
+
 # ----------------------------------------------------------------------
 #
 #   Builtin collections

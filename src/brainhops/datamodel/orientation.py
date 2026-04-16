@@ -1,7 +1,7 @@
 import typing_extensions as _tx
 
-from brainhops.struct import ClassVar
 from .struct import SpecializedStruct
+from .typing import ConstHidden
 
 
 class Orientation(SpecializedStruct):
@@ -10,31 +10,31 @@ class Orientation(SpecializedStruct):
 
 
 class AnatomicalOrientation(Orientation):
-    type: ClassVar[str] = "anatomical"
+    type: ConstHidden[str] = "anatomical"
 
 
 class LeftToRight(AnatomicalOrientation):
-    value: ClassVar[str] = "left-to-right"
+    value: ConstHidden[str] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
-    value: ClassVar[str] = "right-to-left"
+    value: ConstHidden[str] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
-    value: ClassVar[str] = "anterior-to-posterior"
+    value: ConstHidden[str] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
-    value: ClassVar[str] = "posterior-to-anterior"
+    value: ConstHidden[str] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
-    value: ClassVar[str] = "inferior-to-superior"
+    value: ConstHidden[str] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
-    value: ClassVar[str] = "superior-to-inferior"
+    value: ConstHidden[str] = "superior-to-inferior"
 
 
 L = leftToRight = LeftToRight()

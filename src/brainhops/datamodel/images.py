@@ -8,4 +8,4 @@ from .transforms import Transform
 class Image(SpecializedStruct):
     data: object
     coordinateSystem: CoordinateSystem
-    coordinateTransforms: _tx.List[Transform] = []
+    coordinateTransforms: _tx.List[Transform] = ()

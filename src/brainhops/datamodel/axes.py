@@ -1,8 +1,13 @@
 from typing_extensions import Optional
 
-from brainhops.struct import ClassVar
 from .struct import SpecializedStruct
-from .orientation import Orientation
+from .orientation import (
+    Orientation, 
+    LeftToRight, RightToLeft, 
+    AnteriorToPosterior, PosteriorToAnterior, 
+    InferiorToSuperior, SuperiorToInferior
+)
+from .typing import ConstHidden
 
 
 class Axis(SpecializedStruct):
@@ -15,46 +20,46 @@ class Axis(SpecializedStruct):
 
 class SpatialAxis(Axis):
     unit: str = "mm"
-    type: ClassVar[str] = "spatial"
+    type: ConstHidden[str] = "spatial"
 
 
 class TimeAxis(Axis):
     unit: str = "s"
-    type: ClassVar[str] = "time"
+    type: ConstHidden[str] = "time"
 
 
 class ChannelAxis(Axis):
-    type: ClassVar[str] = "channel"
+    type: ConstHidden[str] = "channel"
 
 
 class LeftToRightAxis(SpatialAxis):
     name: str = "left-to-right"
-    orientation: ClassVar[Orientation] = Orientation("left-to-right")
+    orientation: ConstHidden[LeftToRight] = LeftToRight()
 
 
 class RightToLeftAxis(SpatialAxis):
     name: str = "right-to-left"
-    orientation: ClassVar[Orientation] = Orientation("right-to-left")
+    orientation: ConstHidden[RightToLeft] = RightToLeft()
 
 
 class AnteriorToPosteriorAxis(SpatialAxis):
     name: str = "anterior-to-posterior"
-    orientation: ClassVar[Orientation] = Orientation("anterior-to-posterior")
+    orientation: ConstHidden[AnteriorToPosterior] = AnteriorToPosterior()
 
 
 class PosteriorToAnteriorAxis(SpatialAxis):
     name: str = "posterior-to-anterior"
-    orientation: ClassVar[Orientation] = Orientation("posterior-to-anterior")
+    orientation: ConstHidden[PosteriorToAnterior] = PosteriorToAnterior()
 
 
 class InferiorToSuperiorAxis(SpatialAxis):
     name: str = "inferior-to-superior"
-    orientation: ClassVar[Orientation] = Orientation("inferior-to-superior")
+    orientation: ConstHidden[InferiorToSuperior] = InferiorToSuperior()
 
 
 class SuperiorToInferiorAxis(SpatialAxis):
     name: str = "superior-to-inferior"
-    orientation: ClassVar[Orientation] = Orientation("superior-to-inferior")
+    orientation: ConstHidden[SuperiorToInferior] = SuperiorToInferior()
 
 
 R = leftToRightAxis = LeftToRightAxis()

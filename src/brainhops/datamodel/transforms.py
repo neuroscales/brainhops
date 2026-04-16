@@ -1,9 +1,9 @@
 import typing_extensions as _tx
 from functools import partial
 
-from brainhops.struct import ClassVar
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
+from .typing import ConstHidden
 
 
 class Transform(SpecializedStruct):
@@ -71,22 +71,22 @@ class Transform(SpecializedStruct):
 
 class Affine(Transform):
     matrix: _tx.Optional["ArrayLike"] = None
-    type: ClassVar[str] = "affine"
+    type: ConstHidden[str] = "affine"
 
 
 class Linear(Transform):
     matrix: _tx.Optional["ArrayLike"] = None
-    type: ClassVar[str] = "linear"
+    type: ConstHidden[str] = "linear"
 
 
 class DisplacementField(Transform):
     field: _tx.Optional["ArrayLike"] = None
-    type: ClassVar[str] = "displacement"
+    type: ConstHidden[str] = "displacement"
 
 
 class CoordinatesField(Transform):
     field: _tx.Optional["ArrayLike"] = None
-    type: ClassVar[str] = "coordinates"
+    type: ConstHidden[str] = "coordinates"
 
 
 class CartesianCoordinatesField(CoordinatesField):
@@ -104,22 +104,22 @@ class CartesianCoordinatesField(CoordinatesField):
 
 class Permutation(Transform):
     permutation: _tx.Optional[_tx.List[int]] = None
-    type: ClassVar[str] = "permutation"
+    type: ConstHidden[str] = "permutation"
 
 
 class Scale(Transform):
     scale: _tx.Optional[_tx.List[float]] = None
-    type: ClassVar[str] = "scale"
+    type: ConstHidden[str] = "scale"
 
 
 class Translation(Transform):
     translation: _tx.Optional[_tx.List[float]] = None
-    type: ClassVar[str] = "translation"
+    type: ConstHidden[str] = "translation"
 
 
 class Sequence(Transform):
     transforms: _tx.Optional[_tx.List[Transform]] = None
-    type: ClassVar[str] = "sequence"
+    type: ConstHidden[str] = "sequence"
 
 
 _COMPOSERS = {}

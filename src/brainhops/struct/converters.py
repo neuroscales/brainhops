@@ -113,7 +113,10 @@ class UnionConverter(HintConverter[T]):
         )
 
     def _convert(self, value: _tx.Any) -> T:
-        for arg in _tx.get_args(self.type):
+        args = _tx.get_args(self.type)
+        if None in args or NoneType in args and value is None:
+            return None
+        for arg in args:
             converter = HintConverter(arg)
             try:
                 return converter(value)
@@ -173,11 +176,11 @@ class NoneConverter(HintConverter[None]):
 class ObjectConverter(HintConverter[object]):
 
     def _init_check(self, type):
-        return type is object
+        return issubclass(type, object)
 
     def _convert(self, value: _tx.Any) -> object:
-        if not isinstance(value, object):
-            raise ConversionError(f"Value {value} is not an object")
+        if not isinstance(value, self.type):
+            return self.type(value)
 
 
 @_register(type, _tx.Type)

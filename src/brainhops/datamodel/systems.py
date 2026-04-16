@@ -1,6 +1,5 @@
 import typing_extensions as _tx
 
-from brainhops.struct import DefaultFactory
 from .struct import SpecializedStruct
 from .axes import Axis, SpatialAxis
 from . import axes as _axes
@@ -8,15 +7,15 @@ from . import axes as _axes
 
 class CoordinateSystem(SpecializedStruct):
     name: _tx.Optional[str] = None
-    axes: _tx.List[Axis]
+    axes: _tx.Optional[_tx.List[Axis]] = None
 
 
 class SpatialCoordinateSystem(CoordinateSystem):
-    axes: _tx.List[SpatialAxis]
+    axes: _tx.Optional[_tx.List[SpatialAxis]] = None
 
 
 class Spatial3dCoordinateSystem(CoordinateSystem):
-    axes: _tx.Tuple[SpatialAxis, SpatialAxis, SpatialAxis]
+    axes: _tx.Optional[_tx.Tuple[SpatialAxis, SpatialAxis, SpatialAxis]] = None
 
 
 class RASCoordinateSystem(Spatial3dCoordinateSystem):
@@ -31,8 +30,8 @@ class RASCoordinateSystem(Spatial3dCoordinateSystem):
 class LPSCoordinateSystem(Spatial3dCoordinateSystem):
     name: str = "LPS"
     axes: _tx.Tuple[
-        _axes.LeftToRightAxis, 
-        _axes.PosteriorToAnteriorAxis, 
-        _axes.InferiorToSuperiorAxis
+        _axes.RightToLeftAxis, 
+        _axes.AnteriorToPosteriorAxis, 
+        _axes.SuperiorToInferiorAxis
     ] = (_axes.L, _axes.P, _axes.S)
 
