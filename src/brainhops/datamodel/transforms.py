@@ -3,12 +3,18 @@ from functools import partial
 
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
-from .typing import ConstHidden
+from .typing import HiddenConst
 
 
 class Transform(SpecializedStruct):
     input: _tx.Optional[CoordinateSystem] = None
     output: _tx.Optional[CoordinateSystem] = None
+
+    def compute(self, *args, **kwargs) -> _tx.Self:
+        return self
+
+    def to(self, cls: _tx.Type[_tx.Self]) -> _tx.Self:
+        return _to(self, cls)
 
     @_tx.overload
     def __call__(self, x: "CoordinatesField", compute: _tx.Literal[True]) -> "CoordinatesField":
@@ -69,24 +75,9 @@ class Transform(SpecializedStruct):
         return self(other, compute=False)
 
 
-class Affine(Transform):
-    matrix: _tx.Optional["ArrayLike"] = None
-    type: ConstHidden[str] = "affine"
-
-
-class Linear(Transform):
-    matrix: _tx.Optional["ArrayLike"] = None
-    type: ConstHidden[str] = "linear"
-
-
-class DisplacementField(Transform):
-    field: _tx.Optional["ArrayLike"] = None
-    type: ConstHidden[str] = "displacement"
-
-
 class CoordinatesField(Transform):
     field: _tx.Optional["ArrayLike"] = None
-    type: ConstHidden[str] = "coordinates"
+    type: HiddenConst[str] = "coordinates"
 
 
 class CartesianCoordinatesField(CoordinatesField):
@@ -102,30 +93,173 @@ class CartesianCoordinatesField(CoordinatesField):
             )
         return self._field
 
+
+class DisplacementField(Transform):
+    field: _tx.Optional["ArrayLike"] = None
+    type: HiddenConst[str] = "displacement"
+
+
+class Affine(Transform):
+    matrix: _tx.Optional["ArrayLike"] = None
+    type: HiddenConst[str] = "affine"
+
+
+class Linear(Transform):
+    matrix: _tx.Optional["ArrayLike"] = None
+    type: HiddenConst[str] = "linear"
+
 class Permutation(Transform):
     permutation: _tx.Optional[_tx.List[int]] = None
-    type: ConstHidden[str] = "permutation"
+    type: HiddenConst[str] = "permutation"
 
 
 class Scale(Transform):
     scale: _tx.Optional[_tx.List[float]] = None
-    type: ConstHidden[str] = "scale"
+    type: HiddenConst[str] = "scale"
 
 
 class Translation(Transform):
     translation: _tx.Optional[_tx.List[float]] = None
-    type: ConstHidden[str] = "translation"
+    type: HiddenConst[str] = "translation"
+
+
+class Identity(Transform):
+    type: HiddenConst[str] = "identity"
 
 
 class Sequence(Transform):
+    # NOTE: transforms in a sequence are listed in the order in which 
+    # they are applied. It reads as the opposite order to function
+    # composition (or matrix multiplication), which may be confusing.
+    #
+    # `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
+    # `Sequence([a1, a2, a3]) @ x` is equivalent to `a3 @ a2 @ a1 @ x`.
+
     transforms: _tx.Optional[_tx.List[Transform]] = None
-    type: ConstHidden[str] = "sequence"
+    type: HiddenConst[str] = "sequence"
+
+    def compute(self, mode=None) -> Transform:
+        """
+        Compute the resulting transform of the sequence of transforms.
+
+        If all transforms in the sequence are affine-like transforms, 
+        `compute()` returns an affine-like transform.
+
+        If the first (= rightmost) transform in the sequence is a 
+        coordinate field, `compute()` returns a coordinate field.
+
+        If the first (= rightmost) transform in the sequence is an 
+        affine-like transform, and the sequence contains at least one 
+        non-affine-like transform, `compute()` returns a sequence of two
+        transforms: 
+        1. the composition of all affine-like transforms that appear
+           before the first non-affine-like transform in the sequence, and
+        2. the composition of all transforms in the sequence, starting
+           from the first non-affine-like transform in the sequence.
+
+        Parameters
+        ----------
+        mode : [list of] str, optional
+            Types of transforms to compute. 
+            * If `None` (default): compute all transforms in the sequence.
+            * If the name of a transformation type: compute only consecutive
+              sequences of transformations that match the specified type.
+        """
+        return _compute_sequence(self, mode=mode)
+    
+    def _flatten(self) -> _tx.Self:
+        # Flatten nested sequences of transforms into a single sequence.
+        if self.transforms is None:
+            return self
+        flattened = []
+        for t in self.transforms:
+            if isinstance(t, Sequence):
+                flattened.extend(t._flatten().transforms or [])
+            else:
+                flattened.append(t)
+        return Sequence(self, transforms=flattened)
+
+    def _is_flat(self) -> bool:
+        # Check if the sequence is flat (i.e., does not contain any nested sequences).
+        if self.transforms is None:
+            return True
+        return all(not isinstance(t, Sequence) for t in self.transforms)
+
+
+_IDENTITIES = {'identity'}
+_TRANSLATIONS = {*_IDENTITIES, 'translation'}
+_SCALES = {*_IDENTITIES, 'scale'}
+_PERMUTATIONS = {*_IDENTITIES, 'permutation'}
+_LINEARS = {*_SCALES, *_PERMUTATIONS, 'linear'}
+_AFFINES = {*_LINEARS, *_TRANSLATIONS, 'affine'}
+_NONLINEARS = {*_AFFINES, 'displacements', 'coordinates'}
+_XFORMHIERARCHY = {
+    'identity': _IDENTITIES,
+    'translation': _TRANSLATIONS,
+    'scale': _SCALES,
+    'permutation': _PERMUTATIONS,
+    'linear': _LINEARS,
+    'affine': _AFFINES,
+    'nonlinear': _NONLINEARS
+}
+
+
+def _compute_sequence(self: Sequence, mode=None) -> Transform:
+    # Totally UNTESTED, so raise for now.
+    raise NotImplementedError
+
+    # 0. check if already flat and composed:
+    if self.transforms is None or len(self.transforms) == 0:
+        return Identity(input=self.input, output=self.output)
+    if len(self.transforms) == 1:
+        return self.transforms[0]
+    # 1. flatten sequence:
+    if not self._is_flat():
+        return self._flatten().compute(mode=mode)
+    # 2. compose consecutive transforms of the same type
+    if mode is None:
+        mode = (
+            "translation", 
+            "scale", 
+            "permutation", 
+            "linear", 
+            "affine", 
+            "nonlinear"
+        )
+    if isinstance(mode, str):
+        mode = (mode,)
+    for mode1 in mode:
+        types1 = _XFORMHIERARCHY[mode1]
+        for i in range(len(self.transforms) - 1):
+            t1, t2 = self.transforms[i], self.transforms[i + 1]
+            if t1.type != "coordinates" and t2.type == "coordinates":
+                # Cannot `compose(coordinates, affine)`
+                continue
+            if t1.type in types1 and t2.type in types1:
+                composed = _compose(t2, t1)  # ! reversed order !
+                # Then: insert composed transform in place of the two 
+                # original transforms, and repeat until no more 
+                # consecutive transforms of the same type are found.
+                transforms = (
+                    self.transforms[:i] + [composed] + 
+                    self.transforms[i + 2:]
+                )
+                return Sequence(self, transforms=transforms).compute(mode)
+    return self
+
 
 
 _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
+
+
+def _to(x: Transform, cls: _tx.Type[Transform]) -> Transform:
+    """Convert a transform to a different type."""
+    # TODO: implement using the CONVERTERS map, 
+    #       similarly to _compose() and _COMPOSERS.
+    raise NotImplementedError  
 
 
 def _composer(func: _tx.Callable) -> _tx.Callable:
@@ -168,7 +302,7 @@ def _compose(x1: Transform, x2: Transform) -> Transform:
 
 
 @_composer
-def _(t1: Sequence, t2: Transform) -> Affine:
+def _(t1: Sequence, t2: Transform) -> Transform:
     return Sequence(
         transforms=[t2] + list(t1.transforms),
         input=t2.input,
@@ -177,7 +311,7 @@ def _(t1: Sequence, t2: Transform) -> Affine:
 
 
 @_composer
-def _(t1: Transform, t2: Sequence) -> Affine:
+def _(t1: Transform, t2: Sequence) -> Transform:
     return Sequence(
         transforms=list(t2.transforms) + [t1],
         input=t2.input,
@@ -186,7 +320,7 @@ def _(t1: Transform, t2: Sequence) -> Affine:
 
 
 @_composer
-def _(t1: Sequence, t2: Sequence) -> Affine:
+def _(t1: Sequence, t2: Sequence) -> Sequence:
     return Sequence(
         transforms=list(t2.transforms) + list(t1.transforms),
         input=t2.input,

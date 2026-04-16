@@ -7,7 +7,7 @@ from .orientation import (
     AnteriorToPosterior, PosteriorToAnterior, 
     InferiorToSuperior, SuperiorToInferior
 )
-from .typing import ConstHidden
+from .typing import HiddenConst
 
 
 class Axis(SpecializedStruct):
@@ -20,46 +20,46 @@ class Axis(SpecializedStruct):
 
 class SpatialAxis(Axis):
     unit: str = "mm"
-    type: ConstHidden[str] = "spatial"
+    type: HiddenConst[str] = "spatial"
 
 
 class TimeAxis(Axis):
     unit: str = "s"
-    type: ConstHidden[str] = "time"
+    type: HiddenConst[str] = "time"
 
 
 class ChannelAxis(Axis):
-    type: ConstHidden[str] = "channel"
+    type: HiddenConst[str] = "channel"
 
 
 class LeftToRightAxis(SpatialAxis):
     name: str = "left-to-right"
-    orientation: ConstHidden[LeftToRight] = LeftToRight()
+    orientation: HiddenConst[LeftToRight] = LeftToRight()
 
 
 class RightToLeftAxis(SpatialAxis):
     name: str = "right-to-left"
-    orientation: ConstHidden[RightToLeft] = RightToLeft()
+    orientation: HiddenConst[RightToLeft] = RightToLeft()
 
 
 class AnteriorToPosteriorAxis(SpatialAxis):
     name: str = "anterior-to-posterior"
-    orientation: ConstHidden[AnteriorToPosterior] = AnteriorToPosterior()
+    orientation: HiddenConst[AnteriorToPosterior] = AnteriorToPosterior()
 
 
 class PosteriorToAnteriorAxis(SpatialAxis):
     name: str = "posterior-to-anterior"
-    orientation: ConstHidden[PosteriorToAnterior] = PosteriorToAnterior()
+    orientation: HiddenConst[PosteriorToAnterior] = PosteriorToAnterior()
 
 
 class InferiorToSuperiorAxis(SpatialAxis):
     name: str = "inferior-to-superior"
-    orientation: ConstHidden[InferiorToSuperior] = InferiorToSuperior()
+    orientation: HiddenConst[InferiorToSuperior] = InferiorToSuperior()
 
 
 class SuperiorToInferiorAxis(SpatialAxis):
     name: str = "superior-to-inferior"
-    orientation: ConstHidden[SuperiorToInferior] = SuperiorToInferior()
+    orientation: HiddenConst[SuperiorToInferior] = SuperiorToInferior()
 
 
 R = leftToRightAxis = LeftToRightAxis()

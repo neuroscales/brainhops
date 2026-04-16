@@ -1,11 +1,4 @@
 # TODO:
-# - Add option `objvar` that adds a pseudo-field (InitVar) to the 
-#   very beginning of the `__init__` method, allowing the object
-#   to be initialized with an existing object of the same type.
-# - Add option `dictvar` that adds a pseudo-field (InitVar) to the 
-#   very beginning of the `__init__` method, allowing the object
-#   to be initialized with a compatible dict-like object.
-# - `objvar` and `dictvar` can have the same value (e.g. `"obj"`).
 # - Add converters and validators for array-like types 
 #   (np.ndarray, cp.ndarray, torch.tensor, dask.array, ...)
 # - Refactor/Simplify converters and validators.
@@ -540,7 +533,10 @@ def _make_repr(fields: dict[str, Field]) -> _tx.Callable:
         params = [
             f"{field.name}={getattr(self, field.name)!r}" 
             for field in fields.values()
-            if field.repr
+            if field.repr is True or (
+                field.repr == "hide_none" and 
+                getattr(self, field.name) is not None
+            )
         ]
         params = ", ".join(params)
         return f"{self.__class__.__name__}({params})"
@@ -692,7 +688,10 @@ def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
     def __getitem__(self, key: str) -> _tx.Any:
         field = fields.get(key)
         if field:
-            return getattr(self, field.name)
+            value = getattr(self, field.name)
+            if field.key == "hide_none" and value is None:
+                raise KeyError(key)
+            return value
         raise KeyError(key)
 
     def __setitem__(self, key: str, value: _tx.Any) -> None:
@@ -712,10 +711,18 @@ def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
     def __iter__(self) -> _tx.Iterator[str]:
         for field in fields.values():
             if field:
+                if (field.key == "hide_none" and 
+                    getattr(self, field.name) is None
+                ):
+                    continue
                 yield field.name
 
     def __len__(self) -> int:
-        return len(fields)
+        return sum(
+            field.key != "hide_none" or 
+            getattr(self, field.name) is not None 
+            for field in fields.values()
+        )
 
     return {
         "__getitem__": __getitem__,
@@ -821,8 +828,10 @@ class Struct(metaclass=MetaStruct, **Options._DEFAULTS):
     ----------
     init: bool, default=True
         Generate `__init__` method
-    repr : bool, default=True             
-        Generate `__repr__` method
+    repr : bool | {"hide_none"}, default=True             
+        Generate `__repr__` method.
+        If "hide_none", then fields with value None are not included 
+        in the repr.
     eq : bool, default=True               
         Generate `__eq__` method
     order : bool, default=False            
@@ -847,8 +856,10 @@ class Struct(metaclass=MetaStruct, **Options._DEFAULTS):
         Use field type as converter if none is provided
     validate : bool, default=False        
         Use field type as validator if none is provided
-    mapping : bool, default=False
+    mapping : bool | {"hide_none"}, default=False
         Implement the `Mapping` protocol.
+        If "hide_none", then fields with value None are not included 
+        in the list of keys.
 
     """
 

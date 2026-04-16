@@ -1,7 +1,7 @@
 import typing_extensions as _tx
 
 from .struct import SpecializedStruct
-from .typing import ConstHidden
+from .typing import HiddenConst
 
 
 class Orientation(SpecializedStruct):
@@ -10,31 +10,31 @@ class Orientation(SpecializedStruct):
 
 
 class AnatomicalOrientation(Orientation):
-    type: ConstHidden[str] = "anatomical"
+    type: HiddenConst[str] = "anatomical"
 
 
 class LeftToRight(AnatomicalOrientation):
-    value: ConstHidden[str] = "left-to-right"
+    value: HiddenConst[str] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
-    value: ConstHidden[str] = "right-to-left"
+    value: HiddenConst[str] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
-    value: ConstHidden[str] = "anterior-to-posterior"
+    value: HiddenConst[str] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
-    value: ConstHidden[str] = "posterior-to-anterior"
+    value: HiddenConst[str] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
-    value: ConstHidden[str] = "inferior-to-superior"
+    value: HiddenConst[str] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
-    value: ConstHidden[str] = "superior-to-inferior"
+    value: HiddenConst[str] = "superior-to-inferior"
 
 
 L = leftToRight = LeftToRight()
