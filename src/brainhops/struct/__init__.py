@@ -76,19 +76,19 @@ x: DefaultFactory[list] -> x: Annotated[list, DefaultFactory(list)]
 # - Include in the init method
 #   instead of x: int = field(init=True)
 x: Init[int]
-x: Annotated[int, Init]
+x: Annotated[int, Init()]
 x: Annotated[int, Init(True)]
 x: NoInit[int]
-x: Annotated[int, NoInit]
+x: Annotated[int, NoInit()]
 x: Annotated[int, Init(False)]
 
 # - Keyword-only arguments
 #   instead of x: int = field(kw_only=True)
 x: KwOnly[int]
-x: Annotated[int, KwOnly]
+x: Annotated[int, KwOnly()]
 x: Annotated[int, KwOnly(True)]
 x: NotKwOnly[int]
-x: Annotated[int, NotKwOnly]
+x: Annotated[int, NotKwOnly()]
 x: Annotated[int, KwOnly(False)]
 ```
 
@@ -107,183 +107,30 @@ Frozen or unfrozen fields:
 
 ```python
 x: Frozen[int]
-x: Annotated[int, Frozen]
+x: Annotated[int, Frozen()]
 x: Annotated[int, Frozen(True)]
 x: NotFrozen[int]
-x: Annotated[int, NotFrozen]
+x: Annotated[int, NotFrozen()]
 x: Annotated[int, Frozen(False)]
 ```
 """
-__all__ = [
-    "Struct", "struct",
-    "Default", "DefaultFactory", "ConvertTo", "Validate", 
-    "Frozen", "Init", "KwOnly", "Repr", 
-    "Hash", "Eq", "Order", "Compare", "Var", "InitVar", "ClassVar",
-]
+__all__ = ["Struct", "struct"]
+from abc import ABCMeta
+from collections import abc as _abc
 from functools import partial
 import types as _t
 import typing_extensions as _tx
 
-from .constants import _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, MISSING
-from .converters import HintConverter, _get_origin
-from .validators import HintValidator
-from .annotations import (
-    Default, DefaultFactory, ConvertTo, Validate, Frozen, Init, KwOnly, 
-    Repr, Hash, Eq, Order, Compare, Var, InitVar, ClassVar, 
-)
+from .constants import _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, MISSING
+from .utils import rebuild_cls
+from .options import *
+from .fields import *
 
+from .options import __all__ as __all_options__
+from .fields import __all__ as __all_fields__
+__all__ += __all_fields__
+__all__ += __all_options__
 
-# ----------------------------------------------------------------------
-# Options
-# ----------------------------------------------------------------------
-
-
-class _SlotsBase:
-    __slots__ = ()
-
-    def __init__(self, **kwargs) -> None:
-        for slot in self.__slots__:
-            setattr(self, slot, kwargs.get(slot, MISSING))
-
-    def __repr__(self):
-        params = (f"{slot}={getattr(self, slot)!r}" for slot in self.__slots__)
-        params = ", ".join(params)
-        return f"{self.__class__.__name__}({params})"
-    
-    def update(self, options: _tx.Self) -> None:
-        for slot in self.__slots__:
-            if getattr(options, slot) is not MISSING:
-                setattr(self, slot, getattr(options, slot))
-
-    def setdefault(self, options: _tx.Self) -> None:
-        for slot in self.__slots__:
-            if getattr(self, slot) is MISSING:
-                setattr(self, slot, getattr(options, slot))
-
-
-class StructOptions(_SlotsBase):
-
-    __slots__ = (
-        'init',             # Generate __init__ method
-        'repr',             # Generate __repr__ method
-        'eq',               # Generate __eq__ method
-        'order',            # Generate __lt__ method
-        'unsafe_hash',      # Always generate __hash__ method
-        'frozen',           # Disable __setattr__ and __delattr__
-        'match_args',       # Generate __match_args__ for pattern matching
-        'kw_only',          # Make all fields keyword-only by default
-        'slots',            # Generate __slots__ and remove __dict__
-        'weakref_slot',     # Generate a weakref slot in __slots__
-        'default_factory',  # Use field type as factory if none is provided
-        'convert',          # Use field type as converter if none is provided
-        'validate',         # Use field type as validator if none is provided
-    )
-
-    _DEFAULTS: _tx.Dict[str, bool] = dict(
-        init=True,
-        repr=True,
-        eq=True,
-        order=False,
-        unsafe_hash=False,
-        frozen=False,
-        match_args=False,
-        kw_only=False,
-        slots=False,
-        weakref_slot=False,
-        default_factory=False,
-        convert=False,
-        validate=False
-    )
-    
-    @staticmethod
-    def make_default() -> _tx.Self:
-        return StructOptions(**StructOptions._DEFAULTS)
-
-
-class StructField(_SlotsBase):
-
-    __slots__ = (
-        'name',             # Field name
-        'type',             # Field type (or type hint)
-        'default',          # Default value for this field.
-        'default_factory',  # A factory function that generates a default value for this field.
-        'init',             # Include this field in the generated __init__ method.
-        'repr',             # Include this field in the generated __repr__ method.
-        'hash',             # Include this field in the generated __hash__ method.
-        'eq',               # Include this field in the generated __eq__ method.
-        'order',            # Include this field in the generated __lt__ methods.
-        'metadata',         # User-defined metadata
-        'kw_only',          # Make this field keyword-only in the generated __init__ method.
-        'frozen',           # Make this field immutable after initialization.
-        'converter',        # A function that converts the input value for this field.
-        'validator',        # A function that validates the input value for this field.
-        'var',              # Whether this field is a pseudo-field (InitVar or ClassVar).
-    )
-
-    def __init__(self, **kwargs) -> None:
-        compare = kwargs.get("compare", MISSING)
-        if compare is not MISSING:
-            kwargs.setdefault("eq", True)
-            kwargs.setdefault("order", True)
-        super().__init__(**kwargs)
-    
-    @classmethod
-    def from_hint(
-        cls, name: str, hint: _tx.Any, default: _tx.Any = MISSING
-    ) -> "StructField":
-        if default is MISSING:
-            default = Default.from_hint(hint)
-        type = hint
-        if _get_origin(hint) is _tx.Annotated:
-            type = _tx.get_args(hint)[0]
-        return StructField(
-            name=name,
-            type=type,
-            default=default,
-            default_factory=DefaultFactory.from_hint(hint),
-            init=Init.from_hint(hint),
-            repr=Repr.from_hint(hint),
-            hash=Hash.from_hint(hint),
-            eq=Eq.from_hint(hint),
-            order=Order.from_hint(hint),
-            kw_only=KwOnly.from_hint(hint),
-            frozen=Frozen.from_hint(hint),
-            converter=ConvertTo.from_hint(hint),
-            validator=Validate.from_hint(hint),
-            var=(Var.from_hint(hint) == True),
-        )
-    
-    def setdefault(self, options: StructOptions) -> None:
-        # When field options are not explicitly set (MISSING), they are 
-        # inherited from the class options.
-        if self.init is MISSING:
-            self.init = options.init
-        if self.repr is MISSING:
-            self.repr = options.repr
-        if self.hash is MISSING:
-            self.hash = True
-        if self.eq is MISSING:
-            self.eq = options.eq
-        if self.order is MISSING:
-            self.order = options.order
-        if self.kw_only is MISSING:
-            self.kw_only = options.kw_only
-        if self.frozen is MISSING:
-            self.frozen = options.frozen
-        if self.converter is MISSING and options.convert:
-            self.converter = HintConverter(self.type)
-        if self.validator is MISSING and options.validate:
-            self.validator = HintValidator(self.type)
-        if self.default_factory is MISSING and options.default_factory:
-            factory = self.type
-            origin = _get_origin(factory)
-            if origin in (_t.UnionType, _tx.Union, _tx.Optional):
-                factory = _tx.get_args(factory)[0]
-            elif origin in (type, _tx.Type):
-                factory = lambda: _tx.get_args(factory)[0]
-            else:
-                factory = origin
-            self.default_factory = factory
 
 # ----------------------------------------------------------------------
 # Builder
@@ -292,13 +139,12 @@ class StructField(_SlotsBase):
 # licensed under the Python Software Foundation License Version 2.
 
 def __post_new__(cls: type) -> type:
-    
-    fields = getattr(cls, _FIELDS, {})
-    real_fields = {name: f for name, f in fields.items() if not f.var}
-
     # These methods have to be assigned post-new, because they 
     # use super and therefore need to reference the class.
-    __delattr__, __setattr__ = _make_frozen(cls, real_fields)
+
+    fields = getattr(cls, _FIELDS, {})
+    fields = {name: field for name, field in fields.items() if not field.var}
+    __delattr__, __setattr__ = _make_assign(cls)
     if "__setattr___" not in cls.__dict__:
         cls.__setattr__ = __setattr__
     if "__delattr___" not in cls.__dict__:
@@ -306,17 +152,18 @@ def __post_new__(cls: type) -> type:
 
     return cls
 
+
 def __pre_new__(
     metacls: "MetaStruct", 
-    name: str, 
-    namespace: dict, 
+    clsname: str, 
     bases: tuple[type, ...], 
+    namespace: dict, 
     **kwargs
-) -> dict:
-    if name == _DISCARD:
+) -> tuple[str, tuple[type, ...], dict]:
+    if clsname == _DISCARD:
         # This is a dummy class used to compute the MRO of our class 
         # without including the class itself.
-        return namespace
+        return clsname, bases, namespace
 
     # Now that dicts retain insertion order, there's no reason to use
     # an ordered dict.  I am leveraging that ordering here, because
@@ -327,7 +174,7 @@ def __pre_new__(
     # Class options that are not explicitly set are inherited from 
     # base classes in MRO order. Derived classes only override base
     # classes if options are explicitly set (not MISSING).
-    options = StructOptions.make_default()
+    options = Options.make_default()
 
     # Find our base classes in reverse MRO order, and exclude
     # ourselves. In reversed order so that more derived classes
@@ -344,7 +191,7 @@ def __pre_new__(
                 fields[f.name] = f
 
     # Save final options for this class.
-    options.update(StructOptions(**kwargs))
+    options.update(Options(**kwargs))
     namespace[_OPTIONS] = options
 
     # Annotations that are defined in this class (not in base
@@ -365,9 +212,9 @@ def __pre_new__(
     # things, and set the default values (as class attributes) where
     # we can.
     cls_fields = []
-    for name, type_ in cls_annotations.items():
-        default = namespace.get(name, MISSING)
-        field = StructField.from_hint(name, type_, default)
+    for field_name, type_ in cls_annotations.items():
+        default = namespace.get(field_name, MISSING)
+        field = Field.from_hint(field_name, type_, default)
         field.setdefault(options)
         cls_fields.append(field)
 
@@ -378,7 +225,7 @@ def __pre_new__(
         # field) exists and is of type 'StructField', replace it with 
         # the real default.  This is so that normal class introspection
         # sees a real default value, not a StructField.
-        if isinstance(namespace.get(f.name), StructField):
+        if isinstance(namespace.get(f.name), Field):
             if f.default is MISSING:
                 # If there's no default, delete the class attribute.
                 # This happens if we specify field(repr=False), for
@@ -391,9 +238,11 @@ def __pre_new__(
                 namespace[f.name] = f.default
 
     # Do we have any Field members that don't also have annotations?
-    for name, value in namespace.items():
-        if isinstance(value, StructField) and not name in cls_annotations:
-            raise TypeError(f'{name!r} is a field but has no type annotation')
+    for attr_name, value in namespace.items():
+        if isinstance(value, Field) and not attr_name in cls_annotations:
+            raise TypeError(
+                f'{attr_name!r} is a field but has no type annotation'
+            )
 
     # Remember all of the fields on our class (including bases).
     namespace[_FIELDS] = fields
@@ -423,7 +272,8 @@ def __pre_new__(
     real_fields = {name: f for name, f in fields.items() if not f.var}
 
     if options.repr:
-        namespace.setdefault("__repr__", _make_repr(real_fields))
+        repr_fields = {name: f for name, f in fields.items() if f.repr}
+        namespace.setdefault("__repr__", _make_repr(repr_fields))
 
     if options.eq:
         namespace.setdefault("__eq__", _make_eq(real_fields))
@@ -432,30 +282,42 @@ def __pre_new__(
         namespace.setdefault("__lt__", _make_lt(real_fields))
 
     # Decide if/how we're going to create a hash function.
-    hash_action = _hash_action[bool(options.unsafe_hash),
-                               bool(options.eq),
-                               bool(options.frozen),
-                               "__hash__" in namespace]
-    if hash_action:
-        namespace.setdefault("__hash__", hash_action(name, real_fields))
+    _make_hash = _hash_action[bool(options.unsafe_hash),
+                              bool(options.eq),
+                              bool(options.frozen),
+                              has_explicit_hash]
+    if _make_hash:
+        namespace.setdefault("__hash__", _make_hash(clsname, real_fields))
 
     if options.match_args:
         # I could probably compute this once.
         namespace.setdefault("__match_args__", tuple(
-            f.name for f in fields.values() if f.init and not f.kw_only
+            f.name for f in fields.values() if f.init and f.positional
         ))
+
+    if options.frozen:
+        getstate, setstate = _make_state(real_fields)
+        namespace.setdefault("__getstate__", getstate)
+        namespace.setdefault("__setstate__", setstate)
+
+    if options.mapping:
+        dict_fields = {f.name: f for f in fields.values() if f.key}
+        for name, func in _make_mapping(dict_fields).items():
+            namespace.setdefault(name, func)
+        Mapping = _abc.Mapping if options.frozen else _abc.MutableMapping
+        if not any(isinstance(base, Mapping) for base in bases):
+            bases += (Mapping,)
 
     # It's an error to specify weakref_slot if slots is False.
     if options.weakref_slot and not options.slots:
         raise TypeError('weakref_slot is True but slots is False')
     if options.slots:
         if '__slots__' in namespace:
-            raise TypeError(f'{name} already specifies __slots__')
-        namespace['__slots__'] = tuple(real_fields.keys())
-        if options.weakref_slot:
-            namespace['__slots__'] += ('__weakref__',)
+            raise TypeError(f'{clsname} already specifies __slots__')
+        weakref_slot = options.weakref_slot
+        namespace["__slots__"] = _make_slots(bases, real_fields, weakref_slot)
 
-    return namespace
+    return clsname, bases, namespace
 
 
 def _hash_set_none(name: str, fields: dict) -> None:
@@ -508,106 +370,171 @@ _hash_action = {(False, False, False, False): None,
                 }
 
 
-def _make_init(fields: dict[str, StructField]) -> _tx.Callable:
+def _make_init(fields: dict[str, Field]) -> _tx.Callable:
 
     self_name = "__struct_self__" if "self" in fields else "self"
     _std_init_fields = {
         name: field for name, field in fields.items()
-        if field.init and not field.kw_only
+        if field.init and field.positional
     }
     _kw_only_init_fields = {
         name: field for name, field in fields.items()
-        if field.init and field.kw_only
+        if field.init and field.kw and not field.positional
+    }
+    _positional_only_init_fields = {
+        name: field for name, field in fields.items()
+        if field.init and field.positional and not field.kw
     }
 
     def __init__(*args, **kwargs) -> None:
 
-        std_init_fields = dict(_std_init_fields)
-        kw_only_init_fields = dict(_kw_only_init_fields)
-        init_vars = {}
-
-        args = list(args)
+        # --------------------------------------------------------------
+        # Get self
         if args:
             self, *args = args
         else:
             self = kwargs.pop(self_name)
 
+        # --------------------------------------------------------------
+        # Call pre-init.
+        if hasattr(self, _PRE_INIT_NAME):
+            args, kwargs = getattr(self, _PRE_INIT_NAME)(*args, **kwargs)
+
+        # --------------------------------------------------------------
+        # Make copies of the fields dicts, because we're going to be mutating
+        std_init_fields = dict(_std_init_fields)
+        kw_only_init_fields = dict(_kw_only_init_fields)
+        positional_only_init_fields = dict(_positional_only_init_fields)
+        init_vars = {}
+
+        # --------------------------------------------------------------
         # First, unroll positional arguments.
+        args = list(args)
         while args:
             if not std_init_fields:
                 raise TypeError(f"Too many positional arguments: {len(args)}")
             arg = args.pop(0)
             field = std_init_fields.pop(next(iter(std_init_fields)))
 
-            if field.converter is not MISSING:
-                arg = field.converter(arg)
-
-            if field.validator is not MISSING:
-                arg = field.validator(arg)
-
             if field.var:
                 init_vars[field.name] = arg
-            
-            else:
+                continue
+
+            if not field.frozen:
+                # We let setattr() do the work
                 setattr(self, field.name, arg)
 
+            else:
+                if field.converter:
+                    arg = field.converter(arg)
+
+                if field.validator:
+                    arg = field.validator(arg)
+            
+                object.__setattr__(self, field.name, arg)
+
+        # --------------------------------------------------------------
         # Merge all remaining fields. They will either be in kwargs,
         # or will be assigned their default value.
         kw_only_init_fields.update(std_init_fields)
 
+        # --------------------------------------------------------------
         # Unroll keyword arguments.
         for name, arg in kwargs.items():
+
+            if name in positional_only_init_fields:
+                raise TypeError(
+                    f"Got positional-only argument as keyword: {name!r}"
+                )
+
             if name not in kw_only_init_fields:
                 raise TypeError(f"Unexpected keyword argument: {name!r}")
             
             field = kw_only_init_fields.pop(name)
 
-            if field.converter is not MISSING:
-                arg = field.converter(arg)
-
-            if field.validator is not MISSING:
-                arg = field.validator(arg)
-
             if field.var:
                 init_vars[field.name] = arg
-            
-            else:
+                continue
+
+            if not field.frozen:
+                # We let setattr() do the work
                 setattr(self, field.name, arg)
 
+            else:
+                if field.converter:
+                    arg = field.converter(arg)
+
+                if field.validator:
+                    arg = field.validator(arg)
+            
+                object.__setattr__(self, field.name, arg)
+
+        # --------------------------------------------------------------
         # Assign default values for any remaining fields.
         for field in kw_only_init_fields.values():
-            if field.default_factory is not MISSING:
-                value = field.default_factory()
-            elif field.default is not MISSING:
-                value = field.default
+
+            if field.default is not MISSING:
+                arg = field.default
+            
+            elif field.default_factory:
+                arg = field.default_factory()
+
             else:
                 raise TypeError(f"Missing required argument: {field.name!r}")
-            setattr(self, field.name, value)
+        
+            if field.var:
+                init_vars[field.name] = arg
 
+            if not field.frozen:
+                # We let setattr() do the work
+                setattr(self, field.name, arg)
+
+            else:
+                if field.converter:
+                    arg = field.converter(arg)
+
+                if field.validator:
+                    arg = field.validator(arg)
+
+                object.__setattr__(self, field.name, arg)
+
+        # --------------------------------------------------------------
         # Call post-init on InitVars
         if hasattr(self, _POST_INIT_NAME):
             postinit_args = []
             for field in fields.values():
+
                 if not (field.init and field.var):
                     continue
-                arg = getattr(init_vars, field.name, MISSING)
+
+                arg = init_vars.get(field.name, MISSING)
                 if arg is MISSING:
-                    if field.default_factory is not MISSING:
-                        arg = field.default_factory()
-                    elif field.default is not MISSING:
+
+                    if field.default is not MISSING:
                         arg = field.default
+
+                    elif field.default_factory:
+                        arg = field.default_factory()
+
                     else:
                         raise TypeError(
                             f"Missing required argument for post-init: "
                             f"{field.name!r}"
                         )
+            
+                if field.converter:
+                    arg = field.converter(arg)
+
+                if field.validator:
+                    arg = field.validator(arg)
+
                 postinit_args.append(arg)
             getattr(self, _POST_INIT_NAME)(*postinit_args)
 
     return __init__
 
 
-def _make_repr(fields: dict[str, StructField]) -> _tx.Callable:
+def _make_repr(fields: dict[str, Field]) -> _tx.Callable:
 
     def __repr__(self) -> str:
         params = [
@@ -621,7 +548,7 @@ def _make_repr(fields: dict[str, StructField]) -> _tx.Callable:
     return __repr__
 
 
-def _make_eq(fields: dict[str, StructField]) -> _tx.Callable:
+def _make_eq(fields: dict[str, Field]) -> _tx.Callable:
 
     def __eq__(self, other) -> bool:
         if self is other:
@@ -637,7 +564,7 @@ def _make_eq(fields: dict[str, StructField]) -> _tx.Callable:
     return __eq__
 
 
-def _make_lt(fields: dict[str, StructField]) -> _tx.Callable:
+def _make_lt(fields: dict[str, Field]) -> _tx.Callable:
 
     def __lt__(self, other) -> bool:
         if other.__class__ is self.__class__:
@@ -657,31 +584,155 @@ def _make_lt(fields: dict[str, StructField]) -> _tx.Callable:
     return __lt__
 
 
-def _make_frozen(cls: type, fields: dict[str, StructField]) -> type:
+def _make_assign(cls: type) -> type:
 
     __class__ = cls
+    fields = getattr(cls, _FIELDS, {})
+    fields = {name: field for name, field in fields.items() if not field.var}
+
+    # We are calling object methods instead of super(), beause
+    # super() falls back to inherited struct methods, which we don't want.
 
     def __delattr__(self, name: str) -> None:
         field = fields.get(name)
-        if getattr(field, "frozen", False):
-            raise AttributeError(f"Cannot delete frozen field {name!r}")
-        super(cls, self).__delattr__(name)
+        if field:
+            if getattr(field, 'frozen', False):
+                raise AttributeError(f"Cannot delete frozen field {name!r}")
+        elif getattr(type(self), _OPTIONS).frozen:
+            raise AttributeError(
+                f"Cannot delete attribute {name!r} on frozen class"
+            )
+        object.__delattr__(self, name)
 
     def __setattr__(self, name: str, value: _tx.Any) -> None:
         field = fields.get(name)
-        if getattr(field, "frozen", False):
-            raise AttributeError(f"Cannot set frozen field {name!r}")
-        super(cls, self).__setattr__(name, value)
+        if field and not field.var:
+            if field.frozen:
+                raise AttributeError(f"Cannot set frozen field {name!r}")
+            if field.converter:
+                value = field.converter(value)
+            if field.validator:
+                value = field.validator(value)
+        elif getattr(type(self), _OPTIONS).frozen:
+            raise AttributeError(
+                f"Cannot set attribute {name!r} on frozen class"
+            )
+        object.__setattr__(self, name, value)
 
     return __delattr__, __setattr__
+
+
+def _make_state(fields: dict[str, Field]) -> _tx.Callable:
+
+    def __getstate__(self) -> _tx.Tuple:
+        fields = [f for f in fields.values() if not f.var]
+        return tuple(getattr(self, f.name) for f in fields)
+
+    def __setstate__(self, state: _tx.Tuple) -> None:
+        fields = [f for f in fields.values() if not f.var]
+        for field, value in zip(fields, state):
+            # use setattr because dataclass may be frozen
+            object.__setattr__(self, field.name, value)
+
+    return __getstate__, __setstate__
+
+
+def _get_slots(cls: type) -> _tx.Iterator[str]:
+    slots = cls.__dict__.get('__slots__')
+    if slots is None:
+        # `__dictoffset__` and `__weakrefoffset__` can tell us whether
+        # the base type has dict/weakref slots, in a way that works correctly
+        # for both Python classes and C extension types. Extension types
+        # don't use `__slots__` for slot creation
+        if getattr(cls, '__weakrefoffset__', -1) != 0:
+            yield '__weakref__'
+        if getattr(cls, '__dictoffset__', -1) != 0:
+            yield '__dict__'
+    elif isinstance(slots, str):
+        yield slots
+    elif not hasattr(slots, '__next__'):
+        # Slots may be any iterable, but we cannot handle an iterator
+        # because it will already be (partially) consumed.
+        yield from slots
+    else:
+        raise TypeError(f"Slots of '{cls.__name__}' cannot be determined")
+
+
+def _make_slots(
+    bases: tuple[type, ...], 
+    fields: dict[str, Field], 
+    weakref_slot: bool = False,
+) -> _tx.Union[tuple[str, ...], dict[str, _tx.Optional[str]]]:
+    mro = type(_DISCARD, bases, {}).__mro__[1:-1]
+    inherited_slots = set(
+        slot
+        for base in mro
+        for slot in _get_slots(base)
+    )
+
+    slots, has_doc = {}, False
+    for field in fields.values():
+        if field.name in inherited_slots:
+            continue
+        slots[field.name] = field.doc
+        if field.doc:
+            has_doc = True
+
+    if weakref_slot and '__weakref__' not in inherited_slots:
+        slots['__weakref__'] = None
+    
+    if not has_doc:
+        slots = tuple(slots)
+
+    return slots
+
+
+def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
+
+    def __getitem__(self, key: str) -> _tx.Any:
+        field = fields.get(key)
+        if field:
+            return getattr(self, field.name)
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: _tx.Any) -> None:
+        field = fields.get(key)
+        if field:
+            setattr(self, field.name, value)
+        else:
+            raise KeyError(key)
+        
+    def __delitem__(self, key: str) -> None:
+        field = fields.get(key)
+        if field:
+            delattr(self, field.name)
+        else:
+            raise KeyError(key)
+
+    def __iter__(self) -> _tx.Iterator[str]:
+        for field in fields.values():
+            if field:
+                yield field.name
+
+    def __len__(self) -> int:
+        return len(fields)
+
+    return {
+        "__getitem__": __getitem__,
+        "__setitem__": __setitem__,
+        "__delitem__": __delitem__,
+        "__iter__": __iter__,
+        "__len__": __len__,
+    }
 
 
 # ----------------------------------------------------------------------
 # Base
 # ----------------------------------------------------------------------
+# MetaStruct derives from ABCMeta so that derivatives of Struct can 
+# derive from ABCs (e.g. Mapping).
 
-
-class MetaStruct(type):
+class MetaStruct(ABCMeta):
     """
     Examples
     --------
@@ -711,31 +762,35 @@ class MetaStruct(type):
     Other Parameters
     ----------------
     init: bool, default=True
-        Generate __init__ method
+        Generate `__init__` method
     repr : bool, default=True             
-        Generate __repr__ method
+        Generate `__repr__` method
     eq : bool, default=True               
-        Generate __eq__ method
+        Generate `__eq__` method
     order : bool, default=False            
-        Generate __lt__ method
+        Generate `__lt__` method
     unsafe_hash : bool, default=False      
-        Always generate __hash__ method
+        Always generate `__hash__` method
     frozen : bool, default=False           
-        Disable __setattr__ and __delattr__
+        Disable `__setattr__` and `__delattr__`
     match_args : bool, default=True       
-        Generate __match_args__ for pattern matching
+        Generate `__match_args__` for pattern matching
     kw_only : bool, default=False         
         Make all fields keyword-only by default
+    positional_only : bool, default=False
+        Make all fields positional-only by default
     slots : bool, default=False           
-        Generate __slots__ and remove __dict__
+        Generate `__slots__` and remove `__dict__`
     weakref_slot : bool, default=False    
-        Generate a weakref slot in __slots__
+        Generate a weakref slot in `__slots__`
     default_factory : bool, default=False 
         Use field type as factory if none is provided
     convert : bool, default=False         
         Use field type as converter if none is provided
     validate : bool, default=False        
         Use field type as validator if none is provided
+    mapping : bool, default=False
+        Implement the `Mapping` protocol.
 
     Returns
     -------
@@ -744,13 +799,13 @@ class MetaStruct(type):
     """
 
     def __new__(metacls, name, bases, namespace, **kwargs) -> type:
-        namespace = __pre_new__(metacls, name, namespace, bases, **kwargs)
+        name, bases, namespace = __pre_new__(metacls, name, bases, namespace, **kwargs)
         cls = super().__new__(metacls, name, bases, namespace)
         cls = __post_new__(cls)
         return cls
 
 
-class Struct(metaclass=MetaStruct, **StructOptions._DEFAULTS):
+class Struct(metaclass=MetaStruct, **Options._DEFAULTS):
     """
     Base class for data structures.
 
@@ -780,6 +835,8 @@ class Struct(metaclass=MetaStruct, **StructOptions._DEFAULTS):
         Generate `__match_args__` for pattern matching
     kw_only : bool, default=False         
         Make all fields keyword-only by default
+    positional_only : bool, default=False
+        Make all fields positional-only by default
     slots : bool, default=False           
         Generate `__slots__` and remove `__dict__`
     weakref_slot : bool, default=False    
@@ -790,13 +847,26 @@ class Struct(metaclass=MetaStruct, **StructOptions._DEFAULTS):
         Use field type as converter if none is provided
     validate : bool, default=False        
         Use field type as validator if none is provided
+    mapping : bool, default=False
+        Implement the `Mapping` protocol.
+
     """
-    ...
+
+    # Set __slots__ so that inheriting classes can have slot=True
+    __slots__ = ()
 
 
 # ----------------------------------------------------------------------
 # Decorator
 # ----------------------------------------------------------------------
+
+
+@_tx.overload
+def struct(**kwargs) -> _tx.Callable[[type], type]: ...
+
+
+@_tx.overload
+def struct(cls: type, **kwargs) -> type: ...
 
 
 def struct(cls: _tx.Optional[type] = None, **kwargs):
@@ -806,5 +876,5 @@ def struct(cls: _tx.Optional[type] = None, **kwargs):
     """
     if cls is None:
         return partial(struct, **kwargs)
-    return MetaStruct(cls.__name__, cls.__bases__, cls.__dict__, **kwargs)
+    return rebuild_cls(cls, partial(MetaStruct, **kwargs))
 
