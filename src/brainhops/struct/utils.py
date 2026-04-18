@@ -7,6 +7,13 @@ import typing_extensions as _tx
 from .constants import MISSING
 
 
+def _get_origin(type: _tx.Any) -> _tx.Any:
+    origin = _tx.get_origin(type)
+    if origin is None:
+        return type
+    return origin
+
+
 def _update_func_cell_for__class__(
     f: _tx.Optional[_tx.Callable], oldcls: type, newcls: type
 ) -> bool:

@@ -37,9 +37,9 @@ import types as _t
 import typing_extensions as _tx
 
 from .constants import MISSING, REQUIRED, MaybeMissing
-from .converters import HintConverter, _get_origin
+from .converters import HintConverter
 from .options import Options
-from .utils import SlotsBase, slots
+from .utils import SlotsBase, slots, _get_origin
 from .validators import HintValidator
 
 T = _tx.TypeVar("T")

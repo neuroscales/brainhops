@@ -3,7 +3,7 @@ from functools import partial
 
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
-from .typing import HiddenConst
+from .typing import HiddenConst, ArrayProtocol
 
 
 class Transform(SpecializedStruct):
@@ -76,7 +76,7 @@ class Transform(SpecializedStruct):
 
 
 class CoordinatesField(Transform):
-    field: _tx.Optional["ArrayLike"] = None
+    field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "coordinates"
 
 
@@ -84,7 +84,7 @@ class CartesianCoordinatesField(CoordinatesField):
     shape: _tx.Optional[_tx.Tuple[int, ...]] = None
 
     @property
-    def field(self) -> "ArrayLike":
+    def field(self) -> ArrayProtocol:
         if getattr(self, "_field", None) is None:
             import dask.array as da  # implement `get_array_backend()`
             self._field = da.meshgrid(
@@ -95,17 +95,17 @@ class CartesianCoordinatesField(CoordinatesField):
 
 
 class DisplacementField(Transform):
-    field: _tx.Optional["ArrayLike"] = None
+    field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "displacement"
 
 
 class Affine(Transform):
-    matrix: _tx.Optional["ArrayLike"] = None
+    matrix: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "affine"
 
 
 class Linear(Transform):
-    matrix: _tx.Optional["ArrayLike"] = None
+    matrix: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "linear"
 
 class Permutation(Transform):
