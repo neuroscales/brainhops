@@ -22,7 +22,7 @@ class ObjectConverter(HintConverter[OBJ]):
     _DEFAULT = object
 
     def _init_check(self):
-        return issubclass(self.type, self._DEFAULT)
+        return issubclass(self.origin, self._DEFAULT)
 
     def _convert(self, value: _tx.Any) -> object:
         if not isinstance(value, self.type):
