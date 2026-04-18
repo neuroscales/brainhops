@@ -1,6 +1,19 @@
-import typing_extensions as _tx
+__all__ = [
+    "DTypeProtocol", 
+    "DTypeLike", 
+    "dtype", 
+    "ArrayProtocol", 
+    "ArrayLike", 
+    "NDArray",
+    "ndarray", 
+]
+# stdlib 
 from numbers import Number
 
+# externals
+import typing_extensions as _tx
+
+# optionals
 try:
     import numpy as np
 except ImportError:

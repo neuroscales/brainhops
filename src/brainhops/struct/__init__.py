@@ -1,6 +1,4 @@
 # TODO:
-# - Add converters and validators for array-like types 
-#   (np.ndarray, cp.ndarray, torch.tensor, dask.array, ...)
 # - Refactor/Simplify validators.
 #   (many have identical semantics and could share a base class)
 # - Implement from_dict, to_dict, etc.
