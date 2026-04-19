@@ -184,24 +184,6 @@ class Sequence(Transform):
               sequences of transformations that match the specified type.
         """
         return _compute_sequence(self, mode=mode)
-    
-    def _flatten(self) -> _tx.Self:
-        # Flatten nested sequences of transforms into a single sequence.
-        if self.transforms is None:
-            return self
-        flattened = []
-        for t in self.transforms:
-            if isinstance(t, Sequence):
-                flattened.extend(t._flatten().transforms or [])
-            else:
-                flattened.append(t)
-        return Sequence(self, transforms=flattened)
-
-    def _is_flat(self) -> bool:
-        # Check if the sequence is flat (i.e., does not contain any nested sequences).
-        if self.transforms is None:
-            return True
-        return all(not isinstance(t, Sequence) for t in self.transforms)
 
 
 _IDENTITIES = {'identity'}
@@ -222,6 +204,26 @@ _XFORMHIERARCHY = {
 }
 
 
+def _flatten(self) -> _tx.Self:
+    # Flatten nested sequences of transforms into a single sequence.
+    if self.transforms is None:
+        return self
+    flattened = []
+    for t in self.transforms:
+        if isinstance(t, Sequence):
+            flattened.extend(t._flatten().transforms or [])
+        else:
+            flattened.append(t)
+    return Sequence(self, transforms=flattened)
+
+
+def _is_flat(self) -> bool:
+    # Check if the sequence is flat (i.e., does not contain any nested sequences).
+    if self.transforms is None:
+        return True
+    return all(not isinstance(t, Sequence) for t in self.transforms)
+
+
 def _compute_sequence(self: Sequence, mode=None) -> Transform:
     # Totally UNTESTED, so raise for now.
     raise NotImplementedError
@@ -232,8 +234,8 @@ def _compute_sequence(self: Sequence, mode=None) -> Transform:
     if len(self.transforms) == 1:
         return self.transforms[0]
     # 1. flatten sequence:
-    if not self._is_flat():
-        return self._flatten().compute(mode=mode)
+    if not _is_flat(self):
+        return _flatten(self).compute(mode=mode)
     # 2. compose consecutive transforms of the same type
     if mode is None:
         mode = (
