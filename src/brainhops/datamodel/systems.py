@@ -1,3 +1,10 @@
+__all__ = [
+    "CoordinateSystem",
+    "SpatialCoordinateSystem",
+    "Spatial3dCoordinateSystem",
+    "RASCoordinateSystem",
+    "LPSCoordinateSystem"
+]
 import typing_extensions as _tx
 
 from .struct import SpecializedStruct

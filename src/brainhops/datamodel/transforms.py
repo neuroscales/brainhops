@@ -1,9 +1,27 @@
-import typing_extensions as _tx
+__all__ = [
+    "Transform",
+    "CoordinatesField",
+    "CartesianCoordinatesField",
+    "DisplacementField",
+    "Affine",
+    "Linear",
+    "Permutation",
+    "Scale",
+    "Translation",
+    "Identity",
+    "Sequence"
+]
+# stdlib
+from numbers import Real, Integral
 from functools import partial
 
+# externals
+import typing_extensions as _tx
+
+# internals
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
-from .typing import HiddenConst, ArrayProtocol
+from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
 
 
 class Transform(SpecializedStruct):
@@ -100,26 +118,26 @@ class DisplacementField(Transform):
 
 
 class Affine(Transform):
-    matrix: _tx.Optional[ArrayProtocol] = None
+    matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
 
 
 class Linear(Transform):
-    matrix: _tx.Optional[ArrayProtocol] = None
+    matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
 
 class Permutation(Transform):
-    permutation: _tx.Optional[_tx.List[int]] = None
+    permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
 
 
 class Scale(Transform):
-    scale: _tx.Optional[_tx.List[float]] = None
+    scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
 
 
 class Translation(Transform):
-    translation: _tx.Optional[_tx.List[float]] = None
+    translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
 
 
@@ -248,26 +266,9 @@ def _compute_sequence(self: Sequence, mode=None) -> Transform:
     return self
 
 
-
-_COMPOSERS = {}
-_COMPOSERS_FASTMAP = {}
-_CONVERTERS = {}
-_CONVERTERS_FASTMAP = {}
-
-
-def _to(x: Transform, cls: _tx.Type[Transform]) -> Transform:
-    """Convert a transform to a different type."""
-    # TODO: implement using the CONVERTERS map, 
-    #       similarly to _compose() and _COMPOSERS.
-    raise NotImplementedError  
-
-
-def _composer(func: _tx.Callable) -> _tx.Callable:
-    """Decorator to register a function as a composer of two transforms."""
-    types = tuple(_tx.get_type_hints(func).values())[:2]
-    _COMPOSERS[types] = func
-    _COMPOSERS_FASTMAP.clear()
-    return func
+# ----------------------------------------------------------------------
+#   UTILITIES
+# ----------------------------------------------------------------------
 
 
 def _distance(t1: type, t2: type, oriented: bool = True) -> int:
@@ -280,6 +281,79 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
     if issubclass(t2, t1) and not oriented:
         return 1 + min(map(partial(_distance, t2=t1), t2.__bases__))
     return float("inf")
+
+
+def _get_ndim(
+    t: Transform, default: _tx.Optional[int] = None
+) ->  _tx.Optional[int]:
+    if t.input and t.inputs.axes is not None:
+        return len(t.input.axes)
+    if t.output and t.output.axes is not None:
+        return len(t.output.axes)
+    return default
+
+
+# ----------------------------------------------------------------------
+#   CONVERSIONS
+# ----------------------------------------------------------------------
+_CONVERTERS = {}
+_CONVERTERS_FASTMAP = {}
+
+
+class ConversionError(TypeError): ...
+
+
+class LossyConversionError(ConversionError):
+
+    def __init__(
+        self, *args, result: _tx.Optional[Transform] = None, **kwargs, 
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.result = result
+
+
+def _converter(func: _tx.Callable) -> _tx.Callable:
+    """Decorator to register a converter of between transformation types."""
+    types = tuple(_tx.get_type_hints(func).values())
+    _CONVERTERS[types] = func
+    _CONVERTERS_FASTMAP.clear()
+    return func
+
+
+def _to(x: Transform, cls: _tx.Type[Transform]) -> Transform:
+    """Convert a transform to a different type."""
+    # TODO: implement using the CONVERTERS map, 
+    #       similarly to _compose() and _COMPOSERS.
+    t1, t2 = type(x), cls
+    if (t1, t2) in _CONVERTERS_FASTMAP:
+        return _CONVERTERS_FASTMAP[(t1, t2)]
+    best_distance, best_func = float("inf"), None
+    for (T1, T2), FUNC in _CONVERTERS.items():
+        distance = _distance(t1, T1) + _distance(t2, T2)
+        if distance < best_distance:
+            best_distance, best_func = distance, FUNC
+    if best_distance < float("inf"):
+        _CONVERTERS_FASTMAP[(t1, t2)] = best_func
+        return best_func(x)
+    raise ConversionError(f"No converter found for: {t1} -> {t2}")
+
+
+# ----------------------------------------------------------------------
+#   COMPOSITIONS
+# ----------------------------------------------------------------------
+_COMPOSERS = {}
+_COMPOSERS_FASTMAP = {}
+
+
+class CompositionError(TypeError): ...
+
+
+def _composer(func: _tx.Callable) -> _tx.Callable:
+    """Decorator to register a function as a composer of two transforms."""
+    types = tuple(_tx.get_type_hints(func).values())[:2]
+    _COMPOSERS[types] = func
+    _COMPOSERS_FASTMAP.clear()
+    return func
 
 
 def _compose(x1: Transform, x2: Transform) -> Transform:
@@ -298,92 +372,40 @@ def _compose(x1: Transform, x2: Transform) -> Transform:
     if best_distance < float("inf"):
         _COMPOSERS_FASTMAP[(t1, t2)] = best_func
         return best_func(x1, x2)
-    raise TypeError(f"No composer found for types: {t1}, {t2}")
+    raise CompositionError(f"No composer found for types: {t1}, {t2}")
 
 
-@_composer
-def _(t1: Sequence, t2: Transform) -> Transform:
-    return Sequence(
-        transforms=[t2] + list(t1.transforms),
-        input=t2.input,
-        output=t1.output
-    ).compute()
+# ----------------------------------------------------------------------
+#   ADAPTORS
+# ----------------------------------------------------------------------
+_ADAPTORS = {}
+_ADAPTORS_FASTMAP = {}
 
 
-@_composer
-def _(t1: Transform, t2: Sequence) -> Transform:
-    return Sequence(
-        transforms=list(t2.transforms) + [t1],
-        input=t2.input,
-        output=t1.output
-    ).compute()
+class AdaptationError(TypeError): ...
 
 
-@_composer
-def _(t1: Sequence, t2: Sequence) -> Sequence:
-    return Sequence(
-        transforms=list(t2.transforms) + list(t1.transforms),
-        input=t2.input,
-        output=t1.output
-    ).compute()
+def _adaptor(func: _tx.Callable) -> _tx.Callable:
+    """Decorator to register a function as an adaptor between two coordinate systems."""
+    types = tuple(_tx.get_type_hints(func).values())[:2]
+    _ADAPTORS[types] = func
+    _ADAPTORS_FASTMAP.clear()
+    return func
 
 
-@_composer
-def _(t1: Affine, t2: Affine) -> Affine:
-    return Affine(
-        matrix=t1.matrix @ t2.matrix,
-        input=t2.input,
-        output=t1.output
-    )
-
-
-@_composer
-def _(t1: Linear, t2: Linear) -> Linear:
-    return Linear(
-        matrix=t1.matrix @ t2.matrix,
-        input=t2.input,
-        output=t1.output
-    )
-
-
-@_composer
-def _(t1: Permutation, t2: Permutation) -> Permutation:
-    return Permutation(
-        permutation=[t1.permutation[i] for i in t2.permutation],
-        input=t2.input,
-        output=t1.output
-    )
-
-
-@_composer
-def _(t1: Scale, t2: Scale) -> Scale:
-    return Scale(
-        scale=[s1 * s2 for s1, s2 in zip(t1.scale, t2.scale)],
-        input=t2.input,
-        output=t1.output
-    )
-
-
-@_composer
-def _(t1: Translation, t2: Translation) -> Translation:
-    return Translation(
-        translation=[t1 + t2 for t1, t2 in zip(t1.translation, t2.translation)],
-        input=t2.input,
-        output=t1.output
-    )
-
-
-_LinearIsh = _tx.Union[Linear, Scale, Permutation]
-_AffineIsh = _tx.Union[_LinearIsh, Affine, Translation]
-
-
-@_composer
-def _(t1: _LinearIsh, t2: _LinearIsh) -> Linear:
-    return (t1.to(Linear) @ t2.to(Linear)).compute()
-
-
-@_composer
-def _(t1: _AffineIsh, t2: _AffineIsh) -> Affine:
-    return (t1.to(Affine) @ t2.to(Affine)).compute()
-
-
+def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transform:
+    """
+    Dispatch the adaptation between two coordinate systems to the appropriate 
+    adaptor function.
+    """
+    if (s1, s2) in _ADAPTORS_FASTMAP:
+        return _ADAPTORS_FASTMAP[(s1, s2)]
+    best_distance, best_func = float("inf"), None
+    for (S1, S2), FUNC in _ADAPTORS.items():
+        distance = _distance(s1, S1) + _distance(s2, S2)
+        if distance < best_distance:
+            best_distance, best_func = distance, FUNC
+    if best_distance < float("inf"):
+        _ADAPTORS_FASTMAP[(s1, s2)] = best_func
+        return best_func(s1, s2)
+    raise AdaptationError(f"No adaptor found for types: {s1}, {s2}")

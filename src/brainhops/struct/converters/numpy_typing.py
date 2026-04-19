@@ -64,7 +64,7 @@ elif np:
         pass
 
 
-    NDArray = ndarray[_tx.Tuple[_tx.Any, ...], dtype[DTYPE]]
+    NDArray = ndarray[_tx.Tuple[int, ...], dtype[DTYPE]]
 
 else:
 
@@ -78,6 +78,6 @@ else:
         pass
 
 
-    NDArray = ndarray[_tx.Tuple[_tx.Any, ...], dtype[DTYPE]]
+    NDArray = ndarray[_tx.Tuple[int, ...], dtype[DTYPE]]
 
 
