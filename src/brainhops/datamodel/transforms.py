@@ -22,6 +22,7 @@ import typing_extensions as _tx
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
+from ._utils import _get_array_package
 
 
 class Transform(SpecializedStruct):
@@ -97,6 +98,17 @@ class CoordinatesField(Transform):
     field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "coordinates"
 
+    def inverse(self) -> _tx.Self:
+        if self.field is None:
+            return CoordinatesField(input=self.output, output=self.input)
+        raise NotImplementedError
+        # TODO:
+        # If the input and output systems are the same, we can use the
+        # displacement field's inverse (disp = coord - meshgrid).
+        # Otherwise, I am not sure we can easily compute an inverse,
+        # since it'll depend on the "shape" (and "orientation") of 
+        # the output space.
+
 
 class CartesianCoordinatesField(CoordinatesField):
     shape: _tx.Optional[_tx.Tuple[int, ...]] = None
@@ -111,38 +123,110 @@ class CartesianCoordinatesField(CoordinatesField):
             )
         return self._field
 
+    def inverse(self) -> _tx.Self:
+        # Inverse is itself
+        return CartesianCoordinatesField(
+            shape=self.shape,
+            input=self.output,
+            output=self.input
+        )
+
 
 class DisplacementField(Transform):
     field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "displacement"
+
+    def inverse(self) -> _tx.Self:
+        if self.field is None:
+            return DisplacementField(input=self.output, output=self.input)
+        raise NotImplementedError
+        # TODO: I'd like to implement a piecewise-affine inverse, 
+        # based on this paper: 
+        # https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf
+        # It's implemented in SPM, but with a GPL license so we can't 
+        # just ported. But I've been meaning to implement it for a while.
 
 
 class Affine(Transform):
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
 
+    def inverse(self) -> _tx.Self:
+        if self.matrix is None:
+            return Affine(input=self.output, output=self.input)
+        nx = _get_array_package(self.matrix)
+        return Affine(
+            matrix=nx.linalg.inv(self.matrix),
+            input=self.output,
+            output=self.input
+        )
+
 
 class Linear(Transform):
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
 
+    def inverse(self) -> _tx.Self:
+        if self.matrix is None:
+            return Linear(input=self.output, output=self.input)
+        nx = _get_array_package(self.matrix)
+        return Linear(
+            matrix=nx.linalg.inv(self.matrix),
+            input=self.output,
+            output=self.input
+        )
+
+
 class Permutation(Transform):
     permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
+
+    def inverse(self) -> _tx.Self:
+        if self.permutation is None:
+            return Permutation(input=self.output, output=self.input)
+        inverse_permutation = [0] * len(self.permutation)
+        for i, p in enumerate(self.permutation):
+            inverse_permutation[p] = i
+        return Permutation(
+            permutation=inverse_permutation,
+            input=self.output,
+            output=self.input
+        )
 
 
 class Scale(Transform):
     scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
 
+    def inverse(self) -> _tx.Self:
+        if self.scale is None:
+            return Scale(input=self.output, output=self.input)
+        return Scale(
+            scale=1.0 / self.scale,
+            input=self.output,
+            output=self.input
+        )
+
 
 class Translation(Transform):
     translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
 
+    def inverse(self) -> _tx.Self:
+        if self.translation is None:
+            return Translation(input=self.output, output=self.input)
+        return Translation(
+            translation=-self.translation,
+            input=self.output,
+            output=self.input
+        )
+
 
 class Identity(Transform):
     type: HiddenConst[str] = "identity"
+
+    def inverse(self) -> _tx.Self:
+        return Identity(input=self.output, output=self.input)
 
 
 class Sequence(Transform):

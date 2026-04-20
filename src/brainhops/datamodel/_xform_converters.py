@@ -6,17 +6,8 @@ from .transforms import (
 )
 from .transforms import _get_ndim, _converter, _to
 from .typing import ArrayProtocol, npt, cpt, dkt
+from ._utils import _get_array_package
 
-
-def _get_array_package(x: ArrayProtocol) -> ModuleType:
-    if npt.np and isinstance(x, npt.np.ndarray):
-        return npt.np
-    elif cpt.cp and isinstance(x, cpt.cp.ndarray):
-        return cpt.cp
-    elif dkt.dk and isinstance(x, dkt.dk.ndarray):
-        return dkt.dk
-    else:
-        raise TypeError(f"Unsupported array type: {type(x)}")
 
 
 # ----------------------------------------------------------------------
