@@ -1,9 +1,10 @@
-from .system import CoordinateSystem
-from .transforms import Transform, Identity, Permutation, Scale, _adaptor
+# internals
+from .systems import CoordinateSystem
+from .transformations import Transformation, Identity, Permutation, Scaling, _adaptor
 
 
 @_adaptor
-def _(inp: CoordinateSystem, out: CoordinateSystem) -> Transform:
+def _(inp: CoordinateSystem, out: CoordinateSystem) -> Transformation:
     raise NotImplementedError
 
     # TODO/WIP
@@ -40,4 +41,4 @@ def _(inp: CoordinateSystem, out: CoordinateSystem) -> Transform:
                 input=inp,
                 output=out
             )
-            scale = Scale()
+            scale = Scaling()

@@ -1,13 +1,14 @@
+# stdlib
 from types import ModuleType
 
-from .transforms import (
-    Identity, Translation, Scale, Permutation, Linear, Affine,
+# internals
+from .transformations import (
+    Identity, Translation, Scaling, Permutation, Linear, Affine,
     DisplacementField, CoordinatesField, LossyConversionError
 )
-from .transforms import _get_ndim, _converter, _to
+from .transformations import _get_ndim, _converter, _to
 from .typing import ArrayProtocol, npt, cpt, dkt
 from ._utils import _get_array_package
-
 
 
 # ----------------------------------------------------------------------
@@ -26,9 +27,9 @@ def _(t: Identity) -> Translation:
 
 
 @_converter
-def _(t: Identity) -> Scale:
+def _(t: Identity) -> Scaling:
     ndim = _get_ndim(t)
-    return Scale(
+    return Scaling(
         scale=[1.0] * ndim if ndim is not None else None,
         input=t.input,
         output=t.output
@@ -89,7 +90,7 @@ def _(t: Translation) -> Affine:
 
 
 @_converter
-def _(t: Scale) -> Linear:
+def _(t: Scaling) -> Linear:
     if t.scale is None:
         return _to(Identity(input=t.input, output=t.output), Linear)
     ndim = max(_get_ndim(t, 0), len(t.scale))
@@ -172,7 +173,7 @@ def _(t: Translation) -> Identity:
     
 
 @_converter
-def _(t: Scale) -> Identity:
+def _(t: Scaling) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if (
         t.scale is not None and 
@@ -226,12 +227,12 @@ def _(t: Linear) -> Permutation:
 
 
 @_converter
-def _(t: Linear) -> Scale:
+def _(t: Linear) -> Scaling:
     if t.matrix is None:
-        return _to(_to(t, Identity), Scale)
+        return _to(_to(t, Identity), Scaling)
     nx = _get_array_package(t.matrix)
     scale = nx.diagonal(t.matrix)  # TODO: use svd instead?
-    u = Scale(input=t.input, output=t.output, scale=scale)
+    u = Scaling(input=t.input, output=t.output, scale=scale)
     if t.matrix is not None:
         for i in range(len(t.matrix)):
             for j in range(len(t.matrix[i])):
@@ -292,12 +293,12 @@ def _make_converter_chain(*types):
 
 
 # Lossless
-_make_converter_chain(Scale, Linear, Affine)
+_make_converter_chain(Scaling, Linear, Affine)
 _make_converter_chain(Permutation, Linear, Affine)
 
 # Lossy
-_make_converter_chain(Affine, Linear, Scale)
+_make_converter_chain(Affine, Linear, Scaling)
 _make_converter_chain(Affine, Linear, Permutation)
 _make_converter_chain(Linear, Identity, Translation)
-_make_converter_chain(Scale, Identity, Translation)
+_make_converter_chain(Scaling, Identity, Translation)
 _make_converter_chain(Permutation, Identity, Translation)

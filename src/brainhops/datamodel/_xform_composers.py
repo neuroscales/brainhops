@@ -1,25 +1,25 @@
+# externals
 import typing_extensions as _tx
 
-from .transforms import (
-    Transform, 
-    Identity, Translation, Scale, Permutation, Linear, Affine, Sequence
+# internals
+from .transformations import (
+    Transformation, _composer,
+    Identity, Translation, Scaling, Permutation, Linear, Affine, Sequence
 )
-from .transforms import _composer
-
 
 
 @_composer
-def _(t1: Identity, t2: Transform) -> Transform:
+def _(t1: Identity, t2: Transformation) -> Transformation:
     return type(t2)(t2, output=t1.output).compute()
 
 
 @_composer
-def _(t1: Transform, t2: Identity) -> Transform:
+def _(t1: Transformation, t2: Identity) -> Transformation:
     return type(t1)(t1, input=t2.input).compute()
 
 
 @_composer
-def _(t1: Sequence, t2: Transform) -> Transform:
+def _(t1: Sequence, t2: Transformation) -> Transformation:
     return Sequence(
         transforms=[t2] + list(t1.transforms),
         input=t2.input,
@@ -28,7 +28,7 @@ def _(t1: Sequence, t2: Transform) -> Transform:
 
 
 @_composer
-def _(t1: Transform, t2: Sequence) -> Transform:
+def _(t1: Transformation, t2: Sequence) -> Transformation:
     return Sequence(
         transforms=list(t2.transforms) + [t1],
         input=t2.input,
@@ -73,8 +73,8 @@ def _(t1: Permutation, t2: Permutation) -> Permutation:
 
 
 @_composer
-def _(t1: Scale, t2: Scale) -> Scale:
-    return Scale(
+def _(t1: Scaling, t2: Scaling) -> Scaling:
+    return Scaling(
         scale=[s1 * s2 for s1, s2 in zip(t1.scale, t2.scale)],
         input=t2.input,
         output=t1.output
@@ -90,7 +90,7 @@ def _(t1: Translation, t2: Translation) -> Translation:
     )
 
 
-_LinearIsh = _tx.Union[Linear, Scale, Permutation]
+_LinearIsh = _tx.Union[Linear, Scaling, Permutation]
 _AffineIsh = _tx.Union[_LinearIsh, Affine, Translation]
 
 

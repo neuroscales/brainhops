@@ -1,12 +1,12 @@
 __all__ = [
-    "Transform",
+    "Transformation",
     "CoordinatesField",
     "CartesianCoordinatesField",
     "DisplacementField",
     "Affine",
     "Linear",
     "Permutation",
-    "Scale",
+    "Scaling",
     "Translation",
     "Identity",
     "Sequence"
@@ -24,9 +24,75 @@ from .struct import DataModelBase
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
 from ._utils import _get_array_package
+from . import hierarchy
 
 
-class Transform(DataModelBase):
+if False:
+    # This is an idea to implement a pipe-like syntax `a |p> b`.
+    # It's not very pythonic!
+
+    class _Pipe:
+
+        def __init__(self, input=None, side=None):
+            self.input = input
+            self.side = side
+
+        def __ror__(self, other):
+            if self.side == "R":
+                return self.input(other)
+            elif self.side is None:
+                return _Pipe(input=other, side="L")
+            else:
+                raise SyntaxError("Invalid pipe syntax")
+
+        def __gt__(self, other):
+            if self.side == "L":
+                return other(self.input)
+            elif self.side is None:
+                return _Pipe(input=other, side="R")
+            else:
+                raise SyntaxError("Invalid pipe syntax")
+            
+
+    p = _Pipe()
+
+
+@hierarchy.Transformation.register
+class Transformation(DataModelBase):
+    """
+    A transformation between coordinate systems.
+
+    It maps coordinates from an input coordinate system to an output 
+    coordinate system. Transformations can be applied and/or composed 
+    using different syntaxes:
+
+    1. Functional: `t(x)` applies the transform `t` to coordinates `x`, 
+       and `t2(t1)` composes the transform `t1` with the transform `t2` 
+       (i.e., applies `t1` first, then `t2`).
+
+    2. Matrix-like: `t @ x` applies the transform `t` to coordinates `x`, 
+       and `t2 @ t1` composes the transform `t1` with the transform `t2`.
+
+       This abuses the matrix multiplication operator `@` because linear
+       and affine transformations can be represented as matrices, and are
+       typically applied to coordinates using matrix multiplication, with
+       the input space "on the right" and the output space "on the left".
+    
+    :: warning "Direction of transformation"
+        This mapping direction is the opposite of the direction that is 
+        typically used to transform images. For example, a transformation
+        that deforms an image from space A to space B, will actually 
+        map coordinates from space B to space A. In our model, this
+        transformation would be represented as `Transform(input=B, output=A)`.
+
+    Parameters
+    ----------
+    input, output : CoordinateSystem, optional
+        The input and output coordinate systems of the transformation. 
+        If not specified, they can be inferred from the context 
+        (e.g., from the coordinate system of the image being transformed).
+    """
+
     input: _tx.Optional[CoordinateSystem] = None
     output: _tx.Optional[CoordinateSystem] = None
 
@@ -57,7 +123,7 @@ class Transform(DataModelBase):
         ...
 
     @_tx.overload
-    def __call__(self, x: "Transform", compute: _tx.Literal[True]) -> "Transform":
+    def __call__(self, x: "Transformation", compute: _tx.Literal[True]) -> "Transformation":
         """
         Compose this transform with another transform.
 
@@ -73,7 +139,7 @@ class Transform(DataModelBase):
         ...
 
     @_tx.overload
-    def __call__(self, x: "Transform", compute: _tx.Literal[False]) -> "Sequence":
+    def __call__(self, x: "Transformation", compute: _tx.Literal[False]) -> "Sequence":
         """
         Compose this transform with another transform, without computing 
         the resulting transform, but instead returning a sequence of the 
@@ -82,7 +148,7 @@ class Transform(DataModelBase):
         ...
 
     def __call__(self, x, compute: bool = False):
-        if isinstance(x, Transform):
+        if isinstance(x, Transformation):
             x = Sequence([x, self])
         else:
             raise TypeError(f"Unsupported type for transformation: {type(x)}")
@@ -95,13 +161,21 @@ class Transform(DataModelBase):
         return self(other, compute=False)
 
 
-class CoordinatesField(Transform):
+class CoordinatesField(Transformation):
+    """
+    A field of coordinates defined on a regular grid.
+
+    The input space corresponds to the regular grid on which the 
+    coordinates are defined. 
+    """
+
     field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "coordinates"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.field is None:
-            return CoordinatesField(input=self.output, output=self.input)
+            return cls(input=self.output, output=self.input)
         raise NotImplementedError
         # TODO:
         # If the input and output systems are the same, we can use the
@@ -112,12 +186,21 @@ class CoordinatesField(Transform):
 
 
 class CartesianCoordinatesField(CoordinatesField):
+    """
+    An identity transform over a regular grid of coordinates.
+
+    Both the input and output spaces correspond to the underlying grid.
+
+    Its `field` attribute is fuly defined by the shape of the grid,
+    and is generated on demand when accessed.
+    """
+
     shape: _tx.Optional[_tx.Tuple[int, ...]] = None
 
     @property
     def field(self) -> ArrayProtocol:
         if getattr(self, "_field", None) is None:
-            import dask.array as da  # implement `get_array_backend()`
+            import dask.array as da  # TODO: implement `get_array_backend()`
             self._field = da.meshgrid(
                 *[da.arange(s) for s in self.shape], 
                 indexing="ij"
@@ -125,111 +208,149 @@ class CartesianCoordinatesField(CoordinatesField):
         return self._field
 
     def inverse(self) -> _tx.Self:
-        # Inverse is itself
-        return CartesianCoordinatesField(
+        # Inverse is itself, with switched input and output.
+        cls = type(self)
+        return cls(
             shape=self.shape,
             input=self.output,
             output=self.input
         )
 
 
-class DisplacementField(Transform):
+class DisplacementField(Transformation):
+    """
+    A field of displacements defined on a regular grid.
+
+    Both the input and output spaces correspond to the underlying grid.
+    """
+
     field: _tx.Optional[ArrayProtocol] = None
     type: HiddenConst[str] = "displacement"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.field is None:
-            return DisplacementField(input=self.output, output=self.input)
-        return DisplacementField(
+            return cls(input=self.output, output=self.input)
+        return cls(
             field=inverse_disp(self.field),
             input=self.output,
             output=self.input
         )
 
 
-class Affine(Transform):
+@hierarchy.AffineTransformation.register
+class Affine(Transformation):
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.matrix is None:
-            return Affine(input=self.output, output=self.input)
+            return cls(input=self.output, output=self.input)
         nx = _get_array_package(self.matrix)
-        return Affine(
+        return cls(
             matrix=nx.linalg.inv(self.matrix),
             input=self.output,
             output=self.input
         )
 
 
-class Linear(Transform):
+@hierarchy.LinearTransformation.register
+class Linear(Transformation):
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.matrix is None:
-            return Linear(input=self.output, output=self.input)
+            return cls(input=self.output, output=self.input)
         nx = _get_array_package(self.matrix)
-        return Linear(
+        return cls(
             matrix=nx.linalg.inv(self.matrix),
             input=self.output,
             output=self.input
         )
 
 
-class Permutation(Transform):
+@hierarchy.Rotation.register
+class Rotation(Linear):
+    # TODO: Implement Rotation subclasses that use other representations 
+    # (e.g., quaternions, Euler angles, etc.)
+
+    type: HiddenConst[str] = "rotation"
+
+    def inverse(self) -> _tx.Self:
+        cls = type(self)
+        if self.matrix is None:
+            return cls(input=self.output, output=self.input)
+        return cls(
+            matrix=self.matrix.T,
+            input=self.output,
+            output=self.input
+        )
+
+
+@hierarchy.Permutation.register
+class Permutation(Transformation):
     permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.permutation is None:
-            return Permutation(input=self.output, output=self.input)
+            return cls(input=self.output, output=self.input)
         inverse_permutation = [0] * len(self.permutation)
         for i, p in enumerate(self.permutation):
             inverse_permutation[p] = i
-        return Permutation(
+        return cls(
             permutation=inverse_permutation,
             input=self.output,
             output=self.input
         )
 
 
-class Scale(Transform):
+@hierarchy.DiagonalTransformation.register
+class Scaling(Transformation):
     scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.scale is None:
-            return Scale(input=self.output, output=self.input)
-        return Scale(
+            return cls(input=self.output, output=self.input)
+        return cls(
             scale=1.0 / self.scale,
             input=self.output,
             output=self.input
         )
 
 
-class Translation(Transform):
+@hierarchy.Translation.register
+class Translation(Transformation):
     translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
 
     def inverse(self) -> _tx.Self:
+        cls = type(self)
         if self.translation is None:
-            return Translation(input=self.output, output=self.input)
-        return Translation(
+            return cls(input=self.output, output=self.input)
+        return cls(
             translation=-self.translation,
             input=self.output,
             output=self.input
         )
 
 
-class Identity(Transform):
+@hierarchy.IdentityTransformation.register
+class Identity(Transformation):
     type: HiddenConst[str] = "identity"
 
     def inverse(self) -> _tx.Self:
-        return Identity(input=self.output, output=self.input)
+        cls = type(self)
+        return cls(input=self.output, output=self.input)
 
 
-class Sequence(Transform):
+class Sequence(Transformation):
     # NOTE: transforms in a sequence are listed in the order in which 
     # they are applied. It reads as the opposite order to function
     # composition (or matrix multiplication), which may be confusing.
@@ -237,10 +358,20 @@ class Sequence(Transform):
     # `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
     # `Sequence([a1, a2, a3]) @ x` is equivalent to `a3 @ a2 @ a1 @ x`.
 
-    transforms: _tx.Optional[_tx.List[Transform]] = None
+    transforms: _tx.Optional[_tx.List[Transformation]] = None
     type: HiddenConst[str] = "sequence"
 
-    def compute(self, mode=None) -> Transform:
+    def inverse(self) -> _tx.Self:
+        cls = type(self)
+        if self.transforms is None:
+            return cls(input=self.output, output=self.input)
+        return cls(
+            transforms=[t.inverse() for t in reversed(self.transforms)],
+            input=self.output,
+            output=self.input
+        )
+
+    def compute(self, mode=None) -> Transformation:
         """
         Compute the resulting transform of the sequence of transforms.
 
@@ -308,7 +439,7 @@ def _is_flat(self) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transforms)
 
 
-def _compute_sequence(self: Sequence, mode=None) -> Transform:
+def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     # Totally UNTESTED, so raise for now.
     raise NotImplementedError
 
@@ -370,7 +501,7 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
 
 
 def _get_ndim(
-    t: Transform, default: _tx.Optional[int] = None
+    t: Transformation, default: _tx.Optional[int] = None
 ) ->  _tx.Optional[int]:
     if t.input and t.inputs.axes is not None:
         return len(t.input.axes)
@@ -392,7 +523,7 @@ class ConversionError(TypeError): ...
 class LossyConversionError(ConversionError):
 
     def __init__(
-        self, *args, result: _tx.Optional[Transform] = None, **kwargs, 
+        self, *args, result: _tx.Optional[Transformation] = None, **kwargs, 
     ) -> None:
         super().__init__(*args, **kwargs)
         self.result = result
@@ -406,7 +537,7 @@ def _converter(func: _tx.Callable) -> _tx.Callable:
     return func
 
 
-def _to(x: Transform, cls: _tx.Type[Transform]) -> Transform:
+def _to(x: Transformation, cls: _tx.Type[Transformation]) -> Transformation:
     """Convert a transform to a different type."""
     # TODO: implement using the CONVERTERS map, 
     #       similarly to _compose() and _COMPOSERS.
@@ -442,7 +573,7 @@ def _composer(func: _tx.Callable) -> _tx.Callable:
     return func
 
 
-def _compose(x1: Transform, x2: Transform) -> Transform:
+def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     """
     Dispatch the composition of two transforms to the appropriate 
     composer function.
@@ -479,7 +610,7 @@ def _adaptor(func: _tx.Callable) -> _tx.Callable:
     return func
 
 
-def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transform:
+def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
     """
     Dispatch the adaptation between two coordinate systems to the appropriate 
     adaptor function.
