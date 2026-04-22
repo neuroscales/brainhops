@@ -1,7 +1,7 @@
 import typing_extensions as _tx
 from collections.abc import Mapping
 
-from brainhops.struct import Struct
+from src.brainhops._ext.struct import Struct
 
 
 class SpecializedStruct(

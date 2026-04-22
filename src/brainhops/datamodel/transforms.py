@@ -19,7 +19,7 @@ from functools import partial
 import typing_extensions as _tx
 
 # internals
-from brainhops.invfield import inverse as inverse_disp
+from brainhops._ext.invfield import inverse as inverse_disp
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
