@@ -20,13 +20,13 @@ import typing_extensions as _tx
 
 # internals
 from brainhops._ext.invfield import inverse as inverse_disp
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
 from ._utils import _get_array_package
 
 
-class Transform(SpecializedStruct):
+class Transform(DataModelBase):
     input: _tx.Optional[CoordinateSystem] = None
     output: _tx.Optional[CoordinateSystem] = None
 

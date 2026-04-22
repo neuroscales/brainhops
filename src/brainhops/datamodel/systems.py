@@ -7,12 +7,12 @@ __all__ = [
 ]
 import typing_extensions as _tx
 
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .axes import Axis, SpatialAxis
 from . import axes as _axes
 
 
-class CoordinateSystem(SpecializedStruct):
+class CoordinateSystem(DataModelBase):
     name: _tx.Optional[str] = None
     axes: _tx.Optional[_tx.List[Axis]] = None
 

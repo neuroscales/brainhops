@@ -1,11 +1,11 @@
 import typing_extensions as _tx
 
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .systems import CoordinateSystem
 from .transforms import Transform
 
 
-class Image(SpecializedStruct):
+class Image(DataModelBase):
     data: object
     coordinateSystem: CoordinateSystem
     coordinateTransforms: _tx.List[Transform] = ()

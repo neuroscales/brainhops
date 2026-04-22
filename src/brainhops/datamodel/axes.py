@@ -1,19 +1,15 @@
 __all__ = [
-    "Axis",
-    "SpatialAxis",
-    "TimeAxis",
-    "ChannelAxis",
-    "LeftToRightAxis",
-    "RightToLeftAxis",
-    "AnteriorToPosteriorAxis",
-    "PosteriorToAnteriorAxis",
-    "InferiorToSuperiorAxis",
-    "SuperiorToInferiorAxis",
-    "R", "L", "P", "A", "S", "I"
+    "Axis", "SpatialAxis", "TimeAxis", "ChannelAxis",
+    "R", "rightToLeftAxis", "RightToLeftAxis",
+    "L", "leftToRightAxis", "LeftToRightAxis",
+    "A", "anteriorToPosteriorAxis", "AnteriorToPosteriorAxis",
+    "P", "posteriorToAnteriorAxis", "PosteriorToAnteriorAxis",
+    "S", "inferiorToSuperiorAxis", "InferiorToSuperiorAxis",
+    "I", "superiorToInferiorAxis", "SuperiorToInferiorAxis",
 ]
 from typing_extensions import Optional
 
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .orientation import (
     Orientation, 
     LeftToRight, RightToLeft, 
@@ -23,7 +19,7 @@ from .orientation import (
 from .typing import HiddenConst
 
 
-class Axis(SpecializedStruct):
+class Axis(DataModelBase):
     name: Optional[str] = None
     type: Optional[str] = None
     unit: Optional[str] = None
@@ -77,7 +73,7 @@ class SuperiorToInferiorAxis(SpatialAxis):
 
 R = leftToRightAxis = LeftToRightAxis()
 L = rightToLeftAxis = RightToLeftAxis()
-P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
 A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
+P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
 S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
 I = superiorToInferiorAxis = SuperiorToInferiorAxis()

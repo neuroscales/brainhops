@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from src.brainhops._ext.struct import Struct
 
 
-class SpecializedStruct(
+class DataModelBase(
     Struct, 
     convert=True,
     mapping="hide_none", 

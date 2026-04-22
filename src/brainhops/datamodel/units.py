@@ -5,7 +5,7 @@ from enum import StrEnum
 
 import typing_extensions as _tx
 
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .typing import HiddenConst
 
 _MU1 = '\u00B5'
@@ -166,7 +166,7 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
     return decorator
 
 
-class Unit(SpecializedStruct):
+class Unit(DataModelBase):
     name: str
     type: _tx.Literal["time", "space"]
     scale: float = 1.0

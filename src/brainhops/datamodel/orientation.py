@@ -1,18 +1,19 @@
 __all__ = [
-    "Orientation",
-    "AnatomicalOrientation",
-    "LeftToRight", "RightToLeft",
-    "AnteriorToPosterior", "PosteriorToAnterior",
-    "InferiorToSuperior", "SuperiorToInferior",
-    "L", "R", "A", "P", "I", "S"
+    "Orientation", "AnatomicalOrientation",
+    "R", "leftToRight", "LeftToRight",
+    "L", "rightToLeft", "RightToLeft",
+    "A", "posteriorToAnterior", "PosteriorToAnterior",
+    "P", "anteriorToPosterior", "AnteriorToPosterior",
+    "I", "superiorToInferior", "SuperiorToInferior",
+    "S", "inferiorToSuperior", "InferiorToSuperior",
 ]
 import typing_extensions as _tx
 
-from .struct import SpecializedStruct
+from .struct import DataModelBase
 from .typing import HiddenConst
 
 
-class Orientation(SpecializedStruct):
+class Orientation(DataModelBase):
     type: _tx.Optional[str] = None
     value: _tx.Optional[str] = None
 
@@ -45,9 +46,9 @@ class SuperiorToInferior(AnatomicalOrientation):
     value: HiddenConst[str] = "superior-to-inferior"
 
 
-L = leftToRight = LeftToRight()
-R = rightToLeft = RightToLeft()
-A = anteriorToPosterior = AnteriorToPosterior()
-P = posteriorToAnterior = PosteriorToAnterior()
-I = inferiorToSuperior = InferiorToSuperior()
-S = superiorToInferior = SuperiorToInferior()
+R = leftToRight = LeftToRight()
+L = rightToLeft = RightToLeft()
+A = posteriorToAnterior = PosteriorToAnterior()
+P = anteriorToPosterior = AnteriorToPosterior()
+I = superiorToInferior = SuperiorToInferior()
+S = inferiorToSuperior = InferiorToSuperior()
