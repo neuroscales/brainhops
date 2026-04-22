@@ -19,6 +19,7 @@ from functools import partial
 import typing_extensions as _tx
 
 # internals
+from brainhops.invfield import inverse as inverse_disp
 from .struct import SpecializedStruct
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
@@ -139,12 +140,11 @@ class DisplacementField(Transform):
     def inverse(self) -> _tx.Self:
         if self.field is None:
             return DisplacementField(input=self.output, output=self.input)
-        raise NotImplementedError
-        # TODO: I'd like to implement a piecewise-affine inverse, 
-        # based on this paper: 
-        # https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf
-        # It's implemented in SPM, but with a GPL license so we can't 
-        # just ported. But I've been meaning to implement it for a while.
+        return DisplacementField(
+            field=inverse_disp(self.field),
+            input=self.output,
+            output=self.input
+        )
 
 
 class Affine(Transform):
