@@ -7,8 +7,10 @@ __all__ = [
     "S", "inferiorToSuperiorAxis", "InferiorToSuperiorAxis",
     "I", "superiorToInferiorAxis", "SuperiorToInferiorAxis",
 ]
+# externals
 from typing_extensions import Optional
 
+# internals
 from .struct import DataModelBase
 from .orientation import (
     Orientation, 

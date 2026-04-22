@@ -1,10 +1,13 @@
 # TODO/WIP: copied some stuff from ngtools, but I'd like to rework it to
 # get someething that fits (in style) with the rest of the data model.
 
+# stdlib
 from enum import StrEnum
 
+# externals
 import typing_extensions as _tx
 
+# internals
 from .struct import DataModelBase
 from .typing import HiddenConst
 

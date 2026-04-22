@@ -7,10 +7,10 @@ __all__ = [
 import typing_extensions as _tx
 
 # internals
-from brainhops.struct import Frozen, NoInit, NoRepr
-from brainhops.struct.converters import numpy_typing as npt
-from brainhops.struct.converters import cupy_typing as cpt
-from brainhops.struct.converters import dask_typing as dkt
+from brainhops._ext.struct import Frozen, NoInit, NoRepr
+from brainhops._ext.struct.converters import numpy_typing as npt
+from brainhops._ext.struct.converters import cupy_typing as cpt
+from brainhops._ext.struct.converters import dask_typing as dkt
 
 
 T = _tx.TypeVar("T")

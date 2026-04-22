@@ -25,19 +25,19 @@ Lie groups
 G | > 0 | = 1 | ⋉ T
 ======================
 GL ------------- Aff             General Linear     | Affine
- | \
+ | \             |
  |   GL+ ------- Aff+
- |    | \
+ |    | \        |
  |    |  SL ---- SAff            Special Linear     | Special Affine
- |    |   | 
+ |    |   |      |
 CO ------------- CE              Conformal          | Affine Conformal
- | \  |   |
+ | \  |   |      |
  |   CSO ------- CSE             Special Conformal  | Special Affine Conformal
- |    |   |
+ |    |   |      |
  O ------------- E               Orthogonal         | Euclidean
- | \  | /
+ | \  | /        |
  S   SO -------- SE              Special Orthogonal | Special Euclidean
- | /
+ | /             |
  I ------------- T               Identity           | Translations
 ```
 
@@ -588,7 +588,8 @@ class InvertibleMultiplicativeTransformation(
 
     alias: Homothety
 
-    wiki: https://en.wikipedia.org/wiki/Scaling_(geometry)
+    wiki: https://en.wikipedia.org/wiki/Multiplicative_group
+    wiki: https://en.wikipedia.org/wiki/Homothety
     """
     SYMBOL = 'R*'
     FSYMBOL = 'R*'

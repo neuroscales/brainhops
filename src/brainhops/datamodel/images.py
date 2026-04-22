@@ -1,8 +1,10 @@
+# externals
 import typing_extensions as _tx
 
+# internals
 from .struct import DataModelBase
 from .systems import CoordinateSystem
-from .transforms import Transform
+from .transformations import Transformation
 
 
 class Image(DataModelBase):

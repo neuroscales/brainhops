@@ -1,7 +1,11 @@
-import typing_extensions as _tx
+# stdlib
 from collections.abc import Mapping
 
-from src.brainhops._ext.struct import Struct
+# externals
+import typing_extensions as _tx
+
+# internals
+from brainhops._ext.struct import Struct
 
 
 class DataModelBase(

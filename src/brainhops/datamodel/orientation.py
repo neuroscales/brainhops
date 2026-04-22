@@ -7,8 +7,10 @@ __all__ = [
     "I", "superiorToInferior", "SuperiorToInferior",
     "S", "inferiorToSuperior", "InferiorToSuperior",
 ]
+# externals
 import typing_extensions as _tx
 
+# internals
 from .struct import DataModelBase
 from .typing import HiddenConst
 

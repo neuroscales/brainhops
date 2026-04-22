@@ -5,8 +5,10 @@ __all__ = [
     "RASCoordinateSystem",
     "LPSCoordinateSystem"
 ]
+# externals
 import typing_extensions as _tx
 
+# internals
 from .struct import DataModelBase
 from .axes import Axis, SpatialAxis
 from . import axes as _axes
