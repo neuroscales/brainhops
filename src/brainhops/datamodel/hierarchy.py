@@ -26,7 +26,7 @@ G | > 0 | = 1 | ⋉ T
 ======================
 GL ------------- Aff             General Linear     | Affine
  | \             |
- |   GL+ ------- Aff+
+ |   GL+ ------- Aff+            Positive Linear    | Positive Affine
  |    | \        |
  |    |  SL ---- SAff            Special Linear     | Special Affine
  |    |   |      |
@@ -38,7 +38,7 @@ CO ------------- CE              Conformal          | Affine Conformal
  | \  | /        |
  S   SO -------- SE              Special Orthogonal | Special Euclidean
  | /             |
- I ------------- T               Identity           | Translations
+ I ------------- T               Identity           | Translation
 ```
 
 General Lie groups (GL/CO/O) are in general not "connected", and
@@ -485,7 +485,10 @@ class SpecialConformalOrthogonalTransformation(
     FSYMBOL = 'CSO({n})'
 
 
-class OrthogonalTransformation(ConformalOrthogonalTransformation, Euclidean):
+class OrthogonalTransformation(
+    ConformalOrthogonalTransformation, 
+    EuclideanTransformation
+):
     """
     A orthogonal matrix (AA' = I) with determinant +/- 1
 

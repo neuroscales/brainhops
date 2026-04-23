@@ -18,13 +18,13 @@ transform on some third image. This is very inconvenient and not a use
 case I am fond of supporting).
 
 """
-__all__ = ["axes", "images", "orientation", "systems", "transforms", "typing"]
+__all__ = ["axes", "images", "orientation", "systems", "transformations", "typing"]
 
 from . import axes
 from . import images
 from . import orientation
 from . import systems
-from . import transforms
+from . import transformations
 from . import typing
 
 # trigger registration

@@ -46,6 +46,7 @@ _ArrayLike = _tx.Union[Number, _tx.Sequence, ArrayProtocol]
 
 if npt:
 
+    dtype = np.dtype
     ndarray = np.ndarray
     NDArray = npt.NDArray
     ArrayLike = npt.ArrayLike

@@ -1,6 +1,4 @@
-__all__ = [
-    "NDArrayConverter",
-]
+__all__ = []
 # stdlib
 import typing_extensions as _tx
 

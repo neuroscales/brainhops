@@ -10,4 +10,4 @@ from .transformations import Transformation
 class Image(DataModelBase):
     data: object
     coordinateSystem: CoordinateSystem
-    coordinateTransforms: _tx.List[Transform] = ()
+    coordinateTransforms: _tx.List[Transformation] = ()
