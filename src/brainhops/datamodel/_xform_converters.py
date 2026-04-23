@@ -1,14 +1,49 @@
-# stdlib
-from types import ModuleType
-
 # internals
 from .transformations import (
+    Transformation,
     Identity, Translation, Scaling, Permutation, Linear, Affine,
     DisplacementField, CoordinatesField, LossyConversionError
 )
 from .transformations import _get_ndim, _converter, _to
-from .typing import ArrayProtocol, npt, cpt, dkt
-from ._utils import _get_array_package
+from ._utils import _get_array_package, _coeff2value_field, _value2coeff_field
+
+
+# ----------------------------------------------------------------------
+#   SAME TYPE
+# ----------------------------------------------------------------------
+
+
+@_converter
+def _(t: Transformation, **kwargs) -> Transformation:
+    return Transformation(t, **kwargs)
+
+
+@_converter
+def _(t: DisplacementField, **kwargs) -> DisplacementField:
+    if "field" not in kwargs and t.field is not None:
+        if t.coeff and not kwargs.get('coeff', t.coeff):
+            field = _coeff2value_field(t.field, order=t.order, bound=t.bound)
+            kwargs['field'] = field
+        elif not t.coeff and kwargs.get('coeff', t.coeff):
+            order = kwargs.get('order', t.order)
+            bound = kwargs.get('bound', t.bound)
+            field = _value2coeff_field(t.field, order=order, bound=bound)
+            kwargs['field'] = field
+    return DisplacementField(t, **kwargs)
+
+
+@_converter
+def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
+    if "field" not in kwargs and t.field is not None:
+        if t.coeff and not kwargs.get('coeff', t.coeff):
+            field = _coeff2value_field(t.field, order=t.order, bound=t.bound)
+            kwargs['field'] = field
+        if not t.coeff and kwargs.get('coeff', t.coeff):
+            order = kwargs.get('order', t.order)
+            bound = kwargs.get('bound', t.bound)
+            field = _value2coeff_field(t.field, order=order, bound=bound)
+            kwargs['field'] = field
+    return CoordinatesField(t, **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -17,7 +52,7 @@ from ._utils import _get_array_package
 
 
 @_converter
-def _(t: Identity) -> Translation:
+def _(t: Identity, **kwargs) -> Translation:
     ndim = _get_ndim(t)
     return Translation(
         translation=[0.0] * ndim if ndim is not None else None,
@@ -27,7 +62,7 @@ def _(t: Identity) -> Translation:
 
 
 @_converter
-def _(t: Identity) -> Scaling:
+def _(t: Identity, **kwargs) -> Scaling:
     ndim = _get_ndim(t)
     return Scaling(
         scale=[1.0] * ndim if ndim is not None else None,
@@ -37,7 +72,7 @@ def _(t: Identity) -> Scaling:
 
 
 @_converter
-def _(t: Identity) -> Permutation:
+def _(t: Identity, **kwargs) -> Permutation:
     ndim = _get_ndim(t)
     return Permutation(
         permutation=range(ndim) if ndim is not None else None,
@@ -47,7 +82,7 @@ def _(t: Identity) -> Permutation:
 
 
 @_converter
-def _(t: Identity) -> Linear:
+def _(t: Identity, **kwargs) -> Linear:
     ndim = _get_ndim(t)
     return Linear(
         matrix=[
@@ -60,7 +95,7 @@ def _(t: Identity) -> Linear:
 
 
 @_converter
-def _(t: Identity) -> Affine:
+def _(t: Identity, **kwargs) -> Affine:
     ndim = _get_ndim(t)
     return Affine(
         matrix=[

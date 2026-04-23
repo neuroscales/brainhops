@@ -1,7 +1,7 @@
 __all__ = [
     "Transformation",
     "CoordinatesField",
-    "CartesianCoordinatesField",
+    "CartesianField",
     "DisplacementField",
     "Affine",
     "Linear",
@@ -20,6 +20,7 @@ import typing_extensions as _tx
 
 # internals
 from brainhops._ext.invfield import inverse as inverse_disp
+from .enum import BoundaryCondition, InterpolationOrder
 from .struct import DataModelBase
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
@@ -95,12 +96,36 @@ class Transformation(DataModelBase):
 
     input: _tx.Optional[CoordinateSystem] = None
     output: _tx.Optional[CoordinateSystem] = None
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ()
 
     def compute(self, *args, **kwargs) -> _tx.Self:
+        """
+        Compute the transformation, if it is not already fully defined.
+        """
         return self
 
-    def to(self, cls: _tx.Type[_tx.Self]) -> _tx.Self:
-        return _to(self, cls)
+    def to(self, cls: _tx.Optional[_tx.Type[_tx.Self]] = None, **kwargs) -> _tx.Self:
+        """
+        Convert this transformation to a different type.
+
+        Parameters
+        ----------
+        cls : type, optional
+            The type to convert to. If `None`, keep the current type.
+        **kwargs : dict
+            Attributes to override in the converted transform.
+            This allows transformations to be modified within their type.
+            For example, a `DisplacementField` can be converted from 
+            a field of values to a field of spline coefficients by
+            setting `coeff=True` in `kwargs`.
+    
+        Returns
+        -------
+        Transformation
+            The converted transformation.
+        """
+        cls = cls or type(self)
+        return _to(self, cls, **kwargs)
 
     @_tx.overload
     def __call__(self, x: "CoordinatesField", compute: _tx.Literal[True]) -> "CoordinatesField":
@@ -143,7 +168,7 @@ class Transformation(DataModelBase):
         """
         Compose this transform with another transform, without computing 
         the resulting transform, but instead returning a sequence of the 
-        two transforms that can be computed later when needed.
+        two transformations that can be computed later when needed.
         """
         ...
 
@@ -153,12 +178,12 @@ class Transformation(DataModelBase):
         else:
             raise TypeError(f"Unsupported type for transformation: {type(x)}")
         if compute:
-            x = self.compute()
+            x = self.compute(mode=compute)
         return x
 
     @_tx.overload
     def __matmul__(self, other):
-        return self(other, compute=False)
+        return self(other)
 
 
 class CoordinatesField(Transformation):
@@ -169,7 +194,11 @@ class CoordinatesField(Transformation):
     coordinates are defined. 
     """
 
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("field",)
     field: _tx.Optional[ArrayProtocol] = None
+    order: InterpolationOrder = InterpolationOrder.linear
+    bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
+    coeff: bool = False
     type: HiddenConst[str] = "coordinates"
 
     def inverse(self) -> _tx.Self:
@@ -185,7 +214,7 @@ class CoordinatesField(Transformation):
         # the output space.
 
 
-class CartesianCoordinatesField(CoordinatesField):
+class CartesianField(CoordinatesField):
     """
     An identity transform over a regular grid of coordinates.
 
@@ -224,7 +253,11 @@ class DisplacementField(Transformation):
     Both the input and output spaces correspond to the underlying grid.
     """
 
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("field",)
     field: _tx.Optional[ArrayProtocol] = None
+    order: int = 1
+    bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
+    coeff: bool = False
     type: HiddenConst[str] = "displacement"
 
     def inverse(self) -> _tx.Self:
@@ -240,6 +273,8 @@ class DisplacementField(Transformation):
 
 @hierarchy.AffineTransformation.register
 class Affine(Transformation):
+
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("matrix",)
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
 
@@ -257,6 +292,8 @@ class Affine(Transformation):
 
 @hierarchy.LinearTransformation.register
 class Linear(Transformation):
+
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("matrix",)
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
 
@@ -292,6 +329,8 @@ class Rotation(Linear):
 
 @hierarchy.Permutation.register
 class Permutation(Transformation):
+    
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("permutation",)
     permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
 
@@ -311,6 +350,8 @@ class Permutation(Transformation):
 
 @hierarchy.DiagonalTransformation.register
 class Scaling(Transformation):
+
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("scale",)
     scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
 
@@ -327,6 +368,8 @@ class Scaling(Transformation):
 
 @hierarchy.Translation.register
 class Translation(Transformation):
+
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("translation",)
     translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
 
@@ -351,31 +394,32 @@ class Identity(Transformation):
 
 
 class Sequence(Transformation):
-    # NOTE: transforms in a sequence are listed in the order in which 
+    # NOTE: transformations in a sequence are listed in the order in which 
     # they are applied. It reads as the opposite order to function
     # composition (or matrix multiplication), which may be confusing.
     #
     # `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
     # `Sequence([a1, a2, a3]) @ x` is equivalent to `a3 @ a2 @ a1 @ x`.
 
-    transforms: _tx.Optional[_tx.List[Transformation]] = None
+    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("transformations",)
+    transformations: _tx.Optional[_tx.List[Transformation]] = None
     type: HiddenConst[str] = "sequence"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
-        if self.transforms is None:
+        if self.transformations is None:
             return cls(input=self.output, output=self.input)
         return cls(
-            transforms=[t.inverse() for t in reversed(self.transforms)],
+            transformations=[t.inverse() for t in reversed(self.transformations)],
             input=self.output,
             output=self.input
         )
 
     def compute(self, mode=None) -> Transformation:
         """
-        Compute the resulting transform of the sequence of transforms.
+        Compute the resulting transform of the sequence of transformations.
 
-        If all transforms in the sequence are affine-like transforms, 
+        If all transformations in the sequence are affine-like transformations, 
         `compute()` returns an affine-like transform.
 
         If the first (= rightmost) transform in the sequence is a 
@@ -384,21 +428,124 @@ class Sequence(Transformation):
         If the first (= rightmost) transform in the sequence is an 
         affine-like transform, and the sequence contains at least one 
         non-affine-like transform, `compute()` returns a sequence of two
-        transforms: 
-        1. the composition of all affine-like transforms that appear
+        transformations: 
+        1. the composition of all affine-like transformations that appear
            before the first non-affine-like transform in the sequence, and
-        2. the composition of all transforms in the sequence, starting
+        2. the composition of all transformations in the sequence, starting
            from the first non-affine-like transform in the sequence.
 
         Parameters
         ----------
         mode : [list of] str, optional
-            Types of transforms to compute. 
-            * If `None` (default): compute all transforms in the sequence.
+            Types of transformations to compute. 
+            * If `None` (default): compute all transformations in the sequence.
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
         return _compute_sequence(self, mode=mode)
+
+
+def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
+    if all(
+        getattr(xform, param) is None 
+        for param in xform.parameter_names
+    ):
+        return True
+    if isinstance(xform, Identity):
+        return True
+    if isinstance(xform, CartesianCoordinatesField):
+        return True
+    if not compute:
+        return False
+    if isinstance(xform, Translation):
+        return (xform.translation == 0).all()
+    if isinstance(xform, Scaling):
+        return (xform.scale == 1).all()
+    if isinstance(xform, Permutation):
+        ndim = len(xform.permutation)
+        return (xform.permutation == list(range(ndim))).all()
+    if isinstance(xform, Linear):
+        ndim = xform.matrix.shape[0]
+        nx = _get_array_package(xform.matrix)
+        return (xform.matrix == nx.eye(ndim)).all()
+    if isinstance(xform, Affine):
+        ndim = xform.matrix.shape[0] - 1
+        nx = _get_array_package(xform.matrix)
+        return (xform.matrix == nx.eye(ndim + 1)[:-1]).all()
+    if isinstance(xform, DisplacementField):
+        return (xform.field == 0).all()
+    return False
+
+
+def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
+    if isinstance(xform, Translation):
+        return True
+    if isinstance(xform, Affine) and xform.matrix is not None:
+        return (xform.matrix[:, :-1] ==  0).all()
+    return is_identity(xform, compute=compute)
+
+
+def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
+    if isinstance(xform, Scaling):
+        return True
+    if isinstance(xform, Linear) and xform.matrix is not None:
+        matrix = xform.matrix
+        ndim = matrix.shape[0]
+        nx = _get_array_package(matrix)
+        return not (matrix * (1 - nx.eye(ndim))).any()
+    if isinstance(xform, Affine) and xform.matrix is not None:
+        return (
+            is_linear(xform, compute=compute) and 
+            is_scale(xform.to(Linear), compute=compute)
+        )
+    return is_identity(xform, compute=compute)
+
+
+def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
+    if isinstance(xform, Permutation):
+        return True
+    if isinstance(xform, Linear) and xform.matrix is not None:
+        matrix = xform.matrix
+        ndim = matrix.shape[0]
+        nx = _get_array_package(matrix)
+        is_binary = nx.isin(matrix, [0, 1]).all()
+        is_perm = matrix.sum(axis=0) == 1 and matrix.sum(axis=1) == 1
+        return is_binary and is_perm
+    if isinstance(xform, Affine) and xform.matrix is not None:
+        return (
+            is_linear(xform, compute=compute) and 
+            is_permutation(xform.to(Linear), compute=compute)
+        )
+    return is_identity(xform, compute=compute)
+
+
+def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
+    if isinstance(xform, Rotation):
+        return True
+    if isinstance(xform, Linear) and xform.matrix is not None:
+        matrix = xform.matrix
+        ndim = matrix.shape[0]
+        nx = _get_array_package(matrix)
+        is_orthogonal = (matrix @ matrix.T == nx.eye(ndim)).all()
+        is_posdef = nx.linalg.det(matrix) > 0
+        return is_orthogonal and is_posdef
+    if isinstance(xform, Affine) and xform.matrix is not None:
+        return (
+            is_linear(xform, compute=compute) and 
+            is_rotation(xform.to(Linear), compute=compute)
+        )
+    return is_identity(xform, compute=compute)
+
+
+def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
+    if isinstance(xform, Linear):
+        return True
+    if isinstance(xform, Affine) and xform.matrix is not None:
+        matrix = xform.matrix
+        ndim = matrix.shape[0] - 1
+        no_translation = (matrix[:, -1] == 0).all()
+        return no_translation
+    return is_identity(xform, compute=compute)
 
 
 _IDENTITIES = {'identity'}
@@ -420,23 +567,23 @@ _XFORMHIERARCHY = {
 
 
 def _flatten(self) -> _tx.Self:
-    # Flatten nested sequences of transforms into a single sequence.
-    if self.transforms is None:
+    # Flatten nested sequences of transformations into a single sequence.
+    if self.transformations is None:
         return self
     flattened = []
-    for t in self.transforms:
+    for t in self.transformations:
         if isinstance(t, Sequence):
-            flattened.extend(t._flatten().transforms or [])
+            flattened.extend(t._flatten().transformations or [])
         else:
             flattened.append(t)
-    return Sequence(self, transforms=flattened)
+    return Sequence(self, transformations=flattened)
 
 
 def _is_flat(self) -> bool:
     # Check if the sequence is flat (i.e., does not contain any nested sequences).
-    if self.transforms is None:
+    if self.transformations is None:
         return True
-    return all(not isinstance(t, Sequence) for t in self.transforms)
+    return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
 def _compute_sequence(self: Sequence, mode=None) -> Transformation:
@@ -444,14 +591,14 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     raise NotImplementedError
 
     # 0. check if already flat and composed:
-    if self.transforms is None or len(self.transforms) == 0:
+    if self.transformations is None or len(self.transformations) == 0:
         return Identity(input=self.input, output=self.output)
-    if len(self.transforms) == 1:
-        return self.transforms[0]
+    if len(self.transformations) == 1:
+        return self.transformations[0]
     # 1. flatten sequence:
     if not _is_flat(self):
         return _flatten(self).compute(mode=mode)
-    # 2. compose consecutive transforms of the same type
+    # 2. compose consecutive transformations of the same type
     if mode is None:
         mode = (
             "translation", 
@@ -465,21 +612,21 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
         mode = (mode,)
     for mode1 in mode:
         types1 = _XFORMHIERARCHY[mode1]
-        for i in range(len(self.transforms) - 1):
-            t1, t2 = self.transforms[i], self.transforms[i + 1]
+        for i in range(len(self.transformations) - 1):
+            t1, t2 = self.transformations[i], self.transformations[i + 1]
             if t1.type != "coordinates" and t2.type == "coordinates":
                 # Cannot `compose(coordinates, affine)`
                 continue
             if t1.type in types1 and t2.type in types1:
                 composed = _compose(t2, t1)  # ! reversed order !
                 # Then: insert composed transform in place of the two 
-                # original transforms, and repeat until no more 
-                # consecutive transforms of the same type are found.
-                transforms = (
-                    self.transforms[:i] + [composed] + 
-                    self.transforms[i + 2:]
+                # original transformations, and repeat until no more 
+                # consecutive transformations of the same type are found.
+                transformations = (
+                    self.transformations[:i] + [composed] + 
+                    self.transformations[i + 2:]
                 )
-                return Sequence(self, transforms=transforms).compute(mode)
+                return Sequence(self, transformations=transformations).compute(mode)
     return self
 
 
@@ -537,7 +684,7 @@ def _converter(func: _tx.Callable) -> _tx.Callable:
     return func
 
 
-def _to(x: Transformation, cls: _tx.Type[Transformation]) -> Transformation:
+def _to(x: Transformation, cls: _tx.Type[Transformation], **kwargs) -> Transformation:
     """Convert a transform to a different type."""
     # TODO: implement using the CONVERTERS map, 
     #       similarly to _compose() and _COMPOSERS.
@@ -551,7 +698,7 @@ def _to(x: Transformation, cls: _tx.Type[Transformation]) -> Transformation:
             best_distance, best_func = distance, FUNC
     if best_distance < float("inf"):
         _CONVERTERS_FASTMAP[(t1, t2)] = best_func
-        return best_func(x)
+        return best_func(x, **kwargs)
     raise ConversionError(f"No converter found for: {t1} -> {t2}")
 
 
@@ -566,7 +713,7 @@ class CompositionError(TypeError): ...
 
 
 def _composer(func: _tx.Callable) -> _tx.Callable:
-    """Decorator to register a function as a composer of two transforms."""
+    """Decorator to register a function as a composer of two transformations."""
     types = tuple(_tx.get_type_hints(func).values())[:2]
     _COMPOSERS[types] = func
     _COMPOSERS_FASTMAP.clear()
@@ -575,7 +722,7 @@ def _composer(func: _tx.Callable) -> _tx.Callable:
 
 def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     """
-    Dispatch the composition of two transforms to the appropriate 
+    Dispatch the composition of two transformations to the appropriate 
     composer function.
     """
     t1, t2 = type(x1), type(x2)
