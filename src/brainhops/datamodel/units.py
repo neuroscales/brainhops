@@ -1,154 +1,134 @@
-# TODO/WIP: copied some stuff from ngtools, but I'd like to rework it to
-# get someething that fits (in style) with the rest of the data model.
+# TODO: This is all overly complicated and fiddly.
+#       But I am happy with the API for now.
+#       I'll revisit the implementation at some point.
+
+__all__ = [
+    "PrefixName", "UnitName", "UnitSIName", "SpaceUnitName", "TimeUnitName",
+    "Unit", "UnitSI",
+    "TimeUnit", "TimeUnitSI", 
+    "Second", "Minute", "Hour", "Day",
+    "SpaceUnit", "SpaceUnitSI", 
+    "Meter", "Inch", "Foot", "Yard", "Mile", "Angstrom", "Parsec",
+]
 
 # stdlib
 from enum import StrEnum
+from math import log10
 
 # externals
 import typing_extensions as _tx
 
 # internals
-from .struct import DataModelBase
-from .typing import HiddenConst
+from brainhops._ext.struct import Struct, ClassVar, MetaStruct
+
+
+def _make_enum(name: str, d: _tx.Dict[str, _tx.Tuple]) -> StrEnum:
+    return StrEnum(name, [
+        (value, key)
+        for key, values in d.items()
+        for value in reversed(values)
+        if isinstance(value, str) and value
+    ])
+
 
 _MU1 = '\u00B5'
 _MU2 = '\u03BC'
 
-SI_PREFIX_SHORT2LONG: dict[str, str] = {
-    "Q": "quetta",
-    "R": "ronna",
-    "Y": "yotta",
-    "Z": "zetta",
-    "E": "exa",
-    "P": "peta",
-    "T": "tera",
-    "G": "giga",
-    "M": "mega",
-    "K": "kilo",
-    "k": "kilo",
-    "H": "hecto",
-    "h": "hecto",
-    "D": "deca",
-    "da": "deca",
-    "": "",
-    "d": "deci",
-    "c": "centi",
-    "m": "milli",
-    "u": "micro",
-    _MU1: "micro",
-    _MU2: "micro",
-    "n": "nano",
-    "p": "pico",
-    "f": "femto",
-    "a": "atto",
-    "z": "zepto",
-    "y": "yocto",
-    "r": "ronto",
-    "q": "quecto",
+PREFIX_SI = {
+    "quetta": (30, "Q", "quetta"),
+    "ronna": (27, "R", "ronna"),
+    "yotta": (24, "Y", "yotta"),
+    "zetta": (21, "Z", "zetta"),
+    "exa": (18, "E", "exa"),
+    "peta": (15, "P", "peta"),
+    "tera": (12, "T", "tera"),
+    "giga": (9, "G", "giga"),
+    "mega": (6, "M", "mega"),
+    "kilo": (3, "k", "K", "kilo"),
+    "hecto": (2, "h", "H", "hecto"),
+    "deca": (1, "da", "D", "deca"),
+    "": (0, ""),
+    "deci": (-1, "d", "deci"),
+    "centi": (-2, "c", "centi"),
+    "milli": (-3, "m", "milli"),
+    "micro": (-6, _MU2, _MU1, "u", "mc", "mic", "micro"),
+    "nano": (-9, "n", "nano"),
+    "pico": (-12, "p", "pico"),
+    "femto": (-15, "f", "femto"),
+    "atto": (-18, "a", "atto"),
+    "zepto": (-21, "z", "zepto"),
+    "yocto": (-24, "y", "yocto"),
+    "ronto": (-27, "r", "ronto"),
+    "quecto": (-30, "q", "quecto"),
 }
+PrefixName = _make_enum("PrefixName", PREFIX_SI)
 
-SI_PREFIX_LONG2SHORT: dict[str, str] = {
-    long: short
-    for short, long in SI_PREFIX_SHORT2LONG.items()
-}
-
-SI_PREFIX_EXPONENT: dict[str, int] = {
-    "Q": 30,
-    "R": 27,
-    "Y": 24,
-    "Z": 21,
-    "E": 18,
-    "P": 15,
-    "T": 12,
-    "G": 9,
-    "M": 6,
-    "K": 3,
-    "k": 3,
-    "H": 2,
-    "h": 2,
-    "D": 1,
-    "da": 1,
-    "": 0,
-    "d": -1,
-    "c": -2,
-    "m": -3,
-    "u": -6,
-    _MU1: -6,
-    _MU2: -6,
-    "n": -9,
-    "p": -12,
-    "f": -15,
-    "a": -18,
-    "z": -21,
-    "y": -24,
-    "r": -27,
-    "q": -30,
-}
-
-_PREFIX_SI_MEMBERS = dict(SI_PREFIX_SHORT2LONG)
-_PREFIX_SI_MEMBERS.pop("")
-PrefixSI = StrEnum("PrefixSI", _PREFIX_SI_MEMBERS.items())
 
 UNITS_TIME = {
-    "s": "s",
-    "sec": "s",
-    "second": "s",
-    "m": "m",
-    "min": "m",
-    "minute": "m",
-    "h": "h",
-    "hour": "h",
-    "d": "d",
-    "day": "d",
-}
-TimeUnit = StrEnum("TimeUnit", UNITS_TIME.items())
-
-UNIT_SPACE = {
     # SI
-    "m": "m", "meter": "m", "metre": "m",
-    # Imperial
-    "ft": "ft",
-    "foot": "ft",
-    "'": "ft",
-    "in": "in",
-    "inch": "in",
-    '"': "in",
-    "yd": "yd",
-    "yard": "yd",
-    "mile": "mi",
+    "second": (1, "s", "sec", "second", "seconds"),
     # Other
-    "angstrom": "Å",
-    "parsec": "pc",
+    "minute": (60, "min", "minute", "minutes"),
+    "hour": (60*60, "h", "hour", "hours"),
+    "day": (24*60*60, "d", "day", "days"),
+    "week": (7*24*60*60, "w", "week", "weeks"),
+    "year": (52*7*24*60*60, "y", "yr", "year", "years"),
+    "decade": (10*52*7*24*60*60, "decade", "decades"),
+    "century": (100*52*7*24*60*60, "century", "centuries"),
+    "millennium": (1000*52*7*24*60*60, "millennium", "millennia"),
 }
-SpaceUnit = StrEnum("SpaceUnit", UNIT_SPACE.items())
+TimeUnitName = _make_enum("TimeUnitName", UNITS_TIME)
+
+UNITS_SPACE = {
+    # SI
+    "meter": (1, "m", "metre", "meter", "metres", "meters"),
+    # Imperial
+    "inch": (0.0254, '"', "in", "inch", "inches"),
+    "foot": (0.3048, "'", "ft", "foot", "feet"),
+    "yard": (0.9144, "yd", "yard", "yards"),
+    "mile": (1609.344, "mi", "mile", "miles"),
+    # Other
+    "angstrom": (1e-10, "Å", "angstrom", "angstroms"),
+    "parsec": (3.085677581491367e+16, "pc", "parsec", "parsecs"),
+    "lightyear": (9.4607304725808e+15, "ly", "lyr", "lightyear", "lightyears"),
+}
+SpaceUnitName = _make_enum("SpaceUnitName", UNITS_SPACE)
+
+UNITS = {**UNITS_TIME, **UNITS_SPACE}
+UnitName = _make_enum("UnitName", UNITS)
+
+UNITS_SI = dict([
+    next(iter(UNITS_SPACE.items())),
+    next(iter(UNITS_TIME.items()))
+])
+UnitSIName = _make_enum("UnitSIName", UNITS_SI)
 
 
-class SpaceUnitBase(StrEnum):
-    meter = metre = "meter"
-    inch = "inch"
-    foot = "foot"
-    yard = "yard"
-    mile = "mile"
-    angstrom = "angstrom"
-    parsec = "parsec"
+def _parse_unit_name(name: str) -> _tx.Tuple[_tx.Optional[PrefixName], UnitName]:
+    if name in UnitName.__members__:
+        return None, UnitName[name]
+    for prefix in PrefixName:
+        if name.startswith(prefix):
+            base_name = name[len(prefix):]
+            if base_name in UnitSIName.__members__:
+                return PrefixName[prefix], UnitSIName[base_name]
+    for (_, *prefixes) in PREFIX_SI.values():
+        for (*_, suffixes) in UNITS_SI.values():
+            for prefix in prefixes:
+                for suffix in suffixes:
+                    if name == prefix + suffix:
+                        return PrefixName[prefix], UnitSIName[suffix]
+    return None, name
 
 
-class TimeUnitBase(StrEnum):
-    second = sec = "second"
-    minute = min = "minute"
-    hour = "hour"
-    day = "day"
-    year = "year"
-
-
-UnitBase = StrEnum("UnitBase", { **SpaceUnitBase.__members__, **TimeUnitBase.__members__ })
-
-
-_UNITS = {}
+# ----------------------------------------------------------------------
+#   DECORATOR TO REGISTER SINGLETON UNITS
+# ----------------------------------------------------------------------
+_REGISTERED_UNITS = {}
 
 
 def register(cls: type) -> type:
-    _UNITS[cls] = cls()
+    _REGISTERED_UNITS[cls] = cls()
     return cls
 
 
@@ -156,146 +136,261 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
 
     def decorator(cls: type) -> type:
 
-        base = register(cls.base)
+        base = register(cls)
 
-        for prefix in PrefixSI:
-            name = prefix.capitalize() + base.capitalize()
-            kls = type(name, cls.__bases__, { "prefix": prefix})
+        for prefix in PrefixName:
+            name = prefix.capitalize() + base.__name__
+            kls = type(name, cls.__bases__, {"prefix": prefix, "base": base.base})
+            kls.__module__ = cls.__module__
             globals[name] = kls
             register(kls)
+            __all__.append(name)
 
         return base
 
     return decorator
 
 
-class Unit(DataModelBase):
-    name: str
-    type: _tx.Literal["time", "space"]
-    scale: float = 1.0
+# ----------------------------------------------------------------------
+#   BASE CLASSES
+# ----------------------------------------------------------------------
+
+
+class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=False):
+    name: ClassVar[_tx.Optional[str]] = None
+    scale: ClassVar[float] = 1.0
+    type: ClassVar[_tx.Literal["time", "space"]]
 
     def __new__(cls, *args, **kwargs):
-        if cls in _UNITS:
-            return _UNITS[cls]
+        if cls in _REGISTERED_UNITS:
+            return _REGISTERED_UNITS[cls]
+        name = kwargs.get("name", args[0] if args else None)
+        if name:
+            prefix, base = _parse_unit_name(name)
+            cls_name = base.capitalize()
+            if prefix:
+                cls_name = prefix.capitalize() + cls_name
+            if cls_name in globals():
+                kls = globals()[cls_name]
+                if kls in _REGISTERED_UNITS:
+                    return _REGISTERED_UNITS[kls]
         return super().__new__(cls)
 
     def __str__(self) -> str:
-        return self.name
+        return getattr(type(self), "name", "<unknown unit>")
 
     def __repr__(self) -> str:
-        return self.name
+        return f"'{self}'"
 
 
-class UnitSI(Unit):
-    base: _tx.Literal["second", "meter"] = "second"
-    prefix: _tx.Optional[PrefixSI] = None
+class _MetaUnitSI(MetaStruct):
+
+    @property
+    def name(cls) -> str:
+        prefix = cls.prefix or ""
+        return f"{prefix}{cls.base}"
+
+    @property
+    def prefixsymbol(cls) -> _tx.Optional[str]:
+        if cls.prefix is None:
+            return None
+        return PREFIX_SI[cls.prefix][1]
+
+    @property
+    def basesymbol(cls) -> str:
+        return UNITS_SI[cls.base][1]
+
+    @property
+    def symbol(cls) -> str:
+        prefixsymbol = cls.prefixsymbol or ""
+        return f"{prefixsymbol}{cls.basesymbol}"
+
+    @property
+    def log10_scale(cls) -> int:
+        return PREFIX_SI[cls.prefix or ""][0]
+
+    @property
+    def scale(cls) -> float:
+        return 10 ** (cls.log10_scale)
+
+
+class UnitSI(Unit, metaclass=_MetaUnitSI):
+    base: ClassVar[UnitSIName] = "second"
+    prefix: ClassVar[_tx.Optional[PrefixName]] = None
+
+    @classmethod
+    def _parse_name(cls, *args, **kwargs):
+        name = cls.name
+        if args:
+            name = args[0]
+        prefix, base = _parse_unit_name(name)
+        if "prefix" in kwargs:
+            prefix = kwargs["prefix"]
+        if prefix:
+            prefix = PrefixName[prefix]
+        if "base" in kwargs:
+            base = kwargs["base"]
+        if base in UnitSIName.__members__:
+            base = UnitSIName[base]
+        return (prefix or "") + base
+        
+    def __new__(cls, *args, **kwargs):
+        name = cls._parse_name(*args, **kwargs)
+        args = (name,) + args[1:]
+        kwargs.pop("name", None)
+        return super().__new__(cls, *args, **kwargs)
 
     @property
     def name(self) -> str:
-        prefix = self.prefix or ""
-        return f"{prefix}{self.base}"
+        return type(self).name
 
     @property
-    def shortprefix(self) -> _tx.Optional[str]:
-        if self.prefix is None:
-            return None
-        return SI_PREFIX_LONG2SHORT[self.prefix]
+    def prefixsymbol(self) -> _tx.Optional[str]:
+        return type(self).prefixsymbol
 
     @property
-    def shortbase(self) -> str:
-        return SI_UNITS[self.base]
+    def basesymbol(self) -> str:
+        return type(self).basesymbol
 
     @property
-    def shortname(self) -> str:
-        shortprefix = self.shortprefix or ""
-        return f"{shortprefix}{self.shortbase}"
-    
+    def symbol(self) -> str:
+        return type(self).symbol
+
     @property
-    def log_scale(self) -> int:
-        return SI_PREFIX_EXPONENT[self.shortprefix or ""]
+    def log10_scale(self) -> int:
+        return type(self).log10_scale
 
     @property
     def scale(self) -> float:
-        return 10 ** (self.log_scale)
+        return type(self).scale
+    
+
+class _MetaKnownUnit(MetaStruct):
+
+    @property
+    def prefix(cls) -> None:
+        return None
+
+    @property
+    def symbol(cls) -> str:
+        return UNITS[cls.name][1]
+
+    @property
+    def scale(cls) -> float:
+        return UNITS[cls.name][0]
+    
+    @property
+    def log10_scale(cls) -> float:
+        return log10(cls.scale)
+
+
+class KnownUnit(Unit, metaclass=_MetaKnownUnit):
+
+    @property
+    def prefix(self) -> None:
+        return type(self).prefix
+
+    @property
+    def symbol(self) -> str:
+        return type(self).symbol
+
+    @property
+    def scale(self) -> float:
+        return type(self).scale
+    
+    @property
+    def log10_scale(self) -> float:
+        return type(self).log10_scale
+
+
+# ----------------------------------------------------------------------
+#   TIME UNITS
+# ----------------------------------------------------------------------
 
 
 class TimeUnit(Unit):
-    type: HiddenConst[_tx.Literal["time"]] = "time"
+    type: ClassVar[_tx.Literal["time"]] = "time"
 
 
 class TimeUnitSI(UnitSI, TimeUnit):
-    base: HiddenConst[_tx.Literal["second"]] = "second"
+    base: ClassVar[TimeUnitName] = TimeUnitName.second
 
 
 @siunit(globals())
 class Second(TimeUnitSI):
-    prefix: HiddenConst[str] = ""
+    prefix: ClassVar[None] = None
 
 
 @register
 class Minute(TimeUnit):
-    name: HiddenConst[str] = "minute"
-    scale: HiddenConst[float] = 60.0
+    name: ClassVar[TimeUnitName] = TimeUnitName.minute
 
 
 @register
 class Hour(TimeUnit):
-    name: HiddenConst[str] = "hour"
-    scale: HiddenConst[float] = 3600.0
+    name: ClassVar[TimeUnitName] = TimeUnitName.hour
 
 
 @register
 class Day(TimeUnit):
-    name: HiddenConst[str] = "day"
-    scale: HiddenConst[float] = 86400.0
+    name: ClassVar[TimeUnitName] = TimeUnitName.day
+
+
+@register
+class Week(TimeUnit):
+    name: ClassVar[TimeUnitName] = TimeUnitName.week
+
+
+@register
+class Year(TimeUnit):
+    name: ClassVar[TimeUnitName] = TimeUnitName.year
+
+
+# ----------------------------------------------------------------------
+#   SPACE UNITS
+# ----------------------------------------------------------------------
 
 
 @register
 class SpaceUnit(Unit):
-    type: HiddenConst[_tx.Literal["space"]] = "space"
+    type: ClassVar[_tx.Literal["space"]] = "space"
 
 
 @register
 class SpaceUnitSI(UnitSI, SpaceUnit):
-    base: HiddenConst[_tx.Literal["meter"]] = "meter"
+    base: ClassVar[SpaceUnitName] = SpaceUnitName.meter
 
 
 @siunit(globals())
 class Meter(SpaceUnitSI):
-    prefix: HiddenConst[str] = ""
+    prefix: ClassVar[None] = None
 
 
 @register
 class Inch(SpaceUnit):
-    name: HiddenConst[str] = "inch"
-    scale: HiddenConst[float] = 0.0254
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.inch
 
 
 @register
 class Foot(SpaceUnit):
-    name: HiddenConst[str] = "foot"
-    scale: HiddenConst[float] = 0.3048
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.foot
 
 
 @register
 class Yard(SpaceUnit):
-    name: HiddenConst[str] = "yard"
-    scale: HiddenConst[float] = 0.9144
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.yard
 
 
 @register
 class Mile(SpaceUnit):
-    name: HiddenConst[str] = "mile"
-    scale: HiddenConst[float] = 1609.344
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.mile
 
 
 @register
 class Angstrom(SpaceUnit):
-    name: HiddenConst[str] = "angstrom"
-    scale: HiddenConst[float] = 1e-10
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.angstrom
 
 
 @register
 class Parsec(SpaceUnit):
-    name: HiddenConst[str] = "parsec"
-    scale: HiddenConst[float] = 3.085677581491367e16
+    name: ClassVar[SpaceUnitName] = SpaceUnitName.parsec

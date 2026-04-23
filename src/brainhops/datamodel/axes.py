@@ -19,23 +19,24 @@ from .orientation import (
     InferiorToSuperior, SuperiorToInferior
 )
 from .typing import HiddenConst
+from .units import Unit, SpaceUnit, TimeUnit
 
 
 class Axis(DataModelBase):
     name: Optional[str] = None
     type: Optional[str] = None
-    unit: Optional[str] = None
+    unit: Optional[Unit] = None
     discrete: Optional[bool] = None
     orientation: Optional[Orientation] = None
 
 
 class SpatialAxis(Axis):
-    unit: str = "mm"
+    unit: SpaceUnit = SpaceUnit("millimeter")
     type: HiddenConst[str] = "spatial"
 
 
 class TimeAxis(Axis):
-    unit: str = "s"
+    unit: TimeUnit = TimeUnit("second")
     type: HiddenConst[str] = "time"
 
 

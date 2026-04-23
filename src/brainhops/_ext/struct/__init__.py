@@ -296,7 +296,7 @@ def __pre_new__(
         for name, func in _make_mapping(dict_fields).items():
             namespace.setdefault(name, func)
         Mapping = _abc.Mapping if options.frozen else _abc.MutableMapping
-        if not any(isinstance(base, Mapping) for base in bases):
+        if not any(issubclass(base, Mapping) for base in bases):
             bases += (Mapping,)
 
     # It's an error to specify weakref_slot if slots is False.
@@ -475,6 +475,7 @@ def _make_init(fields: dict[str, Field]) -> _tx.Callable:
         
             if field.var:
                 init_vars[field.name] = arg
+                continue
 
             if not field.frozen:
                 # We let setattr() do the work
@@ -810,7 +811,7 @@ class MetaStruct(ABCMeta):
         return cls
 
 
-class Struct(metaclass=MetaStruct, **Options._DEFAULTS):
+class Struct(metaclass=MetaStruct):
     """
     Base class for data structures.
 
