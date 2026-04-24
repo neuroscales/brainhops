@@ -3,8 +3,7 @@ import itertools
 from types import ModuleType
 
 # externals
-import scipy.ndimage as ndi
-import numpy as np
+import typing_extensions as _tx
 
 # internals
 from .typing import ArrayProtocol, npt, cpt, dkt
@@ -22,6 +21,21 @@ try:
     import dask_image.ndinterp as dkndi
 except ImportError:
     dkndi = None
+
+
+def _get_origin(type: _tx.Any, unfold: _tx.Any = None) -> _tx.Any:
+    origin = _tx.get_origin(type)
+    if origin is None:
+        return type
+    if unfold == "all":
+        if _tx.get_args(type):
+            return _get_origin(_tx.get_args(type)[0], unfold=unfold)
+    if unfold:
+        if not isinstance(unfold, (list, tuple, set)):
+            unfold = (unfold,)
+        if origin in unfold:
+            return _get_origin(_tx.get_args(type)[0], unfold=unfold)
+    return origin
 
 
 def _get_array_package(x: ArrayProtocol) -> ModuleType:
@@ -192,13 +206,13 @@ def _coeff2value(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = nx.meshgrid(*(np.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = nx.meshgrid(*(nx.arange(s) for s in input.shape[:-ndim]), indexing='ij')
     grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = nx.empty_like(input) if not inplace else input
     mode = "constant" if not isinstance(bound, str) else bound
     cval = 0 if isinstance(bound, str) else bound
-    opts = dict(order=order, mode=mode, cval=cval, prefilter=not coeff)
+    opts = dict(order=order, mode=mode, cval=cval, prefilter=False)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = ndx.map_coordinates(input[index], grid, **opts)
     return output
@@ -284,7 +298,7 @@ def _value2coeff(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = nx.meshgrid(*(np.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = nx.meshgrid(*(nx.arange(s) for s in input.shape[:-ndim]), indexing='ij')
     grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = nx.empty_like(input) if not inplace else input

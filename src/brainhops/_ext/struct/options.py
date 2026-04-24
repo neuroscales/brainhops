@@ -20,6 +20,7 @@ from .utils import slots, SlotsBase
     'convert',          # Use field type as converter if none is provided
     'validate',         # Use field type as validator if none is provided
     'mapping',          # Generate Mapping methods for dict-like behavior
+    'reverse',          # Use the reverse MRO order when listing fields
 )
 class Options(SlotsBase):
 
@@ -39,6 +40,7 @@ class Options(SlotsBase):
         convert=False,
         validate=False,
         mapping=False,
+        reverse=False,
     )
     
     @staticmethod

@@ -12,6 +12,8 @@ __all__ = [
     "Sequence"
 ]
 # stdlib
+import types as _t
+import itertools
 from numbers import Real, Integral
 from functools import partial
 
@@ -20,11 +22,11 @@ import typing_extensions as _tx
 
 # internals
 from brainhops._ext.invfield import inverse as inverse_disp
-from .enum import BoundaryCondition, InterpolationOrder
+from .enums import BoundaryCondition, InterpolationOrder
 from .struct import DataModelBase
 from .systems import CoordinateSystem
 from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
-from ._utils import _get_array_package
+from ._utils import _get_array_package, _get_origin
 from . import hierarchy
 
 
@@ -58,8 +60,13 @@ if False:
     p = _Pipe()
 
 
+# ----------------------------------------------------------------------
+#    BASE CLASS
+# ----------------------------------------------------------------------
+
+
 @hierarchy.Transformation.register
-class Transformation(DataModelBase):
+class Transformation(DataModelBase, reverse=True):
     """
     A transformation between coordinate systems.
 
@@ -96,15 +103,39 @@ class Transformation(DataModelBase):
 
     input: _tx.Optional[CoordinateSystem] = None
     output: _tx.Optional[CoordinateSystem] = None
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ()
+    parameter_names: _tx.ClassVar[_tx.Union[str, _tx.Tuple[str, ...]]] = ()
 
-    def compute(self, *args, **kwargs) -> _tx.Self:
+    def compute(self, simplify: bool = False) -> _tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
         """
+        # We will overload `compute()` in `Sequence`, so here we can 
+        # assume that `self` is not a `Sequence`.
+        # For non sequence transformations, this function simplifies 
+        # to the simplest compatible kind, whose compatibility can be
+        # detected with (almost) no overhead. For example, if the
+        # parameter of a transformation is set to `None`, the 
+        # transformation is treated as an identity transformation.
+        CHECKS = [
+            (is_identity, Identity), 
+            (is_translation, Translation), 
+            (is_scale, Scaling),
+            (is_permutation, Permutation),
+            (is_rotation, Rotation),
+            (is_linear, Linear)
+        ]
+        for check, cls in CHECKS:
+            if check(self, compute=simplify):
+                return self.to(cls)
         return self
 
-    def to(self, cls: _tx.Optional[_tx.Type[_tx.Self]] = None, **kwargs) -> _tx.Self:
+    def to(
+        self, 
+        cls: _tx.Optional[_tx.Type[_tx.Self]] = None, 
+        *,
+        lossy: bool = False,
+        **kwargs
+    ) -> _tx.Self:
         """
         Convert this transformation to a different type.
 
@@ -112,6 +143,8 @@ class Transformation(DataModelBase):
         ----------
         cls : type, optional
             The type to convert to. If `None`, keep the current type.
+        lossy : bool, default=False
+            Whether to allow lossy conversions.
         **kwargs : dict
             Attributes to override in the converted transform.
             This allows transformations to be modified within their type.
@@ -125,8 +158,14 @@ class Transformation(DataModelBase):
             The converted transformation.
         """
         cls = cls or type(self)
-        return _to(self, cls, **kwargs)
-
+        if lossy:
+            try:
+                return _to(self, cls, **kwargs)
+            except LossyConversionError as e:
+                return e.result
+        else:
+            return _to(self, cls, **kwargs)
+        
     @_tx.overload
     def __call__(self, x: "CoordinatesField", compute: _tx.Literal[True]) -> "CoordinatesField":
         """
@@ -172,7 +211,7 @@ class Transformation(DataModelBase):
         """
         ...
 
-    def __call__(self, x, compute: bool = False):
+    def __call__(self, x, compute: bool = False) -> "Transformation":
         if isinstance(x, Transformation):
             x = Sequence([x, self])
         else:
@@ -181,9 +220,16 @@ class Transformation(DataModelBase):
             x = self.compute(mode=compute)
         return x
 
-    @_tx.overload
-    def __matmul__(self, other):
+    def __matmul__(self, other: "Transformation") -> "Transformation":
         return self(other)
+    
+    def __or__(self, other: "Transformation") -> "Transformation":
+        return other(self)
+
+
+# ----------------------------------------------------------------------
+#    CONCRETE CLASSES
+# ----------------------------------------------------------------------
 
 
 class CoordinatesField(Transformation):
@@ -194,7 +240,7 @@ class CoordinatesField(Transformation):
     coordinates are defined. 
     """
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("field",)
+    parameter_names: _tx.ClassVar[str] = "field"
     field: _tx.Optional[ArrayProtocol] = None
     order: InterpolationOrder = InterpolationOrder.linear
     bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
@@ -211,7 +257,10 @@ class CoordinatesField(Transformation):
         # displacement field's inverse (disp = coord - meshgrid).
         # Otherwise, I am not sure we can easily compute an inverse,
         # since it'll depend on the "shape" (and "orientation") of 
-        # the output space.
+        # the output space. However, we could introduced a delayed
+        # `InverseCoordinatesField` class, that computes the inverse
+        # on demand during interpolation (as the output shape will then 
+        # be known).
 
 
 class CartesianField(CoordinatesField):
@@ -251,9 +300,14 @@ class DisplacementField(Transformation):
     A field of displacements defined on a regular grid.
 
     Both the input and output spaces correspond to the underlying grid.
+
+    Attributes
+    ----------
+    field : array-like | None
+        An array of shape `(*shape, ndim)`, where `len(shape) == ndim`.
     """
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("field",)
+    parameter_names: _tx.ClassVar[str] = "field"
     field: _tx.Optional[ArrayProtocol] = None
     order: int = 1
     bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
@@ -274,9 +328,21 @@ class DisplacementField(Transformation):
 @hierarchy.AffineTransformation.register
 class Affine(Transformation):
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("matrix",)
+    parameter_names: _tx.ClassVar[str] = "matrix"
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
+
+    @property
+    def homogeneous_matrix(self) -> ArrayProtocol:
+        if self.matrix is None:
+            return None
+        nx = _get_array_package(self.matrix)
+        No, Ni = self.matrix.shape
+        homogeneous_matrix = nx.zeros((No + 1, Ni))
+        homogeneous_matrix[:-1, :-1] = self.matrix[:, :-1]
+        homogeneous_matrix[:-1, -1:] = self.matrix[:, -1:]
+        homogeneous_matrix[-1, -1] = 1
+        return homogeneous_matrix
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -284,7 +350,7 @@ class Affine(Transformation):
             return cls(input=self.output, output=self.input)
         nx = _get_array_package(self.matrix)
         return cls(
-            matrix=nx.linalg.inv(self.matrix),
+            matrix=nx.linalg.inv(self.homogeneous_matrix)[:-1],
             input=self.output,
             output=self.input
         )
@@ -293,7 +359,7 @@ class Affine(Transformation):
 @hierarchy.LinearTransformation.register
 class Linear(Transformation):
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("matrix",)
+    parameter_names: _tx.ClassVar[str] = "matrix"
     matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
 
@@ -309,7 +375,7 @@ class Linear(Transformation):
         )
 
 
-@hierarchy.Rotation.register
+@hierarchy.SpecialOrthogonalTransformation.register
 class Rotation(Linear):
     # TODO: Implement Rotation subclasses that use other representations 
     # (e.g., quaternions, Euler angles, etc.)
@@ -330,7 +396,7 @@ class Rotation(Linear):
 @hierarchy.Permutation.register
 class Permutation(Transformation):
     
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("permutation",)
+    parameter_names: _tx.ClassVar[str] = "permutation"
     permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
 
@@ -351,7 +417,7 @@ class Permutation(Transformation):
 @hierarchy.DiagonalTransformation.register
 class Scaling(Transformation):
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("scale",)
+    parameter_names: _tx.ClassVar[str] = "scale"
     scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
 
@@ -368,8 +434,7 @@ class Scaling(Transformation):
 
 @hierarchy.Translation.register
 class Translation(Transformation):
-
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("translation",)
+    parameter_names: _tx.ClassVar[str] = "translation"
     translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
 
@@ -386,11 +451,22 @@ class Translation(Transformation):
 
 @hierarchy.IdentityTransformation.register
 class Identity(Transformation):
+    """An identity transformation.
+    
+    If the `input` and `output` coordinate systems are different, it maps 
+    the input axes to the output axes, while preserving their orders.
+    """
+
     type: HiddenConst[str] = "identity"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
+
+
+# ----------------------------------------------------------------------
+#    SEQUENCE
+# ----------------------------------------------------------------------
 
 
 class Sequence(Transformation):
@@ -401,9 +477,23 @@ class Sequence(Transformation):
     # `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
     # `Sequence([a1, a2, a3]) @ x` is equivalent to `a3 @ a2 @ a1 @ x`.
 
-    parameter_names: _tx.ClassVar[_tx.Tuple[str, ...]] = ("transformations",)
+    parameter_names: _tx.ClassVar[str] = "transformations"
     transformations: _tx.Optional[_tx.List[Transformation]] = None
     type: HiddenConst[str] = "sequence"
+
+    def guess_input(self) -> _tx.Optional[CoordinateSystem]:
+        if self.input is not None:
+            return self.input
+        if (self.transformations or []):
+            return self.transformations[0].input
+        return None
+    
+    def guess_output(self) -> _tx.Optional[CoordinateSystem]:
+        if self.output is not None:
+            return self.output
+        if (self.transformations or []):
+            return self.transformations[-1].output
+        return None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -445,15 +535,23 @@ class Sequence(Transformation):
         return _compute_sequence(self, mode=mode)
 
 
+# ----------------------------------------------------------------------
+#    KIND CHECKS
+# ----------------------------------------------------------------------
+
+
 def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
+    parameter_names = getattr(xform, "parameter_names", ())
+    if isinstance(parameter_names, str):
+        parameter_names = (parameter_names,)
     if all(
         getattr(xform, param) is None 
-        for param in xform.parameter_names
+        for param in parameter_names
     ):
         return True
     if isinstance(xform, Identity):
         return True
-    if isinstance(xform, CartesianCoordinatesField):
+    if isinstance(xform, CartesianField):
         return True
     if not compute:
         return False
@@ -480,7 +578,7 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
 def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Translation):
         return True
-    if isinstance(xform, Affine) and xform.matrix is not None:
+    if compute and isinstance(xform, Affine) and xform.matrix is not None:
         return (xform.matrix[:, :-1] ==  0).all()
     return is_identity(xform, compute=compute)
 
@@ -488,7 +586,7 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
 def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Scaling):
         return True
-    if isinstance(xform, Linear) and xform.matrix is not None:
+    if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
         ndim = matrix.shape[0]
         nx = _get_array_package(matrix)
@@ -504,9 +602,8 @@ def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
 def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Permutation):
         return True
-    if isinstance(xform, Linear) and xform.matrix is not None:
+    if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
-        ndim = matrix.shape[0]
         nx = _get_array_package(matrix)
         is_binary = nx.isin(matrix, [0, 1]).all()
         is_perm = matrix.sum(axis=0) == 1 and matrix.sum(axis=1) == 1
@@ -522,7 +619,7 @@ def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
 def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Rotation):
         return True
-    if isinstance(xform, Linear) and xform.matrix is not None:
+    if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
         ndim = matrix.shape[0]
         nx = _get_array_package(matrix)
@@ -540,12 +637,16 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
 def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Linear):
         return True
-    if isinstance(xform, Affine) and xform.matrix is not None:
+    if compute and isinstance(xform, Affine) and xform.matrix is not None:
         matrix = xform.matrix
-        ndim = matrix.shape[0] - 1
         no_translation = (matrix[:, -1] == 0).all()
         return no_translation
     return is_identity(xform, compute=compute)
+
+
+# ----------------------------------------------------------------------
+#    SEQUENCE COMPUTATION
+# ----------------------------------------------------------------------
 
 
 _IDENTITIES = {'identity'}
@@ -587,47 +688,42 @@ def _is_flat(self) -> bool:
 
 
 def _compute_sequence(self: Sequence, mode=None) -> Transformation:
-    # Totally UNTESTED, so raise for now.
-    raise NotImplementedError
+    # For now, let's make simple assumptions:
+    # * coordinate systems are compatible
+    #   - there is the same number of axes in the inout and output spaces.
+    #   - the axes of the input and output spaces match.
+    #   - there is no need to check them (they may not even be defined)
+    # * we can safely "forget" the coordinate systems of the sequence
+    #   object (i.e., they are also contained in the nested transformations)
+    # * we do not perform any optimization
+    #   - transformations are composed in order
+    #   - we do not try to compose series of similar types first
+    # * we fail if we cannot return a single transformation
+    #   - for example, if the first transformation is an affine,
+    #     and there are non-affine transformations in the sequence.
+    #   - or if the first transformation is a displacement field, and 
+    #     there are coordinate fields in the sequence.
+    #   - (later, we will return the simplest possible sequence in such 
+    #      cases, i.e., compute the sequence parts that we can)
+
+    xforms = self.transformations or []
 
     # 0. check if already flat and composed:
-    if self.transformations is None or len(self.transformations) == 0:
+    if not xforms:
         return Identity(input=self.input, output=self.output)
     if len(self.transformations) == 1:
         return self.transformations[0]
+    
     # 1. flatten sequence:
     if not _is_flat(self):
         return _flatten(self).compute(mode=mode)
-    # 2. compose consecutive transformations of the same type
-    if mode is None:
-        mode = (
-            "translation", 
-            "scale", 
-            "permutation", 
-            "linear", 
-            "affine", 
-            "nonlinear"
-        )
-    if isinstance(mode, str):
-        mode = (mode,)
-    for mode1 in mode:
-        types1 = _XFORMHIERARCHY[mode1]
-        for i in range(len(self.transformations) - 1):
-            t1, t2 = self.transformations[i], self.transformations[i + 1]
-            if t1.type != "coordinates" and t2.type == "coordinates":
-                # Cannot `compose(coordinates, affine)`
-                continue
-            if t1.type in types1 and t2.type in types1:
-                composed = _compose(t2, t1)  # ! reversed order !
-                # Then: insert composed transform in place of the two 
-                # original transformations, and repeat until no more 
-                # consecutive transformations of the same type are found.
-                transformations = (
-                    self.transformations[:i] + [composed] + 
-                    self.transformations[i + 2:]
-                )
-                return Sequence(self, transformations=transformations).compute(mode)
-    return self
+    # 2. compose transformations in order
+    #    NOTE: we compose to the left, as that's how we define a sequence order
+    t, *xforms = xforms
+    while xforms:
+        t2, *xforms = xforms
+        t = _compose(t2, t)
+    return t
 
 
 # ----------------------------------------------------------------------
@@ -676,9 +772,30 @@ class LossyConversionError(ConversionError):
         self.result = result
 
 
+@_tx.overload
+def _converter(
+    Ti: _tx.Type[Transformation], To: _tx.Type[Transformation]
+) -> _tx.Callable:
+    """Return a decorator to register a converter of between types."""
+    ...
+
+
+@_tx.overload
 def _converter(func: _tx.Callable) -> _tx.Callable:
+    """Register a converter of between types (based on hints)."""
+    ...
+
+
+def _converter(*args, **kwargs) -> _tx.Callable:
     """Decorator to register a converter of between transformation types."""
-    types = tuple(_tx.get_type_hints(func).values())
+    if len(args) == 2:
+        Ti, To = args
+        return partial(_converter, Ti=Ti, To=To)
+    func = args[0]
+    if kwargs:
+        types = kwargs["Ti"], kwargs["To"]
+    else:
+        types = tuple(_tx.get_type_hints(func).values())
     _CONVERTERS[types] = func
     _CONVERTERS_FASTMAP.clear()
     return func
@@ -690,7 +807,8 @@ def _to(x: Transformation, cls: _tx.Type[Transformation], **kwargs) -> Transform
     #       similarly to _compose() and _COMPOSERS.
     t1, t2 = type(x), cls
     if (t1, t2) in _CONVERTERS_FASTMAP:
-        return _CONVERTERS_FASTMAP[(t1, t2)]
+        func = _CONVERTERS_FASTMAP[(t1, t2)]
+        return func(x, **kwargs)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _CONVERTERS.items():
         distance = _distance(t1, T1) + _distance(t2, T2)
@@ -727,12 +845,22 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     """
     t1, t2 = type(x1), type(x2)
     if (t1, t2) in _COMPOSERS_FASTMAP:
-        return _COMPOSERS_FASTMAP[(t1, t2)]
+        func = _COMPOSERS_FASTMAP[(t1, t2)]
+        return func(x1, x2)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _COMPOSERS.items():
-        distance = _distance(t1, T1) + _distance(t2, T2)
-        if distance < best_distance:
-            best_distance, best_func = distance, FUNC
+        if _get_origin(T1) in (_tx.Union, _t.UnionType):
+            T1s = _tx.get_args(T1)
+        else:
+            T1s = (T1,)
+        if _get_origin(T2) in (_tx.Union, _t.UnionType):
+            T2s = _tx.get_args(T2)
+        else:            
+            T2s = (T2,)
+        for T1, T2 in itertools.product(T1s, T2s):
+            distance = _distance(t1, T1) + _distance(t2, T2)
+            if distance < best_distance:
+                best_distance, best_func = distance, FUNC
     if best_distance < float("inf"):
         _COMPOSERS_FASTMAP[(t1, t2)] = best_func
         return best_func(x1, x2)
@@ -763,7 +891,8 @@ def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
     adaptor function.
     """
     if (s1, s2) in _ADAPTORS_FASTMAP:
-        return _ADAPTORS_FASTMAP[(s1, s2)]
+        func = _ADAPTORS_FASTMAP[(s1, s2)]
+        return func(s1, s2)
     best_distance, best_func = float("inf"), None
     for (S1, S2), FUNC in _ADAPTORS.items():
         distance = _distance(s1, S1) + _distance(s2, S2)

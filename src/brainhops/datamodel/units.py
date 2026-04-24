@@ -161,7 +161,7 @@ class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=Fal
     scale: ClassVar[float] = 1.0
     type: ClassVar[_tx.Literal["time", "space"]]
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> _tx.Self:
         if cls in _REGISTERED_UNITS:
             return _REGISTERED_UNITS[cls]
         name = kwargs.get("name", args[0] if args else None)
@@ -175,6 +175,10 @@ class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=Fal
                 if kls in _REGISTERED_UNITS:
                     return _REGISTERED_UNITS[kls]
         return super().__new__(cls)
+
+    def __init__(self, *args, **kwargs) -> None:
+        # Do nothing, so to not trigger Struct.__init__
+        pass
 
     def __str__(self) -> str:
         return getattr(type(self), "name", "<unknown unit>")

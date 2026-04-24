@@ -320,8 +320,8 @@ def _make_converter_chain(*types):
 
     T0, TN = types[0], types[-1]
 
-    @_converter
-    def _(t: T0) -> TN:
+    @_converter(T0, TN)
+    def _(t):
         for T1 in types[1:]:
             t = _to(t, T1)
         return t

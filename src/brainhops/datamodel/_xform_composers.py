@@ -1,3 +1,16 @@
+"""
+This module implements function that compute the composition of two
+transformations. It assumes that their input and output coordinate  
+systems are compatible (see _xform_adaptors for composing transformations
+that do not have compatible coordinate systems). It also assumes that
+transfmations are fully defined (i.e., their parameters are not `None`).
+
+A composer takes two transformations To and Ti, and returns a 
+transformation T such that T = To @ Ti, i.e. such that T(x) = To(Ti(x)) 
+for any x in the domain of Ti. The input coordinate system of T is the
+input coordinate system of Ti, and the output coordinate system of T is
+the output coordinate system of To.
+"""
 # externals
 import typing_extensions as _tx
 
@@ -7,7 +20,7 @@ from .transformations import (
     Identity, Translation, Scaling, Permutation, Linear, Affine, Sequence,
     CoordinatesField, CartesianField, DisplacementField
 )
-from ._utils import _pull_field
+from ._utils import _pull_field, _get_array_package
 
 
 # ----------------------------------------------------------------------
@@ -16,13 +29,13 @@ from ._utils import _pull_field
 
 
 @_composer
-def _(t1: Identity, t2: Transformation) -> Transformation:
-    return type(t2)(t2, output=t1.output).compute()
+def _(To: Identity, Ti: Transformation) -> Transformation:
+    return type(Ti)(Ti, output=To.output).compute()
 
 
 @_composer
-def _(t1: Transformation, t2: Identity) -> Transformation:
-    return type(t1)(t1, input=t2.input).compute()
+def _(To: Transformation, Ti: Identity) -> Transformation:
+    return type(To)(To, input=Ti.input).compute()
 
 
 # ----------------------------------------------------------------------
@@ -31,29 +44,29 @@ def _(t1: Transformation, t2: Identity) -> Transformation:
 
 
 @_composer
-def _(t1: Sequence, t2: Transformation) -> Transformation:
+def _(To: Sequence, Ti: Transformation) -> Transformation:
     return Sequence(
-        transformations=[t2] + list(t1.transformations),
-        input=t2.input,
-        output=t1.output
+        transformations=[Ti] + list(To.transformations),
+        input=Ti.input,
+        output=To.output
     ).compute()
 
 
 @_composer
-def _(t1: Transformation, t2: Sequence) -> Transformation:
+def _(To: Transformation, Ti: Sequence) -> Transformation:
     return Sequence(
-        transformations=list(t2.transformations) + [t1],
-        input=t2.input,
-        output=t1.output
+        transformations=list(Ti.transformations) + [To],
+        input=Ti.input,
+        output=To.output
     ).compute()
 
 
 @_composer
-def _(t1: Sequence, t2: Sequence) -> Sequence:
+def _(To: Sequence, Ti: Sequence) -> Sequence:
     return Sequence(
-        transformations=list(t2.transformations) + list(t1.transformations),
-        input=t2.input,
-        output=t1.output
+        transformations=list(Ti.transformations) + list(To.transformations),
+        input=Ti.input,
+        output=To.output
     ).compute()
 
 
@@ -63,47 +76,53 @@ def _(t1: Sequence, t2: Sequence) -> Sequence:
 
 
 @_composer
-def _(t1: Affine, t2: Affine) -> Affine:
+def _(To: Affine, Ti: Affine) -> Affine:
+    nx = _get_array_package(To.matrix)
+    No = To.matrix.shape[0]
+    Ni = Ti.matrix.shape[1] - 1
+    A = nx.empty_like(To.matrix, shape=(No, Ni + 1))
+    A[:, :-1] = To.matrix[:, :-1] @ Ti.matrix[:, :-1]
+    A[:, -1:] = To.matrix[:, :-1] @ Ti.matrix[:, -1:] + To.matrix[:, -1:]
     return Affine(
-        matrix=t1.matrix @ t2.matrix,
-        input=t2.input,
-        output=t1.output
+        matrix=A,
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Linear, t2: Linear) -> Linear:
+def _(To: Linear, Ti: Linear) -> Linear:
     return Linear(
-        matrix=t1.matrix @ t2.matrix,
-        input=t2.input,
-        output=t1.output
+        matrix=To.matrix @ Ti.matrix,
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Permutation, t2: Permutation) -> Permutation:
+def _(To: Permutation, Ti: Permutation) -> Permutation:
     return Permutation(
-        permutation=[t1.permutation[i] for i in t2.permutation],
-        input=t2.input,
-        output=t1.output
+        permutation=To.permutation[Ti.permutation],
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Scaling, t2: Scaling) -> Scaling:
+def _(To: Scaling, Ti: Scaling) -> Scaling:
     return Scaling(
-        scale=[s1 * s2 for s1, s2 in zip(t1.scale, t2.scale)],
-        input=t2.input,
-        output=t1.output
+        scale=To.scale * Ti.scale,
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Translation, t2: Translation) -> Translation:
+def _(To: Translation, Ti: Translation) -> Translation:
     return Translation(
-        translation=[t1 + t2 for t1, t2 in zip(t1.translation, t2.translation)],
-        input=t2.input,
-        output=t1.output
+        translation=To.translation + Ti.translation,
+        input=Ti.input,
+        output=To.output
     )
 
 
@@ -112,13 +131,13 @@ _AffineIsh = _tx.Union[_LinearIsh, Affine, Translation]
 
 
 @_composer
-def _(t1: _LinearIsh, t2: _LinearIsh) -> Linear:
-    return (t1.to(Linear) @ t2.to(Linear)).compute()
+def _(To: _LinearIsh, Ti: _LinearIsh) -> Linear:
+    return (To.to(Linear) @ Ti.to(Linear)).compute()
 
 
 @_composer
-def _(t1: _AffineIsh, t2: _AffineIsh) -> Affine:
-    return (t1.to(Affine) @ t2.to(Affine)).compute()
+def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
+    return (To.to(Affine) @ Ti.to(Affine)).compute()
 
 
 # ----------------------------------------------------------------------
@@ -127,52 +146,52 @@ def _(t1: _AffineIsh, t2: _AffineIsh) -> Affine:
 
 
 @_composer
-def _(t1: Translation, t2: CoordinatesField) -> CoordinatesField:
-    field = t2.field + t1.translation
+def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
+    field = Ti.field + To.translation
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Scaling, t2: CoordinatesField) -> CoordinatesField:
-    field = t2.field * t1.scale
+def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
+    field = Ti.field * To.scale
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Permutation, t2: CoordinatesField) -> CoordinatesField:
-    field = t2.field[..., t1.permutation]
+def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
+    field = Ti.field[..., To.permutation]
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Linear, t2: CoordinatesField) -> CoordinatesField:
-    field = t2.field @ t1.matrix.T
+def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
+    field = Ti.field @ To.matrix.T
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Affine, t2: CoordinatesField) -> CoordinatesField:
-    field = t2.field @ t1.matrix[:, :-1].T + t1.matrix[:, -1]
+def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
+    field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
@@ -182,56 +201,56 @@ def _(t1: Affine, t2: CoordinatesField) -> CoordinatesField:
 
 
 @_composer
-def _(t1: Translation, t2: DisplacementField) -> DisplacementField:
-    field = t2.field + t1.translation
+def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
+    field = Ti.field + To.translation
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Scaling, t2: DisplacementField) -> DisplacementField:
-    grid = CartesianField(shape=t2.field.shape[:-1]).field
-    field = t1.scale * t2.field + (t1.scale - 1) * grid
+def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = To.scale * Ti.field + (To.scale - 1) * grid
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Permutation, t2: DisplacementField) -> DisplacementField:
-    grid = CartesianField(shape=t2.field.shape[:-1]).field
-    field = (grid + t2.field)[..., t1.permutation] - grid
+def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field)[..., To.permutation] - grid
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Linear, t2: DisplacementField) -> DisplacementField:
-    grid = CartesianField(shape=t2.field.shape[:-1]).field
-    field = (grid + t2.field) @ t1.matrix.T - grid
+def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field) @ To.matrix.T - grid
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
 @_composer
-def _(t1: Affine, t2: DisplacementField) -> DisplacementField:
-    grid = CartesianField(shape=t2.field.shape[:-1]).field
-    field = (grid + t2.field) @ t1.matrix[:, :-1].T + t1.matrix[:, -1] - grid
+def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output
+        input=Ti.input,
+        output=To.output
     )
 
 
@@ -241,63 +260,63 @@ def _(t1: Affine, t2: DisplacementField) -> DisplacementField:
 
 
 @_composer
-def _(t1: DisplacementField, t2: DisplacementField) -> DisplacementField:
-    t2 = t2.to(coeff=False)
-    x2 = t2.to(CoordinatesField)
+def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
+    Ti = Ti.to(coeff=False)
+    x2 = Ti.to(CoordinatesField)
     field = _pull_field(
-        t1.field,
+        To.field,
         coords=x2.field,
-        order=t1.order,
-        bound=t1.bound,
-        coeff=t1.coeff
-    ) + t2.field
+        order=To.order,
+        bound=To.bound,
+        coeff=To.coeff
+    ) + Ti.field
     return DisplacementField(
         field=field,
-        input=t2.input,
-        output=t1.output,
-        order=t1.order, 
-        bound=t1.bound, 
+        input=Ti.input,
+        output=To.output,
+        order=To.order, 
+        bound=To.bound, 
         coeff=False
-    ).to(coeff=t1.coeff)
+    ).to(coeff=To.coeff)
 
 
 @_composer
-def _(t1: DisplacementField, t2: CoordinatesField) -> CoordinatesField:
-    t2 = t2.to(coeff=False)
-    x2 = t2.to(CoordinatesField)
+def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
+    Ti = Ti.to(coeff=False)
+    x2 = Ti.to(CoordinatesField)
     field = _pull_field(
-        t1.field,
+        To.field,
         coords=x2.field,
-        order=t1.order,
-        bound=t1.bound,
-        coeff=t1.coeff
+        order=To.order,
+        bound=To.bound,
+        coeff=To.coeff
     ) + x2
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output,
-        order=t2.order, 
-        bound=t2.bound, 
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order, 
+        bound=Ti.bound, 
         coeff=False
-    ).to(coeff=t2.coeff)
+    ).to(coeff=Ti.coeff)
 
 
 @_composer
-def _(t1: CoordinatesField, t2: CoordinatesField) -> CoordinatesField:
-    coeff = t2.coeff
-    t2 = t2.to(coeff=False)
+def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    Ti = Ti.to(coeff=False)
     field = _pull_field(
-        t1.field,
-        coords=t2.field,
-        order=t1.order,
-        bound=t1.bound,
-        coeff=t1.coeff
+        To.field,
+        coords=Ti.field,
+        order=To.order,
+        bound=To.bound,
+        coeff=To.coeff
     )
     return CoordinatesField(
         field=field,
-        input=t2.input,
-        output=t1.output,
-        order=t2.order, 
-        bound=t2.bound, 
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order, 
+        bound=Ti.bound, 
         coeff=False
     ).to(coeff=coeff)

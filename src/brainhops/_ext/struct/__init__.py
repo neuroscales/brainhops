@@ -144,6 +144,39 @@ def __post_new__(cls: type) -> type:
     return cls
 
 
+def _add_fields(
+    fields: dict[str, Field], 
+    new_fields: _tx.Iterable[Field], 
+    replace: bool = False,
+    reverse: bool = False,
+) -> None:
+    # Add fields to an existing dict of fields.
+    # This is used when constructing the dictionary of inherited fields.
+    # * replace :
+    #   If True, then new fields will replace existing fields.
+    #   If False, then existing fields will be preserved.
+    # * reverse :
+    #   If True, then new fields will be added before existing fields.
+    #   If False, then new fields will be added after existing fields.
+    #   In both case, the order of `new_fields` is preserved.
+    if replace and not reverse:
+        fields.update({f.name: f for f in new_fields})
+    elif replace and reverse:
+        prev_fields = fields.copy()
+        fields.clear()
+        fields.update({f.name: f for f in new_fields})
+        fields.update(prev_fields)
+    elif not replace and not reverse:
+        for f in new_fields:
+            fields.setdefault(f.name, f)
+    elif not replace and reverse:
+        prev_fields = fields.copy()
+        fields.clear()
+        fields.update(prev_fields)
+        for f in new_fields:
+            fields.setdefault(f.name, f)
+
+
 def __pre_new__(
     metacls: "MetaStruct", 
     clsname: str, 
@@ -167,9 +200,8 @@ def __pre_new__(
     # classes if options are explicitly set (not MISSING).
     options = Options.make_default()
 
-    # Find our base classes in reverse MRO order, and exclude
-    # ourselves. In reversed order so that more derived classes
-    # override earlier field definitions in base classes.
+    # Find our base classes in reverse MRO order, so that order is 
+    # obtained from MRO, but value is obtained from most derived class.
     mro = type(_DISCARD, bases, {}).__mro__
     for b in reversed(mro):
         # Only process classes that have been processed by our
@@ -178,8 +210,12 @@ def __pre_new__(
         if base_fields is not None:
             base_options = getattr(b, _OPTIONS)
             options.update(base_options)
-            for f in base_fields.values():
-                fields[f.name] = f
+            _add_fields(
+                fields, 
+                base_fields.values(), 
+                replace=True, 
+                reverse=options.reverse
+            )
 
     # Save final options for this class.
     options.update(Options(**kwargs))
@@ -209,8 +245,10 @@ def __pre_new__(
         field.setdefault(options)
         cls_fields.append(field)
 
+    # Inherit fields from this class, in correct order.
+    _add_fields(fields, cls_fields, replace=True, reverse=options.reverse)
+
     for f in cls_fields:
-        fields[f.name] = f
 
         # If the class attribute (which is the default value for this
         # field) exists and is of type 'StructField', replace it with 
@@ -738,6 +776,45 @@ def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
 # MetaStruct derives from ABCMeta so that derivatives of Struct can 
 # derive from ABCs (e.g. Mapping).
 
+
+_DOC_OPTIONS = """
+init: bool, default=True
+    Generate `__init__` method
+repr : bool, default=True             
+    Generate `__repr__` method
+eq : bool, default=True               
+    Generate `__eq__` method
+order : bool, default=False            
+    Generate `__lt__` method
+unsafe_hash : bool, default=False      
+    Always generate `__hash__` method
+frozen : bool, default=False           
+    Disable `__setattr__` and `__delattr__`
+match_args : bool, default=True       
+    Generate `__match_args__` for pattern matching
+kw_only : bool, default=False         
+    Make all fields keyword-only by default
+positional_only : bool, default=False
+    Make all fields positional-only by default
+slots : bool, default=False           
+    Generate `__slots__` and remove `__dict__`
+weakref_slot : bool, default=False    
+    Generate a weakref slot in `__slots__`
+default_factory : bool, default=False 
+    Use field type as factory if none is provided
+convert : bool, default=False         
+    Use field type as converter if none is provided
+validate : bool, default=False        
+    Use field type as validator if none is provided
+mapping : bool, default=False
+    Implement the `Mapping` protocol.
+reverse : bool, default=False
+    Use the reverse MRO order to determine field order.
+    This only affects the relaive order of the fields of one class
+    with respect to the fields of its base classes.
+""".strip()
+
+
 class MetaStruct(ABCMeta):
     """
     Examples
@@ -767,36 +844,7 @@ class MetaStruct(ABCMeta):
     
     Other Parameters
     ----------------
-    init: bool, default=True
-        Generate `__init__` method
-    repr : bool, default=True             
-        Generate `__repr__` method
-    eq : bool, default=True               
-        Generate `__eq__` method
-    order : bool, default=False            
-        Generate `__lt__` method
-    unsafe_hash : bool, default=False      
-        Always generate `__hash__` method
-    frozen : bool, default=False           
-        Disable `__setattr__` and `__delattr__`
-    match_args : bool, default=True       
-        Generate `__match_args__` for pattern matching
-    kw_only : bool, default=False         
-        Make all fields keyword-only by default
-    positional_only : bool, default=False
-        Make all fields positional-only by default
-    slots : bool, default=False           
-        Generate `__slots__` and remove `__dict__`
-    weakref_slot : bool, default=False    
-        Generate a weakref slot in `__slots__`
-    default_factory : bool, default=False 
-        Use field type as factory if none is provided
-    convert : bool, default=False         
-        Use field type as converter if none is provided
-    validate : bool, default=False        
-        Use field type as validator if none is provided
-    mapping : bool, default=False
-        Implement the `Mapping` protocol.
+    {DOC_OPTIONS}
 
     Returns
     -------
@@ -825,45 +873,15 @@ class Struct(metaclass=MetaStruct):
 
     Parameters
     ----------
-    init: bool, default=True
-        Generate `__init__` method
-    repr : bool | {"hide_none"}, default=True             
-        Generate `__repr__` method.
-        If "hide_none", then fields with value None are not included 
-        in the repr.
-    eq : bool, default=True               
-        Generate `__eq__` method
-    order : bool, default=False            
-        Generate `__lt__` method
-    unsafe_hash : bool, default=False      
-        Always generate `__hash__` method
-    frozen : bool, default=False           
-        Disable `__setattr__` and `__delattr__`
-    match_args : bool, default=True       
-        Generate `__match_args__` for pattern matching
-    kw_only : bool, default=False         
-        Make all fields keyword-only by default
-    positional_only : bool, default=False
-        Make all fields positional-only by default
-    slots : bool, default=False           
-        Generate `__slots__` and remove `__dict__`
-    weakref_slot : bool, default=False    
-        Generate a weakref slot in `__slots__`
-    default_factory : bool, default=False 
-        Use field type as factory if none is provided
-    convert : bool, default=False         
-        Use field type as converter if none is provided
-    validate : bool, default=False        
-        Use field type as validator if none is provided
-    mapping : bool | {"hide_none"}, default=False
-        Implement the `Mapping` protocol.
-        If "hide_none", then fields with value None are not included 
-        in the list of keys.
-
+    {DOC_OPTIONS}
     """
 
     # Set __slots__ so that inheriting classes can have slot=True
     __slots__ = ()
+
+
+MetaStruct.__doc__ = MetaStruct.__doc__.format(DOC_OPTIONS=_DOC_OPTIONS)
+Struct.__doc__ = Struct.__doc__.format(DOC_OPTIONS=_DOC_OPTIONS)
 
 
 # ----------------------------------------------------------------------

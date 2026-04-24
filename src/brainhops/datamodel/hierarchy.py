@@ -14,9 +14,21 @@ of transformation (e.g. "is this transformation a linear transform?"),
 without it being conflated with type inheritence 
 (e.g. "is this transformation an instance of the Linear class?").
 
+In our hierarchu, transformations types correspond to sets, and 
+inheritance describes set inclusion (i.e., `isubclass(A, B)` implies 
+`A ⊆ B`). All transformations act on the n-dimensional euclidean space 
+R^n, and are assigned a "composition" operator.
+
+Some of these transformation sets (but not all!) are groups under the 
+composition operator. This is indicated by the `@group` decorator. 
+If a set A is a subset of set B, and both A and B are groups, then A is 
+a subgroup of B.
+
 Many linear transformations, when constrained to be invertible, can
-be thought of as members of a Lie group. Lie groups are therefore 
-heavily used in our hierarchy.
+be thought of as members of a Lie group, i.e. they are smooth manifolds, 
+and their group operations (composition and inversion) are smooth maps.
+This is indicated by the `@liegroup` decorator. Note that the set A may 
+be a subgroup of a Lie group B without being a Lie group itself!
 
 Lie groups
 ----------
@@ -45,7 +57,7 @@ General Lie groups (GL/CO/O) are in general not "connected", and
 instead composed of two disconnected components. One that contains
 the identity, and one that does not (the "flipped" version).
 
-Positive Lie groups (SO/CSO/GL+) are restricted to transforms with
+Positive Lie groups (SO/CSO/GL+) are restricted to transformations with
 positive determinant, and therefore exclude flips. They can be defined
 as the component from the corresponding general group that contains the
 identity transform.
@@ -58,13 +70,13 @@ All classical linear group can be extended with the translation group
 (⋉ T) to define affine groups.
 
 ::note
-    * The Special Euclidean group (SE) contains transforms that are
-      classicaly referred to as "rigid-body" transforms. They preserve
+    * The Special Euclidean group (SE) contains transformations that are
+      classicaly referred to as "rigid-body" transformations. They preserve
       angles and volumes.
 
-    * The Special Conformal Euclidean group (CSE) contains transforms 
+    * The Special Conformal Euclidean group (CSE) contains transformations 
       that are classicaly referred to as "similitude" (or conformal) 
-      transforms. They only preserve angles.
+      transformations. They only preserve angles.
 """
 __all__ = [
     "Transformation", 
@@ -96,7 +108,7 @@ __all__ = [
     "PositiveDilation",
     "Translation",                                  # T                (det = 1)
     # LINEAR
-    "LinearTransformation",
+    "LinearTransformation",                         # M (set of matrices)
     "InvertibleLinearTransformation",               # GL               (det ≠ 0)
     "PositiveLinearTransformation",                 # GL+              (det > 0)    
     "SpecialLinearTransformation",                  # SL               (det = 1)
@@ -108,8 +120,8 @@ __all__ = [
     "Permutation",                                 
     "InvertiblePermutation",                        # S                (det ≠ 0)
     "DiagonalTransformation",
-    "InvertibleDiagonalTransformation", 
-    "PositiveDiagonalTransformation",
+    "InvertibleDiagonalTransformation",             # Δ                (det ≠ 0)
+    "PositiveDiagonalTransformation",               # Δ+               (det > 0)
     "MultiplicativeTransformation",                 # R
     "InvertibleMultiplicativeTransformation",       # R*               (det ≠ 0)
     "PositiveMultiplicativeTransformation",         # R+               (det > 0)
@@ -119,11 +131,79 @@ __all__ = [
 from abc import ABC
 
 
+GROUPS = set()
+LIE_GROUPS = set()
+CONNECTED = set()
+SIMPLYCONNECTED = set()
+
+
+def is_group(cls) -> bool:
+    return cls in GROUPS
+
+
+def is_lie_group(cls) -> bool:
+    return cls in LIE_GROUPS
+
+
+def is_connected(cls) -> bool:
+    return cls in CONNECTED
+
+
+def is_simplyconnected(cls) -> bool:
+    return cls in SIMPLYCONNECTED
+
+
+def group(cls):
+    """
+    Mark the set of transformations as forming a group under composition.
+    
+    wiki: https://en.wikipedia.org/wiki/Group_(mathematics)
+    """
+    GROUPS.add(cls)
+    return cls
+
+
+def liegroup(cls):
+    """
+    Mark the set of transformations as forming a Lie group under composition.
+
+    wiki: https://en.wikipedia.org/wiki/Lie_group
+    """
+    LIE_GROUPS.add(cls)
+    return group(cls)
+
+
+def connected(cls):
+    """
+    Mark the set of transformations as being connected.
+
+    wiki: https://en.wikipedia.org/wiki/Connected_space
+    """
+    CONNECTED.add(cls)
+    return cls
+
+
+def simplyconnected(cls):
+    """
+    Mark the set of transformations as being simply connected.
+
+    wiki: https://en.wikipedia.org/wiki/Simply_connected_space
+    """
+    SIMPLYCONNECTED.add(cls)
+    return connected(cls)
+
+
 class Transformation(ABC):
-    """Any coordinate transformation."""
+    """Any coordinate transformation.
+    
+    alias: Morphism
+    """
 
     SYMBOL: str
     FSYMBOL: str
+
+
+Morphism = Transformation
 
 
 class Bijection(Transformation):
@@ -143,19 +223,21 @@ class Isomorphism(Bijection):
     """
 
 
+@group
 class Diffeomorphism(Isomorphism):
     """Smooth invertible transformation, with a smooth inverse.
     
     wiki: https://en.wikipedia.org/wiki/Diffeomorphism
     """
-
     SYMBOL = "Diff"
+    FSYMBOL = "Diff(R^{n})"
 
 
+@group
 class VolumePreservingDiffeomorphism(Diffeomorphism):
     """A diffeomorphism that preserves volumes."""
-
     SYMBOL = "SDiff"
+    FSYMBOL = "SDiff(R^{n})"
 
 
 # ----------------------------------------------------------------------
@@ -170,65 +252,30 @@ class MatrixTransformation(Transformation):
     """
 
 
-class LieGroupTransformation(Transformation):
-    """Transformation that belong to a Lie group.
+@group
+class InvertibleMatrixTransformation(
+    MatrixTransformation, 
+    Bijection
+):
+    """A matrix transformation that is invertible.
     
-    wiki: https://en.wikipedia.org/wiki/Lie_group
+    wiki: https://en.wikipedia.org/wiki/Invertible_matrix
     """
 
 
-class DiffeomorphicLieGroupTransformation(
-    LieGroupTransformation, 
-    Diffeomorphism
-):
-    """Transformation that belong to a Diffeomorphic Lie group."""
-
-
-class ConnectedLieGroupTransformation(DiffeomorphicLieGroupTransformation):
-    """
-    Transformation that belong to Lie groups with a single connected component.
-
-    wiki: https://en.wikipedia.org/wiki/Connected_space
-    """
-
-
-class SimplyConnectedLieGroupTransformation(ConnectedLieGroupTransformation):
-    """
-    Transformation that belong to Lie groups with a single connected component
-    and no holes.
-
-    wiki: https://en.wikipedia.org/wiki/Simply_connected_space
-    """
-
-
-class MatrixLieGroupTransformation(
-    DiffeomorphicLieGroupTransformation, 
-    MatrixTransformation
-):
-    """
-    A transformation that belongs to a Lie group and that can be 
-    represented as a matrix.
+@group
+@simplyconnected
+class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
+    """An invertible matrix transformation with positive determinant.
     
-    Most Lie groups are matrix groups (Lie groups oiginate in the study 
-    of matrix subgroups), and all matrix Lie groups are subgroups of 
-    the group of Diffeomorphisms.
-
-    wiki: https://en.wikipedia.org/wiki/Lie_group#Matrix_Lie_groups
-    """
-
-
-class ConnectedMatrixLieGroupTransformation(
-    MatrixLieGroupTransformation, 
-    ConnectedLieGroupTransformation
-):
-    """
-    Connected Lie groups have a single connected component.
+    wiki: https://en.wikipedia.org/wiki/Positive-definite_matrix
     """
 
 
 # ----------------------------------------------------------------------
 #   A F F I N E
 # ----------------------------------------------------------------------
+
 
 class AffineTransformation(MatrixTransformation):
     """An affine transformation. May not be invertible.
@@ -237,9 +284,10 @@ class AffineTransformation(MatrixTransformation):
     """
 
 
+@liegroup
 class InvertibleAffineTransformation(
     AffineTransformation, 
-    MatrixLieGroupTransformation
+    InvertibleMatrixTransformation
 ):
     """
     An invertible affine transformation 
@@ -257,9 +305,11 @@ class InvertibleAffineTransformation(
     FSYMBOL = "Aff({n})"
 
 
+@liegroup
+@simplyconnected
 class PositiveAffineTransformation(
     InvertibleAffineTransformation, 
-    ConnectedMatrixLieGroupTransformation
+    PositiveDefiniteMatrixTransformation
 ):
     """
     Affine transformation with a positive determinant.
@@ -273,6 +323,8 @@ class PositiveAffineTransformation(
     FSYMBOL = "Aff+({n})"
 
 
+@liegroup
+@simplyconnected
 class SpecialAffineTransformation(
     PositiveAffineTransformation,
     VolumePreservingDiffeomorphism
@@ -289,13 +341,14 @@ class SpecialAffineTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Affine_group#Special_affine_group
     """
-    SYMBOL = 'SAff'
-    FSYMBOL = 'SAff({n})'
+    SYMBOL = "SAff"
+    FSYMBOL = "SAff({n})"
 
 
 VolumePreservingAffineTransformation = SpecialAffineTransformation
 
 
+@liegroup
 class ConformalEuclideanTransformation(InvertibleAffineTransformation):
     """
     An affine transformation that preserves angles (up to their sign).
@@ -305,10 +358,12 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
 
     symbol: CE = CO ⋉ T
     """
-    SYMBOL = 'CE'
-    FSYMBOL = 'CE({n})'
+    SYMBOL = "CE"
+    FSYMBOL = "CE({n})"
 
 
+@liegroup
+@connected
 class SpecialConformalEuclideanTransformation(ConformalEuclideanTransformation):
     """
     An affine transformation that preserves angles
@@ -320,25 +375,28 @@ class SpecialConformalEuclideanTransformation(ConformalEuclideanTransformation):
 
     alias: Similitude
     """
-    SYMBOL = 'CSE'
-    FSYMBOL = 'CSE({n})'
+    SYMBOL = "CSE"
+    FSYMBOL = "CSE({n})"
 
 
 Similitude = SpecialConformalEuclideanTransformation
 
 
+@liegroup
 class EuclideanTransformation(ConformalEuclideanTransformation):
     """
-    A euclidean transformation with positive determinant +/- 1
+    A euclidean transformation with determinant ± 1
     
     symbol: E = O ⋉ T
 
     wiki: https://en.wikipedia.org/wiki/Euclidean_group
     """
-    SYMBOL = 'E'
-    FSYMBOL = 'E({n})'
+    SYMBOL = "E"
+    FSYMBOL = "E({n})"
 
 
+@liegroup
+@connected
 class SpecialEuclideanTransformation(SpecialConformalEuclideanTransformation):
     """
     A euclidean transformation with determinant +1
@@ -349,13 +407,14 @@ class SpecialEuclideanTransformation(SpecialConformalEuclideanTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Euclidean_group#Direct_and_indirect_isometries
     """
-    SYMBOL = 'SE'
-    FSYMBOL = 'SE({n})'
+    SYMBOL = "SE"
+    FSYMBOL = "SE({n})"
 
 
 RigidTransformation = SpecialEuclideanTransformation
 
 
+@liegroup
 class Dilation(ConformalEuclideanTransformation):
     """
     A dilation is a similitude with no rotation, i.e. a scaling with
@@ -366,10 +425,12 @@ class Dilation(ConformalEuclideanTransformation):
     wiki: https://en.wikipedia.org/wiki/Homothety
     wiki: https://en.wikipedia.org/wiki/Dilation_(metric_space)
     """
-    SYMBOL = 'R* ⋉ T'
-    FSYMBOL = 'R* ⋉ T({n})'
+    SYMBOL = "R* ⋉ T"
+    FSYMBOL = "R* ⋉ T({n})"
 
 
+@liegroup
+@simplyconnected
 class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
     """
     A dilation with a positive scaling factor.
@@ -379,10 +440,12 @@ class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
     wiki: https://en.wikipedia.org/wiki/Homothety
     wiki: https://en.wikipedia.org/wiki/Dilation_(metric_space)
     """
-    SYMBOL = 'R+ ⋉ T'
-    FSYMBOL = 'R+ ⋉ T({n})'
+    SYMBOL = "R+ ⋉ T"
+    FSYMBOL = "R+ ⋉ T({n})"
 
 
+@liegroup
+@simplyconnected
 class Translation(PositiveDilation):
     """A translation.
     
@@ -390,8 +453,8 @@ class Translation(PositiveDilation):
 
     wiki: https://en.wikipedia.org/wiki/Translation_(geometry)#As_a_group
     """
-    SYMBOL = 'T'
-    FSYMBOL = 'T({n})'
+    SYMBOL = "T"
+    FSYMBOL = "T({n})"
 
 
 # ----------------------------------------------------------------------
@@ -403,6 +466,7 @@ class LinearTransformation(AffineTransformation):
     """A linear transformation. May not be invertible."""
 
 
+@liegroup
 class InvertibleLinearTransformation(
     LinearTransformation, 
     InvertibleAffineTransformation
@@ -424,6 +488,8 @@ class InvertibleLinearTransformation(
     FSYMBOL = "GL({n})"
 
 
+@liegroup
+@connected
 class PositiveLinearTransformation(
     InvertibleLinearTransformation, 
     PositiveAffineTransformation
@@ -440,6 +506,8 @@ class PositiveLinearTransformation(
     FSYMBOL = "GL+({n})"
 
 
+@liegroup
+@connected
 class SpecialLinearTransformation(
     PositiveLinearTransformation,
     VolumePreservingDiffeomorphism
@@ -451,10 +519,11 @@ class SpecialLinearTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Special_linear_group
     """
-    SYMBOL = 'SL'
-    FSYMBOL = 'SL({n})'
+    SYMBOL = "SL"
+    FSYMBOL = "SL({n})"
 
 
+@liegroup
 class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
     """
     A linear transformation that preserves (absolute) angles (CO)
@@ -464,10 +533,12 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group
     """
-    SYMBOL = 'CO'
-    FSYMBOL = 'CO({n})'
+    SYMBOL = "CO"
+    FSYMBOL = "CO({n})"
 
 
+@liegroup
+@connected
 class SpecialConformalOrthogonalTransformation(
     ConformalOrthogonalTransformation, 
     SpecialLinearTransformation
@@ -481,32 +552,35 @@ class SpecialConformalOrthogonalTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group
     """
-    SYMBOL = 'CSO'
-    FSYMBOL = 'CSO({n})'
+    SYMBOL = "CSO"
+    FSYMBOL = "CSO({n})"
 
 
+@liegroup
 class OrthogonalTransformation(
     ConformalOrthogonalTransformation, 
     EuclideanTransformation
 ):
     """
-    A orthogonal matrix (AA' = I) with determinant +/- 1
+    A orthogonal matrix (AA" = I) with determinant ±1
 
     symbol: O
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group
     """
-    SYMBOL = 'O'
-    FSYMBOL = 'O({n})'
+    SYMBOL = "O"
+    FSYMBOL = "O({n})"
 
 
+@liegroup
+@connected
 class SpecialOrthogonalTransformation(
     OrthogonalTransformation, 
     SpecialConformalOrthogonalTransformation, 
     SpecialEuclideanTransformation
 ):
     """
-    A orthogonal matrix (AA' = I) with determinant +1 (SO)
+    A orthogonal matrix (AA" = I) with determinant +1
 
     symbol: SO
     
@@ -514,28 +588,57 @@ class SpecialOrthogonalTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Special_orthogonal_group
     """
-    SYMBOL = 'SO'
-    FSYMBOL = 'SO({n})'
+    SYMBOL = "SO"
+    FSYMBOL = "SO({n})"
 
 
 Rotation = SpecialOrthogonalTransformation
 
 
-class Permutation(LinearTransformation):
-    """A permutation, may not be invertible."""
-
-
-class InvertiblePermutation(Permutation, OrthogonalTransformation):
-    """An invertible permutation.
+@group
+class GeneralizedPermutation(InvertibleLinearTransformation):
+    """A generalized permutation.
     
-    Invertible permutation form the symmetric Lie group, named S
+    Permutations are invertible by definition.
 
-    Symbol: S
+    The generalized permutation group is the semidirect product of the 
+    symmetric group (permutations) and the group of invertible diagonal 
+    matrices.
+
+    symbol: S ⋉ Δ
+
+    wiki: https://en.wikipedia.org/wiki/Generalized_permutation_matrix
+    """
+    SYMBOL = "S ⋉ Δ"
+    FSYMBOL = "S_{n} ⋉ Δ({n})"
+
+
+@group
+class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
+    """A signed permutation.
+
+    A generalized permutation with non-zero entries ±1.
+
+    wiki: https://en.wikipedia.org/wiki/Generalized_permutation_matrix#Signed_permutation_group
+    """
+    SYMBOL = "S ⋉ Δ+"
+    FSYMBOL = "S_{n} ⋉ Δ+({n})"
+
+
+@group
+class Permutation(SignedPermutation, OrthogonalTransformation):
+    """A permutation.
+    
+    A generalized permutation with non-zero entries +1.
+
+    Permutations form the symmetric Lie group, named S.
+
+    symbol: S
 
     wiki: https://en.wikipedia.org/wiki/Permutation_group
     """
-    SYMBOL = 'S'
-    FSYMBOL = 'S_{n}'
+    SYMBOL = "S"
+    FSYMBOL = "S_{n}"
 
 
 class DiagonalTransformation(LinearTransformation):
@@ -546,6 +649,7 @@ class DiagonalTransformation(LinearTransformation):
     """
 
 
+@liegroup
 class InvertibleDiagonalTransformation(
     DiagonalTransformation, 
     InvertibleLinearTransformation
@@ -556,9 +660,15 @@ class InvertibleDiagonalTransformation(
 
     This group includes reflections, and has therefore two connected 
     components.
+
+    symbol: Δ
     """
+    SYMBOL = "Δ"
+    FSYMBOL = "Δ({n})"
 
 
+@liegroup
+@simplyconnected
 class PositiveDiagonalTransformation(
     InvertibleDiagonalTransformation, 
     PositiveLinearTransformation
@@ -567,7 +677,11 @@ class PositiveDiagonalTransformation(
     
     This group does not include reflections, and has therefore a
     single connected component.
+
+    symbol: Δ+
     """
+    SYMBOL = "Δ+"
+    FSYMBOL = "Δ+({n})"
 
 
 class MultiplicativeTransformation(
@@ -577,10 +691,11 @@ class MultiplicativeTransformation(
     
     symbol: R
     """
-    SYMBOL = 'R'
-    FSYMBOL = 'R'
+    SYMBOL = "R"
+    FSYMBOL = "R"
 
 
+@liegroup
 class InvertibleMultiplicativeTransformation(
     MultiplicativeTransformation, 
     InvertibleDiagonalTransformation
@@ -594,13 +709,15 @@ class InvertibleMultiplicativeTransformation(
     wiki: https://en.wikipedia.org/wiki/Multiplicative_group
     wiki: https://en.wikipedia.org/wiki/Homothety
     """
-    SYMBOL = 'R*'
-    FSYMBOL = 'R*'
+    SYMBOL = "R*"
+    FSYMBOL = "R*"
 
 
 Homothety = InvertibleMultiplicativeTransformation
 
 
+@liegroup
+@simplyconnected
 class PositiveMultiplicativeTransformation(
     MultiplicativeTransformation, 
     PositiveDiagonalTransformation
@@ -613,8 +730,8 @@ class PositiveMultiplicativeTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Scaling_(geometry)
     """
-    SYMBOL = 'R+'
-    FSYMBOL = 'R+'
+    SYMBOL = "R+"
+    FSYMBOL = "R+"
 
 
 PositiveHomothety = PositiveMultiplicativeTransformation
@@ -624,9 +741,12 @@ PositiveHomothety = PositiveMultiplicativeTransformation
 #   I D E N T I T Y
 # ----------------------------------------------------------------------
 
+
+@liegroup
+@simplyconnected
 class IdentityTransformation(
     Translation,
-    InvertiblePermutation,
+    Permutation,
     PositiveMultiplicativeTransformation,
     SpecialOrthogonalTransformation
 ):
@@ -636,5 +756,5 @@ class IdentityTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Identity_function
     """
-    SYMBOL = 'I'
-    FSYMBOL = 'I({n})'
+    SYMBOL = "I"
+    FSYMBOL = "I({n})"

@@ -92,9 +92,16 @@ class Field(SlotsBase):
     def from_hint(
         cls, name: str, hint: _tx.Any, default: _tx.Any = MISSING
     ) -> "Field":
-        field = Field()
         type = hint
-        if _get_origin(hint) is _tx.Annotated:
+        origin = _get_origin(hint)
+
+        if origin is _tx.ClassVar:
+            # Replace python's ClassVar with our own.
+            hint = ClassVar[_tx.get_args(hint)]
+            return cls.from_hint(name, hint, default)
+    
+        field = Field()
+        if origin is _tx.Annotated:
             type, *hints = _tx.get_args(hint)
             for hint in hints:
                 if isinstance(hint, Field):

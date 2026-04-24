@@ -10,11 +10,11 @@ class BoundaryCondition(StrEnum):
 
 
 class InterpolationOrder(IntEnum):
-    nearest = 0
-    linear = 1
-    quadratic = 2
-    cubic = 3
-    fourth = 4
-    fifth = 5
-    barycentric = -1
-    fourier = -2
+    zeroth = nearest   = 0
+    first  = linear    = 1
+    second = quadratic = 2
+    third  = cubic     = 3
+    fourth             = 4
+    fifth              = 5
+    barycentric        = -1
+    fourier            = -2

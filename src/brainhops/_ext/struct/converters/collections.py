@@ -23,7 +23,7 @@ import typing_extensions as _tx
 # internals
 from .abc import HintConverter, _register
 from .base import ObjectConverter
-from .utils import ConversionError
+from .utils import ConversionError, _issubclass
 
 
 # ----------------------------------------------------------------------
@@ -49,7 +49,7 @@ class IterableConverter(ObjectConverter[ITERABLE]):
     _DEFAULT = abc.Iterable
 
     def _init_check(self):
-        return issubclass(self.origin, self._DEFAULT)
+        return _issubclass(self.origin, self._DEFAULT)
 
     def _convert(self, value: _tx.Any) -> ITERABLE:
         origin, args = self.origin, self.args
@@ -59,7 +59,7 @@ class IterableConverter(ObjectConverter[ITERABLE]):
             return value
         converter = HintConverter(args[0])
         return (converter(v) for v in value)
-    
+
 
 @_register(abc.Iterator, _tx.Iterator)
 class IteratorConverter(IterableConverter[ITERATOR]):

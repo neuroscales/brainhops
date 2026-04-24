@@ -3,7 +3,7 @@
 # internals
 from .systems import CoordinateSystem
 from .orientation import Orientation
-from .transformations import Transformation, Identity, Permutation, Scaling, 
+from .transformations import Transformation, Identity, Permutation, Scaling
 from .transformations import _adaptor, is_identity
 
 
@@ -48,7 +48,8 @@ def _get_by_orientation_type(axes, orientation_type):
 
 
 @_adaptor
-def _(inp: CoordinateSystem, out: CoordinateSystem) -> Transformation:
+def _(inp: Transformation, out: Transformation) -> Transformation:
+
     raise NotImplementedError
 
     # TODO/WIP
