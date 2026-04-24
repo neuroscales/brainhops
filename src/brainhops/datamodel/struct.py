@@ -5,9 +5,9 @@ from brainhops.struct import Struct
 
 
 class SpecializedStruct(
-    Struct, 
-    convert=True, 
-    mapping=True, 
+    Struct,
+    convert=False,
+    mapping=True,
     default_factory=True,
 ):
     """
@@ -19,8 +19,8 @@ class SpecializedStruct(
         self, *args, **kwargs
     ) -> _tx.Tuple[_tx.Tuple, _tx.Mapping]:
         if (
-            args and 
-            isinstance(args[0], Mapping) and 
+            args and
+            isinstance(args[0], Mapping) and
             all(key in self.keys() for key in args[0].keys())
         ):
             # Valid mapping-like object
