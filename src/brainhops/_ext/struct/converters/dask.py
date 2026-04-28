@@ -6,7 +6,7 @@ import numbers
 import typing_extensions as _tx
 
 # internals
-from .abc import _register
+from .abc import register
 from .base import ObjectConverter
 from . import dask_typing as dkt
 
@@ -44,7 +44,7 @@ if da:
     NDARRAY = _tx.TypeVar("NDARRAY", bound=da.Array)
 
 
-    @_register(da.Array, dkt.Array)
+    @register(da.Array, dkt.Array)
     class DaskArrayConverter(ObjectConverter[NDARRAY]):
         """An adaptor for dask arrays."""
 

@@ -1,7 +1,7 @@
 __all__ = [
     "Field",
     "Default",
-    "DefaultFactory",
+    "Factory",
     "ConvertTo",
     "Validate",
     "Init",
@@ -49,7 +49,7 @@ T = _tx.TypeVar("T")
     'name',             # Field name
     'type',             # Field type (or type hint)
     'default',          # Default value for this field.
-    'default_factory',  # A factory function that generates a default value for this field.
+    'factory',  # A factory function that generates a default value for this field.
     'init',             # Include this field in the generated __init__ method.
     'repr',             # Include this field in the generated __repr__ method.
     'hash',             # Include this field in the generated __hash__ method.
@@ -159,9 +159,9 @@ class Field(SlotsBase):
             self.validator = options.validate
         if self.validator is True:
             self.validator = HintValidator(self.type)
-        if self.default_factory is MISSING: 
-            self.default_factory = options.default_factory
-        if self.default_factory is True:
+        if self.factory is MISSING: 
+            self.factory = options.factory
+        if self.factory is True:
             factory = self.type
             origin = _get_origin(factory)
             if origin in (_t.UnionType, _tx.Union, _tx.Optional):
@@ -170,7 +170,7 @@ class Field(SlotsBase):
                 factory = lambda: _tx.get_args(factory)[0]
             else:
                 factory = origin
-            self.default_factory = factory
+            self.factory = factory
 
 
 # ----------------------------------------------------------------------
@@ -262,19 +262,19 @@ class Default(AnnotatedField):
 
 
 @slots
-class DefaultFactory(AnnotatedField):
+class Factory(AnnotatedField):
     """
     Specifiy that a field has a default factory.
     
     ```python
-    DefaultFactory()             ~> Field(default_factory=True)
-    DefaultFactory(list)         ~> Field(default_factory=list)
-    DefaultFactory[list]         ~> Annotated[T, Field(default_factory=True)]
-    DefaultFactory[list, mylist] ~> Annotated[T, Field(default_factory=mylist)]
+    Factory()             ~> Field(factory=True)
+    Factory(list)         ~> Field(factory=list)
+    Factory[list]         ~> Annotated[T, Field(factory=True)]
+    Factory[list, mylist] ~> Annotated[T, Field(factory=mylist)]
     ```
     """
 
-    __set_slots__ = {'default_factory': True}
+    __set_slots__ = {'factory': True}
 
 
 @slots

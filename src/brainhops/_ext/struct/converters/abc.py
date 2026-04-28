@@ -1,4 +1,4 @@
-__all__ = ["HintConverter"]
+__all__ = ["HintConverter", "register"]
 
 from abc import ABC, abstractmethod
 from collections import abc
@@ -79,22 +79,22 @@ class HintConverter(_tx.Generic[T], ABC):
 
 
 @_tx.overload
-def _register(
+def register(
     *origins: _tx.Tuple[_tx.Any], 
     converter: None = None
 ) -> _tx.Callable[[_tx.Type[HintConverter]], _tx.Type[HintConverter]]: ...
 
 
 @_tx.overload
-def _register(
+def register(
     *origins: _tx.Tuple[_tx.Any], 
     converter: _tx.Type[HintConverter]
 ) -> _tx.Type[HintConverter]: ...
 
 
-def _register(*origins, converter=None):
+def register(*origins, converter=None):
     if converter is None:
-        return lambda cls: _register(*origins, converter=cls)
+        return lambda cls: register(*origins, converter=cls)
     for origin in origins:
         HintConverter._CONVERTERS[origin] = converter
     return converter

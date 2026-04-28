@@ -1,7 +1,7 @@
 __all__ = ["ObjectConverter", "TypeConverter"]
 import typing_extensions as _tx
 
-from .abc import HintConverter, _register
+from .abc import HintConverter, register
 from .utils import ConversionError, _get_origin
 
 
@@ -16,7 +16,7 @@ OBJ = _tx.TypeVar("OBJ", bound=object)
 TYP = _tx.TypeVar("TYP", bound=type)
 
 
-@_register(object)
+@register(object)
 class ObjectConverter(HintConverter[OBJ]):
 
     _DEFAULT = object
@@ -29,7 +29,7 @@ class ObjectConverter(HintConverter[OBJ]):
             return self.type(value)
 
 
-@_register(type, _tx.Type)
+@register(type, _tx.Type)
 class TypeConverter(HintConverter[TYP]):
 
     def _init_check(self):

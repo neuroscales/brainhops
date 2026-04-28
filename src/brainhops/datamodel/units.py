@@ -137,11 +137,19 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
     def decorator(cls: type) -> type:
 
         base = register(cls)
+        if "." in cls.__qualname__:
+            qualprefix = cls.__qualname__.rsplit(".")[0] + "."
+        else:
+            qualprefix = ""
 
         for prefix in PrefixName:
             name = prefix.capitalize() + base.__name__
-            kls = type(name, cls.__bases__, {"prefix": prefix, "base": base.base})
-            kls.__module__ = cls.__module__
+            kls = type(name, cls.__bases__, {
+                "prefix": prefix, 
+                "base": base.base,
+                "__module__": cls.__module__,
+                "__qualname__": qualprefix + name,
+            })
             globals[name] = kls
             register(kls)
             __all__.append(name)
@@ -184,7 +192,7 @@ class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=Fal
         return getattr(type(self), "name", "<unknown unit>")
 
     def __repr__(self) -> str:
-        return f"'{self}'"
+        return f"'{self.__str__()}'"
 
 
 class _MetaUnitSI(MetaStruct):

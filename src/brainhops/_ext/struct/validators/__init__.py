@@ -1,4 +1,4 @@
-__all__ = ["HintConverter", "ConversionError"]
+__all__ = ["HintConverter", "ConversionError", "register"]
 
 import types as _t
 import typing_extensions as _tx
@@ -62,22 +62,22 @@ def _get_origin(type: _tx.Any) -> _tx.Any:
 
 
 @_tx.overload
-def _register(
+def register(
     *origins: _tx.Tuple[_tx.Any], 
     validator: None = None
 ) -> _tx.Callable[[_tx.Type[HintValidator]], _tx.Type[HintValidator]]: ...
 
 
 @_tx.overload
-def _register(
+def register(
     *origins: _tx.Tuple[_tx.Any], 
     validator: _tx.Type[HintValidator]
 ) -> _tx.Type[HintValidator]: ...
 
 
-def _register(*origins, validator=None):
+def register(*origins, validator=None):
     if validator is None:
-        return lambda cls: _register(*origins, validator=cls)
+        return lambda cls: register(*origins, validator=cls)
     for origin in origins:
         HintValidator._VALIDATORS[origin] = validator
     return validator
@@ -90,7 +90,7 @@ def _register(*origins, validator=None):
 # ----------------------------------------------------------------------
 
 
-@_register(_tx.Any)
+@register(_tx.Any)
 class AnyValidator(HintValidator[_tx.Any]):
 
     def _init_check(self, type: _tx.Any) -> bool:
@@ -100,7 +100,7 @@ class AnyValidator(HintValidator[_tx.Any]):
         return value
     
 
-@_register(_tx.Union, _t.UnionType)
+@register(_tx.Union, _t.UnionType)
 class UnionValidator(HintValidator[T]):
 
     def _init_check(self, type: _tx.Any) -> bool:
@@ -122,7 +122,7 @@ class UnionValidator(HintValidator[T]):
         raise e
     
 
-@_register(_tx.Optional)
+@register(_tx.Optional)
 class OptionalValidator(HintValidator[T]):
         
     def _init_check(self, type):
@@ -141,7 +141,7 @@ class OptionalValidator(HintValidator[T]):
         return validator(value)
 
 
-@_register(None, NoneType)
+@register(None, NoneType)
 class NoneValidator(HintValidator[None]):
 
     def __init__(self, type: _tx.Union[None, NoneType] = None) -> None:
@@ -169,7 +169,7 @@ class NoneValidator(HintValidator[None]):
 # ----------------------------------------------------------------------
 
 
-@_register(type, _tx.Type)
+@register(type, _tx.Type)
 class TypeValidator(HintValidator[T]):
 
     def _init_check(self, type_):
@@ -187,7 +187,7 @@ class TypeValidator(HintValidator[T]):
         return value
 
 
-@_register(object)
+@register(object)
 class ObjectValidator(HintValidator[object]):
 
     def _init_check(self, type):
@@ -207,7 +207,7 @@ class ObjectValidator(HintValidator[object]):
 # ----------------------------------------------------------------------
 
 
-@_register(list, _tx.List)
+@register(list, _tx.List)
 class ListValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = list) -> None:
@@ -231,7 +231,7 @@ class ListValidator(HintValidator[T]):
         return value
 
 
-@_register(tuple, _tx.Tuple)
+@register(tuple, _tx.Tuple)
 class TupleValidator(HintValidator[T]):
 
     def __init__(self, type: _tx.Type[T] = tuple) -> None:
@@ -269,7 +269,7 @@ class TupleValidator(HintValidator[T]):
         return tuple(validator(v) for validator, v in zip(converters, value))
 
 
-@_register(set, _tx.Set)
+@register(set, _tx.Set)
 class SetValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = set) -> None:
@@ -293,7 +293,7 @@ class SetValidator(HintValidator[T]):
         return value
 
 
-@_register(frozenset, _tx.FrozenSet)
+@register(frozenset, _tx.FrozenSet)
 class FrozenSetValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = frozenset) -> None:
@@ -318,7 +318,7 @@ class FrozenSetValidator(HintValidator[T]):
         return value
 
 
-@_register(dict, _tx.Dict)
+@register(dict, _tx.Dict)
 class DictValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = dict) -> None:
@@ -352,7 +352,7 @@ class DictValidator(HintValidator[T]):
 # ----------------------------------------------------------------------
 
 
-@_register(abc.Sequence, _tx.Sequence)
+@register(abc.Sequence, _tx.Sequence)
 class AbcSequenceValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.Sequence) -> None:
@@ -371,7 +371,7 @@ class AbcSequenceValidator(HintValidator[T]):
         return type(value)(validator(v) for v in value)
     
 
-@_register(abc.MutableSequence, _tx.MutableSequence)
+@register(abc.MutableSequence, _tx.MutableSequence)
 class AbcMutableSequenceValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.MutableSequence) -> None:
@@ -390,7 +390,7 @@ class AbcMutableSequenceValidator(HintValidator[T]):
         return type(value)(validator(v) for v in value)
     
 
-@_register(abc.MutableSet, _tx.MutableSet)
+@register(abc.MutableSet, _tx.MutableSet)
 class AbcMutableSetValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.MutableSet) -> None:
@@ -409,7 +409,7 @@ class AbcMutableSetValidator(HintValidator[T]):
         return type(value)(validator(v) for v in value)
 
 
-@_register(abc.Set)
+@register(abc.Set)
 class AbcSetValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.Set) -> None:
@@ -428,7 +428,7 @@ class AbcSetValidator(HintValidator[T]):
         return type(value)(validator(v) for v in value)
 
 
-@_register(abc.Mapping, _tx.Mapping)
+@register(abc.Mapping, _tx.Mapping)
 class AbcMappingValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.Mapping) -> None:
@@ -450,7 +450,7 @@ class AbcMappingValidator(HintValidator[T]):
         })
     
 
-@_register(abc.MutableMapping, _tx.MutableMapping)
+@register(abc.MutableMapping, _tx.MutableMapping)
 class AbcMutableMappingValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.MutableMapping) -> None:
@@ -472,7 +472,7 @@ class AbcMutableMappingValidator(HintValidator[T]):
         })
 
 
-@_register(abc.Iterable, _tx.Iterable)
+@register(abc.Iterable, _tx.Iterable)
 class AbcIterableValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.Iterable) -> None:
@@ -491,7 +491,7 @@ class AbcIterableValidator(HintValidator[T]):
         return list(validator(v) for v in value)
 
 
-@_register(abc.Iterator, _tx.Iterator)
+@register(abc.Iterator, _tx.Iterator)
 class AbcIteratorValidator(HintValidator[T]):
     
     def __init__(self, type: _tx.Type[T] = abc.Iterator) -> None:

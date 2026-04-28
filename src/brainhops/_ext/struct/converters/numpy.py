@@ -7,7 +7,7 @@ from inspect import isabstract
 import typing_extensions as _tx
 
 # internals
-from .abc import _register
+from .abc import register
 from .base import ObjectConverter
 from . import numpy_typing as npt
 
@@ -19,7 +19,7 @@ except ImportError:
     np = None
 
 
-@_register(npt.ArrayProtocol)
+@register(npt.ArrayProtocol)
 class NDArrayConverter(ObjectConverter[npt.ArrayProtocol]):
     """A converter for array-like objects."""
 
@@ -61,7 +61,7 @@ if np:
     NDARRAY = _tx.TypeVar("NDARRAY", bound=np.ndarray)
 
 
-    @_register(np.ndarray, npt.ndarray)
+    @register(np.ndarray, npt.ndarray)
     class NumpyArrayConverter(ObjectConverter[NDARRAY]):
         """An adaptor for numpy arrays."""
 

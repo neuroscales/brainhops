@@ -3,7 +3,7 @@ __all__ = []
 import typing_extensions as _tx
 
 # internals
-from .abc import _register
+from .abc import register
 from .base import ObjectConverter
 
 # optionals
@@ -20,14 +20,14 @@ if pd:
     SERIES = _tx.TypeVar("SERIES", bound=pd.Series)
 
 
-    @_register(pd.DataFrame)
+    @register(pd.DataFrame)
     class DataFrameConverter(ObjectConverter[DATAFRAME]):
         """An adaptor for pandas DataFrames."""
 
         _DEFAULT = pd.DataFrame
 
 
-    @_register(pd.Series)
+    @register(pd.Series)
     class SeriesConverter(ObjectConverter[SERIES]):
         """An adaptor for pandas Series."""
 

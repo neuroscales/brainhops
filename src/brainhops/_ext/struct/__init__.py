@@ -45,7 +45,7 @@ slots : bool, default=False
     Generate `__slots__` and remove `__dict__`
 weakref_slot : bool, default=False    
     Generate a weakref slot in `__slots__`
-default_factory : bool, default=False 
+factory : bool, default=False 
     Use field type as factory if none is provided
 convert : bool, default=False         
     Use field type as converter if none is provided
@@ -57,7 +57,7 @@ are assigned via annotations, rather than via a `field` function:
 
 ```python
 # - Default factories
-#   instead of x: list = field(default_factory=list)
+#   instead of x: list = field(factory=list)
 x: DefaultFactory[list, list_factory]
 x: Annotated[list, DefaultFactory(list_factory)]
 
@@ -105,18 +105,27 @@ x: Annotated[int, NotFrozen()]
 x: Annotated[int, Frozen(False)]
 ```
 """
-__all__ = ["Struct", "struct"]
+__all__ = ["Struct", "struct", "converters", "validators"]
+# stdlib
 from abc import ABCMeta
 from collections import abc as _abc
 from functools import partial
-import types as _t
+import sys
+from textwrap import dedent, indent
+
+# externals
 import typing_extensions as _tx
 
-from .constants import _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, MISSING
+# internals
+from .constants import (
+    _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, _RETURN_TYPE, 
+    _SELF, _HasFactory, _DEFAULT, _TYPE, _CONVERTER, _VALIDATOR, MISSING
+)
 from .utils import rebuild_cls
 from .options import *
 from .fields import *
 
+from . import converters, validators
 from .options import __all__ as __all_options__
 from .fields import __all__ as __all_fields__
 __all__ += __all_fields__
@@ -184,10 +193,27 @@ def __pre_new__(
     namespace: dict, 
     **kwargs
 ) -> tuple[str, tuple[type, ...], dict]:
+
     if clsname == _DISCARD:
         # This is a dummy class used to compute the MRO of our class 
         # without including the class itself.
         return clsname, bases, namespace
+
+    # Get globals of the module where this class is defined.
+    if namespace["__module__"] in sys.modules:
+        globals = sys.modules[namespace["__module__"]].__dict__
+    else:
+        # Theoretically this can happen if someone writes
+        # a custom string to cls.__module__.  In which case
+        # such dataclass won't be fully introspectable
+        # (w.r.t. typing.get_type_hints) but will still function
+        # correctly.
+        globals = {}
+
+    fnbuilder = _FuncBuilder(globals)
+
+    # Save qualified name -- we will use it when generating methods.
+    qualname = namespace["__qualname__"]
 
     # Now that dicts retain insertion order, there's no reason to use
     # an ordered dict.  I am leveraging that ordering here, because
@@ -240,31 +266,36 @@ def __pre_new__(
     # we can.
     cls_fields = []
     for field_name, type_ in cls_annotations.items():
-        default = namespace.get(field_name, MISSING)
-        field = Field.from_hint(field_name, type_, default)
-        field.setdefault(options)
-        cls_fields.append(field)
-
-    # Inherit fields from this class, in correct order.
-    _add_fields(fields, cls_fields, replace=True, reverse=options.reverse)
-
-    for f in cls_fields:
+        # Make Field from annotation
+        field = Field.from_hint(field_name, type_)
 
         # If the class attribute (which is the default value for this
-        # field) exists and is of type 'StructField', replace it with 
-        # the real default.  This is so that normal class introspection
-        # sees a real default value, not a StructField.
-        if isinstance(namespace.get(f.name), Field):
-            if f.default is MISSING:
+        # field) exists and is of type `Field`, replace it with the real 
+        # default. This is so that normal class introspection sees a 
+        # real default value, not a `Field`.
+        if isinstance(namespace.get(field.name), Field):
+            field.update(namespace[field.name])
+            if field.default is MISSING:
                 # If there's no default, delete the class attribute.
                 # This happens if we specify field(repr=False), for
                 # example (that is, we specified a field object, but
                 # no default value).  Also if we're using a default
                 # factory.  The class attribute should not be set at
                 # all in the post-processed class.
-                namespace.pop(f.name, None)
+                namespace.pop(field.name, None)
             else:
-                namespace[f.name] = f.default
+                namespace[field.name] = field.default
+        elif field.name in namespace:
+            # If the class attribute exists and is not a Field, then
+            # use it as the default value for this field.
+            field.default = namespace[field.name]
+
+        # Set unset field options from class options
+        field.setdefault(options)
+        cls_fields.append(field)
+
+    # Inherit fields from this class, in correct order.
+    _add_fields(fields, cls_fields, replace=True, reverse=options.reverse)
 
     # Do we have any Field members that don't also have annotations?
     for attr_name, value in namespace.items():
@@ -291,8 +322,18 @@ def __pre_new__(
         if field.order and not field.eq:
             raise ValueError('eq must be true if order is true')
 
+    # Check if pre and/or post init methods are defined in this class.
+    prepost = []
+    if _PRE_INIT_NAME in namespace:
+        prepost += ["pre"]
+    if _POST_INIT_NAME in namespace:
+        prepost += ["post"]
+    prepost = "+".join(prepost)
+
+    # Build __init__
     if options.init:
-        namespace.setdefault("__init__", _make_init(fields))
+        fnbuilder.add_fn(**_make_init_smart(fields, prepost))
+        # namespace.setdefault("__init__", _make_init(qualname, fields))
 
     # TODO
     # _set_new_attribute(cls, '__replace__', _replace)
@@ -302,13 +343,13 @@ def __pre_new__(
 
     if options.repr:
         repr_fields = {name: f for name, f in fields.items() if f.repr}
-        namespace.setdefault("__repr__", _make_repr(repr_fields))
+        namespace.setdefault("__repr__", _make_repr(qualname, repr_fields))
 
     if options.eq:
-        namespace.setdefault("__eq__", _make_eq(real_fields))
+        namespace.setdefault("__eq__", _make_eq(qualname, real_fields))
 
     if options.order:
-        namespace.setdefault("__lt__", _make_lt(real_fields))
+        namespace.setdefault("__lt__", _make_lt(qualname, real_fields))
 
     # Decide if/how we're going to create a hash function.
     _make_hash = _hash_action[bool(options.unsafe_hash),
@@ -316,7 +357,7 @@ def __pre_new__(
                               bool(options.frozen),
                               has_explicit_hash]
     if _make_hash:
-        namespace.setdefault("__hash__", _make_hash(clsname, real_fields))
+        namespace.setdefault("__hash__", _make_hash(qualname, real_fields))
 
     if options.match_args:
         # I could probably compute this once.
@@ -325,13 +366,13 @@ def __pre_new__(
         ))
 
     if options.frozen:
-        getstate, setstate = _make_state(real_fields)
+        getstate, setstate = _make_state(qualname, real_fields)
         namespace.setdefault("__getstate__", getstate)
         namespace.setdefault("__setstate__", setstate)
 
     if options.mapping:
         dict_fields = {f.name: f for f in fields.values() if f.key}
-        for name, func in _make_mapping(dict_fields).items():
+        for name, func in _make_mapping(qualname, dict_fields).items():
             namespace.setdefault(name, func)
         Mapping = _abc.Mapping if options.frozen else _abc.MutableMapping
         if not any(issubclass(base, Mapping) for base in bases):
@@ -346,19 +387,121 @@ def __pre_new__(
         weakref_slot = options.weakref_slot
         namespace["__slots__"] = _make_slots(bases, real_fields, weakref_slot)
 
+    fnbuilder.insert_fns(clsname, namespace)
+
     return clsname, bases, namespace
 
 
-def _hash_set_none(name: str, fields: dict) -> None:
+class _FuncBuilder:
+    # Also adapted from dataclasses
+
+    def __init__(self, globals: dict) -> None:
+        self.methods = {}  # name -> function
+        self.globals = globals
+        self.locals = {}
+        self.overwrite_errors = {}
+        self.unconditional_adds = {}
+
+    def add_fn(
+        self, name: str, args: _tx.List[str], body: _tx.List[str], *, 
+        doc: _tx.Optional[_tx.List[str]] = None,
+        locals: _tx.Optional[dict] = None, 
+        return_type: _tx.Any = MISSING,
+        overwrite_error: _tx.Union[bool, str] = False, 
+        unconditional_add: bool = False, 
+        decorator: _tx.Optional[str] = None
+    ) -> None:
+        if locals is not None:
+            self.locals.update(locals)
+
+        if overwrite_error:
+            self.overwrite_errors[name] = overwrite_error
+
+        if unconditional_add:
+            self.unconditional_adds[name] = True
+
+        if return_type is not MISSING:
+            self.locals[_RETURN_TYPE(name)] = return_type
+            return_annotation = f'->{_RETURN_TYPE(name)}'
+        else:
+            return_annotation = ''
+        
+        args = ','.join(args or [])
+        body = '\n'.join(body or ['pass'])
+        doc = '\n'.join(['"""'] + (doc or []) + ['"""'])
+
+        src = "\n".join([
+            f"def {name}({args}){return_annotation}:",
+            indent(doc, " " * 4),
+            indent(body, " " * 4),
+        ])
+        if decorator:
+            src = f'{decorator}\n{src}'
+        self.methods[name] = src
+
+    def insert_fns(self, clsname: str, namespace: dict) -> None:
+        # The source to all of the functions we're generating.
+        fns_src = '\n'.join(self.methods.values())
+
+        # The locals they use.
+        local_vars = ','.join(self.locals.keys())
+
+        # The names of all of the functions, used for the return value of the
+        # outer function.  Need to handle the 0-tuple specially.
+        if len(self.methods) == 0:
+            return_names = "()"
+        else:
+            return_names  =f'({",".join(self.methods.keys())},)'
+
+        # txt is the entire function we're going to execute, including the
+        # bodies of the functions we're defining.  Here's a greatly simplified
+        # version:
+        # def __create_fn__():
+        #  def __init__(self, x, y):
+        #   self.x = x
+        #   self.y = y
+        #  @recursive_repr
+        #  def __repr__(self):
+        #   return f"cls(x={self.x!r},y={self.y!r})"
+        # return __init__,__repr__
+
+        txt = "\n".join([
+            f"def __create_fn__({local_vars}):",
+            indent(f"{fns_src}", " " * 4),
+            indent(f"return {return_names}", " " * 4)
+        ])
+        temporary_namespace = {}
+        exec(txt, self.globals, temporary_namespace)
+        fns = temporary_namespace['__create_fn__'](**self.locals)
+
+        # Now that we've generated the functions, assign them into cls.
+        qualname = namespace["__qualname__"]
+        for name, fn in zip(self.methods, fns):
+            fn.__qualname__ = f"{qualname}.{fn.__name__}"
+            if self.unconditional_adds.get(name, False):
+                namespace[name] = fn
+            elif name not in namespace:
+                namespace[name] = fn
+            elif self.overwrite_errors.get(name, False):
+                msg_extra = self.overwrite_errors[name]
+                error_msg = (
+                    f'Cannot overwrite attribute {name} in class {clsname}'
+                )
+                if msg_extra is not True:
+                    error_msg = f'{error_msg} {msg_extra}'
+                raise TypeError(error_msg)
+
+
+def _hash_set_none(qualname: str, fields: dict) -> None:
     return None
 
 
-def _hash_exception(name: str, fields: dict) -> _tx.NoReturn:
+def _hash_exception(qualname: str, fields: dict) -> _tx.NoReturn:
     raise TypeError(
-        f'Cannot overwrite attribute __hash__ in class {name}')
+        f'Cannot overwrite attribute __hash__ in class {qualname}')
 
 
-def _hash_add(name: str, fields: dict) -> int:
+def _hash_add(qualname: str, fields: dict) -> int:
     fields = [
         f for f in fields.values() 
         if (f.compare if f.hash is None else f.hash)
@@ -368,6 +511,7 @@ def _hash_add(name: str, fields: dict) -> int:
         values = tuple(getattr(self, f.name) for f in fields)
         return hash(values)
     
+    __hash__.__qualname__ = f"{qualname}.__hash__"
     return __hash__
 
 
@@ -399,20 +543,163 @@ _hash_action = {(False, False, False, False): None,
                 }
 
 
-def _make_init(fields: dict[str, Field]) -> _tx.Callable:
+def _make_init_smart(
+    fields: dict[str, Field], prepost: str=""
+) -> dict:
 
-    self_name = "__struct_self__" if "self" in fields else "self"
+    locals = {"object": object, "_HasFactory": _HasFactory}
+    positional_onlys, args, kw_onlys = {}, {}, {}
+
+    SELF = "self"
+    for name, field in fields.items():
+        if field.init and field.positional and not field.kw:
+            positional_onlys[name] = field
+        elif field.init and field.positional and field.kw:
+            args[name] = field
+        elif field.init and not field.positional and field.kw:
+            kw_onlys[name] = field
+        else:
+            continue
+        if name == "self":
+            SELF = _SELF
+
+    def _make_signature_elem(field: Field) -> _tx.Tuple[str, str]:
+        name = field.name
+        default = field.default
+        if field.factory:
+            default = _HasFactory(field.factory)
+        locals[_TYPE(name)] = field.type
+        if default is MISSING:
+            signature = f"{name}: {_TYPE(name)}" 
+        else:
+            locals[_DEFAULT(name)] = default
+            signature = f"{name}: {_TYPE(name)}={_DEFAULT(name)}" 
+        doctype = (
+            field.type.__qualname__
+            if isinstance(field.type, type) else
+            repr(field.type)
+        )
+        doc = [
+            f"{name} : {doctype}, default={default!r}" 
+            if default is not MISSING else
+            f"{name} : {doctype}"
+        ]
+        if field.doc:
+            doc += indent({dedent(field.doc)}, " " * 4).split("\n")
+        return signature, doc
+
+    def _check_signature(signature: _tx.List[str]) -> None:
+        has_default = False
+        for elem in signature:
+            if elem == "*":
+                break
+            if elem == "/":
+                continue
+            if "=" in elem:
+                has_default = True
+            elif has_default:
+                raise SyntaxError(f"parameter without a default follows "
+                                  f"parameter with a default: {elem}")
+
+    signature, doc = [], ["Parameters", "----------"]
+    for name, field in positional_onlys.items():
+        signature_elem, doc_elem = _make_signature_elem(field)
+        signature.append(signature_elem)
+        doc.extend(doc_elem)
+    if positional_onlys:
+        signature.append("/")
+    for name, field in args.items():
+        signature_elem, doc_elem = _make_signature_elem(field)
+        signature.append(signature_elem)
+        doc.extend(doc_elem)
+    if kw_onlys:
+        signature.append("*")
+    for name, field in kw_onlys.items():
+        signature_elem, doc_elem = _make_signature_elem(field)
+        signature.append(signature_elem)
+        doc.extend(doc_elem)
+
+    _check_signature(signature)
+
+    def _make_prepost_call(func: str) -> str:
+        prepost_args = []
+        for name, field in positional_onlys.items():
+            if field.var:
+                prepost_args.append(f"{name}")
+        for name, field in args.items():
+            if field.var:
+                prepost_args.append(f"{name}")
+        for name, field in kw_onlys.items():
+            if field.var:
+                prepost_args.append(f"{name}={name}")
+        prepost_args = ", ".join(prepost_args)
+        return f"{SELF}.{func}({prepost_args})"
+
+    def _make_body_elem(name: str, field: Field) -> str:
+        body = ""
+        if field.factory:
+            body += dedent(f"""
+            if isinstance({name}, _HasFactory):
+                {name} = {name}()
+            """)
+        if field.converter:
+            locals[_CONVERTER(name)] = field.converter
+            body += dedent(f"""
+            {name} = {_CONVERTER(name)}({name})
+            """)
+        if field.validator:
+            locals[_VALIDATOR(name)] = field.validator
+            body += dedent(f"""
+            {name} = {_VALIDATOR(name)}({name})
+            """)
+        if not field.var:
+            # NOTE: we by pass the object's __setattr__ to avoid running
+            # through conversion and validation multiple times.
+            body += dedent(f"""
+            object.__setattr__({SELF}, {field.name!r}, {name})
+            """)
+        return body
+
+    body = []
+    if "pre" in prepost:
+        body.append(_make_prepost_call(_PRE_INIT_NAME))
+    for field in positional_onlys.values():
+        body.append(_make_body_elem(name, field))
+    for name, field in args.items():
+        body.append(_make_body_elem(name, field))
+    for name, field in kw_onlys.items():
+        body.append(_make_body_elem(name, field))
+    if "post" in prepost:
+        body.append(_make_prepost_call(_POST_INIT_NAME))
+
+    return {
+        "name": "__init__",
+        "args": [SELF] + signature,
+        "body": body,
+        "doc": doc,
+        "locals": locals,
+        "return_type": None,
+    }
+
+
+def _make_init(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
+
+    self_name = _SELF if "self" in fields else "self"
+
     _std_init_fields = {
-        name: field for name, field in fields.items()
+        name: field
+        for name, field in fields.items()
         if field.init and field.positional
     }
-    _kw_only_init_fields = {
-        name: field for name, field in fields.items()
-        if field.init and field.kw and not field.positional
-    }
     _positional_only_init_fields = {
-        name: field for name, field in fields.items()
+        name: field
+        for name, field in fields.items()
         if field.init and field.positional and not field.kw
+    }
+    _kw_only_init_fields = {
+        name: field
+        for name, field in fields.items()
+        if field.init and not field.positional and field.kw
     }
 
     def __init__(*args, **kwargs) -> None:
@@ -505,8 +792,8 @@ def _make_init(fields: dict[str, Field]) -> _tx.Callable:
             if field.default is not MISSING:
                 arg = field.default
             
-            elif field.default_factory:
-                arg = field.default_factory()
+            elif field.factory:
+                arg = field.factory()
 
             else:
                 raise TypeError(f"Missing required argument: {field.name!r}")
@@ -543,8 +830,8 @@ def _make_init(fields: dict[str, Field]) -> _tx.Callable:
                     if field.default is not MISSING:
                         arg = field.default
 
-                    elif field.default_factory:
-                        arg = field.default_factory()
+                    elif field.factory:
+                        arg = field.factory()
 
                     else:
                         raise TypeError(
@@ -561,10 +848,11 @@ def _make_init(fields: dict[str, Field]) -> _tx.Callable:
                 postinit_args.append(arg)
             getattr(self, _POST_INIT_NAME)(*postinit_args)
 
+    __init__.__qualname__ = f"{qualname}.__init__"
     return __init__
 
 
-def _make_repr(fields: dict[str, Field]) -> _tx.Callable:
+def _make_repr(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
 
     def __repr__(self) -> str:
         params = [
@@ -578,10 +866,11 @@ def _make_repr(fields: dict[str, Field]) -> _tx.Callable:
         params = ", ".join(params)
         return f"{self.__class__.__name__}({params})"
     
+    __repr__.__qualname__ = f"{qualname}.__repr__"
     return __repr__
 
 
-def _make_eq(fields: dict[str, Field]) -> _tx.Callable:
+def _make_eq(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
 
     def __eq__(self, other) -> bool:
         if self is other:
@@ -594,10 +883,11 @@ def _make_eq(fields: dict[str, Field]) -> _tx.Callable:
             )
         return NotImplemented
     
+    __eq__.__qualname__ = f"{qualname}.__eq__"
     return __eq__
 
 
-def _make_lt(fields: dict[str, Field]) -> _tx.Callable:
+def _make_lt(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
 
     def __lt__(self, other) -> bool:
         if other.__class__ is self.__class__:
@@ -614,6 +904,7 @@ def _make_lt(fields: dict[str, Field]) -> _tx.Callable:
             return this_value < other_value
         return NotImplemented
     
+    __lt__.__qualname__ = f"{qualname}.__lt__"
     return __lt__
 
 
@@ -652,10 +943,12 @@ def _make_assign(cls: type) -> type:
             )
         object.__setattr__(self, name, value)
 
+    __delattr__.__qualname__ = f"{cls.__qualname__}.__delattr__"
+    __setattr__.__qualname__ = f"{cls.__qualname__}.__setattr__"
     return __delattr__, __setattr__
 
 
-def _make_state(fields: dict[str, Field]) -> _tx.Callable:
+def _make_state(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
 
     def __getstate__(self) -> _tx.Tuple:
         fields = [f for f in fields.values() if not f.var]
@@ -667,6 +960,8 @@ def _make_state(fields: dict[str, Field]) -> _tx.Callable:
             # use setattr because dataclass may be frozen
             object.__setattr__(self, field.name, value)
 
+    __getstate__.__qualname__ = f"{qualname}.__getstate__"
+    __setstate__.__qualname__ = f"{qualname}.__setstate__"
     return __getstate__, __setstate__
 
 
@@ -720,7 +1015,7 @@ def _make_slots(
     return slots
 
 
-def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
+def _make_mapping(qualname: str, fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
 
     def __getitem__(self, key: str) -> _tx.Any:
         field = fields.get(key)
@@ -761,6 +1056,11 @@ def _make_mapping(fields: dict[str, Field]) -> _tx.Mapping[str, _tx.Callable]:
             for field in fields.values()
         )
 
+    __getitem__.__qualname__ = f"{qualname}.__getitem__"
+    __setitem__.__qualname__ = f"{qualname}.__setitem__"
+    __delitem__.__qualname__ = f"{qualname}.__delitem__"
+    __iter__.__qualname__ = f"{qualname}.__iter__"
+    __len__.__qualname__ = f"{qualname}.__len__"
     return {
         "__getitem__": __getitem__,
         "__setitem__": __setitem__,
@@ -800,7 +1100,7 @@ slots : bool, default=False
     Generate `__slots__` and remove `__dict__`
 weakref_slot : bool, default=False    
     Generate a weakref slot in `__slots__`
-default_factory : bool, default=False 
+factory : bool, default=False 
     Use field type as factory if none is provided
 convert : bool, default=False         
     Use field type as converter if none is provided

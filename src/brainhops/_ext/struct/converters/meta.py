@@ -8,7 +8,7 @@ __all__ = [
 import typing_extensions as _tx
 import types as _t
 
-from .abc import HintConverter, _register
+from .abc import HintConverter, register
 from .utils import _get_origin, T, ConversionError
 
 
@@ -19,7 +19,7 @@ from .utils import _get_origin, T, ConversionError
 # ----------------------------------------------------------------------
 
 
-@_register(_tx.Any)
+@register(_tx.Any)
 class AnyConverter(HintConverter[_tx.Any]):
 
     _DEFAULT = _tx.Any
@@ -31,7 +31,7 @@ class AnyConverter(HintConverter[_tx.Any]):
         return value
     
 
-@_register(_tx.Union, _t.UnionType)
+@register(_tx.Union, _t.UnionType)
 class UnionConverter(HintConverter[T]):
 
     def _init_check(self) -> bool:
@@ -56,7 +56,7 @@ class UnionConverter(HintConverter[T]):
         raise e
     
 
-@_register(_tx.Optional)
+@register(_tx.Optional)
 class OptionalConverter(HintConverter[T]):
         
     def _init_check(self):
@@ -75,7 +75,7 @@ class OptionalConverter(HintConverter[T]):
         return converter(value)
 
 
-@_register(None, _t.NoneType)
+@register(None, _t.NoneType)
 class NoneConverter(HintConverter[None]):
 
     _DEFAULT = None

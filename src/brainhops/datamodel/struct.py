@@ -6,6 +6,10 @@ import typing_extensions as _tx
 
 # internals
 from brainhops._ext.struct import Struct
+from brainhops._ext.struct.converters import (
+    register as register_converter,
+    ObjectConverter,
+)
 
 
 class DataModelBase(
@@ -14,43 +18,65 @@ class DataModelBase(
     mapping="hide_none", 
     repr="hide_none",
 ):
-    # We use this to set options that we want to propagate to all 
-    # classes in the hierarchy.
+    # We use this base class to set options that we want to propagate to 
+    # all classes in the hierarchy.
 
-    def __pre_init__(
-        self, *args, **kwargs
-    ) -> _tx.Tuple[_tx.Tuple, _tx.Mapping]:
-        # Implements a copy constructor:
-        #   If the first positional argument is an instance of the class,
-        #   or a dictionary-like object with keys matching the fields of 
-        #   the class, then we use it to populate the fields of the class.
+    @classmethod
+    def from_dict(cls, other: Mapping, *args, **kwargs) -> "DataModelBase":
+        """
+        Create an instance of the class from a dictionary-like object.
 
-        if (
-            args and
-            isinstance(args[0], type(self))
-        ):
-            # Valid instance of the class
-            obj, *args = args
-            for field in self.__struct_fields__.values():
-                if field.init and not field.var:
-                    kwargs.setdefault(field.name, getattr(obj, field.name))
-            return args, kwargs
+        Only keys in the dictionary that match keyword-like fields of
+        this class will be used.
+
+        Additional positional and/or keyword arguments can be provided,
+        and will take precedence over the values in the dictionary.
+        """
+        for key, value in cls.__struct_fields__.items():
+            if value.init and value.kw and key in other:
+                kwargs.setdefault(key, other[key])
+        return cls(*args, **kwargs)
+    
+    @classmethod
+    def from_instance(cls, other: "DataModelBase", *args, **kwargs) -> "DataModelBase":
+        """
+        Create an instance of the class from an instance of a similar 
+        class.
         
-        valid_keys = (
-            field.name
-            for field in self.__struct_fields__.values()
-            if field.init and field.kw
-        )
-        if (
-            args and 
-            isinstance(args[0], Mapping) and 
-            all(key in valid_keys for key in args[0].keys())
-        ):
-            # Valid mapping-like object
-            obj, *args = args
-            for key, value in obj.items():
-                kwargs.setdefault(key, value)
-            return args, kwargs
-        
+        Only attibutes of the other instance that match keyword-like 
+        fields of this class will be used.
+
+        Additional positional and/or keyword arguments can be provided,
+        and will take precedence over the attributes in the instance.
+        """
+        for key, value in cls.__struct_fields__.items():
+            if value.init and value.kw and hasattr(other, key):
+                kwargs.setdefault(key, getattr(other, key))
+        return cls(*args, **kwargs)
+    
+    @classmethod
+    def from_other(cls, other: _tx.Any, *args, **kwargs) -> "DataModelBase":
+        """
+        Create an instance of the class from any object that can be
+        interpreted as a dictionary, or an instance of a similar class,
+        or an arguments to be passed to the constructor.
+        """
+        if isinstance(other, Mapping):
+            return cls.from_dict(other, *args, **kwargs)
+        elif isinstance(other, cls):
+            return cls.from_instance(other, *args, **kwargs)
+        elif issubclass(cls, type(other)):
+            return cls.from_instance(other, *args, **kwargs)
         else:
-            return args, kwargs
+            return cls(other, *args, **kwargs)
+
+
+@register_converter(DataModelBase)
+class DataModelConverter(ObjectConverter[DataModelBase]):
+
+    _DEFAULT = DataModelBase
+
+    def _convert(self, value: _tx.Any) -> DataModelBase:
+        if not isinstance(value, self.type):
+            return self.type.from_other(value)
+        return value

@@ -6,7 +6,7 @@ import numbers
 import typing_extensions as _tx
 
 # internals
-from .abc import _register
+from .abc import register
 from .base import ObjectConverter
 from . import cupy_typing as cpt
 
@@ -44,7 +44,7 @@ if cp:
     NDARRAY = _tx.TypeVar("NDARRAY", bound=cp.ndarray)
 
 
-    @_register(cp.ndarray, cpt.ndarray)
+    @register(cp.ndarray, cpt.ndarray)
     class CupyArrayConverter(ObjectConverter[NDARRAY]):
         """An adaptor for cupy arrays."""
 

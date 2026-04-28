@@ -2,9 +2,9 @@
 import typing_extensions as _tx
 from enum import Enum
 
-from brainhope.struct import Struct
+from brainhops._ext.struct import Struct
 from brainhops.datamodel.axes import SpatialAxis
-from brainhops.datamodel.base import Affine
+from brainhops.datamodel.transformations import Affine
 from brainhops.datamodel.systems import Spatial3dCoordinateSystem
 
 
@@ -57,7 +57,7 @@ class LTACoordinateSystem(Spatial3dCoordinateSystem):
 
 
 class LTAVoxelSystem(LTACoordinateSystem):
-    ...
+    """Voxel space of a volume (source or destination)."""
 
     @classmethod
     def from_struct(cls, struct: LTAStruct.VolumeInfo) -> "LTAVoxelSystem":
@@ -66,6 +66,11 @@ class LTAVoxelSystem(LTACoordinateSystem):
             axes=[SpatialAxis(name=name, unit="mm") for name in ("x", "y", "z")],
             struct=struct
         )
+
+
+class LTAScaledSystem(LTACoordinateSystem):
+    ...
+
 
 class LTAPhysicalSystem(LTACoordinateSystem):
     ...

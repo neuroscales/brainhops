@@ -9,7 +9,7 @@ import typing_extensions as _tx
 import numbers
 import fractions
 
-from .abc import _register
+from .abc import register
 from .base import ObjectConverter
 
 
@@ -27,7 +27,7 @@ RATIONAL = _tx.TypeVar("RATIONAL", bound=numbers.Rational)
 INTEGRAL = _tx.TypeVar("INTEGRAL", bound=numbers.Integral)
 
 
-@_register(numbers.Number)
+@register(numbers.Number)
 class NumberConverter(ObjectConverter[NUMBER]):
 
     _DEFAULT = numbers.Number
@@ -46,31 +46,31 @@ class NumberConverter(ObjectConverter[NUMBER]):
         raise e
 
 
-@_register(numbers.Complex)
+@register(numbers.Complex)
 class ComplexConverter(NumberConverter[COMPLEX]):
     
     _DEFAULT = numbers.Complex
     
 
-@_register(numbers.Real)
+@register(numbers.Real)
 class RealConverter(ComplexConverter[REAL]):
     
     _DEFAULT = numbers.Real
     
 
-@_register(numbers.Rational)
+@register(numbers.Rational)
 class RationalConverter(RealConverter[RATIONAL]):
     
     _DEFAULT = numbers.Rational
     
 
-@_register(numbers.Integral)
+@register(numbers.Integral)
 class IntegralConverter(RationalConverter[INTEGRAL]):
     
     _DEFAULT = numbers.Integral
 
 
-@_register(bool)
+@register(bool)
 class BoolConverter(IntegralConverter[bool]):
 
     _DEFAULT = bool
