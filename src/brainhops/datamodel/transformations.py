@@ -286,7 +286,7 @@ class CoordinatesField(Transformation):
     ] = None
 
     order: _tx.Annotated[
-        int, 
+        InterpolationOrder, 
         _tx.Doc("The spline interpolation order")
     ] = 1
 
@@ -389,7 +389,7 @@ class DisplacementField(Transformation):
     ] = None
 
     order: _tx.Annotated[
-        int, 
+        InterpolationOrder,
         _tx.Doc("The spline interpolation order")
     ] = 1
 

@@ -2,6 +2,7 @@ __all__ = ["HintConverter", "register"]
 
 from abc import ABC, abstractmethod
 from collections import abc
+from functools import partial
 import typing_extensions as _tx
 
 from .constants import MISSING
@@ -124,28 +125,23 @@ def _get_converter(hint: _tx.Any) -> type:
 
     # Find the best matching adaptor (via issubclass)
     NOHINT = object()
-    best_hint, best_adaptor = NOHINT, NOHINT
+    best_hint, best_adaptor, best_dist = NOHINT, NOHINT, float('inf')
     for adaptor_hint, adaptor in CONVERTERS.items():
         if _issubclass(hint, adaptor_hint):
-            if best_hint is NOHINT:
+            dist = _distance(hint, adaptor_hint)
+            if dist < best_dist:
                 best_hint = adaptor_hint
                 best_adaptor = adaptor
-            elif _issubclass(adaptor_hint, best_hint):
-                best_hint = adaptor_hint
-                best_adaptor = adaptor
+                best_dist = dist
         elif _issubclass(
             _get_origin(hint),
             _get_origin(adaptor_hint)
         ):
-            if best_hint is NOHINT:
+            dist = _distance(_get_origin(hint), _get_origin(adaptor_hint))
+            if dist < best_dist:
                 best_hint = adaptor_hint
                 best_adaptor = adaptor
-            elif _issubclass(
-                _get_origin(adaptor_hint),
-                _get_origin(best_hint)
-            ):
-                best_hint = adaptor_hint
-                best_adaptor = adaptor
+                best_dist = dist
 
     if best_adaptor is not NOHINT:
         CONVERTERS[hint] = best_adaptor
@@ -154,16 +150,26 @@ def _get_converter(hint: _tx.Any) -> type:
     # Find the best matching adaptor (via isinstance)
     for adaptor_hint, adaptor in CONVERTERS.items():
         origin = _get_origin(adaptor_hint, unfold="all")
-        if _isinstance(hint, origin):
-            if best_hint is NOHINT:
+        dist = _distance(type(hint), origin)
+        if dist < best_dist:
                 best_hint = origin
                 best_adaptor = adaptor
-            elif _issubclass(origin, best_hint):
-                best_hint = origin
-                best_adaptor = adaptor
+                best_dist = dist
 
     if best_adaptor is not NOHINT:
         CONVERTERS[hint] = best_adaptor
         return best_adaptor
 
     raise KeyError(f"No adaptor registered for {hint}")
+
+
+def _distance(t1: type, t2: type, oriented: bool = True) -> int:
+    """Compute the distance between two types in the class hierarchy."""
+    # TODO: handle type hints (Union, Any)
+    if t1 == t2:
+        return 0
+    if issubclass(t1, t2):
+        return 1 + min(map(partial(_distance, t2=t2), t1.__bases__))
+    if issubclass(t2, t1) and not oriented:
+        return 1 + min(map(partial(_distance, t2=t1), t2.__bases__))
+    return float("inf")

@@ -17,7 +17,7 @@ from .utils import ConversionError
 ENUM = _tx.TypeVar("ENUM", bound=enum.Enum)
 
 
-@register(enum.Enum)
+@register(enum.Enum, enum.IntEnum, enum.StrEnum, enum.Flag, enum.IntFlag)
 class EnumConverter(HintConverter[ENUM]):
 
     def _init_check(self):
