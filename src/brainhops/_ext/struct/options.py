@@ -21,6 +21,7 @@ from .utils import slots, SlotsBase
     'validate',         # Use field type as validator if none is provided
     'mapping',          # Generate Mapping methods for dict-like behavior
     'reverse',          # Use the reverse MRO order when listing fields
+    'doc',              # Generate class docstring from field docstrings
 )
 class Options(SlotsBase):
 
@@ -41,6 +42,7 @@ class Options(SlotsBase):
         validate=False,
         mapping=False,
         reverse=False,
+        doc=True,
     )
     
     @staticmethod

@@ -103,6 +103,10 @@ class Field(SlotsBase):
         field = Field()
         if origin is _tx.Annotated:
             type, *hints = _tx.get_args(hint)
+            if _tx.get_origin(type) is _tx.ClassVar:
+                # Replace python's ClassVar with our own.
+                type = _tx.get_args(type)[0]
+                hints = (ClassVar(), *hints)
             for hint in hints:
                 if isinstance(hint, Field):
                     field.update(hint)

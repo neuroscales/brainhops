@@ -107,10 +107,11 @@ x: Annotated[int, Frozen(False)]
 """
 __all__ = ["Struct", "struct", "converters", "validators"]
 # stdlib
+import sys
+import types as _t
 from abc import ABCMeta
 from collections import abc as _abc
 from functools import partial
-import sys
 from textwrap import dedent, indent
 
 # externals
@@ -121,7 +122,7 @@ from .constants import (
     _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, _RETURN_TYPE, 
     _SELF, _HasFactory, _DEFAULT, _TYPE, _CONVERTER, _VALIDATOR, MISSING
 )
-from .utils import rebuild_cls
+from .utils import _get_origin, rebuild_cls
 from .options import *
 from .fields import *
 
@@ -158,8 +159,10 @@ def _add_fields(
     new_fields: _tx.Iterable[Field], 
     replace: bool = False,
     reverse: bool = False,
+    inherit: _tx.List[str] = ("doc",),
 ) -> None:
     # Add fields to an existing dict of fields.
+    #
     # This is used when constructing the dictionary of inherited fields.
     # * replace :
     #   If True, then new fields will replace existing fields.
@@ -169,21 +172,44 @@ def _add_fields(
     #   If False, then new fields will be added after existing fields.
     #   In both case, the order of `new_fields` is preserved.
     if replace and not reverse:
-        fields.update({f.name: f for f in new_fields})
+        if inherit:
+            for new_field in new_fields:
+                if inherit and new_field.name in fields:
+                    old_field = fields[new_field.name]
+                    for attr in inherit:
+                        if getattr(new_field, attr, MISSING) is MISSING:
+                            continue
+                        setattr(new_field, attr, getattr(old_field, attr))
+                fields[new_field.name] = new_field
+        else:
+            fields.update({f.name: f for f in new_fields})
+
     elif replace and reverse:
         prev_fields = fields.copy()
         fields.clear()
         fields.update({f.name: f for f in new_fields})
-        fields.update(prev_fields)
+        for name, field in prev_fields.items():
+            fields.setdefault(name, field)
+            for attr in inherit:
+                if getattr(fields[name], attr, MISSING) is MISSING:
+                    setattr(fields[name], attr, getattr(field, attr))
+
     elif not replace and not reverse:
         for f in new_fields:
             fields.setdefault(f.name, f)
+            for attr in inherit:
+                if getattr(fields[f.name], attr, MISSING) is MISSING:
+                    setattr(fields[f.name], attr, getattr(f, attr))
+
     elif not replace and reverse:
         prev_fields = fields.copy()
         fields.clear()
         fields.update(prev_fields)
         for f in new_fields:
             fields.setdefault(f.name, f)
+            for attr in inherit:
+                if getattr(fields[f.name], attr, MISSING) is MISSING:
+                    setattr(fields[f.name], attr, getattr(f, attr))
 
 
 def __pre_new__(
@@ -285,17 +311,20 @@ def __pre_new__(
                 namespace.pop(field.name, None)
             else:
                 namespace[field.name] = field.default
+
+        # If the class attribute exists and is not a Field, then use it 
+        # as the default value for this field.
         elif field.name in namespace:
-            # If the class attribute exists and is not a Field, then
-            # use it as the default value for this field.
             field.default = namespace[field.name]
 
-        # Set unset field options from class options
-        field.setdefault(options)
         cls_fields.append(field)
 
-    # Inherit fields from this class, in correct order.
+    # Insert fields from this class, in correct order.
     _add_fields(fields, cls_fields, replace=True, reverse=options.reverse)
+
+    # Set unset field options from class options
+    for field in fields.values():
+        field.setdefault(options)
 
     # Do we have any Field members that don't also have annotations?
     for attr_name, value in namespace.items():
@@ -388,6 +417,12 @@ def __pre_new__(
         namespace["__slots__"] = _make_slots(bases, real_fields, weakref_slot)
 
     fnbuilder.insert_fns(clsname, namespace)
+
+    # Add attributes to class documentation
+    if options.doc:
+        doc = namespace.get('__doc__', '').rstrip("\n")
+        doc = "\n\n".join([doc, _make_doc_class(fields)])
+        namespace['__doc__'] = doc
 
     return clsname, bases, namespace
 
@@ -543,6 +578,72 @@ _hash_action = {(False, False, False, False): None,
                 }
 
 
+def _make_doc_class(fields: dict[str, Field]) -> str:
+    attrdocs, classattrdocs = [], []
+    for name, field in fields.items():
+        if not field.var:
+            attrdocs.append(_make_doc_elem(field, name))
+        elif not field.init:
+            classattrdocs.append(_make_doc_elem(field, name))
+    attrdocs = "\n".join(attrdocs)
+    classattrdocs = "\n".join(classattrdocs)
+    if attrdocs:
+        attrdocs = "Attributes\n----------\n" + attrdocs
+    if classattrdocs:
+        classattrdocs = "Class Attributes\n----------------\n" + classattrdocs
+    return "\n\n".join([attrdocs, classattrdocs])
+
+
+def _make_doc_elem(field: Field, name: _tx.Optional[str] = None) -> str:
+
+    name = name or field.name
+
+    default = field.default
+    if field.factory:
+        default = _HasFactory(field.factory)
+
+    doctype = field.type
+    if _get_origin(doctype) in (_tx.Optional, _tx.Annotated):
+        doctype = _tx.get_args(doctype)[0]
+    elif _get_origin(doctype) in (_tx.Union, _t.UnionType):
+        # Simplify the representation of optional unions.
+        if (
+            len(_tx.get_args(doctype)) == 2 and (
+                None in _tx.get_args(doctype) or
+                type(None) in _tx.get_args(doctype)
+            )
+        ):
+            doctype = next(iter(
+                arg 
+                for arg in _tx.get_args(doctype) 
+                if arg not in (None, type(None))
+            ))
+        else:
+            doctype = " | ".join([
+                arg.__qualname__
+                if isinstance(arg, type) else
+                repr(arg) 
+                for arg in _tx.get_args(doctype)
+            ])
+    doctype = (
+        doctype 
+        if isinstance(doctype, str) else
+        doctype.__qualname__
+        if isinstance(doctype, type) else
+        repr(doctype)
+    )
+    doc = (
+        f"{name} : {doctype}, optional"
+        if default is None else
+        f"{name} : {doctype}, default={default!r}" 
+        if default is not MISSING else
+        f"{name} : {doctype}"
+    )
+    if field.doc:
+        doc += "\n" + indent(dedent(field.doc).strip(), " " * 4)
+    return doc
+
+
 def _make_init_smart(
     fields: dict[str, Field], prepost: str=""
 ) -> dict:
@@ -574,18 +675,7 @@ def _make_init_smart(
         else:
             locals[_DEFAULT(name)] = default
             signature = f"{name}: {_TYPE(name)}={_DEFAULT(name)}" 
-        doctype = (
-            field.type.__qualname__
-            if isinstance(field.type, type) else
-            repr(field.type)
-        )
-        doc = [
-            f"{name} : {doctype}, default={default!r}" 
-            if default is not MISSING else
-            f"{name} : {doctype}"
-        ]
-        if field.doc:
-            doc += indent({dedent(field.doc)}, " " * 4).split("\n")
+        doc = _make_doc_elem(field, name)
         return signature, doc
 
     def _check_signature(signature: _tx.List[str]) -> None:
@@ -605,19 +695,19 @@ def _make_init_smart(
     for name, field in positional_onlys.items():
         signature_elem, doc_elem = _make_signature_elem(field)
         signature.append(signature_elem)
-        doc.extend(doc_elem)
+        doc.append(doc_elem)
     if positional_onlys:
         signature.append("/")
     for name, field in args.items():
         signature_elem, doc_elem = _make_signature_elem(field)
         signature.append(signature_elem)
-        doc.extend(doc_elem)
+        doc.append(doc_elem)
     if kw_onlys:
         signature.append("*")
     for name, field in kw_onlys.items():
         signature_elem, doc_elem = _make_signature_elem(field)
         signature.append(signature_elem)
-        doc.extend(doc_elem)
+        doc.append(doc_elem)
 
     _check_signature(signature)
 

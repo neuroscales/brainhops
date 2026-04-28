@@ -1,5 +1,6 @@
 
 __all__ = ["SlotsBase", "rebuild_cls", "slots"]
+import copy as copy_
 import inspect
 import types as _t
 import typing_extensions as _tx
@@ -145,3 +146,8 @@ class SlotsBase:
             if getattr(self, slot, MISSING) is MISSING:
                 setattr(self, slot, getattr(options, slot, MISSING))
 
+    def copy(self) -> _tx.Self:
+        return copy_.copy(self)
+    
+    def deepcopy(self) -> _tx.Self:
+        return copy_.deepcopy(self)

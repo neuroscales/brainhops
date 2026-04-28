@@ -101,9 +101,35 @@ class Transformation(DataModelBase, reverse=True):
         (e.g., from the coordinate system of the image being transformed).
     """
 
-    input: _tx.Optional[CoordinateSystem] = None
-    output: _tx.Optional[CoordinateSystem] = None
-    parameter_names: _tx.ClassVar[_tx.Union[str, _tx.Tuple[str, ...]]] = ()
+    parameter_names: _tx.Annotated[
+        _tx.ClassVar[_tx.Union[str, _tx.Tuple[str, ...]]],
+        _tx.Doc("The attributes that parameterize the transformation.")
+    ] = ()
+
+    type: _tx.Annotated[
+        HiddenConst[str],
+        _tx.Doc("A string that describes the type of the transformation.")
+    ]
+
+    input: _tx.Annotated[
+        _tx.Optional[CoordinateSystem],
+        _tx.Doc(
+            """
+            The input coordinate system of the transformation. 
+            If not specified, it can be inferred from the context (e.g., 
+            from the coordinate system of the image being transformed).
+            """)
+    ] = None
+
+    output: _tx.Annotated[
+        _tx.Optional[CoordinateSystem],
+        _tx.Doc(
+            """
+            The output coordinate system of the transformation. 
+            If not specified, it can be inferred from the context (e.g., 
+            from the coordinate system of the image being transformed).
+            """)
+    ] = None
 
     def compute(self, simplify: bool = False) -> _tx.Self:
         """
@@ -165,7 +191,15 @@ class Transformation(DataModelBase, reverse=True):
                 return e.result
         else:
             return _to(self, cls, **kwargs)
+    
+    def inverse(self) -> _tx.Self:
+        """Return the inverse of this transformation.
         
+        The inverse can also be obtained using the `__invert__` operator:
+        `T.inverse()` is equivalent to `~T`.
+        """
+        raise NotImplementedError
+
     @_tx.overload
     def __call__(self, x: "CoordinatesField", compute: _tx.Literal[True]) -> "CoordinatesField":
         """
@@ -225,6 +259,9 @@ class Transformation(DataModelBase, reverse=True):
     
     def __or__(self, other: "Transformation") -> "Transformation":
         return other(self)
+    
+    def __invert__(self) -> _tx.Self:
+        return self.inverse()
 
 
 # ----------------------------------------------------------------------
@@ -241,11 +278,36 @@ class CoordinatesField(Transformation):
     """
 
     parameter_names: _tx.ClassVar[str] = "field"
-    field: _tx.Optional[ArrayProtocol] = None
-    order: InterpolationOrder = InterpolationOrder.linear
-    bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
-    coeff: bool = False
     type: HiddenConst[str] = "coordinates"
+
+    field: _tx.Annotated[
+        _tx.Optional[ArrayProtocol], 
+        _tx.Doc("An array of shape `(*shape, ndim)`.")
+    ] = None
+
+    order: _tx.Annotated[
+        int, 
+        _tx.Doc("The spline interpolation order")
+    ] = 1
+
+    bound: _tx.Annotated[
+        _tx.Union[BoundaryCondition, float],
+        _tx.Doc(
+            """
+            The boundary condition used to deal with coordinates outside 
+            of the field of view. If a float is given, it is treated as 
+            a constant value.
+            """)
+    ] = BoundaryCondition.nearest
+
+    coeff: _tx.Annotated[
+        bool,
+         _tx.Doc(
+            """
+            If `True`, the field is treated as a field of spline coefficients,
+            rather than a field if values to interpolate.
+            """)
+    ] = False
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -273,17 +335,31 @@ class CartesianField(CoordinatesField):
     and is generated on demand when accessed.
     """
 
-    shape: _tx.Optional[_tx.Tuple[int, ...]] = None
+    shape: _tx.Annotated[
+        _tx.Optional[_tx.Tuple[int, ...]], 
+        _tx.Doc("The shape of the grid.")
+    ] = None
+
+    field: HiddenConst[None] = None
 
     @property
-    def field(self) -> ArrayProtocol:
+    def field(self) -> _tx.Optional[ArrayProtocol]:
+        if self.shape is None:
+            return None
         if getattr(self, "_field", None) is None:
             import dask.array as da  # TODO: implement `get_array_backend()`
-            self._field = da.meshgrid(
+            self._field = da.stack(da.meshgrid(
                 *[da.arange(s) for s in self.shape], 
                 indexing="ij"
-            )
+            ), -1)
         return self._field
+    
+    @field.setter
+    def field(self, value: None) -> None:
+        if value is not None:
+            raise ValueError(
+                "Cannot set field of CartesianField to a non-None value."
+            )
 
     def inverse(self) -> _tx.Self:
         # Inverse is itself, with switched input and output.
@@ -300,19 +376,41 @@ class DisplacementField(Transformation):
     A field of displacements defined on a regular grid.
 
     Both the input and output spaces correspond to the underlying grid.
-
-    Attributes
-    ----------
-    field : array-like | None
-        An array of shape `(*shape, ndim)`, where `len(shape) == ndim`.
     """
 
     parameter_names: _tx.ClassVar[str] = "field"
-    field: _tx.Optional[ArrayProtocol] = None
-    order: int = 1
-    bound: _tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest
-    coeff: bool = False
     type: HiddenConst[str] = "displacement"
+
+    field: _tx.Annotated[
+        _tx.Optional[ArrayProtocol], 
+        _tx.Doc(
+            "An array of shape `(*shape, ndim)`, where `len(shape) == ndim`"
+        )
+    ] = None
+
+    order: _tx.Annotated[
+        int, 
+        _tx.Doc("The spline interpolation order")
+    ] = 1
+
+    bound: _tx.Annotated[
+        _tx.Union[BoundaryCondition, float],
+        _tx.Doc(
+            """
+            The boundary condition used to deal with coordinates outside 
+            of the field of view. If a float is given, it is treated as 
+            a constant value.
+            """)
+    ] = BoundaryCondition.nearest
+
+    coeff: _tx.Annotated[
+        bool,
+         _tx.Doc(
+            """
+            If `True`, the field is treated as a field of spline coefficients,
+            rather than a field if values to interpolate.
+            """)
+    ] = False
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -327,18 +425,35 @@ class DisplacementField(Transformation):
 
 @hierarchy.AffineTransformation.register
 class Affine(Transformation):
+    """An affine transformation."""
 
     parameter_names: _tx.ClassVar[str] = "matrix"
-    matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "affine"
+
+    matrix: _tx.Annotated[
+        _tx.Optional[npmatrix[Real]],
+        _tx.Doc(
+            """
+            A matrix of shape `(No, Ni + 1)`, where `Ni` is the number of 
+            input dimensions and `No` is the number of output dimensions. 
+            The last column of the matrix corresponds to the translation 
+            component of the affine transformation. 
+            If `None`, the matrix is treated as an identity transformation.
+            """)
+    ] = None
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
+        """
+        The homogeneous matrix of the affine transformation, of shape
+        `(No + 1, Ni + 1)`. The last row of the homogeneous matrix is 
+        `[0, 0, ..., 1]`.
+        """
         if self.matrix is None:
             return None
         nx = _get_array_package(self.matrix)
-        No, Ni = self.matrix.shape
-        homogeneous_matrix = nx.zeros((No + 1, Ni))
+        No, NiPlus1 = self.matrix.shape
+        homogeneous_matrix = nx.zeros((No + 1, NiPlus1))
         homogeneous_matrix[:-1, :-1] = self.matrix[:, :-1]
         homogeneous_matrix[:-1, -1:] = self.matrix[:, -1:]
         homogeneous_matrix[-1, -1] = 1
@@ -358,10 +473,20 @@ class Affine(Transformation):
 
 @hierarchy.LinearTransformation.register
 class Linear(Transformation):
+    """A linear transformation."""
 
     parameter_names: _tx.ClassVar[str] = "matrix"
-    matrix: _tx.Optional[npmatrix[Real]] = None
     type: HiddenConst[str] = "linear"
+
+    matrix: _tx.Annotated[
+        _tx.Optional[npmatrix[Real]],
+        _tx.Doc(
+            """
+            A matrix of shape `(No, Ni)`, where `Ni` is the number of 
+            input dimensions and `No` is the number of output dimensions. 
+            If `None`, the matrix is treated as an identity transformation.
+            """)
+    ] = None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -377,10 +502,23 @@ class Linear(Transformation):
 
 @hierarchy.SpecialOrthogonalTransformation.register
 class Rotation(Linear):
+    """An orthogonal transformation with determinant 1, i.e., a rotation."""
+
     # TODO: Implement Rotation subclasses that use other representations 
     # (e.g., quaternions, Euler angles, etc.)
 
     type: HiddenConst[str] = "rotation"
+
+    matrix: _tx.Annotated[
+        _tx.Optional[npmatrix[Real]],
+        _tx.Doc(
+            """
+            A matrix of shape `(No, Ni)`, where `Ni` is the number of 
+            input dimensions and `No` is the number of output dimensions. 
+            This matrix MUST have a determinant of 1.
+            If `None`, the matrix is treated as an identity transformation.
+            """)
+    ] = None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -395,10 +533,22 @@ class Rotation(Linear):
 
 @hierarchy.Permutation.register
 class Permutation(Transformation):
+    """A permutation of axes."""
     
     parameter_names: _tx.ClassVar[str] = "permutation"
-    permutation: _tx.Optional[npvector[Integral]] = None
     type: HiddenConst[str] = "permutation"
+
+    permutation: _tx.Annotated[
+        _tx.Optional[npvector[Integral]],
+        _tx.Doc(
+            """
+            A vector of shape `(N,)`, where `N` is the number of axes
+            to permute. The element at index `i` indicates the input 
+            dimension that corresponds to the output dimension `i`.
+            If `None`, the permutation is treated as an identity 
+            transformation.
+            """)
+    ] = None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -416,10 +566,12 @@ class Permutation(Transformation):
 
 @hierarchy.DiagonalTransformation.register
 class Scaling(Transformation):
+    """A scaling of axes."""
 
     parameter_names: _tx.ClassVar[str] = "scale"
-    scale: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "scale"
+
+    scale: _tx.Optional[npvector[Real]] = None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -434,9 +586,12 @@ class Scaling(Transformation):
 
 @hierarchy.Translation.register
 class Translation(Transformation):
+    """A translation."""
+
     parameter_names: _tx.ClassVar[str] = "translation"
-    translation: _tx.Optional[npvector[Real]] = None
     type: HiddenConst[str] = "translation"
+
+    translation: _tx.Optional[npvector[Real]] = None
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -470,16 +625,29 @@ class Identity(Transformation):
 
 
 class Sequence(Transformation):
-    # NOTE: transformations in a sequence are listed in the order in which 
-    # they are applied. It reads as the opposite order to function
-    # composition (or matrix multiplication), which may be confusing.
-    #
-    # `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
-    # `Sequence([a1, a2, a3]) @ x` is equivalent to `a3 @ a2 @ a1 @ x`.
+    """A sequence of transformations.
+    
+    !!! note
+        Transformations in a sequence are listed in the order in which 
+        they are applied. It reads as the opposite order to function
+        composition (or matrix multiplication), which may be confusing.
+    
+        * `Sequence([t1, t2, t3])(x)` is equivalent to `t3(t2(t1(x)))`.
+        * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
+    """
 
     parameter_names: _tx.ClassVar[str] = "transformations"
-    transformations: _tx.Optional[_tx.List[Transformation]] = None
     type: HiddenConst[str] = "sequence"
+
+    transformations: _tx.Annotated[
+        _tx.Optional[_tx.List[Transformation]],
+        _tx.Doc(
+            """
+            A list of transformations, in the order in which they are 
+            applied to an input coordinate system.
+            """
+        )
+    ] = None
 
     def guess_input(self) -> _tx.Optional[CoordinateSystem]:
         if self.input is not None:
