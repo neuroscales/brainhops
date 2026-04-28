@@ -174,7 +174,7 @@ def _add_fields(
     if replace and not reverse:
         if inherit:
             for new_field in new_fields:
-                if inherit and new_field.name in fields:
+                if new_field.name in fields:
                     old_field = fields[new_field.name]
                     for attr in inherit:
                         if getattr(new_field, attr, MISSING) is MISSING:
@@ -288,8 +288,7 @@ def __pre_new__(
     cls_annotations = namespace.get('__annotations__', {})
 
     # Now find fields in our class.  While doing so, validate some
-    # things, and set the default values (as class attributes) where
-    # we can.
+    # things, and set the d
     cls_fields = []
     for field_name, type_ in cls_annotations.items():
         # Make Field from annotation

@@ -175,9 +175,9 @@ class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=Fal
         name = kwargs.get("name", args[0] if args else None)
         if name:
             prefix, base = _parse_unit_name(name)
-            cls_name = base.capitalize()
+            cls_name = str(base).capitalize()
             if prefix:
-                cls_name = prefix.capitalize() + cls_name
+                cls_name = str(prefix).capitalize() + cls_name
             if cls_name in globals():
                 kls = globals()[cls_name]
                 if kls in _REGISTERED_UNITS:
@@ -363,12 +363,10 @@ class Year(TimeUnit):
 # ----------------------------------------------------------------------
 
 
-@register
 class SpaceUnit(Unit):
     type: ClassVar[_tx.Literal["space"]] = "space"
 
 
-@register
 class SpaceUnitSI(UnitSI, SpaceUnit):
     base: ClassVar[SpaceUnitName] = SpaceUnitName.meter
 
