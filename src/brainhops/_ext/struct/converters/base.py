@@ -26,7 +26,8 @@ class ObjectConverter(HintConverter[OBJ]):
 
     def _convert(self, value: _tx.Any) -> object:
         if not isinstance(value, self.type):
-            return self.type(value)
+            value = self.type(value)
+        return value
 
 
 @register(type, _tx.Type)
