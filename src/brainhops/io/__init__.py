@@ -1,10 +1,10 @@
 """
-This module should implement generic APIs for interacting with 
-transformations, images, meshes, or streamlines that are stored in 
+This module should implement generic APIs for interacting with
+transformations, images, meshes, or streamlines that are stored in
 some format on disk or on the clkoud.
 
 Each format should implement the more general
-transformation/images/meshe/streamlines API that does not assume that
+transformation/images/meshes/streamlines API that does not assume that
 the data is stored at a specfic path.
 
 E.g.
