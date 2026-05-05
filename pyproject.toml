@@ -1,10 +1,10 @@
 [project]
-name = "wip-transforms"
+name = "brainhops"
 version = "0.1.0"
 description = "Scalable spatial transforms"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = []
+dependencies = ["typing_extensions", "numpy"]
 
 [build-system]
 requires = ["setuptools>=61"]
