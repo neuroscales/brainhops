@@ -32,15 +32,25 @@ class RASCoordinateSystem(Spatial3dCoordinateSystem):
     axes: _tx.Tuple[
         _axes.LeftToRightAxis, 
         _axes.PosteriorToAnteriorAxis, 
-        _axes.InferiorToSuperiorAxis
+        _axes.InferiorToSuperiorAxis,
     ] = (_axes.R, _axes.A, _axes.S)
 
 
 class LPSCoordinateSystem(Spatial3dCoordinateSystem):
+    # Used in ITK (and therefore also ANTs, Slicer, etc.)
     name: str = "LPS"
     axes: _tx.Tuple[
         _axes.RightToLeftAxis, 
         _axes.AnteriorToPosteriorAxis, 
-        _axes.SuperiorToInferiorAxis
+        _axes.SuperiorToInferiorAxis,
     ] = (_axes.L, _axes.P, _axes.S)
 
+
+class RSACoordinateSystem(Spatial3dCoordinateSystem):
+    # Used in some (rare) Freesurfer LTAs.
+    name: str = "RSA"
+    axes: _tx.Tuple[
+        _axes.LeftToRightAxis, 
+        _axes.InferiorToSuperiorAxis,
+        _axes.PosteriorToAnteriorAxis, 
+    ] = (_axes.R, _axes.A, _axes.S)
