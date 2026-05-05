@@ -10,12 +10,12 @@ _FIELDS = '__struct_fields__'
 # @struct.
 _OPTIONS = '__struct_options__'
 
-# The name of a method that is called before the __init__ method, 
+# The name of a method that is called before the __init__ method,
 # if it exists.
 # It returns (args, kwargs).
 _PRE_INIT_NAME = "__pre_init__"
 
-# The name of a method that is called after the __init__ method, 
+# The name of a method that is called after the __init__ method,
 # if it exists.
 _POST_INIT_NAME = "__post_init__"
 
@@ -49,10 +49,10 @@ class _MissingType:
         if not hasattr(cls, "_instance"):
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __repr__(self) -> str:
         return "<MISSING>"
-    
+
     def __bool__(self) -> bool:
         return False
 
@@ -67,10 +67,10 @@ class _RequiredType:
         if not hasattr(cls, "_instance"):
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __repr__(self) -> str:
         return "<REQUIRED>"
-    
+
     def __bool__(self) -> bool:
         return True
 
@@ -85,3 +85,6 @@ class _HasFactory:
 
     def __repr__(self):
         return '<factory>'
+
+    def __call__(self):
+        return self.factory()
