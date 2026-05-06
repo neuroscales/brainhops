@@ -5,8 +5,8 @@ from scipy.ndimage import gaussian_filter
 def inverse2d(disp: np.ndarray) -> np.ndarray:
     """
     Compute the inverse of a displacement field by interpreting it as a
-    triangular mesh, where each triangle defines an affine transform. 
-    
+    triangular mesh, where each triangle defines an affine transform.
+
     This is the method described in:
         "High-Dimensional Image Registration Using Symmetric Priors"
         Ashburner, Andersson & Friston. NeuroImage (1999).
@@ -15,7 +15,7 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     disp : np.ndarray
-        The displacement field to invert (displacements are in voxels). 
+        The displacement field to invert (displacements are in voxels).
         Should be of shape (Nx, Ny, 2) .
         The last dimension should contain the displacements along each
          axis, in the same order (i.e. [x, y]).
@@ -51,6 +51,7 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
         # Batch process similar thetrahedra
         _process_triangle(src1, dst1, out)
 
+    # Convert coordinates to displacements
     out -= src
 
     # Fill in missing values via smooting
@@ -166,14 +167,14 @@ def _process_segment(src, dst, y, seg, out):
 
 
 def _barycoord(x, tri):
-    # Compute the barycentric coordinates of x with respect to the 
+    # Compute the barycentric coordinates of x with respect to the
     # triangle defined by its vertices.
     # * x is of shape (N, 2), where N is the number of voxels in the
     #   batch. The last dimension contains the (x,y).
-    # * The triangle is defined by its vertices, with shape (N, 3, 2), 
+    # * The triangle is defined by its vertices, with shape (N, 3, 2),
     #   where N is the number of triangles in the batch.
-    # * The output is of shape (N, 3), where the last dimension contains  
-    #   the barycentric coordinates of x with respect to each vertex of  
+    # * The output is of shape (N, 3), where the last dimension contains
+    #   the barycentric coordinates of x with respect to each vertex of
     #   the triangle.
 
     v0 = tri[:, 0]
@@ -219,13 +220,13 @@ def _truncate_and_stack2d(a, b, c):
     Parameters
     ----------
     a, b, c : np.ndarray
-        The coordinates of the vertices of the triangles, 
+        The coordinates of the vertices of the triangles,
         with shape (Nx, Ny, 2).
-    
+
     Returns
     -------
     np.ndarray
-        With shape (N, 3, 2), where N=Nx*Ny is the number of 
+        With shape (N, 3, 2), where N=Nx*Ny is the number of
         triangles in the batch.
     """
     vertices = (a, b, c)
@@ -251,9 +252,9 @@ def _yield_triangles(field):
         (N, 3, 2).
     """
     # We need to split the grid into a red-black cherckerboard pattern.
-    # We also want to extract triangles via slicing, which means we can 
+    # We also want to extract triangles via slicing, which means we can
     # only batch triangles whose vertices are aligned on a cartesian grid.
-    # We therefore split the input grid into 4 subgrids, and designate 2 of 
+    # We therefore split the input grid into 4 subgrids, and designate 2 of
     # them as "red" and the other 2 as "black".
 
     # =========== #
@@ -304,9 +305,9 @@ def _yield_triangles(field):
 def yield_red(x00, x01, x10, x11):
     # Yield the two triangles that make up a red block.
     #
-    # #1  _____    
-    #    |     /    #2  
-    #    |   /    / |             
+    # #1  _____
+    #    |     /    #2
+    #    |   /    / |
     #    | /    /   |
     #         /_____|
 
@@ -323,7 +324,7 @@ def yield_black(x00, x01, x10, x11):
     #  #1      _____  #2
     #  | \    \     |
     #  |   \    \   |
-    #  |_____\    \ | 
+    #  |_____\    \ |
 
     # tip = 01
     yield _truncate_and_stack2d(x01, x00, x11)
@@ -354,7 +355,7 @@ def _compose_fields(field1, field2):
     grid = _identity_field(field1.shape[:-1])
     coords = grid + field1
     coords = np.transpose(coords, (2, 0, 1))  # (2, Nx, Ny)
-    
+
     out = np.empty_like(field1)
     for i in range(field1.shape[-1]):
         out[..., i] = map_coordinates(field2[..., i], coords, order=1)

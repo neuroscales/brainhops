@@ -1,5 +1,5 @@
 # METHOD
-# Described in 2D for simplicity, but the same applies to 3D, with 
+# Described in 2D for simplicity, but the same applies to 3D, with
 # thetrahedra instead of triangles.
 #
 # (0,0) - (0,1) - (0,2) - (0,3) - (0,4)
@@ -19,9 +19,9 @@
 #   |   /   |   \   |   /   |   \   |
 #   |  /    |    \  |  /    |    \  |
 # (4,0) - (4,1) - (4,2) - (4,3) - (4,4)
-# 
-# The grid can be split in a checkerboard pattern of "red" and "black" 
-# blocks, where each block. 
+#
+# The grid can be split in a checkerboard pattern of "red" and "black"
+# blocks, where each block.
 # Examples of "red" blocks are:
 #   - {(0,0),(0,1),(1,0),(1,1)}
 #   - {(2,0),(2,1),(3,0),(3,1)}
@@ -37,8 +37,8 @@
 # Thanks to the regularity of the pattern, we can extract batches of
 # triangles by slicing the displacement field.
 #
-# Inverting the displacement field, consists of finding the voxels 
-# that fall in each (displaced) triangle, and computing the barycentric 
+# Inverting the displacement field, consists of finding the voxels
+# that fall in each (displaced) triangle, and computing the barycentric
 # mean of the corresponding (original) vertices.
 #
 # In 3D, red and black blocks are cubes that are split into 5 thetrahedra.
@@ -53,8 +53,8 @@ from scipy.ndimage import gaussian_filter
 def inverse3d(disp: np.ndarray) -> np.ndarray:
     """
     Compute the inverse of a displacement field by interpreting it as a
-    thetrahedral mesh, where each thetrahedron defines an affine transform. 
-    
+    thetrahedral mesh, where each thetrahedron defines an affine transform.
+
     This is the method described in the appendix of:
         "Image Registration Using a Symmetric Prior — in Three Dimensions"
         Ashburner, Andersson & Friston. Human Brain Mapping (2000).
@@ -63,7 +63,7 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     disp : np.ndarray
-        The displacement field to invert (displacements are in voxels). 
+        The displacement field to invert (displacements are in voxels).
         Should be of shape (Nx, Ny, Nz, 3).
         The last dimension should contain the displacements along each
         axis, in the same order (i.e. [x, y, z]).
@@ -99,6 +99,7 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
         # Batch process similar thetrahedra
         _process_thetrahedron(src1, dst1, out)
 
+    # Convert coordinates to displacements
     out -= src
 
     # Fill in missing values via smooting
@@ -276,14 +277,14 @@ def _process_segment(src, dst, z, y, seg, out):
 
 
 def _barycoord(x, tetra):
-    # Compute the barycentric coordinates of x with respect to the 
+    # Compute the barycentric coordinates of x with respect to the
     # thetrahedron defined by its vertices.
     # * x is of shape (N, 13), where N is the number of voxels in the
     #   batch. The last dimension contains the (x,y,z).
-    # * The thetrahedron is defined by its vertices, with shape (N, 4, 3), 
+    # * The thetrahedron is defined by its vertices, with shape (N, 4, 3),
     #   where N is the number of thetrahedra in the batch.
-    # * The output is of shape (N, 4), where the last dimension contains  
-    #   the barycentric coordinates of x with respect to each vertex of  
+    # * The output is of shape (N, 4), where the last dimension contains
+    #   the barycentric coordinates of x with respect to each vertex of
     #   the thetrahedron.
 
     v0 = tetra[:, 0]
@@ -322,10 +323,10 @@ def _find_segment(tri, y):
 
 def _find_lower_triangle(dst, z):
     # Compute intersection of the "infinite" thetrahedron (no base)
-    # and a horizontal plane. Vertices are sorted by increasing z. 
+    # and a horizontal plane. Vertices are sorted by increasing z.
     # The first vertex is the "tip" of the thetrahedron.
-    # 
-    # The resulting intersection is a triangle. We return the (x,y) 
+    #
+    # The resulting intersection is a triangle. We return the (x,y)
     # coordinates of its vertices.
 
     out = np.empty_like(dst, shape=(len(dst), 3, 2))
@@ -350,10 +351,10 @@ def _find_lower_triangle(dst, z):
 
 def _find_upper_triangle(dst, z):
     # Compute intersection of the "infinite" thetrahedron (no base)
-    # and a horizontal plane. Vertices are sorted by increasing z. 
+    # and a horizontal plane. Vertices are sorted by increasing z.
     # The last vertex is the "tip" of the thetrahedron.
-    # 
-    # The resulting intersection is a triangle. We return the (x,y) 
+    #
+    # The resulting intersection is a triangle. We return the (x,y)
     # coordinates of its vertices.
 
     out = np.empty_like(dst, shape=(len(dst), 3, 2))
@@ -408,13 +409,13 @@ def _truncate_and_stack3d(a, b, c, d):
     Parameters
     ----------
     a, b, c, d : np.ndarray
-        The coordinates of the vertices of the thetrahedra, 
+        The coordinates of the vertices of the thetrahedra,
         with shape (Nx, Ny, Nz, 3).
-    
+
     Returns
     -------
     np.ndarray
-        With shape (N, 4, 3), where N=Nx*Ny*Nz is the number of 
+        With shape (N, 4, 3), where N=Nx*Ny*Nz is the number of
         thetrahedra in the batch.
     """
     vertices = (a, b, c, d)
@@ -440,9 +441,9 @@ def _yield_thetrahedra(field):
         (N, 4, 3).
     """
     # We need to split the grid into a red-black cherckerboard pattern.
-    # We also want to extract thetrahedra via slicing, which means we can 
+    # We also want to extract thetrahedra via slicing, which means we can
     # only batch thetrahedra whose vertices are aligned on a cartesian grid.
-    # We therefore split the input grid into 8 subgrids, and designate 4 of 
+    # We therefore split the input grid into 8 subgrids, and designate 4 of
     # them as "red" and the other 4 as "black".
 
     # =========== #
@@ -562,7 +563,7 @@ def _yield_thetrahedra(field):
 def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
     # Yield the five thetrahedra that make up a red block.
     #
-    # Four of them are all trirectangular thetrahedra 
+    # Four of them are all trirectangular thetrahedra
     # (i.e. with three right angles at the tip vertex,
     # https://en.wikipedia.org/wiki/Trirectangular_tetrahedron).
     # Their tips are two opposing vertices on the top face of the cube,
@@ -576,7 +577,7 @@ def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
     #    |                      /    ________|/
     #                                         #4
     #
-    # The fifth thetrahedron is a regular one, whose vertices are the 
+    # The fifth thetrahedron is a regular one, whose vertices are the
     # four vertices that were not tips in the other four thetrahedra.
 
     # tip = 000
@@ -598,10 +599,10 @@ def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
 def yield_black(x000, x001, x010, x011, x100, x101, x110, x111):
     # Yield the five thetrahedra that make up a black block.
     #
-    # Four of them are also trirectangular thetrahedra, whose tips are  
+    # Four of them are also trirectangular thetrahedra, whose tips are
     # the four vertices that were not tips in "red" blocks.
     #
-    #    #1  ________  
+    #    #1  ________
     #      /|          /                       |
     #     / |  _______/                        |
     #       |         | #2      |      ________| #4
@@ -650,7 +651,7 @@ def _compose_fields(field1, field2):
     grid = _identity_field(field1.shape[:-1])
     coords = grid + field1
     coords = np.transpose(coords, (3, 0, 1, 2))  # (3, Nx, Ny, Nz)
-    
+
     out = np.empty_like(field1)
     for i in range(field1.shape[-1]):
         out[..., i] = map_coordinates(field2[..., i], coords, order=1)
