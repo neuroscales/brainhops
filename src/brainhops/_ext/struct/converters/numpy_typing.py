@@ -1,41 +1,45 @@
 __all__ = [
-    "DTypeProtocol", 
-    "DTypeLike", 
-    "dtype", 
-    "ArrayProtocol", 
-    "ArrayLike", 
+    "DTypeProtocol",
+    "DTypeLike",
+    "dtype",
+    "ArrayProtocol",
+    "ArrayLike",
     "NDArray",
-    "ndarray", 
+    "ndarray",
 ]
-# stdlib 
+# stdlib
 from numbers import Number
 
 # externals
 import typing_extensions as _tx
 
 # optionals
-try:
+if _tx.TYPE_CHECKING:
     import numpy as np
-except ImportError:
-    np = None
-
-try:
     import numpy.typing as npt
-except ImportError:
-    npt = None
+else:
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
+    try:
+        import numpy.typing as npt
+    except ImportError:
+        npt = None
 
 
 SHAPE = _tx.TypeVar("SHAPE", bound=tuple)
 DTYPE = _tx.TypeVar("DTYPE", bound=type)
 
 
-@_tx.runtime_checkable 
+@_tx.runtime_checkable
 class ArrayProtocol(_tx.Protocol):
 
     def __array__(self, dtype=None): ...
 
 
-@_tx.runtime_checkable 
+@_tx.runtime_checkable
 class DTypeProtocol(_tx.Protocol):
 
     dtype: DTYPE
@@ -80,5 +84,3 @@ else:
 
 
     NDArray = ndarray[_tx.Tuple[int, ...], dtype[DTYPE]]
-
-

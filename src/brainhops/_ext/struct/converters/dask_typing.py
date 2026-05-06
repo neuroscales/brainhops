@@ -1,11 +1,11 @@
 __all__ = [
-    "DTypeProtocol", 
-    "DTypeLike", 
-    "dtype", 
-    "ArrayProtocol", 
-    "ArrayLike", 
+    "DTypeProtocol",
+    "DTypeLike",
+    "dtype",
+    "ArrayProtocol",
+    "ArrayLike",
     "NDArray",
-    "ndarray", 
+    "ndarray",
 ]
 # externals
 import typing_extensions as _tx
@@ -14,10 +14,13 @@ import typing_extensions as _tx
 from .numpy_typing import ArrayProtocol, DTypeProtocol, DTypeLike, dtype
 
 # optionals
-try:
+if _tx.TYPE_CHECKING:
     import dask.array as da
-except ImportError:
-    cp = None
+else:
+    try:
+        import dask.array as da
+    except ImportError:
+        da = None
 
 
 SHAPE = _tx.TypeVar("SHAPE", bound=tuple)
@@ -35,5 +38,3 @@ else:
     class Array(_tx.Generic[SHAPE, DTYPE]): ...
 
     NDArray = Array[_tx.Tuple[_tx.Any, ...], dtype[DTYPE]]
-
-

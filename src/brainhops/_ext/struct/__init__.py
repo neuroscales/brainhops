@@ -2,9 +2,9 @@
 # - Refactor/Simplify validators.
 #   (many have identical semantics and could share a base class)
 # - Implement from_dict, to_dict, etc.
-# - dataclasses generate class-specific methods that compile to much
-#   more efficient bytecode than my methods (which are general-purpose).
-#   We could steal some of their magic, but this is for later.
+# - Generate more efficient bytecode by evaluating magic methods at
+#   class creation time, rather than looping through fields at run-time.
+#   This is already done for __init__, but not for the other ones.
 """
 A `Struct` acts like a python `dataclass`, except that it operates
 via inheritence, rather than via a decorator (although the @struct
@@ -16,6 +16,13 @@ by subclasses.
 
 ```python
 class Point(Struct, frozen=True):
+    x: float
+    y: float
+
+# --- or ---
+
+@struct(frozen=True)
+class Point:
     x: float
     y: float
 ```
@@ -105,7 +112,7 @@ x: Annotated[int, NotFrozen()]
 x: Annotated[int, Frozen(False)]
 ```
 """
-__all__ = ["Struct", "struct", "converters", "validators"]
+__all__ = ["Struct", "struct", "converters", "validators", "HIDE_IF_NONE"]
 # stdlib
 import sys
 import types as _t
@@ -120,7 +127,8 @@ import typing_extensions as _tx
 # internals
 from .constants import (
     _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, _RETURN_TYPE,
-    _SELF, _HasFactory, _DEFAULT, _TYPE, _CONVERTER, _VALIDATOR, MISSING
+    _SELF, SHOW_ATTR, _HasFactory, _DEFAULT, _TYPE, _CONVERTER, _VALIDATOR, MISSING,
+    HIDE_IF_NONE
 )
 from .utils import _get_origin, rebuild_cls
 from .options import *
@@ -291,6 +299,11 @@ def __pre_new__(
     # things, and set the d
     cls_fields = []
     for field_name, type_ in cls_annotations.items():
+
+        if field_name[:2] == "__":
+            # Dunder name -> ignore (same behavior as attrs)
+            continue
+
         # Make Field from annotation
         field = Field.from_hint(field_name, type_)
 
@@ -316,14 +329,28 @@ def __pre_new__(
         elif field.name in namespace:
             field.default = namespace[field.name]
 
+        # Set unset field options from class options
+        field.setdefault(options)
+
+        # Use Key/Repr wrappers
+        # (This is hacky and ugly -- should be reworked)
+        if field.key is HIDE_IF_NONE:
+            field.key = HIDE_IF_NONE(field.public_name)
+        if not isinstance(field.key, SHOW_ATTR):
+            field.key = SHOW_ATTR(field.key)
+
+        if field.repr is HIDE_IF_NONE:
+            if field.var:
+                field.repr = SHOW_ATTR(False)
+            else:
+                field.repr = HIDE_IF_NONE(field.public_name)
+        if not isinstance(field.repr, SHOW_ATTR):
+            field.repr = SHOW_ATTR(field.repr)
+
         cls_fields.append(field)
 
     # Insert fields from this class, in correct order.
     _add_fields(fields, cls_fields, replace=True, reverse=options.reverse)
-
-    # Set unset field options from class options
-    for field in fields.values():
-        field.setdefault(options)
 
     # Do we have any Field members that don't also have annotations?
     for attr_name, value in namespace.items():
@@ -360,8 +387,8 @@ def __pre_new__(
 
     # Build __init__
     if options.init:
-        fnbuilder.add_fn(**_make_init_smart(fields, prepost))
-        # namespace.setdefault("__init__", _make_init(qualname, fields))
+        fnname = "__init__" if options.init is True else options.init
+        fnbuilder.add_fn(name=fnname, **_make_init(fields, prepost))
 
     # TODO
     # _set_new_attribute(cls, '__replace__', _replace)
@@ -371,26 +398,33 @@ def __pre_new__(
 
     if options.repr:
         repr_fields = {name: f for name, f in fields.items() if f.repr}
-        namespace.setdefault("__repr__", _make_repr(qualname, repr_fields))
+        fnname = options.repr if isinstance(options.repr, str) else "__repr__"
+        namespace.setdefault(fnname, _make_repr(qualname, repr_fields))
 
     if options.eq:
-        namespace.setdefault("__eq__", _make_eq(qualname, real_fields))
+        fnname = options.eq if isinstance(options.eq, str) else "__eq__"
+        namespace.setdefault(fnname, _make_eq(qualname, real_fields))
 
     if options.order:
-        namespace.setdefault("__lt__", _make_lt(qualname, real_fields))
+        fnname = options.order if isinstance(options.order, str) else "__lt__"
+        namespace.setdefault(fnname, _make_lt(qualname, real_fields))
 
     # Decide if/how we're going to create a hash function.
     _make_hash = _hash_action[bool(options.unsafe_hash),
                               bool(options.eq),
                               bool(options.frozen),
                               has_explicit_hash]
+    if options.hash is False:
+        _make_hash = False
+
     if _make_hash:
-        namespace.setdefault("__hash__", _make_hash(qualname, real_fields))
+        fnname = options.hash if isinstance(options.hash, str) else "__hash__"
+        namespace.setdefault(fnname, _make_hash(qualname, real_fields))
 
     if options.match_args:
-        # I could probably compute this once.
+        fnname = options.match_args if isinstance(options.match_args, str) else "__match_args__"
         namespace.setdefault("__match_args__", tuple(
-            f.name for f in fields.values() if f.init and f.positional
+            f.public_name for f in fields.values() if f.init and f.positional
         ))
 
     if options.frozen:
@@ -399,7 +433,7 @@ def __pre_new__(
         namespace.setdefault("__setstate__", setstate)
 
     if options.mapping:
-        dict_fields = {f.name: f for f in fields.values() if f.key}
+        dict_fields = {f.public_key: f for f in fields.values() if f.key}
         for name, func in _make_mapping(qualname, dict_fields).items():
             namespace.setdefault(name, func)
         Mapping = _abc.Mapping if options.frozen else _abc.MutableMapping
@@ -419,9 +453,10 @@ def __pre_new__(
 
     # Add attributes to class documentation
     if options.doc:
-        doc = namespace.get('__doc__', '').rstrip("\n")
+        docname = '__doc__' if options.doc is True else options.doc
+        doc = namespace.get(docname, '').rstrip("\n")
         doc = "\n\n".join([doc, _make_doc_class(fields)])
-        namespace['__doc__'] = doc
+        namespace[docname] = doc
 
     return clsname, bases, namespace
 
@@ -595,7 +630,7 @@ def _make_doc_class(fields: dict[str, Field]) -> str:
 
 def _make_doc_elem(field: Field, name: _tx.Optional[str] = None) -> str:
 
-    name = name or field.name
+    name = name or field.public_name
 
     default = field.default
     if field.factory:
@@ -643,7 +678,7 @@ def _make_doc_elem(field: Field, name: _tx.Optional[str] = None) -> str:
     return doc
 
 
-def _make_init_smart(
+def _make_init(
     fields: dict[str, Field], prepost: str=""
 ) -> dict:
 
@@ -664,7 +699,7 @@ def _make_init_smart(
             SELF = _SELF
 
     def _make_signature_elem(field: Field) -> _tx.Tuple[str, str]:
-        name = field.name
+        name = field.public_name
         default = field.default
         if field.factory:
             default = _HasFactory(field.factory)
@@ -762,7 +797,6 @@ def _make_init_smart(
         body.append(_make_prepost_call(_POST_INIT_NAME))
 
     return {
-        "name": "__init__",
         "args": [SELF] + signature,
         "body": body,
         "doc": doc,
@@ -771,186 +805,13 @@ def _make_init_smart(
     }
 
 
-def _make_init(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
-
-    self_name = _SELF if "self" in fields else "self"
-
-    _std_init_fields = {
-        name: field
-        for name, field in fields.items()
-        if field.init and field.positional
-    }
-    _positional_only_init_fields = {
-        name: field
-        for name, field in fields.items()
-        if field.init and field.positional and not field.kw
-    }
-    _kw_only_init_fields = {
-        name: field
-        for name, field in fields.items()
-        if field.init and not field.positional and field.kw
-    }
-
-    def __init__(*args, **kwargs) -> None:
-
-        # --------------------------------------------------------------
-        # Get self
-        if args:
-            self, *args = args
-        else:
-            self = kwargs.pop(self_name)
-
-        # --------------------------------------------------------------
-        # Call pre-init.
-        if hasattr(self, _PRE_INIT_NAME):
-            args, kwargs = getattr(self, _PRE_INIT_NAME)(*args, **kwargs)
-
-        # --------------------------------------------------------------
-        # Make copies of the fields dicts, because we're going to be mutating
-        std_init_fields = dict(_std_init_fields)
-        kw_only_init_fields = dict(_kw_only_init_fields)
-        positional_only_init_fields = dict(_positional_only_init_fields)
-        init_vars = {}
-
-        # --------------------------------------------------------------
-        # First, unroll positional arguments.
-        args = list(args)
-        while args:
-            if not std_init_fields:
-                raise TypeError(f"Too many positional arguments: {len(args)}")
-            arg = args.pop(0)
-            field = std_init_fields.pop(next(iter(std_init_fields)))
-
-            if field.var:
-                init_vars[field.name] = arg
-                continue
-
-            if not field.frozen:
-                # We let setattr() do the work
-                setattr(self, field.name, arg)
-
-            else:
-                if field.converter:
-                    arg = field.converter(arg)
-
-                if field.validator:
-                    arg = field.validator(arg)
-
-                object.__setattr__(self, field.name, arg)
-
-        # --------------------------------------------------------------
-        # Merge all remaining fields. They will either be in kwargs,
-        # or will be assigned their default value.
-        kw_only_init_fields.update(std_init_fields)
-
-        # --------------------------------------------------------------
-        # Unroll keyword arguments.
-        for name, arg in kwargs.items():
-
-            if name in positional_only_init_fields:
-                raise TypeError(
-                    f"Got positional-only argument as keyword: {name!r}"
-                )
-
-            if name not in kw_only_init_fields:
-                raise TypeError(f"Unexpected keyword argument: {name!r}")
-
-            field = kw_only_init_fields.pop(name)
-
-            if field.var:
-                init_vars[field.name] = arg
-                continue
-
-            if not field.frozen:
-                # We let setattr() do the work
-                setattr(self, field.name, arg)
-
-            else:
-                if field.converter:
-                    arg = field.converter(arg)
-
-                if field.validator:
-                    arg = field.validator(arg)
-
-                object.__setattr__(self, field.name, arg)
-
-        # --------------------------------------------------------------
-        # Assign default values for any remaining fields.
-        for field in kw_only_init_fields.values():
-
-            if field.default is not MISSING:
-                arg = field.default
-
-            elif field.factory:
-                arg = field.factory()
-
-            else:
-                raise TypeError(f"Missing required argument: {field.name!r}")
-
-            if field.var:
-                init_vars[field.name] = arg
-                continue
-
-            if not field.frozen:
-                # We let setattr() do the work
-                setattr(self, field.name, arg)
-
-            else:
-                if field.converter:
-                    arg = field.converter(arg)
-
-                if field.validator:
-                    arg = field.validator(arg)
-
-                object.__setattr__(self, field.name, arg)
-
-        # --------------------------------------------------------------
-        # Call post-init on InitVars
-        if hasattr(self, _POST_INIT_NAME):
-            postinit_args = []
-            for field in fields.values():
-
-                if not (field.init and field.var):
-                    continue
-
-                arg = init_vars.get(field.name, MISSING)
-                if arg is MISSING:
-
-                    if field.default is not MISSING:
-                        arg = field.default
-
-                    elif field.factory:
-                        arg = field.factory()
-
-                    else:
-                        raise TypeError(
-                            f"Missing required argument for post-init: "
-                            f"{field.name!r}"
-                        )
-
-                if field.converter:
-                    arg = field.converter(arg)
-
-                if field.validator:
-                    arg = field.validator(arg)
-
-                postinit_args.append(arg)
-            getattr(self, _POST_INIT_NAME)(*postinit_args)
-
-    __init__.__qualname__ = f"{qualname}.__init__"
-    return __init__
-
-
 def _make_repr(qualname: str, fields: dict[str, Field]) -> _tx.Callable:
 
     def __repr__(self) -> str:
         params = [
-            f"{field.name}={getattr(self, field.name)!r}"
+            f"{field.public_name}={getattr(self, field.name)!r}"
             for field in fields.values()
-            if field.repr is True or (
-                field.repr == "hide_none" and
-                getattr(self, field.name) is not None
-            )
+            if field.repr(getattr(self, field.name))
         ]
         params = ", ".join(params)
         return f"{self.__class__.__name__}({params})"
@@ -1110,7 +971,7 @@ def _make_mapping(qualname: str, fields: dict[str, Field]) -> _tx.Mapping[str, _
         field = fields.get(key)
         if field:
             value = getattr(self, field.name)
-            if field.key == "hide_none" and value is None:
+            if not field.key(value):
                 raise KeyError(key)
             return value
         raise KeyError(key)
@@ -1130,18 +991,15 @@ def _make_mapping(qualname: str, fields: dict[str, Field]) -> _tx.Mapping[str, _
             raise KeyError(key)
 
     def __iter__(self) -> _tx.Iterator[str]:
-        for field in fields.values():
+        for key, field in fields.items():
             if field:
-                if (field.key == "hide_none" and
-                    getattr(self, field.name) is None
-                ):
+                if not field.key(getattr(self, field.name)):
                     continue
-                yield field.name
+                yield key
 
     def __len__(self) -> int:
         return sum(
-            field.key != "hide_none" or
-            getattr(self, field.name) is not None
+            field.key(getattr(self, field.name))
             for field in fields.values()
         )
 
@@ -1167,40 +1025,46 @@ def _make_mapping(qualname: str, fields: dict[str, Field]) -> _tx.Mapping[str, _
 
 
 _DOC_OPTIONS = """
-init: bool, default=True
-    Generate `__init__` method
-repr : bool, default=True
-    Generate `__repr__` method
-eq : bool, default=True
-    Generate `__eq__` method
+init: bool | str, default=`True`
+    Generate `__init__` method.
+repr : bool | str, default=True
+    Generate `__repr__` method.
+eq : bool | str, default=True
+    Generate `__eq__` method.
 order : bool, default=False
-    Generate `__lt__` method
+    Generate `__lt__` method.
+hash : bool | str, default=None
+    Generate `__hash__` method.
+    If `None`, decide automatically.
 unsafe_hash : bool, default=False
-    Always generate `__hash__` method
+    Always generate `__hash__` method.
 frozen : bool, default=False
-    Disable `__setattr__` and `__delattr__`
+    Disable `__setattr__` and `__delattr__`.
 match_args : bool, default=True
-    Generate `__match_args__` for pattern matching
+    Generate `__match_args__` for pattern matching.
 kw_only : bool, default=False
-    Make all fields keyword-only by default
+    Make all fields keyword-only by default.
 positional_only : bool, default=False
-    Make all fields positional-only by default
+    Make all fields positional-only by default.
 slots : bool, default=False
-    Generate `__slots__` and remove `__dict__`
+    Generate `__slots__` and remove `__dict__`.
 weakref_slot : bool, default=False
-    Generate a weakref slot in `__slots__`
+    Generate a weakref slot in `__slots__`.
 factory : bool, default=False
-    Use field type as factory if none is provided
+    Use field type as factory if none is provided.
 convert : bool, default=False
-    Use field type as converter if none is provided
+    Use field type as converter if none is provided.
 validate : bool, default=False
-    Use field type as validator if none is provided
+    Use field type as validator if none is provided.
 mapping : bool, default=False
     Implement the `Mapping` protocol.
 reverse : bool, default=False
     Use the reverse MRO order to determine field order.
     This only affects the relaive order of the fields of one class
     with respect to the fields of its base classes.
+doc : bool | str, default=True
+    Add field documentation to class docstring
+   .
 """.strip()
 
 
@@ -1294,3 +1158,28 @@ def struct(cls: _tx.Optional[type] = None, **kwargs):
     if cls is None:
         return partial(struct, **kwargs)
     return rebuild_cls(cls, partial(MetaStruct, **kwargs))
+
+
+# ----------------------------------------------------------------------
+# External methods
+# ----------------------------------------------------------------------
+
+
+def fields(cls: type) -> _tx.Tuple[Field]:
+    """
+    Get the fields of a Struct class.
+
+    Parameters
+    ----------
+    cls : type
+        The class to get the fields of.
+
+    Returns
+    -------
+    fields : tuple[Field]
+        All concrete fields (that are not `ClassVar` or `InitVar`).
+    """
+    return tuple(
+        field for field in getattr(cls, _FIELDS, {}).values()
+        if not field.var
+    )

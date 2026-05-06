@@ -5,10 +5,11 @@ from .utils import slots, SlotsBase
 
 
 @slots(
-    'init',             # Generate __init__ method
-    'repr',             # Generate __repr__ method
-    'eq',               # Generate __eq__ method
-    'order',            # Generate __lt__ method
+    'init',             # Generate __init__ method (or its name)
+    'repr',             # Generate __repr__ method (or its name)
+    'eq',               # Generate __eq__ method (or its name)
+    'order',            # Generate __lt__ method (or its name)
+    'hash',             # Generate __hash__ method (or its name)
     'unsafe_hash',      # Always generate __hash__ method
     'frozen',           # Disable __setattr__ and __delattr__
     'match_args',       # Generate __match_args__ for pattern matching
@@ -30,6 +31,7 @@ class Options(SlotsBase):
         repr=True,
         eq=True,
         order=False,
+        hash=None,
         unsafe_hash=False,
         frozen=False,
         match_args=False,
@@ -44,7 +46,7 @@ class Options(SlotsBase):
         reverse=False,
         doc=True,
     )
-    
+
     @staticmethod
     def make_default() -> _tx.Self:
         return Options(**Options._DEFAULTS)

@@ -36,7 +36,7 @@ __all__ = [
 import types as _t
 import typing_extensions as _tx
 
-from .constants import MISSING, REQUIRED, MaybeMissing
+from .constants import MISSING, REQUIRED, MaybeMissing, SHOW_ATTR, HIDE_IF_NONE
 from .converters import HintConverter
 from .options import Options
 from .utils import SlotsBase, slots, _get_origin
@@ -49,7 +49,7 @@ T = _tx.TypeVar("T")
     'name',             # Field name
     'type',             # Field type (or type hint)
     'default',          # Default value for this field.
-    'factory',  # A factory function that generates a default value for this field.
+    'factory',          # A factory function that generates a default value for this field.
     'init',             # Include this field in the generated __init__ method.
     'repr',             # Include this field in the generated __repr__ method.
     'hash',             # Include this field in the generated __hash__ method.
@@ -58,22 +58,92 @@ T = _tx.TypeVar("T")
     'metadata',         # User-defined metadata
     'kw',               # Make this field a keyword in the generated __init__ method.
     'positional',       # Make this field a positional argument in the generated __init__ method.
-    'init_only',        # Make this field positional-only in the generated __init__ method.
     'frozen',           # Make this field immutable after initialization.
     'converter',        # A function that converts the input value for this field.
     'validator',        # A function that validates the input value for this field.
     'var',              # Whether this field is a pseudo-field (InitVar or ClassVar).
     'doc',              # Docstring for this field.
     'key',              # Include this field in the generated dict-like interface.
+    'alias',            # Alternative names for this field in the generated methods.
 )
 class Field(SlotsBase):
+    """A field in a `Struct`."""
 
     def __init__(self, *arg, **kwargs) -> None:
-        # The positional argument is a special case in which `Field`` 
+        """
+        Parameters
+        ----------
+        name : str
+            The name of the field.
+        type : type or type hint
+            The type of the field.
+            This is used for type checking, validation, and conversion.
+        default : any
+            The default value for the field.
+        factory : Callable[[], any], default=`Options().factory`
+            A factory function that generates a default value for the field.
+        init : bool, default=`Options().init`
+            Whether to include this field in the generated `__init__` method.
+        repr : bool, default=`Options().repr`
+            Whether to include this field in the generated `__repr__` method.
+        hash : bool, default=`Options().hash`
+            Whether to include this field in the generated `__hash__` method.
+        eq : bool, default=`Options().eq`
+            Whether to include this field in the generated `__eq__` method.
+        order : bool, default=`Options().order`
+            Whether to include this field in the generated `__lt__` methods.
+        metadata : dict, optional
+            User-defined metadata for this field.
+        kw : bool, default=`not Options().positional_only`
+            Make this field a keyword argument in the generated `__init__`
+            method. To make the field keyword-only, set `positional=False`
+            as well.
+        positional : bool, default=`not Options().kw_only`
+            Make this field a positional argument in the generated `__init__`
+            method. To make the field positional-only, set `kw=False` as well.
+        frozen : bool, default=`Options().frozen`
+            Whether to make this field immutable after initialization.
+        converter : bool | Callable[[any], any], default=`Options().convert`
+            A function that converts the input value for this field.
+            If `True`, a converter will be generated based on the field type.
+        validator : bool | Callable[[any], any], default=`Options().validate`
+            A function that validates the input value for this field.
+            If should be pass-through when the value is valid, and raise
+            an exception when it is not.
+            If `True`, a validator will be generated based on the field type.
+        var : bool, default=False
+            Whether this field is a pseudo-field (InitVar or ClassVar).
+            Pseudo-fields are not set by the generated `__init__` method,
+            but may one of its arguments (when `init=True`), or used in
+            the generated `__repr__` method (when `init=False, repr=True`).
+            It is often more readable to use the `InitVar` and `ClassVar`
+            annotations.
+        doc : str, optional
+            A docstring for this field.
+            The `typing_extensions.Doc` annotation can also be used to
+            set this.
+        key : bool | str, default=`Options().mapping`
+            Whether to include this field in the generated dict-like
+            interface. If a string, it will be used as the key.
+        alias : str, default=`name.lstrip("_")`
+            An alternative name for this field in the generated methods.
+            This is useful when the field name is not a valid Python
+            identifier, or when you want to use a different name in the
+            generated methods for readability or consistency with an
+            external API.
+            By default, names that start with an underscore will have
+            the underscore stripped in the alias.
+
+        Other Parameters
+        ----------------
+        compare : bool, optional
+            Alias for setting both `eq` and `order` at the same time.
+        """
+        # The positional argument is a special case in which `Field``
         # acts as the opposite of `Var`.
         if arg and arg[0] is not MISSING:
             kwargs["var"] = not arg[0]
-        # `compare` is a special alias for setting both `eq` and `order` 
+        # `compare` is a special alias for setting both `eq` and `order`
         # at the same time.
         compare = kwargs.get("compare", MISSING)
         if compare is not MISSING:
@@ -81,12 +151,36 @@ class Field(SlotsBase):
             kwargs.setdefault("order", compare)
         # set slots from keywords
         super().__init__(**kwargs)
-    
+
     def __class_getitem__(cls, t: _tx.Union[type, _tx.Tuple]) -> _tx.TypeAlias:
+        # Allow using Field as an annotation.
+        # It will likely never be used directly on the `Field` class,
+        # but will be useful for subclasses: e.g., `Factory[list]` is
+        # more concise than `Annotated[T, Field(factory=list)]`.
         if not isinstance(t, tuple):
             t = (t,)
         t, *args = t
         return _tx.Annotated[t, cls(True), *args]
+
+    @property
+    def public_name(self) -> str:
+        """The public name of this field, used in generated methods."""
+        if self.alias is False:
+            return self.name
+        if self.alias is not MISSING:
+            return self.alias
+        return self.name.lstrip("_")
+
+    @property
+    def public_key(self) -> _tx.Optional[str]:
+        """The key to use for this field in the generated dict-like interface."""
+        if not self.key:
+            return None
+        if isinstance(self.key, SHOW_ATTR) and isinstance(self.key.key, str):
+            return self.key.key
+        if isinstance(self.key, str):
+            return self.key
+        return self.public_name
 
     @classmethod
     def from_hint(
@@ -99,7 +193,7 @@ class Field(SlotsBase):
             # Replace python's ClassVar with our own.
             hint = ClassVar[_tx.get_args(hint)]
             return cls.from_hint(name, hint, default)
-    
+
         field = Field()
         if origin is _tx.Annotated:
             type, *hints = _tx.get_args(hint)
@@ -114,9 +208,9 @@ class Field(SlotsBase):
                     field.doc = hint.documentation
         field.update(Field(name=name, type=type, default=default))
         return field
-    
+
     def setdefault(self, options: Options) -> None:
-        # When field options are not explicitly set (MISSING), they are 
+        # When field options are not explicitly set (MISSING), they are
         # inherited from the class options.
         if options.kw_only and options.positional_only:
             raise ValueError(
@@ -163,7 +257,7 @@ class Field(SlotsBase):
             self.validator = options.validate
         if self.validator is True:
             self.validator = HintValidator(self.type)
-        if self.factory is MISSING: 
+        if self.factory is MISSING:
             self.factory = options.factory
         if self.factory is True:
             factory = self.type
@@ -197,7 +291,7 @@ class AnnotatedField(Field):
                 cls_set_slots = (cls_set_slots,)
             if isinstance(cls_set_slots, tuple):
                 cls_set_slots = {
-                    slot: cls.__set_value__ 
+                    slot: cls.__set_value__
                     for slot in cls_set_slots
                 }
             set_slots.update(cls_set_slots)
@@ -257,7 +351,7 @@ class Default(AnnotatedField):
     Specifiy that a field has a default value.
 
     ```python
-    Default(10)    ~> Field(default=10)
+    Default(10)      ~> Field(default=10)
     Default[int, 10] ~> Annotated[T, Field(default=10)]
     ```
     """
@@ -269,7 +363,7 @@ class Default(AnnotatedField):
 class Factory(AnnotatedField):
     """
     Specifiy that a field has a default factory.
-    
+
     ```python
     Factory()             ~> Field(factory=True)
     Factory(list)         ~> Field(factory=list)
@@ -285,7 +379,7 @@ class Factory(AnnotatedField):
 class ConvertTo(AnnotatedField):
     """
     Specifiy that a field has a converter.
-    
+
     ```python
     ConvertTo()             ~> Field(converter=True)
     ConvertTo(list)         ~> Field(converter=list)
@@ -301,7 +395,7 @@ class ConvertTo(AnnotatedField):
 class Validate(AnnotatedField):
     """
     Specifiy that a field has a validator.
-    
+
     ```python
     Validate()                  ~> Field(validator=True)
     Validate(myvalidator)       ~> Field(validator=myvalidator)
@@ -316,7 +410,7 @@ class Validate(AnnotatedField):
 @slots
 class Init(BoolAnnotatedField):
     """
-    Specifiy that a field should [not] be included in the generated 
+    Specifiy that a field should [not] be included in the generated
     `__init__` method.
 
     ```python
@@ -440,7 +534,7 @@ class ClassVar(Var, NoInit): ...
 @slots
 class Repr(BoolAnnotatedField):
     """
-    Specifiy that a field should [not] be included in the generated 
+    Specifiy that a field should [not] be included in the generated
     `__repr__` method.
 
     ```python
@@ -458,7 +552,7 @@ class NoRepr(Repr, InversedBoolAnnotatedField): ...
 
 
 @slots
-class Eq(BoolAnnotatedField): 
+class Eq(BoolAnnotatedField):
     """ Specifiy that a field should [not] be included in the generated `__eq__` method.
 
     ```python
@@ -468,7 +562,7 @@ class Eq(BoolAnnotatedField):
     NoEq[int]  ~> Annotated[T, Field(eq=False)]
     ```
     """
-    
+
     __set_slots__ = ('eq',)
 
 
@@ -477,7 +571,7 @@ class NoEq(Eq, InversedBoolAnnotatedField): ...
 
 
 @slots
-class Order(BoolAnnotatedField): 
+class Order(BoolAnnotatedField):
     """ Specifiy that a field should [not] be included in the generated `__lt__` method.
 
     ```python
@@ -504,8 +598,8 @@ class NoCompare(Compare, InversedBoolAnnotatedField): ...
 
 
 @slots
-class Hash(BoolAnnotatedField): 
-    """ Specifiy that a field should [not] be included in the generated 
+class Hash(BoolAnnotatedField):
+    """ Specifiy that a field should [not] be included in the generated
     `__hash__` method.
 
     ```python
@@ -524,8 +618,8 @@ class NoHash(Hash, InversedBoolAnnotatedField): ...
 
 
 @slots
-class Key(BoolAnnotatedField): 
-    """ Specifiy that a field should [not] be included in the generated 
+class Key(BoolAnnotatedField):
+    """ Specifiy that a field should [not] be included in the generated
     `__hash__` method.
 
     ```python

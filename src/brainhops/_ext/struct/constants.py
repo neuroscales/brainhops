@@ -88,3 +88,42 @@ class _HasFactory:
 
     def __call__(self):
         return self.factory()
+
+
+class SHOW_ATTR:
+
+    def __init__(
+        self,
+        key: _tx.Optional[str] = None,
+        hide_if_none: bool = False
+    ) -> None:
+        self.key = key
+        self.hide_if_none = hide_if_none
+
+    def __call__(self, value: _tx.Any) -> bool:
+        if self.key is False:
+            return False
+        if self.hide_if_none and value is None:
+            return False
+        return True
+
+    def __bool__(self) -> bool:
+        return self.key is not False
+
+    def __str__(self) -> str:
+        return str(self.key)
+
+    def __repr__(self) -> str:
+        if self.key is False:
+            return "False"
+        if self.key is True and self.hide_if_none:
+            return "<if not None>"
+        if self.hide_if_none:
+             return f"{self.key!r} <if not None>"
+        return f"{self.key!r}"
+
+
+class HIDE_IF_NONE(SHOW_ATTR):
+
+    def __init__(self, key: _tx.Optional[str] = None) -> None:
+        super().__init__(key=key, hide_if_none=True)
