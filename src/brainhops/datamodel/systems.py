@@ -1,7 +1,7 @@
 __all__ = [
     "CoordinateSystem",
     "SpatialCoordinateSystem",
-    "Spatial3dCoordinateSystem",
+    "SpatialCoordinateSystem3D",
     "RASCoordinateSystem",
     "LPSCoordinateSystem"
 ]
@@ -9,48 +9,268 @@ __all__ = [
 import typing_extensions as _tx
 
 # internals
-from .struct import DataModelBase
+from .base import DataModelBase
 from .axes import Axis, SpatialAxis
 from . import axes as _axes
 
 
+_2Axes = _tx.Tuple[Axis, Axis]
+_3Axes = _tx.Tuple[Axis, Axis, Axis]
+_2SpatialAxes = _tx.Tuple[SpatialAxis, SpatialAxis]
+_3SpatialAxes = _tx.Tuple[SpatialAxis, SpatialAxis, SpatialAxis]
+
+
 class CoordinateSystem(DataModelBase):
+    """A coordinate system defines the meaning of coordinates in a space.
+
+    It describes each axis in the system (name, unit and/or other properties),
+    and can be named.
+    """
     name: _tx.Optional[str] = None
     axes: _tx.Optional[_tx.List[Axis]] = None
 
 
+class CoordinateSystem2D(CoordinateSystem):
+    """A coordinate systems with exactly two dimensions."""
+    axes: _tx.Optional[_2Axes] = (Axis(), Axis())
+
+
+class CoordinateSystem3D(CoordinateSystem):
+    """A coordinate system with exactly three dimensions."""
+    axes: _tx.Optional[_3Axes] = (Axis(), Axis(), Axis())
+
+
+# ----------------------------------------------------------------------
+#   ARRAY COORDINATE SYSTEMS
+# ----------------------------------------------------------------------
+
+
+class ArrayCoordinateSystem(CoordinateSystem):
+    """A coordinate system for a unitless, multidimensional array.
+
+    By default, the array is assumed C-ordered: the first axis is the
+    slowest changing in memory, and the last axis is the fastest changing.
+    """
+    name: _tx.Optional[str] = "array"
+
+
+class CArrayCoordinateSystem(ArrayCoordinateSystem):
+    """A coordinate system for a unitless, C-ordered multidimensional array."""
+    name: _tx.Optional[str] = "carray"
+
+
+class FArrayCoordinateSystem(ArrayCoordinateSystem):
+    """A coordinate system for a unitless, F-ordered multidimensional array."""
+    name: _tx.Optional[str] = "farray"
+
+
+class ArrayCoordinateSystem2D(CoordinateSystem2D, ArrayCoordinateSystem):
+    """A coordinate system for a unitless array with two dimensions."""
+    axes: _tx.Optional[_2Axes] = (Axis("dim0"), Axis("dim1"))
+
+
+class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
+    """A coordinate system for a unitless array with three dimensions."""
+    axes: _tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
+
+
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
+
+
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
+
+
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
+
+
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
+
+
+# ----------------------------------------------------------------------
+#   SPATIAL COORDINATE SYSTEMS
+# ----------------------------------------------------------------------
+
+
 class SpatialCoordinateSystem(CoordinateSystem):
+    """A coordinate system, whose axes have spatial meaning."""
     axes: _tx.Optional[_tx.List[SpatialAxis]] = None
 
 
-class Spatial3dCoordinateSystem(CoordinateSystem):
-    axes: _tx.Optional[_tx.Tuple[SpatialAxis, SpatialAxis, SpatialAxis]] = None
+class SpatialCoordinateSystem2D(CoordinateSystem2D, SpatialCoordinateSystem):
+    """A 2D coordinate system, whose axes have spatial meaning."""
+    axes: _tx.Optional[_2SpatialAxes] = (SpatialAxis(), SpatialAxis())
 
 
-class RASCoordinateSystem(Spatial3dCoordinateSystem):
+class SpatialCoordinateSystem3D(CoordinateSystem3D, SpatialCoordinateSystem):
+    """A 3D coordinate system, whose axes have spatial meaning."""
+    axes: _tx.Optional[_3SpatialAxes] = (SpatialAxis(), SpatialAxis(), SpatialAxis())
+
+
+class PixelCoordinateSystem(SpatialCoordinateSystem2D, ArrayCoordinateSystem2D):
+    """A coordinate system for (unitless) 2D pixel grids."""
+    name: _tx.Optional[str] = "pixel"
+    axes: _tx.Optional[_2SpatialAxes] = (
+        SpatialAxis(name="dim0", unit=None),
+        SpatialAxis(name="dim1", unit=None)
+    )
+
+
+class VoxelCoordinateSystem(SpatialCoordinateSystem3D, ArrayCoordinateSystem3D):
+    """A coordinate system for (unitless) 3D voxel grids."""
+    name: _tx.Optional[str] = "voxel"
+    axes: _tx.Optional[_3SpatialAxes] = (
+        SpatialAxis(name="dim0", unit=None),
+        SpatialAxis(name="dim1", unit=None),
+        SpatialAxis(name="dim2", unit=None)
+    )
+
+
+class CPixelCoordinateSystem(PixelCoordinateSystem, CArrayCoordinateSystem2D):
+    """A coordinate system for (unitless) C-ordered 2D pixel grids."""
+    name: _tx.Optional[str] = "cpixel"
+    axes: _tx.Optional[_2SpatialAxes] = (
+        SpatialAxis(name="j", unit=None),
+        SpatialAxis(name="i", unit=None)
+    )
+
+
+class FPixelCoordinateSystem(PixelCoordinateSystem, FArrayCoordinateSystem2D):
+    """A coordinate system for (unitless) F-ordered 2D pixel grids."""
+    name: _tx.Optional[str] = "fpixel"
+    axes: _tx.Optional[_2SpatialAxes] = (
+        SpatialAxis(name="i", unit=None),
+        SpatialAxis(name="j", unit=None)
+    )
+
+
+class CVoxelCoordinateSystem(SpatialCoordinateSystem3D, CArrayCoordinateSystem3D):
+    """A coordinate system for (unitless) C-ordered 3D voxel grids."""
+    name: _tx.Optional[str] = "cvoxel"
+    axes: _tx.Optional[_3SpatialAxes] = (
+        SpatialAxis(name="k", unit=None),
+        SpatialAxis(name="j", unit=None),
+        SpatialAxis(name="i", unit=None)
+    )
+
+
+class FVoxelCoordinateSystem(SpatialCoordinateSystem3D, FArrayCoordinateSystem3D):
+    """A coordinate system for (unitless) F-ordered 3D voxel grids."""
+    name: _tx.Optional[str] = "fvoxel"
+    axes: _tx.Optional[_3SpatialAxes] = (
+        SpatialAxis(name="i", unit=None),
+        SpatialAxis(name="j", unit=None),
+        SpatialAxis(name="k", unit=None)
+    )
+
+
+# ----------------------------------------------------------------------
+#   ANATOMICAL COORDINATE SYSTEMS
+# ----------------------------------------------------------------------
+
+
+class RASCoordinateSystem(SpatialCoordinateSystem3D):
+    # Used in NIfTI files, and many others.
     name: str = "RAS"
     axes: _tx.Tuple[
-        _axes.LeftToRightAxis, 
-        _axes.PosteriorToAnteriorAxis, 
+        _axes.LeftToRightAxis,
+        _axes.PosteriorToAnteriorAxis,
         _axes.InferiorToSuperiorAxis,
     ] = (_axes.R, _axes.A, _axes.S)
 
 
-class LPSCoordinateSystem(Spatial3dCoordinateSystem):
+class LPSCoordinateSystem(SpatialCoordinateSystem3D):
     # Used in ITK (and therefore also ANTs, Slicer, etc.)
     name: str = "LPS"
     axes: _tx.Tuple[
-        _axes.RightToLeftAxis, 
-        _axes.AnteriorToPosteriorAxis, 
-        _axes.SuperiorToInferiorAxis,
+        _axes.RightToLeftAxis,
+        _axes.AnteriorToPosteriorAxis,
+        _axes.InferiorToSuperiorAxis,
     ] = (_axes.L, _axes.P, _axes.S)
 
 
-class RSACoordinateSystem(Spatial3dCoordinateSystem):
+class RSACoordinateSystem(SpatialCoordinateSystem3D):
     # Used in some (rare) Freesurfer LTAs.
     name: str = "RSA"
     axes: _tx.Tuple[
-        _axes.LeftToRightAxis, 
+        _axes.LeftToRightAxis,
         _axes.InferiorToSuperiorAxis,
-        _axes.PosteriorToAnteriorAxis, 
-    ] = (_axes.R, _axes.A, _axes.S)
+        _axes.PosteriorToAnteriorAxis,
+    ] = (_axes.R, _axes.S, _axes.A)
+
+
+class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
+    name: str = "fRAS"
+    axes: _tx.Tuple[
+        _axes.LeftToRightAxis,
+        _axes.PosteriorToAnteriorAxis,
+        _axes.InferiorToSuperiorAxis,
+    ] = (
+        _axes.LeftToRightAxis(name="x"),
+        _axes.PosteriorToAnteriorAxis(name="y"),
+        _axes.InferiorToSuperiorAxis(name="z"),
+    )
+
+
+class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
+    name: str = "fLPS"
+    axes: _tx.Tuple[
+        _axes.RightToLeftAxis,
+        _axes.AnteriorToPosteriorAxis,
+        _axes.InferiorToSuperiorAxis,
+    ] = (
+        _axes.RightToLeftAxis(name="x"),
+        _axes.AnteriorToPosteriorAxis(name="y"),
+        _axes.InferiorToSuperiorAxis(name="z"),
+    )
+
+
+class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
+    name: str = "fRSA"
+    axes: _tx.Tuple[
+        _axes.LeftToRightAxis,
+        _axes.InferiorToSuperiorAxis,
+        _axes.PosteriorToAnteriorAxis,
+    ] = (
+        _axes.LeftToRightAxis(name="x"),
+        _axes.InferiorToSuperiorAxis(name="y"),
+        _axes.PosteriorToAnteriorAxis(name="z"),
+    )
+
+
+class CRASCoordinateSystem(RASCoordinateSystem, CVoxelCoordinateSystem):
+    name: str = "cRAS"
+    axes: _tx.Tuple[
+        _axes.InferiorToSuperiorAxis,
+        _axes.PosteriorToAnteriorAxis,
+        _axes.LeftToRightAxis,
+    ] = (
+        _axes.InferiorToSuperiorAxis(name="z"),
+        _axes.PosteriorToAnteriorAxis(name="y"),
+        _axes.LeftToRightAxis(name="x"),
+    )
+
+
+class CLPSCoordinateSystem(LPSCoordinateSystem, CVoxelCoordinateSystem):
+    name: str = "cLPS"
+    axes: _tx.Tuple[
+        _axes.InferiorToSuperiorAxis,
+        _axes.AnteriorToPosteriorAxis,
+        _axes.RightToLeftAxis,
+    ] = (
+        _axes.InferiorToSuperiorAxis(name="z"),
+        _axes.AnteriorToPosteriorAxis(name="y"),
+        _axes.RightToLeftAxis(name="x"),
+    )
+
+
+class CRSACoordinateSystem(RSACoordinateSystem, CVoxelCoordinateSystem):
+    name: str = "cRSA"
+    axes: _tx.Tuple[
+        _axes.PosteriorToAnteriorAxis,
+        _axes.InferiorToSuperiorAxis,
+        _axes.LeftToRightAxis,
+    ] = (
+        _axes.PosteriorToAnteriorAxis(name="z"),
+        _axes.InferiorToSuperiorAxis(name="y"),
+        _axes.LeftToRightAxis(name="x"),
+    )

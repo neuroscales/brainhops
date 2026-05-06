@@ -11,11 +11,11 @@ __all__ = [
 from typing_extensions import Optional
 
 # internals
-from .struct import DataModelBase
+from .base import DataModelBase
 from .orientation import (
-    Orientation, 
-    LeftToRight, RightToLeft, 
-    AnteriorToPosterior, PosteriorToAnterior, 
+    Orientation,
+    LeftToRight, RightToLeft,
+    AnteriorToPosterior, PosteriorToAnterior,
     InferiorToSuperior, SuperiorToInferior
 )
 from .typing import HiddenConst
@@ -31,12 +31,12 @@ class Axis(DataModelBase):
 
 
 class SpatialAxis(Axis):
-    unit: SpaceUnit = SpaceUnit("millimeter")
+    unit: Optional[SpaceUnit] = SpaceUnit("millimeter")
     type: HiddenConst[str] = "spatial"
 
 
 class TimeAxis(Axis):
-    unit: TimeUnit = TimeUnit("second")
+    unit: Optional[TimeUnit] = TimeUnit("second")
     type: HiddenConst[str] = "time"
 
 
@@ -80,3 +80,10 @@ A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
 P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
 S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
 I = superiorToInferiorAxis = SuperiorToInferiorAxis()
+
+Rx = leftToRightAxis = LeftToRightAxis(name="x")
+Lx = rightToLeftAxis = RightToLeftAxis(name="x")
+Ay = posteriorToAnteriorAxis = PosteriorToAnteriorAxis(name="y")
+Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
+Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
+Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")

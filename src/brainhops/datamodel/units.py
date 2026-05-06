@@ -5,9 +5,9 @@
 __all__ = [
     "PrefixName", "UnitName", "UnitSIName", "SpaceUnitName", "TimeUnitName",
     "Unit", "UnitSI",
-    "TimeUnit", "TimeUnitSI", 
+    "TimeUnit", "TimeUnitSI",
     "Second", "Minute", "Hour", "Day",
-    "SpaceUnit", "SpaceUnitSI", 
+    "SpaceUnit", "SpaceUnitSI",
     "Meter", "Inch", "Foot", "Yard", "Mile", "Angstrom", "Parsec",
 ]
 
@@ -145,7 +145,7 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
         for prefix in PrefixName:
             name = prefix.capitalize() + base.__name__
             kls = type(name, cls.__bases__, {
-                "prefix": prefix, 
+                "prefix": prefix,
                 "base": base.base,
                 "__module__": cls.__module__,
                 "__qualname__": qualprefix + name,
@@ -245,7 +245,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
         if base in UnitSIName.__members__:
             base = UnitSIName[base]
         return (prefix or "") + base
-        
+
     def __new__(cls, *args, **kwargs):
         name = cls._parse_name(*args, **kwargs)
         args = (name,) + args[1:]
@@ -275,7 +275,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
     @property
     def scale(self) -> float:
         return type(self).scale
-    
+
 
 class _MetaKnownUnit(MetaStruct):
 
@@ -290,7 +290,7 @@ class _MetaKnownUnit(MetaStruct):
     @property
     def scale(cls) -> float:
         return UNITS[cls.name][0]
-    
+
     @property
     def log10_scale(cls) -> float:
         return log10(cls.scale)
@@ -309,7 +309,7 @@ class KnownUnit(Unit, metaclass=_MetaKnownUnit):
     @property
     def scale(self) -> float:
         return type(self).scale
-    
+
     @property
     def log10_scale(self) -> float:
         return type(self).log10_scale

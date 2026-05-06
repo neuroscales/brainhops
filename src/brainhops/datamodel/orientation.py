@@ -11,17 +11,19 @@ __all__ = [
 import typing_extensions as _tx
 
 # internals
-from .struct import DataModelBase
+from .base import DataModelBase
 from .typing import HiddenConst
+from .enums import OrientationType
 
 
-class Orientation(DataModelBase):
-    type: _tx.Optional[str] = None
+class Orientation(DataModelBase, doc=True):
+    """"""
+    type: _tx.Optional[OrientationType] = None
     value: _tx.Optional[str] = None
 
 
 class AnatomicalOrientation(Orientation):
-    type: HiddenConst[str] = "anatomical"
+    type: HiddenConst[OrientationType] = OrientationType.anatomical
 
 
 class LeftToRight(AnatomicalOrientation):

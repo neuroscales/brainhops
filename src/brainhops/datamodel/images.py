@@ -2,7 +2,7 @@
 import typing_extensions as _tx
 
 # internals
-from .struct import DataModelBase
+from .base import DataModelBase
 from .systems import CoordinateSystem
 from .transformations import Transformation
 

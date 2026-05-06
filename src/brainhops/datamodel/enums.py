@@ -1,7 +1,22 @@
+__all__ = ["BoundaryCondition", "InterpolationOrder"]
+
 from enum import StrEnum, IntEnum
 
 
 class BoundaryCondition(StrEnum):
+    """Boundary conditions for interpolation and resampling.
+
+    The following boundary conditions are supported:
+
+    | Value         | Aliases                        | Description                     |
+    |---------------|--------------------------------|---------------------------------|
+    | `nearest`     | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
+    | `reflect`     | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
+    | `mirror`      | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
+    | `grid-wrap`   | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
+    | `wrap`        |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
+    """
+
     nearest = edge = border = "nearest"                     # (a a a a | a b c d | d d d d)
     reflect = symmetric = dct2 = "reflect"                  # (d c b a | a b c d | d c b a)
     mirror = dct1 = "mirror"                                #   (d c b | a b c d | c b a)
@@ -10,6 +25,23 @@ class BoundaryCondition(StrEnum):
 
 
 class InterpolationOrder(IntEnum):
+    """Interpolation order for interpolation and resampling.
+
+    The following interpolation orders are supported:
+
+    | Name          | Aliases     | Value | Description                     |
+    |---------------|-------------|-------|---------------------------------|
+    | `zeroth`      | `nearest`   | 0     | Nearest neighbor interpolation. |
+    | `first`       | `linear`    | 1     | Linear interpolation.           |
+    | `second`      | `quadratic` | 2     | Quadratic interpolation.        |
+    | `third`       | `cubic`     | 3     | Cubic interpolation.            |
+    | `fourth`      |             | 4     | Fourth-order interpolation.     |
+    | `fifth`       |             | 5     | Fifth-order interpolation.      |
+    | `barycentric` |             | -1    | Barycentric interpolation.      |
+    | `fourier`     |             | -2    | Fourier interpolation.          |
+
+    """
+
     zeroth = nearest   = 0
     first  = linear    = 1
     second = quadratic = 2
@@ -18,3 +50,9 @@ class InterpolationOrder(IntEnum):
     fifth              = 5
     barycentric        = -1
     fourier            = -2
+
+
+class OrientationType(StrEnum):
+    """Orientation types for coordinate systems and transformations."""
+
+    anatomical = "anatomical"

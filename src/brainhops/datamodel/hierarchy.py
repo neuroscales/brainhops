@@ -2,32 +2,32 @@ r"""
 This module defines a transformation hierarchy.
 
 The class A is a subclass of B if A can be converted to B without loss.
-For example, Linear is a subclass of Affine. This is akin to set theory 
+For example, Linear is a subclass of Affine. This is akin to set theory
 in mathematics.
 
 This differs from the usual "type hierarchy", where inheriting classes
 are typically more specialized then their parents.
 
-We implement both types of hierarchy, so that users can easily check 
-whether a transformation can be conceptually thought as a given class 
+We implement both types of hierarchy, so that users can easily check
+whether a transformation can be conceptually thought as a given class
 of transformation (e.g. "is this transformation a linear transform?"),
-without it being conflated with type inheritence 
+without it being conflated with type inheritence
 (e.g. "is this transformation an instance of the Linear class?").
 
-In our hierarchu, transformations types correspond to sets, and 
-inheritance describes set inclusion (i.e., `isubclass(A, B)` implies 
-`A ⊆ B`). All transformations act on the n-dimensional euclidean space 
+In our hierarchu, transformations types correspond to sets, and
+inheritance describes set inclusion (i.e., `isubclass(A, B)` implies
+`A ⊆ B`). All transformations act on the n-dimensional euclidean space
 R^n, and are assigned a "composition" operator.
 
-Some of these transformation sets (but not all!) are groups under the 
-composition operator. This is indicated by the `@group` decorator. 
-If a set A is a subset of set B, and both A and B are groups, then A is 
+Some of these transformation sets (but not all!) are groups under the
+composition operator. This is indicated by the `@group` decorator.
+If a set A is a subset of set B, and both A and B are groups, then A is
 a subgroup of B.
 
 Many linear transformations, when constrained to be invertible, can
-be thought of as members of a Lie group, i.e. they are smooth manifolds, 
+be thought of as members of a Lie group, i.e. they are smooth manifolds,
 and their group operations (composition and inversion) are smooth maps.
-This is indicated by the `@liegroup` decorator. Note that the set A may 
+This is indicated by the `@liegroup` decorator. Note that the set A may
 be a subgroup of a Lie group B without being a Lie group itself!
 
 Lie groups
@@ -74,23 +74,23 @@ All classical linear group can be extended with the translation group
       classicaly referred to as "rigid-body" transformations. They preserve
       angles and volumes.
 
-    * The Special Conformal Euclidean group (CSE) contains transformations 
-      that are classicaly referred to as "similitude" (or conformal) 
+    * The Special Conformal Euclidean group (CSE) contains transformations
+      that are classicaly referred to as "similitude" (or conformal)
       transformations. They only preserve angles.
 """
 __all__ = [
-    "Transformation", 
-    "Bijection", 
-    "Isomorphism", 
+    "Transformation",
+    "BijectiveTransformation",
+    "Isomorphism",
     "Diffeomorphism",                               # Diff
     "VolumePreservingDiffeomorphism",               # SDiff
     # LIE / MATRIX
-    "MatrixTransformation", 
-    "LieGroupTransformation", 
+    "MatrixTransformation",
+    "LieGroupTransformation",
     "DiffeomorphicLieGroupTransformation",
-    "ConnectedLieGroupTransformation", 
-    "SimplyConnectedLieGroupTransformation", 
-    "MatrixLieGroupTransformation", 
+    "ConnectedLieGroupTransformation",
+    "SimplyConnectedLieGroupTransformation",
+    "MatrixLieGroupTransformation",
     "ConnectedMatrixLieGroupTransformation",
     # AFFINE
     "AffineTransformation",
@@ -110,14 +110,14 @@ __all__ = [
     # LINEAR
     "LinearTransformation",                         # M (set of matrices)
     "InvertibleLinearTransformation",               # GL               (det ≠ 0)
-    "PositiveLinearTransformation",                 # GL+              (det > 0)    
+    "PositiveLinearTransformation",                 # GL+              (det > 0)
     "SpecialLinearTransformation",                  # SL               (det = 1)
     "ConformalOrthogonalTransformation",            # CO  = O x R*     (det ≠ 0)
     "SpecialConformalOrthogonalTransformation",     # CSO = O x R+     (det > 0)
     "OrthogonalTransformation",                     # O                (det =±1)
     "SpecialOrthogonalTransformation",              # SO               (det = 1)
     "Rotation",                                     # ^ alias
-    "Permutation",                                 
+    "Permutation",
     "InvertiblePermutation",                        # S                (det ≠ 0)
     "DiagonalTransformation",
     "InvertibleDiagonalTransformation",             # Δ                (det ≠ 0)
@@ -156,7 +156,7 @@ def is_simplyconnected(cls) -> bool:
 def group(cls):
     """
     Mark the set of transformations as forming a group under composition.
-    
+
     wiki: https://en.wikipedia.org/wiki/Group_(mathematics)
     """
     GROUPS.add(cls)
@@ -195,7 +195,7 @@ def simplyconnected(cls):
 
 class Transformation(ABC):
     """Any coordinate transformation.
-    
+
     alias: Morphism
     """
 
@@ -206,14 +206,19 @@ class Transformation(ABC):
 Morphism = Transformation
 
 
-class Bijection(Transformation):
+class BijectiveTransformation(Transformation):
     """An invertible transformation.
-    
+
+    alias: Bijection
+
     wiki: https://en.wikipedia.org/wiki/Bijection
     """
 
 
-class Isomorphism(Bijection):
+Bijection = BijectiveTransformation
+
+
+class Isomorphism(BijectiveTransformation):
     """
     In all useful senses, bijective morphisms are isomorphisms,
     but there are mathematical spaces on which this is not true.
@@ -226,7 +231,7 @@ class Isomorphism(Bijection):
 @group
 class Diffeomorphism(Isomorphism):
     """Smooth invertible transformation, with a smooth inverse.
-    
+
     wiki: https://en.wikipedia.org/wiki/Diffeomorphism
     """
     SYMBOL = "Diff"
@@ -247,18 +252,18 @@ class VolumePreservingDiffeomorphism(Diffeomorphism):
 
 class MatrixTransformation(Transformation):
     """Transformation that can be represented as a matrix.
-    
+
     wiki: https://en.wikipedia.org/wiki/Transformation_matrix
     """
 
 
 @group
 class InvertibleMatrixTransformation(
-    MatrixTransformation, 
-    Bijection
+    MatrixTransformation,
+    BijectiveTransformation
 ):
     """A matrix transformation that is invertible.
-    
+
     wiki: https://en.wikipedia.org/wiki/Invertible_matrix
     """
 
@@ -267,7 +272,7 @@ class InvertibleMatrixTransformation(
 @simplyconnected
 class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
     """An invertible matrix transformation with positive determinant.
-    
+
     wiki: https://en.wikipedia.org/wiki/Positive-definite_matrix
     """
 
@@ -279,22 +284,22 @@ class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
 
 class AffineTransformation(MatrixTransformation):
     """An affine transformation. May not be invertible.
-    
+
     wiki: https://en.wikipedia.org/wiki/Affine_transformation
     """
 
 
 @liegroup
 class InvertibleAffineTransformation(
-    AffineTransformation, 
+    AffineTransformation,
     InvertibleMatrixTransformation
 ):
     """
-    An invertible affine transformation 
+    An invertible affine transformation
 
     Invertible affine transformations form a Lie group, named Aff.
 
-    This group includes reflections, and has therefore two connected 
+    This group includes reflections, and has therefore two connected
     components.
 
     symbol: Aff = GL ⋉ T
@@ -308,13 +313,13 @@ class InvertibleAffineTransformation(
 @liegroup
 @simplyconnected
 class PositiveAffineTransformation(
-    InvertibleAffineTransformation, 
+    InvertibleAffineTransformation,
     PositiveDefiniteMatrixTransformation
 ):
     """
     Affine transformation with a positive determinant.
 
-    This group does not include reflections, and has therefore a 
+    This group does not include reflections, and has therefore a
     single connected component.
 
     symbol: Aff+ = GL+ ⋉ T
@@ -330,9 +335,9 @@ class SpecialAffineTransformation(
     VolumePreservingDiffeomorphism
 ):
     """
-    An affine transformation with determinant +1 -- preserves volumes 
-    
-    This group does not include reflections, and has therefore a 
+    An affine transformation with determinant +1 -- preserves volumes
+
+    This group does not include reflections, and has therefore a
     single connected component.
 
     symbol: SAff = SL ⋉ T
@@ -352,8 +357,8 @@ VolumePreservingAffineTransformation = SpecialAffineTransformation
 class ConformalEuclideanTransformation(InvertibleAffineTransformation):
     """
     An affine transformation that preserves angles (up to their sign).
-    
-    This group includes reflections, and has therefore two connected 
+
+    This group includes reflections, and has therefore two connected
     components.
 
     symbol: CE = CO ⋉ T
@@ -367,8 +372,8 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
 class SpecialConformalEuclideanTransformation(ConformalEuclideanTransformation):
     """
     An affine transformation that preserves angles
-    
-    This group does not include reflections, and has therefore a 
+
+    This group does not include reflections, and has therefore a
     single connected component.
 
     symbol: CSE = CSO ⋉ T
@@ -386,7 +391,7 @@ Similitude = SpecialConformalEuclideanTransformation
 class EuclideanTransformation(ConformalEuclideanTransformation):
     """
     A euclidean transformation with determinant ± 1
-    
+
     symbol: E = O ⋉ T
 
     wiki: https://en.wikipedia.org/wiki/Euclidean_group
@@ -400,7 +405,7 @@ class EuclideanTransformation(ConformalEuclideanTransformation):
 class SpecialEuclideanTransformation(SpecialConformalEuclideanTransformation):
     """
     A euclidean transformation with determinant +1
-    
+
     symbol: SE = SO ⋉ T
 
     alias: RigidTransformation
@@ -448,7 +453,7 @@ class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
 @simplyconnected
 class Translation(PositiveDilation):
     """A translation.
-    
+
     symbol: T
 
     wiki: https://en.wikipedia.org/wiki/Translation_(geometry)#As_a_group
@@ -468,16 +473,16 @@ class LinearTransformation(AffineTransformation):
 
 @liegroup
 class InvertibleLinearTransformation(
-    LinearTransformation, 
+    LinearTransformation,
     InvertibleAffineTransformation
 ):
     """
     An invertible linear transformation.
 
-    Invertible linear transformation form a Lie group, named the 
+    Invertible linear transformation form a Lie group, named the
     General Linear group (GL).
 
-    This group includes reflections, and has therefore two connected 
+    This group includes reflections, and has therefore two connected
     components.
 
     symbol: GL
@@ -491,7 +496,7 @@ class InvertibleLinearTransformation(
 @liegroup
 @connected
 class PositiveLinearTransformation(
-    InvertibleLinearTransformation, 
+    InvertibleLinearTransformation,
     PositiveAffineTransformation
 ):
     """
@@ -540,7 +545,7 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
 @liegroup
 @connected
 class SpecialConformalOrthogonalTransformation(
-    ConformalOrthogonalTransformation, 
+    ConformalOrthogonalTransformation,
     SpecialLinearTransformation
 ):
     """
@@ -558,7 +563,7 @@ class SpecialConformalOrthogonalTransformation(
 
 @liegroup
 class OrthogonalTransformation(
-    ConformalOrthogonalTransformation, 
+    ConformalOrthogonalTransformation,
     EuclideanTransformation
 ):
     """
@@ -575,15 +580,15 @@ class OrthogonalTransformation(
 @liegroup
 @connected
 class SpecialOrthogonalTransformation(
-    OrthogonalTransformation, 
-    SpecialConformalOrthogonalTransformation, 
+    OrthogonalTransformation,
+    SpecialConformalOrthogonalTransformation,
     SpecialEuclideanTransformation
 ):
     """
     A orthogonal matrix (AA" = I) with determinant +1
 
     symbol: SO
-    
+
     alias: Rotation
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Special_orthogonal_group
@@ -598,11 +603,11 @@ Rotation = SpecialOrthogonalTransformation
 @group
 class GeneralizedPermutation(InvertibleLinearTransformation):
     """A generalized permutation.
-    
+
     Permutations are invertible by definition.
 
-    The generalized permutation group is the semidirect product of the 
-    symmetric group (permutations) and the group of invertible diagonal 
+    The generalized permutation group is the semidirect product of the
+    symmetric group (permutations) and the group of invertible diagonal
     matrices.
 
     symbol: S ⋉ Δ
@@ -628,7 +633,7 @@ class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
 @group
 class Permutation(SignedPermutation, OrthogonalTransformation):
     """A permutation.
-    
+
     A generalized permutation with non-zero entries +1.
 
     Permutations form the symmetric Lie group, named S.
@@ -643,7 +648,7 @@ class Permutation(SignedPermutation, OrthogonalTransformation):
 
 class DiagonalTransformation(LinearTransformation):
     """A diagonal matrix, may not be invertible.
-    
+
     wiki: https://en.wikipedia.org/wiki/Diagonal_matrix
     wiki: https://en.wikipedia.org/wiki/Scaling_(geometry)
     """
@@ -651,14 +656,14 @@ class DiagonalTransformation(LinearTransformation):
 
 @liegroup
 class InvertibleDiagonalTransformation(
-    DiagonalTransformation, 
+    DiagonalTransformation,
     InvertibleLinearTransformation
 ):
     """An invertible diagonal matrix.
-    
+
     Invertible diagonal matrices form a Lie group.
 
-    This group includes reflections, and has therefore two connected 
+    This group includes reflections, and has therefore two connected
     components.
 
     symbol: Δ
@@ -670,11 +675,11 @@ class InvertibleDiagonalTransformation(
 @liegroup
 @simplyconnected
 class PositiveDiagonalTransformation(
-    InvertibleDiagonalTransformation, 
+    InvertibleDiagonalTransformation,
     PositiveLinearTransformation
 ):
     """A diagonal matrix with positive entries.
-    
+
     This group does not include reflections, and has therefore a
     single connected component.
 
@@ -688,7 +693,7 @@ class MultiplicativeTransformation(
     DiagonalTransformation,
 ):
     """A scaling with the same factor in all dimensions.
-    
+
     symbol: R
     """
     SYMBOL = "R"
@@ -697,11 +702,11 @@ class MultiplicativeTransformation(
 
 @liegroup
 class InvertibleMultiplicativeTransformation(
-    MultiplicativeTransformation, 
+    MultiplicativeTransformation,
     InvertibleDiagonalTransformation
 ):
     """A scaling with the same positive factor in all dimensions.
-    
+
     symbol: R*
 
     alias: Homothety
@@ -719,11 +724,11 @@ Homothety = InvertibleMultiplicativeTransformation
 @liegroup
 @simplyconnected
 class PositiveMultiplicativeTransformation(
-    MultiplicativeTransformation, 
+    MultiplicativeTransformation,
     PositiveDiagonalTransformation
 ):
     """A scaling with the same positive factor in all dimensions.
-    
+
     symbol: R+
 
     alias: PositiveHomothety
@@ -751,7 +756,7 @@ class IdentityTransformation(
     SpecialOrthogonalTransformation
 ):
     """The identity transformation.
-    
+
     symbol: I
 
     wiki: https://en.wikipedia.org/wiki/Identity_function
