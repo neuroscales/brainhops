@@ -48,3 +48,5 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 
 ```
 """
+
+from . import path

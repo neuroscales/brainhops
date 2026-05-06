@@ -41,8 +41,8 @@ def _make_axes(
 
 
 class LTACoordinateSystem(
-    _systems.Spatial3dCoordinateSystem,
-    reversed=False,  # We want `struct` to be the last field.
+    _systems.SpatialCoordinateSystem3D,
+    reverse=False,  # We want `struct` to be the last field.
 ):
     """Base class for coordinate systems specific to LTA files.
 
@@ -67,7 +67,7 @@ class LTACoordinateSystem(
     ...
 
 
-class LTAVoxelSystem(LTACoordinateSystem):
+class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (unscaled) of a volume (source or destination)."""
 
     name: str = "voxel"
@@ -82,12 +82,12 @@ class LTAVoxelSystem(LTACoordinateSystem):
     ) -> _tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
-            axes=_make_axes(names, orientations=_get_orient(struct)),
+            axes=_make_axes(names, orientation=_get_orient(struct)),
             struct=struct
         )
 
 
-class LTAScaledSystem(LTACoordinateSystem):
+class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (scaled) of a volume (source or destination)."""
 
     name: str = "scaled"
@@ -103,12 +103,12 @@ class LTAScaledSystem(LTACoordinateSystem):
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
-            axes=_make_axes(names, orientations=_get_orient(struct)),
+            axes=_make_axes(names, orientation=_get_orient(struct)),
             struct=struct
         )
 
 
-class LTAPhysicalSystem(LTACoordinateSystem):
+class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Physical space of a volume (source or destination).
 
     This is the scaled voxel space, with an additional shift such that
@@ -128,6 +128,6 @@ class LTAPhysicalSystem(LTACoordinateSystem):
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
-            axes=_make_axes(names, orientations=_get_orient(struct)),
+            axes=_make_axes(names, orientation=_get_orient(struct)),
             struct=struct
         )
