@@ -21,6 +21,9 @@ from numbers import Real, Integral
 from functools import partial
 
 # externals
+import numpy as np
+import dask.array as da
+from scipy.ndimage import map_coordinates
 import typing_extensions as _tx
 
 # internals
@@ -58,7 +61,6 @@ if False:
                 return _Pipe(input=other, side="R")
             else:
                 raise SyntaxError("Invalid pipe syntax")
-
 
     p = _Pipe()
 
@@ -244,13 +246,16 @@ class Transformation(DataModelBase, reverse=True):
         ...
 
     def __call__(self, x, compute: bool = False) -> "Transformation":
-        if isinstance(x, Transformation):
-            x = Sequence([x, self])
-        else:
-            raise TypeError(f"Unsupported type for transformation: {type(x)}")
         if compute:
-            x = self.compute(mode=compute)
-        return x
+            if self.type == "sequence":
+                return self.compute()(x, True)
+
+            return _compose(x, self)
+        else:
+            if self.type == "sequence":
+                return Sequence(transformations=[x, *self.transformations], input=x.input, output=self.output).compute(["affine"])
+            else:
+                return Sequence(transformations=[x, self], input=x.input, output=self.output).compute(["affine"])
 
     def __matmul__(self, other: "Transformation") -> "Transformation":
         return self(other)
@@ -276,6 +281,7 @@ class CoordinatesField(Transformation):
     """
 
     parameter_names: _tx.ClassVar[str] = "field"
+    type: HiddenConst[str] = "coordinates"
 
     field: _tx.Annotated[
         _tx.Optional[ArrayProtocol],
@@ -299,7 +305,7 @@ class CoordinatesField(Transformation):
 
     coeff: _tx.Annotated[
         bool,
-         _tx.Doc(
+        _tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
@@ -401,12 +407,13 @@ class DisplacementField(Transformation):
 
     coeff: _tx.Annotated[
         bool,
-         _tx.Doc(
+        _tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
             """)
     ] = False
+    type: HiddenConst[str] = "displacement"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -436,6 +443,7 @@ class Affine(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "affine"
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -481,6 +489,7 @@ class Linear(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "linear"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -511,6 +520,7 @@ class Rotation(Linear):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "rotation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -540,6 +550,7 @@ class Permutation(Transformation):
             transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "permutation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -570,6 +581,7 @@ class Scaling(Transformation):
             transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "scale"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -597,6 +609,7 @@ class Translation(Transformation):
             transformation.
             """)
     ] = None
+    type: HiddenConst[str] = "translation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -616,6 +629,7 @@ class Identity(Transformation):
     If the `input` and `output` coordinate systems are different, it maps
     the input axes to the output axes, while preserving their orders.
     """
+    type: HiddenConst[str] = "identity"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -775,6 +789,7 @@ class Sequence(Transformation):
             """
         )
     ] = None
+    type: HiddenConst[str] = "sequence"
 
     def guess_input(self) -> _tx.Optional[CoordinateSystem]:
         if self.input is not None:
@@ -795,12 +810,13 @@ class Sequence(Transformation):
         if self.transformations is None:
             return cls(input=self.output, output=self.input)
         return cls(
-            transformations=[t.inverse() for t in reversed(self.transformations)],
+            transformations=[t.inverse()
+                             for t in reversed(self.transformations)],
             input=self.output,
             output=self.input
         )
 
-    def compute(self, mode=None) -> Transformation:
+    def compute(self, mode: _tx.Optional[list[str]] = None) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
 
@@ -827,6 +843,12 @@ class Sequence(Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
+        if mode is not None:
+            if "affine" in mode:
+                mode = [*mode, "linear", "translation",
+                        "scaling", "permutation", "identity"]
+            elif "linear" in mode:
+                mode = [*mode, "scaling", "permutation", "identity"]
         return _compute_sequence(self, mode=mode)
 
 
@@ -874,7 +896,7 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Translation):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        return (xform.matrix[:, :-1] ==  0).all()
+        return (xform.matrix[:, :-1] == 0).all()
     return is_identity(xform, compute=compute)
 
 
@@ -1014,11 +1036,18 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
     # 2. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
-    t, *xforms = xforms
+    transformations = []
     while xforms:
-        t2, *xforms = xforms
-        t = _compose(t2, t)
-    return t
+        t = xforms[-1]
+        xforms = xforms[:-1]
+        while xforms and (mode is None or (t.type in mode and xforms[-1].type in mode)):
+            t2 = xforms[-1]
+            xforms = xforms[:-1]
+            t = _compose(t2, t)
+        transformations.append(t)
+    if len(transformations) == 1:
+        return transformations[0]
+    return Sequence(transformations=transformations[:: -1], input=self.input, output=self.output)
 
 
 # ----------------------------------------------------------------------
@@ -1040,7 +1069,7 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
 
 def _get_ndim(
     t: Transformation, default: _tx.Optional[int] = None
-) ->  _tx.Optional[int]:
+) -> _tx.Optional[int]:
     if t.input and t.inputs.axes is not None:
         return len(t.input.axes)
     if t.output and t.output.axes is not None:
@@ -1055,7 +1084,8 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    ...
 
 
 class LossyConversionError(ConversionError):
@@ -1106,6 +1136,10 @@ def _to(x: Transformation, cls: _tx.Type[Transformation], **kwargs) -> Transform
         return func(x, **kwargs)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _CONVERTERS.items():
+        if not isinstance(T1, type):
+            T1 = type(T1)
+        if not isinstance(T2, type):
+            T2 = type(T2)
         distance = _distance(t1, T1) + _distance(t2, T2)
         if distance < best_distance:
             best_distance, best_func = distance, FUNC
@@ -1122,7 +1156,8 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    ...
 
 
 def _composer(func: _tx.Callable) -> _tx.Callable:
@@ -1169,7 +1204,8 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    ...
 
 
 def _adaptor(func: _tx.Callable) -> _tx.Callable:
@@ -1182,7 +1218,7 @@ def _adaptor(func: _tx.Callable) -> _tx.Callable:
 
 def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
     """
-    Dispatch the adaptation between two coordinate systems to the appropriate
+    Dispatch the adaptation between two coordinate systems to the appropriate 
     adaptor function.
     """
     if (s1, s2) in _ADAPTORS_FASTMAP:
