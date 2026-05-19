@@ -44,7 +44,7 @@ def _(To: Transformation, Ti: Identity) -> Transformation:
 
 
 @_composer
-def _(To: Sequence, Ti: Transformation) -> Sequence:
+def _(To: Sequence, Ti: Transformation) -> Transformation:
     return Sequence(
         transformations=[Ti] + list(To.transformations),
         input=Ti.input,
@@ -53,7 +53,7 @@ def _(To: Sequence, Ti: Transformation) -> Sequence:
 
 
 @_composer
-def _(To: Transformation, Ti: Sequence) -> Sequence:
+def _(To: Transformation, Ti: Sequence) -> Transformation:
     return Sequence(
         transformations=list(Ti.transformations) + [To],
         input=Ti.input,
@@ -62,7 +62,7 @@ def _(To: Transformation, Ti: Sequence) -> Sequence:
 
 
 @_composer
-def _(To: Sequence, Ti: Sequence) -> Sequence:
+def _(To: Sequence, Ti: Sequence) -> Transformation:
     return Sequence(
         transformations=list(Ti.transformations) + list(To.transformations),
         input=Ti.input,
@@ -167,8 +167,7 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 
 @_composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
-    nx = _get_array_package(Ti.field)
-    field = nx.transpose(Ti.field, (*To.permutation, len(To.permutation)))
+    field = Ti.field[..., To.permutation]
 
     return CoordinatesField(
         field=field,

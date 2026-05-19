@@ -44,7 +44,7 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             bound = kwargs.get('bound', t.bound)
             field = _value2coeff_field(t.field, order=order, bound=bound)
             kwargs['field'] = field
-
+    # FIXME: this is too hacky
     params = dict(vars(t))
     params.update(kwargs)
     return CoordinatesField(**params)
@@ -59,7 +59,7 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
 def _(t: Identity, **kwargs) -> Translation:
     ndim = _get_ndim(t)
     return Translation(
-        translation=np.array([0.0] * ndim) if ndim is not None else None,
+        translation=[0.0] * ndim if ndim is not None else None,
         input=t.input,
         output=t.output
     )
@@ -69,7 +69,7 @@ def _(t: Identity, **kwargs) -> Translation:
 def _(t: Identity, **kwargs) -> Scaling:
     ndim = _get_ndim(t)
     return Scaling(
-        scale=np.array([1.0] * ndim) if ndim is not None else None,
+        scale=[1.0] * ndim if ndim is not None else None,
         input=t.input,
         output=t.output
     )
@@ -79,7 +79,7 @@ def _(t: Identity, **kwargs) -> Scaling:
 def _(t: Identity, **kwargs) -> Permutation:
     ndim = _get_ndim(t)
     return Permutation(
-        permutation=np.array(range(ndim)) if ndim is not None else None,
+        permutation=range(ndim) if ndim is not None else None,
         input=t.input,
         output=t.output
     )
@@ -89,10 +89,10 @@ def _(t: Identity, **kwargs) -> Permutation:
 def _(t: Identity, **kwargs) -> Linear:
     ndim = _get_ndim(t)
     return Linear(
-        matrix=np.array([
+        matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim)]
             for i in range(ndim)
-        ]) if ndim is not None else None,
+        ] if ndim is not None else None,
         input=t.input,
         output=t.output
     )
@@ -102,10 +102,10 @@ def _(t: Identity, **kwargs) -> Linear:
 def _(t: Identity, **kwargs) -> Affine:
     ndim = _get_ndim(t)
     return Affine(
-        matrix=np.array([
+        matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
-        ]) if ndim is not None else None,
+        ] if ndim is not None else None,
         input=t.input,
         output=t.output
     )
@@ -117,10 +117,10 @@ def _(t: Translation) -> Affine:
         return _to(Identity(input=t.input, output=t.output), Affine)
     ndim = max(_get_ndim(t, 0), len(t.translation))
     u = Affine(
-        matrix=np.array([
+        matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
-        ]),
+        ],
         input=t.input,
         output=t.output
     )
@@ -134,10 +134,10 @@ def _(t: Scaling) -> Linear:
         return _to(Identity(input=t.input, output=t.output), Linear)
     ndim = max(_get_ndim(t, 0), len(t.scale))
     u = Linear(
-        matrix=np.array([
+        matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim)]
             for i in range(ndim)
-        ]),
+        ],
         input=t.input,
         output=t.output
     )
@@ -151,10 +151,10 @@ def _(t: Permutation) -> Linear:
         return _to(Identity(input=t.input, output=t.output), Linear)
     ndim = max(_get_ndim(t, 0), len(t.permutation))
     u = Linear(
-        matrix=np.array([
+        matrix=[
             [1.0 if j == t.permutation[i] else 0.0 for j in range(ndim)]
             for i in range(ndim)
-        ]),
+        ],
         input=t.input,
         output=t.output
     )
@@ -167,10 +167,10 @@ def _(t: Linear) -> Affine:
         return _to(Identity(input=t.input, output=t.output), Affine)
     ndim = len(t.matrix)
     u = Affine(
-        matrix=np.array([
+        matrix=[
             [t.matrix[i][j] if j < ndim else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
-        ]),
+        ],
         input=t.input,
         output=t.output
     )
@@ -315,12 +315,7 @@ def _(t: DisplacementField) -> Identity:
 
 
 @_converter
-def _(t: Affine) -> Affine:
-    return t
-
-
-@_converter
-def _(t: Linear) -> Linear:
+def _(t: Transformation) -> Transformation:
     return t
 
 

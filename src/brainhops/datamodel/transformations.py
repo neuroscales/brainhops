@@ -21,9 +21,6 @@ from numbers import Real, Integral
 from functools import partial
 
 # externals
-import numpy as np
-import dask.array as da
-from scipy.ndimage import map_coordinates
 import typing_extensions as _tx
 
 # internals
@@ -31,7 +28,7 @@ from brainhops._ext.invfield import inverse as inverse_disp
 from .enums import BoundaryCondition, InterpolationOrder
 from .base import DataModelBase
 from .systems import CoordinateSystem
-from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
+from .typing import HiddenConst, ArrayProtocol, npvector, npmatrix
 from ._utils import _get_array_package, _get_origin
 from . import hierarchy
 
@@ -246,16 +243,15 @@ class Transformation(DataModelBase, reverse=True):
         ...
 
     def __call__(self, x, compute: bool = False) -> "Transformation":
-        if compute:
-            if self.type == "sequence":
-                return self.compute()(x, True)
-
-            return _compose(x, self)
+        if isinstance(x, Transformation):
+            x = Sequence([x, self])
         else:
-            if self.type == "sequence":
-                return Sequence(transformations=[x, *self.transformations], input=x.input, output=self.output).compute(["affine"])
-            else:
-                return Sequence(transformations=[x, self], input=x.input, output=self.output).compute(["affine"])
+            raise TypeError(f"Unsupported type for transformation: {type(x)}")
+        if compute:
+            x = x.compute(mode=None)
+        else:
+            x = x.compute(mode=[Affine])
+        return x
 
     def __matmul__(self, other: "Transformation") -> "Transformation":
         return self(other)
@@ -281,7 +277,6 @@ class CoordinatesField(Transformation):
     """
 
     parameter_names: _tx.ClassVar[str] = "field"
-    type: HiddenConst[str] = "coordinates"
 
     field: _tx.Annotated[
         _tx.Optional[ArrayProtocol],
@@ -413,7 +408,6 @@ class DisplacementField(Transformation):
             rather than a field if values to interpolate.
             """)
     ] = False
-    type: HiddenConst[str] = "displacement"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -443,7 +437,6 @@ class Affine(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "affine"
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -489,7 +482,6 @@ class Linear(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "linear"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -520,7 +512,6 @@ class Rotation(Linear):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "rotation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -550,7 +541,6 @@ class Permutation(Transformation):
             transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "permutation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -581,7 +571,6 @@ class Scaling(Transformation):
             transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "scale"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -609,7 +598,6 @@ class Translation(Transformation):
             transformation.
             """)
     ] = None
-    type: HiddenConst[str] = "translation"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -629,7 +617,6 @@ class Identity(Transformation):
     If the `input` and `output` coordinate systems are different, it maps
     the input axes to the output axes, while preserving their orders.
     """
-    type: HiddenConst[str] = "identity"
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -789,7 +776,6 @@ class Sequence(Transformation):
             """
         )
     ] = None
-    type: HiddenConst[str] = "sequence"
 
     def guess_input(self) -> _tx.Optional[CoordinateSystem]:
         if self.input is not None:
@@ -816,7 +802,7 @@ class Sequence(Transformation):
             output=self.input
         )
 
-    def compute(self, mode: _tx.Optional[list[str]] = None) -> Transformation:
+    def compute(self, mode: _tx.Optional[_tx.List[str]] = None) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
 
@@ -844,11 +830,11 @@ class Sequence(Transformation):
               sequences of transformations that match the specified type.
         """
         if mode is not None:
-            if "affine" in mode:
-                mode = [*mode, "linear", "translation",
-                        "scaling", "permutation", "identity"]
-            elif "linear" in mode:
-                mode = [*mode, "scaling", "permutation", "identity"]
+            if Affine in mode:
+                mode = [*mode, Linear, Translation,
+                        Scaling, Permutation, Identity]
+            elif Linear in mode:
+                mode = [*mode, Scaling, Permutation, Identity]
         return _compute_sequence(self, mode=mode)
 
 
@@ -991,10 +977,13 @@ def _flatten(self) -> _tx.Self:
     flattened = []
     for t in self.transformations:
         if isinstance(t, Sequence):
-            flattened.extend(t._flatten().transformations or [])
+            flattened.extend(_flatten(t).transformations or [])
         else:
             flattened.append(t)
-    return Sequence(self, transformations=flattened)
+    # FIXME: this is too hacky
+    params = dict(vars(self))
+    params["transformations"] = flattened
+    return Sequence(**params)
 
 
 def _is_flat(self) -> bool:
@@ -1040,7 +1029,7 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     while xforms:
         t = xforms[-1]
         xforms = xforms[:-1]
-        while xforms and (mode is None or (t.type in mode and xforms[-1].type in mode)):
+        while xforms and (mode is None or (isinstance(t, tuple(mode)) and isinstance(xforms[-1], tuple(mode)))):
             t2 = xforms[-1]
             xforms = xforms[:-1]
             t = _compose(t2, t)

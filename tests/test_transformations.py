@@ -3,7 +3,7 @@ import numpy as np
 import dask.array as da
 
 
-def test_affine():
+def test_affine_with_coordinates():
     g_vals = da.meshgrid(
         *[da.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -28,7 +28,7 @@ def test_affine():
     assert output.field[1, 4, 1, 2] == 31
 
 
-def test_linear():
+def test_linear_with_coordinates():
     g_vals = da.meshgrid(
         *[da.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -50,7 +50,7 @@ def test_linear():
     assert output.field[1, 4, 1, 2] == 1
 
 
-def test_displacement():
+def test_displacement_with_coordinates():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -70,7 +70,7 @@ def test_displacement():
                     assert output.field[x, y, z, i] == identity[x, y, z, i]*2
 
 
-def test_full_output():
+def test_affine_displacement_coordinates():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [10, 10, 10]],
         indexing="ij"
@@ -98,7 +98,7 @@ def test_full_output():
                 assert output.field[x, y, z, 0] == output_tester[x, y, z]
 
 
-def test_full_output_soft():
+def test_mode():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [10, 10, 10]],
         indexing="ij"
@@ -125,7 +125,7 @@ def test_full_output_soft():
     assert len(output.transformations) == 4
 
 
-def test_permutation():
+def test_permutation_with_field():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -142,10 +142,10 @@ def test_permutation():
         for y in range(5):
             for z in range(5):
                 for i in range(3):
-                    assert output.field[y, z, x, i] == identity[x, y, z, i]
+                    assert output.field[x, y, z, i] == identity[y, z, x, i]
 
 
-def test_scale():
+def test_scale_with_coordinates():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -166,7 +166,7 @@ def test_scale():
                 assert output.field[x, y, z, 2] == identity[x, y, z, 2]*0
 
 
-def test_translation():
+def test_translation_with_coordinates():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [5, 5, 5]],
         indexing="ij"
@@ -187,7 +187,7 @@ def test_translation():
                 assert output.field[x, y, z, 2] == identity[x, y, z, 2]+0
 
 
-def test_combinations():
+def test_combinations_of_linear_transformations():
     linear_mat = np.array([[1, 2, 5], [3, 8, 4], [1, 1, 1]])
 
     linear = Linear(matrix=linear_mat)
