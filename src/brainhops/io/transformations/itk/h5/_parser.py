@@ -21,7 +21,7 @@ _HEADER = "#Insight Transform File V1.0"
 # ---------------------------------------------------------------------
 
 
-class GRPParser:
+class GrpParser:
     def __init__(self, grp):
         self.grp = grp
 
@@ -116,6 +116,11 @@ class H5TransformParser(Struct):
             else:
                 root = f
 
+            for field in cls.__struct_fields__.values():
+                key = field.name if TransformBlock._HAS_KEYS else None
+                if key in root:
+                    setattr(obj, key, root[key])
+
             for key in sorted(root.keys()):
                 grp = root[key]
 
@@ -123,32 +128,11 @@ class H5TransformParser(Struct):
                     continue
 
                 tb = TransformBlock()
-                parsed = GRPParser(grp)
+                parsed = GrpParser(grp)
                 for field in TransformBlock.__struct_fields__.values():
                     key = field.name if TransformBlock._HAS_KEYS else None
                     if key in grp:
                         setattr(tb, key, parsed(key))
-
-                """# ---- ITK naming ----
-                if "TransformType" in grp:
-                    val = grp["TransformType"][()]
-                    if isinstance(val, bytes):
-                        val = val.decode()
-                    elif isinstance(val, np.ndarray):
-                        val = val[0].decode()
-                    tb.transform = val
-
-                if "TransformParameters" in grp:
-                    tb.parameters = list(grp["TransformParameters"][()])
-
-                if "TransformFixedParameters" in grp:
-                    tb.fixed_parameters = list(
-                        grp["TransformFixedParameters"][()])
-
-                # ---- extras ----
-                for k, v in grp.attrs.items():
-                    if k != "transform":
-                        tb.extras[k] = v"""
 
                 obj.transform_blocks.append(tb)
 
@@ -183,6 +167,10 @@ class H5TransformParser(Struct):
 
         with h5py.File(fileobj, "w") as f:
             f.attrs["version"] = self.VERSION
+
+            for field in self.__struct_fields__.values():
+                key = field.name if TransformBlock._HAS_KEYS else None
+                f.attrs[key] = getattr(self, key)
 
             for i, transform in enumerate(self.transform_blocks):
                 grp = f.create_group(f"{i}")
