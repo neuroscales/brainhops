@@ -28,17 +28,6 @@ class H5TransformStruct(H5TransformParser):
     In-memory representation of an ITK H5TransformIO file.
 
     Parsing and writing are implemented in `H5TransformParser`.
-
-    Example
-    -------
-    ```
-    #Insight Transform File V1.0
-
-    #Transform 0
-    Transform: Euler2DTransform_double_2_2
-    Parameters: 0.2 10 -5
-    FixedParameters: 128 128
-    ```
     """
 
     # -----------------------------------------------------------------
