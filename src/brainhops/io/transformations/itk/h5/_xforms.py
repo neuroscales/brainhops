@@ -22,7 +22,7 @@ _H5TransformLike = _tx.Union[
 
 class H5TransformBasedTransformation(_xforms.Transformation):
 
-    txtTransformation: _tx.Optional[H5TransformStruct] = None
+    h5Transformation: _tx.Optional[H5TransformStruct] = None
 
     def new_transform(
         self,
@@ -30,17 +30,11 @@ class H5TransformBasedTransformation(_xforms.Transformation):
         parameters=(),
         fixed_parameters=(),
     ):
-        return self.txtTransformation.new_transform(
+        return self.h5Transformation.new_transform(
             transform=transform, parameters=parameters, fixed_parameters=fixed_parameters)
 
     def to_file(self, fileobj: _tx.Union[_tx.IO, PathLike, str]) -> None:
-        text = self.txtTransformation.to_text()
-        if isinstance(fileobj, str):
-            fileobj = LocalPath(fileobj)
-        if isinstance(fileobj, PathLike):
-            LocalPath(fileobj).write_text(text)
-            return
-        fileobj.write(text)
+        self.h5Transformation.to_file(fileobj)
 
     @property
     def image(self) -> _tx.Optional[H5TransformStruct]:
@@ -50,17 +44,17 @@ class H5TransformBasedTransformation(_xforms.Transformation):
     @classmethod
     def from_(cls, other: _H5TransformLike) -> _tx.Self:
         """Create a H5TransformVoxelToLPS transformation from an H5Transform image."""
-        return cls.from_txt(other)
+        return cls.from_h5(other)
 
     @classmethod
     def from_file(cls, fileobj: _tx.Union[str, PathLike]) -> _tx.Self:
-        return cls.from_txt(H5TransformStruct.from_file(str(fileobj)))
+        return cls.from_h5(H5TransformStruct.from_file(str(fileobj)))
 
     @classmethod
-    def from_txt(cls, txt_obj: _H5TransformLike) -> _tx.Self:
-        if isinstance(txt_obj, H5TransformStruct):
-            return cls(txtTransformation=txt_obj)
-        return cls.from_txt(H5TransformStruct.from_(str(txt_obj)))
+    def from_h5(cls, h5_obj: _H5TransformLike) -> _tx.Self:
+        if isinstance(h5_obj, H5TransformStruct):
+            return cls(h5Transformation=h5_obj)
+        return cls.from_h5(H5TransformStruct.from_(str(h5_obj)))
 
 
 class H5TransformVoxelToLPS(VoxelToLPS, H5TransformBasedTransformation):
@@ -69,7 +63,7 @@ class H5TransformVoxelToLPS(VoxelToLPS, H5TransformBasedTransformation):
     def transformations(self) -> _tx.List[_xforms.Transformation]:
         tf = []
 
-        for block in self.txtTransformation.transform_blocks:
+        for block in self.h5Transformation.transform_blocks:
 
             # ---- displacement case ----
             if getattr(block, "is_displacement", False):
@@ -100,7 +94,7 @@ class H5TransformLPSToVoxel(LPSToVoxel, H5TransformBasedTransformation):
     def transformations(self) -> _tx.List[_xforms.Transformation]:
         tf = []
 
-        for block in self.txtTransformation.transform_blocks:
+        for block in self.h5Transformation.transform_blocks:
 
             # ---- displacement case ----
             if getattr(block, "is_displacement", False):

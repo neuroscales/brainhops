@@ -169,13 +169,25 @@ class H5TransformParser(Struct):
             f.attrs["version"] = self.VERSION
 
             for field in self.__struct_fields__.values():
-                key = field.name if TransformBlock._HAS_KEYS else None
-                f.attrs[key] = getattr(self, key)
+                key = field.name if self._HAS_KEYS else None
+                val = getattr(self, key)
+
+                if val is None:
+                    continue
+                elif isinstance(val, (list, tuple)) and all(isinstance(v, TransformBlock) for v in val):
+                    # Skip lists of TransformBlock
+                    continue
+                elif isinstance(val, (int, float, bool, str)):
+                    f.attrs[key] = val
+                elif isinstance(val, (list, tuple)):
+                    f.attrs[key] = np.asarray(val)
+                else:
+                    f.attrs[key] = str(val)
 
             for i, transform in enumerate(self.transform_blocks):
                 grp = f.create_group(f"{i}")
 
-                grp.attrs["TransformType"] = transform.transform
+                grp.attrs["TransformType"] = transform.TransformType
 
                 grp.create_dataset(
                     "TransformParameters",
@@ -187,6 +199,3 @@ class H5TransformParser(Struct):
                     data=np.array(
                         transform.TransformFixedParameters, dtype=float),
                 )
-
-                for k, v in transform.extras.items():
-                    grp.attrs[k] = v

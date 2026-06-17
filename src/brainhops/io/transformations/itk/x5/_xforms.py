@@ -22,7 +22,7 @@ _X5TransformLike = _tx.Union[
 
 class X5TransformBasedTransformation(_xforms.Transformation):
 
-    txtTransformation: _tx.Optional[X5TransformStruct] = None
+    x5Transformation: _tx.Optional[X5TransformStruct] = None
 
     def new_transform(
         self,
@@ -30,17 +30,11 @@ class X5TransformBasedTransformation(_xforms.Transformation):
         parameters=(),
         fixed_parameters=(),
     ):
-        return self.txtTransformation.new_transform(
+        return self.x5Transformation.new_transform(
             transform=transform, parameters=parameters, fixed_parameters=fixed_parameters)
 
     def to_file(self, fileobj: _tx.Union[_tx.IO, PathLike, str]) -> None:
-        text = self.txtTransformation.to_text()
-        if isinstance(fileobj, str):
-            fileobj = LocalPath(fileobj)
-        if isinstance(fileobj, PathLike):
-            LocalPath(fileobj).write_text(text)
-            return
-        fileobj.write(text)
+        self.x5Transformation.to_file(fileobj)
 
     @property
     def image(self) -> _tx.Optional[X5TransformStruct]:
@@ -50,17 +44,17 @@ class X5TransformBasedTransformation(_xforms.Transformation):
     @classmethod
     def from_(cls, other: _X5TransformLike) -> _tx.Self:
         """Create a X5TransformVoxelToLPS transformation from an X5Transform image."""
-        return cls.from_txt(other)
+        return cls.from_x5(other)
 
     @classmethod
     def from_file(cls, fileobj: _tx.Union[str, PathLike]) -> _tx.Self:
-        return cls.from_txt(X5TransformStruct.from_file(str(fileobj)))
+        return cls.from_x5(X5TransformStruct.from_file(str(fileobj)))
 
     @classmethod
-    def from_txt(cls, txt_obj: _X5TransformLike) -> _tx.Self:
-        if isinstance(txt_obj, X5TransformStruct):
-            return cls(txtTransformation=txt_obj)
-        return cls.from_txt(X5TransformStruct.from_(str(txt_obj)))
+    def from_x5(cls, x5_obj: _X5TransformLike) -> _tx.Self:
+        if isinstance(x5_obj, X5TransformStruct):
+            return cls(x5Transformation=x5_obj)
+        return cls.from_x5(X5TransformStruct.from_(str(x5_obj)))
 
 
 class X5TransformVoxelToLPS(VoxelToLPS, X5TransformBasedTransformation):
@@ -69,7 +63,7 @@ class X5TransformVoxelToLPS(VoxelToLPS, X5TransformBasedTransformation):
     def transformations(self) -> _tx.List[_xforms.Transformation]:
         tf = []
 
-        for block in self.txtTransformation.transform_blocks:
+        for block in self.x5Transformation.transform_blocks:
 
             # ---- displacement case ----
             if getattr(block, "is_displacement", False):
@@ -100,7 +94,7 @@ class X5TransformLPSToVoxel(LPSToVoxel, X5TransformBasedTransformation):
     def transformations(self) -> _tx.List[_xforms.Transformation]:
         tf = []
 
-        for block in self.txtTransformation.transform_blocks:
+        for block in self.x5Transformation.transform_blocks:
 
             # ---- displacement case ----
             if getattr(block, "is_displacement", False):
