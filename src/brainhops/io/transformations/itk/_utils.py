@@ -155,7 +155,7 @@ class TransformBlock(Struct):
         t = np.array(self.TransformParameters[:d], dtype=np.float64)
         M = np.eye(d + 1)
         M[:d, d] = t
-        return M
+        return M[:-1, :]
 
     def _matrix_offset_to_affine(self) -> np.ndarray:
         """AffineTransform / MatrixOffsetTransformBase.
@@ -167,7 +167,7 @@ class TransformBlock(Struct):
         A = np.array(p[:d * d], dtype=np.float64).reshape(d, d)
         t = np.array(p[d * d:d * d + d], dtype=np.float64)
         c = self._center()
-        return self._apply_center(A, t, c)
+        return self._apply_center(A, t, c)[:-1, :]
 
     def _euler2d_to_affine(self) -> np.ndarray:
         """Rigid2DTransform / Euler2DTransform.
@@ -179,7 +179,7 @@ class TransformBlock(Struct):
         c = self._center()
         co, si = math.cos(angle), math.sin(angle)
         A = np.array([[co, -si], [si, co]], dtype=np.float64)
-        return self._apply_center(A, t, c)
+        return self._apply_center(A, t, c)[:-1, :]
 
     def _euler3d_to_affine(self) -> np.ndarray:
         """Euler3DTransform.
@@ -202,7 +202,7 @@ class TransformBlock(Struct):
         Rz = np.array([[cz, -sz, 0], [sz, cz, 0],
                       [0, 0, 1]], dtype=np.float64)
         A = Rz @ Ry @ Rx
-        return self._apply_center(A, t, c)
+        return self._apply_center(A, t, c)[:-1, :]
 
     def _versor3d_to_affine(self) -> np.ndarray:
         """VersorRigid3DTransform / QuaternionRigidTransform.
@@ -225,7 +225,7 @@ class TransformBlock(Struct):
             [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qx*qw)],
             [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
         ], dtype=np.float64)
-        return self._apply_center(A, t, c)
+        return self._apply_center(A, t, c)[:-1, :]
 
     def _scale_to_affine(self) -> np.ndarray:
         """ScaleTransform.
@@ -237,7 +237,7 @@ class TransformBlock(Struct):
         c = self._center()
         A = np.diag(s)
         t = np.zeros(d, dtype=np.float64)
-        return self._apply_center(A, t, c)
+        return self._apply_center(A, t, c)[:-1, :]
 
 
 class VoxelToLPS(_xforms.Sequence):
