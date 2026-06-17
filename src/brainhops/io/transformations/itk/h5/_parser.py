@@ -21,8 +21,32 @@ _HEADER = "#Insight Transform File V1.0"
 # ---------------------------------------------------------------------
 
 
+class GRPParser:
+    def __init__(self, grp):
+        self.grp = grp
+
+    def __call__(self, key):
+        if key in self.grp:
+            if key == "TransformType":
+                val = self.grp["TransformType"][()]
+                if isinstance(val, bytes):
+                    val = val.decode()
+                elif isinstance(val, np.ndarray):
+                    val = val[0].decode()
+                return val
+
+            if key == "TransformParameters":
+                return list(self.grp["TransformParameters"][()])
+
+            if key == "TransformFixedParameters":
+                return list(self.grp["TransformFixedParameters"][()])
+        else:
+            return None
+
+
 class H5TransformParser(Struct):
     VERSION = _HEADER
+    _HAS_KEYS = True
 
     # ---------------------------------------------------------
     # Sniffing
@@ -98,9 +122,14 @@ class H5TransformParser(Struct):
                 if not isinstance(grp, h5py.Group):
                     continue
 
-                tb = TransformBlock(transform="")
+                tb = TransformBlock()
+                parsed = GRPParser(grp)
+                for field in TransformBlock.__struct_fields__.values():
+                    key = field.name if TransformBlock._HAS_KEYS else None
+                    if key in grp:
+                        setattr(tb, key, parsed(key))
 
-                # ---- ITK naming ----
+                """# ---- ITK naming ----
                 if "TransformType" in grp:
                     val = grp["TransformType"][()]
                     if isinstance(val, bytes):
@@ -116,20 +145,10 @@ class H5TransformParser(Struct):
                     tb.fixed_parameters = list(
                         grp["TransformFixedParameters"][()])
 
-                # ---- fallback (your custom format) ----
-                if not tb.transform:
-                    tb.transform = grp.attrs.get("transform", "")
-
-                if not tb.parameters and "parameters" in grp:
-                    tb.parameters = list(grp["parameters"])
-
-                if not tb.fixed_parameters and "fixed_parameters" in grp:
-                    tb.fixed_parameters = list(grp["fixed_parameters"])
-
                 # ---- extras ----
                 for k, v in grp.attrs.items():
                     if k != "transform":
-                        tb.extras[k] = v
+                        tb.extras[k] = v"""
 
                 obj.transform_blocks.append(tb)
 
@@ -166,18 +185,19 @@ class H5TransformParser(Struct):
             f.attrs["version"] = self.VERSION
 
             for i, transform in enumerate(self.transform_blocks):
-                grp = f.create_group(f"Transform_{i}")
+                grp = f.create_group(f"{i}")
 
-                grp.attrs["transform"] = transform.transform
+                grp.attrs["TransformType"] = transform.transform
 
                 grp.create_dataset(
-                    "parameters",
-                    data=np.array(transform.parameters, dtype=float),
+                    "TransformParameters",
+                    data=np.array(transform.TransformParameters, dtype=float),
                 )
 
                 grp.create_dataset(
-                    "fixed_parameters",
-                    data=np.array(transform.fixed_parameters, dtype=float),
+                    "TransformFixedParameters",
+                    data=np.array(
+                        transform.TransformFixedParameters, dtype=float),
                 )
 
                 for k, v in transform.extras.items():

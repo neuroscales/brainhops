@@ -94,12 +94,11 @@ class TxtTransformStruct(TxtTransformParser):
         fixed_parameters=(),
     ):
 
+        obj = TransformBlock()
+        obj.TransformType = transform
+        obj.TransformParameters = parameters
+        obj.TransformFixedParameters = fixed_parameters
+
         self.append_transform(
-            TransformBlock(
-                transform=transform,
-                parameters=tuple(parameters),
-                fixed_parameters=tuple(
-                    fixed_parameters
-                )
-            )
+            obj
         )

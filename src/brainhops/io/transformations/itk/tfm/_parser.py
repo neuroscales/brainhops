@@ -26,6 +26,7 @@ _KEYVAL_RE = re.compile(r"^(\w+)\s*:\s*(.*)$")
 
 class TxtTransformParser(Struct):
     VERSION = _HEADER
+    _HAS_KEYS = True
 
     # ---------------------------------------------------------
     # Sniffing
@@ -153,7 +154,7 @@ class TxtTransformParser(Struct):
             if _TRANSFORM_RE.match(line):
                 if current:
                     obj.transform_blocks.append(current)
-                current = TransformBlock(transform="")
+                current = TransformBlock()
                 active_key = None
                 continue
 
@@ -166,30 +167,23 @@ class TxtTransformParser(Struct):
             if key is not None:
                 active_key = key
 
-                if key == "Transform":
-                    current.transform = value
+                if key == "TransformType":
+                    current.TransformType = value
 
-                elif key == "Parameters":
-                    current.parameters = _read_vector(value)
+                elif key == "TransformParameters":
+                    current.TransformParameters = _read_vector(value)
 
-                elif key == "FixedParameters":
-                    current.fixed_parameters = _read_vector(value)
-
-                else:
-                    current.extras[key] = value
+                elif key == "TransformFixedParameters":
+                    current.TransformFixedParameters = _read_vector(value)
 
                 continue
 
             # ---- continuation line (multiline data) ----
-            if active_key == "Parameters":
-                current.parameters.extend(_read_vector(line))
+            if active_key == "TransformParameters":
+                current.TransformParameters.extend(_read_vector(line))
 
-            elif active_key == "FixedParameters":
-                current.fixed_parameters.extend(_read_vector(line))
-
-            elif active_key is not None:
-                # generic extras continuation (rare but safe)
-                current.extras[active_key] += " " + line
+            elif active_key == "TransformFixedParameters":
+                current.TransformFixedParameters.extend(_read_vector(line))
 
         if current:
             obj.transform_blocks.append(current)
@@ -211,11 +205,9 @@ class TxtTransformParser(Struct):
         return f"{x:.15g}"
 
     def _block_lines(self, transform) -> _tx.Iterable[str]:
-        yield f"Transform: {transform.transform}"
-        yield "Parameters: " + " ".join(map(self._fmt_float, transform.parameters))
-        yield "FixedParameters: " + " ".join(map(self._fmt_float, transform.fixed_parameters))
-        for k, v in transform.extras.items():
-            yield f"{k}: {v}"
+        yield f"Transform: {transform.TransformType}"
+        yield "Parameters: " + " ".join(map(self._fmt_float, transform.TransformParameters))
+        yield "FixedParameters: " + " ".join(map(self._fmt_float, transform.TransformFixedParameters))
 
     def to_lines(self) -> _tx.Iterator[str]:
         """
