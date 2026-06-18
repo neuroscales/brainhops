@@ -1,28 +1,13 @@
 __all__ = ["TxtTransformStruct"]
 
-# externals
-import math
 
 import typing_extensions as _tx
 
 # _ext
-from brainhops._ext.struct import Factory
 from brainhops.io.transformations.itk._utils import TransformBlock
 
 # internals
 from ._parser import TxtTransformParser
-
-
-# ---------------------------------------------------------------------
-# Type hints
-# ---------------------------------------------------------------------
-
-_Floats = _tx.Tuple[float, ...]
-
-
-# ---------------------------------------------------------------------
-# Struct
-# ---------------------------------------------------------------------
 
 
 class TxtTransformStruct(TxtTransformParser):
@@ -37,21 +22,13 @@ class TxtTransformStruct(TxtTransformParser):
     #Insight Transform File V1.0
 
     #Transform 0
-    Transform: Euler2DTransform_double_2_2
-    Parameters: 0.2 10 -5
-    FixedParameters: 128 128
+    TransformType: Euler2DTransform_double_2_2
+    TransformParameters: 0.2 10 -5
+    TransformFixedParameters: 128 128
     ```
     """
 
-    # -----------------------------------------------------------------
-    # File-level fields
-    # -----------------------------------------------------------------
-
     transform_blocks: _tx.List[TransformBlock] = []
-
-    # -----------------------------------------------------------------
-    # Convenience
-    # -----------------------------------------------------------------
 
     @property
     def n_transforms(self) -> int:

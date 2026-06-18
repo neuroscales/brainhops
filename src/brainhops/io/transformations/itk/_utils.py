@@ -252,3 +252,10 @@ class LPSToVoxel(_xforms.Sequence):
 
     input: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
     output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+
+
+class LPSToLPS(_xforms.Sequence):
+    """Affine transformation from LPS space to voxel space."""
+
+    input: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
+    output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()

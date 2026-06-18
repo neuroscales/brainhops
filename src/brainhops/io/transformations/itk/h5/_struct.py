@@ -11,18 +11,6 @@ from brainhops.io.transformations.itk._utils import TransformBlock
 from ._parser import H5TransformParser
 
 
-# ---------------------------------------------------------------------
-# Type hints
-# ---------------------------------------------------------------------
-
-_Floats = _tx.Tuple[float, ...]
-
-
-# ---------------------------------------------------------------------
-# Struct
-# ---------------------------------------------------------------------
-
-
 class H5TransformStruct(H5TransformParser):
     """
     In-memory representation of an ITK H5TransformIO file.
@@ -30,15 +18,7 @@ class H5TransformStruct(H5TransformParser):
     Parsing and writing are implemented in `H5TransformParser`.
     """
 
-    # -----------------------------------------------------------------
-    # File-level fields
-    # -----------------------------------------------------------------
-
     transform_blocks: _tx.List[TransformBlock] = []
-
-    # -----------------------------------------------------------------
-    # Convenience
-    # -----------------------------------------------------------------
 
     @property
     def n_transforms(self) -> int:

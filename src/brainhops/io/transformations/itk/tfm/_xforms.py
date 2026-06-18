@@ -7,10 +7,10 @@ import typing_extensions as _tx
 
 
 # internals
-from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from pathlib import Path as LocalPath
 
+from brainhops.io.transformations.itk._utils import LPSToLPS, LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.itk.tfm._struct import TxtTransformStruct
 
 
@@ -19,20 +19,6 @@ _TxtTransformLike = _tx.Union[
     str,
     PathLike
 ]
-
-
-class VoxelToLPS(_xforms.Sequence):
-    """Affine transformation from voxel space to LPS space."""
-
-    input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    output: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
-
-
-class LPSToVoxel(_xforms.Sequence):
-    """Affine transformation from LPS space to voxel space."""
-
-    input: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
-    output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
 
 
 class TxtTransformBasedTransformation(_xforms.Transformation):
@@ -138,3 +124,34 @@ class TxtTransformLPSToVoxel(LPSToVoxel, TxtTransformBasedTransformation):
 
     def inverse(self) -> VoxelToLPS:
         return super().inverse().to(VoxelToLPS)
+
+
+class TxtTransformLPSToLPS(LPSToLPS, TxtTransformBasedTransformation):
+
+    @property
+    def transformations(self) -> _tx.List[_xforms.Transformation]:
+        tf = []
+
+        for block in self.txtTransformation.transform_blocks:
+
+            # ---- displacement case ----
+            if getattr(block, "is_displacement", False):
+                voxel2world, disp = block.to_displacement()
+                world2voxel = np.linalg.inv(voxel2world)
+
+                tf.append(_xforms.Affine(matrix=world2voxel))
+                tf.append(_xforms.DisplacementField(field=disp))
+                tf.append(_xforms.Affine(matrix=voxel2world))
+
+            # ---- affine case ----
+            else:
+                tf.append(_xforms.Affine(matrix=block.to_affine()))
+
+        return tf
+
+    @transformations.setter
+    def transformations(self, value):
+        self.transformation_blocks = value
+
+    def inverse(self) -> LPSToLPS:
+        return super().inverse().to(LPSToLPS)

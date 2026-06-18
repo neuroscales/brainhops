@@ -8,9 +8,8 @@ import typing_extensions as _tx
 
 # internals
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.transformations.itk._utils import LPSToVoxel, VoxelToLPS
+from brainhops.io.transformations.itk._utils import LPSToLPS, LPSToVoxel, VoxelToLPS
 from brainhops.io.transformations.itk.x5._struct import X5TransformStruct
-from pathlib import Path as LocalPath
 
 
 _X5TransformLike = _tx.Union[
@@ -117,3 +116,34 @@ class X5TransformLPSToVoxel(LPSToVoxel, X5TransformBasedTransformation):
 
     def inverse(self) -> VoxelToLPS:
         return super().inverse().to(VoxelToLPS)
+
+
+class X5TransformLPSToLPS(LPSToLPS, X5TransformBasedTransformation):
+
+    @property
+    def transformations(self) -> _tx.List[_xforms.Transformation]:
+        tf = []
+
+        for block in self.txtTransformation.transform_blocks:
+
+            # ---- displacement case ----
+            if getattr(block, "is_displacement", False):
+                voxel2world, disp = block.to_displacement()
+                world2voxel = np.linalg.inv(voxel2world)
+
+                tf.append(_xforms.Affine(matrix=world2voxel))
+                tf.append(_xforms.DisplacementField(field=disp))
+                tf.append(_xforms.Affine(matrix=voxel2world))
+
+            # ---- affine case ----
+            else:
+                tf.append(_xforms.Affine(matrix=block.to_affine()))
+
+        return tf
+
+    @transformations.setter
+    def transformations(self, value):
+        self.transformation_blocks = value
+
+    def inverse(self) -> LPSToLPS:
+        return super().inverse().to(LPSToLPS)
