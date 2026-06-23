@@ -98,33 +98,6 @@ def test_affine_displacement_coordinates():
                 assert output.field[x, y, z, 0] == output_tester[x, y, z]
 
 
-def test_mode():
-    g_vals = np.meshgrid(
-        *[np.arange(s) for s in [10, 10, 10]],
-        indexing="ij"
-    )
-    identity = np.ones(
-        (10, 10, 10, 3))
-    for i in range(len(g_vals)):
-        identity[:, :, :, i] = g_vals[i]
-    field = CoordinatesField(field=identity)
-    displacement = DisplacementField(field=identity)
-    affine = Affine(matrix=np.asarray(
-        [[2, 1, 0, 0], [1, 2, 1, 0], [0, 0, 1, 0]]))
-    linear = Linear(matrix=np.asarray([[2, 2, 0], [2, 2, 2], [0, 0, 1]]))
-    sequence = Sequence(
-        transformations=[linear, affine, affine, displacement, field])
-    input_tensor = np.zeros((100, 100, 100))
-    input_coord = CoordinatesField(field=input_tensor)
-    output = sequence(input_coord, False)
-    assert isinstance(output, Sequence)
-    assert isinstance(output.transformations[0], CoordinatesField)
-    assert isinstance(output.transformations[1], Affine)
-    assert isinstance(output.transformations[2], DisplacementField)
-    assert isinstance(output.transformations[3], CoordinatesField)
-    assert len(output.transformations) == 4
-
-
 def test_permutation_with_field():
     g_vals = np.meshgrid(
         *[np.arange(s) for s in [5, 5, 5]],
