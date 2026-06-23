@@ -1025,11 +1025,9 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
     # 2. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
-    t = xforms[-1]
-    xforms = xforms[:-1]
+    t, *xforms = xforms
     while xforms:
-        t2 = xforms[-1]
-        xforms = xforms[:-1]
+        t2, *xforms = xforms
         t = _compose(t2, t)
     return t
 
