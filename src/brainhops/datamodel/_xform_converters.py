@@ -6,7 +6,6 @@ from .transformations import (
 )
 from .transformations import _get_ndim, _converter, _to
 from ._utils import _get_array_package, _coeff2value_field, _value2coeff_field
-import numpy as np
 
 
 # ----------------------------------------------------------------------
