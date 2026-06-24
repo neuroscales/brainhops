@@ -7,10 +7,13 @@ __all__ = [
     "S", "inferiorToSuperiorAxis", "InferiorToSuperiorAxis",
     "I", "superiorToInferiorAxis", "SuperiorToInferiorAxis",
 ]
-# externals
+# dependencies
 from typing_extensions import Optional
 
 # internals
+from brainhops._core.typing import HiddenConst
+
+# locals
 from .base import DataModelBase
 from .orientation import (
     Orientation,
@@ -18,7 +21,6 @@ from .orientation import (
     AnteriorToPosterior, PosteriorToAnterior,
     InferiorToSuperior, SuperiorToInferior
 )
-from .typing import HiddenConst
 from .units import Unit, SpaceUnit, TimeUnit
 
 

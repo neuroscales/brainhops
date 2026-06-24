@@ -20,16 +20,23 @@ import itertools
 from numbers import Real, Integral
 from functools import partial
 
-# externals
+# dependencies
 import typing_extensions as _tx
 
-# internals
+# ext
 from brainhops._ext.invfield import inverse as inverse_disp
+
+# core
+from brainhops._core.backends import get_array_backend
+from brainhops._core.typing import (
+    get_origin, HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
+)
+
+
+# locals
 from .enums import BoundaryCondition, InterpolationOrder
 from .base import DataModelBase
 from .systems import CoordinateSystem
-from .typing import HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
-from ._utils import _get_array_package, _get_origin
 from . import hierarchy
 
 
@@ -344,9 +351,9 @@ class CartesianField(CoordinatesField):
         if self.shape is None:
             return None
         if getattr(self, "_field", None) is None:
-            import dask.array as da  # TODO: implement `get_array_backend()`
-            self._field = da.stack(da.meshgrid(
-                *[da.arange(s) for s in self.shape],
+            ab = get_array_backend()
+            self._field = ab.stack(ab.meshgrid(
+                *[ab.arange(s) for s in self.shape],
                 indexing="ij"
             ), -1)
         return self._field
@@ -446,9 +453,9 @@ class Affine(Transformation):
         """
         if self.matrix is None:
             return None
-        nx = _get_array_package(self.matrix)
+        ab = get_array_backend(self.matrix)
         No, NiPlus1 = self.matrix.shape
-        homogeneous_matrix = nx.zeros((No + 1, NiPlus1))
+        homogeneous_matrix = ab.zeros((No + 1, NiPlus1))
         homogeneous_matrix[:-1, :-1] = self.matrix[:, :-1]
         homogeneous_matrix[:-1, -1:] = self.matrix[:, -1:]
         homogeneous_matrix[-1, -1] = 1
@@ -458,9 +465,9 @@ class Affine(Transformation):
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
-        nx = _get_array_package(self.matrix)
+        ab = get_array_backend(self.matrix)
         return cls(
-            matrix=nx.linalg.inv(self.homogeneous_matrix)[:-1],
+            matrix=ab.linalg.inv(self.homogeneous_matrix)[:-1],
             input=self.output,
             output=self.input
         )
@@ -486,9 +493,9 @@ class Linear(Transformation):
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
-        nx = _get_array_package(self.matrix)
+        ab = get_array_backend(self.matrix)
         return cls(
-            matrix=nx.linalg.inv(self.matrix),
+            matrix=ab.linalg.inv(self.matrix),
             input=self.output,
             output=self.input
         )
@@ -859,12 +866,12 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
         return (xform.permutation == list(range(ndim))).all()
     if isinstance(xform, Linear):
         ndim = xform.matrix.shape[0]
-        nx = _get_array_package(xform.matrix)
-        return (xform.matrix == nx.eye(ndim)).all()
+        ab = get_array_backend(xform.matrix)
+        return (xform.matrix == ab.eye(ndim)).all()
     if isinstance(xform, Affine):
         ndim = xform.matrix.shape[0] - 1
-        nx = _get_array_package(xform.matrix)
-        return (xform.matrix == nx.eye(ndim + 1)[:-1]).all()
+        ab = get_array_backend(xform.matrix)
+        return (xform.matrix == ab.eye(ndim + 1)[:-1]).all()
     if isinstance(xform, DisplacementField):
         return (xform.field == 0).all()
     return False
@@ -884,8 +891,8 @@ def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
         ndim = matrix.shape[0]
-        nx = _get_array_package(matrix)
-        return not (matrix * (1 - nx.eye(ndim))).any()
+        ab = get_array_backend(matrix)
+        return not (matrix * (1 - ab.eye(ndim))).any()
     if isinstance(xform, Affine) and xform.matrix is not None:
         return (
             is_linear(xform, compute=compute) and
@@ -899,8 +906,8 @@ def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
-        nx = _get_array_package(matrix)
-        is_binary = nx.isin(matrix, [0, 1]).all()
+        ab = get_array_backend(matrix)
+        is_binary = ab.isin(matrix, [0, 1]).all()
         is_perm = matrix.sum(axis=0) == 1 and matrix.sum(axis=1) == 1
         return is_binary and is_perm
     if isinstance(xform, Affine) and xform.matrix is not None:
@@ -917,9 +924,9 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
         ndim = matrix.shape[0]
-        nx = _get_array_package(matrix)
-        is_orthogonal = (matrix @ matrix.T == nx.eye(ndim)).all()
-        is_posdef = nx.linalg.det(matrix) > 0
+        ab = get_array_backend(matrix)
+        is_orthogonal = (matrix @ matrix.T == ab.eye(ndim)).all()
+        is_posdef = ab.linalg.det(matrix) > 0
         return is_orthogonal and is_posdef
     if isinstance(xform, Affine) and xform.matrix is not None:
         return (
@@ -1144,11 +1151,11 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
         return func(x1, x2)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _COMPOSERS.items():
-        if _get_origin(T1) in (_tx.Union, _t.UnionType):
+        if get_origin(T1) in (_tx.Union, _t.UnionType):
             T1s = _tx.get_args(T1)
         else:
             T1s = (T1,)
-        if _get_origin(T2) in (_tx.Union, _t.UnionType):
+        if get_origin(T2) in (_tx.Union, _t.UnionType):
             T2s = _tx.get_args(T2)
         else:
             T2s = (T2,)

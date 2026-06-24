@@ -40,7 +40,6 @@ from . import images
 from . import orientation
 from . import systems
 from . import transformations
-from . import typing
 from . import units
 
 # trigger registration

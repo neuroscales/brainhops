@@ -1,18 +1,22 @@
 """
 This module implements function that compute the composition of two
-transformations. It assumes that their input and output coordinate  
+transformations. It assumes that their input and output coordinate
 systems are compatible (see _xform_adaptors for composing transformations
 that do not have compatible coordinate systems). It also assumes that
 transfmations are fully defined (i.e., their parameters are not `None`).
 
-A composer takes two transformations To and Ti, and returns a 
-transformation T such that T = To @ Ti, i.e. such that T(x) = To(Ti(x)) 
+A composer takes two transformations To and Ti, and returns a
+transformation T such that T = To @ Ti, i.e. such that T(x) = To(Ti(x))
 for any x in the domain of Ti. The input coordinate system of T is the
 input coordinate system of Ti, and the output coordinate system of T is
 the output coordinate system of To.
 """
-# externals
+# dependencies
 import typing_extensions as _tx
+
+# core
+from brainhops._core.bsplines import pull_field
+from brainhops._core.backends import get_array_backend
 
 # internals
 from .transformations import (
@@ -20,7 +24,6 @@ from .transformations import (
     Identity, Translation, Scaling, Permutation, Linear, Affine, Sequence,
     CoordinatesField, CartesianField, DisplacementField
 )
-from ._utils import _pull_field, _get_array_package
 
 
 # ----------------------------------------------------------------------
@@ -77,10 +80,10 @@ def _(To: Sequence, Ti: Sequence) -> Sequence:
 
 @_composer
 def _(To: Affine, Ti: Affine) -> Affine:
-    nx = _get_array_package(To.matrix)
+    ba = get_array_backend(To.matrix)
     No = To.matrix.shape[0]
     Ni = Ti.matrix.shape[1] - 1
-    A = nx.empty_like(To.matrix, shape=(No, Ni + 1))
+    A = ba.empty_like(To.matrix, shape=(No, Ni + 1))
     A[:, :-1] = To.matrix[:, :-1] @ Ti.matrix[:, :-1]
     A[:, -1:] = To.matrix[:, :-1] @ Ti.matrix[:, -1:] + To.matrix[:, -1:]
     return Affine(
@@ -263,7 +266,7 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.to(coeff=False)
     x2 = Ti.to(CoordinatesField)
-    field = _pull_field(
+    field = pull_field(
         To.field,
         coords=x2.field,
         order=To.order,
@@ -274,8 +277,8 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
         field=field,
         input=Ti.input,
         output=To.output,
-        order=To.order, 
-        bound=To.bound, 
+        order=To.order,
+        bound=To.bound,
         coeff=False
     ).to(coeff=To.coeff)
 
@@ -284,7 +287,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.to(coeff=False)
     x2 = Ti.to(CoordinatesField)
-    field = _pull_field(
+    field = pull_field(
         To.field,
         coords=x2.field,
         order=To.order,
@@ -295,8 +298,8 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
         field=field,
         input=Ti.input,
         output=To.output,
-        order=Ti.order, 
-        bound=Ti.bound, 
+        order=Ti.order,
+        bound=Ti.bound,
         coeff=False
     ).to(coeff=Ti.coeff)
 
@@ -305,7 +308,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
 def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.to(coeff=False)
-    field = _pull_field(
+    field = pull_field(
         To.field,
         coords=Ti.field,
         order=To.order,
@@ -316,7 +319,7 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
         field=field,
         input=Ti.input,
         output=To.output,
-        order=Ti.order, 
-        bound=Ti.bound, 
+        order=Ti.order,
+        bound=Ti.bound,
         coeff=False
     ).to(coeff=coeff)
