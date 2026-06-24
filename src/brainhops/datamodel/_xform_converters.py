@@ -43,7 +43,10 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             bound = kwargs.get('bound', t.bound)
             field = _value2coeff_field(t.field, order=order, bound=bound)
             kwargs['field'] = field
-    return CoordinatesField(t, **kwargs)
+    # FIXME: this is too hacky
+    params = dict(vars(t))
+    params.update(kwargs)
+    return CoordinatesField(**params)
 
 
 # ----------------------------------------------------------------------
@@ -86,7 +89,7 @@ def _(t: Identity, **kwargs) -> Linear:
     ndim = _get_ndim(t)
     return Linear(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim)] 
+            [1.0 if i == j else 0.0 for j in range(ndim)]
             for i in range(ndim)
         ] if ndim is not None else None,
         input=t.input,
@@ -99,7 +102,7 @@ def _(t: Identity, **kwargs) -> Affine:
     ndim = _get_ndim(t)
     return Affine(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim+1)] 
+            [1.0 if i == j else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
         ] if ndim is not None else None,
         input=t.input,
@@ -114,7 +117,7 @@ def _(t: Translation) -> Affine:
     ndim = max(_get_ndim(t, 0), len(t.translation))
     u = Affine(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim+1)] 
+            [1.0 if i == j else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
         ],
         input=t.input,
@@ -131,7 +134,7 @@ def _(t: Scaling) -> Linear:
     ndim = max(_get_ndim(t, 0), len(t.scale))
     u = Linear(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim)] 
+            [1.0 if i == j else 0.0 for j in range(ndim)]
             for i in range(ndim)
         ],
         input=t.input,
@@ -148,7 +151,7 @@ def _(t: Permutation) -> Linear:
     ndim = max(_get_ndim(t, 0), len(t.permutation))
     u = Linear(
         matrix=[
-            [1.0 if j == t.permutation[i] else 0.0 for j in range(ndim)] 
+            [1.0 if j == t.permutation[i] else 0.0 for j in range(ndim)]
             for i in range(ndim)
         ],
         input=t.input,
@@ -164,7 +167,7 @@ def _(t: Linear) -> Affine:
     ndim = len(t.matrix)
     u = Affine(
         matrix=[
-            [t.matrix[i][j] if j < ndim else 0.0 for j in range(ndim+1)] 
+            [t.matrix[i][j] if j < ndim else 0.0 for j in range(ndim+1)]
             for i in range(ndim)
         ],
         input=t.input,
@@ -200,29 +203,29 @@ def _(t: DisplacementField) -> CoordinatesField:
 def _(t: Translation) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if (
-        t.translation is not None and 
+        t.translation is not None and
         any(x != 0.0 for x in t.translation)
     ):
         raise LossyConversionError(result=u)
     return u
-    
+
 
 @_converter
 def _(t: Scaling) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if (
-        t.scale is not None and 
+        t.scale is not None and
         any(s != 1.0 for s in t.scale)
     ):
         raise LossyConversionError(result=u)
     return u
-    
+
 
 @_converter
 def _(t: Permutation) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if (
-        t.permutation is not None and 
+        t.permutation is not None and
         any(i != p for i, p in enumerate(t.permutation))
     ):
         raise LossyConversionError(result=u)
@@ -236,7 +239,7 @@ def _(t: Linear) -> Identity:
         for i in range(len(t.matrix)):
             for j in range(len(t.matrix[i])):
                 if (
-                    (i == j and t.matrix[i][j] != 1.0) or 
+                    (i == j and t.matrix[i][j] != 1.0) or
                     (i != j and t.matrix[i][j] != 0.0)
                 ):
                     raise LossyConversionError(result=u)
@@ -283,7 +286,7 @@ def _(t: Affine) -> Identity:
         for i in range(len(t.matrix)):
             for j in range(len(t.matrix[i])):
                 if (
-                    (i == j and t.matrix[i][j] != 1.0) or 
+                    (i == j and t.matrix[i][j] != 1.0) or
                     (i != j and t.matrix[i][j] != 0.0)
                 ):
                     raise LossyConversionError(result=u)
@@ -309,6 +312,10 @@ def _(t: DisplacementField) -> Identity:
             raise LossyConversionError(result=u)
     return u
 
+
+@_converter
+def _(t: Transformation) -> Transformation:
+    return t
 
 
 # ----------------------------------------------------------------------

@@ -40,14 +40,14 @@ def _get_origin(type: _tx.Any, unfold: _tx.Any = None) -> _tx.Any:
 
 def _get_array_package(x: ArrayProtocol) -> ModuleType:
     """Determine the array package for a given array
-    
+
     One of: numpy, cupy, dask.array
     """
     if npt.np and isinstance(x, npt.np.ndarray):
         return npt.np
     if cpt.cp and isinstance(x, cpt.cp.ndarray):
         return cpt.cp
-    if dkt.da and isinstance(x, dkt.da.ndarray):
+    if dkt.da and isinstance(x, dkt.da.Array):
         return dkt.da
     raise TypeError(f"Unsupported array type: {type(x)}")
 
@@ -61,7 +61,7 @@ def _get_ndimage_package(x: ArrayProtocol) -> ModuleType:
         return cpndi
     if npt.np and npndi and isinstance(x, npt.np.ndarray):
         return npndi
-    if dkt.da and isinstance(x, dkt.da.ndarray):
+    if dkt.da and isinstance(x, dkt.da.Array):
         if dkndi:
             return dkndi
         if npndi:
@@ -70,8 +70,8 @@ def _get_ndimage_package(x: ArrayProtocol) -> ModuleType:
 
 
 def _pull(
-    input: ArrayProtocol, 
-    coords: ArrayProtocol, 
+    input: ArrayProtocol,
+    coords: ArrayProtocol,
     order: int,
     bound: _tx.Union[str, float],
     coeff: bool
@@ -206,7 +206,8 @@ def _coeff2value(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = nx.meshgrid(*(nx.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = nx.meshgrid(*(nx.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = nx.empty_like(input) if not inplace else input
@@ -244,7 +245,7 @@ def _coeff2value_field(field, order, bound, inplace=False):
         If True, the conversion will be done in-place (i.e. the input 
         array will be modified). If False, a new array will be created 
         for the output.
-    
+
     Returns
     -------
     array-like
@@ -298,7 +299,8 @@ def _value2coeff(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = nx.meshgrid(*(nx.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = nx.meshgrid(*(nx.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = nx.empty_like(input) if not inplace else input
