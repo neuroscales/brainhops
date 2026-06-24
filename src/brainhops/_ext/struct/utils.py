@@ -39,22 +39,26 @@ def _update_func_cell_for__class__(
 
 
 def rebuild_cls(
-    cls: type, 
+    cls: type,
     type_func: _tx.Callable[[str, tuple[type, ...], dict], type] = type,
 ) -> type:
     namespace = dict(cls.__dict__)
 
+    # Instert attributes that are not in the class dict, but handled
+    # by the low level Cpython.
+    namespace.setdefault("__qualname__", cls.__qualname__)
+
     # Remove __dict__ and __weakref__ from the class dict.
     namespace.pop('__dict__', None)
     namespace.pop('__weakref__', None)
-    qualname  = namespace.pop('__qualname__', None)
+    # qualname  = namespace.pop('__qualname__', None)
 
     # Make a new class with the same name, bases, and namespace.
     newcls = type_func(cls.__name__, cls.__bases__, namespace)
 
     # Restore the original qualname.
-    if qualname is not None:
-        newcls.__qualname__ = qualname
+    # if qualname is not None:
+    #     newcls.__qualname__ = qualname
 
     # Fix up any closures which reference __class__.  This is used to
     # fix zero argument super so that it points to the correct class
@@ -91,7 +95,7 @@ def slots(*aslots, **kwslots):
         cls, aslots = aslots[0], aslots[1:]
     else:
         return (lambda cls: slots(cls, *aslots, **kwslots))
-    
+
     if kwslots:
         for slot in aslots:
             kwslots[slot] = None
@@ -114,12 +118,12 @@ class SlotsBase:
             setattr(self, slot, kwargs.get(slot, MISSING))
 
     def __repr__(self) -> str:
-        repr_slots = (slot for slot in self._slots() 
+        repr_slots = (slot for slot in self._slots()
                       if getattr(self, slot, MISSING) is not MISSING)
         params = (f"{slot}={getattr(self, slot)!r}" for slot in repr_slots)
         params = ", ".join(params)
         return f"{self.__class__.__name__}({params})"
-    
+
     def __getattr__(self, name: str) -> _tx.Any:
         if name in self._slots():
             return MISSING
@@ -148,6 +152,6 @@ class SlotsBase:
 
     def copy(self) -> _tx.Self:
         return copy_.copy(self)
-    
+
     def deepcopy(self) -> _tx.Self:
         return copy_.deepcopy(self)
