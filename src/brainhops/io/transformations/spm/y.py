@@ -1,7 +1,4 @@
 
-# stdlib
-from os import PathLike
-
 # externals
 import typing_extensions as _tx
 
@@ -13,23 +10,6 @@ from brainhops.io.transformations.common.affines import NiftiRASToVoxel
 from brainhops.io.transformations.common.base import NiftiBasedTransformation
 from brainhops.io.transformations.common.fields import NiftiRASCoordinatesField
 
-# typing + optionals
-if _tx.TYPE_CHECKING:
-    import nibabel as nib
-else:
-    try:
-        import nibabel as nib
-    except ImportError:
-        nib = None
-
-
-_NiftiLike = _tx.Union[
-    nib.Nifti1Header,
-    nib.Nifti1Image,
-    str,
-    PathLike,
-    _tx.BinaryIO
-]
 
 
 class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
