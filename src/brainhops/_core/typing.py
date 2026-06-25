@@ -17,6 +17,7 @@ T = _tx.TypeVar("T")
 Const = _tx.Annotated[T, Frozen(), NoInit()]
 HiddenConst = _tx.Annotated[Const[T], NoRepr()]
 ArrayProtocol = npt.ArrayProtocol
+ArrayLike = npt.ArrayLike
 
 npscalar = _tx.Union[T, npt.ndarray[_tx.Tuple[()], npt.dtype[T]]]
 npvector = npt.ndarray[_tx.Tuple[int], npt.dtype[T]]
