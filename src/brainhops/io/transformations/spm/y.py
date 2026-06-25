@@ -11,7 +11,6 @@ from brainhops.io.transformations.common.base import NiftiBasedTransformation
 from brainhops.io.transformations.common.fields import NiftiRASCoordinatesField
 
 
-
 class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     """Field of RAS coordinates.
 
