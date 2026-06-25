@@ -100,8 +100,8 @@ class TFMTransformParser(
                 ITKStruct(
                     type=transform_type,
                     precision=precision,
-                    ndim_in=input_dim,
-                    ndim_out=output_dim,
+                    ndim_input=input_dim,
+                    ndim_output=output_dim,
                     parameters=parameters,
                     fixed_parameters=fixed_parameters,
                 )
