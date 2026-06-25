@@ -166,10 +166,26 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     their filenames are often prefixed with `y_` or `iy_`.
     """
 
-    transformations: _tx.Tuple[
+    @property
+    def transformations(self) -> _tx.Tuple[
         _tx.Optional[RASToVoxel],
         _tx.Optional[RASCoordinatesField],
-    ] = (None, None)
+    ]:
+        """The transformations that make up the sequence."""
+        _transformations = getattr(self, "_transformations", None)
+        if _transformations is not None:
+            return _transformations
+        return (
+            NiftiRASToVoxel(image=self.image, header=self.header),
+            NiftiRASCoordinatesField(image=self.image, header=self.header),
+        )
+
+    @transformations.setter
+    def transformations(self, value: _tx.Tuple[
+        _tx.Optional[RASToVoxel],
+        _tx.Optional[RASCoordinatesField],
+    ]) -> None:
+        self._transformations = tuple(value)
 
     @property
     def ras2voxel(self) -> _tx.Optional[RASToVoxel]:

@@ -6,12 +6,19 @@ from itertools import tee
 from pathlib import Path as LocalPath
 from warnings import warn
 
-# externals
+# dependencies
 import typing_extensions as _tx
 
-# internals
+# externals
 from brainhops._ext.struct import Struct
-from brainhops.io.path import Path, PathLike
+
+# core
+from brainhops._core.peek import peekable_lines
+from brainhops._core.path import Path, PathLike
+
+# typing
+_FileLike = _tx.Union[_tx.IO, PathLike, str]
+_FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
 
 
 # ----------------------------------------------------------------------
@@ -19,13 +26,11 @@ from brainhops.io.path import Path, PathLike
 # ----------------------------------------------------------------------
 
 
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
-
-
 class LTAParser(Struct):
 
     _HAS_KEYS = True
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff(cls, other: _FileOrContentLike) -> bool:
@@ -58,7 +63,7 @@ class LTAParser(Struct):
 
     @classmethod
     def sniff_text(cls, text: str) -> bool:
-        first_line = next(_iterlines(text.splitlines()))
+        first_line = next(peekable_lines(text.splitlines()))
         if first_line:
             return cls.sniff_line(first_line)
         return False
@@ -68,6 +73,8 @@ class LTAParser(Struct):
         if re.match(r"^type\s*=\s*\d+$", line.strip()):
             return True
         return False
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_(cls, other: _FileOrContentLike) -> _tx.Self:
@@ -171,13 +178,15 @@ class LTAParser(Struct):
             The parsed object.
         """
         obj = cls()
-        if not isinstance(lines, _iterlines):
-            lines = _iterlines(lines)
+        if not isinstance(lines, peekable_lines):
+            lines = peekable_lines(lines)
         for field in cls.__struct_fields__.values():
             key = field.name if cls._HAS_KEYS else None
             parse = LTAFieldParser(key, field.type)
             setattr(obj, field.name, parse(lines))
         return obj
+
+    # --- to -----------------------------------------------------------
 
     def to_file(self, fileobj: _tx.Union[_tx.IO, PathLike, str]) -> None:
         """
@@ -249,8 +258,8 @@ class VolumeInfoParser(LTAParser):
 
     @classmethod
     def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Optional[_tx.Self]:
-        if not isinstance(lines, _iterlines):
-            lines = _iterlines(lines)
+        if not isinstance(lines, peekable_lines):
+            lines = peekable_lines(lines)
         line = lines.peek()
         if not line:
             return None
@@ -268,8 +277,8 @@ class MatrixParser(LTAParser):
 
     @classmethod
     def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
-        if not isinstance(lines, _iterlines):
-            lines = _iterlines(lines)
+        if not isinstance(lines, peekable_lines):
+            lines = peekable_lines(lines)
 
         # Read first line to check affine shape
         line = next(lines, None)
@@ -327,8 +336,8 @@ class LTAFieldParser:
         self.optional, self.type = _is_optional(type)
 
     def __call__(self, lines: _tx.Iterator[str]) -> _tx.Any:
-        if not isinstance(lines, _iterlines):
-            lines = _iterlines(lines)
+        if not isinstance(lines, peekable_lines):
+            lines = peekable_lines(lines)
         types = self.type
 
         # If field is a struct, defer
@@ -405,64 +414,6 @@ class LTAFieldWriter:
         else:
             kwargs = {**self.kwargs, **kwargs}
             yield _write_values(value, **kwargs)
-
-
-# ----------------------------------------------------------------------
-#   Smart iterator over lines of an LTA file
-# ----------------------------------------------------------------------
-
-
-class _iterlines:
-    """
-    A peekable iterator over lines of an LTA file.
-
-    Automatically trims whitespace and comments, and skips empty lines.
-    """
-
-    EMPTY = object()
-
-    def __init__(self, lines: _tx.Iterable[str]):
-        if not hasattr(lines, '__next__'):
-            lines = iter(lines)
-        self.lines = lines
-        self.peeked = self.EMPTY
-
-    def __next__(self) -> str:
-        if self.peeked is not self.EMPTY:
-            line, self.peeked = self.peeked, self.EMPTY
-        else:
-            line = self._next_valid()
-        if line is None:
-            raise StopIteration
-        return line
-
-    def __iter__(self):
-        while True:
-            try:
-                yield next(self)
-            except StopIteration:
-                return
-
-    def peek(self) -> _tx.Optional[str]:
-        if self.peeked is not self.EMPTY:
-            return self.peeked
-        try:
-            self.peeked = self._next_valid()
-            return self.peeked
-        except StopIteration:
-            return None
-
-    def _next_valid(self) -> _tx.Optional[str]:
-        while True:
-            line = next(self.lines, None)
-            if line is None:
-                return None
-            line = line.split('\r\n')[0]  # remove eol (windows)
-            line = line.split('\n')[0]    # remove eol (unix)
-            line = line.split('#')[0]     # remove hanging comments
-            line = line.strip()           # remove leading/trailing whitespaces
-            if line:
-                return line
 
 
 # ----------------------------------------------------------------------

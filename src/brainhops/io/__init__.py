@@ -49,4 +49,6 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 ```
 """
 
-from . import path
+from . import transformations
+from . import images
+from . import vectors
