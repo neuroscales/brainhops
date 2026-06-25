@@ -663,7 +663,6 @@ class DiagonalTransformation(LinearTransformation):
 @liegroup
 class InvertibleDiagonalTransformation(
     DiagonalTransformation,
-    InvertibleLinearTransformation,
     GeneralizedPermutation
 ):
     """An invertible diagonal matrix.
