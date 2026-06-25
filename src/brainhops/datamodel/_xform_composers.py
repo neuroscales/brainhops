@@ -171,7 +171,6 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
     field = Ti.field[..., To.permutation]
-
     return CoordinatesField(
         field=field,
         input=Ti.input,
