@@ -1,6 +1,9 @@
 # Doc
 site/
 
+# versioningit
+_version.py
+
 # Python-generated files
 __pycache__/
 *.py[oc]
