@@ -17,6 +17,7 @@ __all__ = [
 # stdlib
 import types as _t
 import itertools
+from collections.abc import MutableSequence
 from numbers import Real, Integral
 from functools import partial
 
@@ -759,7 +760,7 @@ class ByDimension(Transformation):
 # ----------------------------------------------------------------------
 
 
-class Sequence(Transformation):
+class Sequence(MutableSequence, Transformation):
     """A sequence of transformations.
 
     !!! note
@@ -835,6 +836,52 @@ class Sequence(Transformation):
               sequences of transformations that match the specified type.
         """
         return _compute_sequence(self, mode=mode)
+
+    # --- sequence API ---
+
+    def __len__(self) -> int:
+        return len(self.transformations or [])
+
+    def __getitem__(self, index: int | slice) -> Transformation:
+        return self.transformations[index]
+
+    def __setitem__(self, index: int | slice, value: Transformation) -> None:
+        self.transformations[index] = value
+
+    def __delitem__(self, index: int | slice) -> None:
+        del self.transformations[index]
+
+    def __iter__(self):
+        return iter(self.transformations or [])
+
+    def insert(self, index: int, value: Transformation) -> None:
+        if self.transformations is None:
+            self.transformations = []
+        self.transformations.insert(index, value)
+
+    def append(self, value: Transformation) -> None:
+        if self.transformations is None:
+            self.transformations = []
+        self.transformations.append(value)
+
+    def extend(self, values: list[Transformation]) -> None:
+        if self.transformations is None:
+            self.transformations = []
+        self.transformations.extend(values)
+
+    def clear(self) -> None:
+        if self.transformations:
+            self.transformations.clear()
+
+    def pop(self, index: int = -1) -> Transformation:
+        if self.transformations is None:
+            raise IndexError("pop from empty sequence")
+        return self.transformations.pop(index)
+
+    def remove(self, value: Transformation) -> None:
+        if self.transformations is None:
+            raise ValueError("remove from empty sequence")
+        self.transformations.remove(value)
 
 
 # ----------------------------------------------------------------------
