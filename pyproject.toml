@@ -59,7 +59,7 @@ dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
 distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
 
 [tool.versioningit.write]
-file = "magnetix/_version.py"
+file = "src/brainhops/_version.py"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
