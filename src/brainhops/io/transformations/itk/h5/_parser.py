@@ -1,4 +1,5 @@
 # stdlib
+import os.path as op
 from os import PathLike
 
 # dependencies
@@ -7,6 +8,9 @@ import typing_extensions as _tx
 
 # externals
 from brainhops._ext.struct import Struct, Factory, HIDE_IF_NONE
+
+# core
+from brainhops._core.backends import da
 
 # locals
 from .._common import ITKStruct
@@ -183,17 +187,21 @@ class H5TransformParser(
 
             parameters = np.array([])
             if "TransformParameters" in nodes[node]:
+                parameters_key = "TransformParameters"
                 parameters = nodes[node]["TransformParameters"]
             elif "TranformParameters" in nodes[node]:
                 # legacy spelling error in older ITK versions
-                parameters = nodes[node]["TranformParameters"]
+                parameters_key = "TranformParameters"
+                parameters = nodes[node][parameters_key]
 
             fixed_parameters = np.array([])
             if "TransformFixedParameters" in nodes[node]:
+                fixed_parameters_key = "TransformFixedParameters"
                 fixed_parameters = nodes[node]["TransformFixedParameters"]
             elif "TranformFixedParameters" in nodes[node]:
                 # legacy spelling error in older ITK versions
-                fixed_parameters = nodes[node]["TranformFixedParameters"]
+                fixed_parameters_key = "TranformFixedParameters"
+                fixed_parameters = nodes[node][fixed_parameters_key]
 
             # Always load fixed parameters (they are never large)
             fixed_parameters = fixed_parameters[()]
@@ -203,16 +211,22 @@ class H5TransformParser(
                 parameters = parameters[()]
             else:
                 filename = h5file.filename
+                filename = op.abspath(filename) if filename else None
                 parameters = DelayedH5Array(
-                    filename, f"/TransformGroup/{node}/TransformParameters"
+                    filename, f"/TransformGroup/{node}/{parameters_key}"
                 )
+                if da:
+                    parameters = da.from_array(
+                        parameters, fancy=False,
+                        chunks=parameters.chunks or "auto"
+                    )
 
             blocks.append(
                 ITKStruct(
-                    type=nodes[node]["TransformType"][()],
+                    type=xtype,
                     precision=prec,
-                    ndim_in=ndim_inp,
-                    ndim_out=ndim_out,
+                    ndim_input=ndim_inp,
+                    ndim_output=ndim_out,
                     parameters=parameters,
                     fixed_parameters=fixed_parameters,
                 )
@@ -239,35 +253,72 @@ class DelayedH5Array:
     """
 
     def __init__(self, file: _H5Like, path: str):
-        self.file = file
-        self.path = path
-        self._shape = None
-        self._dtype = None
+        self.file: _H5Like = file
+        self.path: str = path
+        self._file: h5py.File | None = None
+        self._shape: _tx.Tuple[int] | None = None
+        self._dtype: np.dtype | None = None
+        self._chunks: _tx.Tuple[int] | None = None
 
-    def to_dataset(self, file: _H5Like | None = None):
+    def open(self) -> h5py.File:
+        self.to_dataset(keep_open=True)
+        return self._file
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __del__(self):
+        self.close()
+
+    def to_dataset(
+        self, file: _H5Like | None = None, keep_open: bool = False
+    ) -> h5py.Dataset:
+
         if file is None:
-            return self.to_dataset(self.file)
+            return self.to_dataset(self.file, keep_open=keep_open)
+
+        if self._file is not None:
+            file = self._file
+
         if isinstance(file, (str, PathLike)):
-            with h5py.File(file, "r") as f:
-                return self.to_dataset(f)
+            if not keep_open:
+                with h5py.File(file, "r") as f:
+                    return self.to_dataset(f)
+            else:
+                file = self._file = h5py.File(file, "r")
+
         if isinstance(file, h5py.File):
             dataset = file[self.path]
             # cache info
             self._shape = dataset.shape
             self._dtype = dataset.dtype
+            self._chunks = dataset.chunks
             return dataset
+
         raise ValueError("Invalid file type")
 
     def to_array(self, **kwargs):
         import numpy as np
-        return np.asarray(self.to_dataset(), **kwargs)
+        is_mine = self._file is None
+        dataset = self.to_dataset(keep_open=True)
+        array = np.asarray(dataset, **kwargs)
+        if is_mine:
+            self.close()
+        return array
 
     def to_dask(self, **kwargs):
         import dask.array as da
-        return da.from_array(self.to_dataset(), **kwargs)
+        return da.from_array(self.to_dataset(keep_open=True), **kwargs)
 
     def __getitem__(self, index):
-        return self.to_dataset()[index]
+        is_mine = self._file is None
+        dataset = self.to_dataset(keep_open=True)
+        chunk = dataset[index]
+        if is_mine:
+            self.close()
+        return chunk
 
     def __array__(self, dtype=None):
         return self.to_array(dtype=dtype)
@@ -283,6 +334,12 @@ class DelayedH5Array:
         if self._dtype is None:
             self.to_dataset()
         return self._dtype
+
+    @property
+    def chunks(self):
+        if self._chunks is None:
+            self.to_dataset()
+        return self._chunks
 
     @property
     def ndim(self):

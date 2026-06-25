@@ -108,10 +108,10 @@ def get_array_backend(
         return np
     if cp and isinstance(x, cp.ndarray):
         return cp
-    if da and isinstance(x, da.ndarray):
+    if da and isinstance(x, da.Array):
         return da
 
-    raise TypeError(f"Unsupported array type: {type(x)}")
+    return get_array_backend()
 
 
 def get_ndimage_backend(
@@ -154,10 +154,10 @@ def get_ndimage_backend(
         return cpndi
     if np and npndi and isinstance(x, np.ndarray):
         return npndi
-    if da and isinstance(x, da.ndarray):
+    if da and isinstance(x, da.Array):
         if dkndi:
             return dkndi
         if npndi:
             return npndi
 
-    raise TypeError(f"Unsupported array type: {type(x)}")
+    return get_ndimage_backend()

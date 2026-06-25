@@ -598,21 +598,20 @@ class ITKDisplacementFieldStruct(ITKStruct):
 
     type: _tx.Literal[_ITKT.DisplacementFieldTransform] = _ITKT.DisplacementFieldTransform
 
-    vox2lps: _Mat34 | None = None
-
     def to_transform(self) -> _xforms.DisplacementField:
 
-        vox2lps = self.vox2lps
-        if vox2lps is None:
-            raise ValueError(
-                "ITK displacement fields can only be converted to proper "
-                "world-to-world transformations if the geometry of the "
-                "fixed image is known. "
-            )
-        vox2lps = vox2lps[:3, :4]  # Ensure compact form
+        # Get geometry of the B-spline grid
+        # -> Assumig a voxel grid ordered [Nx, Ny, Nz]
+        vox2lps, shape = _vox2lps(self.fixed_parameters)
 
-        # Reorder from (Nz, Ny, Nx, 3) to (Nx, Ny, Nz, 3)
-        disp = self.parameters.transpose(2, 1, 0, 3)
+        # Ensure array-like
+        parameters = self.parameters
+        if not hasattr(parameters, "reshape"):
+            parameters = get_array_backend(parameters).asarray(parameters)
+
+        # Reorder from (3, Nz, Ny, Nx) to (Nx, Ny, Nz, 3)
+        disp = parameters.reshape(3, *reversed(shape))
+        disp = disp.transpose(3, 2, 1, 0)
 
         # Compute the linear part of the world-to-voxel affine
         lps2vox = _affines.inv(vox2lps)
@@ -620,8 +619,8 @@ class ITKDisplacementFieldStruct(ITKStruct):
         # Multiply by the world-to-voxel affine to convert from world
         # displacements to voxel displacements
         backend = get_array_backend(disp)
-        rotate = backend.asarray(rotate[:3, :3], dtype=disp.dtype)
-        disp = backend.linalg.matmul(rotate, disp[..., None])[..., 0]
+        rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
+        disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
         LPS = _make_system(3)
         VOX = _systems.VoxelCoordinateSystem()
@@ -660,12 +659,17 @@ class ITKBSplineStruct(ITKStruct):
 
         # Get geometry of the B-spline grid
         # -> Assumig a voxel grid ordered [Nx, Ny, Nz]
-        vox2lps, shape = _bsplines_vox2lps(self.fixed_parameters)
+        vox2lps, shape = _vox2lps(self.fixed_parameters)
+
+        # Ensure array-like
+        parameters = self.parameters
+        if not hasattr(parameters, "reshape"):
+            parameters = get_array_backend(parameters).asarray(parameters)
 
         # The coefficients have shape [Nx, Ny, Nz, 3] (F-ordered),
         # resulting in a C-ordered shape of [3, Nz, Ny, Nx].
-        # We reshape and reorder dimesions to recover [Nx, Ny, Nz, 3].
-        coeff = self.parameters.reshape(3, *reversed(shape))
+        # We reshape and reorder dimensions to recover [Nx, Ny, Nz, 3].
+        coeff = parameters.reshape(3, *reversed(shape))
         coeff = coeff.transpose(3, 2, 1, 0)
 
         # Compute the linear part of the world-to-voxel affine
@@ -674,8 +678,8 @@ class ITKBSplineStruct(ITKStruct):
         # Multiply by the world-to-voxel affine to convert from world
         # displacements to voxel displacements
         backend = get_array_backend(disp)
-        rotate = backend.asarray(rotate[:3, :3], dtype=disp.dtype)
-        disp = backend.linalg.matmul(rotate, disp[..., None])[..., 0]
+        rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
+        disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
         LPS = _make_system(3)
         VOX = _systems.VoxelCoordinateSystem()
@@ -705,7 +709,7 @@ class ITKBSplineStruct(ITKStruct):
         )
 
 
-def _bsplines_vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
+def _vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
     """Compute the node-to-world affine of a B-splines transform."""
 
     fixed_parameters = np.asarray(fixed_parameters, dtype=np.float64)
@@ -713,6 +717,8 @@ def _bsplines_vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
     origin = fixed_parameters[3:6]
     spacing = fixed_parameters[6:9]
     direction = fixed_parameters[9:18].reshape(3, 3)
+
+    shape = tuple(map(int, map(round, shape)))
 
     vox2lps = np.eye(4, dtype=np.float64)
     vox2lps[:3, :3] = direction @ np.diag(spacing)

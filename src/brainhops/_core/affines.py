@@ -44,7 +44,7 @@ def inv(
     N -= 1
 
     matinv = backend.linalg.pinv if N != M else backend.linalg.inv
-    matmul = backend.linalg.matmul
+    matmul = backend.matmul
 
     C = backend.empty(A.shape[:-2] + (N, M + 1), dtype=A.dtype)
     C[..., :-1] = matinv(A[..., :-1])
@@ -104,8 +104,8 @@ def _matmul(
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
     C = backend.empty(batch + (M, N + 1), dtype=A.dtype)
 
-    C[..., :-1] = backend.linalg.matmul(A[..., :-1], B[..., :-1])
-    C[..., -1:] = backend.linalg.matmul(A[..., :-1], B[..., -1:])
+    C[..., :-1] = backend.matmul(A[..., :-1], B[..., :-1])
+    C[..., -1:] = backend.matmul(A[..., :-1], B[..., -1:])
     C[..., -1:] += A[..., -1:]
 
     return C
@@ -278,6 +278,6 @@ def rmdiv(
     Bt = t(B[..., :-1])
     C[..., :-1] = t(backend.linalg.solve(Bt, At))
     C[..., -1:] = A[..., -1:]
-    C[..., -1:] -= backend.linalg.matmul(C[..., :-1], B[..., -1:])
+    C[..., -1:] -= backend.matmul(C[..., :-1], B[..., -1:])
 
     return C
