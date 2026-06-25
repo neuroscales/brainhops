@@ -207,19 +207,21 @@ class H5TransformParser(
             fixed_parameters = fixed_parameters[()]
 
             # Do not load parameters if nonlinear (can be large)
-            if load or xtype not in ("DisplacementFieldTransform", "BSplineTransform"):
+            LARGE_TYPES = ("DisplacementFieldTransform", "BSplineTransform")
+            if load or xtype not in LARGE_TYPES:
                 parameters = parameters[()]
             else:
-                filename = h5file.filename
-                filename = op.abspath(filename) if filename else None
+                if keep_open:
+                    fileish = h5file
+                else:
+                    fileish = h5file.filename
+                    fileish = op.abspath(fileish) if fileish else None
+
                 parameters = DelayedH5Array(
-                    filename, f"/TransformGroup/{node}/{parameters_key}"
+                    fileish, f"/TransformGroup/{node}/{parameters_key}"
                 )
                 if da:
-                    parameters = da.from_array(
-                        parameters, fancy=False,
-                        chunks=parameters.chunks or "auto"
-                    )
+                    parameters = parameters.to_dask(keep_open=keep_open)
 
             blocks.append(
                 ITKStruct(
@@ -308,9 +310,14 @@ class DelayedH5Array:
             self.close()
         return array
 
-    def to_dask(self, **kwargs):
+    def to_dask(self, *, keep_open: bool = False, **kwargs):
         import dask.array as da
-        return da.from_array(self.to_dataset(keep_open=True), **kwargs)
+        kwargs.setdefault("chunks", self.chunks or "auto")
+        if keep_open:
+            array_like = self.to_dataset(keep_open=True)
+        else:
+            array_like = self
+        return da.from_array(array_like, **kwargs)
 
     def __getitem__(self, index):
         is_mine = self._file is None
