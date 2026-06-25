@@ -2,12 +2,12 @@
 import pytest
 from typing import Annotated
 
-from brainhops.struct import (
+from brainhops._ext.struct import (
     Struct,
     struct,
     Field,
     Default,
-    DefaultFactory,
+    Factory,
     ConvertTo,
     Validate,
     Init,
@@ -32,10 +32,10 @@ from brainhops.struct import (
     Key,
     NotKey,
 )
-from brainhops.struct.constants import MISSING, _FIELDS, _OPTIONS
-from brainhops.struct.options import Options
-from brainhops.struct.converters import HintConverter, ConversionError
-from brainhops.struct.validators import HintValidator, ValidationError
+from brainhops._ext.struct.constants import MISSING, _FIELDS, _OPTIONS
+from brainhops._ext.struct.options import Options
+from brainhops._ext.struct.converters import HintConverter, ConversionError
+from brainhops._ext.struct.validators import HintValidator, ValidationError
 
 
 # ======================================================================
@@ -47,7 +47,7 @@ class TestMissing:
 
     def test_singleton(self):
         assert MISSING is MISSING
-        from brainhops.struct.constants import _MissingType
+        from brainhops._ext.struct.constants import _MissingType
         assert _MissingType() is MISSING
 
     def test_bool_is_false(self):
@@ -76,7 +76,7 @@ class TestOptions:
         assert opts.kw_only is False
         assert opts.slots is False
         assert opts.weakref_slot is False
-        assert opts.default_factory is False
+        assert opts.factory is False
         assert opts.convert is False
         assert opts.validate is False
 
@@ -167,21 +167,21 @@ class TestBasicStruct:
             x: int
             y: int
 
-        with pytest.raises(TypeError, match="Missing required argument"):
+        with pytest.raises(TypeError, match="missing 1 required positional argument"):
             Point(1)
 
     def test_too_many_positional_args(self):
         class Point(Struct):
             x: int
 
-        with pytest.raises(TypeError, match="Too many positional"):
+        with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
             Point(1, 2)
 
     def test_unexpected_kwarg(self):
         class Point(Struct):
             x: int
 
-        with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        with pytest.raises(TypeError, match="got an unexpected keyword argument"):
             Point(x=1, z=2)
 
 
@@ -240,21 +240,21 @@ class TestDefaults:
 
     def test_default_factory_annotation(self):
         class Container(Struct):
-            items: DefaultFactory[list]
+            items: Factory[list]
 
         c = Container()
         assert c.items == []
 
     def test_default_factory_custom(self):
         class Container(Struct):
-            items: DefaultFactory[list, lambda: [1, 2]]
+            items: Factory[list, lambda: [1, 2]]
 
         c = Container()
         assert c.items == [1, 2]
 
     def test_default_factory_independent_instances(self):
         class Container(Struct):
-            items: DefaultFactory[list]
+            items: Factory[list]
 
         a = Container()
         b = Container()
@@ -327,7 +327,7 @@ class TestKwOnly:
 
         p = Point(x=1, y=2)
         assert p.x == 1
-        with pytest.raises(TypeError, match="Too many positional"):
+        with pytest.raises(TypeError, match="takes 1 positional argument but 3 were given"):
             Point(1, 2)
 
     def test_kw_only_field_annotation(self):
@@ -360,7 +360,7 @@ class TestInit:
             x: int
             y: NoInit[int] = 0
 
-        with pytest.raises(TypeError, match="Too many positional"):
+        with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
             Point(1, 2)
 
     def test_no_init_field_rejects_keyword(self):
@@ -368,7 +368,7 @@ class TestInit:
             x: int
             y: NoInit[int] = 0
 
-        with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        with pytest.raises(TypeError, match="got an unexpected keyword argument 'y'"):
             Point(x=1, y=2)
 
     def test_no_init_class(self):
@@ -1134,7 +1134,7 @@ class TestIntegration:
         assert d.y == 20
 
     def test_default_factory_class_option(self):
-        class Container(Struct, default_factory=True):
+        class Container(Struct, factory=True):
             items: list
 
         c = Container()

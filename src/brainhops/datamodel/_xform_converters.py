@@ -1,11 +1,14 @@
-# internals
+# core
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+from brainhops._core.backends import get_array_backend
+
+# locals
 from .transformations import (
     Transformation,
     Identity, Translation, Scaling, Permutation, Linear, Affine,
     DisplacementField, CoordinatesField, LossyConversionError
 )
 from .transformations import _get_ndim, _converter, _to
-from ._utils import _get_array_package, _coeff2value_field, _value2coeff_field
 
 
 # ----------------------------------------------------------------------
@@ -22,12 +25,12 @@ def _(t: Transformation, **kwargs) -> Transformation:
 def _(t: DisplacementField, **kwargs) -> DisplacementField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get('coeff', t.coeff):
-            field = _coeff2value_field(t.field, order=t.order, bound=t.bound)
+            field = coeff2value_field(t.field, order=t.order, bound=t.bound)
             kwargs['field'] = field
         elif not t.coeff and kwargs.get('coeff', t.coeff):
             order = kwargs.get('order', t.order)
             bound = kwargs.get('bound', t.bound)
-            field = _value2coeff_field(t.field, order=order, bound=bound)
+            field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs['field'] = field
     return DisplacementField(t, **kwargs)
 
@@ -36,12 +39,12 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
 def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get('coeff', t.coeff):
-            field = _coeff2value_field(t.field, order=t.order, bound=t.bound)
+            field = coeff2value_field(t.field, order=t.order, bound=t.bound)
             kwargs['field'] = field
         if not t.coeff and kwargs.get('coeff', t.coeff):
             order = kwargs.get('order', t.order)
             bound = kwargs.get('bound', t.bound)
-            field = _value2coeff_field(t.field, order=order, bound=bound)
+            field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs['field'] = field
     # FIXME: this is too hacky
     params = dict(vars(t))
@@ -184,9 +187,9 @@ def _(t: DisplacementField) -> CoordinatesField:
             input=t.input,
             output=t.output
         )
-    xp = _get_array_package(t.field)
-    g = xp.meshgrid(*(xp.arange(s) for s in t.field.shape[:-1]), indexing='ij')
-    g = xp.stack(g, axis=-1)
+    ba = get_array_backend(t.field)
+    g = ba.meshgrid(*(ba.arange(s) for s in t.field.shape[:-1]), indexing='ij')
+    g = ba.stack(g, axis=-1)
     return CoordinatesField(
         field=t.field + g,
         input=t.input,
@@ -250,9 +253,9 @@ def _(t: Linear) -> Identity:
 def _(t: Linear) -> Permutation:
     if t.matrix is None:
         return _to(_to(t, Identity), Permutation)
-    nx = _get_array_package(t.matrix)
-    matrix = nx.round(nx.abs(t.matrix))
-    permutation = nx.argmax(matrix, axis=1)
+    ba = get_array_backend(t.matrix)
+    matrix = ba.round(ba.abs(t.matrix))
+    permutation = ba.argmax(matrix, axis=1)
     u = Permutation(input=t.input, output=t.output, permutation=permutation)
     if t.matrix is not None:
         for row in t.matrix:
@@ -268,8 +271,8 @@ def _(t: Linear) -> Permutation:
 def _(t: Linear) -> Scaling:
     if t.matrix is None:
         return _to(_to(t, Identity), Scaling)
-    nx = _get_array_package(t.matrix)
-    scale = nx.diagonal(t.matrix)  # TODO: use svd instead?
+    ba = get_array_backend(t.matrix)
+    scale = ba.diagonal(t.matrix)  # TODO: use svd instead?
     u = Scaling(input=t.input, output=t.output, scale=scale)
     if t.matrix is not None:
         for i in range(len(t.matrix)):

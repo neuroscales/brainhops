@@ -1,0 +1,9 @@
+{
+    "type": "ScaleTransform",
+    "ndim": 3,
+    "scale": [
+        1.2,
+        0.8,
+        1.0
+    ]
+}

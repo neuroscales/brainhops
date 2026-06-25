@@ -15,6 +15,7 @@ class BoundaryCondition(StrEnum):
     | `mirror`      | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
     | `grid-wrap`   | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
     | `wrap`        |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
+    | `constant`    | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
     """
 
     nearest = edge = border = "nearest"                     # (a a a a | a b c d | d d d d)
@@ -22,6 +23,7 @@ class BoundaryCondition(StrEnum):
     mirror = dct1 = "mirror"                                #   (d c b | a b c d | c b a)
     gridwrap = circular = circulant = dft = "grid-wrap"     # (a b c d | a b c d | a b c d)
     wrap = "wrap"                                           # (d b c d | a b c d | b c a b)
+    constant = zero = zeros = "constant"                    # (0 0 0 0 | a b c d | 0 0 0 0)
 
 
 class InterpolationOrder(IntEnum):

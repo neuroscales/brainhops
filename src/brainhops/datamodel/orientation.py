@@ -7,12 +7,14 @@ __all__ = [
     "I", "superiorToInferior", "SuperiorToInferior",
     "S", "inferiorToSuperior", "InferiorToSuperior",
 ]
-# externals
+# dependencies
 import typing_extensions as _tx
 
 # internals
+from brainhops._core.typing import HiddenConst
+
+# locals
 from .base import DataModelBase
-from .typing import HiddenConst
 from .enums import OrientationType
 
 

@@ -247,7 +247,7 @@ def __pre_new__(
     fnbuilder = _FuncBuilder(globals)
 
     # Save qualified name -- we will use it when generating methods.
-    qualname = namespace["__qualname__"]
+    qualname = namespace.get("__qualname__", None)
 
     # Now that dicts retain insertion order, there's no reason to use
     # an ordered dict.  I am leveraging that ordering here, because
@@ -454,7 +454,8 @@ def __pre_new__(
     # Add attributes to class documentation
     if options.doc:
         docname = '__doc__' if options.doc is True else options.doc
-        doc = namespace.get(docname, '').rstrip("\n")
+        doc = namespace.get(docname, '') or ''
+        doc = doc.rstrip("\n")
         doc = "\n\n".join([doc, _make_doc_class(fields)])
         namespace[docname] = doc
 
@@ -544,7 +545,7 @@ class _FuncBuilder:
         fns = temporary_namespace['__create_fn__'](**self.locals)
 
         # Now that we've generated the functions, assign them into cls.
-        qualname = namespace["__qualname__"]
+        qualname = namespace.get("__qualname__", None)
         for name, fn in zip(self.methods, fns):
             fn.__qualname__ = f"{qualname}.{fn.__name__}"
             if self.unconditional_adds.get(name, False):

@@ -28,9 +28,9 @@ class NDArrayConverter(ObjectConverter[npt.ArrayProtocol]):
 
     def _convert(self, value):
         origin = self.origin
-        if isinstance(value, origin):
+        if isinstance(origin, type) and isinstance(value, origin):
             return value
-        if isabstract(origin):
+        if not isinstance(origin, type) or issubclass(origin, _tx.Protocol):
             return self._FALLBACK(value)
         return origin(value)
 
@@ -74,7 +74,7 @@ if np:
             if origin is npt.ndarray:
                 origin = np.ndarray
             return origin
-        
+
         @property
         def dtype(self):
             dtype = self.args[1] if self.args else None
