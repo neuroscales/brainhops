@@ -14,10 +14,10 @@ of transformation (e.g. "is this transformation a linear transform?"),
 without it being conflated with type inheritence
 (e.g. "is this transformation an instance of the Linear class?").
 
-In our hierarchu, transformations types correspond to sets, and
+In our hierarchy, transformations types correspond to sets, and
 inheritance describes set inclusion (i.e., `isubclass(A, B)` implies
 `A ⊆ B`). All transformations act on the n-dimensional euclidean space
-R^n, and are assigned a "composition" operator.
+ℝⁿ, and are assigned a "composition" operator.
 
 Some of these transformation sets (but not all!) are groups under the
 composition operator. This is indicated by the `@group` decorator.
@@ -63,7 +63,7 @@ as the component from the corresponding general group that contains the
 identity transform.
 
 Note that the Special Linear group (SL) can have negative determinants,
-but is restricted to unit-norm determinants (+/- 1, i.e. volume
+but is restricted to unit-norm determinants (±1, i.e. volume
 preserving).
 
 All classical linear group can be extended with the translation group
@@ -71,29 +71,27 @@ All classical linear group can be extended with the translation group
 
 ::note
     * The Special Euclidean group (SE) contains transformations that are
-      classicaly referred to as "rigid-body" transformations. They preserve
-      angles and volumes.
+      classicaly referred to as "rigid-body" transformations. They
+      preserve angles and volumes.
 
-    * The Special Conformal Euclidean group (CSE) contains transformations
-      that are classicaly referred to as "similitude" (or conformal)
-      transformations. They only preserve angles.
+    * The Special Conformal Euclidean group (CSE) contains
+      transformations that are classicaly referred to as "similitude"
+      (or conformal) transformations. They only preserve angles.
 """
 __all__ = [
     "Transformation",
+    "Morphism",                                     # ^ alias
     "BijectiveTransformation",
+    "Bijection",                                    # ^ alias
     "Isomorphism",
     "Diffeomorphism",                               # Diff
     "VolumePreservingDiffeomorphism",               # SDiff
-    # LIE / MATRIX
+    # --- MATRIX -------------------------------------------------------
     "MatrixTransformation",
-    "LieGroupTransformation",
-    "DiffeomorphicLieGroupTransformation",
-    "ConnectedLieGroupTransformation",
-    "SimplyConnectedLieGroupTransformation",
-    "MatrixLieGroupTransformation",
-    "ConnectedMatrixLieGroupTransformation",
-    # AFFINE
-    "AffineTransformation",
+    "InvertibleMatrixTransformation",
+    "PositiveDefiniteMatrixTransformation",
+    # --- AFFINE -------------------------------------------------------
+    "AffineTransformation",                         # <not a group>
     "InvertibleAffineTransformation",               # Aff              (det ≠ 0)
     "PositiveAffineTransformation",                 # Aff+             (det > 0)
     "SpecialAffineTransformation",                  # SAff = SL  ⋉ T   (det = 1)
@@ -102,30 +100,36 @@ __all__ = [
     "SpecialConformalEuclideanTransformation",      # CSE  = CSO ⋉ T   (det > 0)
     "Similitude",                                   # ^ alias
     "EuclideanTransformation",                      # E    = O   ⋉ T   (det =±1)
-    "SpecialEuclideanTransformation",               # SE   = SO.  ⋉ T  (det = 1)
+    "SpecialEuclideanTransformation",               # SE   = SO  ⋉ T   (det = 1)
     "RigidTransformation",                          # ^ alias
-    "Dilation",
-    "PositiveDilation",
+    "Dilation",                                     # ℝ* ⋉ T           (det ≠ 0)
+    "PositiveDilation",                             # ℝ+ ⋉ T           (det > 0)
     "Translation",                                  # T                (det = 1)
-    # LINEAR
-    "LinearTransformation",                         # M (set of matrices)
+    # --- LINEAR -------------------------------------------------------
+    "LinearTransformation",                         # M = matrix set
     "InvertibleLinearTransformation",               # GL               (det ≠ 0)
     "PositiveLinearTransformation",                 # GL+              (det > 0)
     "SpecialLinearTransformation",                  # SL               (det = 1)
-    "ConformalOrthogonalTransformation",            # CO  = O x R*     (det ≠ 0)
-    "SpecialConformalOrthogonalTransformation",     # CSO = O x R+     (det > 0)
+    "ConformalOrthogonalTransformation",            # CO  = O x ℝ*     (det ≠ 0)
+    "SpecialConformalOrthogonalTransformation",     # CSO = O x ℝ+     (det > 0)
     "OrthogonalTransformation",                     # O                (det =±1)
     "SpecialOrthogonalTransformation",              # SO               (det = 1)
     "Rotation",                                     # ^ alias
-    "Permutation",
-    "InvertiblePermutation",                        # S                (det ≠ 0)
-    "DiagonalTransformation",
+    "GeneralizedPermutation",                       # S ⋉ Δ            (det ≠ 0)
+    "SignedPermutation",                            # S ⋉ Δ+           (det ≠ 0)
+    "Permutation",                                  # S                (det ≠ 0)
+    "DiagonalTransformation",                       # <not a group>
     "InvertibleDiagonalTransformation",             # Δ                (det ≠ 0)
     "PositiveDiagonalTransformation",               # Δ+               (det > 0)
-    "MultiplicativeTransformation",                 # R
-    "InvertibleMultiplicativeTransformation",       # R*               (det ≠ 0)
-    "PositiveMultiplicativeTransformation",         # R+               (det > 0)
-    # IDENTITY
+    "Reflection",                                   #
+    "FiniteReflection",                             #
+    "SpecialDiagonalTransformation",                # SΔ               (det =±1)
+    "MultiplicativeTransformation",                 # ℝ
+    "InvertibleMultiplicativeTransformation",       # ℝ*               (det ≠ 0)
+    "Homothety",                                    # ^ alias
+    "PositiveMultiplicativeTransformation",         # ℝ+               (det > 0)
+    "PositiveHomothety",                            # ^ alias
+    # --- IDENTITY -----------------------------------------------------
     "IdentityTransformation",                       # I                (det = 1)
 ]
 from abc import ABC
@@ -235,14 +239,14 @@ class Diffeomorphism(Isomorphism):
     wiki: https://en.wikipedia.org/wiki/Diffeomorphism
     """
     SYMBOL = "Diff"
-    FSYMBOL = "Diff(R^{n})"
+    FSYMBOL = "Diff(ℝ^{n})"
 
 
 @group
 class VolumePreservingDiffeomorphism(Diffeomorphism):
     """A diffeomorphism that preserves volumes."""
     SYMBOL = "SDiff"
-    FSYMBOL = "SDiff(R^{n})"
+    FSYMBOL = "SDiff(ℝ^{n})"
 
 
 # ----------------------------------------------------------------------
@@ -307,7 +311,7 @@ class InvertibleAffineTransformation(
     wiki: https://en.wikipedia.org/wiki/Affine_group
     """
     SYMBOL = "Aff"
-    FSYMBOL = "Aff({n})"
+    FSYMBOL = "Aff(ℝ^{n})"
 
 
 @liegroup
@@ -325,7 +329,7 @@ class PositiveAffineTransformation(
     symbol: Aff+ = GL+ ⋉ T
     """
     SYMBOL = "Aff+"
-    FSYMBOL = "Aff+({n})"
+    FSYMBOL = "Aff+(ℝ^{n})"
 
 
 @liegroup
@@ -425,13 +429,13 @@ class Dilation(ConformalEuclideanTransformation):
     A dilation is a similitude with no rotation, i.e. a scaling with
     translation.
 
-    symbol: R* ⋉ T
+    symbol: ℝ* ⋉ T
 
     wiki: https://en.wikipedia.org/wiki/Homothety
     wiki: https://en.wikipedia.org/wiki/Dilation_(metric_space)
     """
-    SYMBOL = "R* ⋉ T"
-    FSYMBOL = "R* ⋉ T({n})"
+    SYMBOL = "ℝ* ⋉ T"
+    FSYMBOL = "ℝ* ⋉ T({n})"
 
 
 @liegroup
@@ -440,13 +444,13 @@ class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
     """
     A dilation with a positive scaling factor.
 
-    symbol: R+ ⋉ T
+    symbol: ℝ+ ⋉ T
 
     wiki: https://en.wikipedia.org/wiki/Homothety
     wiki: https://en.wikipedia.org/wiki/Dilation_(metric_space)
     """
-    SYMBOL = "R+ ⋉ T"
-    FSYMBOL = "R+ ⋉ T({n})"
+    SYMBOL = "ℝ+ ⋉ T"
+    FSYMBOL = "ℝ+ ⋉ T({n})"
 
 
 @liegroup
@@ -533,8 +537,8 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
     """
     A linear transformation that preserves (absolute) angles (CO)
 
-    symbol: CO = O x R* (if n is even)
-                 O x R+ (if n is odd)
+    symbol: CO = O x ℝ* (if n is even)
+                 O x ℝ+ (if n is odd)
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group
     """
@@ -551,7 +555,7 @@ class SpecialConformalOrthogonalTransformation(
     """
     An linear transformation that preserves angles (CSO)
 
-    symbol: CSO = SO x R+
+    symbol: CSO = SO x ℝ+
 
     alias: Dilation
 
@@ -567,7 +571,7 @@ class OrthogonalTransformation(
     EuclideanTransformation
 ):
     """
-    A orthogonal matrix (AA" = I) with determinant ±1
+    A orthogonal matrix (AA' = I) with determinant ±1
 
     symbol: O
 
@@ -585,7 +589,7 @@ class SpecialOrthogonalTransformation(
     SpecialEuclideanTransformation
 ):
     """
-    A orthogonal matrix (AA" = I) with determinant +1
+    A orthogonal matrix (AA' = I) with determinant +1
 
     symbol: SO
 
@@ -624,10 +628,12 @@ class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
 
     A generalized permutation with non-zero entries ±1.
 
+    symbol: S ⋉ SΔ
+
     wiki: https://en.wikipedia.org/wiki/Generalized_permutation_matrix#Signed_permutation_group
     """
-    SYMBOL = "S ⋉ Δ+"
-    FSYMBOL = "S_{n} ⋉ Δ+({n})"
+    SYMBOL = "S ⋉ SΔ"
+    FSYMBOL = "S_{n} ⋉ SΔ({n})"
 
 
 @group
@@ -657,7 +663,8 @@ class DiagonalTransformation(LinearTransformation):
 @liegroup
 class InvertibleDiagonalTransformation(
     DiagonalTransformation,
-    InvertibleLinearTransformation
+    InvertibleLinearTransformation,
+    GeneralizedPermutation
 ):
     """An invertible diagonal matrix.
 
@@ -689,15 +696,58 @@ class PositiveDiagonalTransformation(
     FSYMBOL = "Δ+({n})"
 
 
+@group
+class Reflection(OrthogonalTransformation):
+    """A reflection.
+
+    This group includes all reflections along any hyperplane that goes
+    through the origin. This hyperplane does not have to be axis-aligned.
+
+    wiki: https://en.wikipedia.org/wiki/Reflection_group
+    """
+
+
+@group
+class FiniteReflection(Reflection):
+    """Base class for finite reflection groups.
+
+    A finite reflection group is a reflection group limited to a finite
+    number of reflection planes.
+
+    wiki: https://en.wikipedia.org/wiki/Reflection_group
+    """
+
+
+@group
+class SpecialDiagonalTransformation(
+    InvertibleDiagonalTransformation,
+    SignedPermutation,
+    FiniteReflection
+):
+    """A diagonal matrix with entries ±1.
+
+    symbol: SΔ
+
+    alias: CardinalReflection
+
+    wiki: https://en.wikipedia.org/wiki/Reflection_group
+    """
+    SYMBOL = "SΔ"
+    FSYMBOL = "SΔ({n})"
+
+
+CardinalReflection = SpecialDiagonalTransformation
+
+
 class MultiplicativeTransformation(
     DiagonalTransformation,
 ):
     """A scaling with the same factor in all dimensions.
 
-    symbol: R
+    symbol: ℝ
     """
-    SYMBOL = "R"
-    FSYMBOL = "R"
+    SYMBOL = "ℝ"
+    FSYMBOL = "ℝ"
 
 
 @liegroup
@@ -707,15 +757,15 @@ class InvertibleMultiplicativeTransformation(
 ):
     """A scaling with the same positive factor in all dimensions.
 
-    symbol: R*
+    symbol: ℝ*
 
     alias: Homothety
 
     wiki: https://en.wikipedia.org/wiki/Multiplicative_group
     wiki: https://en.wikipedia.org/wiki/Homothety
     """
-    SYMBOL = "R*"
-    FSYMBOL = "R*"
+    SYMBOL = "ℝ*"
+    FSYMBOL = "ℝ*"
 
 
 Homothety = InvertibleMultiplicativeTransformation
@@ -729,14 +779,14 @@ class PositiveMultiplicativeTransformation(
 ):
     """A scaling with the same positive factor in all dimensions.
 
-    symbol: R+
+    symbol: ℝ+
 
     alias: PositiveHomothety
 
     wiki: https://en.wikipedia.org/wiki/Scaling_(geometry)
     """
-    SYMBOL = "R+"
-    FSYMBOL = "R+"
+    SYMBOL = "ℝ+"
+    FSYMBOL = "ℝ+"
 
 
 PositiveHomothety = PositiveMultiplicativeTransformation
