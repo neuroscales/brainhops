@@ -18,6 +18,9 @@ from brainhops._core import affines as _affines
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel import systems as _systems
 
+# io
+from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
+
 # locals
 from ._systems import _make_system
 
@@ -587,9 +590,6 @@ class ITKAffineStruct(ITKStruct):
         )
 
 
-_Mat34 = np.ndarray[_tx.Tuple[_tx.Literal[3], _tx.Literal[4]], np.floating]
-
-
 @_register_type("DisplacementFieldTransform")
 class ITKDisplacementFieldStruct(ITKStruct):
     """
@@ -626,24 +626,14 @@ class ITKDisplacementFieldStruct(ITKStruct):
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.Sequence(
             [
-                _xforms.Affine(
-                    lps2vox,
-                    input=LPS,
-                    output=VOX,
-                ),
+                LPSToVoxel(lps2vox),
                 _xforms.DisplacementField(
                     disp,
                     input=VOX,
                     output=VOX,
                 ),
-                _xforms.Affine(
-                    vox2lps,
-                    input=VOX,
-                    output=LPS,
-                ),
+                VoxelToLPS(vox2lps),
             ],
-            input=LPS,
-            output=LPS
         )
 
 
@@ -681,15 +671,11 @@ class ITKBSplineStruct(ITKStruct):
         rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
         disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
-        LPS = _make_system(3)
         VOX = _systems.VoxelCoordinateSystem()
+        LPS = _make_system(3)
         return _xforms.Sequence(
             [
-                _xforms.Affine(
-                    lps2vox,
-                    input=LPS,
-                    output=VOX,
-                ),
+                LPSToVoxel(lps2vox),
                 _xforms.DisplacementField(
                     disp,
                     input=VOX,
@@ -698,14 +684,8 @@ class ITKBSplineStruct(ITKStruct):
                     coeff=True,
                     bound="zeros",
                 ),
-                _xforms.Affine(
-                    vox2lps,
-                    input=VOX,
-                    output=LPS,
-                ),
+                VoxelToLPS(vox2lps),
             ],
-            input=LPS,
-            output=LPS
         )
 
 

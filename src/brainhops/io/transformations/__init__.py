@@ -1,3 +1,5 @@
+__all__ = ["itk", "freesurfer", "spm"]
+
 from . import itk
-from . import lta
-from . import spmy
+from . import freesurfer
+from . import spm
