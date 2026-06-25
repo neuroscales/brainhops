@@ -256,7 +256,9 @@ class Transformation(DataModelBase, reverse=True):
         else:
             raise TypeError(f"Unsupported type for transformation: {type(x)}")
         if compute:
-            x = self.compute(mode=compute)
+            x = x.compute(mode=None)
+        else:
+            x = x.compute(mode=[Affine])
         return x
 
     def __matmul__(self, other: "Transformation") -> "Transformation":
@@ -834,6 +836,12 @@ class Sequence(Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
+        if mode is not None:
+            if Affine in mode:
+                mode = [*mode, Linear, Translation,
+                        Scaling, Permutation, Identity]
+            elif Linear in mode:
+                mode = [*mode, Scaling, Permutation, Identity]
         return _compute_sequence(self, mode=mode)
 
 
@@ -976,10 +984,13 @@ def _flatten(self) -> _tx.Self:
     flattened = []
     for t in self.transformations:
         if isinstance(t, Sequence):
-            flattened.extend(t._flatten().transformations or [])
+            flattened.extend(_flatten(t).transformations or [])
         else:
             flattened.append(t)
-    return Sequence(self, transformations=flattened)
+    # FIXME: this is too hacky
+    params = dict(vars(self))
+    params["transformations"] = flattened
+    return Sequence(**params)
 
 
 def _is_flat(self) -> bool:
@@ -1113,6 +1124,10 @@ def _to(x: Transformation, cls: _tx.Type[Transformation], **kwargs) -> Transform
         return func(x, **kwargs)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _CONVERTERS.items():
+        if not isinstance(T1, type):
+            T1 = type(T1)
+        if not isinstance(T2, type):
+            T2 = type(T2)
         distance = _distance(t1, T1) + _distance(t2, T2)
         if distance < best_distance:
             best_distance, best_func = distance, FUNC
