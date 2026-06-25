@@ -72,6 +72,8 @@ class ITKPrecision(StrEnum):
 class ITKStruct(Struct, kw_only=True, convert=True):
     """This object represents a single ITK transform block."""
 
+    _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
+
     def __new__(cls, **kwargs):
         if cls is not ITKStruct:
             return super().__new__(cls)
@@ -193,7 +195,7 @@ class ITKScaleStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
-            transforms=[
+            transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(self.parameters),
                 _xforms.Translation(self.fixed_parameters)
@@ -217,7 +219,7 @@ class ITKScaleLogarithmicStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
-            transforms=[
+            transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(np.exp(self.parameters)),
                 _xforms.Translation(self.fixed_parameters)
@@ -255,7 +257,7 @@ class ITKEuler2DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(2),
             output=_make_system(2),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
@@ -289,7 +291,7 @@ class ITKEuler3DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
@@ -325,7 +327,7 @@ class ITKVersorStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Rotation(R),
                 _xforms.Translation(c)
@@ -394,7 +396,7 @@ class ITKSimilarity2DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(2),
             output=_make_system(2),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Scaling(scale),
                 _xforms.Rotation(R),
@@ -435,7 +437,7 @@ class ITKSimilarity3DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Scaling(s),
                 _xforms.Rotation(R),
@@ -483,7 +485,7 @@ class ITKScaleVersor3DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Linear(R+S),
                 _xforms.Translation(c),
@@ -539,7 +541,7 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Linear(R+S+K),
                 _xforms.Translation(c),
@@ -576,7 +578,7 @@ class ITKAffineStruct(ITKStruct):
         return _xforms.Sequence(
             input=_make_system(Di),
             output=_make_system(Do),
-            transforms=[
+            transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Linear(L),
                 _xforms.Translation(c),
