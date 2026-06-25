@@ -54,11 +54,11 @@ class HintConverter(_tx.Generic[T], ABC):
         origin = _get_origin(self.type)
         origin = _HINT_TO_TYPE.get(origin, origin)
         return origin
-    
+
     @property
     def args(self) -> tuple:
         return _tx.get_args(self.type)
-    
+
     def _init_check(self) -> bool:
         return True
 
@@ -70,7 +70,7 @@ class HintConverter(_tx.Generic[T], ABC):
             return self._convert(value)
         except Exception as e:
             raise ConversionError(self._convert_error_message(value)) from e
-        
+
     @abstractmethod
     def _convert(self, value: _tx.Any) -> T:
         return NotImplemented
@@ -81,14 +81,14 @@ class HintConverter(_tx.Generic[T], ABC):
 
 @_tx.overload
 def register(
-    *origins: _tx.Tuple[_tx.Any], 
+    *origins: _tx.Tuple[_tx.Any],
     converter: None = None
 ) -> _tx.Callable[[_tx.Type[HintConverter]], _tx.Type[HintConverter]]: ...
 
 
 @_tx.overload
 def register(
-    *origins: _tx.Tuple[_tx.Any], 
+    *origins: _tx.Tuple[_tx.Any],
     converter: _tx.Type[HintConverter]
 ) -> _tx.Type[HintConverter]: ...
 
@@ -147,7 +147,7 @@ def _get_converter(hint: _tx.Any) -> type:
         CONVERTERS[hint] = best_adaptor
         return best_adaptor
 
-    # Find the best matching adaptor (via isinstance)
+    # Find the best matching adaptor (via issubclass)
     for adaptor_hint, adaptor in CONVERTERS.items():
         origin = _get_origin(adaptor_hint, unfold="all")
         dist = _distance(type(hint), origin)
@@ -168,6 +168,8 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
     # TODO: handle type hints (Union, Any)
     if t1 == t2:
         return 0
+    if not isinstance(t1, type) or not isinstance(t2, type):
+        return float("inf")
     if issubclass(t1, t2):
         return 1 + min(map(partial(_distance, t2=t2), t1.__bases__))
     if issubclass(t2, t1) and not oriented:
