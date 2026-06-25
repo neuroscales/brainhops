@@ -1,0 +1,9 @@
+{
+    "type": "TranslationTransform",
+    "ndim": 3,
+    "offset": [
+        10.0,
+        5.0,
+        2.0
+    ]
+}
