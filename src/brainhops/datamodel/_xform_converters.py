@@ -46,7 +46,10 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             bound = kwargs.get('bound', t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs['field'] = field
-    return CoordinatesField(t, **kwargs)
+    # FIXME: this is too hacky
+    params = dict(vars(t))
+    params.update(kwargs)
+    return CoordinatesField(**params)
 
 
 # ----------------------------------------------------------------------
@@ -312,6 +315,10 @@ def _(t: DisplacementField) -> Identity:
             raise LossyConversionError(result=u)
     return u
 
+
+@_converter
+def _(t: Transformation) -> Transformation:
+    return t
 
 
 # ----------------------------------------------------------------------

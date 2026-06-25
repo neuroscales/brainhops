@@ -65,7 +65,7 @@ def _(To: Transformation, Ti: Sequence) -> Transformation:
 
 
 @_composer
-def _(To: Sequence, Ti: Sequence) -> Sequence:
+def _(To: Sequence, Ti: Sequence) -> Transformation:
     return Sequence(
         transformations=list(Ti.transformations) + list(To.transformations),
         input=Ti.input,
@@ -171,6 +171,7 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
     field = Ti.field[..., To.permutation]
+
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -293,7 +294,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
         order=To.order,
         bound=To.bound,
         coeff=To.coeff
-    ) + x2
+    ) + x2.field
     return CoordinatesField(
         field=field,
         input=Ti.input,
