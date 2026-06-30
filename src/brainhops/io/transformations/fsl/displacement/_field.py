@@ -21,15 +21,13 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
     Field of RAS displacements, stored in a NIfTI file.
     """
 
-    _is_spline_cache: _tx.Optional[bool] = None
-    _bspline_order: int = 3  # cubic, FNIRT's default
-    _kernel: _tx.Optional[BSpline] = None
-    _kernel_half_width: _tx.Optional[int] = None
+    is_spline_cache: _tx.Optional[bool] = None
+    bspline_order: int = 3  # cubic, FNIRT's default
 
     @property
     def is_spline_coefficients(self) -> bool:
-        if self._is_spline_cache is not None:
-            return self._is_spline_cache
+        if self.is_spline_cache is not None:
+            return self.is_spline_cache
 
         header = self.header
         if header is None:
@@ -39,21 +37,21 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
 
         intent_code = int(header.get("intent_code", 0))
         if intent_code == FSL_CUBIC_SPLINE_COEFFICIENTS:
-            self._is_spline_cache = True
-            self._bspline_order = 3
+            self.is_spline_cache = True
+            self.bspline_order = 3
         elif intent_code == FSL_QUADRATIC_SPLINE_COEFFICIENTS:
-            self._is_spline_cache = True
-            self._bspline_order = 2
+            self.is_spline_cache = True
+            self.bspline_order = 2
         elif intent_code == FSL_DCT_COEFFICIENTS:
             raise NotImplementedError(
                 "DCT-basis FNIRT coefficient fields are not supported."
             )
         elif intent_code == FSL_FNIRT_DISPLACEMENT_FIELD:
-            self._is_spline_cache = False
+            self.is_spline_cache = False
         else:
             raise ValueError(f"Unrecognized intent code: {intent_code}")
 
-        return self._is_spline_cache
+        return self.is_spline_cache
 
     # ------------------------------------------------------------------
     # Reconstruction (order-agnostic, scipy-backed)
@@ -69,7 +67,7 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
 
         TODO: Test against ground truth with FSL file
         """
-        order = self._bspline_order
+        order = self.bspline_order
         if order not in (2, 3):
             raise NotImplementedError(f"Unsupported B-spline order: {order}")
 
@@ -118,6 +116,10 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
             name=f"displacement-field-{id(self)}",
         )
 
+    @field.setter
+    def field(self, value: _tx.Optional[ArrayProtocol]):
+        ValueError("cannot set field")
+
     @property
     def shape(self) -> tuple:
         if not self.is_spline_coefficients:
@@ -133,6 +135,10 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
     @property
     def dtype(self) -> np.dtype:
         return np.dtype(np.float64)
+
+    @property
+    def ndim(self) -> np.int32:
+        return 3
 
     # ------------------------------------------------------------------
     # Lazy conversion: spline coefficients -> displacement field

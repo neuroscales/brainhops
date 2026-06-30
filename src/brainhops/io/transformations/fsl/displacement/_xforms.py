@@ -31,13 +31,8 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
     coefficients lazily, only for the slice actually requested.
     """
 
-    _transformations: _tx.Optional[_tx.Tuple[
-        _tx.Optional[RASToVoxel],
-        _tx.Optional[RASDisplacementField],
-        _tx.Optional[VoxelToRAS]
-    ]] = None
-    _reference_image: _tx.Optional[nb.Nifti1Image] = None
-    _target_shape: _tx.Optional[_tx.Tuple[int, int, int]] = None
+    reference_image: _tx.Optional[nb.Nifti1Image] = None
+    target_shape: _tx.Optional[_tx.Tuple[int, int, int]] = None
 
     @classmethod
     def from_(
@@ -96,6 +91,7 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
             return cls.from_nifti(nb.load(nifti), reference=reference)
 
         obj._apply_reference(reference=reference)
+        obj._ensure_transformations()
         return obj
 
     def _apply_reference(self, reference: _tx.Optional[_NiftiLike]) -> None:
@@ -114,13 +110,13 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
             # needed for our purposes, so use it as-is rather than forcing
             # it through nb.load.
             ref_shape = tuple(int(d) for d in reference.get_data_shape()[:3])
-            self._reference_image = reference
-            self._target_shape = ref_shape
+            self.reference_image = reference
+            self.target_shape = ref_shape
             return
 
         if isinstance(reference, nb.Nifti1Image):
-            self._reference_image = reference
-            self._target_shape = tuple(int(d) for d in reference.shape[:3])
+            self.reference_image = reference
+            self.target_shape = tuple(int(d) for d in reference.shape[:3])
             return
 
         if isinstance(reference, (str, PathLike)):
@@ -128,50 +124,46 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
         else:
             loaded = nb.Nifti1Image.from_bytes(reference.read())
 
-        self._reference_image = loaded
-        self._target_shape = tuple(int(d) for d in loaded.shape[:3])
+        self.reference_image = loaded
+        self.target_shape = tuple(int(d) for d in loaded.shape[:3])
 
-    @property
-    def transformations(self) -> _tx.Tuple[
-        _tx.Optional[RASToVoxel],
-        _tx.Optional[RASDisplacementField],
-        _tx.Optional[VoxelToRAS]
-    ]:
-        """The transformations that make up the sequence."""
-        _transformations = getattr(self, "_transformations", None)
-        if _transformations is not None:
-            return _transformations
+    def _ensure_transformations(self) -> None:
+        """
+        Lazily populate the inherited `transformations` field (from
+        `Sequence`) the first time it's needed
+        """
+        if self.transformations is not None:
+            return
 
         displacement_field = FSLRASDisplacementField(
             image=self.image, header=self.header
         )
 
-        if displacement_field.is_spline_coefficients and self._reference_image is None:
+        if displacement_field.is_spline_coefficients and self.reference_image is None:
             raise ValueError(
                 "A reference image is required to build RAS<->voxel "
                 "transforms for spline-coefficient FNIRT files — "
             )
-        elif not displacement_field.is_spline_coefficients and self._reference_image is not None:
+        elif not displacement_field.is_spline_coefficients and self.reference_image is not None:
             raise ValueError(
-                "Reference files should not be provided for dense displancement fields"
+                "Reference files should not be provided for dense displacement fields"
             )
 
-        affine_source_image = self._reference_image or self.image
+        affine_source_image = self.reference_image or self.image
         affine_source_header = (
-            self._reference_image.header if self._reference_image else self.header
+            self.reference_image.header if self.reference_image else self.header
         )
 
-        if self._target_shape is not None:
-            displacement_field._target_shape = self._target_shape
+        if self.target_shape is not None:
+            displacement_field._target_shape = self.target_shape
 
-        self._transformations = (
+        self.transformations = [
             NiftiRASToVoxel(image=affine_source_image,
                             header=affine_source_header),
             displacement_field,
             NiftiRASToVoxel(image=affine_source_image,
                             header=affine_source_header).inverse(),
-        )
-        return self._transformations
+        ]
 
     @classmethod
     def sniff_file(cls, fileobj: _tx.Union[str, PathLike], reference: _tx.Optional[_NiftiLike] = None) -> bool:
