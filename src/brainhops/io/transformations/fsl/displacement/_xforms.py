@@ -14,7 +14,6 @@ from brainhops.io.transformations.fsl.displacement._field import (
     FSLRASDisplacementField,
 )
 
-# These values were retreved from the FSLPY github repo's source code
 _NiftiLike = _tx.Union[
     nb.Nifti1Header,
     nb.Nifti1Image,
@@ -124,8 +123,6 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
             self._target_shape = tuple(int(d) for d in reference.shape[:3])
             return
 
-        # str, PathLike, or BinaryIO — load it the same way the base
-        # class's own from_nifti/from_bytes handle non-header/image input.
         if isinstance(reference, (str, PathLike)):
             loaded = nb.load(reference)
         else:
@@ -149,10 +146,6 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
             image=self.image, header=self.header
         )
 
-        # A reference is mandatory for spline coefficients — fail loudly
-        # rather than silently falling back to the coefficient file's
-        # own (wrong) affine, which would produce plausible-looking but
-        # incorrect RAS<->voxel mappings.
         if displacement_field.is_spline_coefficients and self._reference_image is None:
             raise ValueError(
                 "A reference image is required to build RAS<->voxel "

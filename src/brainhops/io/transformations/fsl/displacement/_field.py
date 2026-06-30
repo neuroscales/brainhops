@@ -9,6 +9,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.io.transformations.base.fields import RASDisplacementField
 from brainhops.io.transformations.common.base import NiftiBasedTransformation
 
+# constants retrieved from fslpy on Jun 29th 2026
 FSL_CUBIC_SPLINE_COEFFICIENTS = 2007
 FSL_DCT_COEFFICIENTS = 2008
 FSL_QUADRATIC_SPLINE_COEFFICIENTS = 2009
@@ -170,16 +171,8 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
         Map target-image voxel coordinates into coefficient-grid
         (knot) coordinate space, using the relative voxel sizes of the
         coefficient image vs. the implied dense-field resolution.
-
-        NOTE: This assumes the coefficient image's affine/zooms encode
-        the knot spacing directly, which matches FNIRT's convention but
-        should be verified against `fnirtfileutils` output if exactness
-        matters for your use case.
         """
         coef_zooms = np.array(self.header.get_zooms()[:3])
-        # Caller is responsible for passing voxel_coords already in the
-        # *target* (dense-field) voxel grid; here we rescale into knot
-        # spacing units.
         return voxel_coords / coef_zooms
 
     def _reconstruct_full_field(self) -> np.ndarray:
