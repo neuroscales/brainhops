@@ -4,8 +4,6 @@ from os import PathLike
 import nibabel as nb
 
 from brainhops.datamodel import transformations as _xforms
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.fields import RASDisplacementField
 from brainhops.io.transformations.common.affines import (
     NiftiRASToVoxel,
 )

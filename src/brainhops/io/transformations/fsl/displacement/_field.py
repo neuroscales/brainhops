@@ -1,7 +1,6 @@
 import typing as _tx
 
 import numpy as np
-from scipy.interpolate import BSpline
 from scipy.ndimage import map_coordinates
 
 from brainhops._core.backends import da
@@ -62,16 +61,28 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
     ) -> np.ndarray:
         """
         Reconstruct only the requested slice of the dense displacement
-        field from spline coefficients (cubic or quadratic) using
-        `scipy.ndimage.map_coordinates`.
+        field from spline coefficients using the cubic B-spline basis
+        functions from Rueckert et al. (1999), matching fslpy's own
+        CoefficientField.displacements() implementation exactly.
 
-        TODO: Test against ground truth with FSL file
+        Reference:
+        Rueckert et al., "Nonrigid Registration Using Free-Form
+        Deformations", IEEE TMI 1999.
+        https://www.fmrib.ox.ac.uk/datasets/techrep/tr07ja2/tr07ja2.pdf
         """
-        order = self.bspline_order
-        if order not in (2, 3):
-            raise NotImplementedError(f"Unsupported B-spline order: {order}")
+        import itertools
 
-        coef_data = self.image.get_fdata()  # shape: (nx, ny, nz, 3)
+        order = self.bspline_order
+        if order != 3:
+            raise NotImplementedError(
+                f"Only cubic (order=3) B-spline reconstruction is "
+                f"currently supported via the Rueckert basis functions. "
+                f"Quadratic (order=2) requires its own basis functions "
+                f"from the same formulation — not yet implemented."
+            )
+
+        coef_data = self.image.get_fdata()  # (nx, ny, nz, 3)
+        nx, ny, nz = coef_data.shape[:3]
 
         target_shape = getattr(self, "_target_shape", None)
         if target_shape is None:
@@ -81,6 +92,16 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
                 "before slicing."
             )
 
+        # Cubic B-spline basis functions (Rueckert et al.)
+        # u is the fractional position within the current spline segment,
+        # always in [0, 1). l indexes which of the 4 neighboring knots
+        # is being weighted — asymmetric by design.
+        def b0(u): return ((1 - u) ** 3) / 6
+        def b1(u): return (3 * (u ** 3) - 6 * (u ** 2) + 4) / 6
+        def b2(u): return (-3 * (u ** 3) + 3 * (u ** 2) + 3 * u + 1) / 6
+        def b3(u): return (u ** 3) / 6
+        b = [b0, b1, b2, b3]
+
         grid_indices = np.indices(target_shape)  # (3, X, Y, Z)
         sliced_indices = grid_indices[(
             slice(None),) + self._normalize_idx(idx, target_shape)]
@@ -88,21 +109,36 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
         out_shape = sliced_indices.shape[1:]
         flat_coords = sliced_indices.reshape(3, -1).T  # (N, 3)
 
-        knot_coords = self._voxel_to_knot_coords(flat_coords)
+        knot_coords = self._voxel_to_knot_coords(flat_coords)  # (N, 3)
 
-        displacement = np.stack([
-            map_coordinates(
-                coef_data[..., c],
-                knot_coords.T,
-                order=order,
-                prefilter=False,
-                mode="grid-constant",
-                cval=0.0,
+        # Fractional and integer parts of knot coordinates
+        u = np.remainder(knot_coords[:, 0], 1)
+        v = np.remainder(knot_coords[:, 1], 1)
+        w = np.remainder(knot_coords[:, 2], 1)
+        i = np.floor(knot_coords[:, 0]).astype(np.int32)
+        j = np.floor(knot_coords[:, 1]).astype(np.int32)
+        k = np.floor(knot_coords[:, 2]).astype(np.int32)
+
+        disps = np.zeros((flat_coords.shape[0], 3), dtype=float)
+
+        for l, m, n in itertools.product(range(4), range(4), range(4)):
+            il = i + l
+            jm = j + m
+            kn = k + n
+
+            mask = (
+                (il >= 0) & (il < nx) &
+                (jm >= 0) & (jm < ny) &
+                (kn >= 0) & (kn < nz)
             )
-            for c in range(coef_data.shape[-1])
-        ], axis=-1)
+            if not np.any(mask):
+                continue
 
-        return displacement.reshape(*out_shape, coef_data.shape[-1])
+            c = b[l](u[mask]) * b[m](v[mask]) * b[n](w[mask])
+            disps[mask] += coef_data[il[mask],
+                                     jm[mask], kn[mask], :] * c[:, None]
+
+        return disps.reshape(*out_shape, 3)
 
     @property
     def field(self) -> _tx.Optional[ArrayProtocol]:
