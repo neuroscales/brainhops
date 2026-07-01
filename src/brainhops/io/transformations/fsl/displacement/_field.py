@@ -1,4 +1,4 @@
-from brainhops.io.transformations.base.fields import RASDisplacementField
+from brainhops.io.transformations.base.fields import VoxelDisplacementField
 from brainhops.io.transformations.common.base import NiftiBasedTransformation
 
 # constants retrieved from fslpy on Jun 29th 2026
@@ -8,7 +8,7 @@ FSL_QUADRATIC_SPLINE_COEFFICIENTS = 2009
 FSL_FNIRT_DISPLACEMENT_FIELD = 2006
 
 
-class FSLDisplacementField(RASDisplacementField, NiftiBasedTransformation):
+class FSLDisplacementField(VoxelDisplacementField, NiftiBasedTransformation):
     """
     Field of RAS displacements, stored in a NIfTI file.
     """
