@@ -77,9 +77,6 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
             Required when the underlying file stores spline coefficients.
             Both the target shape and the affine used to build this
             sequence's RAS<->voxel transforms are derived from this image
-            — never from the coefficient file's own affine, which
-            describes knot spacing, not the dense field's actual voxel
-            grid.
         """
         if isinstance(nifti, nb.Nifti1Header):
             obj = cls(header=nifti)
@@ -94,19 +91,13 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
 
     def _apply_reference(self, reference: _tx.Optional[_NiftiLike]) -> None:
         """
-        Resolve and store `_reference_image`/`_target_shape` from the
-        constructor-overload `reference` argument. Kept as a separate
-        method (rather than living in `__init__`) so it can be reused
-        across every construction path without touching the base class's
-        own `__init__`.
+        Resolve and store `reference_image`/`target_shape` from the
+        constructor-overload `reference` argument.
         """
         if reference is None:
             return
 
         if isinstance(reference, nb.Nifti1Header):
-            # Headers carry shape/affine info directly; no pixel data
-            # needed for our purposes, so use it as-is rather than forcing
-            # it through nb.load.
             ref_shape = tuple(int(d) for d in reference.get_data_shape()[:3])
             self.reference_image = reference
             self.target_shape = ref_shape

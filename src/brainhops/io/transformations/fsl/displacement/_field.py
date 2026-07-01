@@ -1,3 +1,4 @@
+import itertools
 import typing as _tx
 
 import numpy as np
@@ -60,25 +61,25 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
         self, idx: _tx.Union[int, slice, tuple]
     ) -> np.ndarray:
         """
+        Code taken from fslpy's displacement function
+
         Reconstruct only the requested slice of the dense displacement
         field from spline coefficients using the cubic B-spline basis
-        functions from Rueckert et al. (1999), matching fslpy's own
-        CoefficientField.displacements() implementation exactly.
+        functions from Rueckert et al. (1999).
 
         Reference:
         Rueckert et al., "Nonrigid Registration Using Free-Form
         Deformations", IEEE TMI 1999.
         https://www.fmrib.ox.ac.uk/datasets/techrep/tr07ja2/tr07ja2.pdf
         """
-        import itertools
 
         order = self.bspline_order
         if order != 3:
             raise NotImplementedError(
-                f"Only cubic (order=3) B-spline reconstruction is "
-                f"currently supported via the Rueckert basis functions. "
-                f"Quadratic (order=2) requires its own basis functions "
-                f"from the same formulation — not yet implemented."
+                "Only cubic (order=3) B-spline reconstruction is "
+                "currently supported via the Rueckert basis functions. "
+                "Quadratic (order=2) requires its own basis functions "
+                "fslpy does not support this yet"
             )
 
         coef_data = self.image.get_fdata()  # (nx, ny, nz, 3)
@@ -154,7 +155,8 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
 
     @field.setter
     def field(self, value: _tx.Optional[ArrayProtocol]):
-        ValueError("cannot set field")
+        NotImplementedError(
+            "cannot set field, make another displacement field")
 
     @property
     def shape(self) -> tuple:
@@ -184,9 +186,6 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
     def displacement_field(self) -> np.ndarray:
         """
         Full dense displacement field, materialized eagerly.
-        Prefer slicing (`obj[idx]`) instead of this when you only need
-        part of the volume — this property reconstructs the *entire*
-        field if the source is spline coefficients, which can be costly.
         """
         if not self.is_spline_coefficients:
             return self.image.get_fdata()
