@@ -144,14 +144,12 @@ class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedTransformation):
         )
 
         if self.target_shape is not None:
-            displacement_field._target_shape = self.target_shape
+            displacement_field.target_shape = self.target_shape
 
         self.transformations = [
             NiftiRASToVoxel(image=affine_source_image,
                             header=affine_source_header),
             displacement_field,
-            NiftiRASToVoxel(image=affine_source_image,
-                            header=affine_source_header).inverse(),
         ]
 
     @classmethod

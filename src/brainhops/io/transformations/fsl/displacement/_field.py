@@ -85,11 +85,11 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
         coef_data = self.image.get_fdata()  # (nx, ny, nz, 3)
         nx, ny, nz = coef_data.shape[:3]
 
-        target_shape = getattr(self, "_target_shape", None)
+        target_shape = getattr(self, "target_shape", None)
         if target_shape is None:
             raise ValueError(
                 "Reconstructing from spline coefficients requires a "
-                "target/reference grid shape. Set `_target_shape` "
+                "target/reference grid shape. Set `target_shape` "
                 "before slicing."
             )
 
@@ -107,7 +107,14 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
         sliced_indices = grid_indices[(
             slice(None),) + self._normalize_idx(idx, target_shape)]
 
-        out_shape = sliced_indices.shape[1:]
+        out_shape = list(sliced_indices.shape[1:])
+        flatten_idx = idx
+        if not isinstance(flatten_idx, _tx.Tuple):
+            flatten_idx = tuple(flatten_idx, )
+        for i in range(len(flatten_idx)-1, -1, -1):
+            if isinstance(flatten_idx[i], int) or isinstance(flatten_idx[i], np.floating):
+                out_shape.pop(i)
+
         flat_coords = sliced_indices.reshape(3, -1).T  # (N, 3)
 
         knot_coords = self._voxel_to_knot_coords(flat_coords)  # (N, 3)
@@ -162,11 +169,11 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
     def shape(self) -> tuple:
         if not self.is_spline_coefficients:
             return self.image.shape
-        target_shape = getattr(self, "_target_shape", None)
+        target_shape = getattr(self, "target_shape", None)
         if target_shape is None:
             raise ValueError(
                 "Cannot determine field shape from spline coefficients "
-                "without `_target_shape` set."
+                "without `target_shape` set."
             )
         return (*target_shape, 3)
 
@@ -218,11 +225,11 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
 
     def _reconstruct_full_field(self) -> np.ndarray:
         """Reconstruct the entire dense field (no slicing shortcut)."""
-        target_shape = getattr(self, "_target_shape", None)
+        target_shape = getattr(self, "target_shape", None)
         if target_shape is None:
             raise ValueError(
                 "Reconstructing from spline coefficients requires a "
-                "target/reference grid shape set via `_target_shape`."
+                "target/reference grid shape set via `target_shape`."
             )
         full_idx = tuple(slice(None) for _ in target_shape)
         return self._reconstruct_field_slice(full_idx)
@@ -235,11 +242,11 @@ class FSLRASDisplacementField(RASDisplacementField, NiftiBasedTransformation):
             idx = (idx,)
         idx = list(idx)
         while len(idx) < len(shape):
-            idx.append(slice(None))
+            idx.append(slice(0, shape[len(idx)]))
         normalized = []
         for i, dim in zip(idx, shape):
-            if isinstance(i, int):
-                normalized.append(slice(i, i + 1))
+            if isinstance(i, int) or isinstance(i, np.floating):
+                normalized.append(slice(int(i), int(i) + 1))
             else:
                 normalized.append(i)
         return tuple(normalized)
