@@ -11,5 +11,5 @@ class RASCoordinatesField(_xforms.CoordinatesField):
 class RASDisplacementField(_xforms.DisplacementField):
     """Field of RAS displacements."""
 
-    input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
     output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
