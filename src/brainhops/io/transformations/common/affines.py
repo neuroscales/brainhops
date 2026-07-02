@@ -19,7 +19,7 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedTransformation):
     def matrix(self) -> _tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
         if self.header is not None:
-            return np.linalg.inverse(self.header.get_best_affine())[:-1]
+            return np.linalg.inv(self.header.get_best_affine())[:-1]
         return None
 
     @matrix.setter
