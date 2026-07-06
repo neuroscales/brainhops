@@ -28,38 +28,42 @@ class FslLinearTransformParser(TextFileParser):
     @classmethod
     def sniff_line(cls, line: str) -> bool:
         line = line.strip()
-        if len(line.split(" ")) != 4:
+        if not line:
             return False
-        return True
+        parts = line.split()
+        try:
+            [float(p) for p in parts]
+            return True
+        except ValueError:
+            return False
 
     # ---------------------------------------------------------
     # Construction
     # ---------------------------------------------------------
-
     @classmethod
     def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
-        """
-        Build an object from an iterable over lines on an TFM files.
-
-        Parameters
-        ----------
-        lines : Iterable[str]
-            Iterable content of an TFM file.
-
-        Returns
-        -------
-        obj
-            The parsed object.
-        """
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
-        obj = cls()
-        for i, line in enumerate(lines):
+        rows = []
+        for line in lines:
             line = line.strip()
-            for j, num in enumerate(line.split(" ")):
-                obj.matrix[i, j] = float(num)
+            if not line:
+                continue
+            rows.append([float(x) for x in line.split()])
 
+        if not rows:
+            raise ValueError("No data found — empty input.")
+
+        n_cols = len(rows[0])
+        if any(len(r) != n_cols for r in rows):
+            raise ValueError(
+                f"Inconsistent row lengths: {[len(r) for r in rows]}. "
+                f"All rows must have the same number of columns."
+            )
+
+        obj = cls()
+        obj.matrix = np.array(rows, dtype=np.float64)
         return obj
 
     # ---------------------------------------------------------
@@ -67,7 +71,7 @@ class FslLinearTransformParser(TextFileParser):
     # ---------------------------------------------------------
 
     def __init__(self):
-        self.matrix = np.zeros((4, 4))
+        self.matrix = np.zeros((1, 1))
 
     # ---------------------------------------------------------
     # Writing
@@ -88,7 +92,7 @@ class FslLinearTransformParser(TextFileParser):
         Iterator[str]
             An iterable over lines of an TFM file representing the object.
         """
-        for i in range(4):
+        for i in range(self.matrix.shape[0]):
             yield " ".join(self._fmt_float(j) for j in self.matrix[i, :])
 
     def to_text(self) -> str:
