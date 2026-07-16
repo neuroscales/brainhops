@@ -837,14 +837,16 @@ class Sequence(MutableSequence, Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
-        if mode is not None and not isinstance(mode, list):
-            mode = [mode]
         if mode is not None:
+            if not isinstance(mode, list):
+                mode = [mode]
             if Affine in mode or "affine" in mode:
                 mode = [*mode, Affine, Linear, Translation,
                         Scaling, Permutation, Identity]
             elif Linear in mode or "linear" in mode:
                 mode = [*mode, Linear, Scaling, Permutation, Identity]
+            if "nonlinear" in mode:
+                mode = [*mode, DisplacementField, CoordinatesField]
         return _compute_sequence(self, mode=mode)
 
     # --- sequence API ---
