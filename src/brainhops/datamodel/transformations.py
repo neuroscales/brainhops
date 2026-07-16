@@ -837,12 +837,14 @@ class Sequence(MutableSequence, Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
+        if mode is not None and not isinstance(mode, list):
+            mode = [mode]
         if mode is not None:
-            if Affine in mode:
-                mode = [*mode, Linear, Translation,
+            if Affine in mode or "affine" in mode:
+                mode = [*mode, Affine, Linear, Translation,
                         Scaling, Permutation, Identity]
-            elif Linear in mode:
-                mode = [*mode, Scaling, Permutation, Identity]
+            elif Linear in mode or "linear" in mode:
+                mode = [*mode, Linear, Scaling, Permutation, Identity]
         return _compute_sequence(self, mode=mode)
 
     # --- sequence API ---
@@ -1037,7 +1039,7 @@ def _flatten(self) -> _tx.Self:
     # FIXME: this is too hacky
     params = dict(vars(self))
     params["transformations"] = flattened
-    return Sequence(**params)
+    return type(self)(**params)
 
 
 def _is_flat(self) -> bool:
@@ -1079,11 +1081,23 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
     # 2. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
-    t, *xforms = xforms
-    while xforms:
-        t2, *xforms = xforms
-        t = _compose(t2, t)
-    return t
+    transformations = []
+    if mode is None:
+        t, *xforms = xforms
+        while xforms:
+            t2, *xforms = xforms
+            t = _compose(t2, t)
+        return t
+    i = 0
+    while i < len(xforms):
+        t = xforms[i]
+        if type(t) in mode:
+            while i + 1 < len(xforms) and type(xforms[i + 1]) in mode:
+                i += 1
+                t = _compose(xforms[i], t)
+        transformations.append(t)
+        i += 1
+    return Sequence(transformations=transformations)
 
 
 # ----------------------------------------------------------------------
@@ -1105,8 +1119,8 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
 
 def _get_ndim(
     t: Transformation, default: _tx.Optional[int] = None
-) ->  _tx.Optional[int]:
-    if t.input and t.inputs.axes is not None:
+) -> _tx.Optional[int]:
+    if t.input and t.input.axes is not None:
         return len(t.input.axes)
     if t.output and t.output.axes is not None:
         return len(t.output.axes)
