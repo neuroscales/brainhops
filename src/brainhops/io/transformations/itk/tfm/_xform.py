@@ -13,7 +13,10 @@ class TFMTransform(TFMTransformParser, ITKTransform):
 
     @property
     def transformations(self) -> _tx.Tuple[_xforms.Transformation, ...]:
-        return [t.to_transform() for t in self.transform_group]
+        if self._transformations is None:
+            self._transformations = [t.to_transform()
+                                     for t in self.transform_group]
+        return self._transformations
 
     @transformations.setter
     def transformations(self, value: _tx.Tuple[_xforms.Transformation, ...]) -> None:

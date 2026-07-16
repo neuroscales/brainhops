@@ -1041,6 +1041,9 @@ def _flatten(self) -> _tx.Self:
     # FIXME: this is too hacky
     params = dict(vars(self))
     params["transformations"] = flattened
+    for k in list(params.keys()):
+        if k.startswith('_'):
+            del params[k]
     return type(self)(**params)
 
 
