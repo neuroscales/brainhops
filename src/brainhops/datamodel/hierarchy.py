@@ -132,7 +132,7 @@ __all__ = [
     # --- IDENTITY -----------------------------------------------------
     "IdentityTransformation",                       # I                (det = 1)
 ]
-from abc import ABC
+from abc import ABC, ABCMeta
 
 
 GROUPS = set()
@@ -197,6 +197,14 @@ def simplyconnected(cls):
     return connected(cls)
 
 
+def get_hierarchy_classes(concrete_cls):
+    """Return the hierarchy class(es) that `concrete_cls` is registered under."""
+    ret = CONCRETE_TO_ABSTRACT.get(concrete_cls, concrete_cls)
+    if not isinstance(ret, list):
+        ret = [ret]
+    return tuple(ret)
+
+
 class Transformation(ABC):
     """Any coordinate transformation.
 
@@ -205,6 +213,16 @@ class Transformation(ABC):
 
     SYMBOL: str
     FSYMBOL: str
+
+    @classmethod
+    def register(cls, subclass):
+        """
+        Register `subclass` as a virtual subclass of `cls`, and record
+        the mapping so the hierarchy class(es) can be recovered later
+        from the concrete class via `get_hierarchy_classes()`.
+        """
+        CONCRETE_TO_ABSTRACT.setdefault(subclass, []).append(cls)
+        return ABCMeta.register(cls, subclass)
 
 
 Morphism = Transformation

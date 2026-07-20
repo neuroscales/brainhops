@@ -840,13 +840,6 @@ class Sequence(MutableSequence, Transformation):
         if mode is not None:
             if not isinstance(mode, list):
                 mode = [mode]
-            if Affine in mode or "affine" in mode:
-                mode = [*mode, Affine, Linear, Translation,
-                        Scaling, Permutation, Identity]
-            elif Linear in mode or "linear" in mode:
-                mode = [*mode, Linear, Scaling, Permutation, Identity]
-            if "nonlinear" in mode:
-                mode = [*mode, DisplacementField, CoordinatesField]
         return _compute_sequence(self, mode=mode)
 
     # --- sequence API ---
@@ -1054,6 +1047,28 @@ def _is_flat(self) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
+def _mode_children(mode) -> list:
+    """
+    Return the direct child classes (in the abstract hierarchy) of the
+    hierarchy node(s) associated with each class in `mode`.
+
+    Used to recurse into more specific transformation types before
+    falling back to the broader ones in `mode`.
+    """
+    children = []
+    seen = set()
+    for m in mode:
+        node = hierarchy.get_hierarchy_classes(m)
+        if not isinstance(node, tuple):
+            node = tuple(node)
+        for n in node:
+            for child in n.__subclasses__():
+                if child not in seen:
+                    seen.add(child)
+                    children.append(child)
+    return children
+
+
 def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     # For now, let's make simple assumptions:
     # * coordinate systems are compatible
@@ -1084,10 +1099,22 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     # 1. flatten sequence:
     if not _is_flat(self):
         return _flatten(self).compute(mode=mode)
-    # 2. compose transformations in order
+
+    seq = self
+    if not isinstance(mode, list):
+        mode = [mode]
+    if mode[0] is None or mode == []:
+        mode = [Transformation]
+    # 2. combine similar transformations first
+    for submode in _mode_children(mode):
+        seq = _compute_sequence(seq, mode=[submode])
+    
+    # 3. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
+
+    xforms = seq.transformations
     transformations = []
-    if mode is None:
+    if mode == [Transformation]:
         t, *xforms = xforms
         while xforms:
             t2, *xforms = xforms
@@ -1096,8 +1123,8 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     i = 0
     while i < len(xforms):
         t = xforms[i]
-        if type(t) in mode:
-            while i + 1 < len(xforms) and type(xforms[i + 1]) in mode:
+        if any(issubclass(type(t), hierarchy.get_hierarchy_classes(m)) for m in mode):
+            while i + 1 < len(xforms) and any(issubclass(type(xforms[i+1]), hierarchy.get_hierarchy_classes(m)) for m in mode):
                 i += 1
                 t = _compose(xforms[i], t)
         transformations.append(t)
