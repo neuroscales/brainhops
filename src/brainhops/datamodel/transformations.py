@@ -258,8 +258,6 @@ class Transformation(DataModelBase, reverse=True):
             raise TypeError(f"Unsupported type for transformation: {type(x)}")
         if compute:
             x = x.compute(mode=None)
-        else:
-            x = x.compute(mode=[Affine])
         return x
 
     def __matmul__(self, other: "Transformation") -> "Transformation":
@@ -1047,29 +1045,30 @@ def _is_flat(self) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
-def _mode_children(mode) -> list:
-    """
-    Return the direct child classes (in the abstract hierarchy) of the
-    hierarchy node(s) associated with each class in `mode`.
+def _matches_mode(t, mode) -> bool:
+    if not isinstance(t, mode[0]):
+        return False
+    if mode[1] is None:
+        return True
+    if t.input is None or t.output is None:
+        return False
+    return len(t.input.axes) == mode[1] and len(t.output.axes) == mode[1]
 
-    Used to recurse into more specific transformation types before
-    falling back to the broader ones in `mode`.
-    """
+
+def _mode_children(mode) -> list:
     children = []
     seen = set()
     for m in mode:
-        node = hierarchy.get_hierarchy_classes(m)
-        if not isinstance(node, tuple):
-            node = tuple(node)
-        for n in node:
-            for child in n.__subclasses__():
-                if child not in seen:
-                    seen.add(child)
-                    children.append(child)
+        cls = m[0]
+        axis = m[1]
+        for child in cls.__subclasses__():
+            if child not in seen:
+                seen.add((child, axis))
+                children.append((child, axis))
     return children
 
 
-def _compute_sequence(self: Sequence, mode=None) -> Transformation:
+def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
     # For now, let's make simple assumptions:
     # * coordinate systems are compatible
     #   - there is the same number of axes in the inout and output spaces.
@@ -1087,6 +1086,8 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     #     there are coordinate fields in the sequence.
     #   - (later, we will return the simplest possible sequence in such
     #      cases, i.e., compute the sequence parts that we can)
+    if rec is None:
+        rec = []
 
     xforms = self.transformations or []
 
@@ -1104,17 +1105,22 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     if not isinstance(mode, list):
         mode = [mode]
     if mode[0] is None or mode == []:
-        mode = [Transformation]
+        mode = ["Transformation"]
+    for i in range(len(mode)):
+        if type(mode[i]) is str:
+            mode[i] = hierarchy.class_from_string(mode[i])
+
     # 2. combine similar transformations first
     for submode in _mode_children(mode):
-        seq = _compute_sequence(seq, mode=[submode])
-    
+        if not submode in rec:
+            seq = _compute_sequence(seq, mode=[submode], rec=rec)
+            rec.append(submode)
+
     # 3. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
-
-    xforms = seq.transformations
+    xforms = getattr(seq, "transformations", [seq])
     transformations = []
-    if mode == [Transformation]:
+    if mode[0][0] == hierarchy.Transformation:
         t, *xforms = xforms
         while xforms:
             t2, *xforms = xforms
@@ -1123,12 +1129,14 @@ def _compute_sequence(self: Sequence, mode=None) -> Transformation:
     i = 0
     while i < len(xforms):
         t = xforms[i]
-        if any(issubclass(type(t), hierarchy.get_hierarchy_classes(m)) for m in mode):
-            while i + 1 < len(xforms) and any(issubclass(type(xforms[i+1]), hierarchy.get_hierarchy_classes(m)) for m in mode):
+        if any(_matches_mode(t, m) for m in mode):
+            while i + 1 < len(xforms) and any(_matches_mode(xforms[i+1], m) for m in mode):
                 i += 1
                 t = _compose(xforms[i], t)
         transformations.append(t)
         i += 1
+    if len(transformations) == 1:
+        return transformations[0]
     return Sequence(transformations=transformations)
 
 
