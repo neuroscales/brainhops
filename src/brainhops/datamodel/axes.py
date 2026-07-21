@@ -35,6 +35,8 @@ class Axis(DataModelBase):
 class SpatialAxis(Axis):
     unit: Optional[SpaceUnit] = SpaceUnit("millimeter")
     type: HiddenConst[str] = "spatial"
+    axes: str = "None"
+    direction: int = 1
 
 
 class TimeAxis(Axis):
@@ -49,31 +51,43 @@ class ChannelAxis(Axis):
 class LeftToRightAxis(SpatialAxis):
     name: str = "left-to-right"
     orientation: HiddenConst[LeftToRight] = LeftToRight()
+    axis: str = "x"
+    direction: int = 1
 
 
 class RightToLeftAxis(SpatialAxis):
     name: str = "right-to-left"
     orientation: HiddenConst[RightToLeft] = RightToLeft()
+    axis: str = "x"
+    direction: int = -1
 
 
 class AnteriorToPosteriorAxis(SpatialAxis):
     name: str = "anterior-to-posterior"
     orientation: HiddenConst[AnteriorToPosterior] = AnteriorToPosterior()
+    axis: str = "y"
+    direction: int = 1
 
 
 class PosteriorToAnteriorAxis(SpatialAxis):
     name: str = "posterior-to-anterior"
     orientation: HiddenConst[PosteriorToAnterior] = PosteriorToAnterior()
+    axis: str = "y"
+    direction: int = -1
 
 
 class InferiorToSuperiorAxis(SpatialAxis):
     name: str = "inferior-to-superior"
     orientation: HiddenConst[InferiorToSuperior] = InferiorToSuperior()
+    axis: str = "z"
+    direction: int = 1
 
 
 class SuperiorToInferiorAxis(SpatialAxis):
     name: str = "superior-to-inferior"
     orientation: HiddenConst[SuperiorToInferior] = SuperiorToInferior()
+    axis: str = "z"
+    direction: int = -1
 
 
 R = leftToRightAxis = LeftToRightAxis()

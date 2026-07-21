@@ -47,10 +47,74 @@ def _get_by_orientation_type(axes, orientation_type):
     return None
 
 
+def _same_axis_type(a1: Axis, a2: Axis):
+    if a1.type == a2.type:
+        if a1.type != "spatial":
+            return True
+        return a1.axis == a2.axis
+    return False
+
+
 @_adaptor
 def _(inp: Transformation, out: Transformation) -> Transformation:
 
-    raise NotImplementedError
+    if inp.output == out.input:
+        return Identity(input=inp.output, output=out.input)
+
+    if len(inp.output.axes) != len(out.input.axes):
+        raise NotImplementedError
+
+    transformations = []
+
+    perm = []
+    for i in range(len(inp.output.axes)):
+        for j in range(len(out.input.axes)):
+            if _same_axis_type(inp.output.axes[i], out.input.axes[j]):
+                perm.append(j)
+        if len(perm) != i + 1:
+            raise NotImplementedError
+
+    permNeeded = False
+    for i in range(len(perm)):
+        if perm[i] != i:
+            permNeeded = True
+
+    intermediate_output = inp.output
+
+    if permNeeded:
+        intermediate_output = systems.SpatialCoordinateSystem(
+            [inp.output.axes[i] for i in perm])
+        transformations.append(Permutation(
+            permutation=perm, input=inp.output, output=intermediate_output))
+
+    scales = []
+    for i in range(len(intermediate_output.axes)):
+        inter = intermediate_output.axes[i]
+        outer = out.input.axes[i]
+        scale = 1.0
+        if inter.unit is not None and outer.unit is not None:
+            scale = inter.unit.scale / outer.unit.scale
+        if inter.type != "spatial":
+            scales.append(scale)
+        else:
+            scales.append(inter.direction * outer.direction * scale)
+
+    scalesNeeded = False
+    for i in scales:
+        if i != 1:
+            scalesNeeded = True
+
+    if scalesNeeded:
+        transformations.append(
+            Scaling(scales=scales, input=intermediate_output, output=out.input))
+
+    if len(transformations) == 0:
+        return Identity(input=inp.output, output=out.input)
+
+    if len(transformations) == 1:
+        return transformations[0]
+
+    return Sequence(transformations=transformations, input=inp.output, output=out.input)
 
     # TODO/WIP
     #
