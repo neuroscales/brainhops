@@ -1,10 +1,13 @@
 # TODO/WIP: not working at all yet 
 
 # internals
+from brainhops.datamodel.axes import Axis
+
 from .systems import CoordinateSystem
 from .orientation import Orientation
-from .transformations import Transformation, Identity, Permutation, Scaling
+from .transformations import Sequence, Transformation, Identity, Permutation, Scaling
 from .transformations import _adaptor, is_identity
+from brainhops.datamodel import systems
 
 
 def _get_names(axes):
