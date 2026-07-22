@@ -1102,10 +1102,10 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
 
     seq = self
+    if mode is None or mode[0] is None or mode == []:
+        mode = ["Transformation"]
     if isinstance(mode, str) or (len(mode) > 0 and isinstance(mode[0], type)):
         mode = [mode]
-    if mode[0] is None or mode == []:
-        mode = ["Transformation"]
     mode = [hierarchy.class_from_string(
         m) if type(m) is str else m for m in mode]
 
