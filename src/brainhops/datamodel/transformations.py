@@ -836,7 +836,7 @@ class Sequence(MutableSequence, Transformation):
               sequences of transformations that match the specified type.
         """
         if mode is not None:
-            if not isinstance(mode, list):
+            if isinstance(mode, str) or (len(mode) > 0 and isinstance(mode[0], type)):
                 mode = [mode]
         return _compute_sequence(self, mode=mode)
 
@@ -1102,13 +1102,12 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
 
     seq = self
-    if not isinstance(mode, list):
+    if isinstance(mode, str) or (len(mode) > 0 and isinstance(mode[0], type)):
         mode = [mode]
     if mode[0] is None or mode == []:
         mode = ["Transformation"]
-    for i in range(len(mode)):
-        if type(mode[i]) is str:
-            mode[i] = hierarchy.class_from_string(mode[i])
+    mode = [hierarchy.class_from_string(
+        m) if type(m) is str else m for m in mode]
 
     # 2. combine similar transformations first
     for submode in _mode_children(mode):
