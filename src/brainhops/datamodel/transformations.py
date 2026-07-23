@@ -836,7 +836,7 @@ class Sequence(MutableSequence, Transformation):
               sequences of transformations that match the specified type.
         """
         if mode is not None:
-            if isinstance(mode, str) or (len(mode) > 0 and isinstance(mode[0], type)):
+            if isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
                 mode = [mode]
         return _compute_sequence(self, mode=mode)
 
@@ -1052,6 +1052,8 @@ def _matches_mode(t, mode) -> bool:
         return True
     if t.input is None or t.output is None:
         return False
+    if t.input.axes is None or t.output.axes is None:
+        return False
     return len(t.input.axes) == mode[1] and len(t.output.axes) == mode[1]
 
 
@@ -1062,7 +1064,7 @@ def _mode_children(mode) -> list:
         cls = m[0]
         axis = m[1]
         for child in cls.__subclasses__():
-            if child not in seen:
+            if (child, axis) not in seen:
                 seen.add((child, axis))
                 children.append((child, axis))
     return children
@@ -1102,12 +1104,12 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
 
     seq = self
-    if mode is None or mode[0] is None or mode == []:
-        mode = ["Transformation"]
-    if isinstance(mode, str) or (len(mode) > 0 and isinstance(mode[0], type)):
+    if mode is None or isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
         mode = [mode]
-    mode = [hierarchy.class_from_string(
-        m) if type(m) is str else m for m in mode]
+    if mode == [] or mode[0] is None:
+        mode = ["Transformation"]
+    mode = [hierarchy.parseType(
+        m) if isinstance(m, (str, type, int)) else m for m in mode]
 
     # 2. combine similar transformations first
     for submode in _mode_children(mode):
@@ -1119,12 +1121,6 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
     #    NOTE: we compose to the left, as that's how we define a sequence order
     xforms = getattr(seq, "transformations", [seq])
     transformations = []
-    if mode[0][0] == hierarchy.Transformation:
-        t, *xforms = xforms
-        while xforms:
-            t2, *xforms = xforms
-            t = _compose(t2, t)
-        return t
     i = 0
     while i < len(xforms):
         t = xforms[i]
