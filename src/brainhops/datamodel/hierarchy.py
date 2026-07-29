@@ -284,7 +284,7 @@ class Transformation(TransformationBaseClass):
 
     SYMBOL = "Trans"
     FSYMBOL = "Trans({n})"
-    NAME = ("Transformation")
+    NAME = ("Transformation",)
 
 
 Morphism = Transformation
@@ -297,7 +297,7 @@ class BijectiveTransformation(Transformation):
 
     wiki: https://en.wikipedia.org/wiki/Bijection
     """
-    NAME = ("BijectiveTransformation", "Bijective", "Bijection")
+    NAME = ("BijectiveTransformation", "Bijective", "Bijection",)
 
 
 Bijection = BijectiveTransformation
@@ -311,7 +311,7 @@ class Isomorphism(BijectiveTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Isomorphism
     """
-    NAME = ("Isomorphism")
+    NAME = ("Isomorphism",)
 
 
 @group
@@ -322,7 +322,7 @@ class Diffeomorphism(Isomorphism):
     """
     SYMBOL = "Diff"
     FSYMBOL = "Diff(ℝ^{n})"
-    NAME = ("Diffeomorphism")
+    NAME = ("Diffeomorphism",)
 
 
 @group
@@ -330,7 +330,7 @@ class VolumePreservingDiffeomorphism(Diffeomorphism):
     """A diffeomorphism that preserves volumes."""
     SYMBOL = "SDiff"
     FSYMBOL = "SDiff(ℝ^{n})"
-    NAME = ("VolumePreservingDiffeomorphism")
+    NAME = ("VolumePreservingDiffeomorphism",)
 
 
 # ----------------------------------------------------------------------
@@ -343,7 +343,7 @@ class MatrixTransformation(Transformation):
 
     wiki: https://en.wikipedia.org/wiki/Transformation_matrix
     """
-    NAME = ("MatrixTransformation", "Matrix")
+    NAME = ("MatrixTransformation", "Matrix",)
 
 
 @group
@@ -355,7 +355,7 @@ class InvertibleMatrixTransformation(
 
     wiki: https://en.wikipedia.org/wiki/Invertible_matrix
     """
-    NAME = ("InvertibleMatrixTransformation", "InvertibleMatrix")
+    NAME = ("InvertibleMatrixTransformation", "InvertibleMatrix",)
 
 
 @group
@@ -365,7 +365,7 @@ class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Positive-definite_matrix
     """
-    NAME = ("PositiveDefiniteMatrixTransformation", "PositiveDefiniteMatrix")
+    NAME = ("PositiveDefiniteMatrixTransformation", "PositiveDefiniteMatrix",)
 
 
 # ----------------------------------------------------------------------
@@ -378,7 +378,7 @@ class AffineTransformation(MatrixTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Affine_transformation
     """
-    NAME = ("AffineTransformation", "Affine")
+    NAME = ("AffineTransformation", "Affine",)
 
 
 @liegroup
@@ -400,7 +400,7 @@ class InvertibleAffineTransformation(
     """
     SYMBOL = "Aff"
     FSYMBOL = "Aff(ℝ^{n})"
-    NAME = ("InvertibleAffineTransformation", "InvertibleAffine")
+    NAME = ("InvertibleAffineTransformation", "InvertibleAffine",)
 
 
 @liegroup
@@ -419,7 +419,7 @@ class PositiveAffineTransformation(
     """
     SYMBOL = "Aff+"
     FSYMBOL = "Aff+(ℝ^{n})"
-    NAME = ("PositiveAffineTransformation", "PositiveAffine")
+    NAME = ("PositiveAffineTransformation", "PositiveAffine",)
 
 
 @liegroup
@@ -443,7 +443,7 @@ class SpecialAffineTransformation(
     SYMBOL = "SAff"
     FSYMBOL = "SAff({n})"
     NAME = ("SpecialAffineTransformation", "SpecialAffine",
-            "VolumePreservingAffineTransformation", "VolumePreservingAffine")
+            "VolumePreservingAffineTransformation", "VolumePreservingAffine",)
 
 
 VolumePreservingAffineTransformation = SpecialAffineTransformation
@@ -461,7 +461,7 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
     """
     SYMBOL = "CE"
     FSYMBOL = "CE({n})"
-    NAME = ("ConformalEuclideanTransformation", "ConformalEuclidean")
+    NAME = ("ConformalEuclideanTransformation", "ConformalEuclidean",)
 
 
 @liegroup
@@ -482,7 +482,7 @@ class SpecialConformalEuclideanTransformation(ConformalEuclideanTransformation):
     NAME = ("SpecialConformalEuclideanTransformation",
             "SpecialConformalEuclidean",
             "Similitude",
-            "SimilitudeTransformation")
+            "SimilitudeTransformation",)
 
 
 Similitude = SpecialConformalEuclideanTransformation
@@ -499,7 +499,7 @@ class EuclideanTransformation(ConformalEuclideanTransformation):
     """
     SYMBOL = "E"
     FSYMBOL = "E({n})"
-    NAME = ("EuclideanTransformation", "Euclidean")
+    NAME = ("EuclideanTransformation", "Euclidean",)
 
 
 @liegroup
@@ -517,7 +517,7 @@ class SpecialEuclideanTransformation(SpecialConformalEuclideanTransformation):
     SYMBOL = "SE"
     FSYMBOL = "SE({n})"
     NAME = ("SpecialEuclideanTransformation",
-            "SpecialEuclidean", "RigidTransformation", "Rigid")
+            "SpecialEuclidean", "RigidTransformation", "Rigid",)
 
 
 RigidTransformation = SpecialEuclideanTransformation
@@ -536,7 +536,7 @@ class Dilation(ConformalEuclideanTransformation):
     """
     SYMBOL = "ℝ* ⋉ T"
     FSYMBOL = "ℝ* ⋉ T({n})"
-    NAME = ("Dilation")
+    NAME = ("Dilation",)
 
 
 @liegroup
@@ -552,7 +552,7 @@ class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
     """
     SYMBOL = "ℝ+ ⋉ T"
     FSYMBOL = "ℝ+ ⋉ T({n})"
-    NAME = ("PositiveDilation")
+    NAME = ("PositiveDilation",)
 
 
 @liegroup
@@ -566,7 +566,7 @@ class Translation(PositiveDilation):
     """
     SYMBOL = "T"
     FSYMBOL = "T({n})"
-    NAME = ("Translation")
+    NAME = ("Translation",)
 
 
 # ----------------------------------------------------------------------
@@ -576,7 +576,7 @@ class Translation(PositiveDilation):
 
 class LinearTransformation(AffineTransformation):
     """A linear transformation. May not be invertible."""
-    NAME = ("LinearTransformation", "Linear")
+    NAME = ("LinearTransformation", "Linear",)
 
 
 @liegroup
@@ -599,7 +599,7 @@ class InvertibleLinearTransformation(
     """
     SYMBOL = "GL"
     FSYMBOL = "GL({n})"
-    NAME = ("InvertibleLinearTransformation", "InvertibleLinear")
+    NAME = ("InvertibleLinearTransformation", "InvertibleLinear",)
 
 
 @liegroup
@@ -618,7 +618,7 @@ class PositiveLinearTransformation(
     """
     SYMBOL = "GL+"
     FSYMBOL = "GL+({n})"
-    NAME = ("PositiveLinearTransformation", "PositiveLinear")
+    NAME = ("PositiveLinearTransformation", "PositiveLinear",)
 
 
 @liegroup
@@ -636,7 +636,7 @@ class SpecialLinearTransformation(
     """
     SYMBOL = "SL"
     FSYMBOL = "SL({n})"
-    NAME = ("SpecialLinearTransformation", "SpecialLinear")
+    NAME = ("SpecialLinearTransformation", "SpecialLinear",)
 
 
 @liegroup
@@ -651,7 +651,7 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
     """
     SYMBOL = "CO"
     FSYMBOL = "CO({n})"
-    NAME = ("ConformalOrthogonalTransformation", "ConformalOrthogonal")
+    NAME = ("ConformalOrthogonalTransformation", "ConformalOrthogonal",)
 
 
 @liegroup
@@ -672,7 +672,7 @@ class SpecialConformalOrthogonalTransformation(
     SYMBOL = "CSO"
     FSYMBOL = "CSO({n})"
     NAME = ("SpecialConformalOrthogonalTransformation",
-            "SpecialConformalOrthogonal")
+            "SpecialConformalOrthogonal",)
 
 
 @liegroup
@@ -689,7 +689,7 @@ class OrthogonalTransformation(
     """
     SYMBOL = "O"
     FSYMBOL = "O({n})"
-    NAME = ("OrthogonalTransformation", "Orthogonal")
+    NAME = ("OrthogonalTransformation", "Orthogonal",)
 
 
 @liegroup
@@ -711,7 +711,7 @@ class SpecialOrthogonalTransformation(
     SYMBOL = "SO"
     FSYMBOL = "SO({n})"
     NAME = ("SpecialOrthogonalTransformation",
-            "SpecialOrthogonal", "Rotation", "RotationTransformation")
+            "SpecialOrthogonal", "Rotation", "RotationTransformation",)
 
 
 Rotation = SpecialOrthogonalTransformation
@@ -733,7 +733,7 @@ class GeneralizedPermutation(InvertibleLinearTransformation):
     """
     SYMBOL = "S ⋉ Δ"
     FSYMBOL = "S_{n} ⋉ Δ({n})"
-    NAME = ("GeneralizedPermutation")
+    NAME = ("GeneralizedPermutation",)
 
 
 @group
@@ -748,7 +748,7 @@ class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
     """
     SYMBOL = "S ⋉ SΔ"
     FSYMBOL = "S_{n} ⋉ SΔ({n})"
-    NAME = ("SignedPermutation")
+    NAME = ("SignedPermutation",)
 
 
 @group
@@ -765,7 +765,7 @@ class Permutation(SignedPermutation, OrthogonalTransformation):
     """
     SYMBOL = "S"
     FSYMBOL = "S_{n}"
-    NAME = ("Permutation")
+    NAME = ("Permutation",)
 
 
 class DiagonalTransformation(LinearTransformation):
@@ -774,7 +774,7 @@ class DiagonalTransformation(LinearTransformation):
     wiki: https://en.wikipedia.org/wiki/Diagonal_matrix
     wiki: https://en.wikipedia.org/wiki/Scaling_(geometry)
     """
-    NAME = ("DiagonalTransformation", "Diagonal")
+    NAME = ("DiagonalTransformation", "Diagonal",)
 
 
 @liegroup
@@ -793,7 +793,7 @@ class InvertibleDiagonalTransformation(
     """
     SYMBOL = "Δ"
     FSYMBOL = "Δ({n})"
-    NAME = ("InvertibleDiagonalTransformation", "InvertibleDiagonal")
+    NAME = ("InvertibleDiagonalTransformation", "InvertibleDiagonal",)
 
 
 @liegroup
@@ -811,7 +811,7 @@ class PositiveDiagonalTransformation(
     """
     SYMBOL = "Δ+"
     FSYMBOL = "Δ+({n})"
-    NAME = ("PositiveDiagonalTransformation", "PositiveDiagonal")
+    NAME = ("PositiveDiagonalTransformation", "PositiveDiagonal",)
 
 
 @group
@@ -823,7 +823,7 @@ class Reflection(OrthogonalTransformation):
 
     wiki: https://en.wikipedia.org/wiki/Reflection_group
     """
-    NAME = ("Reflection")
+    NAME = ("Reflection",)
 
 
 @group
@@ -835,7 +835,7 @@ class FiniteReflection(Reflection):
 
     wiki: https://en.wikipedia.org/wiki/Reflection_group
     """
-    NAME = ("FiniteReflection")
+    NAME = ("FiniteReflection",)
 
 
 @group
@@ -854,7 +854,7 @@ class SpecialDiagonalTransformation(
     """
     SYMBOL = "SΔ"
     FSYMBOL = "SΔ({n})"
-    NAME = ("SpecialDiagonalTransformation", "SpecialDiagonal")
+    NAME = ("SpecialDiagonalTransformation", "SpecialDiagonal",)
 
 
 CardinalReflection = SpecialDiagonalTransformation
@@ -869,7 +869,7 @@ class MultiplicativeTransformation(
     """
     SYMBOL = "ℝ"
     FSYMBOL = "ℝ"
-    NAME = ("MultiplicativeTransformation", "Multiplicative")
+    NAME = ("MultiplicativeTransformation", "Multiplicative",)
 
 
 @liegroup
@@ -889,7 +889,7 @@ class InvertibleMultiplicativeTransformation(
     SYMBOL = "ℝ*"
     FSYMBOL = "ℝ*"
     NAME = ("InvertibleMultiplicativeTransformation",
-            "InvertibleMultiplicative", "Homothety", "HomothetyTransformation")
+            "InvertibleMultiplicative", "Homothety", "HomothetyTransformation",)
 
 
 Homothety = InvertibleMultiplicativeTransformation
@@ -912,7 +912,7 @@ class PositiveMultiplicativeTransformation(
     SYMBOL = "ℝ+"
     FSYMBOL = "ℝ+"
     NAME = ("PositiveMultiplicativeTransformation", "PositiveMultiplicative",
-            "PositiveHomothety", "PositiveHomothetyTransformation")
+            "PositiveHomothety", "PositiveHomothetyTransformation",)
 
 
 PositiveHomothety = PositiveMultiplicativeTransformation
@@ -939,4 +939,4 @@ class IdentityTransformation(
     """
     SYMBOL = "I"
     FSYMBOL = "I({n})"
-    NAME = ("IdentityTransformation", "Identity")
+    NAME = ("IdentityTransformation", "Identity",)

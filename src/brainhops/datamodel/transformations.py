@@ -1060,14 +1060,23 @@ def _matches_mode(t, mode) -> bool:
 def _mode_children(mode) -> list:
     children = []
     seen = set()
-    for m in mode:
-        cls = m[0]
-        axis = m[1]
-        for child in cls.__subclasses__():
-            if (child, axis) not in seen:
-                seen.add((child, axis))
-                children.append((child, axis))
+    cls = mode[0]
+    axis = mode[1]
+    for child in cls.__subclasses__():
+        if (child, axis) not in seen:
+            seen.add((child, axis))
+            children.append((child, axis))
     return children
+
+
+def _ensure_proper_modes(mode) -> list:
+    if mode is None or isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
+        mode = [mode]
+    if mode == [] or mode[0] is None:
+        mode = ["Transformation"]
+    mode = [hierarchy.parseType(
+        m) if isinstance(m, (str, type, int)) else m for m in mode]
+    return mode
 
 
 def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
@@ -1078,18 +1087,14 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
     #   - there is no need to check them (they may not even be defined)
     # * we can safely "forget" the coordinate systems of the sequence
     #   object (i.e., they are also contained in the nested transformations)
-    # * we do not perform any optimization
-    #   - transformations are composed in order
-    #   - we do not try to compose series of similar types first
-    # * we fail if we cannot return a single transformation
-    #   - for example, if the first transformation is an affine,
-    #     and there are non-affine transformations in the sequence.
-    #   - or if the first transformation is a displacement field, and
-    #     there are coordinate fields in the sequence.
-    #   - (later, we will return the simplest possible sequence in such
-    #      cases, i.e., compute the sequence parts that we can)
-    if rec is None:
-        rec = []
+    # * we optimize by recursivly finding the subclasses of all the modes
+    #   specified. This allows us to combine similar transformations first
+    #   before combining vauge transformations. For example say the user
+    #   lists Affine as the mode. This will then recursivly call this function
+    #   with all subclasses then all subclasses of subclasses ect. in a depth
+    #   first search fassion. This means if there are translations that are
+    #   next to each other in the sequence it will combine the translations
+    #   before combining any of the affines
 
     xforms = self.transformations or []
 
@@ -1104,18 +1109,18 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
         return _flatten(self).compute(mode=mode)
 
     seq = self
-    if mode is None or isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
-        mode = [mode]
-    if mode == [] or mode[0] is None:
-        mode = ["Transformation"]
-    mode = [hierarchy.parseType(
-        m) if isinstance(m, (str, type, int)) else m for m in mode]
 
     # 2. combine similar transformations first
-    for submode in _mode_children(mode):
-        if not submode in rec:
-            seq = _compute_sequence(seq, mode=[submode], rec=rec)
-            rec.append(submode)
+    if rec is None:
+        rec = set()
+        mode = _ensure_proper_modes(mode)
+        for submode in mode:
+            seq = _compute_sequence(seq, submode, rec=rec)
+        return seq
+    children = _mode_children(mode)
+    for child in children:
+        if child not in rec:
+            seq = _compute_sequence(seq, child, rec=rec)
 
     # 3. compose transformations in order
     #    NOTE: we compose to the left, as that's how we define a sequence order
@@ -1124,12 +1129,13 @@ def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
     i = 0
     while i < len(xforms):
         t = xforms[i]
-        if any(_matches_mode(t, m) for m in mode):
-            while i + 1 < len(xforms) and any(_matches_mode(xforms[i+1], m) for m in mode):
+        if _matches_mode(t, mode):
+            while i + 1 < len(xforms) and _matches_mode(xforms[i+1], mode):
                 i += 1
                 t = _compose(xforms[i], t)
         transformations.append(t)
         i += 1
+    rec.add(mode)
     if len(transformations) == 1:
         return transformations[0]
     return Sequence(transformations=transformations)
