@@ -54,7 +54,7 @@ def _same_axis_type(a1: Axis, a2: Axis):
     if a1.type == a2.type:
         if a1.type != "spatial":
             return True
-        return a1.axis == a2.axis
+        return set(a1.name.split("-")) == set(a2.name.split("-"))
     return False
 
 
@@ -100,7 +100,7 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
         if inter.type != "spatial":
             scales.append(scale)
         else:
-            scales.append(inter.direction * outer.direction * scale)
+            scales.append((1 if inter.name == outer.name else -1) * scale)
 
     scalesNeeded = False
     for i in scales:
