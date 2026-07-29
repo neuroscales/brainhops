@@ -835,9 +835,7 @@ class Sequence(MutableSequence, Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
-        if mode is not None:
-            if isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
-                mode = [mode]
+        mode = _ensure_proper_modes(mode)
         return _compute_sequence(self, mode=mode)
 
     # --- sequence API ---
