@@ -15,31 +15,34 @@ __all__ = [
     "Sequence"
 ]
 # stdlib
-import types as _t
 import itertools
+import types as _t
 from collections.abc import MutableSequence
-from numbers import Real, Integral
 from functools import partial
+from numbers import Integral, Real
 
 # dependencies
-import typing_extensions as _tx
-
-# ext
-from brainhops._ext.invfield import inverse as inverse_disp
+import typing_extensions as tx
 
 # core
 from brainhops._core.backends import get_array_backend
 from brainhops._core.typing import (
-    get_origin, HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
+    ArrayProtocol,
+    HiddenConst,
+    get_origin,
+    npmatrix,
+    npvector,
 )
 
+# ext
+from brainhops._ext.invfield import inverse as inverse_disp
+
+from . import hierarchy
+from .base import DataModelBase
 
 # locals
 from .enums import BoundaryCondition, InterpolationOrder
-from .base import DataModelBase
 from .systems import CoordinateSystem
-from . import hierarchy
-
 
 if False:
     # This is an idea to implement a pipe-like syntax `a |p> b`.
@@ -47,11 +50,17 @@ if False:
 
     class _Pipe:
 
-        def __init__(self, input=None, side=None):
+        def __init__(
+            self,
+            input: tx.Optional["Transformation"] = None,
+            side: tx.Optional[tx.Literal["L", "R"]] = None
+        ) -> None:
             self.input = input
             self.side = side
 
-        def __ror__(self, other):
+        def __ror__(
+            self, other: "Transformation"
+        ) -> tx.Union["_Pipe", "Transformation"]:
             if self.side == "R":
                 return self.input(other)
             elif self.side is None:
@@ -59,7 +68,9 @@ if False:
             else:
                 raise SyntaxError("Invalid pipe syntax")
 
-        def __gt__(self, other):
+        def __gt__(
+            self, other: "Transformation"
+        ) -> tx.Union["_Pipe", "Transformation"]:
             if self.side == "L":
                 return other(self.input)
             elif self.side is None:
@@ -112,14 +123,14 @@ class Transformation(DataModelBase, reverse=True):
         (e.g., from the coordinate system of the image being transformed).
     """
 
-    parameter_names: _tx.Annotated[
-        _tx.ClassVar[_tx.Union[str, _tx.Tuple[str, ...]]],
-        _tx.Doc("The attributes that parameterize the transformation.")
+    parameter_names: tx.Annotated[
+        tx.ClassVar[tx.Union[str, tx.Tuple[str, ...]]],
+        tx.Doc("The attributes that parameterize the transformation.")
     ] = ()
 
-    input: _tx.Annotated[
-        _tx.Optional[CoordinateSystem],
-        _tx.Doc(
+    input: tx.Annotated[
+        tx.Optional[CoordinateSystem],
+        tx.Doc(
             """
             The input coordinate system of the transformation.
             If not specified, it can be inferred from the context (e.g.,
@@ -127,9 +138,9 @@ class Transformation(DataModelBase, reverse=True):
             """)
     ] = None
 
-    output: _tx.Annotated[
-        _tx.Optional[CoordinateSystem],
-        _tx.Doc(
+    output: tx.Annotated[
+        tx.Optional[CoordinateSystem],
+        tx.Doc(
             """
             The output coordinate system of the transformation.
             If not specified, it can be inferred from the context (e.g.,
@@ -137,7 +148,7 @@ class Transformation(DataModelBase, reverse=True):
             """)
     ] = None
 
-    def compute(self, simplify: bool = False) -> _tx.Self:
+    def compute(self, simplify: bool = False) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
         """
@@ -163,11 +174,11 @@ class Transformation(DataModelBase, reverse=True):
 
     def to(
         self,
-        cls: _tx.Optional[_tx.Type[_tx.Self]] = None,
+        cls: tx.Optional[tx.Type[tx.Self]] = None,
         *,
         lossy: bool = False,
         **kwargs
-    ) -> _tx.Self:
+    ) -> tx.Self:
         """
         Convert this transformation to a different type.
 
@@ -198,7 +209,7 @@ class Transformation(DataModelBase, reverse=True):
         else:
             return _to(self, cls, **kwargs)
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         """Return the inverse of this transformation.
 
         The inverse can also be obtained using the `__invert__` operator:
@@ -206,16 +217,20 @@ class Transformation(DataModelBase, reverse=True):
         """
         raise NotImplementedError
 
-    @_tx.overload
-    def __call__(self, x: "CoordinatesField", compute: _tx.Literal[True]) -> "CoordinatesField":
+    @tx.overload
+    def __call__(
+        self, x: "CoordinatesField", compute: tx.Literal[True]
+    ) -> "CoordinatesField":
         """
         Transform coordinates from the input coordinate system to the
         output coordinate system.
         """
         ...
 
-    @_tx.overload
-    def __call__(self, x: "CoordinatesField", compute: _tx.Literal[False]) -> "Sequence":
+    @tx.overload
+    def __call__(
+        self, x: "CoordinatesField", compute: tx.Literal[False]
+    ) -> "Sequence":
         """
         Transform coordinates from the input coordinate system to the
         output coordinate system.
@@ -226,8 +241,10 @@ class Transformation(DataModelBase, reverse=True):
         """
         ...
 
-    @_tx.overload
-    def __call__(self, x: "Transformation", compute: _tx.Literal[True]) -> "Transformation":
+    @tx.overload
+    def __call__(
+        self, x: "Transformation", compute: tx.Literal[True]
+    ) -> "Transformation":
         """
         Compose this transform with another transform.
 
@@ -242,8 +259,10 @@ class Transformation(DataModelBase, reverse=True):
         """
         ...
 
-    @_tx.overload
-    def __call__(self, x: "Transformation", compute: _tx.Literal[False]) -> "Sequence":
+    @tx.overload
+    def __call__(
+        self, x: "Transformation", compute: tx.Literal[False]
+    ) -> "Sequence":
         """
         Compose this transform with another transform, without computing
         the resulting transform, but instead returning a sequence of the
@@ -266,7 +285,7 @@ class Transformation(DataModelBase, reverse=True):
     def __or__(self, other: "Transformation") -> "Transformation":
         return other(self)
 
-    def __invert__(self) -> _tx.Self:
+    def __invert__(self) -> tx.Self:
         return self.inverse()
 
 
@@ -283,21 +302,21 @@ class CoordinatesField(Transformation):
     coordinates are defined.
     """
 
-    parameter_names: _tx.ClassVar[str] = "field"
+    parameter_names: tx.ClassVar[str] = "field"
 
-    field: _tx.Annotated[
-        _tx.Optional[ArrayProtocol],
-        _tx.Doc("An array of shape `(*shape, ndim)`.")
+    field: tx.Annotated[
+        tx.Optional[ArrayProtocol],
+        tx.Doc("An array of shape `(*shape, ndim)`.")
     ] = None
 
-    order: _tx.Annotated[
+    order: tx.Annotated[
         InterpolationOrder,
-        _tx.Doc("The spline interpolation order")
+        tx.Doc("The spline interpolation order")
     ] = 1
 
-    bound: _tx.Annotated[
-        _tx.Union[BoundaryCondition, float],
-        _tx.Doc(
+    bound: tx.Annotated[
+        tx.Union[BoundaryCondition, float],
+        tx.Doc(
             """
             The boundary condition used to deal with coordinates outside
             of the field of view. If a float is given, it is treated as
@@ -305,16 +324,16 @@ class CoordinatesField(Transformation):
             """)
     ] = BoundaryCondition.nearest
 
-    coeff: _tx.Annotated[
+    coeff: tx.Annotated[
         bool,
-         _tx.Doc(
+         tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
             """)
     ] = False
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.field is None:
             return cls(input=self.output, output=self.input)
@@ -340,15 +359,13 @@ class CartesianField(CoordinatesField):
     and is generated on demand when accessed.
     """
 
-    shape: _tx.Annotated[
-        _tx.Optional[_tx.Tuple[int, ...]],
-        _tx.Doc("The shape of the grid.")
+    shape: tx.Annotated[
+        tx.Optional[tx.Tuple[int, ...]],
+        tx.Doc("The shape of the grid.")
     ] = None
 
-    field: HiddenConst[None] = None
-
     @property
-    def field(self) -> _tx.Optional[ArrayProtocol]:
+    def field(self) -> tx.Optional[ArrayProtocol]:
         if self.shape is None:
             return None
         if getattr(self, "_field", None) is None:
@@ -366,7 +383,7 @@ class CartesianField(CoordinatesField):
                 "Cannot set field of CartesianField to a non-None value."
             )
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         # Inverse is itself, with switched input and output.
         cls = type(self)
         return cls(
@@ -383,23 +400,23 @@ class DisplacementField(Transformation):
     Both the input and output spaces correspond to the underlying grid.
     """
 
-    parameter_names: _tx.ClassVar[str] = "field"
+    parameter_names: tx.ClassVar[str] = "field"
 
-    field: _tx.Annotated[
-        _tx.Optional[ArrayProtocol],
-        _tx.Doc(
+    field: tx.Annotated[
+        tx.Optional[ArrayProtocol],
+        tx.Doc(
             "An array of shape `(*shape, ndim)`, where `len(shape) == ndim`"
         )
     ] = None
 
-    order: _tx.Annotated[
+    order: tx.Annotated[
         InterpolationOrder,
-        _tx.Doc("The spline interpolation order")
+        tx.Doc("The spline interpolation order")
     ] = 1
 
-    bound: _tx.Annotated[
-        _tx.Union[BoundaryCondition, float],
-        _tx.Doc(
+    bound: tx.Annotated[
+        tx.Union[BoundaryCondition, float],
+        tx.Doc(
             """
             The boundary condition used to deal with coordinates outside
             of the field of view. If a float is given, it is treated as
@@ -407,16 +424,16 @@ class DisplacementField(Transformation):
             """)
     ] = BoundaryCondition.nearest
 
-    coeff: _tx.Annotated[
+    coeff: tx.Annotated[
         bool,
-         _tx.Doc(
+         tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
             """)
     ] = False
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.field is None:
             return cls(input=self.output, output=self.input)
@@ -431,11 +448,11 @@ class DisplacementField(Transformation):
 class Affine(Transformation):
     """An affine transformation."""
 
-    parameter_names: _tx.ClassVar[str] = "matrix"
+    parameter_names: tx.ClassVar[str] = "matrix"
 
-    matrix: _tx.Annotated[
-        _tx.Optional[npmatrix[Real]],
-        _tx.Doc(
+    matrix: tx.Annotated[
+        tx.Optional[npmatrix[Real]],
+        tx.Doc(
             """
             A matrix of shape `(No, Ni + 1)`, where `Ni` is the number of
             input dimensions and `No` is the number of output dimensions.
@@ -462,7 +479,7 @@ class Affine(Transformation):
         homogeneous_matrix[-1, -1] = 1
         return homogeneous_matrix
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
@@ -478,11 +495,11 @@ class Affine(Transformation):
 class Linear(Transformation):
     """A linear transformation."""
 
-    parameter_names: _tx.ClassVar[str] = "matrix"
+    parameter_names: tx.ClassVar[str] = "matrix"
 
-    matrix: _tx.Annotated[
-        _tx.Optional[npmatrix[Real]],
-        _tx.Doc(
+    matrix: tx.Annotated[
+        tx.Optional[npmatrix[Real]],
+        tx.Doc(
             """
             A matrix of shape `(No, Ni)`, where `Ni` is the number of
             input dimensions and `No` is the number of output dimensions.
@@ -490,7 +507,7 @@ class Linear(Transformation):
             """)
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
@@ -509,9 +526,9 @@ class Rotation(Linear):
     # TODO: Implement Rotation subclasses that use other representations
     # (e.g., quaternions, Euler angles, etc.)
 
-    matrix: _tx.Annotated[
-        _tx.Optional[npmatrix[Real]],
-        _tx.Doc(
+    matrix: tx.Annotated[
+        tx.Optional[npmatrix[Real]],
+        tx.Doc(
             """
             A matrix of shape `(No, Ni)`, where `Ni` is the number of
             input dimensions and `No` is the number of output dimensions.
@@ -520,7 +537,7 @@ class Rotation(Linear):
             """)
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
@@ -535,11 +552,11 @@ class Rotation(Linear):
 class Permutation(Transformation):
     """A permutation of axes."""
 
-    parameter_names: _tx.ClassVar[str] = "permutation"
+    parameter_names: tx.ClassVar[str] = "permutation"
 
-    permutation: _tx.Annotated[
-        _tx.Optional[npvector[Integral]],
-        _tx.Doc(
+    permutation: tx.Annotated[
+        tx.Optional[npvector[Integral]],
+        tx.Doc(
             """
             A vector of shape `(N,)`, where `N` is the number of axes
             to permute. The element at index `i` indicates the input
@@ -549,7 +566,7 @@ class Permutation(Transformation):
             """)
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.permutation is None:
             return cls(input=self.output, output=self.input)
@@ -567,11 +584,11 @@ class Permutation(Transformation):
 class Scaling(Transformation):
     """A scaling of axes."""
 
-    parameter_names: _tx.ClassVar[str] = "scale"
+    parameter_names: tx.ClassVar[str] = "scale"
 
-    scale: _tx.Annotated[
-        _tx.Optional[npvector[Real]],
-        _tx.Doc(
+    scale: tx.Annotated[
+        tx.Optional[npvector[Real]],
+        tx.Doc(
             """
             A vector of shape `(N,)`, where `N` is the number of dimensions
             to scale. If `None`, the scaling is treated as an identity
@@ -579,7 +596,7 @@ class Scaling(Transformation):
             """)
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.scale is None:
             return cls(input=self.output, output=self.input)
@@ -594,11 +611,11 @@ class Scaling(Transformation):
 class Translation(Transformation):
     """A translation."""
 
-    parameter_names: _tx.ClassVar[str] = "translation"
+    parameter_names: tx.ClassVar[str] = "translation"
 
-    translation: _tx.Annotated[
-        _tx.Optional[npvector[Real]],
-        _tx.Doc(
+    translation: tx.Annotated[
+        tx.Optional[npvector[Real]],
+        tx.Doc(
             """
             A vector of shape `(N,)`, where `N` is the number of dimensions
             to translate. If `None`, the translation is treated as an identity
@@ -606,7 +623,7 @@ class Translation(Transformation):
             """)
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.translation is None:
             return cls(input=self.output, output=self.input)
@@ -625,7 +642,7 @@ class Identity(Transformation):
     the input axes to the output axes, while preserving their orders.
     """
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
 
@@ -641,17 +658,17 @@ class Bijection(Transformation):
     A transformation whose inverse is explicitly defined.
     """
 
-    forward: _tx.Annotated[
-        _tx.Optional[Transformation],
-        _tx.Doc("The forward transformation.")
+    forward: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The forward transformation.")
     ] = None
 
-    backward: _tx.Annotated[
-        _tx.Optional[Transformation],
-        _tx.Doc("The backward transformation.")
+    backward: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The backward transformation.")
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         return cls(
             forward=self.backward,
@@ -661,7 +678,7 @@ class Bijection(Transformation):
         )
 
     @property
-    def guess_input(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_input(self) -> tx.Optional[CoordinateSystem]:
         if self.input is not None:
             return self.input
         if self.forward is not None:
@@ -671,7 +688,7 @@ class Bijection(Transformation):
         return None
 
     @property
-    def guess_output(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_output(self) -> tx.Optional[CoordinateSystem]:
         if self.output is not None:
             return self.output
         if self.forward is not None:
@@ -688,9 +705,9 @@ class Inverse(Transformation):
     original transformation on demand when applied or computed.
     """
 
-    transformation: _tx.Annotated[
-        _tx.Optional[Transformation],
-        _tx.Doc("The transformation to invert.")
+    transformation: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The transformation to invert.")
     ] = None
 
     def compute(self, simplify: bool = False) -> Transformation:
@@ -706,7 +723,7 @@ class Inverse(Transformation):
         )
 
     @property
-    def guess_input(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_input(self) -> tx.Optional[CoordinateSystem]:
         if self.input is not None:
             return self.input
         if self.transformation is not None:
@@ -714,7 +731,7 @@ class Inverse(Transformation):
         return None
 
     @property
-    def guess_output(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_output(self) -> tx.Optional[CoordinateSystem]:
         if self.output is not None:
             return self.output
         if self.transformation is not None:
@@ -727,22 +744,22 @@ class ByDimension(Transformation):
     A transformation that is applied to a subset of the input and output axes.
     """
 
-    transformation: _tx.Annotated[
-        _tx.Optional[Transformation],
-        _tx.Doc("The transformation to apply.")
+    transformation: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The transformation to apply.")
     ] = None
 
-    input_axes: _tx.Annotated[
-        _tx.Optional[npvector[Integral]],
-        _tx.Doc("The axes of the input coordinate system to transform.")
+    input_axes: tx.Annotated[
+        tx.Optional[npvector[Integral]],
+        tx.Doc("The axes of the input coordinate system to transform.")
     ] = None
 
-    output_axes: _tx.Annotated[
-        _tx.Optional[npvector[Integral]],
-        _tx.Doc("The axes of the output coordinate system to transform.")
+    output_axes: tx.Annotated[
+        tx.Optional[npvector[Integral]],
+        tx.Doc("The axes of the output coordinate system to transform.")
     ] = None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.transformations is None:
             return cls(input=self.output, output=self.input)
@@ -759,6 +776,11 @@ class ByDimension(Transformation):
 #    SEQUENCE
 # ----------------------------------------------------------------------
 
+# typing
+_ModeCls = tx.Union[str, tx.Type[hierarchy.Transformation]]
+_ModeLike = tx.Union[tx.Tuple[_ModeCls, tx.Optional[int]], _ModeCls, int]
+ModeLike = tx.Union[_ModeLike, tx.Iterable[_ModeLike]]
+
 
 class Sequence(MutableSequence, Transformation):
     """A sequence of transformations.
@@ -772,11 +794,11 @@ class Sequence(MutableSequence, Transformation):
         * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    parameter_names: _tx.ClassVar[str] = "transformations"
+    parameter_names: tx.ClassVar[str] = "transformations"
 
-    transformations: _tx.Annotated[
-        _tx.Optional[_tx.List[Transformation]],
-        _tx.Doc(
+    transformations: tx.Annotated[
+        tx.Optional[tx.List[Transformation]],
+        tx.Doc(
             """
             A list of transformations, in the order in which they are
             applied to an input coordinate system.
@@ -784,31 +806,33 @@ class Sequence(MutableSequence, Transformation):
         )
     ] = None
 
-    def guess_input(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_input(self) -> tx.Optional[CoordinateSystem]:
         if self.input is not None:
             return self.input
         if (self.transformations or []):
             return self.transformations[0].input
         return None
 
-    def guess_output(self) -> _tx.Optional[CoordinateSystem]:
+    def guess_output(self) -> tx.Optional[CoordinateSystem]:
         if self.output is not None:
             return self.output
         if (self.transformations or []):
             return self.transformations[-1].output
         return None
 
-    def inverse(self) -> _tx.Self:
+    def inverse(self) -> tx.Self:
         cls = type(self)
         if self.transformations is None:
             return cls(input=self.output, output=self.input)
         return cls(
-            transformations=[t.inverse() for t in reversed(self.transformations)],
+            transformations=[
+                t.inverse() for t in reversed(self.transformations)
+            ],
             input=self.output,
             output=self.input
         )
 
-    def compute(self, mode=None) -> Transformation:
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
 
@@ -836,6 +860,8 @@ class Sequence(MutableSequence, Transformation):
               sequences of transformations that match the specified type.
         """
         mode = _ensure_proper_modes(mode)
+        if not mode:
+            return self  # No-op
         return _compute_sequence(self, mode=mode)
 
     # --- sequence API ---
@@ -852,7 +878,7 @@ class Sequence(MutableSequence, Transformation):
     def __delitem__(self, index: int | slice) -> None:
         del self.transformations[index]
 
-    def __iter__(self):
+    def __iter__(self) -> tx.Iterator[Transformation]:
         return iter(self.transformations or [])
 
     def insert(self, index: int, value: Transformation) -> None:
@@ -1017,16 +1043,22 @@ _XFORMHIERARCHY = {
 }
 
 
-def _flatten(self) -> _tx.Self:
+def _flatten(self: Sequence) -> tx.Self:
     # Flatten nested sequences of transformations into a single sequence.
     if self.transformations is None:
         return self
+    inp, out = self.input, self.output
     flattened = []
-    for t in self.transformations:
+    for i, t in enumerate(self.transformations):
+        if i == 0 and t.input is None and inp is not None:
+            t = t.to(input=inp)
+        elif i == len(self) - 1 and t.output is None and out is not None:
+            t = t.to(output=out)
         if isinstance(t, Sequence):
             flattened.extend(_flatten(t).transformations or [])
         else:
             flattened.append(t)
+
     # FIXME: this is too hacky
     params = dict(vars(self))
     params["transformations"] = flattened
@@ -1036,107 +1068,160 @@ def _flatten(self) -> _tx.Self:
     return type(self)(**params)
 
 
-def _is_flat(self) -> bool:
-    # Check if the sequence is flat (i.e., does not contain any nested sequences).
+def _is_flat(self: Sequence) -> bool:
+    # Check if the sequence is flat (does not contain any nested sequences).
     if self.transformations is None:
         return True
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
-def _matches_mode(t, mode) -> bool:
-    if not isinstance(t, mode[0]):
+_ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
+
+
+def _matches_mode(t: Transformation, mode: _ModePair) -> bool:
+    # FIXME
+    #   In many transforms, the ndim can be guessed from the content
+    #   of the xform, even if the input/output spaces are not set
+    #   (eg. the shape of the matri or the field).
+    #
+    #   The current implementation is a stricter bound.
+    cls, ndim = mode
+    if not isinstance(t, cls):
         return False
-    if mode[1] is None:
+    if ndim is None:
         return True
     if t.input is None or t.output is None:
         return False
     if t.input.axes is None or t.output.axes is None:
         return False
-    return len(t.input.axes) == mode[1] and len(t.output.axes) == mode[1]
+    return len(t.input.axes) == ndim and len(t.output.axes) == ndim
 
 
-def _mode_children(mode) -> list:
+def _mode_children(mode: _ModePair) -> list:
     children = []
     seen = set()
-    cls = mode[0]
-    axis = mode[1]
+    cls, ndim = mode
     for child in cls.__subclasses__():
-        if (child, axis) not in seen:
-            seen.add((child, axis))
-            children.append((child, axis))
+        if (child, ndim) not in seen:
+            seen.add((child, ndim))
+            children.append((child, ndim))
     return children
 
 
-def _ensure_proper_modes(mode) -> list:
-    if mode is None or isinstance(mode, (str, type, int)) or (len(mode) == 2 and isinstance(mode[0], type) and isinstance(mode[1], (int, None))):
+def _is_proper_mode(mode: ModeLike) -> bool:
+    """
+    A proper mode is a tuple (type, ndim),
+    where type is a subclass of `hierarchy.Transformation`
+    and ndim is an int or None.
+    """
+    if not isinstance(mode, tuple):
+        return False
+    if len(mode) != 2:
+        return False
+    if not isinstance(mode[0], type):
+        return False
+    if not isinstance(mode[1], (int, type(None))):
+        return False
+    return True
+
+
+def _ensure_proper_modes(mode: ModeLike) -> tx.List[_ModePair]:
+    """
+    Convert any (list of) mode-like input into a list of (type, ndim) pairs.
+
+    !!! note "An empty list of modes yields a no-op"
+    """
+
+    if mode is None:
+        # Default case
+        mode = [hierarchy.Transformation]
+    elif isinstance(mode, (str, int, type)):
+        # We know that these are single modes -> wrap them already
         mode = [mode]
-    if mode == [] or mode[0] is None:
-        mode = ["Transformation"]
-    mode = [hierarchy.parseType(
-        m) if isinstance(m, (str, type, int)) else m for m in mode]
-    return mode
+    elif _is_proper_mode(mode):
+        # Already a proper mode -> wrap it
+        mode = [mode]
+
+    # Convert each element to a proper mode = a (type, ndim) pair
+    return [
+        hierarchy.parseType(m) if not _is_proper_mode(m) else m
+        for m in mode
+    ]
 
 
-def _compute_sequence(self: Sequence, mode=None, rec=None) -> Transformation:
+def _compute_sequence(
+    seq: Sequence,
+    mode: tx.List[_ModePair],
+    memo: tx.Optional[tx.Set[_ModePair]] = None
+) -> Transformation:
     # For now, let's make simple assumptions:
+    #
     # * coordinate systems are compatible
-    #   - there is the same number of axes in the inout and output spaces.
+    #   - there is the same number of axes in the input and output spaces.
     #   - the axes of the input and output spaces match.
     #   - there is no need to check them (they may not even be defined)
+    #
     # * we can safely "forget" the coordinate systems of the sequence
     #   object (i.e., they are also contained in the nested transformations)
+    #
     # * we optimize by recursivly finding the subclasses of all the modes
     #   specified. This allows us to combine similar transformations first
     #   before combining vauge transformations. For example say the user
     #   lists Affine as the mode. This will then recursivly call this function
     #   with all subclasses then all subclasses of subclasses ect. in a depth
-    #   first search fassion. This means if there are translations that are
+    #   first search fashion. This means if there are translations that are
     #   next to each other in the sequence it will combine the translations
-    #   before combining any of the affines
+    #   before combining any of the affines.
 
-    xforms = self.transformations or []
+    # --- Flatten sequence
+    if not _is_flat(seq):
+        seq = _flatten(seq)
 
-    # 0. check if already flat and composed:
-    if not xforms:
-        return Identity(input=self.input, output=self.output)
-    if len(self.transformations) == 1:
-        return self.transformations[0]
-
-    # 1. flatten sequence:
-    if not _is_flat(self):
-        return _flatten(self).compute(mode=mode)
-
-    seq = self
-
-    # 2. combine similar transformations first
-    if rec is None:
-        rec = set()
-        mode = _ensure_proper_modes(mode)
-        for submode in mode:
-            seq = _compute_sequence(seq, submode, rec=rec)
+    # --- Check if nothing to do
+    if len(seq.transformations or []) < 1:
         return seq
+
+    # --- If we are called from the public method, `mode`` is a `list`
+    # > Recuerse with a memo
+    if memo is None:
+        memo = set()
+        for submode in mode:
+            seq = _compute_sequence(seq, submode, memo=memo)
+        return seq
+
+    # --- Otherwise, `mode` is a single mode
+    # > if the mode has been seen, return the sequence as is
+    if mode in memo:
+        return seq
+
+    # --- Else compute all children of the mode
     children = _mode_children(mode)
     for child in children:
-        if child not in rec:
-            seq = _compute_sequence(seq, child, rec=rec)
+        seq = _compute_sequence(seq, child, memo=memo)
 
-    # 3. compose transformations in order
-    #    NOTE: we compose to the left, as that's how we define a sequence order
-    xforms = getattr(seq, "transformations", [seq])
-    transformations = []
-    i = 0
-    while i < len(xforms):
-        t = xforms[i]
-        if _matches_mode(t, mode):
-            while i + 1 < len(xforms) and _matches_mode(xforms[i+1], mode):
-                i += 1
-                t = _compose(xforms[i], t)
-        transformations.append(t)
-        i += 1
-    rec.add(mode)
-    if len(transformations) == 1:
-        return transformations[0]
-    return Sequence(transformations=transformations)
+    # Mark that we've been through this mode
+    # !!! DO NOT RETURN HERE
+    memo.add(mode)
+
+    # --- Compose transformations that belong to this mode in order
+
+    # Ensure a list of transformations (and make a copy so we can pop it)
+    inputs = list(getattr(seq, "transformations", [seq]))
+    outputs = []
+
+    # Compose any consecutive sequence that matches the mode
+    while inputs:
+        item = inputs.pop(0)
+        if _matches_mode(item, mode):
+            while inputs and _matches_mode(inputs[0], mode):
+                # NOTE: we compose to the left ! (see sequence definition)
+                item = _compose(inputs.pop(0), item)
+        outputs.append(item)
+
+    # Return
+    if len(outputs) == 1:
+        return outputs[0]
+    return Sequence(transformations=outputs)
 
 
 # ----------------------------------------------------------------------
@@ -1157,8 +1242,8 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
 
 
 def _get_ndim(
-    t: Transformation, default: _tx.Optional[int] = None
-) -> _tx.Optional[int]:
+    t: Transformation, default: tx.Optional[int] = None
+) -> tx.Optional[int]:
     if t.input and t.input.axes is not None:
         return len(t.input.axes)
     if t.output and t.output.axes is not None:
@@ -1179,27 +1264,27 @@ class ConversionError(TypeError): ...
 class LossyConversionError(ConversionError):
 
     def __init__(
-        self, *args, result: _tx.Optional[Transformation] = None, **kwargs,
+        self, *args, result: tx.Optional[Transformation] = None, **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.result = result
 
 
-@_tx.overload
+@tx.overload
 def _converter(
-    Ti: _tx.Type[Transformation], To: _tx.Type[Transformation]
-) -> _tx.Callable:
+    Ti: tx.Type[Transformation], To: tx.Type[Transformation]
+) -> tx.Callable:
     """Return a decorator to register a converter of between types."""
     ...
 
 
-@_tx.overload
-def _converter(func: _tx.Callable) -> _tx.Callable:
+@tx.overload
+def _converter(func: tx.Callable) -> tx.Callable:
     """Register a converter of between types (based on hints)."""
     ...
 
 
-def _converter(*args, **kwargs) -> _tx.Callable:
+def _converter(*args, **kwargs) -> tx.Callable:
     """Decorator to register a converter of between transformation types."""
     if len(args) == 2:
         Ti, To = args
@@ -1208,13 +1293,13 @@ def _converter(*args, **kwargs) -> _tx.Callable:
     if kwargs:
         types = kwargs["Ti"], kwargs["To"]
     else:
-        types = tuple(_tx.get_type_hints(func).values())
+        types = tuple(tx.get_type_hints(func).values())
     _CONVERTERS[types] = func
     _CONVERTERS_FASTMAP.clear()
     return func
 
 
-def _to(x: Transformation, cls: _tx.Type[Transformation], **kwargs) -> Transformation:
+def _to(x: Transformation, cls: tx.Type[Transformation], **kwargs) -> Transformation:
     """Convert a transform to a different type."""
     # TODO: implement using the CONVERTERS map,
     #       similarly to _compose() and _COMPOSERS.
@@ -1247,9 +1332,9 @@ _COMPOSERS_FASTMAP = {}
 class CompositionError(TypeError): ...
 
 
-def _composer(func: _tx.Callable) -> _tx.Callable:
+def _composer(func: tx.Callable) -> tx.Callable:
     """Decorator to register a function as a composer of two transformations."""
-    types = tuple(_tx.get_type_hints(func).values())[:2]
+    types = tuple(tx.get_type_hints(func).values())[:2]
     _COMPOSERS[types] = func
     _COMPOSERS_FASTMAP.clear()
     return func
@@ -1266,12 +1351,12 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
         return func(x1, x2)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _COMPOSERS.items():
-        if get_origin(T1) in (_tx.Union, _t.UnionType):
-            T1s = _tx.get_args(T1)
+        if get_origin(T1) in (tx.Union, _t.UnionType):
+            T1s = tx.get_args(T1)
         else:
             T1s = (T1,)
-        if get_origin(T2) in (_tx.Union, _t.UnionType):
-            T2s = _tx.get_args(T2)
+        if get_origin(T2) in (tx.Union, _t.UnionType):
+            T2s = tx.get_args(T2)
         else:
             T2s = (T2,)
         for T1, T2 in itertools.product(T1s, T2s):
@@ -1294,9 +1379,9 @@ _ADAPTORS_FASTMAP = {}
 class AdaptationError(TypeError): ...
 
 
-def _adaptor(func: _tx.Callable) -> _tx.Callable:
+def _adaptor(func: tx.Callable) -> tx.Callable:
     """Decorator to register a function as an adaptor between two coordinate systems."""
-    types = tuple(_tx.get_type_hints(func).values())[:2]
+    types = tuple(tx.get_type_hints(func).values())[:2]
     _ADAPTORS[types] = func
     _ADAPTORS_FASTMAP.clear()
     return func
