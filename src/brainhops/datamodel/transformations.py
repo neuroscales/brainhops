@@ -15,6 +15,7 @@ __all__ = [
     "Sequence"
 ]
 # stdlib
+import copy
 import types as _t
 import itertools
 from collections.abc import MutableSequence
@@ -22,6 +23,7 @@ from numbers import Real, Integral
 from functools import partial
 
 # dependencies
+import numpy as np
 import typing_extensions as _tx
 
 # ext
@@ -32,6 +34,7 @@ from brainhops._core.backends import get_array_backend
 from brainhops._core.typing import (
     get_origin, HiddenConst, ArrayProtocol, npscalar, npvector, npmatrix
 )
+from brainhops.datamodel.axes import Axis
 
 
 # locals
@@ -66,7 +69,6 @@ if False:
                 return _Pipe(input=other, side="R")
             else:
                 raise SyntaxError("Invalid pipe syntax")
-
 
     p = _Pipe()
 
@@ -271,6 +273,12 @@ class Transformation(DataModelBase, reverse=True):
     def __invert__(self) -> _tx.Self:
         return self.inverse()
 
+    def ndims_out(self) -> int:
+        raise NotImplementedError()
+
+    def ndims_in(self) -> int:
+        raise NotImplementedError()
+
 
 # ----------------------------------------------------------------------
 #    CONCRETE CLASSES
@@ -309,12 +317,18 @@ class CoordinatesField(Transformation):
 
     coeff: _tx.Annotated[
         bool,
-         _tx.Doc(
+        _tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
             """)
     ] = False
+
+    def ndims_out(self) -> int:
+        return self.field.shape[-1]
+
+    def ndims_in(self) -> int:
+        return len(self.field.shape)-1
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -411,12 +425,18 @@ class DisplacementField(Transformation):
 
     coeff: _tx.Annotated[
         bool,
-         _tx.Doc(
+        _tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
             """)
     ] = False
+
+    def ndims_out(self) -> int:
+        return self.field.shape[-1]
+
+    def ndims_in(self) -> int:
+        return len(self.field.shape)-1
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -446,6 +466,12 @@ class Affine(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
+
+    def ndims_out(self) -> int:
+        return self.matrix.shape[0]
+
+    def ndims_in(self) -> int:
+        return self.matrix.shape[1]-1
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -491,6 +517,16 @@ class Linear(Transformation):
             If `None`, the matrix is treated as an identity transformation.
             """)
     ] = None
+
+    def ndims_out(self) -> int:
+        if self.matrix is None:
+            return 0
+        return self.matrix.shape[0]
+
+    def ndims_in(self) -> int:
+        if self.matrix is None:
+            return 0
+        return self.matrix.shape[1]
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -551,6 +587,16 @@ class Permutation(Transformation):
             """)
     ] = None
 
+    def ndims_out(self) -> int:
+        if self.permutation is None:
+            return 0
+        return len(self.permutation)
+
+    def ndims_in(self) -> int:
+        if self.permutation is None:
+            return 0
+        return len(self.permutation)
+
     def inverse(self) -> _tx.Self:
         cls = type(self)
         if self.permutation is None:
@@ -581,6 +627,16 @@ class Scaling(Transformation):
             """)
     ] = None
 
+    def ndims_out(self) -> int:
+        if self.scale is None:
+            return 0
+        return len(self.scale)
+
+    def ndims_in(self) -> int:
+        if self.scale is None:
+            return 0
+        return len(self.scale)
+
     def inverse(self) -> _tx.Self:
         cls = type(self)
         if self.scale is None:
@@ -608,6 +664,16 @@ class Translation(Transformation):
             """)
     ] = None
 
+    def ndims_out(self) -> int:
+        if self.translation is None:
+            return 0
+        return len(self.translation)
+
+    def ndims_in(self) -> int:
+        if self.translation is None:
+            return 0
+        return len(self.translation)
+
     def inverse(self) -> _tx.Self:
         cls = type(self)
         if self.translation is None:
@@ -626,6 +692,12 @@ class Identity(Transformation):
     If the `input` and `output` coordinate systems are different, it maps
     the input axes to the output axes, while preserving their orders.
     """
+
+    def ndims_out(self) -> int:
+        return 0
+
+    def ndims_in(self) -> int:
+        return 0
 
     def inverse(self) -> _tx.Self:
         cls = type(self)
@@ -662,6 +734,12 @@ class Bijection(Transformation):
             output=self.input
         )
 
+    def ndims_out(self) -> int:
+        return self.forward.ndims_out()
+
+    def ndims_in(self) -> int:
+        return self.forward.ndims_in()
+
     @property
     def guess_input(self) -> _tx.Optional[CoordinateSystem]:
         if self.input is not None:
@@ -694,6 +772,12 @@ class Inverse(Transformation):
         _tx.Optional[Transformation],
         _tx.Doc("The transformation to invert.")
     ] = None
+
+    def ndims_out(self) -> int:
+        return self.transformation.ndims_in()
+
+    def ndims_in(self) -> int:
+        return self.transformation.ndims_out()
 
     def compute(self, simplify: bool = False) -> Transformation:
         if self.transformation is None:
@@ -744,6 +828,12 @@ class ByDimension(Transformation):
         _tx.Doc("The axes of the output coordinate system to transform.")
     ] = None
 
+    def ndims_out(self) -> int:
+        return len(self.output_axes)
+
+    def ndims_in(self) -> int:
+        return len(self.input_axes)
+
     def inverse(self) -> _tx.Self:
         cls = type(self)
         if self.transformations is None:
@@ -786,6 +876,16 @@ class Sequence(MutableSequence, Transformation):
         )
     ] = None
 
+    def ndims_out(self) -> int:
+        for i in range(len(self.transformations)-1, 0, -1):
+            if self.transformations[i].ndims_out() != 0:
+                return self.transformations[i].ndims_out()
+
+    def ndims_in(self) -> int:
+        for i in range(len(self.transformations)):
+            if self.transformations[i].ndims_in() != 0:
+                return self.transformations[i].ndims_in()
+
     def guess_input(self) -> _tx.Optional[CoordinateSystem]:
         if self.input is not None:
             return self.input
@@ -805,7 +905,8 @@ class Sequence(MutableSequence, Transformation):
         if self.transformations is None:
             return cls(input=self.output, output=self.input)
         return cls(
-            transformations=[t.inverse() for t in reversed(self.transformations)],
+            transformations=[t.inverse()
+                             for t in reversed(self.transformations)],
             input=self.output,
             output=self.input
         )
@@ -936,7 +1037,7 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Translation):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        return (xform.matrix[:, :-1] ==  0).all()
+        return (xform.matrix[:, :-1] == 0).all()
     return is_identity(xform, compute=compute)
 
 
@@ -1105,8 +1206,8 @@ def _distance(t1: type, t2: type, oriented: bool = True) -> int:
 
 def _get_ndim(
     t: Transformation, default: _tx.Optional[int] = None
-) ->  _tx.Optional[int]:
-    if t.input and t.inputs.axes is not None:
+) -> _tx.Optional[int]:
+    if t.input and t.input.axes is not None:
         return len(t.input.axes)
     if t.output and t.output.axes is not None:
         return len(t.output.axes)
@@ -1120,7 +1221,8 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    ...
 
 
 class LossyConversionError(ConversionError):
@@ -1191,7 +1293,123 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    ...
+
+
+def _same_axis_type(a1: Axis, a2: Axis):
+    if a1.type == a2.type:
+        if a1.type != "spatial":
+            return True
+        return set(a1.name.split("-")) == set(a2.name.split("-"))
+    return False
+
+
+def make_same_axes(x1: Transformation, x2: Transformation):
+    if x1.ndims_out() == 0 or x2.ndims_in() == 0:
+        return x1, x2
+    if (x1.output is None or x2.input is None):
+        if x1.ndims_out() == x2.ndims_in():
+            return x1, x2
+        raise ValueError()
+
+    x1_2, x2_2 = x1, x2
+    missing_forward = []
+    for i in range(len(x1.output.axes)):
+        found = False
+        for j in range(len(x2.input.axes)):
+            if _same_axis_type(x1.output.axes[i], x2.input.axes[j]):
+                found = True
+        if not found:
+            missing_forward.append(x1.output.axes[i])
+
+    missing_backwards = []
+    for i in range(len(x2.input.axes)):
+        found = False
+        for j in range(len(x1.output.axes)):
+            if _same_axis_type(x2.input.axes[i], x1.output.axes[j]):
+                found = True
+        if not found:
+            missing_backwards.append(x2.input.axes[i])
+
+    if len(missing_forward) != 0:
+        x2_2 = _expand_dems(x2_2, missing_forward)
+
+    if len(missing_backwards) != 0:
+        x1_2 = _expand_dems(x1_2, missing_backwards)
+
+    return x1_2, x2_2
+
+
+def _expand_dems(x1: Transformation, missing: list):
+    if not missing:
+        return x1
+
+    if isinstance(x1, hierarchy.AffineTransformation):
+
+        ret = copy.deepcopy(x1.to(Affine))
+
+        old_matrix = ret.matrix
+        n_missing = len(missing)
+
+        No, Ni1 = old_matrix.shape
+        Ni = Ni1 - 1
+
+        # homogeneous representation
+        H = np.eye(max(No, Ni) + 1)
+
+        H[:No, :Ni] = old_matrix[:, :-1]
+        H[:No, -1] = old_matrix[:, -1]
+
+        old_ndim = H.shape[0] - 1
+        new_ndim = old_ndim + n_missing
+
+        newH = np.eye(new_ndim + 1)
+
+        # copy linear part
+        newH[:old_ndim, :old_ndim] = H[:old_ndim, :old_ndim]
+
+        # copy translation
+        newH[:old_ndim, -1] = H[:old_ndim, -1]
+
+        ret.matrix = newH[:-1, :]
+
+        ret.input = copy.deepcopy(ret.input)
+        ret.output = copy.deepcopy(ret.output)
+
+        ret.input.axes = ret.input.axes + missing
+        ret.output.axes = ret.output.axes + missing
+
+        return ret
+
+    elif isinstance(x1, (CoordinatesField, DisplacementField)):
+
+        ret = copy.deepcopy(x1)
+
+        # add output dimensions
+        ret.field = np.pad(
+            ret.field,
+            [(0, 0)] * (ret.field.ndim - 1) +
+            [(0, len(missing))],
+            mode="constant",
+            constant_values=0,
+        )
+
+        # add input dimensions
+        ret.field = ret.field.reshape(
+            *ret.field.shape[:-1],
+            *(1,) * len(missing),
+            ret.field.shape[-1],
+        )
+        ret.input = copy.deepcopy(ret.input)
+        ret.output = copy.deepcopy(ret.output)
+
+        ret.input.axes = ret.input.axes + missing
+        ret.output.axes = ret.output.axes + missing
+
+        return ret
+
+    return x1
 
 
 def _composer(func: _tx.Callable) -> _tx.Callable:
@@ -1207,7 +1425,12 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     Dispatch the composition of two transformations to the appropriate
     composer function.
     """
+    x1, x2 = make_same_axes(x1, x2)
     t1, t2 = type(x1), type(x2)
+    adapt = _ADAPTORS[Transformation, Transformation](x1, x2)
+    if not is_identity(adapt):
+        x1 = _compose(adapt, x1)
+
     if (t1, t2) in _COMPOSERS_FASTMAP:
         func = _COMPOSERS_FASTMAP[(t1, t2)]
         return func(x1, x2)
@@ -1238,7 +1461,8 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    ...
 
 
 def _adaptor(func: _tx.Callable) -> _tx.Callable:

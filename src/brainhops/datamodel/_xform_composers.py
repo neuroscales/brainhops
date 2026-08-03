@@ -33,12 +33,12 @@ from .transformations import (
 
 @_composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
-    return type(Ti)(Ti, output=To.output).compute()
+    return type(Ti)(Ti, input=Ti.input, output=Ti.output).compute()
 
 
 @_composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
-    return type(To)(To, input=Ti.input).compute()
+    return type(To)(To, input=To.input, output=To.output).compute()
 
 
 # ----------------------------------------------------------------------

@@ -1,23 +1,22 @@
-# TODO/WIP: not working at all yet 
+# TODO/WIP: not working at all yet
 
 # internals
-from brainhops.datamodel.axes import Axis
-
 from .systems import CoordinateSystem
-from .orientation import Orientation
+from .transformations import _adaptor, _same_axis_type, is_identity
 from .transformations import Sequence, Transformation, Identity, Permutation, Scaling
-from .transformations import _adaptor, is_identity
-from brainhops.datamodel import systems
 
 
 def _get_names(axes):
     return [axis.name for axis in axes]
 
+
 def _get_units(axes):
     return [axis.unit for axis in axes]
 
+
 def _get_orientations(axes):
     return [axis.orientation for axis in axes]
+
 
 def _get_by_name(axes, name):
     for axis in axes:
@@ -25,11 +24,13 @@ def _get_by_name(axes, name):
             yield axis
     return None
 
+
 def _get_by_unit(axes, unit):
     for axis in axes:
         if axis.unit == unit:
             yield axis
     return None
+
 
 def _get_by_unit_type(axes, unit_type):
     for axis in axes:
@@ -37,11 +38,13 @@ def _get_by_unit_type(axes, unit_type):
             yield axis
     return None
 
+
 def _get_by_orientation(axes, orientation):
     for axis in axes:
         if axis.orientation == orientation:
             yield axis
     return None
+
 
 def _get_by_orientation_type(axes, orientation_type):
     for axis in axes:
@@ -50,22 +53,17 @@ def _get_by_orientation_type(axes, orientation_type):
     return None
 
 
-def _same_axis_type(a1: Axis, a2: Axis):
-    if a1.type == a2.type:
-        if a1.type != "spatial":
-            return True
-        return set(a1.name.split("-")) == set(a2.name.split("-"))
-    return False
-
-
 @_adaptor
 def _(inp: Transformation, out: Transformation) -> Transformation:
 
-    if inp.output == out.input:
+    if inp.ndims_out() == 0 or out.ndims_in() == 0:
         return Identity(input=inp.output, output=out.input)
 
-    if len(inp.output.axes) != len(out.input.axes):
-        raise NotImplementedError
+    if inp.ndims_out() != out.ndims_in():
+        raise NotImplementedError()
+
+    if inp.output is None or out.input is None or inp.output == out.input:
+        return Identity(input=inp.output, output=out.input)
 
     transformations = []
 
@@ -85,8 +83,8 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
     intermediate_output = inp.output
 
     if permNeeded:
-        intermediate_output = systems.SpatialCoordinateSystem(
-            [inp.output.axes[i] for i in perm])
+        intermediate_output = CoordinateSystem(
+            axes=[inp.output.axes[i] for i in perm])
         transformations.append(Permutation(
             permutation=perm, input=inp.output, output=intermediate_output))
 
@@ -153,7 +151,7 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
                 input=inp,
                 output=out
             )
-        
+
         if all(iname in onames for iname in inames):
 
             permuted_inp = CoordinateSystem(
@@ -172,7 +170,7 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
                     scale.append(1.0)
                 else:
                     scale.append(
-                        getattr(oaxis.unit, "scale", 1.0) / 
+                        getattr(oaxis.unit, "scale", 1.0) /
                         getattr(iaxis.unit, "scale", 1.0)
                     )
             scale = Scaling(
@@ -203,6 +201,7 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
             axis_matching[oaxis] = iaxis
             matchable_axes.remove(iaxis)
         elif oaxis.orientation and oaxis.orientation in _get_orientations(matchable_axes):
-            iaxis = next(_get_by_orientation(matchable_axes, oaxis.orientation))
+            iaxis = next(_get_by_orientation(
+                matchable_axes, oaxis.orientation))
             axis_matching[oaxis] = iaxis
             matchable_axes.remove(iaxis)
