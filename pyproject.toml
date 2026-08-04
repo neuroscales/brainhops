@@ -71,3 +71,9 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["ANN", "B", "E", "F", "I", "UP", "W"]
+ignore = [
+    "ANN002",   # *args
+    "ANN003",   # **kwargs
+    "UP006",    # Type[T] -> type[T]
+    "UP045",    # Optional[A] -> A | None
+]
