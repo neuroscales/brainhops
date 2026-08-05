@@ -141,11 +141,8 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
         return Identity(input=x2.output, output=x1.input)
 
     # If only 1 transformation was needed just return that transformation,
-    # but make sure its declared `output` is exactly `out.input` (rather
-    # than the intermediate coordinate system), so callers can rely on
-    # the adaptor's output always matching `out.input`.
     if len(transformations) == 1:
-        return transformations[0].to(output=x1.input)
+        return transformations[0]
 
     # If both permutation and scaling were needed return a sequence
     return Sequence(transformations=transformations, input=x2.output, output=x1.input)
