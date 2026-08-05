@@ -477,6 +477,12 @@ class CartesianField(CoordinatesField):
             output=self.input
         )
 
+    def expand_dims(self, missing: list, side: tx.Union[tx.Literal["both"], tx.Literal["input"], tx.Literal["output"]] = "both"
+                    ) -> "CoordinatesField":
+        if not missing:
+            return self
+        return self.to(CoordinatesField).expand_dims(missing, side)
+
 
 class DisplacementField(Transformation):
     """
@@ -1769,10 +1775,10 @@ def make_same_axes(x1: Transformation, x2: Transformation):
     Parameters
     ----------
     x1 : Transformation
-        The transformation whose `output` axes should match the `input`
+        The transformation whose `input` axes should match the `output`
         axes of `x2`.
     x2 : Transformation
-        The transformation whose `input` axes should match the `output`
+        The transformation whose `output` axes should match the `input`
         axes of `x1`.
 
     Returns
@@ -1783,30 +1789,31 @@ def make_same_axes(x1: Transformation, x2: Transformation):
     Raises
     ------
     ValueError
-        If the axes of `x1.output` or `x2.input` are undefined and the
+        If the axes of `x1.input` or `x2.output` are undefined and the
         output/input dimensionalities of `x1` and `x2` do not match.
     """
 
     # if one of the inputs or outputs allow for any amount of axes
     # (most likely because they are identity) just return the input
-    if x1.ndims.output == 0 or x2.ndims.input == 0:
+    if x2.ndims.output == 0 or x1.ndims.input == 0:
         return x1, x2
+
     # If either coordinate systems are not specified assume they are the same
     # if they contain the same number of dims. Otherwise throw an error.
-    if (x1.output is None or x2.input is None):
-        if x1.ndims.output == x2.ndims.input:
+    if (x2.output is None or x1.input is None):
+        if x2.ndims.output == x1.ndims.input:
             return x1, x2
         raise ValueError()
 
     x1_2, x2_2 = x1, x2
-    missing_forward = _get_missing(x1.output, x2.input)
-    missing_backwards = _get_missing(x2.input, x1.output)
+    missing_forward = _get_missing(x2.output, x1.input)
+    missing_backwards = _get_missing(x1.input, x2.output)
 
     if len(missing_forward) != 0:
-        x2_2 = x2_2.expand_dims(missing_forward, side="input")
+        x1_2 = x1_2.expand_dims(missing_forward, side="input")
 
     if len(missing_backwards) != 0:
-        x1_2 = x1_2.expand_dims(missing_backwards, side="output")
+        x2_2 = x2_2.expand_dims(missing_backwards, side="output")
 
     return x1_2, x2_2
 
@@ -1824,9 +1831,11 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     Dispatch the composition of two transformations to the appropriate
     composer function.
     """
-    x2, x1 = make_same_axes(x2, x1)
+    # Make sure that both transformations have compatible axes
+    x1, x2 = make_same_axes(x1, x2)
     t1, t2 = type(x1), type(x2)
-    adapt = _adapt(x2, x1)
+    # find and apply the adaptation transformation between the two coordinate systems
+    adapt = _adapt(x1, x2)
     if not is_identity(adapt):
         x2 = _compose(adapt, x2)
 

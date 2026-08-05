@@ -54,20 +54,20 @@ def _get_by_orientation_type(axes, orientation_type):
 
 
 @_adaptor
-def _(inp: Transformation, out: Transformation) -> Transformation:
+def _(x1: Transformation, x2: Transformation) -> Transformation:
 
     # if one of the two transformations has no axes than assume they are identity
     # if that is the case no adaptor is needed. return Identity
-    if inp.ndims.output == 0 or out.ndims.input == 0:
-        return Identity(input=inp.output, output=out.input)
+    if x2.ndims.output == 0 or x1.ndims.input == 0:
+        return Identity(input=x2.output, output=x1.input)
 
     # The transformations that have been passed in should have the same dims assuming they are not identity
-    if inp.ndims.output != out.ndims.input:
+    if x2.ndims.output != x1.ndims.input:
         raise NotImplementedError()
 
     # If the number of dims match but one or more transformation has unspecified axes assume that they already match
-    if inp.output is None or out.input is None or inp.output == out.input:
-        return Identity(input=inp.output, output=out.input)
+    if x2.output is None or x1.input is None or x2.output == x1.input:
+        return Identity(input=x2.output, output=x1.input)
 
     # Up to two transformations may be needed a permutation and a scaller
     transformations = []
@@ -75,19 +75,19 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
     # Find what axes corrispond to output axes.
     # `perm[i] == j` means `inp.output.axes[i]` matches `out.input.axes[j]`.
     perm = []
-    for i in range(len(inp.output.axes)):
+    for i in range(len(x2.output.axes)):
         matches = []
-        for j in range(len(out.input.axes)):
-            if _same_axis_type(inp.output.axes[i], out.input.axes[j]):
+        for j in range(len(x1.input.axes)):
+            if _same_axis_type(x2.output.axes[i], x1.input.axes[j]):
                 matches.append(j)
         if len(matches) == 0:
             raise ValueError(
                 f"no matching axis found in `out.input` for axis "
-                f"{inp.output.axes[i]!r} (index {i}) of `inp.output`."
+                f"{x2.output.axes[i]!r} (index {i}) of `inp.output`."
             )
         if len(matches) > 1:
             raise ValueError(
-                f"ambiguous axis match: axis {inp.output.axes[i]!r} "
+                f"ambiguous axis match: axis {x2.output.axes[i]!r} "
                 f"(index {i}) of `inp.output` matches more than one axis "
                 f"in `out.input` ({matches!r})."
             )
@@ -100,22 +100,22 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
             permNeeded = True
 
     # If we do need a permutation create one and make an intermediate output axis
-    intermediate_output = inp.output
+    intermediate_output = x2.output
     if permNeeded:
         inverse_perm = [0] * len(perm)
         for i, j in enumerate(perm):
             inverse_perm[j] = i
 
         intermediate_output = CoordinateSystem(
-            axes=[inp.output.axes[i] for i in inverse_perm])
+            axes=[x2.output.axes[i] for i in inverse_perm])
         transformations.append(Permutation(
-            permutation=perm, input=inp.output, output=intermediate_output))
+            permutation=perm, input=x2.output, output=intermediate_output))
 
     # Check to see if the axes use different units
     scales = []
     for i in range(len(intermediate_output.axes)):
         inter = intermediate_output.axes[i]
-        outer = out.input.axes[i]
+        outer = x1.input.axes[i]
         scale = 1.0
         if inter.unit is not None and outer.unit is not None:
             scale = inter.unit.scale / outer.unit.scale
@@ -134,18 +134,18 @@ def _(inp: Transformation, out: Transformation) -> Transformation:
 
     if scalesNeeded:
         transformations.append(
-            Scaling(scale=scales, input=intermediate_output, output=out.input))
+            Scaling(scale=scales, input=intermediate_output, output=x1.input))
 
     # If permutation and scaling were not needed return Identity
     if len(transformations) == 0:
-        return Identity(input=inp.output, output=out.input)
+        return Identity(input=x2.output, output=x1.input)
 
     # If only 1 transformation was needed just return that transformation,
     # but make sure its declared `output` is exactly `out.input` (rather
     # than the intermediate coordinate system), so callers can rely on
     # the adaptor's output always matching `out.input`.
     if len(transformations) == 1:
-        return transformations[0].to(output=out.input)
+        return transformations[0].to(output=x1.input)
 
     # If both permutation and scaling were needed return a sequence
-    return Sequence(transformations=transformations, input=inp.output, output=out.input)
+    return Sequence(transformations=transformations, input=x2.output, output=x1.input)
