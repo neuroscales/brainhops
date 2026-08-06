@@ -355,7 +355,7 @@ class CartesianField(CoordinatesField):
 
     Both the input and output spaces correspond to the underlying grid.
 
-    Its `field` attribute is fuly defined by the shape of the grid,
+    Its `field` attribute is fully defined by the shape of the grid,
     and is generated on demand when accessed.
     """
 
@@ -1164,11 +1164,11 @@ def _compute_sequence(
     # * we can safely "forget" the coordinate systems of the sequence
     #   object (i.e., they are also contained in the nested transformations)
     #
-    # * we optimize by recursivly finding the subclasses of all the modes
+    # * we optimize by recursively finding the subclasses of all the modes
     #   specified. This allows us to combine similar transformations first
     #   before combining vauge transformations. For example say the user
-    #   lists Affine as the mode. This will then recursivly call this function
-    #   with all subclasses then all subclasses of subclasses ect. in a depth
+    #   lists Affine as the mode. This will then recursively call this function
+    #   with all subclasses then all subclasses of subclasses etc. in a depth
     #   first search fashion. This means if there are translations that are
     #   next to each other in the sequence it will combine the translations
     #   before combining any of the affines.

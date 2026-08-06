@@ -3,7 +3,7 @@ ITK binary transformations are saved in H5 format and support a variety
 of (chained) transformations.
 
 They support the same transformation types as the text-based TFM format,
-altough TFM files are rarely used to store displacement fields, which are
+although TFM files are rarely used to store displacement fields, which are
 usually stored in H5 files.
 
 The supported displacement fields have the following encoding:

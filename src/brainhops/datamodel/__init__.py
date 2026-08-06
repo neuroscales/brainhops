@@ -2,7 +2,7 @@
 Generic representation of transforms and their interactions.
 
 Mostly based on OME-NGFF, but with more flexibility.
-Should be able to accomodate a large variety of existing transform formats:
+Should be able to accommodate a large variety of existing transform formats:
 
 - OME-NGFF
 - FreeSurfer LTA (affine)

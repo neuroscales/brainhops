@@ -90,7 +90,7 @@ UNITS_SPACE = {
     # Other
     "angstrom": (1e-10, "Å", "angstrom", "angstroms"),
     "parsec": (3.085677581491367e+16, "pc", "parsec", "parsecs"),
-    "lightyear": (9.4607304725808e+15, "ly", "lyr", "lightyear", "lightyears"),
+    "light year": (9.4607304725808e+15, "ly", "lyr", "light year", "light years"),
 }
 SpaceUnitName = _make_enum("SpaceUnitName", UNITS_SPACE)
 

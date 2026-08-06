@@ -24,7 +24,7 @@ _POST_INIT_NAME = "__post_init__"
 _DISCARD = "__struct_discard__"
 
 # Name we give to the `self` variable, in cases where a field named `self`
-# alread exists.
+# already exists.
 _SELF = "__struct_self__"
 
 # Name given to the local type variable when generating __init__

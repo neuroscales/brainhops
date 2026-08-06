@@ -7,7 +7,7 @@
 #   This is already done for __init__, but not for the other ones.
 """
 A `Struct` acts like a python `dataclass`, except that it operates
-via inheritence, rather than via a decorator (although the @struct
+via inheritance, rather than via a decorator (although the @struct
 decorator can be used if preferred).
 
 The options typically specified in the @dataclass decorator are instead
@@ -865,7 +865,7 @@ def _make_assign(cls: type) -> type:
     fields = getattr(cls, _FIELDS, {})
     fields = {name: field for name, field in fields.items() if not field.var}
 
-    # We are calling object methods instead of super(), beause
+    # We are calling object methods instead of super(), because
     # super() falls back to inherited struct methods, which we don't want.
 
     def __delattr__(self, name: str) -> None:
@@ -1061,7 +1061,7 @@ mapping : bool, default=False
     Implement the `Mapping` protocol.
 reverse : bool, default=False
     Use the reverse MRO order to determine field order.
-    This only affects the relaive order of the fields of one class
+    This only affects the relative order of the fields of one class
     with respect to the fields of its base classes.
 doc : bool | str, default=True
     Add field documentation to class docstring

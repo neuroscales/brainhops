@@ -118,7 +118,7 @@ class H5TransformParser(
             If True, keep the HDF5 file open after loading.
             If False, close the file after loading.
             If `load=False` and `keep_open=False`, the file will be
-            re-opened everytime displacement fields are accessed.
+            re-opened every time displacement fields are accessed.
         load : bool, optional
             If True, load the data into memory. I
             f False, keep the data on disk.

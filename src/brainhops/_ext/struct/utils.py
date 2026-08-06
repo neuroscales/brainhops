@@ -44,7 +44,7 @@ def rebuild_cls(
 ) -> type:
     namespace = dict(cls.__dict__)
 
-    # Instert attributes that are not in the class dict, but handled
+    # Insert attributes that are not in the class dict, but handled
     # by the low level Cpython.
     namespace.setdefault("__qualname__", cls.__qualname__)
 

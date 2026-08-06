@@ -5,7 +5,7 @@ some format on disk or on the clkoud.
 
 Each format should implement the more general
 transformation/images/meshes/streamlines API that does not assume that
-the data is stored at a specfic path.
+the data is stored at a specific path.
 
 E.g.
 ```python

@@ -53,7 +53,7 @@ from scipy.ndimage import gaussian_filter
 def inverse3d(disp: np.ndarray) -> np.ndarray:
     """
     Compute the inverse of a displacement field by interpreting it as a
-    thetrahedral mesh, where each thetrahedron defines an affine transform.
+    thetrahedral mesh, where each tetrahedron defines an affine transform.
 
     This is the method described in the appendix of:
         "Image Registration Using a Symmetric Prior — in Three Dimensions"
@@ -102,7 +102,7 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     # Convert coordinates to displacements
     out -= src
 
-    # Fill in missing values via smooting
+    # Fill in missing values via smoothing
     msk = msk0 = np.isfinite(out)
     while not msk.all():
          out[~msk] = 0
@@ -135,12 +135,12 @@ def _process_thetrahedron(src, dst, out):
         The output array to write the results to, of shape (Nx, Ny, Nz, 3).
 
     """
-    # sort thetrahedron vertices along z axis
+    # sort tetrahedron vertices along z axis
     idx = np.argsort(dst[:, :, Z:Z+1], axis=VERTEX_AXIS)
     ttr = np.take_along_axis(dst, idx, axis=VERTEX_AXIS)
 
-    # For each horizontal plane, find its intersection with the thetrahedron.
-    # We start from the minimum integral z in the thetrahedron.
+    # For each horizontal plane, find its intersection with the tetrahedron.
+    # We start from the minimum integral z in the tetrahedron.
     z = np.ceil(ttr[:, 0, Z]).astype(np.int64)
     while True:
 
@@ -267,7 +267,7 @@ def _process_segment(src, dst, z, y, seg, out):
         bary = _barycoord(vdst, dst[mask])                     # (N, 4)
 
         # Compute the corresponding point in the source domain as the
-        # barycentric mean of the thetrahedron vertices in the source domain.
+        # barycentric mean of the tetrahedron vertices in the source domain.
         vsrc = np.einsum('ijk,ij->ik', src[mask], bary)        # (N, 3)
 
         # Assign the computed point to the output array
@@ -278,14 +278,14 @@ def _process_segment(src, dst, z, y, seg, out):
 
 def _barycoord(x, tetra):
     # Compute the barycentric coordinates of x with respect to the
-    # thetrahedron defined by its vertices.
+    # tetrahedron defined by its vertices.
     # * x is of shape (N, 13), where N is the number of voxels in the
     #   batch. The last dimension contains the (x,y,z).
-    # * The thetrahedron is defined by its vertices, with shape (N, 4, 3),
+    # * The tetrahedron is defined by its vertices, with shape (N, 4, 3),
     #   where N is the number of thetrahedra in the batch.
     # * The output is of shape (N, 4), where the last dimension contains
     #   the barycentric coordinates of x with respect to each vertex of
-    #   the thetrahedron.
+    #   the tetrahedron.
 
     v0 = tetra[:, 0]
     v1 = tetra[:, 1]
@@ -322,9 +322,9 @@ def _find_segment(tri, y):
 
 
 def _find_lower_triangle(dst, z):
-    # Compute intersection of the "infinite" thetrahedron (no base)
+    # Compute intersection of the "infinite" tetrahedron (no base)
     # and a horizontal plane. Vertices are sorted by increasing z.
-    # The first vertex is the "tip" of the thetrahedron.
+    # The first vertex is the "tip" of the tetrahedron.
     #
     # The resulting intersection is a triangle. We return the (x,y)
     # coordinates of its vertices.
@@ -350,9 +350,9 @@ def _find_lower_triangle(dst, z):
 
 
 def _find_upper_triangle(dst, z):
-    # Compute intersection of the "infinite" thetrahedron (no base)
+    # Compute intersection of the "infinite" tetrahedron (no base)
     # and a horizontal plane. Vertices are sorted by increasing z.
-    # The last vertex is the "tip" of the thetrahedron.
+    # The last vertex is the "tip" of the tetrahedron.
     #
     # The resulting intersection is a triangle. We return the (x,y)
     # coordinates of its vertices.
@@ -440,7 +440,7 @@ def _yield_thetrahedra(field):
         The coordinates of the vertices of the thetrahedra, with shape
         (N, 4, 3).
     """
-    # We need to split the grid into a red-black cherckerboard pattern.
+    # We need to split the grid into a red-black checkerboard pattern.
     # We also want to extract thetrahedra via slicing, which means we can
     # only batch thetrahedra whose vertices are aligned on a cartesian grid.
     # We therefore split the input grid into 8 subgrids, and designate 4 of
@@ -577,7 +577,7 @@ def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
     #    |                      /    ________|/
     #                                         #4
     #
-    # The fifth thetrahedron is a regular one, whose vertices are the
+    # The fifth tetrahedron is a regular one, whose vertices are the
     # four vertices that were not tips in the other four thetrahedra.
 
     # tip = 000
@@ -610,7 +610,7 @@ def yield_black(x000, x001, x010, x011, x100, x101, x110, x111):
     #                 |         |/________   /
     #                        #3
     #
-    # Similarly to the "red" blocks, the fifth thetrahedron is made of the
+    # Similarly to the "red" blocks, the fifth tetrahedron is made of the
     # four vertices that were not tips in the other four thetrahedra.
 
     # tip = 010

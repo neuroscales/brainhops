@@ -11,7 +11,7 @@ are typically more specialized then their parents.
 We implement both types of hierarchy, so that users can easily check
 whether a transformation can be conceptually thought as a given class
 of transformation (e.g. "is this transformation a linear transform?"),
-without it being conflated with type inheritence
+without it being conflated with type inheritance
 (e.g. "is this transformation an instance of the Linear class?").
 
 In our hierarchy, transformations types correspond to sets, and
