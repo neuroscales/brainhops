@@ -218,15 +218,15 @@ class TestExpandDimsSquareParametric:
         t = Scaling(scale=np.array([2.0, 3.0]), input=xy, output=xy)
         expanded = t.expand_dims([axes["Z"]], side="both")
         # delegates to Linear -- result is a Linear, not a Scaling
-        assert isinstance(expanded, Linear)
-        assert expanded.matrix.shape == (3, 3)
+        assert isinstance(expanded, Scaling)
+        assert len(expanded.scale) == 3
 
     def test_translation_expand_both(self, xy, axes):
         t = Translation(translation=np.array([1.0, 2.0]), input=xy, output=xy)
         expanded = t.expand_dims([axes["Z"]], side="both")
         # delegates to Affine -- result is an Affine, not a Translation
-        assert isinstance(expanded, Affine)
-        assert expanded.matrix.shape == (3, 4)
+        assert isinstance(expanded, Translation)
+        assert len(expanded.translation) == 3
 
     @pytest.mark.parametrize("cls,kwargs", [
         (Scaling, {"scale": np.array([2.0, 3.0])}),

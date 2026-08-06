@@ -330,6 +330,16 @@ class Transformation(DataModelBase, reverse=True):
                     ) -> "Transformation":
         raise NotImplementedError()
 
+    def add_missing_axes(self, missing: list, side: str = "both") -> "Transformation":
+        ret = copy.deepcopy(self)
+        if side in ("both", "input") and ret.input is not None and ret.input.axes is not None:
+            ret.input = copy.deepcopy(ret.input)
+            ret.input.axes = ret.input.axes + missing
+        if side in ("both", "output") and ret.output is not None and ret.output.axes is not None:
+            ret.output = copy.deepcopy(ret.output)
+            ret.output.axes = ret.output.axes + missing
+        return ret
+
 # ----------------------------------------------------------------------
 #    CONCRETE CLASSES
 # ----------------------------------------------------------------------
@@ -400,11 +410,11 @@ class CoordinatesField(Transformation):
         if not missing:
             return self
 
+        ret = self.add_missing_axes(missing, side)
+
         expand_input = side in ("input", "both")
         expand_output = side in ("output", "both")
         n_missing = len(missing)
-
-        ret = copy.deepcopy(self)
 
         if expand_output:
             # add output dimensions (new zero-filled channels)
@@ -423,13 +433,6 @@ class CoordinatesField(Transformation):
                 *(1,) * n_missing,
                 ret.field.shape[-1],
             )
-
-        if expand_input:
-            ret.input = copy.deepcopy(ret.input)
-            ret.input.axes = ret.input.axes + missing
-        if expand_output:
-            ret.output = copy.deepcopy(ret.output)
-            ret.output.axes = ret.output.axes + missing
 
         return ret
 
@@ -546,11 +549,11 @@ class DisplacementField(Transformation):
         if not missing:
             return self
 
+        ret = self.add_missing_axes(missing, side)
+
         expand_input = side in ("input", "both")
         expand_output = side in ("output", "both")
         n_missing = len(missing)
-
-        ret = copy.deepcopy(self)
 
         if expand_output:
             # add output dimensions (new zero-filled channels)
@@ -569,13 +572,6 @@ class DisplacementField(Transformation):
                 *(1,) * n_missing,
                 ret.field.shape[-1],
             )
-
-        if expand_input:
-            ret.input = copy.deepcopy(ret.input)
-            ret.input.axes = ret.input.axes + missing
-        if expand_output:
-            ret.output = copy.deepcopy(ret.output)
-            ret.output.axes = ret.output.axes + missing
 
         return ret
 
@@ -639,11 +635,11 @@ class Affine(Transformation):
         if not missing:
             return self
 
+        ret = self.add_missing_axes(missing, side)
+
         expand_input = side in ("input", "both")
         expand_output = side in ("output", "both")
         n_missing = len(missing)
-
-        ret = copy.deepcopy(self.to(Affine))
 
         old_matrix = ret.matrix
         No, Ni1 = old_matrix.shape
@@ -668,13 +664,6 @@ class Affine(Transformation):
         #   i.e., the new outputs are constant zero, independent of input.
 
         ret.matrix = new_matrix
-
-        if expand_input:
-            ret.input = copy.deepcopy(ret.input)
-            ret.input.axes = ret.input.axes + missing
-        if expand_output:
-            ret.output = copy.deepcopy(ret.output)
-            ret.output.axes = ret.output.axes + missing
 
         return ret
 
@@ -720,11 +709,11 @@ class Linear(Transformation):
         if not missing:
             return self
 
+        ret = self.add_missing_axes(missing, side)
+
         expand_input = side in ("input", "both")
         expand_output = side in ("output", "both")
         n_missing = len(missing)
-
-        ret = copy.deepcopy(self.to(Linear))
 
         old_matrix = ret.matrix
         No, Ni1 = old_matrix.shape
@@ -748,13 +737,6 @@ class Linear(Transformation):
         #   i.e., the new outputs are constant zero, independent of input.
 
         ret.matrix = new_matrix
-
-        if expand_input:
-            ret.input = copy.deepcopy(ret.input)
-            ret.input.axes = ret.input.axes + missing
-        if expand_output:
-            ret.output = copy.deepcopy(ret.output)
-            ret.output.axes = ret.output.axes + missing
 
         return ret
 
@@ -833,6 +815,15 @@ class Permutation(Transformation):
     def expand_dims(self, missing: list, side: tx.Union[tx.Literal["both"], tx.Literal["input"], tx.Literal["output"]] = "both") -> Transformation:
         if not missing:
             return self
+        if side == "both":
+            ret = self.add_missing_axes(missing, side)
+            if ret.permutation is not None:
+                n_missing = len(missing)
+                old_len = len(ret.permutation)
+                old_permutation = list(ret.permutation)
+                new_indices = list(range(old_len, old_len + n_missing))
+                ret.permutation = np.asarray(old_permutation + new_indices)
+            return ret
         return self.to(Linear).expand_dims(missing, side)
 
 
@@ -872,6 +863,14 @@ class Scaling(Transformation):
     def expand_dims(self, missing: list, side: tx.Union[tx.Literal["both"], tx.Literal["input"], tx.Literal["output"]] = "both") -> Transformation:
         if not missing:
             return self
+        if side == "both":
+            ret = self.add_missing_axes(missing, side)
+            new_scale = np.ones(len(missing))
+            ret.scale = (
+                np.concatenate([np.asarray(ret.scale), new_scale])
+                if ret.scale is not None else None
+            )
+            return ret
         return self.to(Linear).expand_dims(missing, side)
 
 
@@ -911,6 +910,14 @@ class Translation(Transformation):
     def expand_dims(self, missing: list, side: tx.Union[tx.Literal["both"], tx.Literal["input"], tx.Literal["output"]] = "both") -> Transformation:
         if not missing:
             return self
+        if side == "both":
+            ret = self.add_missing_axes(missing, side)
+            new_translation = np.zeros(len(missing))
+            ret.translation = (
+                np.concatenate([np.asarray(ret.translation), new_translation])
+                if ret.translation is not None else None
+            )
+            return ret
         return self.to(Affine).expand_dims(missing, side)
 
 
@@ -931,16 +938,7 @@ class Identity(Transformation):
         return cls(input=self.output, output=self.input)
 
     def expand_dims(self, missing: list, side: tx.Union[tx.Literal["both"], tx.Literal["input"], tx.Literal["output"]] = "both") -> "Identity":
-        expand_input = side in ("input", "both")
-        expand_output = side in ("output", "both")
-        ret = copy.deepcopy(self)
-        if expand_input:
-            ret.input = copy.deepcopy(ret.input)
-            ret.input.axes = ret.input.axes + missing
-        if expand_output:
-            ret.output = copy.deepcopy(ret.output)
-            ret.output.axes = ret.output.axes + missing
-
+        ret = self.add_missing_axes(missing, side)
         return ret
 
 
@@ -1756,6 +1754,8 @@ def _same_axis_type(a1: Axis, a2: Axis):
 
 
 def _get_missing(a1: CoordinateSystem, a2: CoordinateSystem):
+    if a1 is None or a1.axes is None or a2 is None or a2.axes is None:
+        return []
     missing = []
     for i in range(len(a1.axes)):
         found = False
@@ -1810,10 +1810,26 @@ def make_same_axes(x1: Transformation, x2: Transformation):
     missing_backwards = _get_missing(x1.input, x2.output)
 
     if len(missing_forward) != 0:
-        x1_2 = x1_2.expand_dims(missing_forward, side="input")
+        x1_is_square = x1.ndims.input == x1.ndims.output
+        x1_axes_differ = len(
+            _get_missing(x1.input, x1.output) +
+            _get_missing(x1.output, x1.input)
+        ) > 0
+        if not x1_is_square or x1_axes_differ:
+            x1_2 = x1_2.expand_dims(missing_forward, side="input")
+        else:
+            x1_2 = x1_2.expand_dims(missing_forward, side="both")
 
     if len(missing_backwards) != 0:
-        x2_2 = x2_2.expand_dims(missing_backwards, side="output")
+        x2_is_square = x2.ndims.input == x2.ndims.output
+        x2_axes_differ = len(
+            _get_missing(x2.input, x2.output) +
+            _get_missing(x2.output, x2.input)
+        ) > 0
+        if not x2_is_square or x2_axes_differ:
+            x2_2 = x2_2.expand_dims(missing_backwards, side="output")
+        else:
+            x2_2 = x2_2.expand_dims(missing_backwards, side="both")
 
     return x1_2, x2_2
 
