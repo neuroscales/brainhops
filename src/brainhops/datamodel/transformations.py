@@ -37,7 +37,6 @@ from brainhops._core.typing import (
 )
 
 # ext
-# ext
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel.axes import Axis
 
