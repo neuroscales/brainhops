@@ -1607,7 +1607,7 @@ def _compute_sequence(
     while inputs:
         item = inputs.pop(0)
         if _matches_mode(item, mode):
-            while inputs and _matches_mode(inputs[0], mode):
+            while inputs and _matches_mode(inputs[0], mode) and (not _all_different(inputs[0].input, item.output) or mode[0] == hierarchy.Transformation):
                 # NOTE: we compose to the left ! (see sequence definition)
                 item = _compose(inputs.pop(0), item)
         outputs.append(item)
@@ -1765,6 +1765,14 @@ def _get_missing(a1: CoordinateSystem, a2: CoordinateSystem):
         if not found:
             missing.append(a1.axes[i])
     return missing
+
+
+def _all_different(a1: CoordinateSystem, a2: CoordinateSystem) -> bool:
+    if a1 is None or a1.axes is None or a2 is None or a2.axes is None:
+        return False
+    if len(_get_missing(a1, a2)) == len(a1.axes) or len(_get_missing(a2, a1)) == len(a2.axes):
+        return True
+    return False
 
 
 def make_same_axes(x1: Transformation, x2: Transformation):
