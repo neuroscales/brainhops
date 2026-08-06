@@ -54,4 +54,4 @@ jobs:
       - name: Spellcheck
         uses: codespell-project/actions-codespell@v2
         with:
-          skip: "*.git,*.lock"
+          files: "**/*.{md,py,toml,yaml,yml}"
