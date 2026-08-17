@@ -10,7 +10,7 @@ import typing_extensions as _tx
 
 # internals
 from .base import DataModelBase
-from .axes import Axis, SpatialAxis
+from .axes import Axis, SpatialAxis, same_axis_type
 from . import axes as _axes
 
 
@@ -74,16 +74,20 @@ class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
     axes: _tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
 
 
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
+    ...
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
+    ...
 
 
 # ----------------------------------------------------------------------
@@ -103,7 +107,8 @@ class SpatialCoordinateSystem2D(CoordinateSystem2D, SpatialCoordinateSystem):
 
 class SpatialCoordinateSystem3D(CoordinateSystem3D, SpatialCoordinateSystem):
     """A 3D coordinate system, whose axes have spatial meaning."""
-    axes: _tx.Optional[_3SpatialAxes] = (SpatialAxis(), SpatialAxis(), SpatialAxis())
+    axes: _tx.Optional[_3SpatialAxes] = (
+        SpatialAxis(), SpatialAxis(), SpatialAxis())
 
 
 class PixelCoordinateSystem(SpatialCoordinateSystem2D, ArrayCoordinateSystem2D):
@@ -274,3 +279,35 @@ class CRSACoordinateSystem(RSACoordinateSystem, CVoxelCoordinateSystem):
         _axes.InferiorToSuperiorAxis(name="y"),
         _axes.LeftToRightAxis(name="x"),
     )
+
+
+def get_missing(c1: CoordinateSystem, c2: CoordinateSystem):
+    """
+    Find all axes in c1 that don't match an axis in c2
+
+    Parameters
+    ----------
+    c1: CoordinateSystem
+        The coordinate system containing axes that we would like to see if are missing from c2
+    c2: CoordinateSystem
+        The coordinate system that we want to see if there are any missing axes in
+
+    Returns
+    -------
+    list[Axis]
+        all axes in c1 that have no match in c2 
+
+
+    """
+
+    if c1 is None or c1.axes is None or c2 is None or c2.axes is None:
+        return []
+    missing = []
+    for i in range(len(c1.axes)):
+        found = False
+        for j in range(len(c2.axes)):
+            if same_axis_type(c1.axes[i], c2.axes[j]):
+                found = True
+        if not found:
+            missing.append(c1.axes[i])
+    return missing

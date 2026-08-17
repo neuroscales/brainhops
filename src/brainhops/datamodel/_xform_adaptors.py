@@ -2,55 +2,8 @@
 
 # internals
 from .systems import CoordinateSystem
-from .transformations import _adaptor, _same_axis_type
+from .transformations import _adaptor, same_axis_type
 from .transformations import Sequence, Transformation, Identity, Permutation, Scaling
-
-
-def _get_names(axes):
-    return [axis.name for axis in axes]
-
-
-def _get_units(axes):
-    return [axis.unit for axis in axes]
-
-
-def _get_orientations(axes):
-    return [axis.orientation for axis in axes]
-
-
-def _get_by_name(axes, name):
-    for axis in axes:
-        if axis.name == name:
-            yield axis
-    return None
-
-
-def _get_by_unit(axes, unit):
-    for axis in axes:
-        if axis.unit == unit:
-            yield axis
-    return None
-
-
-def _get_by_unit_type(axes, unit_type):
-    for axis in axes:
-        if axis.unit and axis.unit.type == unit_type:
-            yield axis
-    return None
-
-
-def _get_by_orientation(axes, orientation):
-    for axis in axes:
-        if axis.orientation == orientation:
-            yield axis
-    return None
-
-
-def _get_by_orientation_type(axes, orientation_type):
-    for axis in axes:
-        if axis.orientation and axis.orientation.type == orientation_type:
-            yield axis
-    return None
 
 
 @_adaptor
@@ -78,7 +31,7 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
     for i in range(len(x2.output.axes)):
         matches = []
         for j in range(len(x1.input.axes)):
-            if _same_axis_type(x2.output.axes[i], x1.input.axes[j]):
+            if same_axis_type(x2.output.axes[i], x1.input.axes[j]):
                 matches.append(j)
         if len(matches) == 0:
             raise ValueError(
