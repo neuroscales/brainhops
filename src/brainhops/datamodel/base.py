@@ -47,7 +47,7 @@ class DataModelBase(
         Create an instance of the class from an instance of a similar
         class.
 
-        Only attibutes of the other instance that match keyword-like
+        Only attributes of the other instance that match keyword-like
         fields of this class will be used.
 
         Additional positional and/or keyword arguments can be provided,

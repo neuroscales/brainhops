@@ -348,7 +348,7 @@ class InversedBoolAnnotatedField(BoolAnnotatedField):
 @slots
 class Default(AnnotatedField):
     """
-    Specifiy that a field has a default value.
+    Specify that a field has a default value.
 
     ```python
     Default(10)      ~> Field(default=10)
@@ -362,7 +362,7 @@ class Default(AnnotatedField):
 @slots
 class Factory(AnnotatedField):
     """
-    Specifiy that a field has a default factory.
+    Specify that a field has a default factory.
 
     ```python
     Factory()             ~> Field(factory=True)
@@ -378,7 +378,7 @@ class Factory(AnnotatedField):
 @slots
 class ConvertTo(AnnotatedField):
     """
-    Specifiy that a field has a converter.
+    Specify that a field has a converter.
 
     ```python
     ConvertTo()             ~> Field(converter=True)
@@ -394,7 +394,7 @@ class ConvertTo(AnnotatedField):
 @slots
 class Validate(AnnotatedField):
     """
-    Specifiy that a field has a validator.
+    Specify that a field has a validator.
 
     ```python
     Validate()                  ~> Field(validator=True)
@@ -410,7 +410,7 @@ class Validate(AnnotatedField):
 @slots
 class Init(BoolAnnotatedField):
     """
-    Specifiy that a field should [not] be included in the generated
+    Specify that a field should [not] be included in the generated
     `__init__` method.
 
     ```python
@@ -430,7 +430,7 @@ class NoInit(Init, InversedBoolAnnotatedField): ...
 @slots
 class Kw(BoolAnnotatedField):
     """
-    Specifiy that a field is [not] a keyword-only parameter.
+    Specify that a field is [not] a keyword-only parameter.
 
     ```python
     Kw()        ~> Field(kw=True)
@@ -451,7 +451,7 @@ class NotKw(Kw, InversedBoolAnnotatedField): ...
 @slots
 class Positional(BoolAnnotatedField):
     """
-    Specifiy that a field is [not] a positional-only parameter.
+    Specify that a field is [not] a positional-only parameter.
 
     ```python
     Positional()        ~> Field(positional=True)
@@ -488,7 +488,7 @@ class NotPositionalOnly(Kw, Positional): ...
 @slots
 class Frozen(BoolAnnotatedField):
     """
-    Specifiy that a field is [not] frozen.
+    Specify that a field is [not] frozen.
 
     ```python
     Frozen()       ~> Field(frozen=True)
@@ -507,7 +507,7 @@ class NotFrozen(Frozen, InversedBoolAnnotatedField): ...
 @slots
 class Var(BoolAnnotatedField):
     """
-    Specifiy that a field is a pseudo-field (InitVar or ClassVar).
+    Specify that a field is a pseudo-field (InitVar or ClassVar).
 
     ```python
     Var()         ~> Field(var=True)
@@ -534,7 +534,7 @@ class ClassVar(Var, NoInit): ...
 @slots
 class Repr(BoolAnnotatedField):
     """
-    Specifiy that a field should [not] be included in the generated
+    Specify that a field should [not] be included in the generated
     `__repr__` method.
 
     ```python
@@ -553,7 +553,7 @@ class NoRepr(Repr, InversedBoolAnnotatedField): ...
 
 @slots
 class Eq(BoolAnnotatedField):
-    """ Specifiy that a field should [not] be included in the generated `__eq__` method.
+    """ Specify that a field should [not] be included in the generated `__eq__` method.
 
     ```python
     Eq()       ~> Field(eq=True)
@@ -572,7 +572,7 @@ class NoEq(Eq, InversedBoolAnnotatedField): ...
 
 @slots
 class Order(BoolAnnotatedField):
-    """ Specifiy that a field should [not] be included in the generated `__lt__` method.
+    """ Specify that a field should [not] be included in the generated `__lt__` method.
 
     ```python
     Order()       ~> Field(order=True)
@@ -599,7 +599,7 @@ class NoCompare(Compare, InversedBoolAnnotatedField): ...
 
 @slots
 class Hash(BoolAnnotatedField):
-    """ Specifiy that a field should [not] be included in the generated
+    """ Specify that a field should [not] be included in the generated
     `__hash__` method.
 
     ```python
@@ -619,7 +619,7 @@ class NoHash(Hash, InversedBoolAnnotatedField): ...
 
 @slots
 class Key(BoolAnnotatedField):
-    """ Specifiy that a field should [not] be included in the generated
+    """ Specify that a field should [not] be included in the generated
     `__hash__` method.
 
     ```python
@@ -640,7 +640,7 @@ class NotKey(Key, InversedBoolAnnotatedField): ...
 @slots
 class Doc(AnnotatedField, _tx.Doc):
     """
-    Specifiy the docstring for a field.
+    Specify the docstring for a field.
 
     ```python
     Doc("This is a field")      ~> Field(doc="This is a field")

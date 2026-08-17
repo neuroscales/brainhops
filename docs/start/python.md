@@ -87,7 +87,7 @@ They have the attributes:
 ## Apply a transformation to an image
 
 An `Image` can be called on a `Transformation` that maps from any space
-to its preferred space. It returns another image, whose `tranformation`
+to its preferred space. It returns another image, whose `transformation`
 attribute is the composition of the original `transformation` attribute
 and the inverse of the transformation. While this may seem counter-intuitive,
 this is the most general way of "delaying" the application of a transformation.
@@ -137,7 +137,7 @@ mov = src(vox2ras @ vox_disp @ vox2ras.inverse(), reslice="preserve")
 
 ## Transformations
 
-Basic tranformations in `brainhops` are mostly modeled on the
+Basic transformations in `brainhops` are mostly modeled on the
 [OME-NGFF](https://ngff.openmicroscopy.org/specifications/dev/index.html)
 specification, with additional flexibility:
 

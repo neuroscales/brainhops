@@ -54,7 +54,7 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     # Convert coordinates to displacements
     out -= src
 
-    # Fill in missing values via smooting
+    # Fill in missing values via smoothing
     msk = msk0 = np.isfinite(out)
     while not msk.all():
          out[~msk] = 0
@@ -157,7 +157,7 @@ def _process_segment(src, dst, y, seg, out):
         bary = _barycoord(vdst, dst[mask])                 # (N, 3)
 
         # Compute the corresponding point in the source domain as the
-        # barycentric mean of the thetrahedron vertices in the source domain.
+        # barycentric mean of the tetrahedron vertices in the source domain.
         vsrc = np.einsum('ijk,ij->ik', src[mask], bary)    # (N, 2)
 
         # Assign the computed point to the output array
@@ -251,7 +251,7 @@ def _yield_triangles(field):
         The coordinates of the vertices of the triangles, with shape
         (N, 3, 2).
     """
-    # We need to split the grid into a red-black cherckerboard pattern.
+    # We need to split the grid into a red-black checkerboard pattern.
     # We also want to extract triangles via slicing, which means we can
     # only batch triangles whose vertices are aligned on a cartesian grid.
     # We therefore split the input grid into 4 subgrids, and designate 2 of
