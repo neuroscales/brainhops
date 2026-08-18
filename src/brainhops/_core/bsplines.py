@@ -2,6 +2,7 @@
 import itertools
 
 # dependencies
+import numpy as np
 import typing_extensions as _tx
 
 # locals
@@ -14,7 +15,7 @@ def pull(
     coords: ArrayProtocol,
     order: int,
     bound: _tx.Union[str, float],
-    coeff: bool
+    coeff: bool,
 ) -> ArrayProtocol:
     """
     Interpolate an array using a coordinates field.
@@ -103,6 +104,121 @@ def pull_field(field, coords, order, bound, coeff):
     return field
 
 
+def pull_affine(
+    input: ArrayProtocol,
+    affine: ArrayProtocol,
+    order: int,
+    bound: _tx.Union[str, float],
+    shape: _tx.Optional[_tx.Tuple[int, ...]] = None,
+    coeff: bool = False,
+) -> ArrayProtocol:
+    """
+    Interpolate an array using an affine matrix.
+
+    Parameters
+    ----------
+    input : array-like
+        The array to be interpolated. Shape (*batch, *spatial_in)
+    affine : array-like
+        The affine matrix mapping output coordinates to input
+        coordinates (i.e., for each output voxel, where to sample in
+        `input`). Shape (ndim, ndim+1); the last column is the
+        translation. This is the same convention as `Affine.matrix`.
+    shape : tuple[int], optional
+        The shape of the output spatial domain. If `None`, uses the
+        same spatial shape as `input`.
+    order : {0..5}
+        The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
+        The boundary condition. If a string, one of:
+        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+        If a float, the constant value to use beyond the edge.
+    coeff : bool
+        If True, the input image is assumed to already contain spline
+        coefficients. If False, the input image will be prefiltered
+        before interpolation.
+
+    Returns
+    -------
+    array-like
+        The interpolated array. Shape (*batch, *spatial_out)
+
+    """
+    # Get packages
+    ab = get_array_backend(input)
+    ib = get_ndimage_backend(input)
+    # Get dimensions
+    ndim = affine.shape[-1] - 1
+    batch = input.shape[:-ndim]
+    output_shape = tuple(shape) if shape is not None else input.shape[-ndim:]
+    output = ab.empty_like(input, shape=batch + output_shape)
+    mode = "constant" if not isinstance(bound, str) else bound
+    cval = 0 if isinstance(bound, str) else bound
+    opts = dict(
+        matrix=affine,
+        output_shape=output_shape,
+        order=order,
+        mode=mode,
+        cval=cval,
+        prefilter=not coeff,
+    )
+    # Interpolate each batch
+    for index in itertools.product(*[range(s) for s in batch]):
+        output[index] = ib.affine_transform(input[index], **opts)
+    return output
+
+
+def pull_affine_field(field, affine, shape=None, order=1, bound="nearest", coeff=False):
+    """
+    Interpolate a displacement or coordinates field using an affine matrix.
+
+    Parameters
+    ----------
+    field : array-like
+        The field to be interpolated. Shape (*batch, *spatial_in, ndim)
+    affine : array-like
+        The affine matrix mapping output coordinates to input
+        coordinates (i.e., for each output voxel, where to sample in
+        `field`). Shape (ndim, ndim+1); the last column is the
+        translation. This is the same convention as `Affine.matrix`.
+    shape : tuple[int], optional
+        The shape of the output spatial domain. If `None`, uses the
+        same spatial shape as `field`.
+    order : {0..5}
+        The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+    bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
+        The boundary condition. If a string, one of:
+        - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+        - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+        - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+        - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+        - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+        If a float, the constant value to use beyond the edge.
+    coeff : bool
+        If True, the input image is assumed to already contain spline
+        coefficients. I.e., it has already been prefiltered with the
+        appropriate spline filter. If False, the input image will be
+        prefiltered before interpolation.
+
+    Returns
+    -------
+    array-like
+        The interpolated field. Shape (*batch, *spatial_out, ndim)
+
+    """
+    ab = get_array_backend(field)
+    field = ab.moveaxis(field, -1, 0)
+
+    field = pull_affine(field, affine, shape=shape,
+                        order=order, bound=bound, coeff=coeff)
+    field = ab.moveaxis(field, 0, -1)
+    return field
+
+
 def coeff2value(input, order, bound, inplace=False, ndim=None):
     """
     Convert an array of spline coefficients to values by applying the
@@ -146,7 +262,8 @@ def coeff2value(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(*(ab.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
@@ -238,7 +355,8 @@ def value2coeff(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(*(ab.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
