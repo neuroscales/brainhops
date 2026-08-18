@@ -1,4 +1,4 @@
-__all__ = ["nifit"]
+__all__ = ["nifti"]
 
 
 from . import nifti
