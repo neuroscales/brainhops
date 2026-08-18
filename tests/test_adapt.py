@@ -1,5 +1,5 @@
 """
-Tests for `Transformation.expand_dims` and the axis adaptor
+Tests for `Transformation._expand_dims` and the axis adaptor
 (`_adapt` / the `@_adaptor`-registered permutation+scaling function).
 
 These tests exercise the real `brainhops` code, so they need to run in
@@ -18,14 +18,13 @@ assumptions baked into these tests -- adjust if your API differs:
   they depend on the exact `Unit` API (`unit.scale`), which wasn't
   available to verify here -- fill in `make_unit(...)` and un-skip
   once you confirm that API.
-* `make_same_axes(x1, x2)` and `_adapt(x1, x2)` treat `x2` as the
+* `_make_same_axes(x1, x2)` and `_adapt(x1, x2)` treat `x2` as the
   transform applied FIRST (matched via its `.output`) and `x1` as the
   transform applied SECOND (matched via its `.input`). Tests that call
   these directly use fixtures named `earlier`/`later` (== `x2`/`x1`)
   to keep this explicit. `Sequence`'s own public ordering (transforms
   apply in list order) is unaffected by this and is not renamed.
 """
-import copy
 
 import numpy as np
 import pytest
@@ -38,23 +37,19 @@ from brainhops.datamodel.axes import (
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
-    Bijection,
     CoordinatesField,
     Identity,
-    Inverse,
     Linear,
-    NDims,
     Permutation,
     Scaling,
     Sequence,
     Translation,
     _adapt,
-    make_same_axes,
+    _make_same_axes,
 )
 
 # Importing this module registers the permutation/scaling adaptor
 # function with `_adapt` via the `@_adaptor` decorator.
-import brainhops.datamodel._xform_adaptors  # noqa: F401
 
 
 # ---------------------------------------------------------------------
@@ -119,7 +114,7 @@ class TestExpandDimsAffine:
             [2.0, 0.0, 10.0],
             [0.0, 3.0, 20.0],
         ]))
-        expanded = t.expand_dims([axes["Z"]], side="output")
+        expanded = t._expand_dims([axes["Z"]], side="output")
 
         assert expanded.matrix.shape == (3, 3)
         # existing rows/cols untouched
@@ -136,7 +131,7 @@ class TestExpandDimsAffine:
             [2.0, 0.0, 10.0],
             [0.0, 3.0, 20.0],
         ]))
-        expanded = t.expand_dims([axes["Z"]], side="input")
+        expanded = t._expand_dims([axes["Z"]], side="input")
 
         assert expanded.matrix.shape == (2, 4)
         # new input column (before translation) has no effect on output
@@ -149,7 +144,7 @@ class TestExpandDimsAffine:
 
     def test_expand_both_is_identity_pass_through(self, xy, axes):
         t = make_affine(xy, xy)
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
 
         assert expanded.matrix.shape == (3, 4)
         assert expanded.ndim == 3  # input == output dimensionality
@@ -161,7 +156,7 @@ class TestExpandDimsAffine:
 
     def test_expand_empty_missing_is_noop(self, xy):
         t = make_affine(xy, xy)
-        result = t.expand_dims([], side="both")
+        result = t._expand_dims([], side="both")
         assert result is t
 
 
@@ -169,19 +164,19 @@ class TestExpandDimsLinear:
 
     def test_expand_output(self, xy, axes):
         t = make_linear(xy, xy, matrix=np.eye(2))
-        expanded = t.expand_dims([axes["Z"]], side="output")
+        expanded = t._expand_dims([axes["Z"]], side="output")
         assert expanded.matrix.shape == (3, 2)
         np.testing.assert_array_equal(expanded.matrix[-1], [0.0, 0.0])
 
     def test_expand_input(self, xy, axes):
         t = make_linear(xy, xy, matrix=np.eye(2))
-        expanded = t.expand_dims([axes["Z"]], side="input")
+        expanded = t._expand_dims([axes["Z"]], side="input")
         assert expanded.matrix.shape == (2, 3)
         np.testing.assert_array_equal(expanded.matrix[:, -1], [0.0, 0.0])
 
     def test_expand_both(self, xy, axes):
         t = make_linear(xy, xy, matrix=np.eye(2))
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
         assert expanded.matrix.shape == (3, 3)
         np.testing.assert_array_equal(expanded.matrix, np.eye(3))
 
@@ -190,7 +185,7 @@ class TestExpandDimsFields:
 
     def test_expand_output_pads_channel_axis(self, xy, axes):
         t = make_field(xy, xy, shape=(4, 5))
-        expanded = t.expand_dims([axes["Z"]], side="output")
+        expanded = t._expand_dims([axes["Z"]], side="output")
 
         assert expanded.field.shape == (4, 5, 3)
         np.testing.assert_array_equal(expanded.field[..., -1], 0.0)
@@ -199,7 +194,7 @@ class TestExpandDimsFields:
 
     def test_expand_input_adds_singleton_grid_axis(self, xy, axes):
         t = make_field(xy, xy, shape=(4, 5))
-        expanded = t.expand_dims([axes["Z"]], side="input")
+        expanded = t._expand_dims([axes["Z"]], side="input")
 
         assert expanded.field.shape == (4, 5, 1, 2)
         assert len(expanded.input.axes) == 3
@@ -207,7 +202,7 @@ class TestExpandDimsFields:
 
     def test_expand_both(self, xy, axes):
         t = make_field(xy, xy, shape=(4, 5))
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
         assert expanded.field.shape == (4, 5, 1, 3)
 
 
@@ -216,14 +211,14 @@ class TestExpandDimsSquareParametric:
 
     def test_scaling_expand_both(self, xy, axes):
         t = Scaling(scale=np.array([2.0, 3.0]), input=xy, output=xy)
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
         # delegates to Linear -- result is a Linear, not a Scaling
         assert isinstance(expanded, Scaling)
         assert len(expanded.scale) == 3
 
     def test_translation_expand_both(self, xy, axes):
         t = Translation(translation=np.array([1.0, 2.0]), input=xy, output=xy)
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
         # delegates to Affine -- result is an Affine, not a Translation
         assert isinstance(expanded, Translation)
         assert len(expanded.translation) == 3
@@ -240,7 +235,7 @@ class TestExpandDimsSquareParametric:
         # an empty `missing` list silently returned a converted
         # Linear/Affine instance instead of the original object.
         t = cls(input=xy, output=xy, **kwargs)
-        result = t.expand_dims([], side="both")
+        result = t._expand_dims([], side="both")
         assert result is t
         assert type(result) is cls
 
@@ -249,7 +244,7 @@ class TestExpandDimsIdentity:
 
     def test_expand_updates_axes_only(self, xy, axes):
         t = Identity(input=xy, output=xy)
-        expanded = t.expand_dims([axes["Z"]], side="both")
+        expanded = t._expand_dims([axes["Z"]], side="both")
         assert len(expanded.input.axes) == 3
         assert len(expanded.output.axes) == 3
         # original untouched
@@ -263,7 +258,7 @@ class TestExpandDimsSequence:
         second = make_affine(xy, xy)
         seq = Sequence(transformations=[first, second], input=xy, output=xy)
 
-        expanded = seq.expand_dims([axes["Z"]], side="input")
+        expanded = seq._expand_dims([axes["Z"]], side="input")
 
         assert expanded.transformations[0].ndims.input == 3
         # second transform untouched
@@ -275,7 +270,7 @@ class TestExpandDimsSequence:
         second = make_affine(xy, xy)
         seq = Sequence(transformations=[first, second], input=xy, output=xy)
 
-        expanded = seq.expand_dims([axes["Z"]], side="output")
+        expanded = seq._expand_dims([axes["Z"]], side="output")
 
         assert expanded.transformations[-1].ndims.output == 3
         assert expanded.transformations[0].ndims.output == 2
@@ -284,14 +279,14 @@ class TestExpandDimsSequence:
     def test_original_sequence_and_children_untouched(self, xy, axes):
         first = make_affine(xy, xy)
         seq = Sequence(transformations=[first], input=xy, output=xy)
-        seq.expand_dims([axes["Z"]], side="both")
+        seq._expand_dims([axes["Z"]], side="both")
         assert seq.transformations[0].ndims.input == 2
 
 
 # =======================================================================
-#   make_same_axes
+#   _make_same_axes
 #
-#   Current convention: `make_same_axes(x1, x2)` -- and `_adapt`,
+#   Current convention: `_make_same_axes(x1, x2)` -- and `_adapt`,
 #   `_compose` below -- treat `x2` as the transform applied FIRST
 #   (its `.output` is what's being matched) and `x1` as the transform
 #   applied SECOND (its `.input` is what's being matched). i.e.
@@ -305,7 +300,7 @@ class TestMakeSameAxes:
     def test_already_matching_is_noop(self, xyz):
         later = make_affine(xyz, xyz)    # x1
         earlier = make_affine(xyz, xyz)  # x2
-        r1, r2 = make_same_axes(later, earlier)
+        r1, r2 = _make_same_axes(later, earlier)
         assert r1 is later
         assert r2 is earlier
 
@@ -313,7 +308,7 @@ class TestMakeSameAxes:
         # later's input (xyz) has Z; earlier's output (xy) is missing it.
         later = make_affine(xyz, xyz)
         earlier = make_affine(xy, xy)
-        r1, r2 = make_same_axes(later, earlier)
+        r1, r2 = _make_same_axes(later, earlier)
 
         assert r1.ndims.input == 3     # later: unchanged, already 3
         assert r2.ndims.output == 3    # earlier: expanded to add Z
@@ -321,19 +316,19 @@ class TestMakeSameAxes:
     def test_identity_ndims_zero_short_circuits(self, xy, xyz):
         later = Identity(input=xy, output=xy)  # ndims == (0, 0) -> wildcard
         earlier = make_affine(xyz, xyz)
-        r1, r2 = make_same_axes(later, earlier)
+        r1, r2 = _make_same_axes(later, earlier)
         assert r1 is later
         assert r2 is earlier
 
     def test_returns_results_in_same_order_as_arguments(self, xyz):
-        # Regression test: `make_same_axes(x1, x2)` must return
+        # Regression test: `_make_same_axes(x1, x2)` must return
         # `(result_for_x1, result_for_x2)` -- the same order as the
         # arguments -- and not silently swap them. Uses two distinct
         # (non-equal) matrices so an accidental swap can't hide behind
         # object/value equality.
         later = make_affine(xyz, xyz, matrix=np.eye(3, 4) * 2)
         earlier = make_affine(xyz, xyz, matrix=np.eye(3, 4) * 3)
-        r1, r2 = make_same_axes(later, earlier)
+        r1, r2 = _make_same_axes(later, earlier)
         assert r1 is later
         assert r2 is earlier
 
@@ -396,7 +391,7 @@ class TestAdapt:
 
     def test_zero_ndims_side_returns_identity(self, xyz):
         # an Identity transform has ndims (0, 0), which `_adapt`
-        # (mirroring `make_same_axes`) treats as "accepts anything".
+        # (mirroring `_make_same_axes`) treats as "accepts anything".
         later = make_affine(xyz, xyz)
         earlier = Identity(input=xyz, output=xyz)
         adapted = _adapt(later, earlier)
@@ -408,7 +403,7 @@ class TestAdapt:
 #
 #   NOTE: `Sequence(transformations=[t1, t2, ...])` semantics are
 #   unaffected by the x1/x2 convention above -- `_compute_sequence`
-#   already calls `_compose`/`_adapt`/`make_same_axes` with the right
+#   already calls `_compose`/`_adapt`/`_make_same_axes` with the right
 #   internal argument order, so from the outside, transformations in a
 #   Sequence still simply apply in list order (t1 first, then t2, ...).
 # =======================================================================
@@ -429,7 +424,7 @@ class TestSequenceComputeWithAdaptAndExpand:
 
     def test_missing_axis_count_mismatch_is_auto_expanded(self, xy, xyz):
         # t1's output (xy) is missing the Z axis that t2's input (xyz)
-        # has; `make_same_axes` should transparently expand t1's output
+        # has; `_make_same_axes` should transparently expand t1's output
         # (and/or t2's input) before composition, rather than erroring.
         t1 = make_affine(xy, xy)
         t2 = make_affine(xyz, xyz)
@@ -441,12 +436,12 @@ class TestSequenceComputeWithAdaptAndExpand:
     @pytest.mark.xfail(
         reason=(
             "known issue: `ndims == 0` is used as a 'this side accepts "
-            "anything' wildcard in make_same_axes/_adapt, but transforms "
+            "anything' wildcard in _make_same_axes/_adapt, but transforms "
             "like Scaling/Linear/Translation also report ndims == (0, 0) "
             "whenever their parameter is left as `None`, not only true "
             "Identity transforms. If such an under-specified transform "
             "sits between two real, mismatched-dimensionality transforms "
-            "in a Sequence, the mismatch can slip past make_same_axes "
+            "in a Sequence, the mismatch can slip past _make_same_axes "
             "instead of being caught."
         ),
         strict=False,
