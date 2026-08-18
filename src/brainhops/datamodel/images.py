@@ -29,7 +29,9 @@ class Image(DataModelBase):
     coordinateTransforms: _tx.Optional[_tx.List[Transformation]] = None
 
     def compute(self) -> ArrayProtocol:
-        steps = []  # list(self.coordinateTransforms)
+        steps = list(self.coordinateTransforms)
+        if len(steps) == 0:
+            return self.data
 
         transformation = Sequence(
             transformations=steps,
@@ -61,9 +63,9 @@ class Image(DataModelBase):
             return data
         if isinstance(transformation, AffineTransformation):
             affine_transformation = transformation.to(Affine)
-            return pull_affine(data, affine_transformation.matrix, order=3, bound=0.0)
+            return pull_affine(data, affine_transformation.matrix, order=0, bound=0.0)
         coord_transform = transformation.to(CoordinatesField)
-        return pull(data, coord_transform.field, 3, 0.0)
+        return pull(data, coord_transform.field, 0, 0.0, coeff=coord_transform.coeff)
 
 
 class MultiImage(Image):
