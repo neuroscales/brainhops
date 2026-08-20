@@ -7,6 +7,9 @@ import typing_extensions as _tx
 from brainhops._core.bsplines import (
     pull,
 )
+from brainhops.datamodel import hierarchy
+from brainhops.datamodel.hierarchy import AffineTransformation
+from brainhops.datamodel.transformations import is_identity
 
 # internals
 from .base import DataModelBase
@@ -28,8 +31,8 @@ GeometryLike = _tx.Optional[
 
 class Image(DataModelBase):
     data: _tx.Optional[da.Array] = None
-    _transformation: _tx.Optional[CoordinateSystem] = None
-    _transformations: _tx.Optional[_tx.List[Transformation]] = None
+    transformations: _tx.Optional[_tx.List[Transformation]] = None
+    transformation: _tx.Optional[Transformation] = None
 
     @property
     def transformation(self) -> Transformation:
@@ -40,6 +43,9 @@ class Image(DataModelBase):
         is reassigned (see the `transformations` setter, which invalidates
         this cache).
         """
+
+        self._transformation = getattr(self, "_transformation", None)
+        self._transformations = getattr(self, "_transformations", None)
         if self._transformation is None:
             if len(self.transformations) == 0:
                 self._transformation = Identity()
@@ -62,6 +68,7 @@ class Image(DataModelBase):
     @property
     def transformations(self) -> _tx.List[Transformation]:
         """Ordered list of transformations; defaults to [Identity()] if unset."""
+        self._transformations = getattr(self, "_transformations", None)
         if self._transformations is None:
             return [Identity()]
         return self._transformations
@@ -116,16 +123,23 @@ class Image(DataModelBase):
             coord_transform = transformation[1].to(CoordinatesField)
             affine_transform = transformation[0]
         else:
-            coord_transform = transformation.to(CoordinatesField)
-            affine_transform = Identity()
+            if not isinstance(hierarchy.parseType(type(transformation)), hierarchy.AffineTransformation):
+                coord_transform = transformation.to(CoordinatesField)
+                affine_transform = Identity()
+            else:
+                affine_transform = transformation
+                coord_transform = Identity()
 
-        new_data = pull(
-            self.data,
-            coord_transform.field,
-            0,
-            0.0,
-            coeff=coord_transform.coeff,
-        )
+        if is_identity(coord_transform):
+            new_data = self.data
+        else:
+            new_data = pull(
+                self.data,
+                coord_transform.field,
+                0,
+                0.0,
+                coeff=coord_transform.coeff,
+            )
         return Image(data=new_data, transformation=affine_transform)
 
     def __call__(self, transform: Transformation, reslice: GeometryLike = None) -> "Image":
