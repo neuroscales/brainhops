@@ -53,8 +53,7 @@ class UnionConverter(HintConverter[T]):
                 return converter(value)
             except Exception as e:
                 continue
-        raise e
-    
+
 
 @register(_tx.Optional)
 class OptionalConverter(HintConverter[T]):

@@ -1198,6 +1198,8 @@ def _compute_sequence(
     children = _mode_children(mode)
     for child in children:
         seq = _compute_sequence(seq, child, memo=memo)
+        if not isinstance(seq, Sequence):
+            return seq
 
     # Mark that we've been through this mode
     # !!! DO NOT RETURN HERE
