@@ -117,18 +117,18 @@ class Image(DataModelBase):
                 geometry = self.geometry
             elif isinstance(geometry, tuple):
                 geometry = CartesianField(shape=geometry)
-            transformation = geometry @ self.transformation
+            transformation = (self.transformation @ geometry).compute()
 
         if isinstance(transformation, Sequence):
-            coord_transform = transformation[1].to(CoordinatesField)
-            affine_transform = transformation[0]
+            coord_transform = transformation.transformations[1].to(
+                CoordinatesField)
+            affine_transform = transformation.transformations[0]
+        elif not isinstance(hierarchy.parseType(type(transformation)), hierarchy.AffineTransformation):
+            coord_transform = transformation.to(CoordinatesField)
+            affine_transform = Identity()
         else:
-            if not isinstance(hierarchy.parseType(type(transformation)), hierarchy.AffineTransformation):
-                coord_transform = transformation.to(CoordinatesField)
-                affine_transform = Identity()
-            else:
-                affine_transform = transformation
-                coord_transform = Identity()
+            affine_transform = transformation
+            coord_transform = Identity()
 
         if is_identity(coord_transform):
             new_data = self.data
