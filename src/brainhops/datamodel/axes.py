@@ -112,5 +112,5 @@ def same_axis_type(a1: Axis, a2: Axis):
     if a1.type == a2.type:
         if a1.type != "spatial":
             return True
-        return set(a1.name.split("-")) == set(a2.name.split("-"))
+        return set(a1.orientation.value.split("-")) == set(a2.orientation.value.split("-"))
     return False
