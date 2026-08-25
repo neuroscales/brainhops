@@ -55,4 +55,4 @@ jobs:
         uses: codespell-project/actions-codespell@v2
         with:
           skip: "*.git,*.lock"
-          ignore-words-file: "codespell-ignore-words.txt"
+          ignore-words: "codespell-ignore-words.txt"
