@@ -26,6 +26,7 @@ test = [
     "h5py",
     "simpleitk",
     "pytest-cov",
+    "nibabel",
 ]
 
 # doc
