@@ -1,9 +1,9 @@
 # stdlib
-from types import ModuleType
 from contextlib import contextmanager
+from types import ModuleType
 
 # internals
-from .typing import ArrayProtocol, npt, cpt, dkt
+from .typing import ArrayProtocol, cpt, dkt, npt
 
 # optionals
 np = npt.np  # numpy

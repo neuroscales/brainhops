@@ -124,19 +124,32 @@ from textwrap import dedent, indent
 # externals
 import typing_extensions as _tx
 
+from . import converters, validators
+
 # internals
 from .constants import (
-    _FIELDS, _OPTIONS, _DISCARD, _POST_INIT_NAME, _PRE_INIT_NAME, _RETURN_TYPE,
-    _SELF, SHOW_ATTR, _HasFactory, _DEFAULT, _TYPE, _CONVERTER, _VALIDATOR, MISSING,
-    HIDE_IF_NONE
+    _CONVERTER,
+    _DEFAULT,
+    _DISCARD,
+    _FIELDS,
+    _OPTIONS,
+    _POST_INIT_NAME,
+    _PRE_INIT_NAME,
+    _RETURN_TYPE,
+    _SELF,
+    _TYPE,
+    _VALIDATOR,
+    HIDE_IF_NONE,
+    MISSING,
+    SHOW_ATTR,
+    _HasFactory,
 )
-from .utils import _get_origin, rebuild_cls
-from .options import *
 from .fields import *
-
-from . import converters, validators
-from .options import __all__ as __all_options__
 from .fields import __all__ as __all_fields__
+from .options import *
+from .options import __all__ as __all_options__
+from .utils import _get_origin, rebuild_cls
+
 __all__ += __all_fields__
 __all__ += __all_options__
 
@@ -354,7 +367,7 @@ def __pre_new__(
 
     # Do we have any Field members that don't also have annotations?
     for attr_name, value in namespace.items():
-        if isinstance(value, Field) and not attr_name in cls_annotations:
+        if isinstance(value, Field) and attr_name not in cls_annotations:
             raise TypeError(
                 f'{attr_name!r} is a field but has no type annotation'
             )

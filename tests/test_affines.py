@@ -1,7 +1,6 @@
 """Unit tests for compact affine operators against homogeneous baselines."""
 
 import numpy as np
-import pytest
 
 from brainhops._core import affines
 

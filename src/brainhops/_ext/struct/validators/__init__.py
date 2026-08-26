@@ -118,7 +118,7 @@ class UnionValidator(HintValidator[T]):
             validator = HintValidator(arg)
             try:
                 return validator(value)
-            except Exception as e:
+            except Exception:
                 continue
         raise e
 

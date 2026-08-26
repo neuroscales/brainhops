@@ -3,7 +3,6 @@ __all__ = ["PathLike", "Path", "LocalPath", "UPath", "AnyPath"]
 # stdlib
 from os import PathLike
 from pathlib import Path as LocalPath
-from xml.dom.minidom import Text
 
 # dependencies
 import typing_extensions as _tx

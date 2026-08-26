@@ -8,7 +8,7 @@ __all__ = [
     "I", "superiorToInferiorAxis", "SuperiorToInferiorAxis",
 ]
 # dependencies
-from typing_extensions import Optional
+from typing import Optional
 
 # internals
 from brainhops._core.typing import HiddenConst

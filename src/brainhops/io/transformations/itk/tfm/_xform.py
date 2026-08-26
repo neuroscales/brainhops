@@ -4,9 +4,10 @@ import typing_extensions as _tx
 # datamodel
 from brainhops.datamodel import transformations as _xforms
 
+from .._xform import ITKTransform
+
 # locals
 from ._parser import TFMTransformParser
-from .._xform import ITKTransform
 
 
 class TFMTransform(TFMTransformParser, ITKTransform):

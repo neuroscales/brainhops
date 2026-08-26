@@ -37,7 +37,7 @@ import types as _t
 
 import typing_extensions as _tx
 
-from .constants import HIDE_IF_NONE, MISSING, REQUIRED, SHOW_ATTR, MaybeMissing
+from .constants import MISSING, REQUIRED, SHOW_ATTR, MaybeMissing
 from .converters import HintConverter
 from .options import Options
 from .utils import SlotsBase, _get_origin, slots

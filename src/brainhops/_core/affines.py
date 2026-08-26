@@ -4,8 +4,8 @@ i.e., M x (N+1) matrices that do not contain the homogeneous row.
 """
 
 # stdlib
-from types import ModuleType
 from math import prod
+from types import ModuleType
 
 # dependencies
 from numpy import broadcast_shapes

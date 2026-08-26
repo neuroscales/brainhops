@@ -1,15 +1,15 @@
 __all__ = ["NDArrayConverter"]
 # stdlib
 import numbers
-from inspect import isabstract
 
 # externals
 import typing_extensions as _tx
 
+from . import numpy_typing as npt
+
 # internals
 from .abc import register
 from .base import ObjectConverter
-from . import numpy_typing as npt
 
 # optionals
 try:

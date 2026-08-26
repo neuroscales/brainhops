@@ -1,14 +1,17 @@
 __all__ = ["HintConverter", "register"]
 
 from abc import ABC, abstractmethod
-from collections import abc
 from functools import partial
+
 import typing_extensions as _tx
 
 from .constants import MISSING
-from .utils import ConversionError
-from .utils import _get_origin, _issubclass, _isinstance, _HINT_TO_TYPE
-
+from .utils import (
+    _HINT_TO_TYPE,
+    ConversionError,
+    _get_origin,
+    _issubclass,
+)
 
 T = _tx.TypeVar("T")
 

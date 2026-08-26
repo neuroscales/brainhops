@@ -1,10 +1,18 @@
 """Additional utilities for nibabel."""
 import numpy as np
-
 from nibabel.fileslice import (
-    _NullLock, threshold_heuristic, is_fancy, fill_slicer,
-    _positive_slice, canonical_slicers, reduce, operator, read_segments,
-    predict_shape, slicers2segments)
+    _NullLock,
+    _positive_slice,
+    canonical_slicers,
+    fill_slicer,
+    is_fancy,
+    operator,
+    predict_shape,
+    read_segments,
+    reduce,
+    slicers2segments,
+    threshold_heuristic,
+)
 
 
 def full_heuristic(*args, **kwargs):
@@ -46,8 +54,8 @@ def write_segments(fileobj, segments, dat, lock=None):
             fileobj.seek(offset)
             nb_written = fileobj.write(dat)
         if nb_written != length:
-            raise ValueError('Expected to write {} bytes but wrote {}.'
-                             .format(length, nb_written))
+            raise ValueError(f'Expected to write {length} bytes but wrote {nb_written}.'
+                             )
         return
     # More than one segment
     dat_offset = 0
@@ -57,8 +65,8 @@ def write_segments(fileobj, segments, dat, lock=None):
             nb_written = fileobj.write(dat[dat_offset:dat_offset+length])
         dat_offset += length
         if nb_written != length:
-            raise ValueError('Expected to write {} bytes but wrote {}.'
-                             .format(length, nb_written))
+            raise ValueError(f'Expected to write {length} bytes but wrote {nb_written}.'
+                             )
 
 
 def writeslice(dat, fileobj, sliceobj, shape, dtype, offset=0, order='C',

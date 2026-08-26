@@ -5,10 +5,11 @@ import numbers
 # externals
 import typing_extensions as _tx
 
+from . import cupy_typing as cpt
+
 # internals
 from .abc import register
 from .base import ObjectConverter
-from . import cupy_typing as cpt
 
 # optionals
 try:
@@ -57,7 +58,7 @@ if cp:
             if origin is cpt.ndarray:
                 origin = cp.ndarray
             return origin
-        
+
         @property
         def dtype(self):
             dtype = self.args[1] if self.args else None

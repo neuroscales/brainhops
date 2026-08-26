@@ -4,9 +4,10 @@ import itertools
 # dependencies
 import typing_extensions as _tx
 
+from .backends import get_array_backend, get_ndimage_backend
+
 # locals
 from .typing import ArrayProtocol
-from .backends import get_array_backend, get_ndimage_backend
 
 
 def pull(

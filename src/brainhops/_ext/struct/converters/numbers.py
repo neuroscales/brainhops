@@ -1,17 +1,17 @@
 __all__ = [
-    "NumberConverter", 
-    "ComplexConverter", 
-    "RealConverter", 
-    "RationalConverter", 
+    "NumberConverter",
+    "ComplexConverter",
+    "RealConverter",
+    "RationalConverter",
     "IntegralConverter",
 ]
-import typing_extensions as _tx
-import numbers
 import fractions
+import numbers
+
+import typing_extensions as _tx
 
 from .abc import register
 from .base import ObjectConverter
-
 
 # ----------------------------------------------------------------------
 #
@@ -32,7 +32,7 @@ class NumberConverter(ObjectConverter[NUMBER]):
 
     _DEFAULT = numbers.Number
     _FALLBACKS = (int, fractions.Fraction, float, complex)
-    
+
     def _convert(self, value: _tx.Any) -> NUMBER:
         if isinstance(value, self.type):
             return value
@@ -41,32 +41,32 @@ class NumberConverter(ObjectConverter[NUMBER]):
                 continue
             try:
                 return fallback(value)
-            except Exception as e:
+            except Exception:
                 ...
         raise e
 
 
 @register(numbers.Complex)
 class ComplexConverter(NumberConverter[COMPLEX]):
-    
+
     _DEFAULT = numbers.Complex
-    
+
 
 @register(numbers.Real)
 class RealConverter(ComplexConverter[REAL]):
-    
+
     _DEFAULT = numbers.Real
-    
+
 
 @register(numbers.Rational)
 class RationalConverter(RealConverter[RATIONAL]):
-    
+
     _DEFAULT = numbers.Rational
-    
+
 
 @register(numbers.Integral)
 class IntegralConverter(RationalConverter[INTEGRAL]):
-    
+
     _DEFAULT = numbers.Integral
 
 

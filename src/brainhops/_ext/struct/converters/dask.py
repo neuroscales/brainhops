@@ -5,10 +5,11 @@ import numbers
 # externals
 import typing_extensions as _tx
 
+from . import dask_typing as dkt
+
 # internals
 from .abc import register
 from .base import ObjectConverter
-from . import dask_typing as dkt
 
 # optionals
 try:
@@ -78,10 +79,10 @@ if da:
                 value = value.astype(dtype)
             # Finally, convert to proper subclass if necessary
             if not isinstance(value, origin):
-                # NOTE: dask does not have `ndarray.view(cls)` to 
-                # reinterpret as a subclass. da.Array(value) does not 
-                # convert, but this condition should only be hit if 
-                # origin is a da.Array subclass, which we hope 
+                # NOTE: dask does not have `ndarray.view(cls)` to
+                # reinterpret as a subclass. da.Array(value) does not
+                # convert, but this condition should only be hit if
+                # origin is a da.Array subclass, which we hope
                 # implements a conversion constructor.
                 value = origin(value)
             return value

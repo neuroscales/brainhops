@@ -1,6 +1,5 @@
 from os import PathLike
 
-import numpy as np
 import typing_extensions as _tx
 
 from brainhops.datamodel.points import Points

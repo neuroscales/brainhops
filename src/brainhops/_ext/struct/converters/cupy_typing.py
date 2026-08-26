@@ -11,7 +11,7 @@ __all__ = [
 import typing_extensions as _tx
 
 # internals
-from .numpy_typing import ArrayProtocol, DTypeProtocol, DTypeLike, dtype
+from .numpy_typing import ArrayProtocol, DTypeLike, DTypeProtocol, dtype
 
 # optionals
 if _tx.TYPE_CHECKING:

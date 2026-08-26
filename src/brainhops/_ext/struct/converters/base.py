@@ -4,7 +4,6 @@ import typing_extensions as _tx
 from .abc import HintConverter, register
 from .utils import ConversionError, _get_origin
 
-
 # ----------------------------------------------------------------------
 #
 #   Builtin bases

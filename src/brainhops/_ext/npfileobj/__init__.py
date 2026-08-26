@@ -17,7 +17,7 @@ local files. We need to implement something similar, but that can work
 with any file-like object. Its chunking strategy also needs to be 
 adapted to different fsspec backends.
 """
-# TODO: almost everything! 
-# (I had bits of it in nitorch, but it called some nibabel functions 
+# TODO: almost everything!
+# (I had bits of it in nitorch, but it called some nibabel functions
 # under the hood, which we should avoid here).
 # This is not high-priority. We can simply wrap nibabel/zarr/etc for now.

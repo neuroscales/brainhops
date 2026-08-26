@@ -268,12 +268,12 @@ class TransformationBaseClass(ABC):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if getattr(cls, "NAME", None):
-            for name in getattr(cls, "NAME"):
+            for name in cls.NAME:
                 NAMETOCLASS[name] = cls
         if getattr(cls, "FSYMBOL", None):
-            FSYMBOLTOCLASS[getattr(cls, "FSYMBOL")] = cls
+            FSYMBOLTOCLASS[cls.FSYMBOL] = cls
         if getattr(cls, "SYMBOL", None):
-            SYMBOLTOCLASS[getattr(cls, "SYMBOL")] = cls
+            SYMBOLTOCLASS[cls.SYMBOL] = cls
 
 
 class Transformation(TransformationBaseClass):

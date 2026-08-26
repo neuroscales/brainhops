@@ -1,5 +1,6 @@
-import os.path as op
 import json
+import os.path as op
+
 import numpy as np
 import SimpleITK as sitk
 

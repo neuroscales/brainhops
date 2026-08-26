@@ -1,6 +1,8 @@
-import numpy as np
 import itertools
-from typing import Sequence, Union, Tuple, overload
+from collections.abc import Sequence
+from typing import Tuple, Union, overload
+
+import numpy as np
 
 
 class oob_slice:
@@ -301,8 +303,8 @@ def invert_slice(index: slice, shape: int, do_neg2pos: bool = True) -> slice:
 
 
 def slice_navigator(
-    index: slice, 
-    shape: int, 
+    index: slice,
+    shape: int,
     do_neg2pos: bool = True
 ) -> Tuple[int, int, int]:
     """Return explicit start and step values from a slice
@@ -340,10 +342,10 @@ def slice_navigator(
 
 
 def is_slice_equivalent(
-    index1: slice, 
-    index2: slice, 
-    shape: int, 
-    same_sign: bool = True, 
+    index1: slice,
+    index2: slice,
+    shape: int,
+    same_sign: bool = True,
     do_neg2pos: bool = True
 ) -> bool:
     """Check that two slices describe the same chunk of data
@@ -521,13 +523,13 @@ def expand_index(index: NDIndexLike, shape: Tuple[int, ...]) -> Tuple[IndexLike,
             ind = torch.as_tensor(ind, dtype=torch.int64)
             if ind.dim() > 0:
                 raise ValueError('Integer indices should be scalars '
-                                 'Got array with shape {}.'.format(ind.shape))
+                                 f'Got array with shape {ind.shape}.')
             nb_dim_in.append(1)
             nb_dim_out.append(ind.dim())
             index[n_ind] = ind.item()
         else:
             raise TypeError('Indices should be integers, slices '
-                            'or ellipses. Got {}.'.format(type(ind)))
+                            f'or ellipses. Got {type(ind)}.')
 
     # deal with ellipsis
     nb_known_dims = sum(n for n in nb_dim_in if n > 0)
@@ -566,9 +568,9 @@ def expand_index(index: NDIndexLike, shape: Tuple[int, ...]) -> Tuple[IndexLike,
             assert isinstance(ind, int)  # already checked
             ind = neg2pos(ind, shape[nb_ind])
             if ind < 0 or ind >= shape[nb_ind]:
-                raise IndexError('Out-of-bound index in dimension {} '
-                                 '({} not in [0, {}])'
-                                 .format(nb_ind, ind, shape[nb_ind]-1))
+                raise IndexError(f'Out-of-bound index in dimension {nb_ind} '
+                                 f'({ind} not in [0, {shape[nb_ind]-1}])'
+                                 )
             index.append(ind)
             nb_ind += nb_dim_in[d]
 
@@ -601,7 +603,7 @@ def compose_index(parent, child, full_shape):
     def oob(i):
         """Out-of-bound error."""
         raise IndexError('Index out-of-bound in parent dimension '
-                         '{}.'.format(i))
+                         f'{i}.')
 
     parent = expand_index(parent, full_shape)
     sub_shape = guess_shape(parent, full_shape)
@@ -653,7 +655,7 @@ def compose_index(parent, child, full_shape):
                 continue
             if isinstance(c, oob_slice):
                 new_parent.append(oob_slice(newaxis=True))
-            assert False, "p is None and c is {}".format(c)
+            assert False, f"p is None and c is {c}"
 
         if isinstance(p, oob_slice):
             if not p.newaxis:
@@ -667,7 +669,7 @@ def compose_index(parent, child, full_shape):
                 # keep the axis
                 new_parent.append(p)
                 continue
-            assert False, "p is oob_slice(newaxis=True) and c is {}".format(c)
+            assert False, f"p is oob_slice(newaxis=True) and c is {c}"
 
         # pop original dimension
         sz0, *full_shape = full_shape
@@ -718,14 +720,14 @@ def compose_index(parent, child, full_shape):
                 continue
             if isinstance(c, oob_slice):
                 new_parent.append(c)
-            assert False, "p is slice and c is {}".format(c)
+            assert False, f"p is slice and c is {c}"
 
     while child:
         c, *child = child
         if c is not None:
             raise IndexError('More indices than dimensions')
         new_parent.append(c)
-            
+
     return tuple(new_parent)
 
 
@@ -805,7 +807,7 @@ def split_operation(perm, slicer, direction):
         return tuple(slicer_drop), tuple(inv_perm_nodrop), tuple(slicer_sub)
     else:
         raise ValueError("direction should be in ('read' ,'write') "
-                         "but got {}.".format(direction))
+                         f"but got {direction}.")
 
 
 def invert_permutation(perm):
@@ -908,8 +910,7 @@ def slicer_sub2ind(slicer, shape):
     new_shape = py.make_list(new_shape)
 
     assert py.prod(shape0) == py.prod(new_shape), \
-           "Oops: lost something: {} vs {}".format(py.prod(shape0),
-                                                   py.prod(new_shape))
+           f"Oops: lost something: {py.prod(shape0)} vs {py.prod(new_shape)}"
 
     # 2) If we have a unique index, we can stop here
     if len(new_slicer) == 1:
@@ -934,8 +935,7 @@ def slicer_sub2ind(slicer, shape):
             new_index = idx
 
     assert len(new_index) == py.prod(shape_out), \
-           "Oops: lost something: {} vs {}".format(len(new_index),
-                                                   py.prod(shape_out))
+           f"Oops: lost something: {len(new_index)} vs {py.prod(shape_out)}"
 
     return new_index
 

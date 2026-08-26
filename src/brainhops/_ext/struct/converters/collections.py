@@ -25,7 +25,6 @@ from .abc import HintConverter, register
 from .base import ObjectConverter
 from .utils import ConversionError, _issubclass
 
-
 # ----------------------------------------------------------------------
 #
 #   ABC collections
@@ -45,7 +44,7 @@ MMAPPING = _tx.TypeVar("MMAPPING", bound=abc.MutableMapping)
 
 @register(abc.Iterable, _tx.Iterable)
 class IterableConverter(ObjectConverter[ITERABLE]):
-    
+
     _DEFAULT = abc.Iterable
 
     def _init_check(self):
@@ -63,7 +62,7 @@ class IterableConverter(ObjectConverter[ITERABLE]):
 
 @register(abc.Iterator, _tx.Iterator)
 class IteratorConverter(IterableConverter[ITERATOR]):
-    
+
     _DEFAULT = abc.Iterator
 
     def _convert(self, value: _tx.Any) -> ITERATOR:
@@ -74,7 +73,7 @@ class IteratorConverter(IterableConverter[ITERATOR]):
             return value
         converter = HintConverter(args[0])
         return iter(converter(v) for v in value)
-    
+
 
 @register(abc.Sequence, _tx.Sequence)
 class SequenceConverter(IterableConverter[SEQUENCE]):
@@ -93,38 +92,38 @@ class SequenceConverter(IterableConverter[SEQUENCE]):
             return value
         converter = HintConverter(args[0])
         return type(value)(converter(v) for v in value)
-    
+
 
 @register(abc.MutableSequence, _tx.MutableSequence)
 class MutableSequenceConverter(SequenceConverter[MSEQUENCE]):
-    
+
     _DEFAULT = abc.MutableSequence
     _FALLBACK = list
 
 
 @register(abc.Set, _tx.Set)
 class AbstractSetConverter(SequenceConverter[ABCSET]):
-    
+
     _DEFAULT = abc.Set
     _FALLBACK = frozenset
-    
+
 
 @register(abc.MutableSet, _tx.MutableSet)
 class AbstractMutableSetConverter(
-    AbstractSetConverter[ABCMSET], 
+    AbstractSetConverter[ABCMSET],
     MutableSequenceConverter[ABCMSET]
 ):
-    
+
     _DEFAULT = abc.MutableSet
     _FALLBACK = set
 
 
 @register(abc.Mapping, _tx.Mapping)
 class MappingConverter(IterableConverter[MAPPING]):
-    
+
     _DEFAULT = abc.Mapping
     _FALLBACK = dict
-    
+
     def _convert(self, value: _tx.Any) -> MAPPING:
         origin, args = self.origin, self.args
         if not isinstance(value, origin):
@@ -136,14 +135,14 @@ class MappingConverter(IterableConverter[MAPPING]):
         key_converter = HintConverter(args[0])
         value_converter = HintConverter(args[1])
         return type(value)(
-            (key_converter(k), value_converter(v)) 
+            (key_converter(k), value_converter(v))
             for k, v in value.items()
         )
 
 
 @register(abc.MutableMapping, _tx.MutableMapping)
 class MutableMappingConverter(MappingConverter[MMAPPING]):
-    
+
     _DEFAULT = abc.MutableMapping
     _FALLBACK = dict
 
@@ -166,17 +165,17 @@ DICT = _tx.TypeVar("DICT", bound=dict)
 class TupleConverter(SequenceConverter[TUPLE]):
 
     _DEFAULT = tuple
-    
+
     def _convert(self, value: _tx.Any) -> TUPLE:
         origin, args = self.origin, self.args
         if not isinstance(value, origin):
             if isabstract(origin):
                 origin = self._FALLBACK
             value = origin(value)
-            
+
         if not args or args == (...,):
             return value
-        
+
         # Expand ellipsis if present
         if ... in args:
             args = list(args)
@@ -193,33 +192,33 @@ class TupleConverter(SequenceConverter[TUPLE]):
                 f"Value {value} does not have the same length as the "
                 f"Tuple type {self.type}"
             )
-        
+
         # Convert each element
         converters = [HintConverter(arg) for arg in args]
         return type(value)(
             converter(v) for converter, v in zip(converters, value)
         )
-    
+
 
 @register(list, _tx.List)
 class ListConverter(MutableSequenceConverter[LIST]):
 
     _DEFAULT = list
-    
+
 
 @register(frozenset, _tx.FrozenSet)
 class FrozenSetConverter(AbstractSetConverter[FROZENSET]):
-    
+
     _DEFAULT = frozenset
 
 
 @register(set, _tx.Set)
 class SetConverter(AbstractMutableSetConverter[SET]):
-    
+
     _DEFAULT = set
 
 
 @register(dict, _tx.Dict)
 class DictConverter(MutableMappingConverter[DICT]):
-    
+
     _DEFAULT = dict
