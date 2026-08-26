@@ -13,9 +13,10 @@ from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import orientation as _orientation
 from brainhops.datamodel import systems as _systems
 
+from ._matrix_utils import _get_orient
+
 # local
 from ._struct import LTAStruct
-from ._matrix_utils import _get_orient
 
 # type hints
 _3SpatialAxes = _tx.Tuple[

@@ -1,7 +1,7 @@
 __all__ = ["Options"]
 import typing_extensions as _tx
-from .constants import MISSING
-from .utils import slots, SlotsBase
+
+from .utils import SlotsBase, slots
 
 
 @slots(

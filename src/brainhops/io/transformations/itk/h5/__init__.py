@@ -119,5 +119,5 @@ __all__ = [
     "DelayedH5Array"
 ]
 
+from ._parser import DelayedH5Array, H5Header, H5TransformParser
 from ._xform import H5Transform
-from ._parser import H5Header, H5TransformParser, DelayedH5Array

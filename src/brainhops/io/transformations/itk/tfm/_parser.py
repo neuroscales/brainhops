@@ -5,14 +5,15 @@ from warnings import warn
 # dependencies
 import typing_extensions as _tx
 
-# externals
-from brainhops._ext.struct import Struct, HIDE_IF_NONE, Factory
-
 # core
 from brainhops._core.peek import peekable_lines
 
+# externals
+from brainhops._ext.struct import HIDE_IF_NONE, Factory, Struct
+
 # io
 from brainhops.io.base.parsers import TextFileParser
+
 from .._common import ITKStruct
 
 # constants
@@ -65,7 +66,7 @@ class TFMTransformParser(
             line = lines.next()
             transform = _TRANSFORM_RE.match(line)
             if not transform:
-                warn(f"Unexpected line: {line}")
+                warn(f"Unexpected line: {line}", stacklevel=1)
                 break
 
             transform_type = transform.group("type")
@@ -80,16 +81,17 @@ class TFMTransformParser(
                 lines.next()  # consume the line
                 parameters = _read_vector(parameters.group("values"))
             else:
-                parameters =[]
+                parameters = []
 
             # Parse fixed parameters
             line = lines.peek()
             fixed_parameters = _FIXEDPARAMETERS_RE.match(line)
             if fixed_parameters:
                 lines.next()  # consume the line
-                fixed_parameters = _read_vector(fixed_parameters.group("values"))
+                fixed_parameters = _read_vector(
+                    fixed_parameters.group("values"))
             else:
-                fixed_parameters =[]
+                fixed_parameters = []
 
             if transform_type == "CompositeTransform":
                 # skip composite transforms, they just point to the

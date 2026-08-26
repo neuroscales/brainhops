@@ -3,6 +3,7 @@ __all__ = ["SlotsBase", "rebuild_cls", "slots"]
 import copy as copy_
 import inspect
 import types as _t
+
 import typing_extensions as _tx
 
 from .constants import MISSING
@@ -76,7 +77,7 @@ def rebuild_cls(
         elif isinstance(member, property):
             if (_update_func_cell_for__class__(member.fget, cls, newcls)
                 or _update_func_cell_for__class__(member.fset, cls, newcls)
-                or _update_func_cell_for__class__(member.fdel, cls, newcls)):
+                    or _update_func_cell_for__class__(member.fdel, cls, newcls)):
                 break
 
     return newcls
@@ -84,6 +85,7 @@ def rebuild_cls(
 
 @_tx.overload
 def slots(cls: type, *_slots: _tx.Tuple[str]) -> type: ...
+
 
 @_tx.overload
 def slots(*_slots: _tx.Tuple[str]) -> _tx.Callable[[type], type]: ...
@@ -134,8 +136,8 @@ class SlotsBase:
     @classmethod
     def _slots(cls) -> _tx.Iterator[str]:
         seen = dict()
-        for cls in reversed(cls.__mro__):
-            for slot in getattr(cls, '__slots__', ()):
+        for cls_loop in reversed(cls.__mro__):
+            for slot in getattr(cls_loop, '__slots__', ()):
                 if slot not in seen:
                     seen[slot] = True
                     yield slot

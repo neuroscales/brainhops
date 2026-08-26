@@ -34,12 +34,13 @@ __all__ = [
     "Doc",
 ]
 import types as _t
+
 import typing_extensions as _tx
 
-from .constants import MISSING, REQUIRED, MaybeMissing, SHOW_ATTR, HIDE_IF_NONE
+from .constants import HIDE_IF_NONE, MISSING, REQUIRED, SHOW_ATTR, MaybeMissing
 from .converters import HintConverter
 from .options import Options
-from .utils import SlotsBase, slots, _get_origin
+from .utils import SlotsBase, _get_origin, slots
 from .validators import HintValidator
 
 T = _tx.TypeVar("T")
@@ -49,22 +50,30 @@ T = _tx.TypeVar("T")
     'name',             # Field name
     'type',             # Field type (or type hint)
     'default',          # Default value for this field.
-    'factory',          # A factory function that generates a default value for this field.
+    # A factory function that generates a default value for this field.
+    'factory',
     'init',             # Include this field in the generated __init__ method.
     'repr',             # Include this field in the generated __repr__ method.
     'hash',             # Include this field in the generated __hash__ method.
     'eq',               # Include this field in the generated __eq__ method.
     'order',            # Include this field in the generated __lt__ methods.
     'metadata',         # User-defined metadata
-    'kw',               # Make this field a keyword in the generated __init__ method.
-    'positional',       # Make this field a positional argument in the generated __init__ method.
+    # Make this field a keyword in the generated __init__ method.
+    'kw',
+    # Make this field a positional argument in the generated __init__ method.
+    'positional',
     'frozen',           # Make this field immutable after initialization.
-    'converter',        # A function that converts the input value for this field.
-    'validator',        # A function that validates the input value for this field.
-    'var',              # Whether this field is a pseudo-field (InitVar or ClassVar).
+    # A function that converts the input value for this field.
+    'converter',
+    # A function that validates the input value for this field.
+    'validator',
+    # Whether this field is a pseudo-field (InitVar or ClassVar).
+    'var',
     'doc',              # Docstring for this field.
-    'key',              # Include this field in the generated dict-like interface.
-    'alias',            # Alternative names for this field in the generated methods.
+    # Include this field in the generated dict-like interface.
+    'key',
+    # Alternative names for this field in the generated methods.
+    'alias',
 )
 class Field(SlotsBase):
     """A field in a `Struct`."""
@@ -160,7 +169,9 @@ class Field(SlotsBase):
         if not isinstance(t, tuple):
             t = (t,)
         t, *args = t
-        return _tx.Annotated[t, cls(True), *args]
+        return _tx.Annotated.__class_getitem__(
+            (t, cls(True), *args)
+        )
 
     @property
     def public_name(self) -> str:
@@ -265,7 +276,8 @@ class Field(SlotsBase):
             if origin in (_t.UnionType, _tx.Union, _tx.Optional):
                 factory = _tx.get_args(factory)[0]
             elif origin in (type, _tx.Type):
-                factory = lambda: _tx.get_args(factory)[0]
+                def factory(
+                ) -> _tx.AnnotationForm: return _tx.get_args(factory)[0]
             else:
                 factory = origin
             self.factory = factory
@@ -285,13 +297,13 @@ class AnnotatedField(Field):
     @classmethod
     def _set_slots(cls) -> _tx.Dict[str, _tx.Any]:
         set_slots = {}
-        for cls in reversed(cls.__mro__):
-            cls_set_slots = getattr(cls, '__set_slots__', {})
+        for cls_loop in reversed(cls.__mro__):
+            cls_set_slots = getattr(cls_loop, '__set_slots__', {})
             if isinstance(cls_set_slots, str):
                 cls_set_slots = (cls_set_slots,)
             if isinstance(cls_set_slots, tuple):
                 cls_set_slots = {
-                    slot: cls.__set_value__
+                    slot: cls_loop.__set_value__
                     for slot in cls_set_slots
                 }
             set_slots.update(cls_set_slots)
@@ -320,8 +332,11 @@ class AnnotatedField(Field):
         if args:
             values, args = args[:len(set_slots)], args[len(set_slots):]
         if any(value is REQUIRED for value in values):
-            raise TypeError(f"Missing required argument for {cls.__name__!r}[]")
-        return _tx.Annotated[t, cls(*values), *args]
+            raise TypeError(
+                f"Missing required argument for {cls.__name__!r}[]")
+        return _tx.Annotated.__class_getitem__(
+            (t, cls(True), *args)
+        )
 
 
 @slots
@@ -335,7 +350,9 @@ class BoolAnnotatedField(AnnotatedField):
         if not isinstance(args, tuple):
             args = (args,)
         t, *args = args
-        return _tx.Annotated[t, cls(True), *args]
+        return _tx.Annotated.__class_getitem__(
+            (t, cls(True), *args)
+        )
 
 
 @slots
@@ -424,7 +441,8 @@ class Init(BoolAnnotatedField):
 
 
 @slots
-class NoInit(Init, InversedBoolAnnotatedField): ...
+class NoInit(Init, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
@@ -445,7 +463,8 @@ class Kw(BoolAnnotatedField):
 
 
 @slots
-class NotKw(Kw, InversedBoolAnnotatedField): ...
+class NotKw(Kw, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
@@ -466,23 +485,28 @@ class Positional(BoolAnnotatedField):
 
 
 @slots
-class NotPositional(Positional, InversedBoolAnnotatedField): ...
+class NotPositional(Positional, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
-class KwOnly(Kw, NotPositional): ...
+class KwOnly(Kw, NotPositional):
+    ...
 
 
 @slots
-class NotKwOnly(Kw, Positional): ...
+class NotKwOnly(Kw, Positional):
+    ...
 
 
 @slots
-class PositionalOnly(NotKw, Positional): ...
+class PositionalOnly(NotKw, Positional):
+    ...
 
 
 @slots
-class NotPositionalOnly(Kw, Positional): ...
+class NotPositionalOnly(Kw, Positional):
+    ...
 
 
 @slots
@@ -501,7 +525,8 @@ class Frozen(BoolAnnotatedField):
 
 
 @slots
-class NotFrozen(Frozen, InversedBoolAnnotatedField): ...
+class NotFrozen(Frozen, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
@@ -524,11 +549,13 @@ class Var(BoolAnnotatedField):
 
 
 @slots
-class InitVar(Var, Init): ...
+class InitVar(Var, Init):
+    ...
 
 
 @slots
-class ClassVar(Var, NoInit): ...
+class ClassVar(Var, NoInit):
+    ...
 
 
 @slots
@@ -548,12 +575,14 @@ class Repr(BoolAnnotatedField):
 
 
 @slots
-class NoRepr(Repr, InversedBoolAnnotatedField): ...
+class NoRepr(Repr, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
 class Eq(BoolAnnotatedField):
-    """ Specify that a field should [not] be included in the generated `__eq__` method.
+    """
+    Specify that a field should [not] be included in the generated `__eq__` method.
 
     ```python
     Eq()       ~> Field(eq=True)
@@ -561,18 +590,20 @@ class Eq(BoolAnnotatedField):
     Eq[int]    ~> Annotated[T, Field(eq=True)]
     NoEq[int]  ~> Annotated[T, Field(eq=False)]
     ```
-    """
+    """  # noqa: E501
 
     __set_slots__ = ('eq',)
 
 
 @slots
-class NoEq(Eq, InversedBoolAnnotatedField): ...
+class NoEq(Eq, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
 class Order(BoolAnnotatedField):
-    """ Specify that a field should [not] be included in the generated `__lt__` method.
+    """
+    Specify that a field should [not] be included in the generated `__lt__` method.
 
     ```python
     Order()       ~> Field(order=True)
@@ -580,21 +611,24 @@ class Order(BoolAnnotatedField):
     Order[int]    ~> Annotated[T, Field(order=True)]
     NoOrder[int]  ~> Annotated[T, Field(order=False)]
     ```
-    """
+    """  # noqa: E501
 
     __set_slots__ = ('order',)
 
 
 @slots
-class NoOrder(Order, InversedBoolAnnotatedField): ...
+class NoOrder(Order, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
-class Compare(Eq, Order):  ...
+class Compare(Eq, Order):
+    ...
 
 
 @slots
-class NoCompare(Compare, InversedBoolAnnotatedField): ...
+class NoCompare(Compare, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
@@ -614,7 +648,8 @@ class Hash(BoolAnnotatedField):
 
 
 @slots
-class NoHash(Hash, InversedBoolAnnotatedField): ...
+class NoHash(Hash, InversedBoolAnnotatedField):
+    ...
 
 
 @slots
@@ -634,7 +669,8 @@ class Key(BoolAnnotatedField):
 
 
 @slots
-class NotKey(Key, InversedBoolAnnotatedField): ...
+class NotKey(Key, InversedBoolAnnotatedField):
+    ...
 
 
 @slots

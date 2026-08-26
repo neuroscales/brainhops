@@ -8,7 +8,6 @@ import pytest
 from brainhops.io.transformations.itk.h5 import H5Transform
 from brainhops.io.transformations.itk.tfm import TFMTransform
 
-
 data_dir = Path(__file__).parent / "data"
 
 FILES_H5 = list(data_dir.glob("*.h5"))

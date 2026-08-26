@@ -3,5 +3,4 @@ __all__ = [
     "io",
 ]
 
-from . import datamodel
-from . import io
+from . import datamodel, io

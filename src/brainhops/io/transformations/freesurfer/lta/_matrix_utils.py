@@ -1,6 +1,6 @@
 # externals
-import typing_extensions as _tx
 import numpy as np
+import typing_extensions as _tx
 
 # internals
 from ._enums import LTAType
@@ -46,7 +46,8 @@ def _get_ras2ras(lta: LTAStruct) -> np.ndarray:
         # RSA -> RAS = permute first two axes
         return matrix[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute RAS-to-RAS matrix without src and dst volume info')
+        raise ValueError(
+            'cannot compute RAS-to-RAS matrix without src and dst volume info')
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
@@ -63,7 +64,8 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
     if lta.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute phys-to-phys matrix without src and dst volume info')
+        raise ValueError(
+            'cannot compute phys-to-phys matrix without src and dst volume info')
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -86,7 +88,8 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         return matrix
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute vox-to-vox matrix without src and dst volume info')
+        raise ValueError(
+            'cannot compute vox-to-vox matrix without src and dst volume info')
     if lta.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)

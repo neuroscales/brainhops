@@ -8,11 +8,11 @@ __all__ = [
 # externals
 import typing_extensions as _tx
 
+from . import axes as _axes
+from .axes import Axis, SpatialAxis
+
 # internals
 from .base import DataModelBase
-from .axes import Axis, SpatialAxis
-from . import axes as _axes
-
 
 _2Axes = _tx.Tuple[Axis, Axis]
 _3Axes = _tx.Tuple[Axis, Axis, Axis]
@@ -74,16 +74,20 @@ class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
     axes: _tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
 
 
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
+    ...
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
+    ...
 
 
 # ----------------------------------------------------------------------
@@ -103,10 +107,12 @@ class SpatialCoordinateSystem2D(CoordinateSystem2D, SpatialCoordinateSystem):
 
 class SpatialCoordinateSystem3D(CoordinateSystem3D, SpatialCoordinateSystem):
     """A 3D coordinate system, whose axes have spatial meaning."""
-    axes: _tx.Optional[_3SpatialAxes] = (SpatialAxis(), SpatialAxis(), SpatialAxis())
+    axes: _tx.Optional[_3SpatialAxes] = (
+        SpatialAxis(), SpatialAxis(), SpatialAxis())
 
 
-class PixelCoordinateSystem(SpatialCoordinateSystem2D, ArrayCoordinateSystem2D):
+class PixelCoordinateSystem(SpatialCoordinateSystem2D,
+                            ArrayCoordinateSystem2D):
     """A coordinate system for (unitless) 2D pixel grids."""
     name: _tx.Optional[str] = "pixel"
     axes: _tx.Optional[_2SpatialAxes] = (
@@ -115,7 +121,8 @@ class PixelCoordinateSystem(SpatialCoordinateSystem2D, ArrayCoordinateSystem2D):
     )
 
 
-class VoxelCoordinateSystem(SpatialCoordinateSystem3D, ArrayCoordinateSystem3D):
+class VoxelCoordinateSystem(SpatialCoordinateSystem3D,
+                            ArrayCoordinateSystem3D):
     """A coordinate system for (unitless) 3D voxel grids."""
     name: _tx.Optional[str] = "voxel"
     axes: _tx.Optional[_3SpatialAxes] = (
@@ -143,7 +150,8 @@ class FPixelCoordinateSystem(PixelCoordinateSystem, FArrayCoordinateSystem2D):
     )
 
 
-class CVoxelCoordinateSystem(SpatialCoordinateSystem3D, CArrayCoordinateSystem3D):
+class CVoxelCoordinateSystem(SpatialCoordinateSystem3D,
+                             CArrayCoordinateSystem3D):
     """A coordinate system for (unitless) C-ordered 3D voxel grids."""
     name: _tx.Optional[str] = "cvoxel"
     axes: _tx.Optional[_3SpatialAxes] = (
@@ -153,7 +161,8 @@ class CVoxelCoordinateSystem(SpatialCoordinateSystem3D, CArrayCoordinateSystem3D
     )
 
 
-class FVoxelCoordinateSystem(SpatialCoordinateSystem3D, FArrayCoordinateSystem3D):
+class FVoxelCoordinateSystem(SpatialCoordinateSystem3D,
+                             FArrayCoordinateSystem3D):
     """A coordinate system for (unitless) F-ordered 3D voxel grids."""
     name: _tx.Optional[str] = "fvoxel"
     axes: _tx.Optional[_3SpatialAxes] = (

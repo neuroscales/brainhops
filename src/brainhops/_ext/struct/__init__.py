@@ -422,7 +422,8 @@ def __pre_new__(
         namespace.setdefault(fnname, _make_hash(qualname, real_fields))
 
     if options.match_args:
-        fnname = options.match_args if isinstance(options.match_args, str) else "__match_args__"
+        fnname = options.match_args if isinstance(
+            options.match_args, str) else "__match_args__"
         namespace.setdefault("__match_args__", tuple(
             f.public_name for f in fields.values() if f.init and f.positional
         ))
@@ -521,7 +522,7 @@ class _FuncBuilder:
         if len(self.methods) == 0:
             return_names = "()"
         else:
-            return_names  =f'({",".join(self.methods.keys())},)'
+            return_names = f'({",".join(self.methods.keys())},)'
 
         # txt is the entire function we're going to execute, including the
         # bodies of the functions we're defining.  Here's a greatly simplified
@@ -595,21 +596,21 @@ def _hash_add(qualname: str, fields: dict) -> int:
 #                |      |      |      |        |
 #                v      v      v      v        v
 _hash_action = {(False, False, False, False): None,
-                (False, False, False, True ): None,
+                (False, False, False, True): None,
                 (False, False, True,  False): None,
-                (False, False, True,  True ): None,
+                (False, False, True,  True): None,
                 (False, True,  False, False): _hash_set_none,
-                (False, True,  False, True ): None,
+                (False, True,  False, True): None,
                 (False, True,  True,  False): _hash_add,
-                (False, True,  True,  True ): None,
+                (False, True,  True,  True): None,
                 (True,  False, False, False): _hash_add,
-                (True,  False, False, True ): _hash_exception,
+                (True,  False, False, True): _hash_exception,
                 (True,  False, True,  False): _hash_add,
-                (True,  False, True,  True ): _hash_exception,
+                (True,  False, True,  True): _hash_exception,
                 (True,  True,  False, False): _hash_add,
-                (True,  True,  False, True ): _hash_exception,
+                (True,  True,  False, True): _hash_exception,
                 (True,  True,  True,  False): _hash_add,
-                (True,  True,  True,  True ): _hash_exception,
+                (True,  True,  True,  True): _hash_exception,
                 }
 
 
@@ -680,7 +681,7 @@ def _make_doc_elem(field: Field, name: _tx.Optional[str] = None) -> str:
 
 
 def _make_init(
-    fields: dict[str, Field], prepost: str=""
+    fields: dict[str, Field], prepost: str = ""
 ) -> dict:
 
     locals = {"object": object, "_HasFactory": _HasFactory}
@@ -1106,8 +1107,9 @@ class MetaStruct(ABCMeta):
         The class being defined.
     """
 
-    def __new__(metacls, name, bases, namespace, **kwargs) -> type:
-        name, bases, namespace = __pre_new__(metacls, name, bases, namespace, **kwargs)
+    def __new__(metacls, name: str, bases: tuple[type], namespace: dict, **kwargs) -> type:
+        name, bases, namespace = __pre_new__(
+            metacls, name, bases, namespace, **kwargs)
         cls = super().__new__(metacls, name, bases, namespace)
         cls = __post_new__(cls)
         return cls

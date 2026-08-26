@@ -32,17 +32,18 @@ __all__ = [
     "units",
 ]
 
-from . import axes
-from . import base
-from . import enums
-from . import hierarchy
-from . import images
-from . import orientation
-from . import systems
-from . import transformations
-from . import units
-
 # trigger registration
 from . import _xform_adaptors as _
 from . import _xform_composers as _
 from . import _xform_converters as _
+from . import (
+    axes,
+    base,
+    enums,
+    hierarchy,
+    images,
+    orientation,
+    systems,
+    transformations,
+    units,
+)

@@ -1,20 +1,18 @@
 # stdlib
 import re
 from enum import Enum
-from os import PathLike
-from itertools import tee
-from pathlib import Path as LocalPath
 from warnings import warn
 
 # dependencies
 import typing_extensions as _tx
 
-# externals
-from brainhops._ext.struct import Struct
+from brainhops._core.path import Path, PathLike
 
 # core
 from brainhops._core.peek import peekable_lines
-from brainhops._core.path import Path, PathLike
+
+# externals
+from brainhops._ext.struct import Struct
 
 # typing
 _FileLike = _tx.Union[_tx.IO, PathLike, str]
@@ -268,7 +266,7 @@ class VolumeInfoParser(LTAParser):
         next(lines)  # consume line
         return super().from_lines(lines)
 
-    def to_lines(self, **kwargs):
+    def to_lines(self, **kwargs) -> _tx.Generator[str]:
         yield f'{self.NAME} volume info'
         yield from super().to_lines(fmt={float: '{:.15e}'}, **kwargs)
 
@@ -283,13 +281,15 @@ class MatrixParser(LTAParser):
         # Read first line to check affine shape
         line = next(lines, None)
         if not line:
-            warn(f'expected affine block, but got nothing')
+            warn('expected affine block, but got nothing', stacklevel=1)
             return cls()
 
         # Parse shape
         shape = _read_values(line, (int,) * 3)
         if not shape:
-            warn(f'expected affine block with shape, but got: "{line}"')
+            warn(
+                f'expected affine block with shape, but got: "{line}"',
+                stacklevel=1)
             return cls()
         nelem, nrow, ncol = shape
         dtype = {1: float, 2: complex}.get(nelem)
@@ -391,7 +391,7 @@ class LTAFieldParser:
 
 class LTAFieldWriter:
 
-    def __init__(self, key: _tx.Optional[str], **kwargs):
+    def __init__(self, key: _tx.Optional[str], **kwargs) -> None:
         """
         Parameters
         ----------
@@ -484,7 +484,8 @@ def _read_key(
         if isinstance(format, type):
             pattern = _get_pattern(format, compiled=True)
         else:
-            pattern = re.compile(r'\s*'.join([_get_pattern(fmt) for fmt in format]))
+            pattern = re.compile(
+                r'\s*'.join([_get_pattern(fmt) for fmt in format]))
         match = pattern.match(value)
         if match:
             if match.groupdict():  # complex
@@ -531,7 +532,8 @@ def _read_values(
 
 def _write_key(
     key: str,
-    value: _tx.Any,
+    value: _tx.Union[_tx.Sequence[int, float, str, Enum],
+                     int, float, str, Enum],
     sep: _tx.Union[int, str] = 1,
     fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None
 ) -> str:
@@ -561,7 +563,8 @@ def _write_key(
 
 
 def _write_values(
-    value: _tx.Any,
+    value: _tx.Union[_tx.Sequence[int, float, str, Enum],
+                     int, float, str, Enum],
     sep: _tx.Union[int, str] = 1,
     fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None
 ) -> str:
@@ -628,7 +631,8 @@ def _is_optional(type_: _tx.Any) -> _tx.Tuple[bool, _tx.Any]:
     """
     if _tx.get_origin(type_) is _tx.Optional:
         return True, _tx.get_args(type_)[0]
-    if _tx.get_origin(type_) is _tx.Union and type(None) in _tx.get_args(type_):
+    if _tx.get_origin(type_) is _tx.Union and \
+            type(None) in _tx.get_args(type_):
         args = [arg for arg in _tx.get_args(type_) if arg is not type(None)]
         if len(args) == 1:
             return True, args[0]

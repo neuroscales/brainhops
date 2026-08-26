@@ -1,42 +1,32 @@
 """Unit tests for the brainhops.struct module."""
-import pytest
 from typing import Annotated
 
+import pytest
+
 from brainhops._ext.struct import (
-    Struct,
-    struct,
-    Field,
+    ConvertTo,
     Default,
     Factory,
-    ConvertTo,
-    Validate,
-    Init,
-    NoInit,
-    KwOnly,
-    NotKwOnly,
+    Field,
     Frozen,
-    NotFrozen,
-    Var,
     InitVar,
-    ClassVar,
-    Repr,
-    NoRepr,
-    Compare,
-    NoCompare,
-    Eq,
-    NoEq,
-    Order,
-    NoOrder,
-    Hash,
-    NoHash,
     Key,
+    KwOnly,
+    NoEq,
+    NoHash,
+    NoInit,
+    NoOrder,
+    NoRepr,
+    NotFrozen,
     NotKey,
+    Struct,
+    Validate,
+    struct,
 )
-from brainhops._ext.struct.constants import MISSING, _FIELDS, _OPTIONS
+from brainhops._ext.struct.constants import _FIELDS, _OPTIONS, MISSING
+from brainhops._ext.struct.converters import ConversionError, HintConverter
 from brainhops._ext.struct.options import Options
-from brainhops._ext.struct.converters import HintConverter, ConversionError
 from brainhops._ext.struct.validators import HintValidator, ValidationError
-
 
 # ======================================================================
 # Constants

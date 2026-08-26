@@ -1,15 +1,23 @@
 # core
-from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.backends import get_array_backend
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 
 # locals
 from .transformations import (
+    Affine,
+    CoordinatesField,
+    DisplacementField,
+    Identity,
+    Linear,
+    LossyConversionError,
+    Permutation,
+    Scaling,
     Transformation,
-    Identity, Translation, Scaling, Permutation, Linear, Affine,
-    DisplacementField, CoordinatesField, LossyConversionError
+    Translation,
+    _converter,
+    _get_ndim,
+    _to,
 )
-from .transformations import _get_ndim, _converter, _to
-
 
 # ----------------------------------------------------------------------
 #   SAME TYPE
@@ -326,12 +334,12 @@ def _(t: Transformation) -> Transformation:
 # ----------------------------------------------------------------------
 
 
-def _make_converter_chain(*types):
+def _make_converter_chain(*types: list[type]) -> None:
 
     T0, TN = types[0], types[-1]
 
     @_converter(T0, TN)
-    def _(t):
+    def _(t: Transformation) -> Transformation:
         for T1 in types[1:]:
             t = _to(t, T1)
         return t

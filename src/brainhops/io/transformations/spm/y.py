@@ -52,13 +52,14 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         """The field of RAS coordinates."""
         xform = self.transformations[1]
         if xform is None:
-            xform = NiftiRASCoordinatesField(image=self.image, header=self.header)
+            xform = NiftiRASCoordinatesField(
+                image=self.image, header=self.header)
         return xform
 
     @ras2voxel.setter
-    def ras2voxel(self, value: RASToVoxel):
+    def ras2voxel(self, value: RASToVoxel) -> None:
         self._transformations = (value, self.transformations[1])
 
     @rasfield.setter
-    def rasfield(self, value: RASCoordinatesField):
+    def rasfield(self, value: RASCoordinatesField) -> None:
         self._transformations = (self.transformations[0], value)

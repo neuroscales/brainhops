@@ -16,12 +16,15 @@ from brainhops._core.typing import HiddenConst
 # locals
 from .base import DataModelBase
 from .orientation import (
+    AnteriorToPosterior,
+    InferiorToSuperior,
+    LeftToRight,
     Orientation,
-    LeftToRight, RightToLeft,
-    AnteriorToPosterior, PosteriorToAnterior,
-    InferiorToSuperior, SuperiorToInferior
+    PosteriorToAnterior,
+    RightToLeft,
+    SuperiorToInferior,
 )
-from .units import Unit, SpaceUnit, TimeUnit
+from .units import SpaceUnit, TimeUnit, Unit
 
 
 class Axis(DataModelBase):
@@ -81,11 +84,11 @@ L = rightToLeftAxis = RightToLeftAxis()
 A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
 P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
 S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
-I = superiorToInferiorAxis = SuperiorToInferiorAxis()
+I = superiorToInferiorAxis = SuperiorToInferiorAxis()  # noqa: E741
 
-Rx = leftToRightAxis = LeftToRightAxis(name="x")
-Lx = rightToLeftAxis = RightToLeftAxis(name="x")
-Ay = posteriorToAnteriorAxis = PosteriorToAnteriorAxis(name="y")
-Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
-Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
-Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")
+# Rx = leftToRightAxis = LeftToRightAxis(name="x")
+# Lx = rightToLeftAxis = RightToLeftAxis(name="x")
+# Ay = posteriorToAnteriorAxis = PosteriorToAnteriorAxis(name="y")
+# Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
+# Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
+# Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")

@@ -14,17 +14,26 @@ the output coordinate system of To.
 # dependencies
 import typing_extensions as _tx
 
+from brainhops._core.backends import get_array_backend
+
 # core
 from brainhops._core.bsplines import pull_field
-from brainhops._core.backends import get_array_backend
 
 # internals
 from .transformations import (
-    Transformation, _composer,
-    Identity, Translation, Scaling, Permutation, Linear, Affine, Sequence,
-    CoordinatesField, CartesianField, DisplacementField
+    Affine,
+    CartesianField,
+    CoordinatesField,
+    DisplacementField,
+    Identity,
+    Linear,
+    Permutation,
+    Scaling,
+    Sequence,
+    Transformation,
+    Translation,
+    _composer,
 )
-
 
 # ----------------------------------------------------------------------
 #     IDENTITY

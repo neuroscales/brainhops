@@ -6,11 +6,11 @@ from os import PathLike
 import numpy as np
 import typing_extensions as _tx
 
-# externals
-from brainhops._ext.struct import Struct, Factory, HIDE_IF_NONE
-
 # core
 from brainhops._core.backends import da
+
+# externals
+from brainhops._ext.struct import HIDE_IF_NONE, Factory, Struct
 
 # locals
 from .._common import ITKStruct
@@ -240,11 +240,11 @@ class H5TransformParser(
             h5file.close()
         return obj
 
-    def _close(self):
+    def _close(self) -> None:
         if isinstance(self.file, h5py.File):
             self.file.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         self._close()
 
 
@@ -254,7 +254,7 @@ class DelayedH5Array:
     is closed (i.e., by reopening the file when needed).
     """
 
-    def __init__(self, file: _H5Like, path: str):
+    def __init__(self, file: _H5Like, path: str) -> None:
         self.file: _H5Like = file
         self.path: str = path
         self._file: h5py.File | None = None
@@ -271,7 +271,7 @@ class DelayedH5Array:
             self._file.close()
             self._file = None
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def to_dataset(
@@ -301,7 +301,7 @@ class DelayedH5Array:
 
         raise ValueError("Invalid file type")
 
-    def to_array(self, **kwargs):
+    def to_array(self, **kwargs) -> np.ndarray:
         import numpy as np
         is_mine = self._file is None
         dataset = self.to_dataset(keep_open=True)
@@ -310,7 +310,7 @@ class DelayedH5Array:
             self.close()
         return array
 
-    def to_dask(self, *, keep_open: bool = False, **kwargs):
+    def to_dask(self, *, keep_open: bool = False, **kwargs) -> da.Array:
         import dask.array as da
         kwargs.setdefault("chunks", self.chunks or "auto")
         if keep_open:
@@ -327,38 +327,38 @@ class DelayedH5Array:
             self.close()
         return chunk
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype: np.dtype = None) -> np.ndarray:
         return self.to_array(dtype=dtype)
 
     @property
-    def shape(self):
+    def shape(self) -> tuple:
         if self._shape is None:
             self.to_dataset()
         return self._shape
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         if self._dtype is None:
             self.to_dataset()
         return self._dtype
 
     @property
-    def chunks(self):
+    def chunks(self) -> tuple:
         if self._chunks is None:
             self.to_dataset()
         return self._chunks
 
     @property
-    def ndim(self):
+    def ndim(self) -> int:
         return len(self.shape)
 
     @property
-    def size(self):
+    def size(self) -> int:
         from math import prod
         return prod(self.shape)
 
     @property
-    def nbytes(self):
+    def nbytes(self) -> int:
         return self.size * self.dtype.itemsize
 
 

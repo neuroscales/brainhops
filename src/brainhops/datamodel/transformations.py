@@ -28,7 +28,6 @@ import typing_extensions as tx
 from brainhops._core.backends import get_array_backend
 from brainhops._core.typing import (
     ArrayProtocol,
-    HiddenConst,
     get_origin,
     npmatrix,
     npvector,
@@ -77,7 +76,6 @@ if False:
                 return _Pipe(input=other, side="R")
             else:
                 raise SyntaxError("Invalid pipe syntax")
-
 
     p = _Pipe()
 
@@ -326,7 +324,7 @@ class CoordinatesField(Transformation):
 
     coeff: tx.Annotated[
         bool,
-         tx.Doc(
+        tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
@@ -426,7 +424,7 @@ class DisplacementField(Transformation):
 
     coeff: tx.Annotated[
         bool,
-         tx.Doc(
+        tx.Doc(
             """
             If `True`, the field is treated as a field of spline coefficients,
             rather than a field if values to interpolate.
@@ -955,7 +953,7 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, Translation):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        return (xform.matrix[:, :-1] ==  0).all()
+        return (xform.matrix[:, :-1] == 0).all()
     return is_identity(xform, compute=compute)
 
 
@@ -1258,7 +1256,8 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    ...
 
 
 class LossyConversionError(ConversionError):
@@ -1299,7 +1298,9 @@ def _converter(*args, **kwargs) -> tx.Callable:
     return func
 
 
-def _to(x: Transformation, cls: tx.Type[Transformation], **kwargs) -> Transformation:
+def _to(x: Transformation,
+        cls: tx.Type[Transformation],
+        **kwargs) -> Transformation:
     """Convert a transform to a different type."""
     # TODO: implement using the CONVERTERS map,
     #       similarly to _compose() and _COMPOSERS.
@@ -1329,11 +1330,12 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    ...
 
 
 def _composer(func: tx.Callable) -> tx.Callable:
-    """Decorator to register a function as a composer of two transformations."""
+    """Decorator to register a function as a composer of two transformations."""  # noqa: E501
     types = tuple(tx.get_type_hints(func).values())[:2]
     _COMPOSERS[types] = func
     _COMPOSERS_FASTMAP.clear()
@@ -1376,11 +1378,12 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    ...
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:
-    """Decorator to register a function as an adaptor between two coordinate systems."""
+    """Decorator to register a function as an adaptor between two coordinate systems."""  # noqa: E501
     types = tuple(tx.get_type_hints(func).values())[:2]
     _ADAPTORS[types] = func
     _ADAPTORS_FASTMAP.clear()

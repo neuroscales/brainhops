@@ -28,18 +28,28 @@ _DISCARD = "__struct_discard__"
 _SELF = "__struct_self__"
 
 # Name given to the local type variable when generating __init__
+
+
 def _TYPE(x): return f"__struct_{x}_type__"
 
 # Name given to the local default variable when generating __init__
+
+
 def _DEFAULT(x): return f"__struct_{x}_default__"
 
 # Name given to the local converter variable when generating __init__
+
+
 def _CONVERTER(x): return f"__struct_{x}_converter__"
 
 # Name given to the local validator variable when generating __init__
+
+
 def _VALIDATOR(x): return f"__struct_{x}_validator__"
 
 # Name given to a method's return type variable when generating it
+
+
 def _RETURN_TYPE(x): return f"__struct_{x}_return_type__"
 
 
@@ -83,7 +93,7 @@ class _HasFactory:
     def __init__(self, factory: callable) -> None:
         self.factory = factory
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<factory>'
 
     def __call__(self):
@@ -119,7 +129,7 @@ class SHOW_ATTR:
         if self.key is True and self.hide_if_none:
             return "<if not None>"
         if self.hide_if_none:
-             return f"{self.key!r} <if not None>"
+            return f"{self.key!r} <if not None>"
         return f"{self.key!r}"
 
 

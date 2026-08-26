@@ -4,9 +4,10 @@ import typing_extensions as _tx
 # datamodel
 from brainhops.datamodel import transformations as _xforms
 
+from .._xform import ITKTransform
+
 # locals
 from ._parser import H5TransformParser
-from .._xform import ITKTransform
 
 
 class H5Transform(H5TransformParser, ITKTransform):
@@ -19,5 +20,6 @@ class H5Transform(H5TransformParser, ITKTransform):
         return self._transformations
 
     @transformations.setter
-    def transformations(self, value: _tx.Tuple[_xforms.Transformation, ...]) -> None:
+    def transformations(self,
+                        value: _tx.Tuple[_xforms.Transformation, ...]) -> None:
         self._transformations = value

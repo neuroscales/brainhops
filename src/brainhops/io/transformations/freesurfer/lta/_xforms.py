@@ -9,9 +9,10 @@ __all__ = [
 from functools import partial
 from os import PathLike
 
+import numpy as np
+
 # externals
 import typing_extensions as _tx
-import numpy as np
 
 # _ext
 from brainhops._ext.struct import Factory
@@ -22,10 +23,9 @@ from brainhops.datamodel import transformations as _xforms
 
 # local
 from ._enums import LTAType
-from ._struct import LTAStruct
-from ._systems import LTACoordinateSystem, LTAVoxelSystem, LTAPhysicalSystem
 from ._matrix_utils import _get_phys2phys, _get_vox2vox
-
+from ._struct import LTAStruct
+from ._systems import LTACoordinateSystem, LTAPhysicalSystem, LTAVoxelSystem
 
 _FileLike = _tx.Union[_tx.IO, PathLike, str]
 _LTALike = _tx.Union[LTAStruct, _FileLike, bytes, _tx.Iterable[str]]
@@ -80,16 +80,16 @@ class LTATransformation(
         return np.asarray(self.struct.affine.matrix, dtype=np.float64)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
     @classmethod
     def from_(cls, other: _LTALike) -> _tx.Self:
@@ -172,16 +172,16 @@ class LTATransformationVoxToVox(LTATransformation):
         return _get_vox2vox(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
 
 class LTATransformationPhysToPhys(LTATransformation):
@@ -216,16 +216,16 @@ class LTATransformationPhysToPhys(LTATransformation):
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
 
 class LTATransformationRASToRAS(LTATransformation):
@@ -258,13 +258,13 @@ class LTATransformationRASToRAS(LTATransformation):
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value

@@ -7,10 +7,12 @@ from collections.abc import Mapping
 import typing_extensions as _tx
 
 # internals
-from brainhops._ext.struct import Struct, HIDE_IF_NONE
+from brainhops._ext.struct import HIDE_IF_NONE, Struct
+from brainhops._ext.struct.converters import (
+    ObjectConverter,
+)
 from brainhops._ext.struct.converters import (
     register as register_converter,
-    ObjectConverter,
 )
 
 

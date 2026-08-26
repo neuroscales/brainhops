@@ -1,5 +1,6 @@
-import typing_extensions as _tx
 from collections import abc
+
+import typing_extensions as _tx
 
 T = _tx.TypeVar("T")
 
@@ -9,7 +10,7 @@ class ConversionError(ValueError):
 
 
 _HINT_TO_TYPE = {
-    _tx.Iterable: abc.Iterable, 
+    _tx.Iterable: abc.Iterable,
     _tx.Iterator: abc.Iterator,
     _tx.Sequence: abc.Sequence,
     _tx.MutableSequence: abc.MutableSequence,
@@ -38,7 +39,7 @@ def _get_origin(type: _tx.Any, unfold: _tx.Any = None) -> _tx.Any:
     return origin
 
 
-def _issubclass(cls:_tx.Any, base: _tx.Any) -> bool:
+def _issubclass(cls: _tx.Any, base: _tx.Any) -> bool:
     # Robust version of issubclass
     if not isinstance(cls, type) or not isinstance(base, type):
         return False

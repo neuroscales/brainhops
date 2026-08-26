@@ -7,7 +7,6 @@ import typing_extensions as _tx
 # core
 from brainhops._core import path, peek
 
-
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
 # ----------------------------------------------------------------------
@@ -67,7 +66,6 @@ class ParserContentError(ParserError, TypeError):
 class ParserNotImplementedError(ParserError, NotImplementedError):
     """Raised when a parser function is not implemented."""
     pass
-
 
 
 # ---- to ------------------------------------------------------------
@@ -367,20 +365,20 @@ class FileParser(FileSniffer):
         obj
             The parsed object.
         """
-        if isinstance(file, str) and path.Path(file).exists():
-            file = path.Path(file)
+        if isinstance(other, str) and path.Path(other).exists():
+            other = path.Path(other)
 
-        if isinstance(file, path.PathLike):
-            return cls.from_file(file, **kwargs)
+        if isinstance(other, path.PathLike):
+            return cls.from_file(other, **kwargs)
 
-        if hasattr(file, "read"):
-            return cls.from_file(file, **kwargs)
+        if hasattr(other, "read"):
+            return cls.from_file(other, **kwargs)
 
-        if isinstance(file, (bytes, bytearray)):
-            return cls.from_bytes(file, **kwargs)
+        if isinstance(other, (bytes, bytearray)):
+            return cls.from_bytes(other, **kwargs)
 
         # Cannot parse this content -> return False or error
-        raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+        raise ParserTypeError(f"Cannot parse file of type {type(other)}")
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> _tx.Self:

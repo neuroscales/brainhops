@@ -19,7 +19,7 @@ from math import log10
 import typing_extensions as _tx
 
 # internals
-from brainhops._ext.struct import Struct, ClassVar, MetaStruct
+from brainhops._ext.struct import ClassVar, MetaStruct, Struct
 
 
 def _make_enum(name: str, d: _tx.Dict[str, _tx.Tuple]) -> StrEnum:
@@ -90,7 +90,8 @@ UNITS_SPACE = {
     # Other
     "angstrom": (1e-10, "Å", "angstrom", "angstroms"),
     "parsec": (3.085677581491367e+16, "pc", "parsec", "parsecs"),
-    "light year": (9.4607304725808e+15, "ly", "lyr", "light year", "light years"),
+    "light year": (9.4607304725808e+15,
+                   "ly", "lyr", "light year", "light years"),
 }
 SpaceUnitName = _make_enum("SpaceUnitName", UNITS_SPACE)
 
@@ -104,7 +105,7 @@ UNITS_SI = dict([
 UnitSIName = _make_enum("UnitSIName", UNITS_SI)
 
 
-def _parse_unit_name(name: str) -> _tx.Tuple[_tx.Optional[PrefixName], UnitName]:
+def _parse_unit_name(name: str) -> _tx.Tuple[_tx.Optional[PrefixName], UnitName]:  # type: ignore # noqa: E501
     if name in UnitName.__members__:
         return None, UnitName[name]
     for prefix in PrefixName:
@@ -164,7 +165,12 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
 # ----------------------------------------------------------------------
 
 
-class Unit(Struct, convert=True, repr=False, slots=True, init=False, mapping=False):
+class Unit(Struct,
+           convert=True,
+           repr=False,
+           slots=True,
+           init=False,
+           mapping=False):
     name: ClassVar[_tx.Optional[str]] = None
     scale: ClassVar[float] = 1.0
     type: ClassVar[_tx.Literal["time", "space"]]
@@ -231,7 +237,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
     prefix: ClassVar[_tx.Optional[PrefixName]] = None
 
     @classmethod
-    def _parse_name(cls, *args, **kwargs):
+    def _parse_name(cls, *args, **kwargs) -> PrefixName:  # type: ignore
         name = cls.name
         if args:
             name = args[0]
@@ -246,7 +252,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
             base = UnitSIName[base]
         return (prefix or "") + base
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> _tx.Self:
         name = cls._parse_name(*args, **kwargs)
         args = (name,) + args[1:]
         kwargs.pop("name", None)

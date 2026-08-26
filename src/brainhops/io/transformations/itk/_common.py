@@ -1,22 +1,24 @@
 # stdlib
-from enum import StrEnum
 import math
+from enum import StrEnum
+
+import numpy as np
 
 # dependencies
 import typing_extensions as _tx
-import numpy as np
 
-# externals
-from brainhops._ext.struct import Struct
+from brainhops._core import affines as _affines
+from brainhops._core.backends import get_array_backend
 
 # core
 from brainhops._core.typing import ArrayProtocol
-from brainhops._core.backends import get_array_backend
-from brainhops._core import affines as _affines
+
+# externals
+from brainhops._ext.struct import Struct
+from brainhops.datamodel import systems as _systems
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel import systems as _systems
 
 # io
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
@@ -77,7 +79,7 @@ class ITKStruct(Struct, kw_only=True, convert=True):
 
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
 
-    def __new__(cls, **kwargs):
+    def __new__(cls, **kwargs) -> None:
         if cls is not ITKStruct:
             return super().__new__(cls)
         if not hasattr(cls, "_REGISTRY"):
@@ -98,13 +100,12 @@ class ITKStruct(Struct, kw_only=True, convert=True):
     """The number of output dimensions."""
 
     parameters: ArrayProtocol = ()
-    """The optimizable parameters of the transform (e.g., translation vector)."""
+    """The optimizable parameters of the transform (e.g., translation vector)."""  # noqa: E501
 
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-
-    def _check_same_ndim(self, expected_ndim: int | None = None):
+    def _check_same_ndim(self, expected_ndim: int | None = None) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(
@@ -118,7 +119,7 @@ class ITKStruct(Struct, kw_only=True, convert=True):
                 f"({self.ndim_input} != {expected_ndim})"
             )
 
-    def _check_parameters_length(self, expected_length: int):
+    def _check_parameters_length(self, expected_length: int) -> None:
         if len(self.parameters) != expected_length:
             name = self.__class__.__name__
             raise ValueError(
@@ -126,7 +127,7 @@ class ITKStruct(Struct, kw_only=True, convert=True):
                 f"does not match expected length {expected_length}"
             )
 
-    def _check_fixed_parameters_length(self, expected_length: int):
+    def _check_fixed_parameters_length(self, expected_length: int) -> None:
         if len(self.fixed_parameters) != expected_length:
             name = self.__class__.__name__
             raise ValueError(
@@ -135,9 +136,9 @@ class ITKStruct(Struct, kw_only=True, convert=True):
             )
 
 
-def _register_type(*names: str):
+def _register_type(*names: str) -> _tx.Callable:
 
-    def decorator(cls):
+    def decorator(cls: type) -> type:
         for name in names:
             ITKStruct._REGISTRY[name] = cls
         return cls
@@ -164,13 +165,13 @@ class ITKIdentityStruct(ITKStruct):
 
 @_register_type("TranslationTransform")
 class ITKTranslationStruct(ITKStruct):
-    """Translation transform with parameters for translation in each dimension."""
+    """Translation transform with parameters for translation in each dimension."""  # noqa: E501
 
     type: _tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
 
     fixed_parameters: _tx.Tuple[()] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
@@ -189,7 +190,7 @@ class ITKScaleStruct(ITKStruct):
 
     type: _tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
@@ -208,17 +209,17 @@ class ITKScaleStruct(ITKStruct):
 
 @_register_type("ScaleLogarithmicTransform")
 class ITKScaleLogarithmicStruct(ITKStruct):
-    """Scale logarithmic transform with parameters for scaling in each dimension."""
+    """Scale logarithmic transform with parameters for scaling in each dimension."""  # noqa: E501
 
     type: _tx.Literal[_ITKT.ScaleLogarithmicTransform] \
         = _ITKT.ScaleLogarithmicTransform
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
     def to_transform(self) -> _xforms.Sequence:
-        """Return a scale logarithmic transform with the specified parameters."""
+        """Return a scale logarithmic transform with the specified parameters."""  # noqa: E501
         return _xforms.Sequence(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
@@ -318,7 +319,7 @@ class ITKVersorStruct(ITKStruct):
     fixed_parameters: _tx.Tuple[float, float, float]
     """Center of rotation."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
 
     def to_transform(self) -> _xforms.Sequence:
@@ -340,9 +341,12 @@ class ITKVersorStruct(ITKStruct):
 
 @_register_type("VersorRigid3DTransform")
 class ITKVersorRigid3DStruct(ITKStruct):
-    """Versor rigid 3D transform with parameters for rotation and translation."""
+    """
+    Versor rigid 3D transform with parameters for rotation and translation.
+    """
 
-    type: _tx.Literal[_ITKT.VersorRigid3DTransform] = _ITKT.VersorRigid3DTransform
+    type: _tx.Literal[_ITKT.VersorRigid3DTransform] = \
+        _ITKT.VersorRigid3DTransform
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
@@ -375,7 +379,8 @@ class ITKSimilarity2DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity2DTransform] = _ITKT.Similarity2DTransform
+    type: _tx.Literal[_ITKT.Similarity2DTransform] = \
+        _ITKT.Similarity2DTransform
 
     ndim_input: _tx.Literal[2] = 2
     ndim_output: _tx.Literal[2] = 2
@@ -416,7 +421,8 @@ class ITKSimilarity3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity3DTransform] = _ITKT.Similarity3DTransform
+    type: _tx.Literal[_ITKT.Similarity3DTransform] = \
+        _ITKT.Similarity3DTransform
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
@@ -555,14 +561,11 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
 
 @_register_type("AffineTransform")
 class ITKAffineStruct(ITKStruct):
-    """
-    Affine transform with parameters for linear transformation and
-    translation.
-    """
+    """Affine transform with parameters for linear transformation and translation."""  # noqa: E501
 
     type: _tx.Literal[_ITKT.AffineTransform] = _ITKT.AffineTransform
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         ndim = self.ndim_input
         self._check_parameters_length((ndim + 1) * ndim)
@@ -592,11 +595,10 @@ class ITKAffineStruct(ITKStruct):
 
 @_register_type("DisplacementFieldTransform")
 class ITKDisplacementFieldStruct(ITKStruct):
-    """
-    Displacement field transform with parameters for a dense deformation map.
-    """
+    """Displacement field transform with parameters for a dense deformation map."""  # noqa: E501
 
-    type: _tx.Literal[_ITKT.DisplacementFieldTransform] = _ITKT.DisplacementFieldTransform
+    type: _tx.Literal[_ITKT.DisplacementFieldTransform] = \
+        _ITKT.DisplacementFieldTransform
 
     def to_transform(self) -> _xforms.DisplacementField:
 
@@ -622,7 +624,6 @@ class ITKDisplacementFieldStruct(ITKStruct):
         rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
         disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
-        LPS = _make_system(3)
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.Sequence(
             [
@@ -672,7 +673,6 @@ class ITKBSplineStruct(ITKStruct):
         disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
         VOX = _systems.VoxelCoordinateSystem()
-        LPS = _make_system(3)
         return _xforms.Sequence(
             [
                 LPSToVoxel(lps2vox),
@@ -716,8 +716,8 @@ def _versor_to_matrix(q: _tx.Sequence[float]) -> np.ndarray:
     qw = math.sqrt(max(0.0, 1.0 - norm_sq))
     return np.array([
         [1 - 2*(qy**2 + qz**2),     2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
-        [    2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qx*qw)],
-        [    2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
+        [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qx*qw)],
+        [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
     ], dtype=np.float64)
 
 

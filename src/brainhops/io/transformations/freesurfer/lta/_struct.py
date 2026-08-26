@@ -7,7 +7,7 @@ import typing_extensions as _tx
 from brainhops._ext.struct import Factory
 
 # internals
-from ._enums import LTAType, LTAMatrixType, LTAValidity
+from ._enums import LTAMatrixType, LTAType, LTAValidity
 from ._parser import LTAParser, MatrixParser, VolumeInfoParser
 
 # type hints

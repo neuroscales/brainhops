@@ -1,9 +1,10 @@
 # dependencies
 import typing_extensions as _tx
 
+from brainhops._core.backends import da
+
 # core
 from brainhops._core.typing import ArrayProtocol
-from brainhops._core.backends import da
 
 # io
 from brainhops.io.transformations.base.fields import RASCoordinatesField

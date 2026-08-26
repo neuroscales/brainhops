@@ -56,5 +56,5 @@ R = leftToRight = LeftToRight()
 L = rightToLeft = RightToLeft()
 A = posteriorToAnterior = PosteriorToAnterior()
 P = anteriorToPosterior = AnteriorToPosterior()
-I = superiorToInferior = SuperiorToInferior()
+I = superiorToInferior = SuperiorToInferior()  # noqa: E741
 S = inferiorToSuperior = InferiorToSuperior()
