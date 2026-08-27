@@ -19,7 +19,9 @@ def _from_homogeneous(H: np.ndarray) -> np.ndarray:
     return H[..., :-1, :]
 
 
-def _random_affine(rng, m: int, n: int, batch=(), dtype=np.float64) -> np.ndarray:
+def _random_affine(rng: np.random, m: int, n: int,
+                   batch: tuple = (),
+                   dtype: np.dtype = np.float64) -> np.ndarray:
     """Generate random compact affine with shape (*batch, m, n+1)."""
     A = rng.normal(size=(*batch, m, n + 1)).astype(dtype)
     if m == n:
@@ -27,7 +29,7 @@ def _random_affine(rng, m: int, n: int, batch=(), dtype=np.float64) -> np.ndarra
     return A
 
 
-def test_inv_matches_homogeneous_baseline_square_and_rectangular():
+def test_inv_matches_homogeneous_baseline_square_and_rectangular() -> None:
     rng = np.random.default_rng(0)
 
     # Square linear part -> true inverse
@@ -43,7 +45,7 @@ def test_inv_matches_homogeneous_baseline_square_and_rectangular():
     np.testing.assert_allclose(got_rect, exp_rect, rtol=1e-10, atol=1e-10)
 
 
-def test_matmul_matches_homogeneous_baseline_with_broadcast_and_chain():
+def test_matmul_matches_homogeneous_baseline_with_broadcast_and_chain() -> None:  # noqa: E501
     rng = np.random.default_rng(1)
     A = _random_affine(rng, m=2, n=3, batch=(4, 1))
     B = _random_affine(rng, m=3, n=4, batch=(1, 5))
@@ -59,7 +61,7 @@ def test_matmul_matches_homogeneous_baseline_with_broadcast_and_chain():
     np.testing.assert_allclose(got, exp, rtol=1e-10, atol=1e-10)
 
 
-def test_matvec_matches_homogeneous_baseline_with_broadcast():
+def test_matvec_matches_homogeneous_baseline_with_broadcast() -> None:
     rng = np.random.default_rng(2)
     A = _random_affine(rng, m=3, n=4, batch=(2, 1))
     b = rng.normal(size=(1, 5, 4))
@@ -73,7 +75,7 @@ def test_matvec_matches_homogeneous_baseline_with_broadcast():
     np.testing.assert_allclose(got, exp, rtol=1e-10, atol=1e-10)
 
 
-def test_lmdiv_vector_matches_homogeneous_baseline():
+def test_lmdiv_vector_matches_homogeneous_baseline() -> None:
     rng = np.random.default_rng(3)
     A = _random_affine(rng, m=3, n=3, batch=(2,))
     b = rng.normal(size=(2, 3))
@@ -89,7 +91,7 @@ def test_lmdiv_vector_matches_homogeneous_baseline():
     np.testing.assert_allclose(got_vec, exp_vec, rtol=1e-10, atol=1e-10)
 
 
-def test_lmdiv_matrix_matches_homogeneous_baseline():
+def test_lmdiv_matrix_matches_homogeneous_baseline() -> None:
     rng = np.random.default_rng(33)
     A = _random_affine(rng, m=3, n=3, batch=(2,))
     B = _random_affine(rng, m=3, n=2, batch=(2,))
@@ -103,7 +105,7 @@ def test_lmdiv_matrix_matches_homogeneous_baseline():
     np.testing.assert_allclose(got, exp, rtol=1e-10, atol=1e-10)
 
 
-def test_rmdiv_matches_homogeneous_baseline():
+def test_rmdiv_matches_homogeneous_baseline() -> None:
     rng = np.random.default_rng(4)
 
     # Matrix form: solve X @ B = A

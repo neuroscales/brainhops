@@ -1,17 +1,18 @@
-# A good portion of the code found in this file are lightly modified version of the code found on the tirl github page. All credit goes to the creators of that page
+# A good portion of the code found in this file are lightly modified version
+# of the code found on the tirl github page. All credit goes to the creators
+# of that page
 
 # stdlib
 import json
-from os import PathLike
 
 # dependencies
 import typing_extensions as _tx
 
-from brainhops._core.path import Path, PathLike
-
 # core
 # externals
-from brainhops._ext.struct import Struct
+from bagof.magic import Magic
+
+from brainhops._core.path import Path, PathLike
 from brainhops.io.transformations.tirl._helper import (
     MAGIC,
     UINT8,
@@ -29,7 +30,7 @@ _FileLike = _tx.Union[_tx.IO, PathLike, str]
 _FileOrContentLike = _tx.Union[_FileLike, bytes]
 
 
-class TIRLParser(Struct):
+class TIRLParser(Magic):
 
     _HAS_KEYS = True
 

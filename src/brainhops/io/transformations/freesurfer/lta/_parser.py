@@ -6,13 +6,13 @@ from warnings import warn
 # dependencies
 import typing_extensions as _tx
 
+# externals
+from bagof.magic import Magic
+
 from brainhops._core.path import Path, PathLike
 
 # core
 from brainhops._core.peek import peekable_lines
-
-# externals
-from brainhops._ext.struct import Struct
 
 # typing
 _FileLike = _tx.Union[_tx.IO, PathLike, str]
@@ -24,7 +24,7 @@ _FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
 # ----------------------------------------------------------------------
 
 
-class LTAParser(Struct):
+class LTAParser(Magic):
 
     _HAS_KEYS = True
 

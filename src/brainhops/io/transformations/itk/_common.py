@@ -7,14 +7,14 @@ import numpy as np
 # dependencies
 import typing_extensions as _tx
 
+# externals
+from bagof.magic import Magic
+
 from brainhops._core import affines as _affines
 from brainhops._core.backends import get_array_backend
 
 # core
 from brainhops._core.typing import ArrayProtocol
-
-# externals
-from brainhops._ext.struct import Struct
 from brainhops.datamodel import systems as _systems
 
 # datamodel
@@ -74,7 +74,7 @@ class ITKPrecision(StrEnum):
     Double = "double"
 
 
-class ITKStruct(Struct, kw_only=True, convert=True):
+class ITKStruct(Magic, kw_only=True, convert=True):
     """This object represents a single ITK transform block."""
 
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
@@ -100,7 +100,9 @@ class ITKStruct(Struct, kw_only=True, convert=True):
     """The number of output dimensions."""
 
     parameters: ArrayProtocol = ()
-    """The optimizable parameters of the transform (e.g., translation vector)."""  # noqa: E501
+    """
+    The optimizable parameters of the transform (e.g., translation vector).
+    """
 
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
@@ -165,7 +167,9 @@ class ITKIdentityStruct(ITKStruct):
 
 @_register_type("TranslationTransform")
 class ITKTranslationStruct(ITKStruct):
-    """Translation transform with parameters for translation in each dimension."""  # noqa: E501
+    """
+    Translation transform with parameters for translation in each dimension.
+    """
 
     type: _tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
 
@@ -209,7 +213,9 @@ class ITKScaleStruct(ITKStruct):
 
 @_register_type("ScaleLogarithmicTransform")
 class ITKScaleLogarithmicStruct(ITKStruct):
-    """Scale logarithmic transform with parameters for scaling in each dimension."""  # noqa: E501
+    """
+    Scale logarithmic transform with parameters for scaling in each dimension.
+    """
 
     type: _tx.Literal[_ITKT.ScaleLogarithmicTransform] \
         = _ITKT.ScaleLogarithmicTransform
@@ -219,7 +225,9 @@ class ITKScaleLogarithmicStruct(ITKStruct):
         self._check_parameters_length(self.ndim_input)
 
     def to_transform(self) -> _xforms.Sequence:
-        """Return a scale logarithmic transform with the specified parameters."""  # noqa: E501
+        """
+        Return a scale logarithmic transform with the specified parameters.
+        """
         return _xforms.Sequence(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
@@ -561,7 +569,9 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
 
 @_register_type("AffineTransform")
 class ITKAffineStruct(ITKStruct):
-    """Affine transform with parameters for linear transformation and translation."""  # noqa: E501
+    """
+    Affine transform with parameters for linear transformation and translation.
+    """
 
     type: _tx.Literal[_ITKT.AffineTransform] = _ITKT.AffineTransform
 
@@ -595,7 +605,9 @@ class ITKAffineStruct(ITKStruct):
 
 @_register_type("DisplacementFieldTransform")
 class ITKDisplacementFieldStruct(ITKStruct):
-    """Displacement field transform with parameters for a dense deformation map."""  # noqa: E501
+    """
+    Displacement field transform with parameters for a dense deformation map.
+    """
 
     type: _tx.Literal[_ITKT.DisplacementFieldTransform] = \
         _ITKT.DisplacementFieldTransform

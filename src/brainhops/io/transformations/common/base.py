@@ -39,7 +39,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
     image: _tx.Optional[nb.Nifti1Image] = None
 
     @property
-    def header(self) -> _tx.Optional[nb.Nifti1Header]:
+    def header(self) -> _tx.Optional[nb.Nifti1Header]:  # noqa: F811
         """The NIfTI header from which the transformation was derived."""
         if getattr(self, "_header", None) is not None:
             return self._header
@@ -48,7 +48,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
         return None
 
     @property
-    def image(self) -> _tx.Optional[nb.Nifti1Image]:
+    def image(self) -> _tx.Optional[nb.Nifti1Image]:  # noqa: F811
         """The NIfTI image from which the transformation was derived."""
         if getattr(self, "_image", None) is not None:
             return self._image

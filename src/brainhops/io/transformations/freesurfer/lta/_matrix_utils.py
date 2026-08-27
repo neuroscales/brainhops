@@ -65,7 +65,8 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
         return matrix
     if lta.src is None or lta.dst is None:
         raise ValueError(
-            'cannot compute phys-to-phys matrix without src and dst volume info')
+            'cannot compute phys-to-phys matrix without '
+            'src and dst volume info')
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -79,7 +80,7 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
         src_phys2rsa = _get_phys2ras(lta.src)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
         dst_phys2rsa = _get_phys2ras(lta.dst)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
         return np.linalg.inv(dst_phys2rsa) @ matrix @ src_phys2rsa
-    assert False, f"unsupported LTA type: {lta.type}"
+    raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
 def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
@@ -104,7 +105,7 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
         return np.linalg.inv(dst_vox2ras) @ ras2ras @ src_vox2ras
-    assert False, f"unsupported LTA type: {lta.type}"
+    raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
 def _mat2code(vox2ras: np.ndarray) -> _tx.Tuple[_3Ints, _3Flips]:

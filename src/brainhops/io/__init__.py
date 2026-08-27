@@ -48,5 +48,6 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 
 ```
 """
+__all__ = ["images", "transformations", "vectors"]
 
 from . import images, transformations, vectors

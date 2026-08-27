@@ -149,19 +149,19 @@ FSYMBOLTOCLASS = {}
 SYMBOLTOCLASS = {}
 
 
-def is_group(cls) -> bool:
+def is_group(cls: type) -> bool:
     return cls in GROUPS
 
 
-def is_lie_group(cls) -> bool:
+def is_lie_group(cls: type) -> bool:
     return cls in LIE_GROUPS
 
 
-def is_connected(cls) -> bool:
+def is_connected(cls: type) -> bool:
     return cls in CONNECTED
 
 
-def is_simplyconnected(cls) -> bool:
+def is_simplyconnected(cls: type) -> bool:
     return cls in SIMPLYCONNECTED
 
 

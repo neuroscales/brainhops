@@ -1335,7 +1335,9 @@ class CompositionError(TypeError):
 
 
 def _composer(func: tx.Callable) -> tx.Callable:
-    """Decorator to register a function as a composer of two transformations."""  # noqa: E501
+    """
+    Decorator to register a function as a composer of two transformations.
+    """
     types = tuple(tx.get_type_hints(func).values())[:2]
     _COMPOSERS[types] = func
     _COMPOSERS_FASTMAP.clear()
@@ -1383,7 +1385,10 @@ class AdaptationError(TypeError):
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:
-    """Decorator to register a function as an adaptor between two coordinate systems."""  # noqa: E501
+    """
+    Decorator to register a function as an adaptor between two
+    coordinate systems.
+    """
     types = tuple(tx.get_type_hints(func).values())[:2]
     _ADAPTORS[types] = func
     _ADAPTORS_FASTMAP.clear()

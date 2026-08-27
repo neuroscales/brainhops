@@ -24,8 +24,8 @@ voxel_size = [0.97, 0.97, 1.25]
 origin_coords = [-120.5, -120.5, -60.0]
 orientation_matrix = [
     -1.0,  0.0,  0.0,
-     0.0, -1.0,  0.0,
-     0.0,  0.0,  1.0
+    0.0, -1.0,  0.0,
+    0.0,  0.0,  1.0
 ]
 
 image = sitk.Image(shape, dtype, num_channels)
@@ -155,7 +155,8 @@ displacement3d = sitk.GetImageFromArray(values3d.transpose(2, 1, 0, 3))
 displacement3d.CopyInformation(image)
 displacement3d = sitk.DisplacementFieldTransform(displacement3d)
 
-sitk.WriteTransform(displacement3d, op.join(this_dir, "itk_displacement3d.tfm"))
+sitk.WriteTransform(displacement3d, op.join(
+    this_dir, "itk_displacement3d.tfm"))
 sitk.WriteTransform(displacement3d, op.join(this_dir, "itk_displacement3d.h5"))
 
 
@@ -165,19 +166,25 @@ composite_affine3d = sitk.CompositeTransform(3)
 composite_affine3d.AddTransform(affine3d)
 composite_affine3d.AddTransform(scale3d)
 
-sitk.WriteTransform(composite_affine3d, op.join(this_dir, "itk_composite_affine3d.tfm"))
-sitk.WriteTransform(composite_affine3d, op.join(this_dir, "itk_composite_affine3d.h5"))
+sitk.WriteTransform(composite_affine3d, op.join(
+    this_dir, "itk_composite_affine3d.tfm"))
+sitk.WriteTransform(composite_affine3d, op.join(
+    this_dir, "itk_composite_affine3d.h5"))
 
 composite_bsplines3d = sitk.CompositeTransform(3)
 composite_bsplines3d.AddTransform(affine3d)
 composite_bsplines3d.AddTransform(bspline3d)
 
-sitk.WriteTransform(composite_bsplines3d, op.join(this_dir, "itk_composite_bsplines3d.tfm"))
-sitk.WriteTransform(composite_bsplines3d, op.join(this_dir, "itk_composite_bsplines3d.h5"))
+sitk.WriteTransform(composite_bsplines3d, op.join(
+    this_dir, "itk_composite_bsplines3d.tfm"))
+sitk.WriteTransform(composite_bsplines3d, op.join(
+    this_dir, "itk_composite_bsplines3d.h5"))
 
 composite_displacement3d = sitk.CompositeTransform(3)
 composite_displacement3d.AddTransform(affine3d)
 composite_displacement3d.AddTransform(displacement3d)
 
-sitk.WriteTransform(composite_displacement3d, op.join(this_dir, "itk_composite_displacement3d.tfm"))
-sitk.WriteTransform(composite_displacement3d, op.join(this_dir, "itk_composite_displacement3d.h5"))
+sitk.WriteTransform(composite_displacement3d, op.join(
+    this_dir, "itk_composite_displacement3d.tfm"))
+sitk.WriteTransform(composite_displacement3d, op.join(
+    this_dir, "itk_composite_displacement3d.h5"))

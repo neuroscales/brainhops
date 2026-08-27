@@ -1,4 +1,6 @@
-# A good portion of the code found in this file are lightly modified version of the code found on the tirl github page. All credit goes to the creators of that page
+# A good portion of the code found in this file are lightly modified version
+# of the code found on the tirl github page. All credit goes to the
+# creators of that page
 
 # stdlib
 import json
@@ -52,15 +54,20 @@ def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
     return result[0] if len(result) == 1 else tuple(result)
 
 
-def istagged(item: _tx.Any, tag: str) -> bool:
-    """Returns True if *item* is an XML-style tagged string, e.g. ``<tag>value</tag>``."""
+def istagged(item: object, tag: str) -> bool:
+    """
+    Returns True if *item* is an XML-style tagged string,
+    e.g. ``<tag>value</tag>``.
+    """
     if isinstance(item, str):
         return item.startswith(f"<{tag}>") and item.endswith(f"</{tag}>")
     return False
 
 
-def getval(item: _tx.Any, tag: str) -> _tx.Any:
-    """Strips the XML-style tag from a tagged string and returns the inner value."""
+def getval(item: object, tag: str) -> object:
+    """
+    Strips the XML-style tag from a tagged string and returns the inner value.
+    """
     if isinstance(item, str):
         return item[len(f"<{tag}>"):-len(f"</{tag}>")]
     return item
@@ -99,7 +106,8 @@ def dictcmp(a: dict, b: dict) -> bool:
 
 def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
     """
-    Recursively compares two lists or tuples whose elements may include ndarrays.
+    Recursively compares two lists or tuples whose elements may
+    include ndarrays.
     """
     assert isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)), \
         "List/tuple inputs are required for comparison."
@@ -126,7 +134,9 @@ def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
 # ----------------------------------------------------------------------
 
 def load_array(f: _IO) -> np.memmap:
-    """Loads an ndarray block from the file, returning a memory-mapped handle."""
+    """
+    Loads an ndarray block from the file, returning a memory-mapped handle.
+    """
     # TODO: consider returning a dask array instead of np.memmap
     _blocksize = bytes2int(f.read(UINT64.nbytes), UINT64)
     version = nplib.read_magic(f)
@@ -141,7 +151,7 @@ def load_array(f: _IO) -> np.memmap:
         return np.memmap(f.name, dtype=dtype, mode="r+",
                          offset=f.tell(), shape=shape, order=order)
     except PermissionError:
-        warn("Data object is read-only.")
+        warn("Data object is read-only.", stacklevel=1)
         return np.memmap(f.name, dtype=dtype, mode="r",
                          offset=f.tell(), shape=shape, order=order)
 
@@ -164,7 +174,7 @@ def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
         return np.memmap(f.name, dtype=np.dtype(dtype), mode=mode,
                          offset=f.tell(), shape=tuple(shape), order=order)
     except PermissionError:
-        warn("Data array is read-only.")
+        warn("Data array is read-only.", stacklevel=1)
         return np.memmap(f.name, dtype=np.dtype(dtype), mode="r",
                          offset=f.tell(), shape=tuple(shape), order=order)
 
@@ -217,8 +227,8 @@ def load_replacements(f: _IO) -> dict:
 #   Decode / hload
 # ----------------------------------------------------------------------
 
-def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
-           objects: dict) -> _tx.Any:
+def decode(encoded_dump: _tx.Union[dict, list, tuple, object],
+           objects: dict) -> object:
     """
     Recursively restores a TIRL object dump into a Python data structure.
 
@@ -226,9 +236,9 @@ def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
     - ``<complex>...</complex>`` tagged strings → Python complex numbers
     - ``<class>...</class>`` tagged strings     → class objects (via pydoc.locate)
     - ``<obj>...</obj>`` tagged strings         → back-references into *objects*
-    - Dicts with both ``"type"`` and ``"id"``  → registered in *objects* for
+    - Dicts with both ``"type"`` and ``"id"``   → registered in *objects* for
       later back-references, with collision detection via a unique index
-    """
+    """  # noqa: E501
     assert isinstance(objects, dict)
 
     if isinstance(encoded_dump, dict):
@@ -252,7 +262,8 @@ def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
 
         elif istagged(item, "obj"):
             objid = getval(item, "obj")
-            # Backwards compatibility: legacy tuple IDs stored as repr strings (<3.0)
+            # Backwards compatibility: legacy tuple
+            # IDs stored as repr strings (<3.0)
             if objid.startswith("(") and objid.endswith(")"):
                 objid = eval(objid)
                 assert isinstance(objid, tuple)
@@ -289,7 +300,7 @@ def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
     return restored
 
 
-def hload(node: _tx.Any, objects: _tx.Optional[dict] = None) -> _tx.Any:
+def hload(node: object, objects: _tx.Optional[dict] = None) -> object:
     """
     Recursively instantiates TIRLStruct objects from a decoded object dump.
 

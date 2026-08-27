@@ -89,7 +89,8 @@ following specific objects:
     * Data Type: String (Variable length or fixed character array).
     * Specification: Holds the exact C++ Run-Time Type Information (RTTI)
       name of the ITK class.
-    * Example Value: "AffineTransform_double_3_3" or "BSplineTransform_double_3_3".
+    * Example Value: "AffineTransform_double_3_3" or
+      "BSplineTransform_double_3_3".
 
 2. `TransformParameters`
 

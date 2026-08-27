@@ -10,7 +10,8 @@ import numpy as np
 import typing_extensions as _tx
 
 # externals
-from brainhops._ext.struct import Struct
+from bagof.magic import Magic
+
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -18,7 +19,9 @@ from brainhops.datamodel import transformations as _xforms
 
 # TODO: Confirm the coordinate system TIRL uses. This is just a placeholder
 def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
-    """Create a spatial coordinate system with the given number of dimensions."""
+    """
+    Create a spatial coordinate system with the given number of dimensions.
+    """
     if ndim == 2:
         return _systems.SpatialCoordinateSystem2D((_axes.L, _axes.P))
     elif ndim == 3:
@@ -59,7 +62,7 @@ class TIRLEnumClass(StrEnum):
 _TIRLT = TIRLEnumClass
 
 
-def _register_type(*names: str):
+def _register_type(*names: str) -> _tx.Callable:
     def decorator(cls: type) -> type:
         for name in names:
             TIRLStruct._REGISTRY[name] = cls
@@ -71,10 +74,10 @@ def _register_type(*names: str):
 #   Base struct
 # ----------------------------------------------------------------------
 
-class TIRLStruct(Struct, kw_only=True, convert=True):
+class TIRLStruct(Magic, kw_only=True, convert=True):
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
 
-    def __new__(cls, **kwargs):
+    def __new__(cls, **kwargs) -> "TIRLStruct":
         if cls is not TIRLStruct:
             return super().__new__(cls)
         if not hasattr(cls, "_REGISTRY"):
@@ -104,7 +107,8 @@ class TIRLParametersStruct(TIRLStruct):
     def __post_init__(self) -> None:
         if len(self.parameters) == 0:
             self.parameters = np.array([], dtype="f8")
-        elif (len(self.parameters) == 1) and hasattr(self.parameters[0], "__iter__"):
+        elif (len(self.parameters) == 1) and \
+                hasattr(self.parameters[0], "__iter__"):
             self.parameters = np.asanyarray(self.parameters[0]).ravel()
         else:
             self.parameters = np.array(self.parameters).ravel()
@@ -129,7 +133,8 @@ class TIRLParametersStruct(TIRLStruct):
 
 @_register_type("TxTranslation")
 class TIRLTranslationStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.TranslationTransform] = _TIRLT.TranslationTransform
+    type: _tx.Literal[_TIRLT.TranslationTransform] = \
+        _TIRLT.TranslationTransform
 
     parameters:     _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
@@ -185,7 +190,8 @@ class TIRLLinearStruct(TIRLStruct):
                 np.issubdtype(mat.dtype, np.number):
             parameters = mat.ravel()
 
-        elif hasattr(mat, "__iter__") and all(isinstance(v, Number) for v in mat):
+        elif hasattr(mat, "__iter__") and \
+                all(isinstance(v, Number) for v in mat):
             parameters = np.asarray(mat).ravel()
 
         elif all(isinstance(v, Number) for v in param.parameters):
@@ -356,7 +362,8 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
 
 @_register_type("TxEulerAngles")
 class TIRLEulerAnglesStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.EulerAnglesTransform] = _TIRLT.EulerAnglesTransform
+    type: _tx.Literal[_TIRLT.EulerAnglesTransform] = \
+        _TIRLT.EulerAnglesTransform
 
     parameters:     _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
@@ -459,8 +466,8 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
         Q = np.asarray([[0, -qz, qy],
                         [qz, 0, -qx],
                         [-qy, qx, 0]])
-        I = np.eye(3)
-        R = (qw ** 2 - np.dot(q_vect.T, q_vect)) * I \
+        eye = np.eye(3)
+        R = (qw ** 2 - np.dot(q_vect.T, q_vect)) * eye \
             + 2 * np.dot(q_vect, q_vect.T) + 2 * qw * Q
 
         # Taking the rotation centre into account
@@ -562,7 +569,8 @@ class TIRLDomainStruct(TIRLStruct):
     memlimit:    _tx.Optional[_tx.Any] = None
     storage:     _tx.Optional[_tx.Any] = None
 
-    def make_identity_grid(self, shape: tuple, dtype=np.int32) -> np.ndarray:
+    def make_identity_grid(self, shape: tuple,
+                           dtype: np.dtype = np.int32) -> np.ndarray:
         """Returns a voxel coordinate grid of shape (*spatial_shape, ndim)."""
         # TODO: use dask if loaded
         g_vals = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
@@ -576,8 +584,9 @@ class TIRLDomainStruct(TIRLStruct):
         Returns the seed coordinates for the domain.
 
         For compact (regular grid) domains, generates a voxel index grid.
-        For sparse (non-compact) domains, uses the explicitly stored coordinates
-        directly — equivalent to TIRL's TxDirect lookup table behaviour.
+        For sparse (non-compact) domains, uses the explicitly stored
+        coordinates directly — equivalent to TIRL's TxDirect lookup table
+        behaviour.
         """
         ndim = len(self.shape)
         if self.coordinates is not None:
@@ -619,7 +628,8 @@ class TIRLDomainStruct(TIRLStruct):
 
 @_register_type("TxDisplacementField")
 class TIRLDisplacementFieldStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.DisplacementTransform] = _TIRLT.DisplacementTransform
+    type: _tx.Literal[_TIRLT.DisplacementTransform] = \
+        _TIRLT.DisplacementTransform
 
     parameters:     _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
@@ -650,7 +660,8 @@ class TIRLDisplacementFieldStruct(TIRLStruct):
         if mode == "rel":
             # Vectors are in voxel space — scale to physical space using
             # the voxel size from the first internal transform (TxScale)
-            scale = self.domain.internal.transformations[0].parameters.parameters
+            scale = self.domain.internal.transformations[0]\
+                .parameters.parameters
             full_field = full_field * scale
 
         seq = self.domain.to_transform()
@@ -675,7 +686,8 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
     treating the field the same as a regular TIRLDisplacementFieldStruct
     using the domain shape directly.
     """
-    type: _tx.Literal[_TIRLT.RbfDisplacementTransform] = _TIRLT.RbfDisplacementTransform
+    type: _tx.Literal[_TIRLT.RbfDisplacementTransform] = \
+        _TIRLT.RbfDisplacementTransform
 
     parameters:     _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
@@ -687,7 +699,8 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
         if self.domain is None:
             self.domain = self.metaparameters["domain"]
 
-        # dense_shape defines the regular grid the sparse field is rasterised onto
+        # dense_shape defines the regular grid the sparse field is
+        # rasterised onto
         dense_shape = self.metaparameters.get("dense_shape")
         if dense_shape is None or dense_shape == "auto":
             # Fall back to the domain shape if dense_shape is unavailable
@@ -715,7 +728,8 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
         if mode == "rel":
             # Vectors are in voxel space — scale to physical space using
             # the voxel size from the first internal transform (TxScale)
-            scale = self.domain.internal.transformations[0].parameters.parameters
+            scale = self.domain.internal.transformations[0]\
+                .parameters.parameters
             full_field = full_field * scale
 
         seq = self.domain.to_transform()

@@ -1,4 +1,4 @@
-# fmt: off
+# ruff: disable[E501]
 """
 ITK "TFM" transformations are saved in a text format and support a
 variety of (chained) transformations.
@@ -101,7 +101,7 @@ affine transformations.
 | Similarity3DTransform  | [v_x, v_y, v_z, t_x, t_y, t_z, scale]             | 7      | [c_x, c_y, c_z] | Center of rotation/scale | Rigid 3D transformation plus uniform scaling factor.
 | AffineTransform        | [Matrix elements (row-major), Translation vector] | D² + D | [c_x, c_y, ...] | Center of rotation       | Fully unbounded linear mapping (Translation, Rotation, Shearing, and Scale). Example (3D): 9 matrix values + 3 translations = 12 parameters.
 """
-# fmt: on
+# ruff: enable[E501]
 __all__ = [
     "TFMTransform",
     "TFMTransformParser",

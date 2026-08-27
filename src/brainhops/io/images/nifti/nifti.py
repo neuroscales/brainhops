@@ -49,7 +49,9 @@ class NiftiImage(Image):
 
     @classmethod
     def from_bytes(cls, data: bytes) -> _tx.Self:
-        """Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes."""  # noqa: E501
+        """
+        Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes.
+        """
         return cls.from_nifti(nb.Nifti1Image.from_bytes(data))
 
     @classmethod
