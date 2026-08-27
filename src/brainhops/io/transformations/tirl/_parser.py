@@ -10,7 +10,7 @@ import typing_extensions as _tx
 
 # core
 # externals
-from bagof.magic import Magic
+from brainhops._ext.struct import Struct
 
 from brainhops._core.path import Path, PathLike
 from brainhops.io.transformations.tirl._helper import (
@@ -30,7 +30,7 @@ _FileLike = _tx.Union[_tx.IO, PathLike, str]
 _FileOrContentLike = _tx.Union[_FileLike, bytes]
 
 
-class TIRLParser(Magic):
+class TIRLParser(Struct):
 
     _HAS_KEYS = True
 

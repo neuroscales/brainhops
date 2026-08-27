@@ -7,7 +7,7 @@ from warnings import warn
 import typing_extensions as _tx
 
 # externals
-from bagof.magic import Magic
+from brainhops._ext.struct import Struct
 
 from brainhops._core.path import Path, PathLike
 
@@ -24,7 +24,7 @@ _FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
 # ----------------------------------------------------------------------
 
 
-class LTAParser(Magic):
+class LTAParser(Struct):
 
     _HAS_KEYS = True
 
@@ -532,7 +532,7 @@ def _read_values(
 
 def _write_key(
     key: str,
-    value: _tx.Union[_tx.Sequence[int, float, str, Enum],
+    value: _tx.Union[_tx.Sequence[_tx.Union[int, float, str, Enum]],
                      int, float, str, Enum],
     sep: _tx.Union[int, str] = 1,
     fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None
@@ -563,7 +563,7 @@ def _write_key(
 
 
 def _write_values(
-    value: _tx.Union[_tx.Sequence[int, float, str, Enum],
+    value: _tx.Union[_tx.Sequence[_tx.Union[int, float, str, Enum]],
                      int, float, str, Enum],
     sep: _tx.Union[int, str] = 1,
     fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None

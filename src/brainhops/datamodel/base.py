@@ -5,19 +5,19 @@ from collections.abc import Mapping
 
 # externals
 import typing_extensions as _tx
-from bagof.converters import (
+from brainhops._ext.struct.converters import (
     ObjectConverter,
 )
-from bagof.converters import (
+from brainhops._ext.struct.converters import (
     register as register_converter,
 )
 
 # internals
-from bagof.magic import HIDE_IF_NONE, Magic
+from brainhops._ext.struct import HIDE_IF_NONE, Struct
 
 
 class DataModelBase(
-    Magic,
+    Struct,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,

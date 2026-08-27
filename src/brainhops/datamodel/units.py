@@ -19,7 +19,7 @@ from math import log10
 import typing_extensions as _tx
 
 # internals
-from bagof.magic import ClassVar, Magic, MetaMagic
+from brainhops._ext.struct import ClassVar, Struct, MetaStruct
 
 
 def _make_enum(name: str, d: _tx.Dict[str, _tx.Tuple]) -> StrEnum:
@@ -166,7 +166,7 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
 # ----------------------------------------------------------------------
 
 
-class Unit(Magic,
+class Unit(Struct,
            convert=True,
            repr=False,
            slots=True,
@@ -192,7 +192,7 @@ class Unit(Magic,
         return super().__new__(cls)
 
     def __init__(self, *args, **kwargs) -> None:
-        # Do nothing, so to not trigger Magic.__init__
+        # Do nothing, so to not trigger Struct.__init__
         pass
 
     def __str__(self) -> str:
@@ -202,7 +202,7 @@ class Unit(Magic,
         return f"'{self.__str__()}'"
 
 
-class _MetaUnitSI(MetaMagic):
+class _MetaUnitSI(MetaStruct):
 
     @property
     def name(cls) -> str:
@@ -284,7 +284,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
         return type(self).scale
 
 
-class _MetaKnownUnit(MetaMagic):
+class _MetaKnownUnit(MetaStruct):
 
     @property
     def prefix(cls) -> None:

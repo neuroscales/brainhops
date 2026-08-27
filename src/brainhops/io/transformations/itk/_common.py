@@ -7,14 +7,14 @@ import numpy as np
 # dependencies
 import typing_extensions as _tx
 
-# externals
-from bagof.magic import Magic
-
 from brainhops._core import affines as _affines
 from brainhops._core.backends import get_array_backend
 
 # core
 from brainhops._core.typing import ArrayProtocol
+
+# externals
+from brainhops._ext.struct import Struct
 from brainhops.datamodel import systems as _systems
 
 # datamodel
@@ -74,7 +74,7 @@ class ITKPrecision(StrEnum):
     Double = "double"
 
 
-class ITKStruct(Magic, kw_only=True, convert=True):
+class ITKStruct(Struct, kw_only=True, convert=True):
     """This object represents a single ITK transform block."""
 
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
@@ -677,6 +677,9 @@ class ITKBSplineStruct(ITKStruct):
 
         # Compute the linear part of the world-to-voxel affine
         lps2vox = _affines.inv(vox2lps)
+
+        disp = parameters.reshape(3, *reversed(shape))
+        disp = disp.transpose(3, 2, 1, 0)
 
         # Multiply by the world-to-voxel affine to convert from world
         # displacements to voxel displacements

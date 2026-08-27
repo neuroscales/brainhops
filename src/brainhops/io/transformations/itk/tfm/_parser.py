@@ -9,7 +9,7 @@ import typing_extensions as _tx
 from brainhops._core.peek import peekable_lines
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from brainhops._ext.struct import HIDE_IF_NONE, Factory, Struct
 
 # io
 from brainhops.io.base.parsers import TextFileParser
@@ -31,7 +31,7 @@ _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 class TFMTransformParser(
     TextFileParser,
-    Magic,
+    Struct,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,

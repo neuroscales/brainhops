@@ -7,7 +7,7 @@ import numpy as np
 import typing_extensions as _tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from brainhops._ext.struct import HIDE_IF_NONE, Factory, Struct
 
 # core
 from brainhops._core.backends import da
@@ -34,7 +34,7 @@ _H5Like = _tx.Union[
 
 
 class H5Header(
-    Magic,
+    Struct,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
@@ -67,7 +67,7 @@ class H5Header(
 
 
 class H5TransformParser(
-    Magic,
+    Struct,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,

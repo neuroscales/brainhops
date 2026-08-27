@@ -15,7 +15,7 @@ import numpy as np
 import typing_extensions as _tx
 
 # _ext
-from bagof.magic import Factory
+from brainhops._ext.struct import Factory
 
 # internals
 from brainhops.datamodel import systems as _systems

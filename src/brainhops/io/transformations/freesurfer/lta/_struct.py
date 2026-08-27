@@ -4,7 +4,7 @@ __all__ = ["LTAStruct"]
 import typing_extensions as _tx
 
 # _ext
-from bagof.magic import Factory
+from brainhops._ext.struct import Factory
 
 # internals
 from ._enums import LTAMatrixType, LTAType, LTAValidity
