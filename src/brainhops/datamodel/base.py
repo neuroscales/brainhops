@@ -5,19 +5,17 @@ from collections.abc import Mapping
 
 # externals
 import typing_extensions as _tx
-from brainhops._ext.struct.converters import (
-    ObjectConverter,
-)
-from brainhops._ext.struct.converters import (
-    register as register_converter,
+from bagof.converters import (
+    Converter,
+    register_converter,
 )
 
 # internals
-from brainhops._ext.struct import HIDE_IF_NONE, Struct
+from bagof.magic import HIDE_IF_NONE, Magic
 
 
 class DataModelBase(
-    Struct,
+    Magic,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
@@ -78,7 +76,7 @@ class DataModelBase(
 
 
 @register_converter(DataModelBase)
-class DataModelConverter(ObjectConverter[DataModelBase]):
+class DataModelConverter(Converter[DataModelBase, _tx.Any]):
 
     _DEFAULT = DataModelBase
 

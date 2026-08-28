@@ -5,10 +5,10 @@ __all__ = [
 ]
 # externals
 import typing_extensions as _tx
-from brainhops._ext.struct import Frozen, NoInit, NoRepr
-from brainhops._ext.struct.converters import cupy_typing as cpt
-from brainhops._ext.struct.converters import dask_typing as dkt
-from brainhops._ext.struct.converters import numpy_typing as npt
+from bagof.hints import cupy as cpt
+from bagof.hints import dask as dkt
+from bagof.hints import numpy as npt
+from bagof.magic import Frozen, NoInit, NoRepr
 
 T = _tx.TypeVar("T")
 Const = _tx.Annotated[T, Frozen(), NoInit()]

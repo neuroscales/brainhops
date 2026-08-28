@@ -147,7 +147,8 @@ def coeff2value(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(*(ab.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
@@ -239,7 +240,8 @@ def value2coeff(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(*(ab.arange(s)
+                       for s in input.shape[:-ndim]), indexing='ij')
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input

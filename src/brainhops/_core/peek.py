@@ -38,7 +38,7 @@ class peekable(Iterator, _tx.Generic[T]):
             # make an iterator (with a state)
             iterable = iter(iterable)
         self._iterator: _tx.Iterator[T] = iterable
-        self._peeked: T | EMPTY_TYPE  = EMPTY
+        self._peeked: T | EMPTY_TYPE = EMPTY
 
     def peek(self, preproc: bool = True, valid: bool = True) -> _tx.Optional[T]:
         if self._peeked is EMPTY:

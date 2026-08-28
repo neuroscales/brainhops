@@ -10,7 +10,7 @@ import numpy as np
 import typing_extensions as _tx
 
 # externals
-from brainhops._ext.struct import Struct
+from bagof.magic import Magic
 
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
@@ -74,7 +74,7 @@ def _register_type(*names: str) -> _tx.Callable:
 #   Base struct
 # ----------------------------------------------------------------------
 
-class TIRLStruct(Struct, kw_only=True, convert=True):
+class TIRLStruct(Magic, kw_only=True, convert=True):
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
 
     def __new__(cls, **kwargs) -> "TIRLStruct":

@@ -14,7 +14,7 @@ from brainhops._core.backends import get_array_backend
 from brainhops._core.typing import ArrayProtocol
 
 # externals
-from brainhops._ext.struct import Struct
+from bagof.magic import Magic
 from brainhops.datamodel import systems as _systems
 
 # datamodel
@@ -74,7 +74,7 @@ class ITKPrecision(StrEnum):
     Double = "double"
 
 
-class ITKStruct(Struct, kw_only=True, convert=True):
+class ITKStruct(Magic, kw_only=True, convert=True):
     """This object represents a single ITK transform block."""
 
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
@@ -192,7 +192,7 @@ class ITKTranslationStruct(ITKStruct):
 class ITKScaleStruct(ITKStruct):
     """Scale transform with parameters for scaling in each dimension."""
 
-    type: _tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
+    type: _tx.Literal["ScaleTransform"] = "ScaleTransform"
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
