@@ -40,7 +40,9 @@ class peekable(Iterator, _tx.Generic[T]):
         self._iterator: _tx.Iterator[T] = iterable
         self._peeked: T | EMPTY_TYPE = EMPTY
 
-    def peek(self, preproc: bool = True, valid: bool = True) -> _tx.Optional[T]:
+    def peek(self,
+             preproc: bool = True,
+             valid: bool = True) -> _tx.Optional[T]:
         if self._peeked is EMPTY:
             self._peeked = self._next(preproc=preproc, valid=valid)
         return self._peeked
@@ -54,7 +56,9 @@ class peekable(Iterator, _tx.Generic[T]):
             raise StopIteration
         return item
 
-    def iter(self, preproc: bool = True, valid: bool = True) -> _tx.Iterator[T]:
+    def iter(self,
+             preproc: bool = True,
+             valid: bool = True) -> _tx.Iterator[T]:
         while True:
             try:
                 yield self.next(preproc=preproc, valid=valid)
@@ -72,7 +76,9 @@ class peekable(Iterator, _tx.Generic[T]):
     def preproc(cls, item: T) -> T:
         return T
 
-    def _next(self, preproc: bool = True, valid: bool = True) -> T | EMPTY_TYPE:
+    def _next(self,
+              preproc: bool = True,
+              valid: bool = True) -> T | EMPTY_TYPE:
         while True:
             item = next(self._iterator, EMPTY)
             if item is EMPTY:
@@ -87,7 +93,9 @@ class peekable(Iterator, _tx.Generic[T]):
 class peekable_lines(peekable[str]):
     """A peekable iterator over lines of text."""
 
-    def __init__(self, lines: _tx.Iterable[str], comment: str | None = "#") -> None:
+    def __init__(self,
+                 lines: _tx.Iterable[str],
+                 comment: str | None = "#") -> None:
         super().__init__(lines)
         self.comment = comment
 
