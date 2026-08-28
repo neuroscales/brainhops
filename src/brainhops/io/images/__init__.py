@@ -3,19 +3,24 @@ __all__ = ["nifti", "zarr"]
 
 import os
 
-from brainhops.datamodel.images import Image
 import typing_extensions as _tx
+
+from brainhops.datamodel.images import Image
 
 from . import nifti, zarr
 
 
-class ImageEntry():
+class ImageEntry:
     prefix: _tx.Optional[tuple[str]]
     extension: tuple[str]
     class_value: type
     hints: tuple[str]
 
-    def __init__(self, prefix: _tx.Optional[_tx.Union[tuple[str], str]], extension: _tx.Union[tuple[str], str], class_value: type, hints: _tx.Union[tuple[str], str]):
+    def __init__(self,
+                 prefix: _tx.Optional[_tx.Union[tuple[str], str]],
+                 extension: _tx.Union[tuple[str], str],
+                 class_value: type,
+                 hints: _tx.Union[tuple[str], str]) -> None:
         self.prefix = prefix if isinstance(
             prefix, (tuple, type(None))) else (prefix,)
         self.extension = extension if isinstance(
@@ -41,7 +46,8 @@ def load(file_name: str, hint: _tx.Optional[str] = None) -> Image:
             if hint in i.hints:
                 return i.class_value.from_file(file_name)
     for i in image_entries:
-        if base.endswith(i.extension) and (i.prefix is None or base.startswith(i.prefix)):
+        if base.endswith(i.extension) and (i.prefix is None or
+                                           base.startswith(i.prefix)):
             return i.class_value.from_file(file_name)
     for i in image_entries:
         if i.class_value.sniff_file(file_name):
