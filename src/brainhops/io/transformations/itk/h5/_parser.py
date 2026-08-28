@@ -319,7 +319,7 @@ class DelayedH5Array:
             array_like = self
         return da.from_array(array_like, **kwargs)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: _tx.Any) -> _tx.Any:
         is_mine = self._file is None
         dataset = self.to_dataset(keep_open=True)
         chunk = dataset[index]

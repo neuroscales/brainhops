@@ -12,7 +12,7 @@ from numpy import broadcast_shapes
 
 # locals
 from .backends import get_array_backend
-from .typing import ArrayProtocol
+from .typing import ArrayLike, ArrayProtocol
 
 
 def inv(
@@ -268,7 +268,9 @@ def rmdiv(
     B = backend.asarray(B, dtype=A.dtype)
 
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
-    t = lambda X: backend.swapaxes(X, -2, -1)
+
+    def t(X: ArrayLike) -> ArrayLike:
+        return backend.swapaxes(X, -2, -1)
 
     M = A.shape[-2]
     P = B.shape[-2]

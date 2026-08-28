@@ -34,8 +34,8 @@ __all__ = [
 
 # trigger registration
 from . import _xform_adaptors as _
-from . import _xform_composers as _
-from . import _xform_converters as _
+from . import _xform_composers as _  # noqa: F811
+from . import _xform_converters as _  # noqa: F401, F811
 from . import (
     axes,
     base,

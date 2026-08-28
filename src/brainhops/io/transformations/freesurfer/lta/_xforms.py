@@ -57,7 +57,7 @@ class LTATransformation(
             return LTAVoxelSystem.from_struct(self.struct.src)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return LTAPhysicalSystem.from_struct(self.struct.src)
-        assert False, f"unsupported LTA type: {self.struct.type}"
+        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
     def output(self) -> LTACoordinateSystem:
@@ -71,7 +71,7 @@ class LTATransformation(
             return LTAVoxelSystem.from_struct(self.struct.dst)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return LTAPhysicalSystem.from_struct(self.struct.dst)
-        assert False, f"unsupported LTA type: {self.struct.type}"
+        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
     def matrix(self) -> np.ndarray:

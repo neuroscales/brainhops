@@ -318,7 +318,7 @@ class MatrixParser(LTAParser):
 
 class LTAFieldParser:
 
-    def __init__(self, key: _tx.Optional[str], type: _tx.Any):
+    def __init__(self, key: _tx.Optional[str], type: _tx.Any) -> None:
         """
         Parameters
         ----------

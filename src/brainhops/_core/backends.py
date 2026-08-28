@@ -2,6 +2,8 @@
 from contextlib import contextmanager
 from types import ModuleType
 
+import typing_extensions as _tx
+
 # internals
 from .typing import ArrayProtocol, cpt, dkt, npt
 
@@ -30,7 +32,7 @@ _BACKEND = "dask"
 
 
 @contextmanager
-def backend(backend: str | ModuleType | None = None):
+def backend(backend: str | ModuleType | None = None) -> _tx.Iterator[str]:
     """Context manager to temporarily set the array backend"""
     global _BACKEND
     old_backend = _BACKEND

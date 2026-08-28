@@ -83,6 +83,7 @@ import re
 import typing_extensions as _tx
 
 # fmt: off
+# ruff: disable[E501]
 __all__ = [
     "Transformation",
     "Morphism",                                     # ^ alias
@@ -137,7 +138,10 @@ __all__ = [
     # --- IDENTITY -----------------------------------------------------
     "IdentityTransformation",                       # I                (det = 1)
 ]
+# ruff: enable[E501]
 # fmt: on
+
+
 from abc import ABC
 
 GROUPS = set()
@@ -165,7 +169,7 @@ def is_simplyconnected(cls: type) -> bool:
     return cls in SIMPLYCONNECTED
 
 
-def group(cls):
+def group(cls: type) -> type:
     """
     Mark the set of transformations as forming a group under composition.
 
@@ -175,7 +179,7 @@ def group(cls):
     return cls
 
 
-def liegroup(cls):
+def liegroup(cls: type) -> type:
     """
     Mark the set of transformations as forming a Lie group under composition.
 
@@ -185,7 +189,7 @@ def liegroup(cls):
     return group(cls)
 
 
-def connected(cls):
+def connected(cls: type) -> type:
     """
     Mark the set of transformations as being connected.
 
@@ -195,7 +199,7 @@ def connected(cls):
     return cls
 
 
-def simplyconnected(cls):
+def simplyconnected(cls: type) -> type:
     """
     Mark the set of transformations as being simply connected.
 
@@ -222,7 +226,8 @@ def _fsymbol_to_pattern(fsymbol: str) -> str:
     return "^" + pattern + "$"
 
 
-def parseType(s: _tx.Union[str, type, int]):
+def parseType(s: _tx.Union[str, type, int]
+              ) -> _tx.Tuple[_tx.Optional[type], _tx.Optional[int]]:
     """
     Resolve a string to its corresponding class in the transformation
     hierarchy, and extract a dimension if the string encodes one.
@@ -265,7 +270,7 @@ class TransformationBaseClass(ABC):
     FSYMBOL: str
     NAME: tuple
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         if getattr(cls, "NAME", None):
             for name in cls.NAME:
@@ -466,7 +471,8 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
 
 @liegroup
 @connected
-class SpecialConformalEuclideanTransformation(ConformalEuclideanTransformation):
+class SpecialConformalEuclideanTransformation(
+        ConformalEuclideanTransformation):
     """
     An affine transformation that preserves angles
 
@@ -889,7 +895,8 @@ class InvertibleMultiplicativeTransformation(
     SYMBOL = "ℝ*"
     FSYMBOL = "ℝ*"
     NAME = ("InvertibleMultiplicativeTransformation",
-            "InvertibleMultiplicative", "Homothety", "HomothetyTransformation",)
+            "InvertibleMultiplicative", "Homothety",
+            "HomothetyTransformation",)
 
 
 Homothety = InvertibleMultiplicativeTransformation

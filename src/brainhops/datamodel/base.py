@@ -42,7 +42,10 @@ class DataModelBase(
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_instance(cls, other: "DataModelBase", *args, **kwargs) -> "DataModelBase":
+    def from_instance(cls,
+                      other: "DataModelBase",
+                      *args,
+                      **kwargs) -> "DataModelBase":
         """
         Create an instance of the class from an instance of a similar
         class.

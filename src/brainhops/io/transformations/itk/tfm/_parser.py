@@ -5,11 +5,11 @@ from warnings import warn
 # dependencies
 import typing_extensions as _tx
 
-# core
-from brainhops._core.peek import peekable_lines
-
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
+
+# core
+from brainhops._core.peek import peekable_lines
 
 # io
 from brainhops.io.base.parsers import TextFileParser

@@ -23,7 +23,7 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedTransformation):
         return None
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
+    def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
     def inverse(self) -> VoxelToRAS:
@@ -47,7 +47,7 @@ class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedTransformation):
         return None
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
+    def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
     def inverse(self) -> RASToVoxel:

@@ -78,4 +78,5 @@ ignore = [
     "ANN003",   # **kwargs
     "UP006",    # Type[T] -> type[T]
     "UP045",    # Optional[A] -> A | None
+    "ANN401",   # _tx.Any
 ]

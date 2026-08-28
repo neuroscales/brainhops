@@ -7,14 +7,14 @@ import numpy as np
 # dependencies
 import typing_extensions as _tx
 
+# externals
+from bagof.magic import Magic
+
 from brainhops._core import affines as _affines
 from brainhops._core.backends import get_array_backend
 
 # core
 from brainhops._core.typing import ArrayProtocol
-
-# externals
-from bagof.magic import Magic
 from brainhops.datamodel import systems as _systems
 
 # datamodel

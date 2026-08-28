@@ -7,7 +7,7 @@ import typing_extensions as _tx
 from .backends import get_array_backend, get_ndimage_backend
 
 # locals
-from .typing import ArrayProtocol
+from .typing import ArrayLike, ArrayProtocol
 
 
 def pull(
@@ -65,7 +65,12 @@ def pull(
     return output
 
 
-def pull_field(field, coords, order, bound, coeff):
+def pull_field(field: ArrayLike,
+               coords: ArrayLike,
+               order: int,
+               bound: _tx.Literal['nearest', 'reflect', 'mirror',
+                                  'grid-wrap', 'wrap'],
+               coeff: bool) -> ArrayLike:
     """
     Interpolate an displacement or coordinates field using a coordinates field.
 
@@ -104,7 +109,12 @@ def pull_field(field, coords, order, bound, coeff):
     return field
 
 
-def coeff2value(input, order, bound, inplace=False, ndim=None):
+def coeff2value(input: ArrayLike,
+                order: int,
+                bound: _tx.Literal['nearest', 'reflect', 'mirror',
+                                   'grid-wrap', 'wrap'],
+                inplace: bool = False,
+                ndim: _tx.Optional[int] = None) -> ArrayLike:
     """
     Convert an array of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -160,7 +170,11 @@ def coeff2value(input, order, bound, inplace=False, ndim=None):
     return output
 
 
-def coeff2value_field(field, order, bound, inplace=False):
+def coeff2value_field(field: ArrayLike,
+                      order: int,
+                      bound: _tx.Literal['nearest', 'reflect', 'mirror',
+                                         'grid-wrap', 'wrap'],
+                      inplace: bool = False) -> ArrayLike:
     """
     Convert a field of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -200,7 +214,12 @@ def coeff2value_field(field, order, bound, inplace=False):
     return field
 
 
-def value2coeff(input, order, bound, inplace=False, ndim=None):
+def value2coeff(input: ArrayLike,
+                order: int,
+                bound: _tx.Literal['nearest', 'reflect', 'mirror',
+                                   'grid-wrap', 'wrap'],
+                inplace: bool = False,
+                ndim: _tx.Optional[int] = None) -> ArrayLike:
     """
     Convert an array of values to spline coefficients by applying the
     appropriate spline filter.
@@ -253,7 +272,11 @@ def value2coeff(input, order, bound, inplace=False, ndim=None):
     return output
 
 
-def value2coeff_field(field, order, bound, inplace=False):
+def value2coeff_field(field: ArrayLike,
+                      order: int,
+                      bound: _tx.Literal['nearest', 'reflect', 'mirror',
+                                         'grid-wrap', 'wrap'],
+                      inplace: bool = False) -> ArrayLike:
     """
     Convert a field of values to spline coefficients by applying the
     appropriate spline filter.

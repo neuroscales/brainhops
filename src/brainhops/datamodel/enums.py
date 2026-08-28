@@ -3,6 +3,7 @@ __all__ = ["BoundaryCondition", "InterpolationOrder"]
 from enum import IntEnum, StrEnum
 
 
+# ruff: disable[E501]
 # fmt: off
 class BoundaryCondition(StrEnum):
     """Boundary conditions for interpolation and resampling.
@@ -26,6 +27,7 @@ class BoundaryCondition(StrEnum):
     wrap = "wrap"                                           # (d b c d | a b c d | b c a b)
     constant = zero = zeros = "constant"                    # (0 0 0 0 | a b c d | 0 0 0 0)
 # fmt: on
+# ruff: enable[E501]
 
 
 class InterpolationOrder(IntEnum):
