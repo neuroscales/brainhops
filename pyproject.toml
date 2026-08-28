@@ -4,7 +4,7 @@ authors = [{name = "Balbastre, Yael", email = "y.balbastre@ucl.ac.uk"}]
 description = "Scalable spatial transforms"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["typing_extensions", "numpy", "scipy"]
+dependencies = ["typing_extensions", "numpy", "scipy", "git+https://github.com/bagofseeds/bagof-magic.git"]
 dynamic = ["version"]
 
 [project.optional-dependencies]
@@ -27,6 +27,7 @@ test = [
     "simpleitk",
     "pytest-cov",
     "nibabel",
+    "git+https://github.com/bagofseeds/bagof-magic.git"
 ]
 
 # doc
