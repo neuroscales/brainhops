@@ -49,6 +49,28 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 ```
 """
 
-from . import transformations
-from . import images
-from . import vectors
+import os
+
+import typing_extensions as _tx
+
+from brainhops.datamodel.base import DataModelBase
+
+from . import images, transformations
+
+entries = images.image_entries + transformations.transformation_entries
+
+
+def load(file_name: str, hint: _tx.Optional[str] = None) -> DataModelBase:
+    base = os.path.basename(file_name)
+    if hint is not None:
+        hint = hint.lower().replace(" ", "_").removeprefix(".")
+        for i in entries:
+            if hint in i.hints:
+                return i.class_value.from_file(file_name)
+    for i in entries:
+        if base.endswith(i.extension) and (i.prefix is None or base.startswith(i.prefix)):
+            return i.class_value.from_file(file_name)
+    for i in entries:
+        if i.class_value.sniff_file(file_name):
+            return i.class_value.from_file(file_name)
+    raise NotImplementedError(f"can't parse the file: {file_name}")
