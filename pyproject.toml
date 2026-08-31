@@ -27,6 +27,7 @@ test = [
     "simpleitk",
     "pytest-cov",
     "nibabel",
+    "dask",
     "bagof-magic @ git+https://github.com/bagofseeds/bagof-magic.git"
 ]
 
