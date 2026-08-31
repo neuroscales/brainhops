@@ -13,7 +13,7 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops._core.backends import da
 
 # locals
-from .._common import ITKStruct
+from .._common import ITKStruct, ITKTransformClass
 
 # optional
 if _tx.TYPE_CHECKING:
@@ -176,6 +176,7 @@ class H5TransformParser(
             # Parse transform type
             xtype = _readstr(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
+            xtype = ITKTransformClass(xtype)
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
 
             if xtype == "CompositeTransform":

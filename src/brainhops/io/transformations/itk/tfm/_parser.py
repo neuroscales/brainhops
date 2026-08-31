@@ -3,6 +3,7 @@ import re
 from warnings import warn
 
 # dependencies
+import numpy as np
 import typing_extensions as _tx
 
 # externals
@@ -14,7 +15,7 @@ from brainhops._core.peek import peekable_lines
 # io
 from brainhops.io.base.parsers import TextFileParser
 
-from .._common import ITKStruct
+from .._common import ITKStruct, ITKTransformClass
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -98,14 +99,16 @@ class TFMTransformParser(
                 # following transforms.
                 continue
 
+            transform_type = ITKTransformClass(transform_type)
+
             obj.transform_group.append(
                 ITKStruct(
                     type=transform_type,
                     precision=precision,
                     ndim_input=input_dim,
                     ndim_output=output_dim,
-                    parameters=parameters,
-                    fixed_parameters=fixed_parameters,
+                    parameters=np.array(parameters),
+                    fixed_parameters=np.array(fixed_parameters),
                 )
             )
 

@@ -1,13 +1,22 @@
 """Additional utilities for nibabel."""
 import numpy as np
-
+import typing_extensions as _tx
 from nibabel.fileslice import (
-    _NullLock, threshold_heuristic, is_fancy, fill_slicer,
-    _positive_slice, canonical_slicers, reduce, operator, read_segments,
-    predict_shape, slicers2segments)
+    _NullLock,
+    _positive_slice,
+    canonical_slicers,
+    fill_slicer,
+    is_fancy,
+    operator,
+    predict_shape,
+    read_segments,
+    reduce,
+    slicers2segments,
+    threshold_heuristic,
+)
 
 
-def full_heuristic(*args, **kwargs):
+def full_heuristic(*args, **kwargs) -> _tx.Literal['full', 'contiguous', None]:
     """Heuristic that always read the full volume"""
     return threshold_heuristic(*args, **kwargs, skip_thresh=0)
 
@@ -62,7 +71,7 @@ def write_segments(fileobj, segments, dat, lock=None):
 
 
 def writeslice(dat, fileobj, sliceobj, shape, dtype, offset=0, order='C',
-              heuristic=threshold_heuristic, lock=None):
+               heuristic=threshold_heuristic, lock=None):
     """ Write a data slice in `fileobj` using `sliceobj` slicer and array definitions
 
     `fileobj` contains the contiguous binary data for an array ``A`` of shape,

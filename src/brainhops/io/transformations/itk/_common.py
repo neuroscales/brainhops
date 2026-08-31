@@ -21,6 +21,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 
 # io
+from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
@@ -192,7 +193,7 @@ class ITKTranslationStruct(ITKStruct):
 class ITKScaleStruct(ITKStruct):
     """Scale transform with parameters for scaling in each dimension."""
 
-    type: _tx.Literal["ScaleTransform"] = "ScaleTransform"
+    type: _tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -639,13 +640,13 @@ class ITKDisplacementFieldStruct(ITKStruct):
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.Sequence(
             [
-                LPSToVoxel(lps2vox),
+                LPSToVoxel(matrix=lps2vox),
                 _xforms.DisplacementField(
-                    disp,
+                    field=disp,
                     input=VOX,
                     output=VOX,
                 ),
-                VoxelToLPS(vox2lps),
+                VoxelToLPS(matrix=vox2lps),
             ],
         )
 
@@ -690,16 +691,16 @@ class ITKBSplineStruct(ITKStruct):
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.Sequence(
             [
-                LPSToVoxel(lps2vox),
+                LPSToVoxel(matrix=lps2vox),
                 _xforms.DisplacementField(
-                    disp,
+                    field=disp,
                     input=VOX,
                     output=VOX,
                     order=3,
                     coeff=True,
-                    bound="zeros",
+                    bound=BoundaryCondition.zeros,
                 ),
-                VoxelToLPS(vox2lps),
+                VoxelToLPS(matrix=vox2lps),
             ],
         )
 

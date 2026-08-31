@@ -1,4 +1,5 @@
 import numpy as np
+import typing_extensions as _tx
 from scipy.ndimage import gaussian_filter
 
 
@@ -57,15 +58,15 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
     # Fill in missing values via smoothing
     msk = msk0 = np.isfinite(out)
     while not msk.all():
-         out[~msk] = 0
-         wgt = msk.astype(np.float64)
-         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM = 1 voxel
-         sigma = (sigma, sigma, 0)
-         smo = gaussian_filter(out, sigma=sigma, mode='nearest')
-         wgt = gaussian_filter(wgt, sigma=sigma, mode='nearest')
-         smo /= wgt
-         out[~msk0] = smo[~msk0]
-         msk = np.isfinite(out)
+        out[~msk] = 0
+        wgt = msk.astype(np.float64)
+        sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM = 1 voxel
+        sigma = (sigma, sigma, 0)
+        smo = gaussian_filter(out, sigma=sigma, mode='nearest')
+        wgt = gaussian_filter(wgt, sigma=sigma, mode='nearest')
+        smo /= wgt
+        out[~msk0] = smo[~msk0]
+        msk = np.isfinite(out)
 
     return out
 
@@ -74,7 +75,10 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
 X, Y = 0, 1
 BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
-def _process_triangle(src, dst, out):
+
+def _process_triangle(src: np.ndarray,
+                      dst: np.ndarray,
+                      out: np.ndarray) -> None:
     """
     Process a batch of triangles.
 
@@ -122,7 +126,8 @@ def _process_triangle(src, dst, out):
         y += 1
 
 
-def _process_segment(src, dst, y, seg, out):
+def _process_segment(src: np.ndarray, dst: np.ndarray, y: np.ndarray,
+                     seg: np.ndarray, out: np.ndarray) -> None:
     """
     Process a batch of segments in a given z plane and y coordinate.
 
@@ -166,7 +171,7 @@ def _process_segment(src, dst, y, seg, out):
         x += 1
 
 
-def _barycoord(x, tri):
+def _barycoord(x: np.ndarray, tri: np.ndarray) -> np.ndarray:
     # Compute the barycentric coordinates of x with respect to the
     # triangle defined by its vertices.
     # * x is of shape (N, 2), where N is the number of voxels in the
@@ -198,7 +203,7 @@ def _barycoord(x, tri):
     return np.stack((u, v, w), axis=-1)
 
 
-def _find_segment(tri, y):
+def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
     out = np.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
@@ -213,7 +218,9 @@ def _find_segment(tri, y):
     return out
 
 
-def _truncate_and_stack2d(a, b, c):
+def _truncate_and_stack2d(a: np.ndarray,
+                          b: np.ndarray,
+                          c: np.ndarray) -> np.ndarray:
     """
     Truncate arrays so that they have the same shape, then stack them.
 
@@ -235,7 +242,7 @@ def _truncate_and_stack2d(a, b, c):
     return np.stack(tuple(vertices), axis=1)
 
 
-def _yield_triangles(field):
+def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     """
     Yield the vertices of the triangles defined by the displacement field,
     in batches of similar triangles (i.e. with the same pattern of vertices).
@@ -302,7 +309,8 @@ def _yield_triangles(field):
     yield from yield_black(x00, x01, x10, x11)
 
 
-def yield_red(x00, x01, x10, x11):
+def yield_red(x00: np.ndarray, x01: np.ndarray,
+              x10: np.ndarray, x11: np.ndarray) -> _tx.Iterator[np.ndarray]:
     # Yield the two triangles that make up a red block.
     #
     # #1  _____
@@ -318,7 +326,8 @@ def yield_red(x00, x01, x10, x11):
     yield _truncate_and_stack2d(x11, x01, x10)
 
 
-def yield_black(x00, x01, x10, x11):
+def yield_black(x00: np.ndarray, x01: np.ndarray,
+                x10: np.ndarray, x11: np.ndarray) -> _tx.Iterator[np.ndarray]:
     # Yield the two triangles that make up a black block.
     #
     #  #1      _____  #2
@@ -333,7 +342,9 @@ def yield_black(x00, x01, x10, x11):
     yield _truncate_and_stack2d(x10, x00, x11)
 
 
-def _generate_disp_field(shape, magnitude=1, fwhm=5):
+def _generate_disp_field(shape: tuple,
+                         magnitude: float = 1,
+                         fwhm: float = 5) -> np.ndarray:
     # Generate a random displacement field of the given shape, for testing.
     from scipy.ndimage import gaussian_filter
     shape = tuple(shape) + (len(shape),)
@@ -344,13 +355,13 @@ def _generate_disp_field(shape, magnitude=1, fwhm=5):
     return disp
 
 
-def _identity_field(shape):
+def _identity_field(shape: tuple) -> np.ndarray:
     # Generate an identity coordinate field.
     grid = np.meshgrid(*(np.arange(s) for s in shape), indexing='ij')
     return np.stack(grid, axis=-1)
 
 
-def _compose_fields(field1, field2):
+def _compose_fields(field1: np.ndarray, field2: np.ndarray) -> np.ndarray:
     from scipy.ndimage import map_coordinates
     grid = _identity_field(field1.shape[:-1])
     coords = grid + field1
@@ -364,7 +375,7 @@ def _compose_fields(field1, field2):
     return out
 
 
-def _disp2rgb(disp, max=None):
+def _disp2rgb(disp: np.ndarray, max: np.ndarray = None) -> np.ndarray:
     if max is None:
         max = np.abs(disp).max()
     _disp = disp
@@ -375,7 +386,7 @@ def _disp2rgb(disp, max=None):
     return (disp * 255).astype(np.uint8)
 
 
-def _test_inverse2d(plot=True):
+def _test_inverse2d(plot: bool = True) -> None:
     shape = (64,) * 2
     disp = _generate_disp_field(shape, magnitude=10, fwhm=16)
     inv_disp = inverse2d(disp)

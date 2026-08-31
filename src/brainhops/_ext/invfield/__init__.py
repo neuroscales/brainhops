@@ -1,12 +1,14 @@
+import numpy as np
+
 from ._inv2d import inverse2d
 from ._inv3d import inverse3d
 
 
-def inverse(field):
+def inverse(field: np.ndarray) -> np.ndarray:
     """
     Compute the inverse of a displacement field by interpreting it as a
-    mesh, where each cell defines an affine transform. 
-    
+    mesh, where each cell defines an affine transform.
+
     This is the method described in:
         "High-Dimensional Image Registration Using Symmetric Priors"
         Ashburner, Andersson & Friston. NeuroImage (1999).

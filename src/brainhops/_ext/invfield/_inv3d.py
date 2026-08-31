@@ -47,6 +47,7 @@
 #   Ashburner, Andersson & Friston. Human Brain Mapping (2000).
 #   https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf
 import numpy as np
+import typing_extensions as _tx
 from scipy.ndimage import gaussian_filter
 
 
@@ -105,15 +106,15 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     # Fill in missing values via smoothing
     msk = msk0 = np.isfinite(out)
     while not msk.all():
-         out[~msk] = 0
-         wgt = msk.astype(np.float64)
-         sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM = 1 voxel
-         sigma = (sigma, sigma, sigma, 0)
-         smo = gaussian_filter(out, sigma=sigma, mode='nearest')
-         wgt = gaussian_filter(wgt, sigma=sigma, mode='nearest')
-         smo /= wgt
-         out[~msk0] = smo[~msk0]
-         msk = np.isfinite(out)
+        out[~msk] = 0
+        wgt = msk.astype(np.float64)
+        sigma = 1 / np.sqrt(8 * np.log(2))  # FWHM = 1 voxel
+        sigma = (sigma, sigma, sigma, 0)
+        smo = gaussian_filter(out, sigma=sigma, mode='nearest')
+        wgt = gaussian_filter(wgt, sigma=sigma, mode='nearest')
+        smo /= wgt
+        out[~msk0] = smo[~msk0]
+        msk = np.isfinite(out)
 
     return out
 
@@ -122,7 +123,10 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
 X, Y, Z = 0, 1, 2
 BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
-def _process_thetrahedron(src, dst, out):
+
+def _process_thetrahedron(src: np.ndarray,
+                          dst: np.ndarray,
+                          out: np.ndarray) -> None:
     """
     Process a batch of thetrahedra.
 
@@ -179,7 +183,12 @@ def _process_thetrahedron(src, dst, out):
 
         z += 1
 
-def _process_triangle(src, dst, z, tri, out):
+
+def _process_triangle(src: np.ndarray,
+                      dst: np.ndarray,
+                      z: np.ndarray,
+                      tri: np.ndarray,
+                      out: np.ndarray) -> None:
     """
     Process a batch of triangles in a given z plane.
 
@@ -230,7 +239,12 @@ def _process_triangle(src, dst, z, tri, out):
         y += 1
 
 
-def _process_segment(src, dst, z, y, seg, out):
+def _process_segment(src: np.ndarray,
+                     dst: np.ndarray,
+                     z: np.ndarray,
+                     y: np.ndarray,
+                     seg: np.ndarray,
+                     out: np.ndarray) -> None:
     """
     Process a batch of segments in a given z plane and y coordinate.
 
@@ -276,7 +290,7 @@ def _process_segment(src, dst, z, y, seg, out):
         x += 1
 
 
-def _barycoord(x, tetra):
+def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
     # Compute the barycentric coordinates of x with respect to the
     # tetrahedron defined by its vertices.
     # * x is of shape (N, 13), where N is the number of voxels in the
@@ -306,7 +320,7 @@ def _barycoord(x, tetra):
     return bb
 
 
-def _find_segment(tri, y):
+def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
     out = np.empty_like(tri, shape=(len(tri), 2, 1))
 
     p1x, p1y = tri[:, 0].T
@@ -321,7 +335,7 @@ def _find_segment(tri, y):
     return out
 
 
-def _find_lower_triangle(dst, z):
+def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
     # Compute intersection of the "infinite" tetrahedron (no base)
     # and a horizontal plane. Vertices are sorted by increasing z.
     # The first vertex is the "tip" of the tetrahedron.
@@ -349,7 +363,7 @@ def _find_lower_triangle(dst, z):
     return out
 
 
-def _find_upper_triangle(dst, z):
+def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
     # Compute intersection of the "infinite" tetrahedron (no base)
     # and a horizontal plane. Vertices are sorted by increasing z.
     # The last vertex is the "tip" of the tetrahedron.
@@ -377,7 +391,7 @@ def _find_upper_triangle(dst, z):
     return out
 
 
-def _find_quadrilateral(tetra, z):
+def _find_quadrilateral(tetra: np.ndarray, z: np.ndarray) -> np.ndarray:
 
     out = np.empty_like(tetra, shape=(len(tetra), 4, 2))
 
@@ -402,7 +416,10 @@ def _find_quadrilateral(tetra, z):
     return out
 
 
-def _truncate_and_stack3d(a, b, c, d):
+def _truncate_and_stack3d(a: np.ndarray,
+                          b: np.ndarray,
+                          c: np.ndarray,
+                          d: np.ndarray) -> np.ndarray:
     """
     Truncate arrays so that they have the same shape, then stack them.
 
@@ -424,7 +441,7 @@ def _truncate_and_stack3d(a, b, c, d):
     return np.stack(tuple(vertices), axis=1)
 
 
-def _yield_thetrahedra(field):
+def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     """
     Yield the vertices of the thetrahedra defined by the displacement field,
     in batches of similar thetrahedra (i.e. with the same pattern of vertices).
@@ -519,7 +536,6 @@ def _yield_thetrahedra(field):
 
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
-
     # --- y shift
 
     x000 = field[0::2, 1::2, 0::2]
@@ -560,7 +576,14 @@ def _yield_thetrahedra(field):
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
 
-def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
+def yield_red(x000: np.ndarray,
+              x001: np.ndarray,
+              x010: np.ndarray,
+              x011: np.ndarray,
+              x100: np.ndarray,
+              x101: np.ndarray,
+              x110: np.ndarray,
+              x111: np.ndarray) -> _tx.Generator:
     # Yield the five thetrahedra that make up a red block.
     #
     # Four of them are all trirectangular thetrahedra
@@ -596,7 +619,14 @@ def yield_red(x000, x001, x010, x011, x100, x101, x110, x111):
     yield _truncate_and_stack3d(x111, x001, x010, x100)
 
 
-def yield_black(x000, x001, x010, x011, x100, x101, x110, x111):
+def yield_black(x000: np.ndarray,
+                x001: np.ndarray,
+                x010: np.ndarray,
+                x011: np.ndarray,
+                x100: np.ndarray,
+                x101: np.ndarray,
+                x110: np.ndarray,
+                x111: np.ndarray) -> _tx.Generator:
     # Yield the five thetrahedra that make up a black block.
     #
     # Four of them are also trirectangular thetrahedra, whose tips are
@@ -629,7 +659,9 @@ def yield_black(x000, x001, x010, x011, x100, x101, x110, x111):
     yield _truncate_and_stack3d(x000, x011, x110, x101)
 
 
-def _generate_disp_field(shape, magnitude=1, fwhm=5):
+def _generate_disp_field(shape: _tx.Sequence[int],
+                         magnitude: float = 1,
+                         fwhm: float = 5) -> np.ndarray:
     # Generate a random displacement field of the given shape, for testing.
     from scipy.ndimage import gaussian_filter
     shape = tuple(shape) + (len(shape),)
@@ -640,13 +672,13 @@ def _generate_disp_field(shape, magnitude=1, fwhm=5):
     return disp
 
 
-def _identity_field(shape):
+def _identity_field(shape: _tx.Sequence[int]) -> np.ndarray:
     # Generate an identity coordinate field.
     grid = np.meshgrid(*(np.arange(s) for s in shape), indexing='ij')
     return np.stack(grid, axis=-1)
 
 
-def _compose_fields(field1, field2):
+def _compose_fields(field1: np.ndarray, field2: np.ndarray) -> np.ndarray:
     from scipy.ndimage import map_coordinates
     grid = _identity_field(field1.shape[:-1])
     coords = grid + field1
@@ -660,7 +692,8 @@ def _compose_fields(field1, field2):
     return out
 
 
-def _disp2rgb(disp, max=None):
+def _disp2rgb(disp: np.ndarray,
+              max: _tx.Optional[np.ndarray] = None) -> np.ndarray:
     if max is None:
         max = np.abs(disp).max()
     disp = np.clip(disp / max, -1, 1)
@@ -668,7 +701,7 @@ def _disp2rgb(disp, max=None):
     return (disp * 255).astype(np.uint8)
 
 
-def _test_inverse3d(plot=True):
+def _test_inverse3d(plot: bool = True) -> None:
     shape = (64,) * 3
     disp = _generate_disp_field(shape, magnitude=32, fwhm=16)
     inv_disp = inverse3d(disp)
