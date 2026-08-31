@@ -11,6 +11,7 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # core
 from brainhops._core.backends import da
+from brainhops._core.typing import ArrayProtocol
 
 # locals
 from .._common import ITKStruct, ITKTransformClass
@@ -311,7 +312,7 @@ class DelayedH5Array:
             self.close()
         return array
 
-    def to_dask(self, *, keep_open: bool = False, **kwargs) -> da.Array:
+    def to_dask(self, *, keep_open: bool = False, **kwargs) -> ArrayProtocol:
         import dask.array as da
         kwargs.setdefault("chunks", self.chunks or "auto")
         if keep_open:
