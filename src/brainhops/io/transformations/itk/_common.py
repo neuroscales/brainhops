@@ -621,6 +621,7 @@ class ITKDisplacementFieldStruct(ITKStruct):
 
         # Ensure array-like
         parameters = self.parameters
+        parameters = parameters if parameters is not None else np.array([])
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
@@ -667,6 +668,7 @@ class ITKBSplineStruct(ITKStruct):
 
         # Ensure array-like
         parameters = self.parameters
+        parameters = parameters if parameters is not None else np.array([])
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
