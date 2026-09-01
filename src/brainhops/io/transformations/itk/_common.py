@@ -5,7 +5,10 @@ import sys
 if sys.version_info.major >= 11:
     from enum import StrEnum
 else:
-    from enum import Enum as StrEnum
+    from enum import Enum
+
+    class StrEnum(Enum, str): ...
+
 
 import numpy as np
 

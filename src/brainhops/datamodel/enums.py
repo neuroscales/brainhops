@@ -5,8 +5,11 @@ import sys
 if sys.version_info.major >= 11:
     from enum import IntEnum, StrEnum
 else:
-    from enum import Enum as IntEnum
-    from enum import Enum as StrEnum
+    from enum import Enum
+
+    class StrEnum(Enum, str): ...
+
+    class IntEnum(Enum, int): ...
 
 
 # ruff: disable[E501]

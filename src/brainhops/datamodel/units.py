@@ -30,10 +30,14 @@ __all__ = [
 # stdlib
 import sys
 
-if sys.version_info.major >= 11:
+if sys.version_info.minor >= 11:
     from enum import StrEnum
 else:
-    from enum import Enum as StrEnum
+    from enum import Enum
+
+    class StrEnum(Enum, str): ...
+
+
 from math import log10
 
 # externals
