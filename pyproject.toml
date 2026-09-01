@@ -78,7 +78,9 @@ select = ["ANN", "B", "E", "F", "I", "UP", "W"]
 ignore = [
     "ANN002",   # *args
     "ANN003",   # **kwargs
-    "UP006",    # Type[T] -> type[T]
-    "UP045",    # Optional[A] -> A | None
     "ANN401",   # _tx.Any
+    "UP006",    # list[...] annotations need 3.9 at runtime
+    "UP007",    # X | Y unions need 3.10
+    "UP035",    # deprecated typing import (typing_extensions is intentional)
+    "UP045",    # X | None optionals need 3.10
 ]

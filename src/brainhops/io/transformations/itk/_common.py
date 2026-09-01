@@ -108,7 +108,9 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-    def _check_same_ndim(self, expected_ndim: _tx.Optional[int] = None) -> None:
+    def _check_same_ndim(self,
+                         expected_ndim: _tx.Optional[int] = None
+                         ) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(

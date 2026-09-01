@@ -1,4 +1,6 @@
 """Additional utilities for nibabel."""
+from threading import Lock
+
 import numpy as np
 import typing_extensions as _tx
 from nibabel.fileslice import (
@@ -14,6 +16,7 @@ from nibabel.fileslice import (
     slicers2segments,
     threshold_heuristic,
 )
+from numpy.typing import ArrayLike
 
 from brainhops._core.path import FileLike
 
@@ -23,8 +26,13 @@ def full_heuristic(*args, **kwargs) -> _tx.Literal['full', 'contiguous', None]:
     return threshold_heuristic(*args, **kwargs, skip_thresh=0)
 
 
-def write_segments(fileobj: FileLike, segments: list, dat: np.byte, lock=None):
-    """Write chunks of `dat` into `fileobj` at locations described in `segments`
+def write_segments(fileobj: FileLike,
+                   segments: list,
+                   dat: np.byte,
+                   lock: _tx.Optional[Lock] = None
+                   ) -> None:
+    """
+    Write chunks of `dat` into `fileobj` at locations described in `segments`
 
     Parameters
     ----------
@@ -57,8 +65,8 @@ def write_segments(fileobj: FileLike, segments: list, dat: np.byte, lock=None):
             fileobj.seek(offset)
             nb_written = fileobj.write(dat)
         if nb_written != length:
-            raise ValueError('Expected to write {} bytes but wrote {}.'
-                             .format(length, nb_written))
+            raise ValueError(f'Expected to write {length} bytes but',
+                             f' wrote {nb_written}.')
         return
     # More than one segment
     dat_offset = 0
@@ -68,13 +76,23 @@ def write_segments(fileobj: FileLike, segments: list, dat: np.byte, lock=None):
             nb_written = fileobj.write(dat[dat_offset:dat_offset+length])
         dat_offset += length
         if nb_written != length:
-            raise ValueError('Expected to write {} bytes but wrote {}.'
-                             .format(length, nb_written))
+            raise ValueError(f'Expected to write {length} bytes'
+                             f' but wrote {nb_written}.')
 
 
-def writeslice(dat, fileobj, sliceobj, shape, dtype, offset=0, order='C',
-               heuristic=threshold_heuristic, lock=None):
-    """ Write a data slice in `fileobj` using `sliceobj` slicer and array definitions
+def writeslice(dat: ArrayLike,
+               fileobj: FileLike,
+               sliceobj: object,
+               shape: tuple[int],
+               dtype: type,
+               offset: int = 0,
+               order: str = 'C',
+               heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
+               lock: _tx.Optional[Lock] = None
+               ) -> ArrayLike:
+    """
+    Write a data slice in `fileobj` using `sliceobj` slicer and array
+    definitions
 
     `fileobj` contains the contiguous binary data for an array ``A`` of shape,
     dtype, memory layout `shape`, `dtype`, `order`, with the binary data
@@ -149,8 +167,14 @@ def writeslice(dat, fileobj, sliceobj, shape, dtype, offset=0, order='C',
     return
 
 
-def calc_slicedefs_write(sliceobj, in_shape, itemsize, offset, order,
-                         heuristic=threshold_heuristic):
+def calc_slicedefs_write(sliceobj: object,
+                         in_shape: _tx.Sequence[int],
+                         itemsize: int,
+                         offset: int,
+                         order: _tx.Literal['C', 'F'],
+                         heuristic: _tx.Optional[_tx.Callable] =
+                         threshold_heuristic
+                         ) -> tuple[tuple, tuple, tuple, tuple]:
     """ Return parameters for slicing an array into `sliceobj`
 
     Calculate the best combination of skips / (read + write) to use for
@@ -217,7 +241,11 @@ def calc_slicedefs_write(sliceobj, in_shape, itemsize, offset, order,
     return tuple(pre_slicers), tuple(segments), tuple(sub_slicers), sub_shape
 
 
-def optimize_write_slicers(sliceobj, in_shape, itemsize, heuristic):
+def optimize_write_slicers(sliceobj: tuple,
+                           in_shape: _tx.Sequence[int],
+                           itemsize: int,
+                           heuristic: _tx.Callable
+                           ) -> tuple[tuple, tuple, tuple]:
     """ Calculates slices to write disk
 
     Parameters
@@ -277,8 +305,16 @@ def optimize_write_slicers(sliceobj, in_shape, itemsize, heuristic):
     return tuple(pre_slicers), tuple(write_slicers), tuple(sub_slicers)
 
 
-def optimize_write_slicer(slicer, dim_len, all_full, is_slowest, stride,
-                          heuristic=threshold_heuristic):
+def optimize_write_slicer(slicer: _tx.SupportsIndex,
+                          dim_len: int,
+                          all_full: bool,
+                          is_slowest: bool,
+                          stride: int,
+                          heuristic: _tx.Optional[_tx.Callable] =
+                          threshold_heuristic
+                          ) -> tuple[_tx.Union[slice, int],
+                                     _tx.Union[slice, int],
+                                     slice]:
     """ Return maybe modified slice and post-slice slicing for `slicer`
 
     Parameters
@@ -353,7 +389,7 @@ def optimize_write_slicer(slicer, dim_len, all_full, is_slowest, stride,
         action = heuristic(slicer, dim_len, stride)
         # Check return values (we may be using a custom function)
         if action not in ('full', 'contiguous', None):
-            raise ValueError('Unexpected return %s from heuristic' % action)
+            raise ValueError(f'Unexpected return {action} from heuristic')
         if is_int and action == 'contiguous':
             raise ValueError("int index cannot be contiguous")
         # If this is the slowest changing dimension, never upgrade None or
