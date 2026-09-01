@@ -6,11 +6,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops._core.backends import da
 
 # io
+from brainhops.io.base.nifti import NiftiBasedParser
 from brainhops.io.transformations.base.fields import RASCoordinatesField
-from brainhops.io.transformations.common.base import NiftiBasedTransformation
 
 
-class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
+class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedParser):
     """
     Field of RAS coordinates, stored in a NIfTI file.
     """

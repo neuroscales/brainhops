@@ -3,13 +3,11 @@ import numpy as np
 import typing_extensions as _tx
 
 # io
+from brainhops.io.base.nifti import NiftiBasedParser
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
-# locals
-from .base import NiftiBasedTransformation
 
-
-class NiftiRASToVoxel(RASToVoxel, NiftiBasedTransformation):
+class NiftiRASToVoxel(RASToVoxel, NiftiBasedParser):
     """
     Affine transformation from RAS space to voxel space, derived from a
     NIfTI header.
@@ -33,7 +31,7 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedTransformation):
         return super().inverse().to(VoxelToRAS)
 
 
-class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedTransformation):
+class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedParser):
     """
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.
