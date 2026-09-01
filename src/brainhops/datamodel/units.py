@@ -28,7 +28,12 @@ __all__ = [
 ]
 
 # stdlib
-from enum import StrEnum
+import sys
+
+if sys.version_info.major >= 11:
+    from enum import StrEnum
+else:
+    from enum import Enum as StrEnum
 from math import log10
 
 # externals
