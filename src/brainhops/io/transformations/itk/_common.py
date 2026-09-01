@@ -2,7 +2,7 @@
 import math
 import sys
 
-if sys.version_info.major >= 11:
+if sys.version_info.minor >= 11:
     from enum import StrEnum
 else:
     from enum import Enum
