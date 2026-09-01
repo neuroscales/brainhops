@@ -22,7 +22,7 @@ def inverse(field: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     disp : np.ndarray
-        The displacement field to invert (displacements are in voxels). 
+        The displacement field to invert (displacements are in voxels).
         Should be of shape (Nx, Ny, Nz, 3) or (Nx, Ny, 2).
         The last dimension should contain the displacements along each
         axis, in the same order (i.e. [x, y, z] or [x, y]).
