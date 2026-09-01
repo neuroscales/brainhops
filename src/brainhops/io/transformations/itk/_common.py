@@ -108,7 +108,7 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-    def _check_same_ndim(self, expected_ndim: int | None = None) -> None:
+    def _check_same_ndim(self, expected_ndim: _tx.Optional[int] = None) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(
@@ -621,7 +621,6 @@ class ITKDisplacementFieldStruct(ITKStruct):
 
         # Ensure array-like
         parameters = self.parameters
-        parameters = parameters if parameters is not None else np.array([])
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 

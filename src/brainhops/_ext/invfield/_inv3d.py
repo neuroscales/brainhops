@@ -126,7 +126,8 @@ BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
 def _process_thetrahedron(src: np.ndarray,
                           dst: np.ndarray,
-                          out: np.ndarray) -> None:
+                          out: np.ndarray
+                          ) -> None:
     """
     Process a batch of thetrahedra.
 
@@ -188,7 +189,8 @@ def _process_triangle(src: np.ndarray,
                       dst: np.ndarray,
                       z: np.ndarray,
                       tri: np.ndarray,
-                      out: np.ndarray) -> None:
+                      out: np.ndarray
+                      ) -> None:
     """
     Process a batch of triangles in a given z plane.
 
@@ -244,7 +246,8 @@ def _process_segment(src: np.ndarray,
                      z: np.ndarray,
                      y: np.ndarray,
                      seg: np.ndarray,
-                     out: np.ndarray) -> None:
+                     out: np.ndarray
+                     ) -> None:
     """
     Process a batch of segments in a given z plane and y coordinate.
 
@@ -419,7 +422,8 @@ def _find_quadrilateral(tetra: np.ndarray, z: np.ndarray) -> np.ndarray:
 def _truncate_and_stack3d(a: np.ndarray,
                           b: np.ndarray,
                           c: np.ndarray,
-                          d: np.ndarray) -> np.ndarray:
+                          d: np.ndarray
+                          ) -> np.ndarray:
     """
     Truncate arrays so that they have the same shape, then stack them.
 
@@ -583,7 +587,8 @@ def yield_red(x000: np.ndarray,
               x100: np.ndarray,
               x101: np.ndarray,
               x110: np.ndarray,
-              x111: np.ndarray) -> _tx.Generator:
+              x111: np.ndarray
+              ) -> _tx.Generator:
     # Yield the five thetrahedra that make up a red block.
     #
     # Four of them are all trirectangular thetrahedra
@@ -626,7 +631,8 @@ def yield_black(x000: np.ndarray,
                 x100: np.ndarray,
                 x101: np.ndarray,
                 x110: np.ndarray,
-                x111: np.ndarray) -> _tx.Generator:
+                x111: np.ndarray
+                ) -> _tx.Generator:
     # Yield the five thetrahedra that make up a black block.
     #
     # Four of them are also trirectangular thetrahedra, whose tips are
@@ -661,7 +667,8 @@ def yield_black(x000: np.ndarray,
 
 def _generate_disp_field(shape: _tx.Sequence[int],
                          magnitude: float = 1,
-                         fwhm: float = 5) -> np.ndarray:
+                         fwhm: float = 5
+                         ) -> np.ndarray:
     # Generate a random displacement field of the given shape, for testing.
     from scipy.ndimage import gaussian_filter
     shape = tuple(shape) + (len(shape),)

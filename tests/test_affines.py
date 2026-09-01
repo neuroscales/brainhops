@@ -19,9 +19,12 @@ def _from_homogeneous(H: np.ndarray) -> np.ndarray:
     return H[..., :-1, :]
 
 
-def _random_affine(rng: np.random, m: int, n: int,
+def _random_affine(rng: np.random,
+                   m: int,
+                   n: int,
                    batch: tuple = (),
-                   dtype: np.dtype = np.float64) -> np.ndarray:
+                   dtype: np.dtype = np.float64
+                   ) -> np.ndarray:
     """Generate random compact affine with shape (*batch, m, n+1)."""
     A = rng.normal(size=(*batch, m, n + 1)).astype(dtype)
     if m == n:

@@ -58,7 +58,8 @@ if False:
             self.side = side
 
         def __ror__(
-            self, other: "Transformation"
+            self,
+            other: "Transformation"
         ) -> tx.Union["_Pipe", "Transformation"]:
             if self.side == "R":
                 return self.input(other)
@@ -68,7 +69,8 @@ if False:
                 raise SyntaxError("Invalid pipe syntax")
 
         def __gt__(
-            self, other: "Transformation"
+            self,
+            other: "Transformation"
         ) -> tx.Union["_Pipe", "Transformation"]:
             if self.side == "L":
                 return other(self.input)
@@ -1271,7 +1273,8 @@ class LossyConversionError(ConversionError):
 
 @tx.overload
 def _converter(
-    Ti: tx.Type[Transformation], To: tx.Type[Transformation]
+    Ti: tx.Type[Transformation],
+    To: tx.Type[Transformation]
 ) -> tx.Callable:
     """Return a decorator to register a converter of between types."""
     ...
@@ -1300,7 +1303,8 @@ def _converter(*args, **kwargs) -> tx.Callable:
 
 def _to(x: Transformation,
         cls: tx.Type[Transformation],
-        **kwargs) -> Transformation:
+        **kwargs
+        ) -> Transformation:
     """Convert a transform to a different type."""
     # TODO: implement using the CONVERTERS map,
     #       similarly to _compose() and _COMPOSERS.

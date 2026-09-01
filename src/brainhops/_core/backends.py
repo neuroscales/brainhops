@@ -32,7 +32,8 @@ _BACKEND = "dask"
 
 
 @contextmanager
-def backend(backend: str | ModuleType | None = None) -> _tx.Iterator[str]:
+def backend(backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+            ) -> _tx.Iterator[str]:
     """Context manager to temporarily set the array backend"""
     global _BACKEND
     old_backend = _BACKEND
@@ -64,14 +65,15 @@ def set_backend(backend: str) -> None:
 
 
 def to_backend(
-    x: ArrayProtocol, backend: str | ModuleType | None = None
+    x: ArrayProtocol,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     backend = get_array_backend(backend)
     return backend.asarray(x)
 
 
 def get_array_backend(
-    x: ArrayProtocol | ModuleType | str | None = None
+    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None
 ) -> ModuleType:
     """Determine the array package for a given array
 
@@ -117,7 +119,7 @@ def get_array_backend(
 
 
 def get_ndimage_backend(
-    x: ArrayProtocol | ModuleType | str | None = None
+    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None
 ) -> ModuleType:
     """Determine the ndimage package for a given array
 

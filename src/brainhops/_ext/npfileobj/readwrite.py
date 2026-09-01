@@ -15,13 +15,15 @@ from nibabel.fileslice import (
     threshold_heuristic,
 )
 
+from brainhops._core.path import FileLike
+
 
 def full_heuristic(*args, **kwargs) -> _tx.Literal['full', 'contiguous', None]:
     """Heuristic that always read the full volume"""
     return threshold_heuristic(*args, **kwargs, skip_thresh=0)
 
 
-def write_segments(fileobj, segments, dat, lock=None):
+def write_segments(fileobj: FileLike, segments: list, dat: np.byte, lock=None):
     """Write chunks of `dat` into `fileobj` at locations described in `segments`
 
     Parameters

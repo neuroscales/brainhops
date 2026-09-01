@@ -70,7 +70,8 @@ def pull_field(field: ArrayLike,
                order: int,
                bound: _tx.Literal['nearest', 'reflect', 'mirror',
                                   'grid-wrap', 'wrap'],
-               coeff: bool) -> ArrayLike:
+               coeff: bool
+               ) -> ArrayLike:
     """
     Interpolate an displacement or coordinates field using a coordinates field.
 
@@ -114,7 +115,8 @@ def coeff2value(input: ArrayLike,
                 bound: _tx.Literal['nearest', 'reflect', 'mirror',
                                    'grid-wrap', 'wrap'],
                 inplace: bool = False,
-                ndim: _tx.Optional[int] = None) -> ArrayLike:
+                ndim: _tx.Optional[int] = None
+                ) -> ArrayLike:
     """
     Convert an array of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -174,7 +176,8 @@ def coeff2value_field(field: ArrayLike,
                       order: int,
                       bound: _tx.Literal['nearest', 'reflect', 'mirror',
                                          'grid-wrap', 'wrap'],
-                      inplace: bool = False) -> ArrayLike:
+                      inplace: bool = False
+                      ) -> ArrayLike:
     """
     Convert a field of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -219,7 +222,8 @@ def value2coeff(input: ArrayLike,
                 bound: _tx.Literal['nearest', 'reflect', 'mirror',
                                    'grid-wrap', 'wrap'],
                 inplace: bool = False,
-                ndim: _tx.Optional[int] = None) -> ArrayLike:
+                ndim: _tx.Optional[int] = None
+                ) -> ArrayLike:
     """
     Convert an array of values to spline coefficients by applying the
     appropriate spline filter.
@@ -276,7 +280,8 @@ def value2coeff_field(field: ArrayLike,
                       order: int,
                       bound: _tx.Literal['nearest', 'reflect', 'mirror',
                                          'grid-wrap', 'wrap'],
-                      inplace: bool = False) -> ArrayLike:
+                      inplace: bool = False
+                      ) -> ArrayLike:
     """
     Convert a field of values to spline coefficients by applying the
     appropriate spline filter.

@@ -7,6 +7,8 @@ i.e., M x (N+1) matrices that do not contain the homogeneous row.
 from math import prod
 from types import ModuleType
 
+import typing_extensions as _tx
+
 # dependencies
 from numpy import broadcast_shapes
 
@@ -16,7 +18,9 @@ from .typing import ArrayLike, ArrayProtocol
 
 
 def inv(
-    A: ArrayProtocol, *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    *,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     """
     Invert a M x (N+1) affine matrix (i.e., that does not contain the
@@ -54,8 +58,10 @@ def inv(
 
 
 def matmul(
-    A: ArrayProtocol, B: ArrayProtocol, *Cs: ArrayProtocol,
-    backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *Cs: ArrayProtocol,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     """
     Multiply two M x (N+1) affine matrices (i.e., that do not contain
@@ -90,8 +96,10 @@ def matmul(
 
 
 def _matmul(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     backend = get_array_backend(backend or A)
     A = backend.asarray(A, dtype=A.dtype)
@@ -123,7 +131,7 @@ def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
 
 def _chain_matmul(
     *As: ArrayProtocol,
-    backend: str | ModuleType | None = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     if not As:
         return None
@@ -141,8 +149,10 @@ def _chain_matmul(
 
 
 def matvec(
-    A: ArrayProtocol, b: ArrayProtocol,
-    *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    b: ArrayProtocol,
+    *,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     """
     Multiply an M x (N+1) affine matrix (i.e., that does not contain the
@@ -176,8 +186,11 @@ def matvec(
 
 
 def lmdiv(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, vector: bool = False, backend: str | ModuleType | None = None,
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    vector: bool = False,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Solve the linear system AX = B for X, where A is an M x (N+1) affine
@@ -232,8 +245,10 @@ def lmdiv(
 
 
 def rmdiv(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, backend: str | ModuleType | None = None,
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Solve the linear system XB = A for X, where A is an M x (N+1) affine

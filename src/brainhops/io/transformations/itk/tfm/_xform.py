@@ -21,5 +21,6 @@ class TFMTransform(TFMTransformParser, ITKTransform):
 
     @transformations.setter
     def transformations(self,
-                        value: _tx.Tuple[_xforms.Transformation, ...]) -> None:
+                        value: _tx.Tuple[_xforms.Transformation, ...]
+                        ) -> None:
         self._transformations = value

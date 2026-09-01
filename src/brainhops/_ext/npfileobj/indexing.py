@@ -131,13 +131,17 @@ def neg2pos(index, shape):
 
 
 @_tx.overload
-def is_fullslice(index: IndexLike, shape: int,
-                 do_neg2pos: bool = True) -> bool: ...
+def is_fullslice(index: IndexLike,
+                 shape: int,
+                 do_neg2pos: bool = True
+                 ) -> bool: ...
 
 
 @_tx.overload
-def is_fullslice(index: _tx.Tuple[IndexLike, ...], shape: _tx.Tuple[int, ...],
-                 do_neg2pos: bool = True) -> _tx.Tuple[bool, ...]: ...
+def is_fullslice(index: _tx.Tuple[IndexLike, ...],
+                 shape: _tx.Tuple[int, ...],
+                 do_neg2pos: bool = True
+                 ) -> _tx.Tuple[bool, ...]: ...
 
 
 def is_fullslice(index, shape, do_neg2pos=True):
@@ -188,7 +192,10 @@ def is_fullslice(index, shape, do_neg2pos=True):
         return tuple(is_fullslice(idx, shp) for idx, shp in zip(index, shape))
 
 
-def slice_length(index: slice, shape: int, do_neg2pos: bool = True) -> int:
+def slice_length(index: slice,
+                 shape: int,
+                 do_neg2pos: bool = True
+                 ) -> int:
     """Compute the effective length (output number of elements) of a slice.
 
     ::: warning
@@ -231,7 +238,10 @@ def slice_length(index: slice, shape: int, do_neg2pos: bool = True) -> int:
     return max(1 + (stop - start - sign(step)) // step, 0)
 
 
-def simplify_slice(index: slice, shape: int, do_neg2pos: bool = True) -> slice:
+def simplify_slice(index: slice,
+                   shape: int,
+                   do_neg2pos: bool = True
+                   ) -> slice:
     """Replace start/stop/step by `None`s when it is equivalent.
 
     ::: warning
@@ -387,7 +397,8 @@ def is_slice_equivalent(
 
 
 def guess_shape(index: _tx.Sequence[IndexLike],
-                shape: _tx.Sequence[int]) -> _tx.Tuple[int, ...]:
+                shape: _tx.Sequence[int]
+                ) -> _tx.Tuple[int, ...]:
     """Guess the output shape obtained by indexing a volume.
 
     Parameters
@@ -440,7 +451,8 @@ def guess_shape(index: _tx.Sequence[IndexLike],
 
 
 def expand_index(index: NDIndexLike,
-                 shape: _tx.Tuple[int, ...]) -> _tx.Tuple[IndexLike, ...]:
+                 shape: _tx.Tuple[int, ...]
+                 ) -> _tx.Tuple[IndexLike, ...]:
     """Expand indices in a tuple.
 
     * Ellipses are replaced with slices
@@ -590,7 +602,8 @@ def expand_index(index: NDIndexLike,
 
 def compose_index(parent: _tx.Sequence[IndexLike],
                   child: _tx.Sequence[IndexLike],
-                  full_shape: _tx.Sequence[int]) -> tuple[IndexLike]:
+                  full_shape: _tx.Sequence[int]
+                  ) -> tuple[IndexLike]:
     """Compose two sub-indexing
 
     Parameters
@@ -746,7 +759,8 @@ def compose_index(parent: _tx.Sequence[IndexLike],
 
 def split_operation(perm: _tx.Sequence[int],
                     slicer: _tx.Sequence[IndexLike],
-                    direction: _tx.Literal['r', 'w']) -> tuple:
+                    direction: _tx.Literal['r', 'w']
+                    ) -> tuple:
     """Split the operation `slicer of permutation` into subcomponents.
 
     Symbolic slicing is encoded by a permutation and an indexing operation.

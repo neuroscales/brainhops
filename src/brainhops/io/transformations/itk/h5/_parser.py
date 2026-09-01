@@ -42,25 +42,25 @@ class H5Header(
 ):
     """Header of a ITK H5 file."""
 
-    HDFVersion: str | None = None
+    HDFVersion: _tx.Optional[str] = None
     """
     A string describing the version of the HDF5 library used.
     Ex: "HDF5 library version: 1.10.4"
     """
 
-    ITKVersion: str | None = None
+    ITKVersion: _tx.Optional[str] = None
     """
     A string describing the version of the ITK library used.
     Ex: "5.1.0"
     """
 
-    OSName: str | None = None
+    OSName: _tx.Optional[str] = None
     """
     A string describing the operating system name.
     Ex: "Linux"
     """
 
-    OSVersion: str | None = None
+    OSVersion: _tx.Optional[str] = None
     """
     A string describing the operating system version.
     Ex: "6.1.0-1007-oem"
@@ -74,7 +74,7 @@ class H5TransformParser(
     repr=HIDE_IF_NONE,
 ):
 
-    file: h5py.File | None = None
+    file: _tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
     transform_group: _tx.List[ITKStruct] = Factory(list)
 
@@ -104,7 +104,8 @@ class H5TransformParser(
 
     @classmethod
     def from_file(
-        cls, file: _H5Like,
+        cls,
+        file: _H5Like,
         keep_open: bool = False,
         load: bool = True
     ) -> _tx.Self:
@@ -136,7 +137,8 @@ class H5TransformParser(
 
     @classmethod
     def from_h5(
-        cls, h5file: h5py.File,
+        cls,
+        h5file: h5py.File,
         keep_open: bool = False,
         load: bool = True,
     ) -> _tx.Self:
@@ -259,10 +261,10 @@ class DelayedH5Array:
     def __init__(self, file: _H5Like, path: str) -> None:
         self.file: _H5Like = file
         self.path: str = path
-        self._file: h5py.File | None = None
-        self._shape: _tx.Tuple[int] | None = None
-        self._dtype: np.dtype | None = None
-        self._chunks: _tx.Tuple[int] | None = None
+        self._file: _tx.Optional[h5py.File] = None
+        self._shape: _tx.Optional[_tx.Tuple[int]] = None
+        self._dtype: _tx.Optional[np.dtype] = None
+        self._chunks: _tx.Optional[_tx.Tuple[int]] = None
 
     def open(self) -> h5py.File:
         self.to_dataset(keep_open=True)
@@ -277,7 +279,7 @@ class DelayedH5Array:
         self.close()
 
     def to_dataset(
-        self, file: _H5Like | None = None, keep_open: bool = False
+        self, file: _tx.Optional[_H5Like] = None, keep_open: bool = False
     ) -> h5py.Dataset:
 
         if file is None:

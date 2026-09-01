@@ -78,7 +78,8 @@ BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 
 def _process_triangle(src: np.ndarray,
                       dst: np.ndarray,
-                      out: np.ndarray) -> None:
+                      out: np.ndarray
+                      ) -> None:
     """
     Process a batch of triangles.
 
@@ -126,8 +127,12 @@ def _process_triangle(src: np.ndarray,
         y += 1
 
 
-def _process_segment(src: np.ndarray, dst: np.ndarray, y: np.ndarray,
-                     seg: np.ndarray, out: np.ndarray) -> None:
+def _process_segment(src: np.ndarray,
+                     dst: np.ndarray,
+                     y: np.ndarray,
+                     seg: np.ndarray,
+                     out: np.ndarray
+                     ) -> None:
     """
     Process a batch of segments in a given z plane and y coordinate.
 
@@ -220,7 +225,8 @@ def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 def _truncate_and_stack2d(a: np.ndarray,
                           b: np.ndarray,
-                          c: np.ndarray) -> np.ndarray:
+                          c: np.ndarray
+                          ) -> np.ndarray:
     """
     Truncate arrays so that they have the same shape, then stack them.
 
@@ -309,8 +315,11 @@ def _yield_triangles(field: np.ndarray) -> _tx.Iterator[np.ndarray]:
     yield from yield_black(x00, x01, x10, x11)
 
 
-def yield_red(x00: np.ndarray, x01: np.ndarray,
-              x10: np.ndarray, x11: np.ndarray) -> _tx.Iterator[np.ndarray]:
+def yield_red(x00: np.ndarray,
+              x01: np.ndarray,
+              x10: np.ndarray,
+              x11: np.ndarray
+              ) -> _tx.Iterator[np.ndarray]:
     # Yield the two triangles that make up a red block.
     #
     # #1  _____
@@ -326,8 +335,11 @@ def yield_red(x00: np.ndarray, x01: np.ndarray,
     yield _truncate_and_stack2d(x11, x01, x10)
 
 
-def yield_black(x00: np.ndarray, x01: np.ndarray,
-                x10: np.ndarray, x11: np.ndarray) -> _tx.Iterator[np.ndarray]:
+def yield_black(x00: np.ndarray,
+                x01: np.ndarray,
+                x10: np.ndarray,
+                x11: np.ndarray
+                ) -> _tx.Iterator[np.ndarray]:
     # Yield the two triangles that make up a black block.
     #
     #  #1      _____  #2
@@ -344,7 +356,8 @@ def yield_black(x00: np.ndarray, x01: np.ndarray,
 
 def _generate_disp_field(shape: tuple,
                          magnitude: float = 1,
-                         fwhm: float = 5) -> np.ndarray:
+                         fwhm: float = 5
+                         ) -> np.ndarray:
     # Generate a random displacement field of the given shape, for testing.
     from scipy.ndimage import gaussian_filter
     shape = tuple(shape) + (len(shape),)

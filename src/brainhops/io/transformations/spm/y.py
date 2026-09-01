@@ -33,10 +33,11 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         )
 
     @transformations.setter
-    def transformations(self, value: _tx.Tuple[
-        _tx.Optional[RASToVoxel],
-        _tx.Optional[RASCoordinatesField],
-    ]) -> None:
+    def transformations(self,
+                        value: _tx.Tuple[
+                            _tx.Optional[RASToVoxel],
+                            _tx.Optional[RASCoordinatesField],
+                        ]) -> None:
         self._transformations = tuple(value)
 
     @property

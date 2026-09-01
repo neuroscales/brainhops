@@ -458,7 +458,8 @@ def _to_type(value: str, type_: _tx.Any) -> _tx.Any:
 
 
 def _read_key(
-    line: str, key_dict: _tx.Optional[dict] = None
+    line: str,
+    key_dict: _tx.Optional[dict] = None
 ) -> _tx.Tuple[_tx.Optional[str], _tx.Optional[str]]:
     """Read one `key = value` line from an LTA file
 
@@ -499,7 +500,8 @@ def _read_key(
 
 
 def _read_values(
-    line: str, format: _tx.Union[type, _tx.Sequence[type]]
+    line: str,
+    format: _tx.Union[type, _tx.Sequence[type]]
 ) -> _tx.Optional[_tx.Union[str, int, float, _tx.Tuple]]:
     """Read one `*values` line from an LTA file
 

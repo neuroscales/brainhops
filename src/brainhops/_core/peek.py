@@ -78,7 +78,8 @@ class peekable(Iterator, _tx.Generic[T]):
 
     def _next(self,
               preproc: bool = True,
-              valid: bool = True) -> T | EMPTY_TYPE:
+              valid: bool = True
+              ) -> _tx.Union[T, EMPTY_TYPE]:
         while True:
             item = next(self._iterator, EMPTY)
             if item is EMPTY:
@@ -95,7 +96,8 @@ class peekable_lines(peekable[str]):
 
     def __init__(self,
                  lines: _tx.Iterable[str],
-                 comment: str | None = "#") -> None:
+                 comment: _tx.Optional[str] = "#"
+                 ) -> None:
         super().__init__(lines)
         self.comment = comment
 
