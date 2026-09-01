@@ -19,12 +19,13 @@ def _from_homogeneous(H: np.ndarray) -> np.ndarray:
     return H[..., :-1, :]
 
 
-def _random_affine(rng: np.random,
-                   m: int,
-                   n: int,
-                   batch: tuple = (),
-                   dtype: np.dtype = np.float64
-                   ) -> np.ndarray:
+def _random_affine(
+    rng: np.random,
+    m: int,
+    n: int,
+    batch: tuple = (),
+    dtype: np.dtype = np.float64,
+) -> np.ndarray:
     """Generate random compact affine with shape (*batch, m, n+1)."""
     A = rng.normal(size=(*batch, m, n + 1)).astype(dtype)
     if m == n:
@@ -48,7 +49,9 @@ def test_inv_matches_homogeneous_baseline_square_and_rectangular() -> None:
     np.testing.assert_allclose(got_rect, exp_rect, rtol=1e-10, atol=1e-10)
 
 
-def test_matmul_matches_homogeneous_baseline_with_broadcast_and_chain() -> None:  # noqa: E501
+def test_matmul_matches_homogeneous_baseline_with_broadcast_and_chain() -> (
+    None
+):  # noqa: E501
     rng = np.random.default_rng(1)
     A = _random_affine(rng, m=2, n=3, batch=(4, 1))
     B = _random_affine(rng, m=3, n=4, batch=(1, 5))

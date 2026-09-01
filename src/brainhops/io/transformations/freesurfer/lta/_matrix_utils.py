@@ -47,7 +47,8 @@ def _get_ras2ras(lta: LTAStruct) -> np.ndarray:
         return matrix[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
     if lta.src is None or lta.dst is None:
         raise ValueError(
-            'cannot compute RAS-to-RAS matrix without src and dst volume info')
+            "cannot compute RAS-to-RAS matrix without src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
@@ -65,8 +66,9 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
         return matrix
     if lta.src is None or lta.dst is None:
         raise ValueError(
-            'cannot compute phys-to-phys matrix without '
-            'src and dst volume info')
+            "cannot compute phys-to-phys matrix without "
+            "src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -90,7 +92,8 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
         return matrix
     if lta.src is None or lta.dst is None:
         raise ValueError(
-            'cannot compute vox-to-vox matrix without src and dst volume info')
+            "cannot compute vox-to-vox matrix without src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -154,7 +157,7 @@ def _code2orient(permut: _3Ints, flips: _3Flips) -> str:
         - 'I' (superior-to-inferior) or 'S' (inferior-to-superior)
 
     """
-    names = [['L', 'R'], ['P', 'A'], ['I', 'S']]
+    names = [["L", "R"], ["P", "A"], ["I", "S"]]
     name = "".join([names[p][int(f > 0)] for p, f in zip(permut, flips)])
     return name
 

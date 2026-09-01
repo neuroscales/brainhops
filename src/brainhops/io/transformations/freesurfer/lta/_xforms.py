@@ -2,7 +2,7 @@ __all__ = [
     "LTATransformation",
     "LTATransformationVoxToVox",
     "LTATransformationPhysToPhys",
-    "LTATransformationRASToRAS"
+    "LTATransformationRASToRAS",
 ]
 
 # stdlib
@@ -146,12 +146,15 @@ class LTATransformationVoxToVox(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_VOX_TO_VOX,
-        src=LTAStruct.SrcVolumeInfo(),
-        dst=LTAStruct.DstVolumeInfo()
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_VOX_TO_VOX,
+            src=LTAStruct.SrcVolumeInfo(),
+            dst=LTAStruct.DstVolumeInfo(),
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:
@@ -190,12 +193,15 @@ class LTATransformationPhysToPhys(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_PHYSVOX_TO_PHYSVOX,
-        src=LTAStruct.SrcVolumeInfo(),
-        dst=LTAStruct.DstVolumeInfo()
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_PHYSVOX_TO_PHYSVOX,
+            src=LTAStruct.SrcVolumeInfo(),
+            dst=LTAStruct.DstVolumeInfo(),
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:
@@ -234,10 +240,13 @@ class LTATransformationRASToRAS(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_RAS_TO_RAS,
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_RAS_TO_RAS,
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:

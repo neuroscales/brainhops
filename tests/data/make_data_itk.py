@@ -9,11 +9,9 @@ this_dir = op.dirname(op.abspath(__file__))
 center3d_vector = [50.0, 50.0, 50.0]
 translation3d_vector = [10.0, 5.0, 2.0]
 scale3d_vector = [1.2, 0.8, 1.0]
-affine3d_matrix = np.array([
-    [0.9, 0.1, 0.0],
-    [-0.1, 0.9, 0.0],
-    [0.0, 0.0, 1.0]
-])
+affine3d_matrix = np.array(
+    [[0.9, 0.1, 0.0], [-0.1, 0.9, 0.0], [0.0, 0.0, 1.0]]
+)
 
 # --- Image 3D ---------------------------------------------------------
 
@@ -22,11 +20,7 @@ dtype = sitk.sitkFloat32
 num_channels = 1
 voxel_size = [0.97, 0.97, 1.25]
 origin_coords = [-120.5, -120.5, -60.0]
-orientation_matrix = [
-    -1.0,  0.0,  0.0,
-    0.0, -1.0,  0.0,
-    0.0,  0.0,  1.0
-]
+orientation_matrix = [-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0]
 
 image = sitk.Image(shape, dtype, num_channels)
 image.SetSpacing(voxel_size)
@@ -40,12 +34,9 @@ identity3d = sitk.Transform(3, sitk.sitkIdentity)
 sitk.WriteTransform(identity3d, op.join(this_dir, "itk_identity3d.tfm"))
 sitk.WriteTransform(identity3d, op.join(this_dir, "itk_identity3d.h5"))
 json.dump(
-    {
-        "type": "IdentityTransform",
-        "ndim": 3
-    },
+    {"type": "IdentityTransform", "ndim": 3},
     open(op.join(this_dir, "itk_identity3d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 # --- TranslationTransform 3D ------------------------------------------
@@ -59,10 +50,10 @@ json.dump(
     {
         "type": "TranslationTransform",
         "ndim": 3,
-        "offset": translation3d_vector
+        "offset": translation3d_vector,
     },
     open(op.join(this_dir, "itk_translation3d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 
@@ -74,13 +65,9 @@ scale3d.SetScale(scale3d_vector)
 sitk.WriteTransform(scale3d, op.join(this_dir, "itk_scale3d.tfm"))
 sitk.WriteTransform(scale3d, op.join(this_dir, "itk_scale3d.h5"))
 json.dump(
-    {
-        "type": "ScaleTransform",
-        "ndim": 3,
-        "scale": scale3d_vector
-    },
+    {"type": "ScaleTransform", "ndim": 3, "scale": scale3d_vector},
     open(op.join(this_dir, "itk_scale3d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 # --- AffineTransform 2D -----------------------------------------------
@@ -98,10 +85,10 @@ json.dump(
         "ndim": 2,
         "matrix": affine3d_matrix[:2, :2].tolist(),
         "translation": translation3d_vector[:2],
-        "center": center3d_vector[:2]
+        "center": center3d_vector[:2],
     },
     open(op.join(this_dir, "itk_affine2d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 # --- AffineTransform 3D -----------------------------------------------
@@ -119,10 +106,10 @@ json.dump(
         "ndim": 3,
         "matrix": affine3d_matrix.tolist(),
         "translation": translation3d_vector,
-        "center": center3d_vector
+        "center": center3d_vector,
     },
     open(op.join(this_dir, "itk_affine3d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 # --- BSplineTransform 3D -----------------------------------------------
@@ -141,10 +128,10 @@ json.dump(
         "type": "BSplineTransform",
         "ndim": 3,
         "parameters": bspline3d.GetParameters(),
-        "fixed_parameters": bspline3d.GetFixedParameters()
+        "fixed_parameters": bspline3d.GetFixedParameters(),
     },
     open(op.join(this_dir, "itk_bspline3d.json"), "w"),
-    indent=4
+    indent=4,
 )
 
 # --- DisplacementFieldTransform 3D ------------------------------------
@@ -155,8 +142,9 @@ displacement3d = sitk.GetImageFromArray(values3d.transpose(2, 1, 0, 3))
 displacement3d.CopyInformation(image)
 displacement3d = sitk.DisplacementFieldTransform(displacement3d)
 
-sitk.WriteTransform(displacement3d, op.join(
-    this_dir, "itk_displacement3d.tfm"))
+sitk.WriteTransform(
+    displacement3d, op.join(this_dir, "itk_displacement3d.tfm")
+)
 sitk.WriteTransform(displacement3d, op.join(this_dir, "itk_displacement3d.h5"))
 
 
@@ -166,25 +154,33 @@ composite_affine3d = sitk.CompositeTransform(3)
 composite_affine3d.AddTransform(affine3d)
 composite_affine3d.AddTransform(scale3d)
 
-sitk.WriteTransform(composite_affine3d, op.join(
-    this_dir, "itk_composite_affine3d.tfm"))
-sitk.WriteTransform(composite_affine3d, op.join(
-    this_dir, "itk_composite_affine3d.h5"))
+sitk.WriteTransform(
+    composite_affine3d, op.join(this_dir, "itk_composite_affine3d.tfm")
+)
+sitk.WriteTransform(
+    composite_affine3d, op.join(this_dir, "itk_composite_affine3d.h5")
+)
 
 composite_bsplines3d = sitk.CompositeTransform(3)
 composite_bsplines3d.AddTransform(affine3d)
 composite_bsplines3d.AddTransform(bspline3d)
 
-sitk.WriteTransform(composite_bsplines3d, op.join(
-    this_dir, "itk_composite_bsplines3d.tfm"))
-sitk.WriteTransform(composite_bsplines3d, op.join(
-    this_dir, "itk_composite_bsplines3d.h5"))
+sitk.WriteTransform(
+    composite_bsplines3d, op.join(this_dir, "itk_composite_bsplines3d.tfm")
+)
+sitk.WriteTransform(
+    composite_bsplines3d, op.join(this_dir, "itk_composite_bsplines3d.h5")
+)
 
 composite_displacement3d = sitk.CompositeTransform(3)
 composite_displacement3d.AddTransform(affine3d)
 composite_displacement3d.AddTransform(displacement3d)
 
-sitk.WriteTransform(composite_displacement3d, op.join(
-    this_dir, "itk_composite_displacement3d.tfm"))
-sitk.WriteTransform(composite_displacement3d, op.join(
-    this_dir, "itk_composite_displacement3d.h5"))
+sitk.WriteTransform(
+    composite_displacement3d,
+    op.join(this_dir, "itk_composite_displacement3d.tfm"),
+)
+sitk.WriteTransform(
+    composite_displacement3d,
+    op.join(this_dir, "itk_composite_displacement3d.h5"),
+)

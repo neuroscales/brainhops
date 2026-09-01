@@ -59,7 +59,6 @@ class TFMTransformParser(
         obj = cls()
 
         while True:
-
             if not lines.peek():
                 break
 
@@ -90,7 +89,8 @@ class TFMTransformParser(
             if fixed_parameters:
                 lines.next()  # consume the line
                 fixed_parameters = _read_vector(
-                    fixed_parameters.group("values"))
+                    fixed_parameters.group("values")
+                )
             else:
                 fixed_parameters = []
 

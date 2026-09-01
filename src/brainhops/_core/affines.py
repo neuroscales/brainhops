@@ -20,7 +20,7 @@ from .typing import ArrayLike, ArrayProtocol
 def inv(
     A: ArrayProtocol,
     *,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Invert a M x (N+1) affine matrix (i.e., that does not contain the
@@ -61,7 +61,7 @@ def matmul(
     A: ArrayProtocol,
     B: ArrayProtocol,
     *Cs: ArrayProtocol,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Multiply two M x (N+1) affine matrices (i.e., that do not contain
@@ -99,7 +99,7 @@ def _matmul(
     A: ArrayProtocol,
     B: ArrayProtocol,
     *,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     backend = get_array_backend(backend or A)
     A = backend.asarray(A, dtype=A.dtype)
@@ -131,7 +131,7 @@ def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
 
 def _chain_matmul(
     *As: ArrayProtocol,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     if not As:
         return None
@@ -143,8 +143,7 @@ def _chain_matmul(
     A0 = As[:best_cost]
     A1 = As[best_cost:]
     return _chain_matmul(
-        *A0, _matmul(*A1[:2], backend=backend), *A1[2:],
-        backend=backend
+        *A0, _matmul(*A1[:2], backend=backend), *A1[2:], backend=backend
     )
 
 
@@ -152,7 +151,7 @@ def matvec(
     A: ArrayProtocol,
     b: ArrayProtocol,
     *,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Multiply an M x (N+1) affine matrix (i.e., that does not contain the

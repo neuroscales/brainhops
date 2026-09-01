@@ -10,23 +10,17 @@ from brainhops.datamodel import transformations as _xforms
 # optionals
 if _tx.TYPE_CHECKING:
     import nibabel as nb
+
     # typing
     _NiftiLike = _tx.Union[
-        nb.Nifti1Header,
-        nb.Nifti1Image,
-        str,
-        PathLike,
-        _tx.BinaryIO
+        nb.Nifti1Header, nb.Nifti1Image, str, PathLike, _tx.BinaryIO
     ]
 else:
     try:
         import nibabel as nb
+
         _NiftiLike = _tx.Union[
-            nb.Nifti1Header,
-            nb.Nifti1Image,
-            str,
-            PathLike,
-            _tx.BinaryIO
+            nb.Nifti1Header, nb.Nifti1Image, str, PathLike, _tx.BinaryIO
         ]
     except ImportError:
         nb = None
@@ -34,7 +28,6 @@ else:
 
 
 class NiftiBasedTransformation(_xforms.Transformation):
-
     header: _tx.Optional[nb.Nifti1Header] = None
     image: _tx.Optional[nb.Nifti1Image] = None
 

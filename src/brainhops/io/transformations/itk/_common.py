@@ -108,9 +108,9 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-    def _check_same_ndim(self,
-                         expected_ndim: _tx.Optional[int] = None
-                         ) -> None:
+    def _check_same_ndim(
+        self, expected_ndim: _tx.Optional[int] = None
+    ) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(
@@ -147,6 +147,7 @@ def _register_type(*names: str) -> _tx.Callable:
         for name in names:
             ITKStruct._REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
@@ -164,7 +165,7 @@ class ITKIdentityStruct(ITKStruct):
         """Return a copy of the identity transform."""
         return _xforms.Identity(
             input=_make_system(self.ndim_input),
-            output=_make_system(self.ndim_output)
+            output=_make_system(self.ndim_output),
         )
 
 
@@ -187,7 +188,7 @@ class ITKTranslationStruct(ITKStruct):
         return _xforms.Translation(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
-            translation=self.parameters
+            translation=self.parameters,
         )
 
 
@@ -209,8 +210,8 @@ class ITKScaleStruct(ITKStruct):
             transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(self.parameters),
-                _xforms.Translation(self.fixed_parameters)
-            ]
+                _xforms.Translation(self.fixed_parameters),
+            ],
         )
 
 
@@ -220,8 +221,9 @@ class ITKScaleLogarithmicStruct(ITKStruct):
     Scale logarithmic transform with parameters for scaling in each dimension.
     """
 
-    type: _tx.Literal[_ITKT.ScaleLogarithmicTransform] \
-        = _ITKT.ScaleLogarithmicTransform
+    type: _tx.Literal[_ITKT.ScaleLogarithmicTransform] = (
+        _ITKT.ScaleLogarithmicTransform
+    )
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -237,8 +239,8 @@ class ITKScaleLogarithmicStruct(ITKStruct):
             transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(np.exp(self.parameters)),
-                _xforms.Translation(self.fixed_parameters)
-            ]
+                _xforms.Translation(self.fixed_parameters),
+            ],
         )
 
 
@@ -264,10 +266,13 @@ class ITKEuler2DStruct(ITKStruct):
         t = self.parameters[1:3]
         c = self.fixed_parameters
 
-        R = np.array([
-            [math.cos(angle), -math.sin(angle)],
-            [math.sin(angle),  math.cos(angle)]
-        ], dtype=np.float64)
+        R = np.array(
+            [
+                [math.cos(angle), -math.sin(angle)],
+                [math.sin(angle), math.cos(angle)],
+            ],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(2),
@@ -277,7 +282,7 @@ class ITKEuler2DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -311,7 +316,7 @@ class ITKEuler3DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -345,8 +350,8 @@ class ITKVersorStruct(ITKStruct):
             transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Rotation(R),
-                _xforms.Translation(c)
-            ]
+                _xforms.Translation(c),
+            ],
         )
 
 
@@ -356,8 +361,9 @@ class ITKVersorRigid3DStruct(ITKStruct):
     Versor rigid 3D transform with parameters for rotation and translation.
     """
 
-    type: _tx.Literal[_ITKT.VersorRigid3DTransform] = \
+    type: _tx.Literal[_ITKT.VersorRigid3DTransform] = (
         _ITKT.VersorRigid3DTransform
+    )
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
@@ -374,7 +380,7 @@ class ITKVersorRigid3DStruct(ITKStruct):
         q = ITKVersorStruct(
             precision=self.precision,
             parameters=self.parameters[:3],
-            fixed_parameters=self.fixed_parameters
+            fixed_parameters=self.fixed_parameters,
         )
         t = self.parameters[3:6]
 
@@ -390,8 +396,9 @@ class ITKSimilarity2DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity2DTransform] = \
+    type: _tx.Literal[_ITKT.Similarity2DTransform] = (
         _ITKT.Similarity2DTransform
+    )
 
     ndim_input: _tx.Literal[2] = 2
     ndim_output: _tx.Literal[2] = 2
@@ -407,10 +414,13 @@ class ITKSimilarity2DStruct(ITKStruct):
         scale, angle, tx, ty = self.parameters
         c = self.fixed_parameters
 
-        R = np.array([
-            [math.cos(angle), -math.sin(angle)],
-            [math.sin(angle),  math.cos(angle)]
-        ], dtype=np.float64)
+        R = np.array(
+            [
+                [math.cos(angle), -math.sin(angle)],
+                [math.sin(angle), math.cos(angle)],
+            ],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(2),
@@ -421,7 +431,7 @@ class ITKSimilarity2DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation((tx, ty)),
-            ]
+            ],
         )
 
 
@@ -432,8 +442,9 @@ class ITKSimilarity3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity3DTransform] = \
+    type: _tx.Literal[_ITKT.Similarity3DTransform] = (
         _ITKT.Similarity3DTransform
+    )
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
@@ -463,7 +474,7 @@ class ITKSimilarity3DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -474,17 +485,16 @@ class ITKScaleVersor3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.ScaleVersor3DTransform] \
-        = _ITKT.ScaleVersor3DTransform
+    type: _tx.Literal[_ITKT.ScaleVersor3DTransform] = (
+        _ITKT.ScaleVersor3DTransform
+    )
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
 
     parameters: _tx.Tuple[
         # 9 parameters
-        float, float, float,
-        float, float, float,
-        float, float, float
+        float, float, float, float, float, float, float, float, float
     ]
     """
     (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
@@ -507,10 +517,10 @@ class ITKScaleVersor3DStruct(ITKStruct):
             output=_make_system(3),
             transformations=[
                 _xforms.Translation(c).inverse(),
-                _xforms.Linear(R+S),
+                _xforms.Linear(R + S),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -521,19 +531,30 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
     scaling, and skewing.
     """
 
-    type: _tx.Literal[_ITKT.ScaleSkewVersor3DTransform] \
-        = _ITKT.ScaleSkewVersor3DTransform
+    type: _tx.Literal[_ITKT.ScaleSkewVersor3DTransform] = (
+        _ITKT.ScaleSkewVersor3DTransform
+    )
 
     ndim_input: _tx.Literal[3] = 3
     ndim_output: _tx.Literal[3] = 3
 
     parameters: _tx.Tuple[
         # 15 parameters
-        float, float, float,
-        float, float, float,
-        float, float, float,
-        float, float, float,
-        float, float, float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
     ]
     """
     (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
@@ -552,21 +573,20 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
         k = self.parameters[9:15]
         R = _versor_to_matrix(q)
         S = np.diag(np.asarray(s) - 1)
-        K = np.array([
-            [0, k[0], k[1]],
-            [k[2], 0, k[3]],
-            [k[4], k[5], 0]
-        ], dtype=np.float64)
+        K = np.array(
+            [[0, k[0], k[1]], [k[2], 0, k[3]], [k[4], k[5], 0]],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
             transformations=[
                 _xforms.Translation(c).inverse(),
-                _xforms.Linear(R+S+K),
+                _xforms.Linear(R + S + K),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -589,7 +609,7 @@ class ITKAffineStruct(ITKStruct):
 
         Di = self.ndim_input
         Do = self.ndim_output
-        L = np.array(self.parameters[:Di * Do], dtype=np.float64)
+        L = np.array(self.parameters[: Di * Do], dtype=np.float64)
         L = L.reshape(Do, Di)
         t = np.array(self.parameters[-Do:], dtype=np.float64)
         c = self.fixed_parameters
@@ -602,7 +622,7 @@ class ITKAffineStruct(ITKStruct):
                 _xforms.Linear(L),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -612,8 +632,9 @@ class ITKDisplacementFieldStruct(ITKStruct):
     Displacement field transform with parameters for a dense deformation map.
     """
 
-    type: _tx.Literal[_ITKT.DisplacementFieldTransform] = \
+    type: _tx.Literal[_ITKT.DisplacementFieldTransform] = (
         _ITKT.DisplacementFieldTransform
+    )
 
     def to_transform(self) -> _xforms.DisplacementField:
 
@@ -728,16 +749,30 @@ def _vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
 def _versor_to_matrix(q: _tx.Sequence[float]) -> np.ndarray:
     """Convert a versor (unit quaternion) to a rotation matrix."""
     qx, qy, qz = q
-    norm_sq = qx ** 2 + qy ** 2 + qz ** 2
+    norm_sq = qx**2 + qy**2 + qz**2
     if norm_sq > 1.0:
-        raise ValueError(
-            "Versor quaternion vector part has magnitude > 1")
+        raise ValueError("Versor quaternion vector part has magnitude > 1")
     qw = math.sqrt(max(0.0, 1.0 - norm_sq))
-    return np.array([
-        [1 - 2*(qy**2 + qz**2),     2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
-        [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qx*qw)],
-        [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
-    ], dtype=np.float64)
+    return np.array(
+        [
+            [
+                1 - 2 * (qy**2 + qz**2),
+                2 * (qx * qy - qz * qw),
+                2 * (qx * qz + qy * qw),
+            ],
+            [
+                2 * (qx * qy + qz * qw),
+                1 - 2 * (qx**2 + qz**2),
+                2 * (qy * qz - qx * qw),
+            ],
+            [
+                2 * (qx * qz - qy * qw),
+                2 * (qy * qz + qx * qw),
+                1 - 2 * (qx**2 + qy**2),
+            ],
+        ],
+        dtype=np.float64,
+    )
 
 
 def _euler_to_matrix(angles: _tx.Sequence[float]) -> np.ndarray:

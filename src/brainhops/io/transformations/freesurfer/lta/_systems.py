@@ -2,7 +2,7 @@ __all__ = [
     "LTACoordinateSystem",
     "LTAVoxelSystem",
     "LTAScaledSystem",
-    "LTAPhysicalSystem"
+    "LTAPhysicalSystem",
 ]
 
 # externals
@@ -29,7 +29,7 @@ _3SpatialAxes = _tx.Tuple[
 def _make_axes(
     names: _tx.Tuple[str, str, str],
     unit: _tx.Optional[str] = None,
-    orientation: _tx.Optional[str] = None
+    orientation: _tx.Optional[str] = None,
 ) -> _3SpatialAxes:
     if orientation:
         orientation = tuple(getattr(_orientation, o) for o in orientation)
@@ -65,6 +65,7 @@ class LTACoordinateSystem(
         Axes correspond to the F-ordered dimensions of the volume,
         where the first axis is the fastest changing in memory.
     """
+
     ...
 
 
@@ -72,19 +73,19 @@ class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (unscaled) of a volume (source or destination)."""
 
     name: str = "voxel"
-    axes:  _3SpatialAxes = _make_axes(("i", "j", "k"))
+    axes: _3SpatialAxes = _make_axes(("i", "j", "k"))
     struct: _tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("i", "j", "k")
+        names: _tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> _tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             axes=_make_axes(names, orientation=_get_orient(struct)),
-            struct=struct
+            struct=struct,
         )
 
 
@@ -99,13 +100,13 @@ class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("x", "y", "z")
+        names: _tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> _tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
             axes=_make_axes(names, orientation=_get_orient(struct)),
-            struct=struct
+            struct=struct,
         )
 
 
@@ -124,11 +125,11 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("x", "y", "z")
+        names: _tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> _tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
             axes=_make_axes(names, orientation=_get_orient(struct)),
-            struct=struct
+            struct=struct,
         )

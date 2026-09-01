@@ -25,7 +25,6 @@ _FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
 
 
 class LTAParser(Magic):
-
     _HAS_KEYS = True
 
     # --- sniff --------------------------------------------------------
@@ -38,7 +37,7 @@ class LTAParser(Magic):
             return cls.sniff_text(other)
         if isinstance(other, PathLike):
             return cls.sniff_file(other)
-        if hasattr(other, 'read'):
+        if hasattr(other, "read"):
             return cls.sniff_file(other)
         if isinstance(other, bytes):
             return cls.sniff_bytes(other)
@@ -56,7 +55,7 @@ class LTAParser(Magic):
         return cls.sniff_text(fileobj.read())
 
     @classmethod
-    def sniff_bytes(cls, bytes: bytes, encoding: str = 'utf-8') -> bool:
+    def sniff_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> bool:
         return cls.sniff_text(bytes.decode(encoding))
 
     @classmethod
@@ -95,7 +94,7 @@ class LTAParser(Magic):
                 return cls.from_file(Path(other))
             else:
                 return cls.from_text(other)
-        if isinstance(other,  PathLike) or hasattr(other, 'read'):
+        if isinstance(other, PathLike) or hasattr(other, "read"):
             return cls.from_file(other)
         if isinstance(other, bytes):
             return cls.from_bytes(other)
@@ -142,7 +141,7 @@ class LTAParser(Magic):
         return cls.from_lines(text.splitlines())
 
     @classmethod
-    def from_bytes(cls, bytes: bytes, encoding: str = 'utf-8') -> _tx.Self:
+    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> _tx.Self:
         """
         Build an object from bytes in LTA format.
 
@@ -206,7 +205,7 @@ class LTAParser(Magic):
         # TODO: how do I know if it is a text or bytes IO?
         fileobj.write(self.to_text())
 
-    def to_bytes(self, encoding: str = 'utf-8') -> bytes:
+    def to_bytes(self, encoding: str = "utf-8") -> bytes:
         """
         Convert the object to bytes in LTA format.
 
@@ -253,7 +252,6 @@ class LTAParser(Magic):
 
 
 class VolumeInfoParser(LTAParser):
-
     @classmethod
     def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Optional[_tx.Self]:
         if not isinstance(lines, peekable_lines):
@@ -261,18 +259,17 @@ class VolumeInfoParser(LTAParser):
         line = lines.peek()
         if not line:
             return None
-        if line != (f'{cls.NAME} volume info'):
+        if line != (f"{cls.NAME} volume info"):
             return None
         next(lines)  # consume line
         return super().from_lines(lines)
 
     def to_lines(self, **kwargs) -> _tx.Generator[str]:
-        yield f'{self.NAME} volume info'
-        yield from super().to_lines(fmt={float: '{:.15e}'}, **kwargs)
+        yield f"{self.NAME} volume info"
+        yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
 
 
 class MatrixParser(LTAParser):
-
     @classmethod
     def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
         if not isinstance(lines, peekable_lines):
@@ -281,7 +278,7 @@ class MatrixParser(LTAParser):
         # Read first line to check affine shape
         line = next(lines, None)
         if not line:
-            warn('expected affine block, but got nothing', stacklevel=1)
+            warn("expected affine block, but got nothing", stacklevel=1)
             return cls()
 
         # Parse shape
@@ -289,7 +286,8 @@ class MatrixParser(LTAParser):
         if not shape:
             warn(
                 f'expected affine block with shape, but got: "{line}"',
-                stacklevel=1)
+                stacklevel=1,
+            )
             return cls()
         nelem, nrow, ncol = shape
         dtype = {1: float, 2: complex}.get(nelem)
@@ -305,7 +303,7 @@ class MatrixParser(LTAParser):
 
     def to_lines(self) -> _tx.Iterator[str]:
         dtype = self.dtype
-        fmt = '{:+.6f} {:+.6f}   ' if dtype is complex else '{:+.6f}  '
+        fmt = "{:+.6f} {:+.6f}   " if dtype is complex else "{:+.6f}  "
         yield _write_values((int(self.matrix_type), *self.shape))
         for row in self.matrix:
             yield _write_values(row, sep=0, fmt=fmt)
@@ -317,7 +315,6 @@ class MatrixParser(LTAParser):
 
 
 class LTAFieldParser:
-
     def __init__(self, key: _tx.Optional[str], type: _tx.Any) -> None:
         """
         Parameters
@@ -370,9 +367,7 @@ class LTAFieldParser:
             if key != self.key:
                 if self.optional:
                     return None
-                raise ValueError(
-                    f'expected key "{self.key}", but got "{key}"'
-                )
+                raise ValueError(f'expected key "{self.key}", but got "{key}"')
             next(lines)  # consume line
             return value
 
@@ -390,7 +385,6 @@ class LTAFieldParser:
 
 
 class LTAFieldWriter:
-
     def __init__(self, key: _tx.Optional[str], **kwargs) -> None:
         """
         Parameters
@@ -421,20 +415,23 @@ class LTAFieldWriter:
 # ----------------------------------------------------------------------
 
 # Regex patterns for different value types
-_INT = r'(\d+)'
-_FLOAT = r'([\+\-]?\d+\.?\d*(?:[eE][\+\-]?\d+)?)'
-_COMPLEX = f'(?P<real>{_FLOAT})' + r'\s+' + f'(?P<imag>{_FLOAT})'
-_STR = r'(.*)\s*$'
-_KEY_VALUE = r'^(\S+)\s*=\s*(.*)$'
-_WHITESPACE = r'\s*'
+_INT = r"(\d+)"
+_FLOAT = r"([\+\-]?\d+\.?\d*(?:[eE][\+\-]?\d+)?)"
+_COMPLEX = f"(?P<real>{_FLOAT})" + r"\s+" + f"(?P<imag>{_FLOAT})"
+_STR = r"(.*)\s*$"
+_KEY_VALUE = r"^(\S+)\s*=\s*(.*)$"
+_WHITESPACE = r"\s*"
 _PATTERNS = {
-    int: _INT, float: _FLOAT, complex: _COMPLEX, str: _STR,
-    'key_value': _KEY_VALUE, 'whitespace': _WHITESPACE,
+    int: _INT,
+    float: _FLOAT,
+    complex: _COMPLEX,
+    str: _STR,
+    "key_value": _KEY_VALUE,
+    "whitespace": _WHITESPACE,
 }
 
 _COMPILED_PATTERNS = {
-    key: re.compile(pattern)
-    for key, pattern in _PATTERNS.items()
+    key: re.compile(pattern) for key, pattern in _PATTERNS.items()
 }
 
 
@@ -458,8 +455,7 @@ def _to_type(value: str, type_: _tx.Any) -> _tx.Any:
 
 
 def _read_key(
-    line: str,
-    key_dict: _tx.Optional[dict] = None
+    line: str, key_dict: _tx.Optional[dict] = None
 ) -> _tx.Tuple[_tx.Optional[str], _tx.Optional[str]]:
     """Read one `key = value` line from an LTA file
 
@@ -475,7 +471,7 @@ def _read_key(
     """
     key_dict = key_dict or dict()
 
-    match = _get_pattern('key_value', compiled=True).match(line)
+    match = _get_pattern("key_value", compiled=True).match(line)
     if not match:
         return None, None
 
@@ -486,7 +482,8 @@ def _read_key(
             pattern = _get_pattern(format, compiled=True)
         else:
             pattern = re.compile(
-                r'\s*'.join([_get_pattern(fmt) for fmt in format]))
+                r"\s*".join([_get_pattern(fmt) for fmt in format])
+            )
         match = pattern.match(value)
         if match:
             if match.groupdict():  # complex
@@ -494,14 +491,14 @@ def _read_key(
             elif isinstance(format, type):
                 value = _to_type(match.group(1), format)
             else:
-                value = tuple(_to_type(v, t)
-                              for v, t in zip(match.groups(), format))
+                value = tuple(
+                    _to_type(v, t) for v, t in zip(match.groups(), format)
+                )
     return key, value
 
 
 def _read_values(
-    line: str,
-    format: _tx.Union[type, _tx.Sequence[type]]
+    line: str, format: _tx.Union[type, _tx.Sequence[type]]
 ) -> _tx.Optional[_tx.Union[str, int, float, _tx.Tuple]]:
     """Read one `*values` line from an LTA file
 
@@ -516,28 +513,30 @@ def _read_values(
     object or tuple or None
 
     """
-    pattern = _get_pattern('whitespace')
+    pattern = _get_pattern("whitespace")
     if isinstance(format, type):
         reformat = [_get_pattern(format)]
     else:
         reformat = [_get_pattern(fmt) for fmt in format]
-    pattern = re.compile(pattern + r'\s*'.join(reformat))
+    pattern = re.compile(pattern + r"\s*".join(reformat))
     value = pattern.match(line)
     if value:
         if isinstance(format, type):
             value = _to_type(value.group(1), format)
         else:
-            value = tuple(_to_type(v, t)
-                          for v, t in zip(value.groups(), format))
+            value = tuple(
+                _to_type(v, t) for v, t in zip(value.groups(), format)
+            )
     return value
 
 
 def _write_key(
     key: str,
-    value: _tx.Union[_tx.Sequence[_tx.Union[int, float, str, Enum]],
-                     int, float, str, Enum],
+    value: _tx.Union[
+        _tx.Sequence[_tx.Union[int, float, str, Enum]], int, float, str, Enum
+    ],
     sep: _tx.Union[int, str] = 1,
-    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None
+    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None,
 ) -> str:
     """Write a `key = value` line in an LTA file.
 
@@ -561,14 +560,15 @@ def _write_key(
     str
 
     """
-    return f'{key:9s} = {_write_values(value, sep, fmt)}'
+    return f"{key:9s} = {_write_values(value, sep, fmt)}"
 
 
 def _write_values(
-    value: _tx.Union[_tx.Sequence[_tx.Union[int, float, str, Enum]],
-                     int, float, str, Enum],
+    value: _tx.Union[
+        _tx.Sequence[_tx.Union[int, float, str, Enum]], int, float, str, Enum
+    ],
     sep: _tx.Union[int, str] = 1,
-    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None
+    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None,
 ) -> str:
     """Write a `*values` line in an LTA file.
 
@@ -599,31 +599,31 @@ def _write_values(
     if isinstance(value, str):
         # Str -> use appropriate format
         if isinstance(fmt, dict):
-            fmt = fmt.get(str, '{:s}')
+            fmt = fmt.get(str, "{:s}")
         return fmt.format(value)
 
     if isinstance(value, int):
         # Int -> use appropriate format
         if isinstance(fmt, dict):
-            fmt = fmt.get(int, '{:d}')
+            fmt = fmt.get(int, "{:d}")
         return fmt.format(value)
 
     if isinstance(value, float):
         # Float -> use appropriate format
         if isinstance(fmt, dict):
-            fmt = fmt.get(float, '{:6.4f}')
+            fmt = fmt.get(float, "{:6.4f}")
         return fmt.format(value)
 
     if isinstance(value, complex):
         # Complex -> write as two values, separated by a single space.
         if isinstance(fmt, dict):
-            fmt = fmt.get(complex, '{:+.6f} {:+.6f}   ')
+            fmt = fmt.get(complex, "{:+.6f} {:+.6f}   ")
         return fmt.format(value.real, value.imag)
 
     else:
         # Sequence of values -> separate by sep.
         if isinstance(sep, int):
-            sep = ' ' * sep
+            sep = " " * sep
         return sep.join([_write_values(v, fmt=fmt) for v in value])
 
 
@@ -633,8 +633,9 @@ def _is_optional(type_: _tx.Any) -> _tx.Tuple[bool, _tx.Any]:
     """
     if _tx.get_origin(type_) is _tx.Optional:
         return True, _tx.get_args(type_)[0]
-    if _tx.get_origin(type_) is _tx.Union and \
-            type(None) in _tx.get_args(type_):
+    if _tx.get_origin(type_) is _tx.Union and type(None) in _tx.get_args(
+        type_
+    ):
         args = [arg for arg in _tx.get_args(type_) if arg is not type(None)]
         if len(args) == 1:
             return True, args[0]

@@ -113,12 +113,8 @@ following specific objects:
       the legacy misspelled string `TranformFixedParameters` if the
       properly spelled version cannot be indexed.
 """
-__all__ = [
-    "H5Transform",
-    "H5Header",
-    "H5TransformParser",
-    "DelayedH5Array"
-]
+
+__all__ = ["H5Transform", "H5Header", "H5TransformParser", "DelayedH5Array"]
 
 from ._parser import DelayedH5Array, H5Header, H5TransformParser
 from ._xform import H5Transform

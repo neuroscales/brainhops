@@ -73,7 +73,6 @@ class H5TransformParser(
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
-
     file: _tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
     transform_group: _tx.List[ITKStruct] = Factory(list)
@@ -104,10 +103,7 @@ class H5TransformParser(
 
     @classmethod
     def from_file(
-        cls,
-        file: _H5Like,
-        keep_open: bool = False,
-        load: bool = True
+        cls, file: _H5Like, keep_open: bool = False, load: bool = True
     ) -> _tx.Self:
         """
         Build an object from a file (path, file-like object, or HDF5 file).
@@ -307,6 +303,7 @@ class DelayedH5Array:
 
     def to_array(self, **kwargs) -> np.ndarray:
         import numpy as np
+
         is_mine = self._file is None
         dataset = self.to_dataset(keep_open=True)
         array = np.asarray(dataset, **kwargs)
@@ -316,6 +313,7 @@ class DelayedH5Array:
 
     def to_dask(self, *, keep_open: bool = False, **kwargs) -> ArrayProtocol:
         import dask.array as da
+
         kwargs.setdefault("chunks", self.chunks or "auto")
         if keep_open:
             array_like = self.to_dataset(keep_open=True)
@@ -359,6 +357,7 @@ class DelayedH5Array:
     @property
     def size(self) -> int:
         from math import prod
+
         return prod(self.shape)
 
     @property

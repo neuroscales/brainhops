@@ -17,26 +17,31 @@ from brainhops._core import path, peek
 
 class SnifferError(Exception):
     """Base class for sniffer errors."""
+
     pass
 
 
 class SnifferTypeError(SnifferError, TypeError):
     """Raised when a sniffer encounters an unexpected type."""
+
     pass
 
 
 class SnifferExistsError(SnifferError, FileNotFoundError):
     """Raised when a sniffer encounters an unexpected content."""
+
     pass
 
 
 class SnifferContentError(SnifferError, TypeError):
     """Raised when a sniffer encounters an unexpected content."""
+
     pass
 
 
 class SnifferNotImplementedError(SnifferError, NotImplementedError):
     """Raised when a sniffer function is not implemented."""
+
     pass
 
 
@@ -45,26 +50,31 @@ class SnifferNotImplementedError(SnifferError, NotImplementedError):
 
 class ParserError(Exception):
     """Base class for parser errors."""
+
     pass
 
 
 class ParserTypeError(ParserError, TypeError):
     """Raised when a parser encounters an unexpected type."""
+
     pass
 
 
 class ParserExistsError(ParserError, FileNotFoundError):
     """Raised when a parser encounters an unexpected content."""
+
     pass
 
 
 class ParserContentError(ParserError, TypeError):
     """Raised when a parser encounters an unexpected content."""
+
     pass
 
 
 class ParserNotImplementedError(ParserError, NotImplementedError):
     """Raised when a parser function is not implemented."""
+
     pass
 
 
@@ -73,11 +83,13 @@ class ParserNotImplementedError(ParserError, NotImplementedError):
 
 class WriterError(ParserError):
     """Base class for writer errors."""
+
     pass
 
 
 class WriterNotImplementedError(WriterError, NotImplementedError):
     """Raised when a writer function is not implemented."""
+
     pass
 
 
@@ -90,7 +102,6 @@ class WriterNotImplementedError(WriterError, NotImplementedError):
 
 
 class FileSniffer:
-
     _READ_MODE = "r"
 
     @classmethod
@@ -98,7 +109,7 @@ class FileSniffer:
         cls,
         file: path.FileOrContentLike,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can
@@ -118,7 +129,7 @@ class FileSniffer:
         bool
             True if the file is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(file, str) and path.Path(file).exists():
             file = path.Path(file)
@@ -144,7 +155,7 @@ class FileSniffer:
         cls,
         file: path.FileLike,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can
@@ -164,7 +175,7 @@ class FileSniffer:
         bool
             True if the file is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(file, str):
             file = path.Path(file)
@@ -190,7 +201,7 @@ class FileSniffer:
         cls,
         content: path.ContentLike,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given content is of the type that this parser
@@ -210,7 +221,7 @@ class FileSniffer:
         bool
             True if the content is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(content, (bytes, bytearray)):
             return cls.sniff_bytes(content, **kwargs)
@@ -233,7 +244,7 @@ class FileSniffer:
         cls,
         content: path.BinaryContentLike,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can handle.
@@ -261,7 +272,7 @@ class FileSniffer:
         cls,
         text: str,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given text is of the type that this parser can handle.
@@ -280,7 +291,7 @@ class FileSniffer:
         bool
             True if the text is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
         return cls.sniff_lines(text.splitlines(), **kwargs)
 
     @classmethod
@@ -288,7 +299,7 @@ class FileSniffer:
         cls,
         lines: _tx.Iterable[str],
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given lines are of the type that this parser
@@ -308,7 +319,7 @@ class FileSniffer:
         bool
             True if the lines are of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
         if not isinstance(lines, peek.peekable_lines):
             lines = peek.peekable_lines(lines)
         return cls.sniff_line(lines.peek(), **kwargs)
@@ -318,7 +329,7 @@ class FileSniffer:
         cls,
         line: str,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
         """
         Determine if the given line is of the type that this parser can handle.
@@ -346,7 +357,6 @@ class FileSniffer:
 
 
 class FileParser(FileSniffer):
-
     @classmethod
     def from_(cls, other: path.FileOrContentLike, **kwargs) -> _tx.Self:
         """
@@ -529,7 +539,6 @@ class FileParser(FileSniffer):
 
 
 class FileParserWriter(FileParser):
-
     _WRITE_MODE = "w"
 
     def to(self, file: path.FileLike, **kwargs) -> None:
@@ -657,13 +666,13 @@ class FileParserWriter(FileParser):
             f"to_line() is not available in writer of type {cls.__name__}"
         )
 
+
 # ----------------------------------------------------------------------
 #   TEXT
 # ----------------------------------------------------------------------
 
 
 class TextFileSniffer(FileSniffer):
-
     _READ_MODE = "rt"
 
     @classmethod
@@ -671,26 +680,25 @@ class TextFileSniffer(FileSniffer):
         cls,
         content: path.BinaryContentLike,
         error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> bool:
-        kwargs['error'] = error
-        encoding = kwargs.pop('encoding', 'utf-8')
+        kwargs["error"] = error
+        encoding = kwargs.pop("encoding", "utf-8")
         return cls.sniff_text(content.decode(encoding), **kwargs)
 
 
 class TextFileParser(TextFileSniffer, FileParser):
-
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> _tx.Self:
-        encoding = kwargs.pop('encoding', 'utf-8')
+        encoding = kwargs.pop("encoding", "utf-8")
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
 class TextFileParserWriter(TextFileParser):
-
     def to_bytes(self, **kwargs) -> bytes:
-        encoding = kwargs.pop('encoding', 'utf-8')
+        encoding = kwargs.pop("encoding", "utf-8")
         return self.to_text(**kwargs).encode(encoding)
+
 
 # ----------------------------------------------------------------------
 #   BINARY
@@ -698,15 +706,11 @@ class TextFileParserWriter(TextFileParser):
 
 
 class BinaryFileSniffer:
-
     _READ_MODE = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer):
-
-    ...
+class BinaryFileParser(BinaryFileSniffer): ...
 
 
 class BinaryFileParserWriter(BinaryFileParser):
-
     _WRITE_MODE = "wb"

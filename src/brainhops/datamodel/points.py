@@ -18,8 +18,10 @@ class Points(DataModelBase):
         steps = list(self.coordinateTransforms)
 
         transformation = Sequence(
-            transformations=[CoordinatesField(
-                field=self.data, output=self.coordinateSystem)] + steps,
+            transformations=[
+                CoordinatesField(field=self.data, output=self.coordinateSystem)
+            ]
+            + steps,
             output=steps[-1].output,
         ).compute()
         return transformation.to(CoordinatesField).field

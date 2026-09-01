@@ -27,4 +27,4 @@ def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
 def test_read_tfm(filename: str) -> None:
     transform = TFMTransform.from_file(filename)
     # trigger conversion
-    transforms = transform.transformations    # noqa: F841
+    transforms = transform.transformations  # noqa: F841

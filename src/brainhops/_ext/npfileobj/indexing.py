@@ -13,6 +13,7 @@ except ImportError:
 
 class oob_slice:
     """Describe an out-of-bound slice (with output length 0)"""
+
     newaxis: bool = False  # True if it is a slice into a virtual axis
 
     def __init__(self, newaxis: bool = False) -> None:
@@ -20,9 +21,9 @@ class oob_slice:
 
     def __repr__(self) -> str:
         if self.newaxis:
-            return 'oob_slice(newaxis=True)'
+            return "oob_slice(newaxis=True)"
         else:
-            return 'oob_slice()'
+            return "oob_slice()"
 
     __str__ = __repr__
 
@@ -52,8 +53,9 @@ def neg2pos(index: int, shape: int) -> int: ...
 
 
 @_tx.overload
-def neg2pos(index: _tx.Tuple[IndexLike, ...],
-            shape: _tx.Tuple[int, ...]) -> _tx.Tuple[IndexLike, ...]: ...
+def neg2pos(
+    index: _tx.Tuple[IndexLike, ...], shape: _tx.Tuple[int, ...]
+) -> _tx.Tuple[IndexLike, ...]: ...
 
 
 def neg2pos(index, shape):
@@ -101,7 +103,7 @@ def neg2pos(index, shape):
                 shape.append(shp)
         index = list(index)
         if len(shape0) > 0 or len(index) != len(shape):
-            raise ValueError('shape and index vectors not consistent.')
+            raise ValueError("shape and index vectors not consistent.")
         # recursive call
         return tuple(neg2pos(idx, shp) for idx, shp in zip(index, shape))
 
@@ -110,38 +112,38 @@ def neg2pos(index, shape):
         shape0 = shape
         shape = int(shape0)
         if shape != shape0:
-            raise TypeError('Shape should be an integer')
+            raise TypeError("Shape should be an integer")
     except TypeError:
-        raise TypeError('Shape should be an integer') from None
+        raise TypeError("Shape should be an integer") from None
     if shape < 0:
-        raise ValueError('Shape should be a nonnegative integer')
+        raise ValueError("Shape should be a nonnegative integer")
 
     # deal with accepted types
     if isinstance(index, slice):
-        return slice(neg2pos(index.start, shape),
-                     neg2pos(index.stop, shape),
-                     index.step)
+        return slice(
+            neg2pos(index.start, shape), neg2pos(index.stop, shape), index.step
+        )
     elif isinstance(index, int):
         if index is not None and index < 0:
             index = shape + index
         return index
     elif isinstance(index, (oob_slice, type(None), type(Ellipsis))):
         return index
-    raise TypeError('Index should be an int, slice, Ellipsis or None')
+    raise TypeError("Index should be an int, slice, Ellipsis or None")
 
 
 @_tx.overload
-def is_fullslice(index: IndexLike,
-                 shape: int,
-                 do_neg2pos: bool = True
-                 ) -> bool: ...
+def is_fullslice(
+    index: IndexLike, shape: int, do_neg2pos: bool = True
+) -> bool: ...
 
 
 @_tx.overload
-def is_fullslice(index: _tx.Tuple[IndexLike, ...],
-                 shape: _tx.Tuple[int, ...],
-                 do_neg2pos: bool = True
-                 ) -> _tx.Tuple[bool, ...]: ...
+def is_fullslice(
+    index: _tx.Tuple[IndexLike, ...],
+    shape: _tx.Tuple[int, ...],
+    do_neg2pos: bool = True,
+) -> _tx.Tuple[bool, ...]: ...
 
 
 def is_fullslice(index, shape, do_neg2pos=True):
@@ -169,8 +171,11 @@ def is_fullslice(index, shape, do_neg2pos=True):
         return True
     elif isinstance(index, slice):
         index = simplify_slice(index, shape, do_neg2pos=do_neg2pos)
-        return (index.start is None and index.stop is None
-                and index.step in (None, 1, -1))
+        return (
+            index.start is None
+            and index.stop is None
+            and index.step in (None, 1, -1)
+        )
     elif isinstance(index, int):
         if do_neg2pos:
             index = neg2pos(index, shape)
@@ -192,10 +197,7 @@ def is_fullslice(index, shape, do_neg2pos=True):
         return tuple(is_fullslice(idx, shp) for idx, shp in zip(index, shape))
 
 
-def slice_length(index: slice,
-                 shape: int,
-                 do_neg2pos: bool = True
-                 ) -> int:
+def slice_length(index: slice, shape: int, do_neg2pos: bool = True) -> int:
     """Compute the effective length (output number of elements) of a slice.
 
     ::: warning
@@ -213,6 +215,7 @@ def slice_length(index: slice,
     length : int
 
     """
+
     def sign(x: float) -> int:
         return 1 if x > 0 else -1 if x < 0 else 0
 
@@ -238,10 +241,7 @@ def slice_length(index: slice,
     return max(1 + (stop - start - sign(step)) // step, 0)
 
 
-def simplify_slice(index: slice,
-                   shape: int,
-                   do_neg2pos: bool = True
-                   ) -> slice:
+def simplify_slice(index: slice, shape: int, do_neg2pos: bool = True) -> slice:
     """Replace start/stop/step by `None`s when it is equivalent.
 
     ::: warning
@@ -306,6 +306,7 @@ def invert_slice(index: slice, shape: int, do_neg2pos: bool = True) -> slice:
         with `inv_index.step == -index.step`
 
     """
+
     def sign(x: float) -> int:
         return 1 if x > 0 else -1 if x < 0 else 0
 
@@ -322,9 +323,7 @@ def invert_slice(index: slice, shape: int, do_neg2pos: bool = True) -> slice:
 
 
 def slice_navigator(
-    index: slice,
-    shape: int,
-    do_neg2pos: bool = True
+    index: slice, shape: int, do_neg2pos: bool = True
 ) -> _tx.Tuple[int, int, int]:
     """Return explicit start and step values from a slice
 
@@ -365,7 +364,7 @@ def is_slice_equivalent(
     index2: slice,
     shape: int,
     same_sign: bool = True,
-    do_neg2pos: bool = True
+    do_neg2pos: bool = True,
 ) -> bool:
     """Check that two slices describe the same chunk of data
 
@@ -396,9 +395,9 @@ def is_slice_equivalent(
     return (start1, step1, length1) == (start2, step2, length2)
 
 
-def guess_shape(index: _tx.Sequence[IndexLike],
-                shape: _tx.Sequence[int]
-                ) -> _tx.Tuple[int, ...]:
+def guess_shape(
+    index: _tx.Sequence[IndexLike], shape: _tx.Sequence[int]
+) -> _tx.Tuple[int, ...]:
     """Guess the output shape obtained by indexing a volume.
 
     Parameters
@@ -450,9 +449,9 @@ def guess_shape(index: _tx.Sequence[IndexLike],
     return tuple(output_shape)
 
 
-def expand_index(index: NDIndexLike,
-                 shape: _tx.Tuple[int, ...]
-                 ) -> _tx.Tuple[IndexLike, ...]:
+def expand_index(
+    index: NDIndexLike, shape: _tx.Tuple[int, ...]
+) -> _tx.Tuple[IndexLike, ...]:
     """Expand indices in a tuple.
 
     * Ellipses are replaced with slices
@@ -538,21 +537,25 @@ def expand_index(index: NDIndexLike,
             nb_dim_out.append(1)
         elif ind is Ellipsis:
             if ind_ellipsis is not None:
-                raise ValueError('Cannot have more than one ellipsis.')
+                raise ValueError("Cannot have more than one ellipsis.")
             ind_ellipsis = n_ind
             nb_dim_in.append(-1)
             nb_dim_out.append(-1)
         elif is_int(ind):
             ind = torch.as_tensor(ind, dtype=torch.int64)
             if ind.dim() > 0:
-                raise ValueError('Integer indices should be scalars '
-                                 f'Got array with shape {ind.shape}.')
+                raise ValueError(
+                    "Integer indices should be scalars "
+                    f"Got array with shape {ind.shape}."
+                )
             nb_dim_in.append(1)
             nb_dim_out.append(ind.dim())
             index[n_ind] = ind.item()
         else:
-            raise TypeError('Indices should be integers, slices '
-                            f'or ellipses. Got {type(ind)}.')
+            raise TypeError(
+                "Indices should be integers, slices "
+                f"or ellipses. Got {type(ind)}."
+            )
 
     # deal with ellipsis
     nb_known_dims = sum(n for n in nb_dim_in if n > 0)
@@ -591,19 +594,21 @@ def expand_index(index: NDIndexLike,
             assert isinstance(ind, int)  # already checked
             ind = neg2pos(ind, shape[nb_ind])
             if ind < 0 or ind >= shape[nb_ind]:
-                raise IndexError(f'Out-of-bound index in dimension {nb_ind} '
-                                 f'({ind} not in [0, {shape[nb_ind]-1}])'
-                                 )
+                raise IndexError(
+                    f"Out-of-bound index in dimension {nb_ind} "
+                    f"({ind} not in [0, {shape[nb_ind] - 1}])"
+                )
             index.append(ind)
             nb_ind += nb_dim_in[d]
 
     return tuple(index)
 
 
-def compose_index(parent: _tx.Sequence[IndexLike],
-                  child: _tx.Sequence[IndexLike],
-                  full_shape: _tx.Sequence[int]
-                  ) -> tuple[IndexLike]:
+def compose_index(
+    parent: _tx.Sequence[IndexLike],
+    child: _tx.Sequence[IndexLike],
+    full_shape: _tx.Sequence[int],
+) -> tuple[IndexLike]:
     """Compose two sub-indexing
 
     Parameters
@@ -628,8 +633,7 @@ def compose_index(parent: _tx.Sequence[IndexLike],
 
     def oob(i: IndexLike) -> None:
         """Out-of-bound error."""
-        raise IndexError('Index out-of-bound in parent dimension '
-                         f'{i}.')
+        raise IndexError(f"Index out-of-bound in parent dimension {i}.")
 
     parent = expand_index(parent, full_shape)
     sub_shape = guess_shape(parent, full_shape)
@@ -740,8 +744,9 @@ def compose_index(parent: _tx.Sequence[IndexLike],
                     # need to simplify this here because
                     # simplify_slice fails otherwise
                     stop = None
-                new_slice = simplify_slice(slice(start, stop, step), sz0,
-                                           do_neg2pos=False)
+                new_slice = simplify_slice(
+                    slice(start, stop, step), sz0, do_neg2pos=False
+                )
                 new_parent.append(new_slice)
                 continue
             if isinstance(c, oob_slice):
@@ -751,16 +756,17 @@ def compose_index(parent: _tx.Sequence[IndexLike],
     while child:
         c, *child = child
         if c is not None:
-            raise IndexError('More indices than dimensions')
+            raise IndexError("More indices than dimensions")
         new_parent.append(c)
 
     return tuple(new_parent)
 
 
-def split_operation(perm: _tx.Sequence[int],
-                    slicer: _tx.Sequence[IndexLike],
-                    direction: _tx.Literal['r', 'w']
-                    ) -> tuple:
+def split_operation(
+    perm: _tx.Sequence[int],
+    slicer: _tx.Sequence[IndexLike],
+    direction: _tx.Literal["r", "w"],
+) -> tuple:
     """Split the operation `slicer of permutation` into subcomponents.
 
     Symbolic slicing is encoded by a permutation and an indexing operation.
@@ -805,6 +811,7 @@ def split_operation(perm: _tx.Sequence[int],
     slicer_add ('r') or slicer_sub ('w') : tuple
 
     """
+
     def remap(perm: _tx.Sequence[int]) -> list:
         """Re-index dimensions after some have been dropped"""
         remaining_dims = sorted(perm)
@@ -821,22 +828,26 @@ def split_operation(perm: _tx.Sequence[int],
     slicer_nonew = list(filter(lambda x: not is_newaxis(x), slicer))
     slicer_nodrop = filter(lambda x: not is_droppedaxis(x), slicer)
     slicer_sub = select(invert_permutation(perm), slicer_nonew)
-    perm_nodrop = [d for d, idx in zip(perm, slicer_nonew)
-                   if not is_droppedaxis(idx)]
+    perm_nodrop = [
+        d for d, idx in zip(perm, slicer_nonew) if not is_droppedaxis(idx)
+    ]
     perm_nodrop = remap(perm_nodrop)
 
-    if direction.lower().startswith('r'):
-        slicer_add = map(lambda x: slice(None) if x is not None else x,
-                         slicer_nodrop)
+    if direction.lower().startswith("r"):
+        slicer_add = map(
+            lambda x: slice(None) if x is not None else x, slicer_nodrop
+        )
         return tuple(slicer_sub), tuple(perm_nodrop), tuple(slicer_add)
-    elif direction.lower().startswith('w'):
-        slicer_drop = map(lambda x: 0 if x is None else slice(None),
-                          slicer_nodrop)
+    elif direction.lower().startswith("w"):
+        slicer_drop = map(
+            lambda x: 0 if x is None else slice(None), slicer_nodrop
+        )
         inv_perm_nodrop = invert_permutation(perm_nodrop)
         return tuple(slicer_drop), tuple(inv_perm_nodrop), tuple(slicer_sub)
     else:
-        raise ValueError("direction should be in ('read' ,'write') "
-                         f"but got {direction}.")
+        raise ValueError(
+            f"direction should be in ('read' ,'write') but got {direction}."
+        )
 
 
 def invert_permutation(perm: _tx.Sequence[int]) -> list[int]:
@@ -859,9 +870,9 @@ def invert_permutation(perm: _tx.Sequence[int]) -> list[int]:
     return iperm
 
 
-def slicer_sub2ind(slicer: _tx.Sequence[_tx.Union[slice, int]],
-                   shape: _tx.Sequence[int]
-                   ) -> _tx.Union[slice, int, list[int]]:
+def slicer_sub2ind(
+    slicer: _tx.Sequence[_tx.Union[slice, int]], shape: _tx.Sequence[int]
+) -> _tx.Union[slice, int, list[int]]:
     """Convert a multi-dimensional slicer into a linear slicer.
 
     Parameters
@@ -880,11 +891,12 @@ def slicer_sub2ind(slicer: _tx.Sequence[_tx.Union[slice, int]],
 
     slicer = expand_index(slicer, shape)
     shape_out = guess_shape(slicer, shape)
-    if any(isinstance(idx, slice) and idx.step and idx.step < 0
-           for idx in slicer):
-        raise ValueError('sub2ind does not like negative strides')
+    if any(
+        isinstance(idx, slice) and idx.step and idx.step < 0 for idx in slicer
+    ):
+        raise ValueError("sub2ind does not like negative strides")
     if any(is_newaxis(idx) for idx in slicer):
-        raise ValueError('sub2ind does not like new axes')
+        raise ValueError("sub2ind does not like new axes")
 
     _slicer0 = slicer
     shape0 = shape
@@ -940,8 +952,9 @@ def slicer_sub2ind(slicer: _tx.Sequence[_tx.Union[slice, int]],
     new_slicer = list(new_slicer)
     new_shape = list(new_shape)
 
-    assert math.prod(shape0) == math.prod(new_shape), \
+    assert math.prod(shape0) == math.prod(new_shape), (
         f"Oops: lost something: {math.prod(shape0)} vs {math.prod(new_shape)}"
+    )
 
     # 2) If we have a unique index, we can stop here
     if len(new_slicer) == 1:
@@ -965,7 +978,8 @@ def slicer_sub2ind(slicer: _tx.Sequence[_tx.Union[slice, int]],
         else:
             new_index = idx
 
-    assert len(new_index) == math.prod(shape_out), \
+    assert len(new_index) == math.prod(shape_out), (
         f"Oops: lost something: {len(new_index)} vs {math.prod(shape_out)}"
+    )
 
     return new_index

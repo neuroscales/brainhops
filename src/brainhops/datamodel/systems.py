@@ -3,7 +3,7 @@ __all__ = [
     "SpatialCoordinateSystem",
     "SpatialCoordinateSystem3D",
     "RASCoordinateSystem",
-    "LPSCoordinateSystem"
+    "LPSCoordinateSystem",
 ]
 # externals
 import typing_extensions as _tx
@@ -26,17 +26,20 @@ class CoordinateSystem(DataModelBase):
     It describes each axis in the system (name, unit and/or other properties),
     and can be named.
     """
+
     name: _tx.Optional[str] = None
     axes: _tx.Optional[_tx.List[Axis]] = None
 
 
 class CoordinateSystem2D(CoordinateSystem):
     """A coordinate systems with exactly two dimensions."""
+
     axes: _tx.Optional[_2Axes] = (Axis(), Axis())
 
 
 class CoordinateSystem3D(CoordinateSystem):
     """A coordinate system with exactly three dimensions."""
+
     axes: _tx.Optional[_3Axes] = (Axis(), Axis(), Axis())
 
 
@@ -51,43 +54,44 @@ class ArrayCoordinateSystem(CoordinateSystem):
     By default, the array is assumed C-ordered: the first axis is the
     slowest changing in memory, and the last axis is the fastest changing.
     """
+
     name: _tx.Optional[str] = "array"
 
 
 class CArrayCoordinateSystem(ArrayCoordinateSystem):
     """A coordinate system for a unitless, C-ordered multidimensional array."""
+
     name: _tx.Optional[str] = "carray"
 
 
 class FArrayCoordinateSystem(ArrayCoordinateSystem):
     """A coordinate system for a unitless, F-ordered multidimensional array."""
+
     name: _tx.Optional[str] = "farray"
 
 
 class ArrayCoordinateSystem2D(CoordinateSystem2D, ArrayCoordinateSystem):
     """A coordinate system for a unitless array with two dimensions."""
+
     axes: _tx.Optional[_2Axes] = (Axis("dim0"), Axis("dim1"))
 
 
 class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
     """A coordinate system for a unitless array with three dimensions."""
+
     axes: _tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
 
 
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
-    ...
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
-    ...
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
-    ...
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
 
 
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
-    ...
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
 
 
 # ----------------------------------------------------------------------
@@ -97,78 +101,94 @@ class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
 
 class SpatialCoordinateSystem(CoordinateSystem):
     """A coordinate system, whose axes have spatial meaning."""
+
     axes: _tx.Optional[_tx.List[SpatialAxis]] = None
 
 
 class SpatialCoordinateSystem2D(CoordinateSystem2D, SpatialCoordinateSystem):
     """A 2D coordinate system, whose axes have spatial meaning."""
+
     axes: _tx.Optional[_2SpatialAxes] = (SpatialAxis(), SpatialAxis())
 
 
 class SpatialCoordinateSystem3D(CoordinateSystem3D, SpatialCoordinateSystem):
     """A 3D coordinate system, whose axes have spatial meaning."""
+
     axes: _tx.Optional[_3SpatialAxes] = (
-        SpatialAxis(), SpatialAxis(), SpatialAxis())
-
-
-class PixelCoordinateSystem(SpatialCoordinateSystem2D,
-                            ArrayCoordinateSystem2D):
-    """A coordinate system for (unitless) 2D pixel grids."""
-    name: _tx.Optional[str] = "pixel"
-    axes: _tx.Optional[_2SpatialAxes] = (
-        SpatialAxis(name="dim0", unit=None),
-        SpatialAxis(name="dim1", unit=None)
+        SpatialAxis(),
+        SpatialAxis(),
+        SpatialAxis(),
     )
 
 
-class VoxelCoordinateSystem(SpatialCoordinateSystem3D,
-                            ArrayCoordinateSystem3D):
+class PixelCoordinateSystem(
+    SpatialCoordinateSystem2D, ArrayCoordinateSystem2D
+):
+    """A coordinate system for (unitless) 2D pixel grids."""
+
+    name: _tx.Optional[str] = "pixel"
+    axes: _tx.Optional[_2SpatialAxes] = (
+        SpatialAxis(name="dim0", unit=None),
+        SpatialAxis(name="dim1", unit=None),
+    )
+
+
+class VoxelCoordinateSystem(
+    SpatialCoordinateSystem3D, ArrayCoordinateSystem3D
+):
     """A coordinate system for (unitless) 3D voxel grids."""
+
     name: _tx.Optional[str] = "voxel"
     axes: _tx.Optional[_3SpatialAxes] = (
         SpatialAxis(name="dim0", unit=None),
         SpatialAxis(name="dim1", unit=None),
-        SpatialAxis(name="dim2", unit=None)
+        SpatialAxis(name="dim2", unit=None),
     )
 
 
 class CPixelCoordinateSystem(PixelCoordinateSystem, CArrayCoordinateSystem2D):
     """A coordinate system for (unitless) C-ordered 2D pixel grids."""
+
     name: _tx.Optional[str] = "cpixel"
     axes: _tx.Optional[_2SpatialAxes] = (
         SpatialAxis(name="j", unit=None),
-        SpatialAxis(name="i", unit=None)
+        SpatialAxis(name="i", unit=None),
     )
 
 
 class FPixelCoordinateSystem(PixelCoordinateSystem, FArrayCoordinateSystem2D):
     """A coordinate system for (unitless) F-ordered 2D pixel grids."""
+
     name: _tx.Optional[str] = "fpixel"
     axes: _tx.Optional[_2SpatialAxes] = (
         SpatialAxis(name="i", unit=None),
-        SpatialAxis(name="j", unit=None)
+        SpatialAxis(name="j", unit=None),
     )
 
 
-class CVoxelCoordinateSystem(SpatialCoordinateSystem3D,
-                             CArrayCoordinateSystem3D):
+class CVoxelCoordinateSystem(
+    SpatialCoordinateSystem3D, CArrayCoordinateSystem3D
+):
     """A coordinate system for (unitless) C-ordered 3D voxel grids."""
+
     name: _tx.Optional[str] = "cvoxel"
     axes: _tx.Optional[_3SpatialAxes] = (
         SpatialAxis(name="k", unit=None),
         SpatialAxis(name="j", unit=None),
-        SpatialAxis(name="i", unit=None)
+        SpatialAxis(name="i", unit=None),
     )
 
 
-class FVoxelCoordinateSystem(SpatialCoordinateSystem3D,
-                             FArrayCoordinateSystem3D):
+class FVoxelCoordinateSystem(
+    SpatialCoordinateSystem3D, FArrayCoordinateSystem3D
+):
     """A coordinate system for (unitless) F-ordered 3D voxel grids."""
+
     name: _tx.Optional[str] = "fvoxel"
     axes: _tx.Optional[_3SpatialAxes] = (
         SpatialAxis(name="i", unit=None),
         SpatialAxis(name="j", unit=None),
-        SpatialAxis(name="k", unit=None)
+        SpatialAxis(name="k", unit=None),
     )
 
 

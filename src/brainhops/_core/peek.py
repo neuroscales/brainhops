@@ -5,11 +5,10 @@ from collections.abc import Iterator
 import typing_extensions as _tx
 
 # typing
-T = _tx.TypeVar('T')
+T = _tx.TypeVar("T")
 
 
 class EMPTY_TYPE:
-
     def __new__(cls) -> object:
         if not hasattr(cls, "_instance"):
             cls._instance = super().__new__(cls)
@@ -19,10 +18,10 @@ class EMPTY_TYPE:
         return False
 
     def __str__(self) -> str:
-        return '<empty>'
+        return "<empty>"
 
     def __repr__(self) -> str:
-        return 'EMPTY()'
+        return "EMPTY()"
 
 
 EMPTY = EMPTY_TYPE()
@@ -34,15 +33,15 @@ class peekable(Iterator, _tx.Generic[T]):
     EMPTY = EMPTY_TYPE()
 
     def __init__(self, iterable: _tx.Iterable[T]) -> None:
-        if not hasattr(iterable, '__next__'):
+        if not hasattr(iterable, "__next__"):
             # make an iterator (with a state)
             iterable = iter(iterable)
         self._iterator: _tx.Iterator[T] = iterable
         self._peeked: T | EMPTY_TYPE = EMPTY
 
-    def peek(self,
-             preproc: bool = True,
-             valid: bool = True) -> _tx.Optional[T]:
+    def peek(
+        self, preproc: bool = True, valid: bool = True
+    ) -> _tx.Optional[T]:
         if self._peeked is EMPTY:
             self._peeked = self._next(preproc=preproc, valid=valid)
         return self._peeked
@@ -56,9 +55,9 @@ class peekable(Iterator, _tx.Generic[T]):
             raise StopIteration
         return item
 
-    def iter(self,
-             preproc: bool = True,
-             valid: bool = True) -> _tx.Iterator[T]:
+    def iter(
+        self, preproc: bool = True, valid: bool = True
+    ) -> _tx.Iterator[T]:
         while True:
             try:
                 yield self.next(preproc=preproc, valid=valid)
@@ -76,10 +75,9 @@ class peekable(Iterator, _tx.Generic[T]):
     def preproc(cls, item: T) -> T:
         return T
 
-    def _next(self,
-              preproc: bool = True,
-              valid: bool = True
-              ) -> _tx.Union[T, EMPTY_TYPE]:
+    def _next(
+        self, preproc: bool = True, valid: bool = True
+    ) -> _tx.Union[T, EMPTY_TYPE]:
         while True:
             item = next(self._iterator, EMPTY)
             if item is EMPTY:
@@ -94,10 +92,9 @@ class peekable(Iterator, _tx.Generic[T]):
 class peekable_lines(peekable[str]):
     """A peekable iterator over lines of text."""
 
-    def __init__(self,
-                 lines: _tx.Iterable[str],
-                 comment: _tx.Optional[str] = "#"
-                 ) -> None:
+    def __init__(
+        self, lines: _tx.Iterable[str], comment: _tx.Optional[str] = "#"
+    ) -> None:
         super().__init__(lines)
         self.comment = comment
 

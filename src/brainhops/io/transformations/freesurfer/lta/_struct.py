@@ -102,27 +102,29 @@ class LTAStruct(LTAParser):
         """The geometry of a volume."""
 
         valid: LTAValidity = LTAValidity.VOLUME_INFO_INVALID
-        filename: str = ""                    # Filename of the volume
-        volume: _3Ints = (0, 0, 0)            # 3D shape
-        voxelsize: _3Floats = (1., 1., 1.)    # Voxel size
-        xras: _3Floats = (1., 0., 0.)         # Columns of the phys2ras matrix
-        yras: _3Floats = (0., 1., 0.)         # "
-        zras: _3Floats = (0., 0., 1.)         # "
-        cras: _3Floats = (0., 0., 0.)         # "
+        filename: str = ""  # Filename of the volume
+        volume: _3Ints = (0, 0, 0)  # 3D shape
+        voxelsize: _3Floats = (1.0, 1.0, 1.0)  # Voxel size
+        xras: _3Floats = (1.0, 0.0, 0.0)  # Columns of the phys2ras matrix
+        yras: _3Floats = (0.0, 1.0, 0.0)  # "
+        zras: _3Floats = (0.0, 0.0, 1.0)  # "
+        cras: _3Floats = (0.0, 0.0, 0.0)  # "
 
     class SrcVolumeInfo(VolumeInfo):
         """The geometry of the source volume."""
+
         NAME = "src"
 
     class DstVolumeInfo(VolumeInfo):
         """The geometry of the destination volume."""
+
         NAME = "dst"
 
     type: LTAType = LTAType.LINEAR_VOX_TO_VOX
     nxforms: int = 1
-    mean: _3Floats = (0., 0., 0.)
-    sigma: float = 0.
-    affine: Affine = Factory(Affine)         # Affine matrix
-    label: _tx.Optional[int] = None          # Optional label
+    mean: _3Floats = (0.0, 0.0, 0.0)
+    sigma: float = 0.0
+    affine: Affine = Factory(Affine)  # Affine matrix
+    label: _tx.Optional[int] = None  # Optional label
     src: _tx.Optional[SrcVolumeInfo] = None  # Source volume
     dst: _tx.Optional[DstVolumeInfo] = None  # Destination volume

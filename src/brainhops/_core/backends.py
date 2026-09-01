@@ -32,8 +32,9 @@ _BACKEND = "dask"
 
 
 @contextmanager
-def backend(backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
-            ) -> _tx.Iterator[str]:
+def backend(
+    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
+) -> _tx.Iterator[str]:
     """Context manager to temporarily set the array backend"""
     global _BACKEND
     old_backend = _BACKEND
@@ -65,15 +66,14 @@ def set_backend(backend: str) -> None:
 
 
 def to_backend(
-    x: ArrayProtocol,
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    x: ArrayProtocol, backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     backend = get_array_backend(backend)
     return backend.asarray(x)
 
 
 def get_array_backend(
-    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None
+    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
     """Determine the array package for a given array
 
@@ -88,7 +88,6 @@ def get_array_backend(
 
     # Guess from module type
     if isinstance(x, ModuleType):
-
         # Already an array module
         if x is np:
             return np
@@ -119,7 +118,7 @@ def get_array_backend(
 
 
 def get_ndimage_backend(
-    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None
+    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
     """Determine the ndimage package for a given array
 
@@ -134,7 +133,6 @@ def get_ndimage_backend(
 
     # Guess from module type
     if isinstance(x, ModuleType):
-
         # Already a image module?
         if x is npndi:
             return npndi

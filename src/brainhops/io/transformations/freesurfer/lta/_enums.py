@@ -1,8 +1,4 @@
-__all__ = [
-    "LTAType",
-    "LTAMatrixType",
-    "LTAValidity"
-]
+__all__ = ["LTAType", "LTAMatrixType", "LTAValidity"]
 
 # stdlib
 from enum import Enum

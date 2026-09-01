@@ -1,7 +1,13 @@
 __all__ = [
-    "Const", "HiddenConst", "ArrayProtocol",
-    "npscalar", "npvector", "npmatrix",
-    "npt", "cpt", "dkt",
+    "Const",
+    "HiddenConst",
+    "ArrayProtocol",
+    "npscalar",
+    "npvector",
+    "npmatrix",
+    "npt",
+    "cpt",
+    "dkt",
 ]
 # externals
 import typing_extensions as _tx

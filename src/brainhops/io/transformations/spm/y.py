@@ -1,4 +1,3 @@
-
 # externals
 import typing_extensions as _tx
 
@@ -19,7 +18,9 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     """
 
     @property
-    def transformations(self) -> _tx.Tuple[
+    def transformations(
+        self,
+    ) -> _tx.Tuple[
         _tx.Optional[RASToVoxel],
         _tx.Optional[RASCoordinatesField],
     ]:
@@ -33,11 +34,13 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         )
 
     @transformations.setter
-    def transformations(self,
-                        value: _tx.Tuple[
-                            _tx.Optional[RASToVoxel],
-                            _tx.Optional[RASCoordinatesField],
-                        ]) -> None:
+    def transformations(
+        self,
+        value: _tx.Tuple[
+            _tx.Optional[RASToVoxel],
+            _tx.Optional[RASCoordinatesField],
+        ],
+    ) -> None:
         self._transformations = tuple(value)
 
     @property
@@ -54,7 +57,8 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         xform = self.transformations[1]
         if xform is None:
             xform = NiftiRASCoordinatesField(
-                image=self.image, header=self.header)
+                image=self.image, header=self.header
+            )
         return xform
 
     @ras2voxel.setter
