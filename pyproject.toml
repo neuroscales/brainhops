@@ -24,7 +24,6 @@ io = ["brainhops[itk]", "brainhops[spm]", "brainhops[nibabel]"]
 test = [
     "pytest",
     "h5py",
-    "simpleitk",
     "pytest-cov",
     "nibabel",
     "dask",
