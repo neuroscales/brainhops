@@ -30,7 +30,6 @@ _FileOrContentLike = _tx.Union[_FileLike, bytes]
 
 
 class TIRLParser(Struct):
-
     _HAS_KEYS = True
 
     loaded_object: _tx.Optional[TIRLStruct] = None
@@ -44,7 +43,7 @@ class TIRLParser(Struct):
                 return cls.sniff_file(other)
         if isinstance(other, PathLike):
             return cls.sniff_file(other)
-        if hasattr(other, 'read'):
+        if hasattr(other, "read"):
             return cls.sniff_file(other)
         if isinstance(other, bytes):
             return cls.sniff_bytes(other)
@@ -61,8 +60,8 @@ class TIRLParser(Struct):
         return ret
 
     @classmethod
-    def sniff_bytes(cls, bytes: bytes, encoding: str = 'utf-8') -> bool:
-        return bytes[:len(MAGIC)] != MAGIC
+    def sniff_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> bool:
+        return bytes[: len(MAGIC)] != MAGIC
 
     # --- from ---------------------------------------------------------
 
@@ -87,7 +86,7 @@ class TIRLParser(Struct):
                 return cls.from_file(Path(other))
             else:
                 return cls.from_text(other)
-        if isinstance(other,  PathLike) or hasattr(other, 'read'):
+        if isinstance(other, PathLike) or hasattr(other, "read"):
             return cls.from_file(other)
         return cls.from_bytes(other)
 
@@ -113,7 +112,7 @@ class TIRLParser(Struct):
         return cls.from_bytes(fileobj)
 
     @classmethod
-    def from_bytes(cls, bytes: bytes, encoding: str = 'utf-8') -> _tx.Self:
+    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> _tx.Self:
         """
         Build an object from bytes in TIRL format.
 
@@ -135,12 +134,13 @@ class TIRLParser(Struct):
 
         # Check version number
         major, minor = bytes2int(stream.read(2 * UINT8.nbytes), UINT8)
-        outdated = (major > VERSION[0])
-        outdated |= ((major == VERSION[0]) & (minor > VERSION[1]))
+        outdated = major > VERSION[0]
+        outdated |= (major == VERSION[0]) & (minor > VERSION[1])
         if outdated:
             supported = ".".join([str(v) for v in VERSION])
             raise TypeError(
-                f"The maximum supported TIRLFile version is {supported}")
+                f"The maximum supported TIRLFile version is {supported}"
+            )
 
         # Read main header
         hdrsize = bytes2int(stream.read(UINT64.nbytes), UINT64)

@@ -25,16 +25,19 @@ def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
         return _systems.SpatialCoordinateSystem3D((_axes.L, _axes.P, _axes.S))
     else:
         return _systems.SpatialCoordinateSystem(
-            (_axes.L, _axes.P, _axes.S)[:ndim] +
-            (_axes.Axis(),) * max(0, ndim - 3))
+            (_axes.L, _axes.P, _axes.S)[:ndim]
+            + (_axes.Axis(),) * max(0, ndim - 3)
+        )
 
 
 # ----------------------------------------------------------------------
 #   Enum and registry
 # ----------------------------------------------------------------------
 
+
 class TIRLEnumClass(StrEnum):
     """TIRL transform class name mappings."""
+
     TranslationTransform = "TxTranslation"
     LinearTransform = "TxLinear"
     ShearTransform = "TxShear"
@@ -64,12 +67,14 @@ def _register_type(*names: str):
         for name in names:
             TIRLStruct._REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
 # ----------------------------------------------------------------------
 #   Base struct
 # ----------------------------------------------------------------------
+
 
 class TIRLStruct(Struct, kw_only=True, convert=True):
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
@@ -83,28 +88,31 @@ class TIRLStruct(Struct, kw_only=True, convert=True):
         return super().__new__(cls)
 
     type: _tx.Optional[TIRLEnumClass] = None
-    id:   _tx.Optional[_tx.Any] = None
+    id: _tx.Optional[_tx.Any] = None
 
 
 # ----------------------------------------------------------------------
 #   Parameters
 # ----------------------------------------------------------------------
 
+
 @_register_type("ParameterVector")
 class TIRLParametersStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.Parameters] = _TIRLT.Parameters
 
-    parameters:   _tx.Optional[_tx.Union[np.ndarray, list, tuple]] = None
+    parameters: _tx.Optional[_tx.Union[np.ndarray, list, tuple]] = None
     lower_bounds: _tx.Optional[Number] = None
     upper_bounds: _tx.Optional[Number] = None
-    locked:       _tx.Optional[set] = None
-    name:         _tx.Optional[str] = None
-    signature:    _tx.Optional[_tx.Any] = None
+    locked: _tx.Optional[set] = None
+    name: _tx.Optional[str] = None
+    signature: _tx.Optional[_tx.Any] = None
 
     def __post_init__(self):
         if len(self.parameters) == 0:
             self.parameters = np.array([], dtype="f8")
-        elif (len(self.parameters) == 1) and hasattr(self.parameters[0], "__iter__"):
+        elif (len(self.parameters) == 1) and hasattr(
+            self.parameters[0], "__iter__"
+        ):
             self.parameters = np.asanyarray(self.parameters[0]).ravel()
         else:
             self.parameters = np.array(self.parameters).ravel()
@@ -127,11 +135,14 @@ class TIRLParametersStruct(TIRLStruct):
 #   Linear transforms
 # ----------------------------------------------------------------------
 
+
 @_register_type("TxTranslation")
 class TIRLTranslationStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.TranslationTransform] = _TIRLT.TranslationTransform
+    type: _tx.Literal[_TIRLT.TranslationTransform] = (
+        _TIRLT.TranslationTransform
+    )
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Translation:
@@ -147,7 +158,7 @@ class TIRLTranslationStruct(TIRLStruct):
 class TIRLLinearStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.LinearTransform] = _TIRLT.LinearTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
@@ -172,16 +183,24 @@ class TIRLLinearStruct(TIRLStruct):
         mat = param.parameters[0]
         shape = metaparameters.get("shape")
 
-        if isinstance(mat, np.ndarray) and mat.ndim == 2 and \
-                np.issubdtype(mat.dtype, np.number):
+        if (
+            isinstance(mat, np.ndarray)
+            and mat.ndim == 2
+            and np.issubdtype(mat.dtype, np.number)
+        ):
             shape = mat.shape
             parameters = self.matrix2params(mat, **metaparameters)
 
-        elif isinstance(mat, np.ndarray) and mat.ndim == 1 and \
-                np.issubdtype(mat.dtype, np.number):
+        elif (
+            isinstance(mat, np.ndarray)
+            and mat.ndim == 1
+            and np.issubdtype(mat.dtype, np.number)
+        ):
             parameters = mat.ravel()
 
-        elif hasattr(mat, "__iter__") and all(isinstance(v, Number) for v in mat):
+        elif hasattr(mat, "__iter__") and all(
+            isinstance(v, Number) for v in mat
+        ):
             parameters = np.asarray(mat).ravel()
 
         elif all(isinstance(v, Number) for v in param.parameters):
@@ -194,13 +213,16 @@ class TIRLLinearStruct(TIRLStruct):
 
     def to_transform(self) -> _xforms.Linear:
         param, shape = self._read_parameters_and_shape(
-            self.parameters, self.metaparameters)
+            self.parameters, self.metaparameters
+        )
         return _xforms.Linear(
             input=_make_system(shape[1]),
             output=_make_system(shape[1]),
             matrix=self.params2matrix(
-                parameters=param, shape=shape,
-                metaparameters=self.metaparameters),
+                parameters=param,
+                shape=shape,
+                metaparameters=self.metaparameters,
+            ),
         )
 
 
@@ -208,12 +230,13 @@ class TIRLLinearStruct(TIRLStruct):
 class TIRLScaleStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.ScaleTransform] = _TIRLT.ScaleTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Scaling:
         param, shape = self._read_parameters_and_shape(
-            self.parameters, self.metaparameters)
+            self.parameters, self.metaparameters
+        )
         return _xforms.Scaling(
             input=param.shape[0],
             output=param.shape[0],
@@ -225,12 +248,13 @@ class TIRLScaleStruct(TIRLLinearStruct):
 class TIRLIsoScaleStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.ISOScaleTransform] = _TIRLT.ISOScaleTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Scaling:
         param, shape = self._read_parameters_and_shape(
-            self.parameters, self.metaparameters)
+            self.parameters, self.metaparameters
+        )
         return _xforms.Scaling(
             input=shape[0],
             output=shape[0],
@@ -242,7 +266,7 @@ class TIRLIsoScaleStruct(TIRLLinearStruct):
 class TIRLShearStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.ShearTransform] = _TIRLT.ShearTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
@@ -259,7 +283,7 @@ class TIRLShearStruct(TIRLLinearStruct):
 class TIRLRotationStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.RotationTransform] = _TIRLT.RotationTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
 
@@ -267,7 +291,7 @@ class TIRLRotationStruct(TIRLLinearStruct):
 class TIRLRotation2DStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.Rotation2DTransform] = _TIRLT.Rotation2DTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
@@ -282,8 +306,10 @@ class TIRLRotation2DStruct(TIRLLinearStruct):
         shape = kwargs.get("shape")
         mat = np.eye(*shape, dtype=dtype)
         phi = parameters[0]
-        mat[:2, :2] = np.array([[np.cos(phi), -np.sin(phi)],
-                                [np.sin(phi),  np.cos(phi)]], dtype=dtype)
+        mat[:2, :2] = np.array(
+            [[np.cos(phi), -np.sin(phi)], [np.sin(phi), np.cos(phi)]],
+            dtype=dtype,
+        )
 
         centre = kwargs.get("centre", False)
         if centre:
@@ -301,7 +327,7 @@ class TIRLRotation2DStruct(TIRLLinearStruct):
 class TIRLAxisAngleStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.AxisAngleTransform] = _TIRLT.AxisAngleTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
@@ -327,12 +353,15 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
         parameters = np.asarray(parameters, dtype=dtype)
         phi = parameters[0]
         e = parameters[1:]
-        cross = np.asarray([[0, -e[2], e[1]],
-                            [e[2], 0, -e[0]],
-                            [-e[1], e[0], 0]], dtype=dtype)
+        cross = np.asarray(
+            [[0, -e[2], e[1]], [e[2], 0, -e[0]], [-e[1], e[0], 0]], dtype=dtype
+        )
         I = np.eye(3, dtype=dtype)
-        R = np.cos(phi) * I + (1 - np.cos(phi)) * np.outer(e, e) \
+        R = (
+            np.cos(phi) * I
+            + (1 - np.cos(phi)) * np.outer(e, e)
             + np.sin(phi) * cross
+        )
 
         centre = kwargs.get("centre", False)
         if centre:
@@ -348,36 +377,32 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
 
 @_register_type("TxEulerAngles")
 class TIRLEulerAnglesStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.EulerAnglesTransform] = _TIRLT.EulerAnglesTransform
+    type: _tx.Literal[_TIRLT.EulerAnglesTransform] = (
+        _TIRLT.EulerAnglesTransform
+    )
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
     def _Rx(phi):
         s = np.sin(phi)
         c = np.cos(phi)
-        mat = np.asarray([[1, 0, 0],
-                          [0, c, -s],
-                          [0, s, c]])
+        mat = np.asarray([[1, 0, 0], [0, c, -s], [0, s, c]])
         return mat
 
     @staticmethod
     def _Ry(phi):
         s = np.sin(phi)
         c = np.cos(phi)
-        mat = np.asarray([[c, 0, s],
-                          [0, 1, 0],
-                          [-s, 0, c]])
+        mat = np.asarray([[c, 0, s], [0, 1, 0], [-s, 0, c]])
         return mat
 
     @staticmethod
     def _Rz(phi):
         s = np.sin(phi)
         c = np.cos(phi)
-        mat = np.asarray([[c, -s, 0],
-                          [s, c, 0],
-                          [0, 0, 1]])
+        mat = np.asarray([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         return mat
 
     @staticmethod
@@ -402,9 +427,11 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
         dtype = "f8"
         order = kwargs.get("order")
         parameters = np.asarray(parameters, dtype=dtype)
-        Rax = {"x": TIRLEulerAnglesStruct._Rx,
-               "y": TIRLEulerAnglesStruct._Ry,
-               "z": TIRLEulerAnglesStruct._Rz}
+        Rax = {
+            "x": TIRLEulerAnglesStruct._Rx,
+            "y": TIRLEulerAnglesStruct._Ry,
+            "z": TIRLEulerAnglesStruct._Rz,
+        }
         R = np.eye(3, dtype=dtype)
         for i, ax in enumerate(order):
             R = np.dot(R, Rax[ax](parameters[i]).astype(dtype))
@@ -426,7 +453,7 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
 class TIRLQuaternionStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.QuaternionTransform] = _TIRLT.QuaternionTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
@@ -446,12 +473,13 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
         """
         qw, qx, qy, qz = parameters
         q_vect = np.asarray([qx, qy, qz]).reshape((-1, 1))
-        Q = np.asarray([[0, -qz, qy],
-                        [qz, 0, -qx],
-                        [-qy, qx, 0]])
+        Q = np.asarray([[0, -qz, qy], [qz, 0, -qx], [-qy, qx, 0]])
         I = np.eye(3)
-        R = (qw ** 2 - np.dot(q_vect.T, q_vect)) * I \
-            + 2 * np.dot(q_vect, q_vect.T) + 2 * qw * Q
+        R = (
+            (qw**2 - np.dot(q_vect.T, q_vect)) * I
+            + 2 * np.dot(q_vect, q_vect.T)
+            + 2 * qw * Q
+        )
 
         # Taking the rotation centre into account
         centre = kwargs.get("centre", False)
@@ -470,18 +498,21 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
 class TIRLAffineStruct(TIRLLinearStruct):
     type: _tx.Literal[_TIRLT.AffineTransform] = _TIRLT.AffineTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Affine:
         param, shape = self._read_parameters_and_shape(
-            self.parameters, self.metaparameters)
+            self.parameters, self.metaparameters
+        )
         return _xforms.Affine(
             input=_make_system(shape[1]),
             output=_make_system(shape[1]),
             matrix=self.params2matrix(
-                parameters=param, shape=shape,
-                metaparameters=self.metaparameters),
+                parameters=param,
+                shape=shape,
+                metaparameters=self.metaparameters,
+            ),
         )
 
 
@@ -489,8 +520,9 @@ class TIRLAffineStruct(TIRLLinearStruct):
 class TIRLIdentityStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.IdentityTransform] = _TIRLT.IdentityTransform
 
-    parameters:     _tx.Optional[_tx.Union[TIRLParametersStruct,
-                                           np.ndarray, list, tuple]] = None
+    parameters: _tx.Optional[
+        _tx.Union[TIRLParametersStruct, np.ndarray, list, tuple]
+    ] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Identity:
@@ -500,6 +532,7 @@ class TIRLIdentityStruct(TIRLStruct):
 # ----------------------------------------------------------------------
 #   Chain and Domain
 # ----------------------------------------------------------------------
+
 
 @_register_type("Chain")
 class TIRLChainStruct(TIRLStruct):
@@ -524,9 +557,10 @@ class TIRLDirectStruct(TIRLStruct):
     lookup table — used for sparse/non-compact domains where coordinates
     are not on a regular grid.
     """
+
     type: _tx.Literal[_TIRLT.DirectTransform] = _TIRLT.DirectTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.CoordinatesField:
@@ -543,14 +577,14 @@ class TIRLDirectStruct(TIRLStruct):
 class TIRLDomainStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.Domain] = _TIRLT.Domain
 
-    name:        _tx.Optional[_tx.Any] = None
-    shape:       _tx.Optional[_tx.Any] = None
+    name: _tx.Optional[_tx.Any] = None
+    shape: _tx.Optional[_tx.Any] = None
     coordinates: _tx.Optional[_tx.Any] = None
-    dtype:       _tx.Optional[_tx.Any] = None
-    internal:    _tx.Optional[TIRLChainStruct] = None
-    external:    _tx.Optional[TIRLChainStruct] = None
-    memlimit:    _tx.Optional[_tx.Any] = None
-    storage:     _tx.Optional[_tx.Any] = None
+    dtype: _tx.Optional[_tx.Any] = None
+    internal: _tx.Optional[TIRLChainStruct] = None
+    external: _tx.Optional[TIRLChainStruct] = None
+    memlimit: _tx.Optional[_tx.Any] = None
+    storage: _tx.Optional[_tx.Any] = None
 
     def make_identity_grid(self, shape: tuple, dtype=np.int32) -> np.ndarray:
         """Returns a voxel coordinate grid of shape (*spatial_shape, ndim)."""
@@ -600,6 +634,7 @@ class TIRLDomainStruct(TIRLStruct):
             transformations=transformations,
         ).compute(mode="affine")
 
+
 # TODO: add support for embedding (will require additional brainhops xform)
 
 
@@ -607,15 +642,18 @@ class TIRLDomainStruct(TIRLStruct):
 #   Nonlinear transform
 # ----------------------------------------------------------------------
 
+
 @_register_type("TxDisplacementField")
 class TIRLDisplacementFieldStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.DisplacementTransform] = _TIRLT.DisplacementTransform
+    type: _tx.Literal[_TIRLT.DisplacementTransform] = (
+        _TIRLT.DisplacementTransform
+    )
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
-    domain:         _tx.Optional[TIRLDomainStruct] = None
-    vectorder:      _tx.Optional[_tx.Any] = None
-    interpolator:   _tx.Optional[dict] = None
+    domain: _tx.Optional[TIRLDomainStruct] = None
+    vectorder: _tx.Optional[_tx.Any] = None
+    interpolator: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.DisplacementField:
         if self.domain is None:
@@ -623,14 +661,18 @@ class TIRLDisplacementFieldStruct(TIRLStruct):
 
         domain_shape = tuple(self.domain.shape)
         ndim = len(domain_shape)
-        vectorder = tuple(self.vectorder) if self.vectorder is not None \
+        vectorder = (
+            tuple(self.vectorder)
+            if self.vectorder is not None
             else tuple(range(ndim))
+        )
         vectdim = len(vectorder)
         mode = self.metaparameters.get("mode", "abs")
 
         # Reshape flat parameters into (*spatial_shape, vectdim)
         compact_field = self.parameters.parameters.reshape(
-            (*domain_shape, vectdim))
+            (*domain_shape, vectdim)
+        )
 
         # Expand into (*spatial_shape, ndim), zeroing axes not in vectorder
         full_field = np.zeros((*domain_shape, ndim), dtype=compact_field.dtype)
@@ -640,7 +682,9 @@ class TIRLDisplacementFieldStruct(TIRLStruct):
         if mode == "rel":
             # Vectors are in voxel space — scale to physical space using
             # the voxel size from the first internal transform (TxScale)
-            scale = self.domain.internal.transformations[0].parameters.parameters
+            scale = self.domain.internal.transformations[
+                0
+            ].parameters.parameters
             full_field = full_field * scale
 
         seq = self.domain.to_transform()
@@ -665,13 +709,16 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
     treating the field the same as a regular TIRLDisplacementFieldStruct
     using the domain shape directly.
     """
-    type: _tx.Literal[_TIRLT.RbfDisplacementTransform] = _TIRLT.RbfDisplacementTransform
 
-    parameters:     _tx.Optional[TIRLParametersStruct] = None
+    type: _tx.Literal[_TIRLT.RbfDisplacementTransform] = (
+        _TIRLT.RbfDisplacementTransform
+    )
+
+    parameters: _tx.Optional[TIRLParametersStruct] = None
     metaparameters: _tx.Optional[dict] = None
-    domain:         _tx.Optional[TIRLDomainStruct] = None
-    vectorder:      _tx.Optional[_tx.Any] = None
-    interpolator:   _tx.Optional[dict] = None
+    domain: _tx.Optional[TIRLDomainStruct] = None
+    vectorder: _tx.Optional[_tx.Any] = None
+    interpolator: _tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Sequence:
         if self.domain is None:
@@ -686,8 +733,11 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
             domain_shape = tuple(dense_shape)
 
         ndim = len(domain_shape)
-        vectorder = tuple(self.vectorder) if self.vectorder is not None \
+        vectorder = (
+            tuple(self.vectorder)
+            if self.vectorder is not None
             else tuple(range(ndim))
+        )
         vectdim = len(vectorder)
         mode = self.metaparameters.get("mode", "abs")
 
@@ -695,7 +745,8 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
         # The sparse field is stored flattened in the same order as the
         # dense grid, so reshaping directly gives the dense representation
         compact_field = self.parameters.parameters.reshape(
-            (*domain_shape, vectdim))
+            (*domain_shape, vectdim)
+        )
 
         # Expand into (*domain_shape, ndim), zeroing axes not in vectorder
         full_field = np.zeros((*domain_shape, ndim), dtype=compact_field.dtype)
@@ -705,7 +756,9 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
         if mode == "rel":
             # Vectors are in voxel space — scale to physical space using
             # the voxel size from the first internal transform (TxScale)
-            scale = self.domain.internal.transformations[0].parameters.parameters
+            scale = self.domain.internal.transformations[
+                0
+            ].parameters.parameters
             full_field = full_field * scale
 
         seq = self.domain.to_transform()
@@ -720,14 +773,15 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
 #   TImage
 # ----------------------------------------------------------------------
 
+
 @_register_type("TImage")
 class TIRLImageStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.Image] = _TIRLT.Image
 
-    resmgr:  _tx.Optional[dict] = None
-    header:  _tx.Optional[_tx.Any] = None
+    resmgr: _tx.Optional[dict] = None
+    header: _tx.Optional[_tx.Any] = None
     maskmgr: _tx.Optional[_tx.Any] = None
-    name:    _tx.Optional[str] = None
+    name: _tx.Optional[str] = None
 
     def to_transform(self) -> _xforms.Sequence:
         # Use the native (highest) resolution layer only

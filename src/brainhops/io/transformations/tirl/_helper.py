@@ -24,7 +24,7 @@ ARRAY_TAG = b"NDArray"
 BYTES_TAG = b"Bytes"
 MMAP_TAG = b"MemoryMap"
 LH_TAG = b"LookupHeader"
-BUFSIZE = 100 * 1024 ** 2  # 100 MB
+BUFSIZE = 100 * 1024**2  # 100 MB
 UNIQUE_INDEX = count(0, 1)
 VERSION = [3, 7]
 
@@ -34,6 +34,7 @@ _IO = _tx.IO[bytes]
 # ----------------------------------------------------------------------
 #   Binary helpers
 # ----------------------------------------------------------------------
+
 
 def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
     """
@@ -46,7 +47,9 @@ def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
     itemsize, byteorder, signed = int_type
     assert len(data) % itemsize == 0
     result = [
-        int.from_bytes(data[start:start + itemsize], byteorder, signed=signed)
+        int.from_bytes(
+            data[start : start + itemsize], byteorder, signed=signed
+        )
         for start in range(0, len(data), itemsize)
     ]
     return result[0] if len(result) == 1 else tuple(result)
@@ -62,7 +65,7 @@ def istagged(item: _tx.Any, tag: str) -> bool:
 def getval(item: _tx.Any, tag: str) -> _tx.Any:
     """Strips the XML-style tag from a tagged string and returns the inner value."""
     if isinstance(item, str):
-        return item[len(f"<{tag}>"):-len(f"</{tag}>")]
+        return item[len(f"<{tag}>") : -len(f"</{tag}>")]
     return item
 
 
@@ -70,13 +73,15 @@ def getval(item: _tx.Any, tag: str) -> _tx.Any:
 #   Dict / list comparison (ndarray-safe)
 # ----------------------------------------------------------------------
 
+
 def dictcmp(a: dict, b: dict) -> bool:
     """
     Recursively compares two dicts whose values may include ndarrays.
     Plain ``==`` would raise on arrays due to ambiguous truth values.
     """
-    assert isinstance(a, dict) and isinstance(b, dict), \
+    assert isinstance(a, dict) and isinstance(b, dict), (
         "Dict inputs are required for comparison."
+    )
     a_items = sorted(a.items(), key=lambda e: e[0])
     b_items = sorted(b.items(), key=lambda e: e[0])
     results = []
@@ -101,8 +106,9 @@ def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
     """
     Recursively compares two lists or tuples whose elements may include ndarrays.
     """
-    assert isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)), \
+    assert isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)), (
         "List/tuple inputs are required for comparison."
+    )
     results = []
     for v1, v2 in zip(a, b):
         if type(v1) is not type(v2):
@@ -125,6 +131,7 @@ def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
 #   Block loaders
 # ----------------------------------------------------------------------
 
+
 def load_array(f: _IO) -> np.memmap:
     """Loads an ndarray block from the file, returning a memory-mapped handle."""
     # TODO: consider returning a dask array instead of np.memmap
@@ -138,12 +145,24 @@ def load_array(f: _IO) -> np.memmap:
         raise ValueError(f"Invalid ndarray header version: {version}")
     order = "F" if fortran_order else "C"
     try:
-        return np.memmap(f.name, dtype=dtype, mode="r+",
-                         offset=f.tell(), shape=shape, order=order)
+        return np.memmap(
+            f.name,
+            dtype=dtype,
+            mode="r+",
+            offset=f.tell(),
+            shape=shape,
+            order=order,
+        )
     except PermissionError:
         warn("Data object is read-only.")
-        return np.memmap(f.name, dtype=dtype, mode="r",
-                         offset=f.tell(), shape=shape, order=order)
+        return np.memmap(
+            f.name,
+            dtype=dtype,
+            mode="r",
+            offset=f.tell(),
+            shape=shape,
+            order=order,
+        )
 
 
 def load_bytes(f: _IO) -> bytes:
@@ -161,12 +180,24 @@ def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
     shape, dtype, order = json.loads(js_descr)
     order = "C" if order else "F"
     try:
-        return np.memmap(f.name, dtype=np.dtype(dtype), mode=mode,
-                         offset=f.tell(), shape=tuple(shape), order=order)
+        return np.memmap(
+            f.name,
+            dtype=np.dtype(dtype),
+            mode=mode,
+            offset=f.tell(),
+            shape=tuple(shape),
+            order=order,
+        )
     except PermissionError:
         warn("Data array is read-only.")
-        return np.memmap(f.name, dtype=np.dtype(dtype), mode="r",
-                         offset=f.tell(), shape=tuple(shape), order=order)
+        return np.memmap(
+            f.name,
+            dtype=np.dtype(dtype),
+            mode="r",
+            offset=f.tell(),
+            shape=tuple(shape),
+            order=order,
+        )
 
 
 def load_replacements(f: _IO) -> dict:
@@ -204,7 +235,8 @@ def load_replacements(f: _IO) -> dict:
             item = load_bytes(f)
         else:
             raise NotImplementedError(
-                f"Unknown replacement block label: {label}")
+                f"Unknown replacement block label: {label}"
+            )
 
         if isinstance(key, list):
             key = tuple(key)
@@ -217,8 +249,10 @@ def load_replacements(f: _IO) -> dict:
 #   Decode / hload
 # ----------------------------------------------------------------------
 
-def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
-           objects: dict) -> _tx.Any:
+
+def decode(
+    encoded_dump: _tx.Union[dict, list, tuple, _tx.Any], objects: dict
+) -> _tx.Any:
     """
     Recursively restores a TIRL object dump into a Python data structure.
 
@@ -233,8 +267,9 @@ def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
 
     if isinstance(encoded_dump, dict):
         restored: _tx.Any = {}
-        iterator = tuple((k, encoded_dump[k])
-                         for k in sorted(encoded_dump.keys()))
+        iterator = tuple(
+            (k, encoded_dump[k]) for k in sorted(encoded_dump.keys())
+        )
     elif hasattr(encoded_dump, "__iter__"):
         restored = [None] * len(encoded_dump)
         iterator = enumerate(encoded_dump)
@@ -262,8 +297,11 @@ def decode(encoded_dump: _tx.Union[dict, list, tuple, _tx.Any],
             decoded = decode(item, objects)
             if decoded.get("type") and decoded.get("id"):
                 raw_id = decoded["id"]
-                objid = (raw_id + "_src") if isinstance(raw_id, str) \
+                objid = (
+                    (raw_id + "_src")
+                    if isinstance(raw_id, str)
                     else (tuple(raw_id) + ("src",))
+                )
                 if objid not in objects:
                     objects[objid] = decoded
                 elif not dictcmp(objects[objid], decoded):
