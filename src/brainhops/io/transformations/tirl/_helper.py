@@ -1,4 +1,6 @@
-# A good portion of the code found in this file are lightly modified version of the code found on the tirl github page. All credit goes to the creators of that page
+# A good portion of the code found in this file are lightly modified version of
+# the code found on the tirl github page. All credit goes to the creators of
+# that page
 
 # stdlib
 import json
@@ -13,6 +15,7 @@ import numpy.lib.format as nplib
 import typing_extensions as _tx
 
 # internals
+from brainhops._core.backends import get_ndimage_backend
 from brainhops.io.transformations.tirl._transformations import TIRLStruct
 
 ctype = namedtuple("ctype", ["nbytes", "byteorder", "signed"])
@@ -56,14 +59,19 @@ def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
 
 
 def istagged(item: _tx.Any, tag: str) -> bool:
-    """Returns True if *item* is an XML-style tagged string, e.g. ``<tag>value</tag>``."""
+    """
+    Returns True if *item* is an XML-style tagged string,
+    e.g. ``<tag>value</tag>``.
+    """
     if isinstance(item, str):
         return item.startswith(f"<{tag}>") and item.endswith(f"</{tag}>")
     return False
 
 
 def getval(item: _tx.Any, tag: str) -> _tx.Any:
-    """Strips the XML-style tag from a tagged string and returns the inner value."""
+    """
+    Strips the XML-style tag from a tagged string and returns the inner value.
+    """
     if isinstance(item, str):
         return item[len(f"<{tag}>") : -len(f"</{tag}>")]
     return item
@@ -104,7 +112,8 @@ def dictcmp(a: dict, b: dict) -> bool:
 
 def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
     """
-    Recursively compares two lists or tuples whose elements may include ndarrays.
+    Recursively compares two lists or tuples whose elements may include
+    ndarrays.
     """
     assert isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)), (
         "List/tuple inputs are required for comparison."
@@ -133,8 +142,9 @@ def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
 
 
 def load_array(f: _IO) -> np.memmap:
-    """Loads an ndarray block from the file, returning a memory-mapped handle."""
-    # TODO: consider returning a dask array instead of np.memmap
+    """
+    Loads an ndarray block from the file, returning a memory-mapped handle.
+    """
     _blocksize = bytes2int(f.read(UINT64.nbytes), UINT64)
     version = nplib.read_magic(f)
     if version == (1, 0):
@@ -145,7 +155,7 @@ def load_array(f: _IO) -> np.memmap:
         raise ValueError(f"Invalid ndarray header version: {version}")
     order = "F" if fortran_order else "C"
     try:
-        return np.memmap(
+        return get_ndimage_backend().memmap(
             f.name,
             dtype=dtype,
             mode="r+",
@@ -154,8 +164,8 @@ def load_array(f: _IO) -> np.memmap:
             order=order,
         )
     except PermissionError:
-        warn("Data object is read-only.")
-        return np.memmap(
+        warn("Data object is read-only.", stacklevel=1)
+        return get_ndimage_backend().memmap(
             f.name,
             dtype=dtype,
             mode="r",
@@ -180,7 +190,7 @@ def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
     shape, dtype, order = json.loads(js_descr)
     order = "C" if order else "F"
     try:
-        return np.memmap(
+        return get_ndimage_backend().memmap(
             f.name,
             dtype=np.dtype(dtype),
             mode=mode,
@@ -189,8 +199,8 @@ def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
             order=order,
         )
     except PermissionError:
-        warn("Data array is read-only.")
-        return np.memmap(
+        warn("Data array is read-only.", stacklevel=1)
+        return get_ndimage_backend().memmap(
             f.name,
             dtype=np.dtype(dtype),
             mode="r",
@@ -287,7 +297,8 @@ def decode(
 
         elif istagged(item, "obj"):
             objid = getval(item, "obj")
-            # Backwards compatibility: legacy tuple IDs stored as repr strings (<3.0)
+            # Backwards compatibility: legacy tuple IDs stored as repr strings
+            # (<3.0)
             if objid.startswith("(") and objid.endswith(")"):
                 objid = eval(objid)
                 assert isinstance(objid, tuple)

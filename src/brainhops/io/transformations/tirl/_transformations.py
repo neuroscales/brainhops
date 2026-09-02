@@ -7,27 +7,23 @@ from numbers import Number
 
 # dependencies
 import numpy as np
+from numpy.typing import ArrayLike
 import typing_extensions as _tx
 
 # externals
 from brainhops._ext.struct import Struct
-from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 
 
-# TODO: Confirm the coordinate system TIRL uses. This is just a placeholder
+# TODO: From my googling it seems the TIRL files do not specify their
+# coordinate system. However I am leaving this helper function here in case
+# that is wrong
 def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
-    """Create a spatial coordinate system with the given number of dimensions."""
-    if ndim == 2:
-        return _systems.SpatialCoordinateSystem2D((_axes.L, _axes.P))
-    elif ndim == 3:
-        return _systems.SpatialCoordinateSystem3D((_axes.L, _axes.P, _axes.S))
-    else:
-        return _systems.SpatialCoordinateSystem(
-            (_axes.L, _axes.P, _axes.S)[:ndim]
-            + (_axes.Axis(),) * max(0, ndim - 3)
-        )
+    """
+    Create a spatial coordinate system with the given number of dimensions.
+    """
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -62,8 +58,8 @@ class TIRLEnumClass(StrEnum):
 _TIRLT = TIRLEnumClass
 
 
-def _register_type(*names: str):
-    def decorator(cls):
+def _register_type(*names: str) -> _tx.Callable:
+    def decorator(cls: type) -> type:
         for name in names:
             TIRLStruct._REGISTRY[name] = cls
         return cls
@@ -79,7 +75,7 @@ def _register_type(*names: str):
 class TIRLStruct(Struct, kw_only=True, convert=True):
     _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
 
-    def __new__(cls, **kwargs):
+    def __new__(cls, **kwargs: dict) -> "TIRLStruct":
         if cls is not TIRLStruct:
             return super().__new__(cls)
         if not hasattr(cls, "_REGISTRY"):
@@ -107,7 +103,7 @@ class TIRLParametersStruct(TIRLStruct):
     name: _tx.Optional[str] = None
     signature: _tx.Optional[_tx.Any] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if len(self.parameters) == 0:
             self.parameters = np.array([], dtype="f8")
         elif (len(self.parameters) == 1) and hasattr(
@@ -162,7 +158,7 @@ class TIRLLinearStruct(TIRLStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         """
         Builds a linear transformation matrix from a flat parameter vector.
         The base class fills the matrix in C (row-major) order. Subclasses
@@ -174,7 +170,9 @@ class TIRLLinearStruct(TIRLStruct):
         mat.flat[:] = parameters
         return mat
 
-    def _read_parameters_and_shape(self, param, metaparameters):
+    def _read_parameters_and_shape(
+        self, param: object, metaparameters: dict
+    ) -> tuple[np.ndarray, tuple[int]]:
         """
         Normalises the parameter input into a flat array and resolves the
         matrix shape. Accepts a 2D matrix, a 1D ndarray, a numeric iterable,
@@ -270,7 +268,7 @@ class TIRLShearStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         shape = kwargs.get("shape")
         parameters = np.asarray(parameters, dtype="f8")
         mat = np.eye(*shape, dtype=parameters.dtype)
@@ -295,7 +293,7 @@ class TIRLRotation2DStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         """
         Builds a (2, 2) rotation matrix from a single angle (radians).
         If a rotation centre is provided, the result is (2, 3) to account
@@ -331,7 +329,7 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         """
         Creates (3, 3) rotation matrix from rotation angle and axis as
         parameters using the Rodrigues formula.
@@ -385,28 +383,28 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def _Rx(phi):
+    def _Rx(phi: float) -> np.ndarray:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[1, 0, 0], [0, c, -s], [0, s, c]])
         return mat
 
     @staticmethod
-    def _Ry(phi):
+    def _Ry(phi: float) -> np.ndarray:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[c, 0, s], [0, 1, 0], [-s, 0, c]])
         return mat
 
     @staticmethod
-    def _Rz(phi):
+    def _Rz(phi: float) -> np.ndarray:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         return mat
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         """
         Creates (3, 3) rotation matrix from rotation angles, given a specific
         order of rotation axes. If the rotation has a centre that is different
@@ -457,7 +455,7 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters, **kwargs):
+    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
         """
         Creates (3, 3) rotation matrix from quaternion.
 
@@ -586,7 +584,9 @@ class TIRLDomainStruct(TIRLStruct):
     memlimit: _tx.Optional[_tx.Any] = None
     storage: _tx.Optional[_tx.Any] = None
 
-    def make_identity_grid(self, shape: tuple, dtype=np.int32) -> np.ndarray:
+    def make_identity_grid(
+        self, shape: tuple, dtype: np.dtype = np.int32
+    ) -> np.ndarray:
         """Returns a voxel coordinate grid of shape (*spatial_shape, ndim)."""
         # TODO: use dask if loaded
         g_vals = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
@@ -600,8 +600,9 @@ class TIRLDomainStruct(TIRLStruct):
         Returns the seed coordinates for the domain.
 
         For compact (regular grid) domains, generates a voxel index grid.
-        For sparse (non-compact) domains, uses the explicitly stored coordinates
-        directly — equivalent to TIRL's TxDirect lookup table behaviour.
+        For sparse (non-compact) domains, uses the explicitly stored
+        coordinates directly — equivalent to TIRL's TxDirect lookup table
+        behaviour.
         """
         ndim = len(self.shape)
         if self.coordinates is not None:
@@ -724,7 +725,8 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
         if self.domain is None:
             self.domain = self.metaparameters["domain"]
 
-        # dense_shape defines the regular grid the sparse field is rasterised onto
+        # dense_shape defines the regular grid the sparse field is rasterised
+        # onto
         dense_shape = self.metaparameters.get("dense_shape")
         if dense_shape is None or dense_shape == "auto":
             # Fall back to the domain shape if dense_shape is unavailable

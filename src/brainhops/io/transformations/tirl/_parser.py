@@ -7,7 +7,7 @@ from os import PathLike
 # dependencies
 import typing_extensions as _tx
 
-from brainhops._core.path import Path, PathLike
+from brainhops._core.path import Path
 
 # core
 # externals
