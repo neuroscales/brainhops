@@ -78,7 +78,7 @@ def write_segments(
     for offset, length in segments:
         with lock:
             fileobj.seek(offset)
-            nb_written = fileobj.write(dat[dat_offset: dat_offset + length])
+            nb_written = fileobj.write(dat[dat_offset : dat_offset + length])
         dat_offset += length
         if nb_written != length:
             raise ValueError(
