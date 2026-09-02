@@ -863,13 +863,15 @@ class Sequence(MutableSequence, Transformation):
     def __len__(self) -> int:
         return len(self.transformations or [])
 
-    def __getitem__(self, index: int | slice) -> Transformation:
+    def __getitem__(self, index: tx.Union[int, slice]) -> Transformation:
         return self.transformations[index]
 
-    def __setitem__(self, index: int | slice, value: Transformation) -> None:
+    def __setitem__(
+        self, index: tx.Union[int, slice], value: Transformation
+    ) -> None:
         self.transformations[index] = value
 
-    def __delitem__(self, index: int | slice) -> None:
+    def __delitem__(self, index: tx.Union[int, slice]) -> None:
         del self.transformations[index]
 
     def __iter__(self) -> tx.Iterator[Transformation]:
