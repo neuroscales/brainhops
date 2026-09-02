@@ -99,7 +99,7 @@ L = rightToLeftAxis = RightToLeftAxis()
 A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
 P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
 S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
-I = superiorToInferiorAxis = SuperiorToInferiorAxis()  # noqa: E741
+I = superiorToInferiorAxis = SuperiorToInferiorAxis()
 
 # Rx = leftToRightAxis = LeftToRightAxis(name="x")
 # Lx = rightToLeftAxis = RightToLeftAxis(name="x")
