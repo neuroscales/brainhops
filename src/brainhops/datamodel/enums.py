@@ -1,15 +1,16 @@
 __all__ = ["BoundaryCondition", "InterpolationOrder"]
 
 import sys
+from enum import IntEnum
 
 if sys.version_info.minor >= 11:
-    from enum import IntEnum, StrEnum
+    from enum import StrEnum
 else:
     from enum import Enum
 
-    class StrEnum(Enum, str): ...
-
-    class IntEnum(Enum, int): ...
+    class StrEnum(str, Enum):
+        def __str__(self) -> str:
+            return str(self.value)
 
 
 # ruff: disable[E501]

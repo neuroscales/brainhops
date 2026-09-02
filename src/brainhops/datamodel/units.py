@@ -35,7 +35,9 @@ if sys.version_info.minor >= 11:
 else:
     from enum import Enum
 
-    class StrEnum(Enum, str): ...
+    class StrEnum(str, Enum):
+        def __str__(self) -> str:
+            return str(self.value)
 
 
 from math import log10
