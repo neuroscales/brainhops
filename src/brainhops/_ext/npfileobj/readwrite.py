@@ -20,6 +20,7 @@ from nibabel.fileslice import (
 from numpy.typing import ArrayLike
 
 from brainhops._core.path import FileLike
+from brainhops._ext.npfileobj.indexing import IndexLike
 
 
 def full_heuristic(*args, **kwargs) -> _tx.Literal["full", "contiguous", None]:
@@ -77,7 +78,7 @@ def write_segments(
     for offset, length in segments:
         with lock:
             fileobj.seek(offset)
-            nb_written = fileobj.write(dat[dat_offset : dat_offset + length])
+            nb_written = fileobj.write(dat[dat_offset: dat_offset + length])
         dat_offset += length
         if nb_written != length:
             raise ValueError(
@@ -89,7 +90,7 @@ def writeslice(
     dat: ArrayLike,
     fileobj: FileLike,
     sliceobj: object,
-    shape: tuple[int],
+    shape: _tx.Tuple[int],
     dtype: type,
     offset: int = 0,
     order: str = "C",
@@ -181,7 +182,7 @@ def calc_slicedefs_write(
     offset: int,
     order: _tx.Literal["C", "F"],
     heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
-) -> tuple[tuple, tuple, tuple, tuple]:
+) -> _tx.Tuple[_tx.Tuple, _tx.Tuple, _tx.Tuple, _tx.Tuple]:
     """Return parameters for slicing an array into `sliceobj`
 
     Calculate the best combination of skips / (read + write) to use for
@@ -250,11 +251,11 @@ def calc_slicedefs_write(
 
 
 def optimize_write_slicers(
-    sliceobj: tuple,
+    sliceobj: _tx.Tuple[IndexLike],
     in_shape: _tx.Sequence[int],
     itemsize: int,
     heuristic: _tx.Callable,
-) -> tuple[tuple, tuple, tuple]:
+) -> _tx.Tuple[_tx.Tuple, _tx.Tuple, _tx.Tuple]:
     """Calculates slices to write disk
 
     Parameters
@@ -322,7 +323,7 @@ def optimize_write_slicer(
     is_slowest: bool,
     stride: int,
     heuristic: _tx.Optional[_tx.Callable] = threshold_heuristic,
-) -> tuple[_tx.Union[slice, int], _tx.Union[slice, int], slice]:
+) -> _tx.Tuple[_tx.Union[slice, int], _tx.Union[slice, int], slice]:
     """Return maybe modified slice and post-slice slicing for `slicer`
 
     Parameters

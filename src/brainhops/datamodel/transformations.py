@@ -887,7 +887,7 @@ class Sequence(MutableSequence, Transformation):
             self.transformations = []
         self.transformations.append(value)
 
-    def extend(self, values: list[Transformation]) -> None:
+    def extend(self, values: tx.List[Transformation]) -> None:
         if self.transformations is None:
             self.transformations = []
         self.transformations.extend(values)

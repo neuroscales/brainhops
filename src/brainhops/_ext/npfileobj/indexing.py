@@ -608,7 +608,7 @@ def compose_index(
     parent: _tx.Sequence[IndexLike],
     child: _tx.Sequence[IndexLike],
     full_shape: _tx.Sequence[int],
-) -> tuple[IndexLike]:
+) -> _tx.Tuple[IndexLike]:
     """Compose two sub-indexing
 
     Parameters
@@ -850,7 +850,7 @@ def split_operation(
         )
 
 
-def invert_permutation(perm: _tx.Sequence[int]) -> list[int]:
+def invert_permutation(perm: _tx.Sequence[int]) -> _tx.List[int]:
     """Return the inverse of a permutation
 
     Parameters
@@ -872,7 +872,7 @@ def invert_permutation(perm: _tx.Sequence[int]) -> list[int]:
 
 def slicer_sub2ind(
     slicer: _tx.Sequence[_tx.Union[slice, int]], shape: _tx.Sequence[int]
-) -> _tx.Union[slice, int, list[int]]:
+) -> _tx.Union[slice, int, _tx.List[int]]:
     """Convert a multi-dimensional slicer into a linear slicer.
 
     Parameters
