@@ -83,5 +83,5 @@ ignore = [
     "UP007",    # X | Y unions need 3.10
     "UP035",    # deprecated typing import (typing_extensions is intentional)
     "UP045",    # X | None optionals need 3.10
-    "E741",     # Allow for the variable I | Ambiguious variable name
+    "E741",     # Allow for the variable I | Ambiguous variable name
 ]
