@@ -7,10 +7,10 @@ from numbers import Number
 
 # dependencies
 import numpy as np
-from numpy.typing import ArrayLike
 import typing_extensions as _tx
 
 # externals
+from brainhops._core.typing import ArrayProtocol
 from brainhops._ext.struct import Struct
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -96,10 +96,16 @@ class TIRLStruct(Struct, kw_only=True, convert=True):
 class TIRLParametersStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.Parameters] = _TIRLT.Parameters
 
-    parameters: _tx.Optional[_tx.Union[np.ndarray, list, tuple]] = None
-    lower_bounds: _tx.Optional[Number] = None
-    upper_bounds: _tx.Optional[Number] = None
-    locked: _tx.Optional[set] = None
+    parameters: _tx.Optional[_tx.Union[ArrayProtocol, list, tuple]] = None
+    lower_bounds: _tx.Optional[_tx.Union[Number, ArrayProtocol, list]] = None
+    upper_bounds: _tx.Optional[
+        _tx.Union[
+            Number,
+            ArrayProtocol,
+            list,
+        ]
+    ] = None
+    locked: _tx.Optional[_tx.Union[set, ArrayProtocol]] = None
     name: _tx.Optional[str] = None
     signature: _tx.Optional[_tx.Any] = None
 
@@ -113,9 +119,9 @@ class TIRLParametersStruct(TIRLStruct):
         else:
             self.parameters = np.array(self.parameters).ravel()
 
-        if isinstance(self.parameters, np.memmap):
+        if isinstance(self.parameters, ArrayProtocol):
             self.parameters = self.parameters.ravel()
-        elif isinstance(self.parameters, np.ndarray):
+        elif isinstance(self.parameters, ArrayProtocol):
             self._parameters = np.ascontiguousarray(self.parameters.ravel())
         elif hasattr(self.parameters, "__iter__"):
             p = np.asarray(self.parameters)
@@ -158,7 +164,9 @@ class TIRLLinearStruct(TIRLStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         """
         Builds a linear transformation matrix from a flat parameter vector.
         The base class fills the matrix in C (row-major) order. Subclasses
@@ -172,7 +180,7 @@ class TIRLLinearStruct(TIRLStruct):
 
     def _read_parameters_and_shape(
         self, param: object, metaparameters: dict
-    ) -> tuple[np.ndarray, tuple[int]]:
+    ) -> tuple[ArrayProtocol, tuple[int]]:
         """
         Normalises the parameter input into a flat array and resolves the
         matrix shape. Accepts a 2D matrix, a 1D ndarray, a numeric iterable,
@@ -182,7 +190,7 @@ class TIRLLinearStruct(TIRLStruct):
         shape = metaparameters.get("shape")
 
         if (
-            isinstance(mat, np.ndarray)
+            isinstance(mat, ArrayProtocol)
             and mat.ndim == 2
             and np.issubdtype(mat.dtype, np.number)
         ):
@@ -190,7 +198,7 @@ class TIRLLinearStruct(TIRLStruct):
             parameters = self.matrix2params(mat, **metaparameters)
 
         elif (
-            isinstance(mat, np.ndarray)
+            isinstance(mat, ArrayProtocol)
             and mat.ndim == 1
             and np.issubdtype(mat.dtype, np.number)
         ):
@@ -268,7 +276,9 @@ class TIRLShearStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         shape = kwargs.get("shape")
         parameters = np.asarray(parameters, dtype="f8")
         mat = np.eye(*shape, dtype=parameters.dtype)
@@ -293,7 +303,9 @@ class TIRLRotation2DStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         """
         Builds a (2, 2) rotation matrix from a single angle (radians).
         If a rotation centre is provided, the result is (2, 3) to account
@@ -329,7 +341,9 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         """
         Creates (3, 3) rotation matrix from rotation angle and axis as
         parameters using the Rodrigues formula.
@@ -337,14 +351,14 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
         :param parameters:
             Sequence of angle and axis of the rotation:
             (angle, axis_x, axis_y, axis_z)
-        :type parameters: np.ndarray
+        :type parameters: ArrayProtocol
         :param kwargs:
             Keyword arguments required to retrieve rotation matrix from
             parameters.
         :type kwargs: Any
 
         :returns: (3, 3) rotation matrix
-        :rtype: np.ndarray
+        :rtype: ArrayProtocol
 
         """
         dtype = "f8"
@@ -383,28 +397,30 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def _Rx(phi: float) -> np.ndarray:
+    def _Rx(phi: float) -> ArrayProtocol:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[1, 0, 0], [0, c, -s], [0, s, c]])
         return mat
 
     @staticmethod
-    def _Ry(phi: float) -> np.ndarray:
+    def _Ry(phi: float) -> ArrayProtocol:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[c, 0, s], [0, 1, 0], [-s, 0, c]])
         return mat
 
     @staticmethod
-    def _Rz(phi: float) -> np.ndarray:
+    def _Rz(phi: float) -> ArrayProtocol:
         s = np.sin(phi)
         c = np.cos(phi)
         mat = np.asarray([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         return mat
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         """
         Creates (3, 3) rotation matrix from rotation angles, given a specific
         order of rotation axes. If the rotation has a centre that is different
@@ -412,14 +428,14 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
 
         :param parameters:
             Rotation angles in radians.
-        :type parameters: np.ndarray
+        :type parameters: ArrayProtocol
         :param kwargs:
             Keyword arguments required to retrieve rotation matrix
             from parameters.
         :type kwargs: Any
 
         :returns: (3, 3) rotation matrix or (3, 4) eccentric rotation matrix
-        :rtype: np.ndarray
+        :rtype: ArrayProtocol
 
         """
         dtype = "f8"
@@ -455,7 +471,9 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
     metaparameters: _tx.Optional[dict] = None
 
     @staticmethod
-    def params2matrix(parameters: ArrayLike, **kwargs: dict) -> np.ndarray:
+    def params2matrix(
+        parameters: ArrayProtocol, **kwargs: dict
+    ) -> ArrayProtocol:
         """
         Creates (3, 3) rotation matrix from quaternion.
 
@@ -466,7 +484,7 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
         :type kwargs: Any
 
         :returns: (3, 3) rotation matrix
-        :rtype: np.ndarray
+        :rtype: ArrayProtocol
 
         """
         qw, qx, qy, qz = parameters
@@ -519,7 +537,7 @@ class TIRLIdentityStruct(TIRLStruct):
     type: _tx.Literal[_TIRLT.IdentityTransform] = _TIRLT.IdentityTransform
 
     parameters: _tx.Optional[
-        _tx.Union[TIRLParametersStruct, np.ndarray, list, tuple]
+        _tx.Union[TIRLParametersStruct, ArrayProtocol, list, tuple]
     ] = None
     metaparameters: _tx.Optional[dict] = None
 
@@ -544,7 +562,7 @@ class TIRLChainStruct(TIRLStruct):
             input=transform_list[0].input,
             output=transform_list[-1].output,
             transformations=transform_list,
-        ).compute(mode="affine")
+        )
 
 
 @_register_type("TxDirect")
@@ -586,7 +604,7 @@ class TIRLDomainStruct(TIRLStruct):
 
     def make_identity_grid(
         self, shape: tuple, dtype: np.dtype = np.int32
-    ) -> np.ndarray:
+    ) -> ArrayProtocol:
         """Returns a voxel coordinate grid of shape (*spatial_shape, ndim)."""
         # TODO: use dask if loaded
         g_vals = np.meshgrid(*[np.arange(s) for s in shape], indexing="ij")
@@ -595,7 +613,7 @@ class TIRLDomainStruct(TIRLStruct):
             identity[(*[slice(None)] * len(shape), i)] = g_vals[i]
         return identity
 
-    def _get_seed_coordinates(self) -> np.ndarray:
+    def _get_seed_coordinates(self) -> ArrayProtocol:
         """
         Returns the seed coordinates for the domain.
 
@@ -633,7 +651,7 @@ class TIRLDomainStruct(TIRLStruct):
             input=transformations[0].input,
             output=transformations[-1].output,
             transformations=transformations,
-        ).compute(mode="affine")
+        )
 
 
 # TODO: add support for embedding (will require additional brainhops xform)

@@ -15,7 +15,8 @@ import numpy.lib.format as nplib
 import typing_extensions as _tx
 
 # internals
-from brainhops._core.backends import get_ndimage_backend
+from brainhops._core.backends import get_array_backend
+from brainhops._core.typing import ArrayProtocol
 from brainhops.io.transformations.tirl._transformations import TIRLStruct
 
 ctype = namedtuple("ctype", ["nbytes", "byteorder", "signed"])
@@ -141,7 +142,7 @@ def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
 # ----------------------------------------------------------------------
 
 
-def load_array(f: _IO) -> np.memmap:
+def load_array(f: _IO) -> ArrayProtocol:
     """
     Loads an ndarray block from the file, returning a memory-mapped handle.
     """
@@ -155,23 +156,27 @@ def load_array(f: _IO) -> np.memmap:
         raise ValueError(f"Invalid ndarray header version: {version}")
     order = "F" if fortran_order else "C"
     try:
-        return get_ndimage_backend().memmap(
-            f.name,
-            dtype=dtype,
-            mode="r+",
-            offset=f.tell(),
-            shape=shape,
-            order=order,
+        return get_array_backend().array(
+            np.memmap(
+                f.name,
+                dtype=dtype,
+                mode="r+",
+                offset=f.tell(),
+                shape=shape,
+                order=order,
+            )
         )
     except PermissionError:
         warn("Data object is read-only.", stacklevel=1)
-        return get_ndimage_backend().memmap(
-            f.name,
-            dtype=dtype,
-            mode="r",
-            offset=f.tell(),
-            shape=shape,
-            order=order,
+        return get_array_backend().array(
+            np.memmap(
+                f.name,
+                dtype=dtype,
+                mode="r",
+                offset=f.tell(),
+                shape=shape,
+                order=order,
+            )
         )
 
 
@@ -181,7 +186,7 @@ def load_bytes(f: _IO) -> bytes:
     return f.read(blocksize)
 
 
-def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
+def load_memmap(f: _IO, mode: str = "r+") -> ArrayProtocol:
     """
     Returns a memory-mapped array from the file.
     Falls back to read-only if the file is not writable.
@@ -190,23 +195,27 @@ def load_memmap(f: _IO, mode: str = "r+") -> np.memmap:
     shape, dtype, order = json.loads(js_descr)
     order = "C" if order else "F"
     try:
-        return get_ndimage_backend().memmap(
-            f.name,
-            dtype=np.dtype(dtype),
-            mode=mode,
-            offset=f.tell(),
-            shape=tuple(shape),
-            order=order,
+        return get_array_backend().array(
+            np.memmap(
+                f.name,
+                dtype=np.dtype(dtype),
+                mode=mode,
+                offset=f.tell(),
+                shape=tuple(shape),
+                order=order,
+            )
         )
     except PermissionError:
         warn("Data array is read-only.", stacklevel=1)
-        return get_ndimage_backend().memmap(
-            f.name,
-            dtype=np.dtype(dtype),
-            mode="r",
-            offset=f.tell(),
-            shape=tuple(shape),
-            order=order,
+        return get_array_backend().array(
+            np.memmap(
+                f.name,
+                dtype=np.dtype(dtype),
+                mode="r",
+                offset=f.tell(),
+                shape=tuple(shape),
+                order=order,
+            )
         )
 
 
