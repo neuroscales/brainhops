@@ -178,7 +178,7 @@ def matvec(
     A = backend.asarray(A, dtype=A.dtype)
     b = backend.asarray(b, dtype=A.dtype)
 
-    c = backend.linalg.matmul(A[..., :-1], b[..., None])[..., 0]
+    c = backend.matmul(A[..., :-1], b[..., None])[..., 0]
     c += A[..., -1]
 
     return c

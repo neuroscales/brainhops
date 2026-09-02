@@ -23,7 +23,11 @@ else:
     try:
         import h5py
     except ImportError:
-        h5py = None
+
+        class h5py:
+            File = None
+            Dataset = None
+
 
 # typing
 _H5Like = _tx.Union[

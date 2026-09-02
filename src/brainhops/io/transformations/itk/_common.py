@@ -167,9 +167,9 @@ class ITKIdentityStruct(ITKStruct):
 
     type: _tx.Literal[_ITKT.IdentityTransform] = _ITKT.IdentityTransform
 
-    parameters: _tx.Tuple[()] = ()
+    parameters: _tx.Tuple[_tx.Any, ...] = ()
 
-    fixed_parameters: _tx.Tuple[()] = ()
+    fixed_parameters: _tx.Tuple[_tx.Any, ...] = ()
 
     def to_transform(self) -> _xforms.Identity:
         """Return a copy of the identity transform."""
@@ -187,7 +187,7 @@ class ITKTranslationStruct(ITKStruct):
 
     type: _tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
 
-    fixed_parameters: _tx.Tuple[()] = ()
+    fixed_parameters: _tx.Tuple[_tx.Any, ...] = ()
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
