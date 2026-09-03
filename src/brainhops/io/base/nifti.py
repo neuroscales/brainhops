@@ -5,6 +5,7 @@ from os import PathLike
 import typing_extensions as _tx
 
 # internals
+from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import FileParser
 
 # optionals
@@ -27,26 +28,10 @@ else:
         _NiftiLike = _tx.Any
 
 
-class NiftiBasedParser(FileParser):
+class NiftiBasedParser(DataModelBase, FileParser):
 
     header: _tx.Optional[nb.Nifti1Header] = None
     image: _tx.Optional[nb.Nifti1Image] = None
-
-    @property
-    def header(self) -> _tx.Optional[nb.Nifti1Header]:
-        """The NIfTI header from which the transformation was derived."""
-        if getattr(self, "_header", None) is not None:
-            return self._header
-        if getattr(self, "_image", None) is not None:
-            return self._image.header
-        return None
-
-    @property
-    def image(self) -> _tx.Optional[nb.Nifti1Image]:
-        """The NIfTI image from which the transformation was derived."""
-        if getattr(self, "_image", None) is not None:
-            return self._image
-        return None
 
     @classmethod
     def from_(cls, other: _NiftiLike) -> _tx.Self:
@@ -69,7 +54,7 @@ class NiftiBasedParser(FileParser):
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti)
         if isinstance(nifti, nb.Nifti1Image):
-            return cls(image=nifti)
+            return cls(image=nifti, header=nifti.header)
         return cls.from_nifti(nb.load(nifti))
 
     @classmethod
