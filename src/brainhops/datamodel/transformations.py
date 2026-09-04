@@ -297,7 +297,7 @@ class LayeredTransformation(Transformation):
     parameter_names: tx.ClassVar[str] = "layers"
 
     layers: tx.Annotated[
-        tx.Optional[list[Transformation]],
+        tx.Optional[tx.List[Transformation]],
         tx.Doc("The layers of transformations"),
     ]
     active_layer = 0
@@ -1271,7 +1271,8 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    ...
 
 
 class LossyConversionError(ConversionError):
@@ -1346,7 +1347,8 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    ...
 
 
 def _composer(func: tx.Callable) -> tx.Callable:
@@ -1395,7 +1397,8 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    ...
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:
