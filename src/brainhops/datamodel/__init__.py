@@ -19,6 +19,7 @@ transform on some third image. This is very inconvenient and not a use
 case I am fond of supporting).
 
 """
+
 __all__ = [
     "axes",
     "base",
@@ -32,17 +33,18 @@ __all__ = [
     "units",
 ]
 
-from . import axes
-from . import base
-from . import enums
-from . import hierarchy
-from . import images
-from . import orientation
-from . import systems
-from . import transformations
-from . import units
-
 # trigger registration
 from . import _xform_adaptors as _
-from . import _xform_composers as _
-from . import _xform_converters as _
+from . import _xform_composers as _  # noqa: F811
+from . import _xform_converters as _  # noqa: F401, F811
+from . import (
+    axes,
+    base,
+    enums,
+    hierarchy,
+    images,
+    orientation,
+    systems,
+    transformations,
+    units,
+)
