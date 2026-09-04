@@ -39,9 +39,7 @@ class peekable(Iterator, tx.Generic[T]):
         self._iterator: tx.Iterator[T] = iterable
         self._peeked: tx.Union[T, EMPTY_TYPE] = EMPTY
 
-    def peek(
-        self, preproc: bool = True, valid: bool = True
-    ) -> tx.Optional[T]:
+    def peek(self, preproc: bool = True, valid: bool = True) -> tx.Optional[T]:
         if self._peeked is EMPTY:
             self._peeked = self._next(preproc=preproc, valid=valid)
         return self._peeked
@@ -55,9 +53,7 @@ class peekable(Iterator, tx.Generic[T]):
             raise StopIteration
         return item
 
-    def iter(
-        self, preproc: bool = True, valid: bool = True
-    ) -> tx.Iterator[T]:
+    def iter(self, preproc: bool = True, valid: bool = True) -> tx.Iterator[T]:
         while True:
             try:
                 yield self.next(preproc=preproc, valid=valid)

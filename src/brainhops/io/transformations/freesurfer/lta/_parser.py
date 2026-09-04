@@ -632,9 +632,7 @@ def _is_optional(type_: tx.Any) -> tx.Tuple[bool, tx.Any]:
     """
     if tx.get_origin(type_) is tx.Optional:
         return True, tx.get_args(type_)[0]
-    if tx.get_origin(type_) is tx.Union and type(None) in tx.get_args(
-        type_
-    ):
+    if tx.get_origin(type_) is tx.Union and type(None) in tx.get_args(type_):
         args = [arg for arg in tx.get_args(type_) if arg is not type(None)]
         if len(args) == 1:
             return True, args[0]

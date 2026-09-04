@@ -11,4 +11,5 @@ else:
         def __str__(self) -> str:
             return str(self.value)
 
+
 from enum import Enum, IntEnum

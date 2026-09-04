@@ -106,9 +106,7 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-    def _check_same_ndim(
-        self, expected_ndim: tx.Optional[int] = None
-    ) -> None:
+    def _check_same_ndim(self, expected_ndim: tx.Optional[int] = None) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(
@@ -394,9 +392,7 @@ class ITKSimilarity2DStruct(ITKStruct):
     and scaling.
     """
 
-    type: tx.Literal[_ITKT.Similarity2DTransform] = (
-        _ITKT.Similarity2DTransform
-    )
+    type: tx.Literal[_ITKT.Similarity2DTransform] = _ITKT.Similarity2DTransform
 
     ndim_input: tx.Literal[2] = 2
     ndim_output: tx.Literal[2] = 2
@@ -440,9 +436,7 @@ class ITKSimilarity3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: tx.Literal[_ITKT.Similarity3DTransform] = (
-        _ITKT.Similarity3DTransform
-    )
+    type: tx.Literal[_ITKT.Similarity3DTransform] = _ITKT.Similarity3DTransform
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
