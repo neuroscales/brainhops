@@ -1,4 +1,5 @@
-from brainhops.datamodel import systems as _systems, transformations as _xforms
+from brainhops.datamodel import systems as _systems
+from brainhops.datamodel import transformations as _xforms
 
 
 class RASCoordinatesField(_xforms.CoordinatesField):

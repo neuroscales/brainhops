@@ -4,18 +4,13 @@ __all__ = ["DataModelBase"]
 from collections.abc import Mapping
 
 # externals
-import typing_extensions as _tx
-
-# internals
-from brainhops._ext.struct import Struct, HIDE_IF_NONE
-from brainhops._ext.struct.converters import (
-    register as register_converter,
-    ObjectConverter,
-)
+import typing_extensions as tx
+from bagof.converters import Converter, register_converter
+from bagof.magic import HIDE_IF_NONE, Magic
 
 
 class DataModelBase(
-    Struct,
+    Magic,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
@@ -42,12 +37,14 @@ class DataModelBase(
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_instance(cls, other: "DataModelBase", *args, **kwargs) -> "DataModelBase":
+    def from_instance(
+        cls, other: "DataModelBase", *args, **kwargs
+    ) -> "DataModelBase":
         """
         Create an instance of the class from an instance of a similar
         class.
 
-        Only attibutes of the other instance that match keyword-like
+        Only attributes of the other instance that match keyword-like
         fields of this class will be used.
 
         Additional positional and/or keyword arguments can be provided,
@@ -59,7 +56,7 @@ class DataModelBase(
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_other(cls, other: _tx.Any, *args, **kwargs) -> "DataModelBase":
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> "DataModelBase":
         """
         Create an instance of the class from any object that can be
         interpreted as a dictionary, or an instance of a similar class,
@@ -76,11 +73,10 @@ class DataModelBase(
 
 
 @register_converter(DataModelBase)
-class DataModelConverter(ObjectConverter[DataModelBase]):
-
+class DataModelConverter(Converter[DataModelBase, tx.Any]):
     _DEFAULT = DataModelBase
 
-    def _convert(self, value: _tx.Any) -> DataModelBase:
+    def _convert(self, value: tx.Any) -> DataModelBase:
         if not isinstance(value, self.type):
             return self.type.from_other(value)
         return value

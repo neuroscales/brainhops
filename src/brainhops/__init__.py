@@ -3,5 +3,9 @@ __all__ = [
     "io",
 ]
 
-from . import datamodel
-from . import io
+from . import datamodel, io
+
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "0.0.0+unknown"

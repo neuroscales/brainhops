@@ -7,7 +7,7 @@ kept here.
 
 * `struct`: a library that provides similar tools as `dataclasses.@dataclass`,
   `attrs.@define`, or `pydantic.BaseModel`; with additional features.
-  It is closer to pydantic in that it's default behaviour relies on inheritence
+  It is closer to pydantic in that it's default behaviour relies on inheritance
   rater than decorators (although a decorator is also available). However,
   its implementation relies heavily on ports from `dataclasses`.
   The main advantage for us is that it is ours so we have more flexibility
@@ -15,7 +15,7 @@ kept here.
   we can ensure backward compatibility to python versions of our choice.
 
 * `invfield`: a compact implementation of John Ashburner's displacement 
-  field inversion. It is an independant implementation based on his paper,
+  field inversion. It is an independent implementation based on his paper,
   not a port of the SPM implementation.
 
 * `npfileobj`: a class that implements "lazy" array-like semantics for 

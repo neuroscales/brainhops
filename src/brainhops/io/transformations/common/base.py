@@ -2,37 +2,36 @@
 from os import PathLike
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # internals
 from brainhops.datamodel import transformations as _xforms
 
 # optionals
-if _tx.TYPE_CHECKING:
+if tx.TYPE_CHECKING:
     import nibabel as nb
 else:
     try:
         import nibabel as nb
     except ImportError:
-        nb = None
+
+        class nb:
+            Nifti1Header = None
+            Nifti1Image = None
+
 
 # typing
-_NiftiLike = _tx.Union[
-    nb.Nifti1Header,
-    nb.Nifti1Image,
-    str,
-    PathLike,
-    _tx.BinaryIO
+_NiftiLike = tx.Union[
+    nb.Nifti1Header, nb.Nifti1Image, str, PathLike, tx.BinaryIO
 ]
 
 
 class NiftiBasedTransformation(_xforms.Transformation):
-
-    header: _tx.Optional[nb.Nifti1Header] = None
-    image: _tx.Optional[nb.Nifti1Image] = None
+    header: tx.Optional[nb.Nifti1Header] = None
+    image: tx.Optional[nb.Nifti1Image] = None
 
     @property
-    def header(self) -> _tx.Optional[nb.Nifti1Header]:
+    def header(self) -> tx.Optional[nb.Nifti1Header]:  # noqa: F811
         """The NIfTI header from which the transformation was derived."""
         if getattr(self, "_header", None) is not None:
             return self._header
@@ -45,7 +44,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
         self._header = value
 
     @property
-    def image(self) -> _tx.Optional[nb.Nifti1Image]:
+    def image(self) -> tx.Optional[nb.Nifti1Image]:  # noqa: F811
         """The NIfTI image from which the transformation was derived."""
         if getattr(self, "_image", None) is not None:
             return self._image
@@ -56,22 +55,24 @@ class NiftiBasedTransformation(_xforms.Transformation):
         self._image = value
 
     @classmethod
-    def from_(cls, other: _NiftiLike) -> _tx.Self:
+    def from_(cls, other: _NiftiLike) -> tx.Self:
         """Create a NiftiVoxelToRAS transformation from a NIfTI image."""
         return cls.from_nifti(other)
 
     @classmethod
-    def from_file(cls, fileobj: _tx.Union[str, PathLike]) -> _tx.Self:
+    def from_file(cls, fileobj: tx.Union[str, PathLike]) -> tx.Self:
         """Create a NiftiVoxelToRAS transformation from a NIfTI file."""
         return cls.from_nifti(nb.load(fileobj))
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> _tx.Self:
-        """Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes."""
+    def from_bytes(cls, data: bytes) -> tx.Self:
+        """
+        Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes.
+        """
         return cls.from_nifti(nb.Nifti1Image.from_bytes(data))
 
     @classmethod
-    def from_nifti(cls, nifti: _NiftiLike) -> _tx.Self:
+    def from_nifti(cls, nifti: _NiftiLike) -> tx.Self:
         """Create a NiftiVoxelToRAS transformation from a NIfTI image."""
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti)

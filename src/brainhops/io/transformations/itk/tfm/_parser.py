@@ -3,17 +3,19 @@ import re
 from warnings import warn
 
 # dependencies
-import typing_extensions as _tx
+import numpy as np
+import typing_extensions as tx
 
 # externals
-from brainhops._ext.struct import Struct, HIDE_IF_NONE, Factory
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
 
 # io
 from brainhops.io.base.parsers import TextFileParser
-from .._common import ITKStruct
+
+from .._common import ITKStruct, ITKTransformClass
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -30,12 +32,12 @@ _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 class TFMTransformParser(
     TextFileParser,
-    Struct,
+    Magic,
     convert=True,
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
-    transform_group: _tx.List[ITKStruct] = Factory(list)
+    transform_group: tx.List[ITKStruct] = Factory(list)
 
     # --- sniff --------------------------------------------------------
 
@@ -49,7 +51,7 @@ class TFMTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
@@ -57,7 +59,6 @@ class TFMTransformParser(
         obj = cls()
 
         while True:
-
             if not lines.peek():
                 break
 
@@ -65,7 +66,7 @@ class TFMTransformParser(
             line = lines.next()
             transform = _TRANSFORM_RE.match(line)
             if not transform:
-                warn(f"Unexpected line: {line}")
+                warn(f"Unexpected line: {line}", stacklevel=1)
                 break
 
             transform_type = transform.group("type")
@@ -80,21 +81,25 @@ class TFMTransformParser(
                 lines.next()  # consume the line
                 parameters = _read_vector(parameters.group("values"))
             else:
-                parameters =[]
+                parameters = []
 
             # Parse fixed parameters
             line = lines.peek()
             fixed_parameters = _FIXEDPARAMETERS_RE.match(line)
             if fixed_parameters:
                 lines.next()  # consume the line
-                fixed_parameters = _read_vector(fixed_parameters.group("values"))
+                fixed_parameters = _read_vector(
+                    fixed_parameters.group("values")
+                )
             else:
-                fixed_parameters =[]
+                fixed_parameters = []
 
             if transform_type == "CompositeTransform":
                 # skip composite transforms, they just point to the
                 # following transforms.
                 continue
+
+            transform_type = ITKTransformClass(transform_type)
 
             obj.transform_group.append(
                 ITKStruct(
@@ -102,8 +107,8 @@ class TFMTransformParser(
                     precision=precision,
                     ndim_input=input_dim,
                     ndim_output=output_dim,
-                    parameters=parameters,
-                    fixed_parameters=fixed_parameters,
+                    parameters=np.array(parameters),
+                    fixed_parameters=np.array(fixed_parameters),
                 )
             )
 
@@ -115,7 +120,7 @@ class TFMTransformParser(
 # ---------------------------------------------------------------------
 
 
-def _read_vector(text: _tx.Optional[str]) -> _tx.List[float]:
+def _read_vector(text: tx.Optional[str]) -> tx.List[float]:
     if not text:
         return []
     return list(map(float, text.split()))

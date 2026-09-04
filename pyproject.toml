@@ -4,7 +4,12 @@ authors = [{name = "Balbastre, Yael", email = "y.balbastre@ucl.ac.uk"}]
 description = "Scalable spatial transforms"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["typing_extensions", "numpy", "scipy"]
+dependencies = [
+    "typing_extensions",
+    "numpy",
+    "scipy",
+    "bagof-magic >= 0.1"
+]
 dynamic = ["version"]
 
 [project.optional-dependencies]
@@ -23,8 +28,10 @@ io = ["brainhops[itk]", "brainhops[spm]", "brainhops[nibabel]"]
 # test
 test = [
     "pytest",
+    "pytest-cov",
     "h5py",
-    "simpleitk",
+    "nibabel",
+    "dask",
 ]
 
 # doc
@@ -71,3 +78,13 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["ANN", "B", "E", "F", "I", "UP", "W"]
+ignore = [
+    "ANN002",   # *args
+    "ANN003",   # **kwargs
+    "ANN401",   # _tx.Any
+    "UP006",    # list[...] annotations need 3.9 at runtime
+    "UP007",    # X | Y unions need 3.10
+    "UP035",    # deprecated typing import (typing_extensions is intentional)
+    "UP045",    # X | None optionals need 3.10
+    "E741",     # Allow for the variable I | Ambiguous variable name
+]

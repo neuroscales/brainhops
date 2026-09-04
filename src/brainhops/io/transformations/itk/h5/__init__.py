@@ -3,7 +3,7 @@ ITK binary transformations are saved in H5 format and support a variety
 of (chained) transformations.
 
 They support the same transformation types as the text-based TFM format,
-altough TFM files are rarely used to store displacement fields, which are
+although TFM files are rarely used to store displacement fields, which are
 usually stored in H5 files.
 
 The supported displacement fields have the following encoding:
@@ -89,7 +89,8 @@ following specific objects:
     * Data Type: String (Variable length or fixed character array).
     * Specification: Holds the exact C++ Run-Time Type Information (RTTI)
       name of the ITK class.
-    * Example Value: "AffineTransform_double_3_3" or "BSplineTransform_double_3_3".
+    * Example Value: "AffineTransform_double_3_3" or
+      "BSplineTransform_double_3_3".
 
 2. `TransformParameters`
 
@@ -112,12 +113,8 @@ following specific objects:
       the legacy misspelled string `TranformFixedParameters` if the
       properly spelled version cannot be indexed.
 """
-__all__ = [
-    "H5Transform",
-    "H5Header",
-    "H5TransformParser",
-    "DelayedH5Array"
-]
 
+__all__ = ["H5Transform", "H5Header", "H5TransformParser", "DelayedH5Array"]
+
+from ._parser import DelayedH5Array, H5Header, H5TransformParser
 from ._xform import H5Transform
-from ._parser import H5Header, H5TransformParser, DelayedH5Array
