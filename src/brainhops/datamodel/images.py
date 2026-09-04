@@ -29,8 +29,8 @@ GeometryLike = _tx.Optional[
 
 class Image(DataModelBase):
     data: _tx.Optional[da.Array] = None
-    transformations: _tx.Optional[_tx.List[Transformation]] = None
-    transformation: _tx.Optional[Transformation] = None
+    _transformations: _tx.Optional[_tx.List[Transformation]] = None
+    _transformation: _tx.Optional[Transformation] = None
 
     @property
     def transformation(self) -> Transformation:  # noqa: F811
