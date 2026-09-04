@@ -194,7 +194,8 @@ class MultiImage(Image):
     def data(self, value: da.Array) -> None:
         warn(
             "setting data for MultiImages is not recommended as it only "
-            "effects the first layer", stacklevel=1
+            "effects the first layer",
+            stacklevel=1,
         )
         if self.images is not None and len(self.images) > 0:
             self.images[0].data = value
@@ -207,7 +208,8 @@ class MultiImage(Image):
     def transformations(self, value: _tx.List[Transformation]) -> None:
         warn(
             "setting transformations for MultiImages is not recommended as it "
-            "only effects the first layer", stacklevel=1
+            "only effects the first layer",
+            stacklevel=1,
         )
         if self.images is not None and len(self.images) > 0:
             self.images[0].transformations = value
@@ -220,7 +222,8 @@ class MultiImage(Image):
     def transformation(self, value: Transformation) -> None:
         warn(
             "setting transformation for MultiImages is not recommended as it "
-            "only effects the first layer", stacklevel=1
+            "only effects the first layer",
+            stacklevel=1,
         )
         if self.images is not None and len(self.images) > 0:
             self.images[0].transformation = value
