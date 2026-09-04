@@ -281,7 +281,7 @@ class TIRLShearStruct(TIRLLinearStruct):
         shape = kwargs.get("shape")
         parameters = np.asarray(parameters, dtype="f8")
         mat = np.eye(*shape, dtype=parameters.dtype)
-        indices = kwargs.get("metaparameters", {}).get("indicies")
+        indices = kwargs.get("metaparameters", {}).get("indices")
         mat[indices] = parameters
         return mat
 
