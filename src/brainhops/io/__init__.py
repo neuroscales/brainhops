@@ -48,6 +48,8 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 
 ```
 """
+__all__ = ["images", "transformations", "vectors"]
+
 
 import os
 
@@ -55,7 +57,7 @@ import typing_extensions as _tx
 
 from brainhops.datamodel.base import DataModelBase
 
-from . import images, transformations
+from . import images, transformations, vectors
 
 entries = images.image_entries + transformations.transformation_entries
 

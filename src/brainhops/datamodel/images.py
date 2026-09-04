@@ -1,5 +1,5 @@
-# externals
-import typing_extensions as _tx
+# dependencies
+import typing_extensions as tx
 
 # internals
 from .base import DataModelBase
@@ -10,4 +10,4 @@ from .transformations import Transformation
 class Image(DataModelBase):
     data: object
     coordinateSystem: CoordinateSystem
-    coordinateTransforms: _tx.List[Transformation] = ()
+    coordinateTransforms: tx.List[Transformation] = ()
