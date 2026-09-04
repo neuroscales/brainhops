@@ -1,4 +1,4 @@
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
@@ -13,11 +13,13 @@ class TIRLTransform(TIRLParser, _xforms.Sequence):
     """
 
     @property
-    def transformations(self) -> _tx.Tuple[_xforms.Transformation, ...]:
-        return self.loaded_object.to_transform().transformations
+    def transformations(self) -> tx.List[_xforms.Transformation]:
+        if getattr(self, "_transformation", None) is None:
+            self._tranformation = (
+                self.loaded_object.to_transform().transformations
+            )
+        return self._tranformation
 
     @transformations.setter
-    def transformations(
-        self, value: _tx.Tuple[_xforms.Transformation, ...]
-    ) -> None:
-        NotImplementedError("cannot set transformations from loaded file")
+    def transformations(self, value: tx.List[_xforms.Transformation]) -> None:
+        self._tranformation = value

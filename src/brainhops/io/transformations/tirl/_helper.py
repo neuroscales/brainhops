@@ -12,7 +12,7 @@ from warnings import warn
 # dependencies
 import numpy as np
 import numpy.lib.format as nplib
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # internals
 from brainhops._core.backends import get_array_backend
@@ -32,7 +32,7 @@ BUFSIZE = 100 * 1024**2  # 100 MB
 UNIQUE_INDEX = count(0, 1)
 VERSION = [3, 7]
 
-_IO = _tx.IO[bytes]
+_IO = tx.IO[bytes]
 
 
 # ----------------------------------------------------------------------
@@ -40,7 +40,9 @@ _IO = _tx.IO[bytes]
 # ----------------------------------------------------------------------
 
 
-def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
+def bytes2int(
+    data: bytes, int_type: ctype
+) -> tx.Union[int, tx.Tuple[int, ...]]:
     """
     Converts a byte buffer into one or more integers.
 
@@ -59,7 +61,7 @@ def bytes2int(data: bytes, int_type: ctype) -> _tx.Union[int, tuple[int, ...]]:
     return result[0] if len(result) == 1 else tuple(result)
 
 
-def istagged(item: _tx.Any, tag: str) -> bool:
+def istagged(item: tx.Any, tag: str) -> bool:
     """
     Returns True if *item* is an XML-style tagged string,
     e.g. ``<tag>value</tag>``.
@@ -69,7 +71,7 @@ def istagged(item: _tx.Any, tag: str) -> bool:
     return False
 
 
-def getval(item: _tx.Any, tag: str) -> _tx.Any:
+def getval(item: tx.Any, tag: str) -> tx.Any:
     """
     Strips the XML-style tag from a tagged string and returns the inner value.
     """
@@ -111,7 +113,7 @@ def dictcmp(a: dict, b: dict) -> bool:
     return all(results)
 
 
-def lstcmp(a: _tx.Union[list, tuple], b: _tx.Union[list, tuple]) -> bool:
+def lstcmp(a: tx.Union[list, tuple], b: tx.Union[list, tuple]) -> bool:
     """
     Recursively compares two lists or tuples whose elements may include
     ndarrays.
@@ -270,22 +272,22 @@ def load_replacements(f: _IO) -> dict:
 
 
 def decode(
-    encoded_dump: _tx.Union[dict, list, tuple, _tx.Any], objects: dict
-) -> _tx.Any:
+    encoded_dump: tx.Union[dict, list, tuple, tx.Any], objects: dict
+) -> tx.Any:
     """
     Recursively restores a TIRL object dump into a Python data structure.
 
     Handles four special cases found in serialised dumps:
     - ``<complex>...</complex>`` tagged strings → Python complex numbers
-    - ``<class>...</class>`` tagged strings     → class objects (via pydoc.locate)
-    - ``<obj>...</obj>`` tagged strings         → back-references into *objects*
+    - ``<class>...</class>`` tagged strings  → class objects (via pydoc.locate)
+    - ``<obj>...</obj>`` tagged strings      → back-references into *objects*
     - Dicts with both ``"type"`` and ``"id"``  → registered in *objects* for
       later back-references, with collision detection via a unique index
     """
     assert isinstance(objects, dict)
 
     if isinstance(encoded_dump, dict):
-        restored: _tx.Any = {}
+        restored: tx.Any = {}
         iterator = tuple(
             (k, encoded_dump[k]) for k in sorted(encoded_dump.keys())
         )
@@ -347,7 +349,7 @@ def decode(
     return restored
 
 
-def hload(node: _tx.Any, objects: _tx.Optional[dict] = None) -> _tx.Any:
+def hload(node: tx.Any, objects: tx.Optional[dict] = None) -> tx.Any:
     """
     Recursively instantiates TIRLStruct objects from a decoded object dump.
 

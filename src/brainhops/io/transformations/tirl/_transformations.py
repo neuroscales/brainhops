@@ -2,18 +2,19 @@
 # of code found on the TIRL GitHub page. All credit goes to the creators.
 
 # stdlib
-from enum import StrEnum
 from numbers import Number
 
 # dependencies
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
+
+from brainhops._core.enum import StrEnum
 
 # externals
 from brainhops._core.typing import ArrayProtocol
-from brainhops._ext.struct import Struct
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.base import DataModelBase
 
 
 # TODO: From my googling it seems the TIRL files do not specify their
@@ -58,7 +59,7 @@ class TIRLEnumClass(StrEnum):
 _TIRLT = TIRLEnumClass
 
 
-def _register_type(*names: str) -> _tx.Callable:
+def _register_type(*names: str) -> tx.Callable:
     def decorator(cls: type) -> type:
         for name in names:
             TIRLStruct._REGISTRY[name] = cls
@@ -72,8 +73,8 @@ def _register_type(*names: str) -> _tx.Callable:
 # ----------------------------------------------------------------------
 
 
-class TIRLStruct(Struct, kw_only=True, convert=True):
-    _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
+class TIRLStruct(DataModelBase, kw_only=True, convert=True):
+    _REGISTRY: tx.ClassVar[tx.Mapping[str, type]] = {}
 
     def __new__(cls, **kwargs: dict) -> "TIRLStruct":
         if cls is not TIRLStruct:
@@ -83,8 +84,8 @@ class TIRLStruct(Struct, kw_only=True, convert=True):
         cls = cls._REGISTRY.get(kwargs.get("type"), None)
         return super().__new__(cls)
 
-    type: _tx.Optional[TIRLEnumClass] = None
-    id: _tx.Optional[_tx.Any] = None
+    type: tx.Optional[TIRLEnumClass] = None
+    id: tx.Optional[tx.Any] = None
 
 
 # ----------------------------------------------------------------------
@@ -94,20 +95,20 @@ class TIRLStruct(Struct, kw_only=True, convert=True):
 
 @_register_type("ParameterVector")
 class TIRLParametersStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.Parameters] = _TIRLT.Parameters
+    type: tx.Literal[_TIRLT.Parameters] = _TIRLT.Parameters
 
-    parameters: _tx.Optional[_tx.Union[ArrayProtocol, list, tuple]] = None
-    lower_bounds: _tx.Optional[_tx.Union[Number, ArrayProtocol, list]] = None
-    upper_bounds: _tx.Optional[
-        _tx.Union[
+    parameters: tx.Optional[tx.Union[ArrayProtocol, list, tuple]] = None
+    lower_bounds: tx.Optional[tx.Union[Number, ArrayProtocol, list]] = None
+    upper_bounds: tx.Optional[
+        tx.Union[
             Number,
             ArrayProtocol,
             list,
         ]
     ] = None
-    locked: _tx.Optional[_tx.Union[set, ArrayProtocol]] = None
-    name: _tx.Optional[str] = None
-    signature: _tx.Optional[_tx.Any] = None
+    locked: tx.Optional[tx.Union[set, ArrayProtocol]] = None
+    name: tx.Optional[str] = None
+    signature: tx.Optional[tx.Any] = None
 
     def __post_init__(self) -> None:
         if len(self.parameters) == 0:
@@ -140,12 +141,10 @@ class TIRLParametersStruct(TIRLStruct):
 
 @_register_type("TxTranslation")
 class TIRLTranslationStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.TranslationTransform] = (
-        _TIRLT.TranslationTransform
-    )
+    type: tx.Literal[_TIRLT.TranslationTransform] = _TIRLT.TranslationTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Translation:
         ndim = self.parameters.parameters.shape[0]
@@ -158,10 +157,10 @@ class TIRLTranslationStruct(TIRLStruct):
 
 @_register_type("TxLinear")
 class TIRLLinearStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.LinearTransform] = _TIRLT.LinearTransform
+    type: tx.Literal[_TIRLT.LinearTransform] = _TIRLT.LinearTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def params2matrix(
@@ -234,10 +233,10 @@ class TIRLLinearStruct(TIRLStruct):
 
 @_register_type("TxScale")
 class TIRLScaleStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.ScaleTransform] = _TIRLT.ScaleTransform
+    type: tx.Literal[_TIRLT.ScaleTransform] = _TIRLT.ScaleTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Scaling:
         param, shape = self._read_parameters_and_shape(
@@ -252,10 +251,10 @@ class TIRLScaleStruct(TIRLLinearStruct):
 
 @_register_type("TxIsoScale")
 class TIRLIsoScaleStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.ISOScaleTransform] = _TIRLT.ISOScaleTransform
+    type: tx.Literal[_TIRLT.ISOScaleTransform] = _TIRLT.ISOScaleTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Scaling:
         param, shape = self._read_parameters_and_shape(
@@ -270,10 +269,10 @@ class TIRLIsoScaleStruct(TIRLLinearStruct):
 
 @_register_type("TxShear")
 class TIRLShearStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.ShearTransform] = _TIRLT.ShearTransform
+    type: tx.Literal[_TIRLT.ShearTransform] = _TIRLT.ShearTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def params2matrix(
@@ -289,18 +288,18 @@ class TIRLShearStruct(TIRLLinearStruct):
 
 @_register_type("TxRotation")
 class TIRLRotationStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.RotationTransform] = _TIRLT.RotationTransform
+    type: tx.Literal[_TIRLT.RotationTransform] = _TIRLT.RotationTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
 
 @_register_type("TxRotation2D")
 class TIRLRotation2DStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.Rotation2DTransform] = _TIRLT.Rotation2DTransform
+    type: tx.Literal[_TIRLT.Rotation2DTransform] = _TIRLT.Rotation2DTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def params2matrix(
@@ -335,10 +334,10 @@ class TIRLRotation2DStruct(TIRLLinearStruct):
 
 @_register_type("TxAxisAngle")
 class TIRLAxisAngleStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.AxisAngleTransform] = _TIRLT.AxisAngleTransform
+    type: tx.Literal[_TIRLT.AxisAngleTransform] = _TIRLT.AxisAngleTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def params2matrix(
@@ -389,12 +388,10 @@ class TIRLAxisAngleStruct(TIRLLinearStruct):
 
 @_register_type("TxEulerAngles")
 class TIRLEulerAnglesStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.EulerAnglesTransform] = (
-        _TIRLT.EulerAnglesTransform
-    )
+    type: tx.Literal[_TIRLT.EulerAnglesTransform] = _TIRLT.EulerAnglesTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def _Rx(phi: float) -> ArrayProtocol:
@@ -465,10 +462,10 @@ class TIRLEulerAnglesStruct(TIRLLinearStruct):
 
 @_register_type("TxQuaternion")
 class TIRLQuaternionStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.QuaternionTransform] = _TIRLT.QuaternionTransform
+    type: tx.Literal[_TIRLT.QuaternionTransform] = _TIRLT.QuaternionTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     @staticmethod
     def params2matrix(
@@ -512,10 +509,10 @@ class TIRLQuaternionStruct(TIRLLinearStruct):
 
 @_register_type("TxAffine")
 class TIRLAffineStruct(TIRLLinearStruct):
-    type: _tx.Literal[_TIRLT.AffineTransform] = _TIRLT.AffineTransform
+    type: tx.Literal[_TIRLT.AffineTransform] = _TIRLT.AffineTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Affine:
         param, shape = self._read_parameters_and_shape(
@@ -534,12 +531,12 @@ class TIRLAffineStruct(TIRLLinearStruct):
 
 @_register_type("TxIdentity")
 class TIRLIdentityStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.IdentityTransform] = _TIRLT.IdentityTransform
+    type: tx.Literal[_TIRLT.IdentityTransform] = _TIRLT.IdentityTransform
 
-    parameters: _tx.Optional[
-        _tx.Union[TIRLParametersStruct, ArrayProtocol, list, tuple]
+    parameters: tx.Optional[
+        tx.Union[TIRLParametersStruct, ArrayProtocol, list, tuple]
     ] = None
-    metaparameters: _tx.Optional[dict] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Identity:
         return _xforms.Identity(input=None, output=None)
@@ -552,9 +549,9 @@ class TIRLIdentityStruct(TIRLStruct):
 
 @_register_type("Chain")
 class TIRLChainStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.Chain] = _TIRLT.Chain
+    type: tx.Literal[_TIRLT.Chain] = _TIRLT.Chain
 
-    transformations: _tx.Optional[_tx.List[TIRLStruct]] = None
+    transformations: tx.Optional[tx.List[TIRLStruct]] = None
 
     def to_transform(self) -> _xforms.Sequence:
         transform_list = [t.to_transform() for t in self.transformations]
@@ -574,10 +571,10 @@ class TIRLDirectStruct(TIRLStruct):
     are not on a regular grid.
     """
 
-    type: _tx.Literal[_TIRLT.DirectTransform] = _TIRLT.DirectTransform
+    type: tx.Literal[_TIRLT.DirectTransform] = _TIRLT.DirectTransform
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.CoordinatesField:
         ndim = self.metaparameters.get("ndim")
@@ -591,16 +588,16 @@ class TIRLDirectStruct(TIRLStruct):
 
 @_register_type("Domain")
 class TIRLDomainStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.Domain] = _TIRLT.Domain
+    type: tx.Literal[_TIRLT.Domain] = _TIRLT.Domain
 
-    name: _tx.Optional[_tx.Any] = None
-    shape: _tx.Optional[_tx.Any] = None
-    coordinates: _tx.Optional[_tx.Any] = None
-    dtype: _tx.Optional[_tx.Any] = None
-    internal: _tx.Optional[TIRLChainStruct] = None
-    external: _tx.Optional[TIRLChainStruct] = None
-    memlimit: _tx.Optional[_tx.Any] = None
-    storage: _tx.Optional[_tx.Any] = None
+    name: tx.Optional[tx.Any] = None
+    shape: tx.Optional[tx.Any] = None
+    coordinates: tx.Optional[tx.Any] = None
+    dtype: tx.Optional[tx.Any] = None
+    internal: tx.Optional[TIRLChainStruct] = None
+    external: tx.Optional[TIRLChainStruct] = None
+    memlimit: tx.Optional[tx.Any] = None
+    storage: tx.Optional[tx.Any] = None
 
     def make_identity_grid(
         self, shape: tuple, dtype: np.dtype = np.int32
@@ -664,15 +661,15 @@ class TIRLDomainStruct(TIRLStruct):
 
 @_register_type("TxDisplacementField")
 class TIRLDisplacementFieldStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.DisplacementTransform] = (
+    type: tx.Literal[_TIRLT.DisplacementTransform] = (
         _TIRLT.DisplacementTransform
     )
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
-    domain: _tx.Optional[TIRLDomainStruct] = None
-    vectorder: _tx.Optional[_tx.Any] = None
-    interpolator: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
+    domain: tx.Optional[TIRLDomainStruct] = None
+    vectorder: tx.Optional[tx.Any] = None
+    interpolator: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.DisplacementField:
         if self.domain is None:
@@ -729,15 +726,15 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
     using the domain shape directly.
     """
 
-    type: _tx.Literal[_TIRLT.RbfDisplacementTransform] = (
+    type: tx.Literal[_TIRLT.RbfDisplacementTransform] = (
         _TIRLT.RbfDisplacementTransform
     )
 
-    parameters: _tx.Optional[TIRLParametersStruct] = None
-    metaparameters: _tx.Optional[dict] = None
-    domain: _tx.Optional[TIRLDomainStruct] = None
-    vectorder: _tx.Optional[_tx.Any] = None
-    interpolator: _tx.Optional[dict] = None
+    parameters: tx.Optional[TIRLParametersStruct] = None
+    metaparameters: tx.Optional[dict] = None
+    domain: tx.Optional[TIRLDomainStruct] = None
+    vectorder: tx.Optional[tx.Any] = None
+    interpolator: tx.Optional[dict] = None
 
     def to_transform(self) -> _xforms.Sequence:
         if self.domain is None:
@@ -796,12 +793,12 @@ class TIRLRbfDisplacementFieldStruct(TIRLStruct):
 
 @_register_type("TImage")
 class TIRLImageStruct(TIRLStruct):
-    type: _tx.Literal[_TIRLT.Image] = _TIRLT.Image
+    type: tx.Literal[_TIRLT.Image] = _TIRLT.Image
 
-    resmgr: _tx.Optional[dict] = None
-    header: _tx.Optional[_tx.Any] = None
-    maskmgr: _tx.Optional[_tx.Any] = None
-    name: _tx.Optional[str] = None
+    resmgr: tx.Optional[dict] = None
+    header: tx.Optional[tx.Any] = None
+    maskmgr: tx.Optional[tx.Any] = None
+    name: tx.Optional[str] = None
 
     def to_transform(self) -> _xforms.Sequence:
         # Use the native (highest) resolution layer only

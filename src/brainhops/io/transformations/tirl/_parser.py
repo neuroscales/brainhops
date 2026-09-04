@@ -1,17 +1,16 @@
-# A good portion of the code found in this file are lightly modified version of the code found on the tirl github page. All credit goes to the creators of that page
+# A good portion of the code found in this file are lightly modified version
+# of the code found on the tirl github page. All credit goes to the creators
+# of that page
 
 # stdlib
 import json
 from os import PathLike
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 from brainhops._core.path import Path
-
-# core
-# externals
-from brainhops._ext.struct import Struct
+from brainhops.datamodel.base import DataModelBase
 from brainhops.io.transformations.tirl._helper import (
     MAGIC,
     UINT8,
@@ -25,14 +24,14 @@ from brainhops.io.transformations.tirl._helper import (
 from brainhops.io.transformations.tirl._transformations import TIRLStruct
 
 # typing
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_FileOrContentLike = _tx.Union[_FileLike, bytes]
+_FileLike = tx.Union[tx.IO, PathLike, str]
+_FileOrContentLike = tx.Union[_FileLike, bytes]
 
 
-class TIRLParser(Struct):
+class TIRLParser(DataModelBase):
     _HAS_KEYS = True
 
-    loaded_object: _tx.Optional[TIRLStruct] = None
+    loaded_object: tx.Optional[TIRLStruct] = None
 
     # --- sniff --------------------------------------------------------
 
@@ -66,7 +65,7 @@ class TIRLParser(Struct):
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_(cls, other: _FileOrContentLike) -> _tx.Self:
+    def from_(cls, other: _FileOrContentLike) -> tx.Self:
         """
         Build an object from a file (path, file-like object or iterable
         of lines).
@@ -91,7 +90,7 @@ class TIRLParser(Struct):
         return cls.from_bytes(other)
 
     @classmethod
-    def from_file(cls, fileobj: _FileLike) -> _tx.Self:
+    def from_file(cls, fileobj: _FileLike) -> tx.Self:
         """
         Build an object from a file (path or file-like object).
 
@@ -112,7 +111,7 @@ class TIRLParser(Struct):
         return cls.from_bytes(fileobj)
 
     @classmethod
-    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> _tx.Self:
+    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> tx.Self:
         """
         Build an object from bytes in TIRL format.
 
