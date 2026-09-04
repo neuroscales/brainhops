@@ -138,7 +138,6 @@ class ITKStruct(Magic, kw_only=True, convert=True):
 
 
 def _register_type(*names: str) -> tx.Callable:
-
     def decorator(cls: type) -> type:
         for name in names:
             ITKStruct._REGISTRY[name] = cls
@@ -404,7 +403,6 @@ class ITKSimilarity2DStruct(ITKStruct):
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
-
         scale, angle, tx, ty = self.parameters
         c = self.fixed_parameters
 
@@ -629,7 +627,6 @@ class ITKDisplacementFieldStruct(ITKStruct):
     )
 
     def to_transform(self) -> _xforms.DisplacementField:
-
         # Get geometry of the B-spline grid
         # -> Assumig a voxel grid ordered [Nx, Ny, Nz]
         vox2lps, shape = _vox2lps(self.fixed_parameters)
@@ -675,7 +672,6 @@ class ITKBSplineStruct(ITKStruct):
     type: tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
 
     def to_transform(self) -> _xforms.DisplacementField:
-
         # Get geometry of the B-spline grid
         # -> Assumig a voxel grid ordered [Nx, Ny, Nz]
         vox2lps, shape = _vox2lps(self.fixed_parameters)

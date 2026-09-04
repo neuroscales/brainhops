@@ -325,7 +325,6 @@ def _(t: Transformation) -> Transformation:
 
 
 def _make_converter_chain(*types: tx.List[type]) -> None:
-
     T0, TN = types[0], types[-1]
 
     @_converter(T0, TN)
