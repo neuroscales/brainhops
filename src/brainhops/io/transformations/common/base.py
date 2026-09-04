@@ -77,5 +77,5 @@ class NiftiBasedTransformation(_xforms.Transformation):
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti)
         if isinstance(nifti, nb.Nifti1Image):
-            return cls(image=nifti)
+            return cls(image=nifti, header=nifti.header)
         return cls.from_nifti(nb.load(nifti))

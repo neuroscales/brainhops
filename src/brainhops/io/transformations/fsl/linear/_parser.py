@@ -3,7 +3,7 @@ from os import PathLike
 from pathlib import Path as LocalPath
 
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
 
 from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import TextFileParser
@@ -12,8 +12,8 @@ from brainhops.io.base.parsers import TextFileParser
 # Types
 # ---------------------------------------------------------------------
 
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_FileOrContentLike = _tx.Union[_FileLike, _tx.Iterable[str]]
+_FileLike = tx.Union[tx.IO, PathLike, str]
+_FileOrContentLike = tx.Union[_FileLike, tx.Iterable[str]]
 
 # ---------------------------------------------------------------------
 # Parser
@@ -41,7 +41,7 @@ class FslLinearTransformParser(TextFileParser):
     # Construction
     # ---------------------------------------------------------
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
@@ -70,7 +70,7 @@ class FslLinearTransformParser(TextFileParser):
     # Object
     # ---------------------------------------------------------
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.matrix = np.zeros((1, 1))
 
     # ---------------------------------------------------------
@@ -80,7 +80,7 @@ class FslLinearTransformParser(TextFileParser):
     def _fmt_float(self, x: float) -> str:
         return f"{x:.15g}"
 
-    def to_lines(self) -> _tx.Iterator[str]:
+    def to_lines(self) -> tx.Iterator[str]:
         """
         Convert the object to an iterable over lines of an TFM file.
 
@@ -106,7 +106,7 @@ class FslLinearTransformParser(TextFileParser):
         """
         return "\n".join(self.to_lines())
 
-    def to_file(self, fileobj: _tx.Union[_tx.IO, PathLike, str]) -> None:
+    def to_file(self, fileobj: tx.Union[tx.IO, PathLike, str]) -> None:
         """
         Write the object to a file (path or file-like object).
 

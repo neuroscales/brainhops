@@ -6,17 +6,20 @@ from brainhops.io.transformations.fsl.linear._parser import (
 )
 
 
-class FslLinearTransformBasedTransformation(_xforms.Affine, FslLinearTransformParser):
-    ...
+class FslLinearTransformBasedTransformation(
+    _xforms.Affine, FslLinearTransformParser
+): ...
 
 
-class FslLinearTransformVoxelToRAS(VoxelToRAS, FslLinearTransformBasedTransformation):
-
+class FslLinearTransformVoxelToRAS(
+    VoxelToRAS, FslLinearTransformBasedTransformation
+):
     def inverse(self) -> RASToVoxel:
         return super().inverse().to(RASToVoxel)
 
 
-class FslLinearTransformRASToVoxel(RASToVoxel, FslLinearTransformBasedTransformation):
-
+class FslLinearTransformRASToVoxel(
+    RASToVoxel, FslLinearTransformBasedTransformation
+):
     def inverse(self) -> VoxelToRAS:
         return super().inverse().to(VoxelToRAS)

@@ -1,7 +1,7 @@
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
-from brainhops._core.backends import da
+from brainhops._core.backends import get_backend
 
 # core
 from brainhops._core.typing import ArrayProtocol
@@ -47,15 +47,15 @@ class FSLDisplacementField(VoxelDisplacementField, NiftiBasedTransformation):
         return self.coeff
 
     @property
-    def field(self) -> _tx.Optional[ArrayProtocol]:
+    def field(self) -> tx.Optional[ArrayProtocol]:
         """The field of RAS coordinates."""
-        field = None
-        if self.image is not None:
-            field = self.image.dataobj
-            if da:
-                field = da.from_array(field, fancy=False, name=self.image)
-        return field
+        if getattr(self, "_field", None) is None:
+            if self.image is not None:
+                self._field = get_backend().from_array(self.image.dataobj)
+            else:
+                self._field = None
+        return self._field
 
     @field.setter
-    def field(self, value: _tx.Optional[ArrayProtocol]) -> None:
-        NotImplementedError("FSLDisplacementField's field can not be set")
+    def field(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._field = value
