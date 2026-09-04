@@ -1,17 +1,28 @@
+# dependencies
 # core
 import inspect
 
-from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+import typing_extensions as tx
+
 from brainhops._core.backends import get_array_backend
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 
 # locals
 from .transformations import (
+    Affine,
+    CoordinatesField,
+    DisplacementField,
+    Identity,
+    Linear,
+    LossyConversionError,
+    Permutation,
+    Scaling,
     Transformation,
-    Identity, Translation, Scaling, Permutation, Linear, Affine,
-    DisplacementField, CoordinatesField, LossyConversionError
+    Translation,
+    _converter,
+    _get_ndim,
+    _to,
 )
-from .transformations import _get_ndim, _converter, _to
-
 
 # ----------------------------------------------------------------------
 #   SAME TYPE
@@ -26,28 +37,28 @@ def _(t: Transformation, **kwargs) -> Transformation:
 @_converter
 def _(t: DisplacementField, **kwargs) -> DisplacementField:
     if "field" not in kwargs and t.field is not None:
-        if t.coeff and not kwargs.get('coeff', t.coeff):
+        if t.coeff and not kwargs.get("coeff", t.coeff):
             field = coeff2value_field(t.field, order=t.order, bound=t.bound)
-            kwargs['field'] = field
-        elif not t.coeff and kwargs.get('coeff', t.coeff):
-            order = kwargs.get('order', t.order)
-            bound = kwargs.get('bound', t.bound)
+            kwargs["field"] = field
+        elif not t.coeff and kwargs.get("coeff", t.coeff):
+            order = kwargs.get("order", t.order)
+            bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
-            kwargs['field'] = field
+            kwargs["field"] = field
     return DisplacementField(t, **kwargs)
 
 
 @_converter
 def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     if "field" not in kwargs and t.field is not None:
-        if t.coeff and not kwargs.get('coeff', t.coeff):
+        if t.coeff and not kwargs.get("coeff", t.coeff):
             field = coeff2value_field(t.field, order=t.order, bound=t.bound)
-            kwargs['field'] = field
-        if not t.coeff and kwargs.get('coeff', t.coeff):
-            order = kwargs.get('order', t.order)
-            bound = kwargs.get('bound', t.bound)
+            kwargs["field"] = field
+        if not t.coeff and kwargs.get("coeff", t.coeff):
+            order = kwargs.get("order", t.order)
+            bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
-            kwargs['field'] = field
+            kwargs["field"] = field
     # FIXME: this is too hacky
     valid_params = set(inspect.signature(CoordinatesField).parameters)
     params = {k: v for k, v in vars(t).items() if k in valid_params}
@@ -66,7 +77,7 @@ def _(t: Identity, **kwargs) -> Translation:
     return Translation(
         translation=[0.0] * ndim if ndim is not None else None,
         input=t.input,
-        output=t.output
+        output=t.output,
     )
 
 
@@ -76,7 +87,7 @@ def _(t: Identity, **kwargs) -> Scaling:
     return Scaling(
         scale=[1.0] * ndim if ndim is not None else None,
         input=t.input,
-        output=t.output
+        output=t.output,
     )
 
 
@@ -86,7 +97,7 @@ def _(t: Identity, **kwargs) -> Permutation:
     return Permutation(
         permutation=range(ndim) if ndim is not None else None,
         input=t.input,
-        output=t.output
+        output=t.output,
     )
 
 
@@ -95,11 +106,12 @@ def _(t: Identity, **kwargs) -> Linear:
     ndim = _get_ndim(t)
     return Linear(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim)]
-            for i in range(ndim)
-        ] if ndim is not None else None,
+            [1.0 if i == j else 0.0 for j in range(ndim)] for i in range(ndim)
+        ]
+        if ndim is not None
+        else None,
         input=t.input,
-        output=t.output
+        output=t.output,
     )
 
 
@@ -108,11 +120,13 @@ def _(t: Identity, **kwargs) -> Affine:
     ndim = _get_ndim(t)
     return Affine(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim+1)]
+            [1.0 if i == j else 0.0 for j in range(ndim + 1)]
             for i in range(ndim)
-        ] if ndim is not None else None,
+        ]
+        if ndim is not None
+        else None,
         input=t.input,
-        output=t.output
+        output=t.output,
     )
 
 
@@ -123,11 +137,11 @@ def _(t: Translation) -> Affine:
     ndim = max(_get_ndim(t, 0), len(t.translation))
     u = Affine(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim+1)]
+            [1.0 if i == j else 0.0 for j in range(ndim + 1)]
             for i in range(ndim)
         ],
         input=t.input,
-        output=t.output
+        output=t.output,
     )
     u.matrix[:, -1] = t.translation
     return u
@@ -140,11 +154,10 @@ def _(t: Scaling) -> Linear:
     ndim = max(_get_ndim(t, 0), len(t.scale))
     u = Linear(
         matrix=[
-            [1.0 if i == j else 0.0 for j in range(ndim)]
-            for i in range(ndim)
+            [1.0 if i == j else 0.0 for j in range(ndim)] for i in range(ndim)
         ],
         input=t.input,
-        output=t.output
+        output=t.output,
     )
     u.matrix[range(ndim), range(ndim)] = t.scale
     return u
@@ -161,7 +174,7 @@ def _(t: Permutation) -> Linear:
             for i in range(ndim)
         ],
         input=t.input,
-        output=t.output
+        output=t.output,
     )
     return u
 
@@ -173,11 +186,11 @@ def _(t: Linear) -> Affine:
     ndim = len(t.matrix)
     u = Affine(
         matrix=[
-            [t.matrix[i][j] if j < ndim else 0.0 for j in range(ndim+1)]
+            [t.matrix[i][j] if j < ndim else 0.0 for j in range(ndim + 1)]
             for i in range(ndim)
         ],
         input=t.input,
-        output=t.output
+        output=t.output,
     )
     return u
 
@@ -186,18 +199,12 @@ def _(t: Linear) -> Affine:
 def _(t: DisplacementField) -> CoordinatesField:
     if t.field is None:
         return CoordinatesField(
-            coordinates=None,
-            input=t.input,
-            output=t.output
+            coordinates=None, input=t.input, output=t.output
         )
     ba = get_array_backend(t.field)
-    g = ba.meshgrid(*(ba.arange(s) for s in t.field.shape[:-1]), indexing='ij')
+    g = ba.meshgrid(*(ba.arange(s) for s in t.field.shape[:-1]), indexing="ij")
     g = ba.stack(g, axis=-1)
-    return CoordinatesField(
-        field=t.field + g,
-        input=t.input,
-        output=t.output
-    )
+    return CoordinatesField(field=t.field + g, input=t.input, output=t.output)
 
 
 # ----------------------------------------------------------------------
@@ -208,10 +215,7 @@ def _(t: DisplacementField) -> CoordinatesField:
 @_converter
 def _(t: Translation) -> Identity:
     u = Identity(input=t.input, output=t.output)
-    if (
-        t.translation is not None and
-        any(x != 0.0 for x in t.translation)
-    ):
+    if t.translation is not None and any(x != 0.0 for x in t.translation):
         raise LossyConversionError(result=u)
     return u
 
@@ -219,10 +223,7 @@ def _(t: Translation) -> Identity:
 @_converter
 def _(t: Scaling) -> Identity:
     u = Identity(input=t.input, output=t.output)
-    if (
-        t.scale is not None and
-        any(s != 1.0 for s in t.scale)
-    ):
+    if t.scale is not None and any(s != 1.0 for s in t.scale):
         raise LossyConversionError(result=u)
     return u
 
@@ -230,9 +231,8 @@ def _(t: Scaling) -> Identity:
 @_converter
 def _(t: Permutation) -> Identity:
     u = Identity(input=t.input, output=t.output)
-    if (
-        t.permutation is not None and
-        any(i != p for i, p in enumerate(t.permutation))
+    if t.permutation is not None and any(
+        i != p for i, p in enumerate(t.permutation)
     ):
         raise LossyConversionError(result=u)
     return u
@@ -244,9 +244,8 @@ def _(t: Linear) -> Identity:
     if t.matrix is not None:
         for i in range(len(t.matrix)):
             for j in range(len(t.matrix[i])):
-                if (
-                    (i == j and t.matrix[i][j] != 1.0) or
-                    (i != j and t.matrix[i][j] != 0.0)
+                if (i == j and t.matrix[i][j] != 1.0) or (
+                    i != j and t.matrix[i][j] != 0.0
                 ):
                     raise LossyConversionError(result=u)
     return u
@@ -291,9 +290,8 @@ def _(t: Affine) -> Identity:
     if t.matrix is not None:
         for i in range(len(t.matrix)):
             for j in range(len(t.matrix[i])):
-                if (
-                    (i == j and t.matrix[i][j] != 1.0) or
-                    (i != j and t.matrix[i][j] != 0.0)
+                if (i == j and t.matrix[i][j] != 1.0) or (
+                    i != j and t.matrix[i][j] != 0.0
                 ):
                     raise LossyConversionError(result=u)
     return u
@@ -329,12 +327,12 @@ def _(t: Transformation) -> Transformation:
 # ----------------------------------------------------------------------
 
 
-def _make_converter_chain(*types):
+def _make_converter_chain(*types: tx.List[type]) -> None:
 
     T0, TN = types[0], types[-1]
 
     @_converter(T0, TN)
-    def _(t):
+    def _(t: Transformation) -> Transformation:
         for T1 in types[1:]:
             t = _to(t, T1)
         return t
