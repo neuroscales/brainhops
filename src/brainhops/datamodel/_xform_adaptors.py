@@ -2,23 +2,32 @@
 
 # internals
 from .systems import CoordinateSystem
-from .transformations import _adaptor, same_axis_type
-from .transformations import Sequence, Transformation, Identity, Permutation, Scaling
+from .transformations import (
+    Identity,
+    Permutation,
+    Scaling,
+    Sequence,
+    Transformation,
+    _adaptor,
+    same_axis_type,
+)
 
 
 @_adaptor
 def _(x1: Transformation, x2: Transformation) -> Transformation:
-
-    # if one of the two transformations has no axes than assume they are identity
+    # if one of the two transformations has no axes than assume they are
+    # identity
     # if that is the case no adaptor is needed. return Identity
     if x2.ndims.output == 0 or x1.ndims.input == 0:
         return Identity(input=x2.output, output=x1.input)
 
-    # The transformations that have been passed in should have the same dims assuming they are not identity
+    # The transformations that have been passed in should have the same dims
+    # assuming they are not identity
     if x2.ndims.output != x1.ndims.input:
         raise NotImplementedError()
 
-    # If the number of dims match but one or more transformation has unspecified axes assume that they already match
+    # If the number of dims match but one or more transformation has
+    # unspecified axes assume that they already match
     if x2.output is None or x1.input is None or x2.output == x1.input:
         return Identity(input=x2.output, output=x1.input)
 
@@ -52,7 +61,8 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
         if perm[i] != i:
             permNeeded = True
 
-    # If we do need a permutation create one and make an intermediate output axis
+    # If we do need a permutation create one and make an intermediate output
+    # axis
     intermediate_output = x2.output
     if permNeeded:
         inverse_perm = [0] * len(perm)
@@ -60,9 +70,13 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
             inverse_perm[j] = i
 
         intermediate_output = CoordinateSystem(
-            axes=[x2.output.axes[i] for i in inverse_perm])
-        transformations.append(Permutation(
-            permutation=perm, input=x2.output, output=intermediate_output))
+            axes=[x2.output.axes[i] for i in inverse_perm]
+        )
+        transformations.append(
+            Permutation(
+                permutation=perm, input=x2.output, output=intermediate_output
+            )
+        )
 
     # Check to see if the axes use different units
     scales = []
@@ -75,8 +89,10 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
         if inter.type != "spatial":
             scales.append(scale)
         else:
-            # because axes are already matched. If two axes don't share the same name assume they are facing opposite directions
-            # TODO: this is hacky I am open to suggestions on how to better detect opposite directions
+            # because axes are already matched. If two axes don't share the
+            # same name assume they are facing opposite directions
+            # TODO: this is hacky I am open to suggestions on how to better
+            # detect opposite directions
             scales.append((1 if inter.name == outer.name else -1) * scale)
 
     # Check to see if we need to make a scale transformation
@@ -87,7 +103,8 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
 
     if scalesNeeded:
         transformations.append(
-            Scaling(scale=scales, input=intermediate_output, output=x1.input))
+            Scaling(scale=scales, input=intermediate_output, output=x1.input)
+        )
 
     # If permutation and scaling were not needed return Identity
     if len(transformations) == 0:
@@ -98,4 +115,6 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
         return transformations[0]
 
     # If both permutation and scaling were needed return a sequence
-    return Sequence(transformations=transformations, input=x2.output, output=x1.input)
+    return Sequence(
+        transformations=transformations, input=x2.output, output=x1.input
+    )

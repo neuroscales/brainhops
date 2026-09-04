@@ -1,14 +1,14 @@
 # externals
-import typing_extensions as _tx
 import numpy as np
+import typing_extensions as tx
 
 # internals
 from ._enums import LTAType
 from ._struct import LTAStruct
 
 # type hints
-_3Ints = _tx.Tuple[int, int, int]
-_3Flips = _tx.Tuple[_tx.Literal[-1, 1], _tx.Literal[-1, 1], _tx.Literal[-1, 1]]
+_3Ints = tx.Tuple[int, int, int]
+_3Flips = tx.Tuple[tx.Literal[-1, 1], tx.Literal[-1, 1], tx.Literal[-1, 1]]
 
 
 def _get_vox2phys(vol_info: LTAStruct.VolumeInfo) -> np.ndarray:
@@ -46,7 +46,9 @@ def _get_ras2ras(lta: LTAStruct) -> np.ndarray:
         # RSA -> RAS = permute first two axes
         return matrix[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute RAS-to-RAS matrix without src and dst volume info')
+        raise ValueError(
+            "cannot compute RAS-to-RAS matrix without src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
@@ -63,7 +65,10 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
     if lta.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
         return matrix
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute phys-to-phys matrix without src and dst volume info')
+        raise ValueError(
+            "cannot compute phys-to-phys matrix without "
+            "src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -77,7 +82,7 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
         src_phys2rsa = _get_phys2ras(lta.src)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
         dst_phys2rsa = _get_phys2ras(lta.dst)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
         return np.linalg.inv(dst_phys2rsa) @ matrix @ src_phys2rsa
-    assert False, f"unsupported LTA type: {lta.type}"
+    raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
 def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
@@ -86,7 +91,9 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
     if lta.type == LTAType.LINEAR_VOX_TO_VOX:
         return matrix
     if lta.src is None or lta.dst is None:
-        raise ValueError('cannot compute vox-to-vox matrix without src and dst volume info')
+        raise ValueError(
+            "cannot compute vox-to-vox matrix without src and dst volume info"
+        )
     if lta.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
@@ -101,10 +108,10 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
         return np.linalg.inv(dst_vox2ras) @ ras2ras @ src_vox2ras
-    assert False, f"unsupported LTA type: {lta.type}"
+    raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
-def _mat2code(vox2ras: np.ndarray) -> _tx.Tuple[_3Ints, _3Flips]:
+def _mat2code(vox2ras: np.ndarray) -> tx.Tuple[_3Ints, _3Flips]:
     """Convert a vox2ras matrix to an orientation code.
 
     Parameters
@@ -150,7 +157,7 @@ def _code2orient(permut: _3Ints, flips: _3Flips) -> str:
         - 'I' (superior-to-inferior) or 'S' (inferior-to-superior)
 
     """
-    names = [['L', 'R'], ['P', 'A'], ['I', 'S']]
+    names = [["L", "R"], ["P", "A"], ["I", "S"]]
     name = "".join([names[p][int(f > 0)] for p, f in zip(permut, flips)])
     return name
 

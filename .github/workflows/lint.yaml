@@ -52,6 +52,7 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
       - name: Spellcheck
-        uses: streetsidesoftware/cspell-action@v7
+        uses: codespell-project/actions-codespell@v2
         with:
-          files: "**/*.{md,py,toml,yaml,yml}"
+          skip: "*.git,*.lock"
+          ignore_words_file: "codespell-ignore-words.txt"

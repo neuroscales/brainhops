@@ -14,11 +14,11 @@ a `hint` can be provided:
 ```python
 from brainhops import io
 
-src = io.load("source.nii.gz")                        # -> Nifti1Image
-dst = io.load("dest.nii.gz")                          # -> Nifti1Image
-aff = io.load("affine.lta")                           # -> LTATransformationRAS2RAS
-dsp = io.load("disp.nii.gz", hint="voxdisp")          # -> NiftiVoxelDisplacementField
-wrp = io.load("warp.nii.gz", hint="spmy")             # -> SPMCoordinatesField
+src = io.load("source.nii.gz")  # -> Nifti1Image
+dst = io.load("dest.nii.gz")  # -> Nifti1Image
+aff = io.load("affine.lta")  # -> LTATransformationRAS2RAS
+dsp = io.load("disp.nii.gz", hint="voxdisp")  # -> NiftiVoxelDisplacementField
+wrp = io.load("warp.nii.gz", hint="spmy")  # -> SPMCoordinatesField
 ```
 
 Alternatively, the appropriate classes could have been used:
@@ -87,7 +87,7 @@ They have the attributes:
 ## Apply a transformation to an image
 
 An `Image` can be called on a `Transformation` that maps from any space
-to its preferred space. It returns another image, whose `tranformation`
+to its preferred space. It returns another image, whose `transformation`
 attribute is the composition of the original `transformation` attribute
 and the inverse of the transformation. While this may seem counter-intuitive,
 this is the most general way of "delaying" the application of a transformation.
@@ -110,18 +110,18 @@ chain of transformation ends with a `CartesianField`, a `CoordinatesField`
 or another type of transformation:
 
 ```python
-mov = src(dst.geometry).reslice()        # -> Image(data=...).geometry == CartesianField(dst.shape)
-mov = src(wrp).reslice()                 # -> Image(data=...).geometry == CartesianField(ras_coords.shape)
-mov = src(disp).reslice()                # -> Image(data=...).geometry == CartesianField(vox_disp.shape)
-mov = src(ras2ras).reslice()             # -> raise Exception("Cannot guess output geometry")
+mov = src(dst.geometry).reslice()  # -> geometry == CartesianField(dst.shape)
+mov = src(wrp).reslice()  # -> geometry == CartesianField(ras_coords.shape)
+mov = src(disp).reslice()  # -> geometry == CartesianField(vox_disp.shape)
+mov = src(ras2ras).reslice()  # -> raise Exception("Cannot guess geometry")
 ```
 
 A more explicit reslicing operation can be performed by passing the
 `geometry` of the output image:
 
 ```python
-mov = src.reslice(dst.geometry)       # -> Image(data=...).geometry = dst.geometry
-mov = src(dsp).reslice(dsp.geometry)  # -> Image(data=...).geometry = dsp.geometry
+mov = src.reslice(dst.geometry)  # -> geometry = dst.geometry
+mov = src(dsp).reslice(dsp.geometry)  # -> geometry = dsp.geometry
 ```
 
 Finally, it is often the case that we want the output geometry to be the
@@ -137,7 +137,7 @@ mov = src(vox2ras @ vox_disp @ vox2ras.inverse(), reslice="preserve")
 
 ## Transformations
 
-Basic tranformations in `brainhops` are mostly modeled on the
+Basic transformations in `brainhops` are mostly modeled on the
 [OME-NGFF](https://ngff.openmicroscopy.org/specifications/dev/index.html)
 specification, with additional flexibility:
 
