@@ -80,7 +80,10 @@ class NiftiBasedTransformation(_xforms.Transformation):
         """
         if nb is None:
             return False
-        if isinstance(other, (nb.Nifti1Header, nb.Nifti2Header, nb.Nifti1Image, nb.Nifti2Image)):
+        if isinstance(
+            other,
+            (nb.Nifti1Header, nb.Nifti2Header, nb.Nifti1Image, nb.Nifti2Image),
+        ):
             return True
         if isinstance(other, bytes):
             return cls.sniff_bytes(other)
@@ -124,7 +127,6 @@ class NiftiBasedTransformation(_xforms.Transformation):
         """
         if nb is None:
             return False
-        return (
-            nb.Nifti1Header.may_contain_header(data)
-            or nb.Nifti2Header.may_contain_header(data)
-        )
+        return nb.Nifti1Header.may_contain_header(
+            data
+        ) or nb.Nifti2Header.may_contain_header(data)

@@ -48,6 +48,7 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 
 ```
 """
+
 __all__ = ["images", "transformations", "vectors"]
 
 
@@ -70,8 +71,9 @@ def load(file_name: str, hint: _tx.Optional[str] = None) -> DataModelBase:
             if hint in i.hints:
                 return i.class_value.from_file(file_name)
     for i in entries:
-        if base.endswith(i.extension) and (i.prefix is None or
-                                           base.startswith(i.prefix)):
+        if base.endswith(i.extension) and (
+            i.prefix is None or base.startswith(i.prefix)
+        ):
             return i.class_value.from_file(file_name)
     for i in entries:
         if i.class_value.sniff_file(file_name):

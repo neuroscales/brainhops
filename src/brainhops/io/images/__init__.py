@@ -16,25 +16,36 @@ class ImageEntry:
     class_value: type
     hints: tuple[str]
 
-    def __init__(self,
-                 prefix: _tx.Optional[_tx.Union[tuple[str], str]],
-                 extension: _tx.Union[tuple[str], str],
-                 class_value: type,
-                 hints: _tx.Union[tuple[str], str]) -> None:
-        self.prefix = prefix if isinstance(
-            prefix, (tuple, type(None))) else (prefix,)
-        self.extension = extension if isinstance(
-            extension, tuple) else (extension,)
+    def __init__(
+        self,
+        prefix: _tx.Optional[_tx.Union[tuple[str], str]],
+        extension: _tx.Union[tuple[str], str],
+        class_value: type,
+        hints: _tx.Union[tuple[str], str],
+    ) -> None:
+        self.prefix = (
+            prefix if isinstance(prefix, (tuple, type(None))) else (prefix,)
+        )
+        self.extension = (
+            extension if isinstance(extension, tuple) else (extension,)
+        )
         self.class_value = class_value
-        self.hints = hints if isinstance(
-            hints, tuple) else (hints,)
+        self.hints = hints if isinstance(hints, tuple) else (hints,)
 
 
 image_entries = [
-    ImageEntry(None, (".nii", ".nii.gz"), nifti.NiftiImage,
-               ("nii", "nifti", "nii.gz", "nii_gz", "niigz")),
-    ImageEntry(None, (".ome.zarr", ".zarr"), zarr.OmeZarrImage,
-               ("zarr", "omezarr", "ome.zarr", "ome_zarr")),
+    ImageEntry(
+        None,
+        (".nii", ".nii.gz"),
+        nifti.NiftiImage,
+        ("nii", "nifti", "nii.gz", "nii_gz", "niigz"),
+    ),
+    ImageEntry(
+        None,
+        (".ome.zarr", ".zarr"),
+        zarr.OmeZarrImage,
+        ("zarr", "omezarr", "ome.zarr", "ome_zarr"),
+    ),
 ]
 
 
@@ -46,8 +57,9 @@ def load(file_name: str, hint: _tx.Optional[str] = None) -> Image:
             if hint in i.hints:
                 return i.class_value.from_file(file_name)
     for i in image_entries:
-        if base.endswith(i.extension) and (i.prefix is None or
-                                           base.startswith(i.prefix)):
+        if base.endswith(i.extension) and (
+            i.prefix is None or base.startswith(i.prefix)
+        ):
             return i.class_value.from_file(file_name)
     for i in image_entries:
         if i.class_value.sniff_file(file_name):
