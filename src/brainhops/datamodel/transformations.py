@@ -13,21 +13,28 @@ __all__ = [
     "Inverse",
     "ByDimension",
     "Sequence",
+    "NDims",
 ]
 # stdlib
+import copy
 import itertools
-import types as _t
+import sys
 from collections.abc import MutableSequence
 from functools import partial
 from numbers import Integral, Real
 
 # dependencies
+import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
 # core
 from brainhops._core.backends import get_array_backend
-from brainhops._core.typing import get_origin, npmatrix, npvector
+from brainhops._core.typing import (
+    get_origin,
+    npmatrix,
+    npvector,
+)
 
 # ext
 from brainhops._ext.invfield import inverse as inverse_disp
@@ -36,7 +43,15 @@ from brainhops._ext.invfield import inverse as inverse_disp
 from . import hierarchy
 from .base import DataModelBase
 from .enums import BoundaryCondition, InterpolationOrder
-from .systems import CoordinateSystem
+from .systems import CoordinateSystem, get_missing
+
+if sys.version_info.minor >= 11:
+    import types as _t
+else:
+
+    class _t:
+        UnionType = tx.Union
+
 
 if False:
     # This is an idea to implement a pipe-like syntax `a |p> b`.
@@ -72,6 +87,18 @@ if False:
                 raise SyntaxError("Invalid pipe syntax")
 
     p = _Pipe()
+
+
+# ----------------------------------------------------------------------
+#    DIMENSIONALITY
+# ----------------------------------------------------------------------
+
+
+class NDims(tx.NamedTuple):
+    """The input and output dimensionality of a transformation."""
+
+    input: tx.Optional[int]
+    output: tx.Optional[int]
 
 
 # ----------------------------------------------------------------------
@@ -282,6 +309,99 @@ class Transformation(DataModelBase, reverse=True):
     def __invert__(self) -> tx.Self:
         return self.inverse()
 
+    @property
+    def ndims(self) -> NDims:
+        """The input and output dimensionality of the transformation."""
+        raise NotImplementedError()
+
+    @property
+    def ndim(self) -> int:
+        """
+        The dimensionality of the transformation.
+
+        Raises
+        ------
+        ValueError
+            If the input and output dimensionalities differ.
+        """
+        ndims = self.ndims
+        if ndims.input != ndims.output:
+            raise ValueError(
+                "Input and output dimensionality differ: "
+                f"{ndims.input} != {ndims.output}."
+            )
+        return ndims.input
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Transformation":
+        """
+        Create a copy of the current transformation but expanded to include
+        identity transformation for new axes.
+
+        Parameters
+        -----------
+        missing: list
+            A list of misses axes that need to be added.
+
+        side: "both" | "input" | "output", default = "both"
+            Which side(s) to add the additional axes to.
+
+        Returns
+        -------
+        Transformation
+            The expanded transformation.
+
+        Raises
+        ------
+        NotImplementedError
+            If running this function on the transformation parent class.
+        """
+
+        raise NotImplementedError()
+
+    def _add_missing_axes(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Transformation":
+        """
+        Create a copy of the current transformation but with axes added to
+        one or both side's coordinate systems.
+
+        Parameters
+        -----------
+        missing: list
+            A list of misses axes that need to be added.
+
+        side: "both" | "input" | "output", default = "both"
+            Which side(s) to add the additional axes to.
+
+        Returns
+        -------
+        Transformation
+            The transformation with additional axes in coordinate system(s).
+        """
+
+        ret = copy.deepcopy(self)
+        if (
+            side in ("both", "input")
+            and ret.input is not None
+            and ret.input.axes is not None
+        ):
+            ret.input = copy.deepcopy(ret.input)
+            ret.input.axes = ret.input.axes + missing
+        if (
+            side in ("both", "output")
+            and ret.output is not None
+            and ret.output.axes is not None
+        ):
+            ret.output = copy.deepcopy(ret.output)
+            ret.output.axes = ret.output.axes + missing
+        return ret
+
 
 # ----------------------------------------------------------------------
 #    CONCRETE CLASSES
@@ -328,6 +448,12 @@ class CoordinatesField(Transformation):
         ),
     ] = False
 
+    @property
+    def ndims(self) -> NDims:
+        return NDims(
+            input=len(self.field.shape) - 1, output=self.field.shape[-1]
+        )
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.field is None:
@@ -342,6 +468,39 @@ class CoordinatesField(Transformation):
         # `InverseCoordinatesField` class, that computes the inverse
         # on demand during interpolation (as the output shape will then
         # be known).
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "CoordinatesField":
+        if not missing:
+            return self
+
+        ret = self._add_missing_axes(missing, side)
+
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        n_missing = len(missing)
+
+        if expand_output:
+            # add output dimensions (new zero-filled channels)
+            ret.field = np.pad(
+                ret.field,
+                [(0, 0)] * (ret.field.ndim - 1) + [(0, n_missing)],
+                mode="constant",
+                constant_values=0,
+            )
+
+        if expand_input:
+            # add input dimensions (new singleton grid axes)
+            ret.field = ret.field.reshape(
+                *ret.field.shape[:-1],
+                *(1,) * n_missing,
+                ret.field.shape[-1],
+            )
+
+        return ret
 
 
 class CartesianField(CoordinatesField):
@@ -383,6 +542,15 @@ class CartesianField(CoordinatesField):
         # Inverse is itself, with switched input and output.
         cls = type(self)
         return cls(shape=self.shape, input=self.output, output=self.input)
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "CoordinatesField":
+        if not missing:
+            return self
+        return self.to(CoordinatesField)._expand_dims(missing, side)
 
 
 class DisplacementField(Transformation):
@@ -426,6 +594,12 @@ class DisplacementField(Transformation):
         ),
     ] = False
 
+    @property
+    def ndims(self) -> NDims:
+        return NDims(
+            input=len(self.field.shape) - 1, output=self.field.shape[-1]
+        )
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.field is None:
@@ -435,6 +609,39 @@ class DisplacementField(Transformation):
             input=self.output,
             output=self.input,
         )
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "DisplacementField":
+        if not missing:
+            return self
+
+        ret = self._add_missing_axes(missing, side)
+
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        n_missing = len(missing)
+
+        if expand_output:
+            # add output dimensions (new zero-filled channels)
+            ret.field = np.pad(
+                ret.field,
+                [(0, 0)] * (ret.field.ndim - 1) + [(0, n_missing)],
+                mode="constant",
+                constant_values=0,
+            )
+
+        if expand_input:
+            # add input dimensions (new singleton grid axes)
+            ret.field = ret.field.reshape(
+                *ret.field.shape[:-1],
+                *(1,) * n_missing,
+                ret.field.shape[-1],
+            )
+
+        return ret
 
 
 @hierarchy.AffineTransformation.register
@@ -455,6 +662,12 @@ class Affine(Transformation):
             """
         ),
     ] = None
+
+    @property
+    def ndims(self) -> NDims:
+        return NDims(
+            input=self.matrix.shape[1] - 1, output=self.matrix.shape[0]
+        )
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -484,6 +697,46 @@ class Affine(Transformation):
             output=self.input,
         )
 
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Affine":
+        if not missing:
+            return self
+
+        ret = self._add_missing_axes(missing, side)
+
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        n_missing = len(missing)
+
+        old_matrix = ret.matrix
+        No, Ni1 = old_matrix.shape
+        Ni = Ni1 - 1
+
+        new_No = No + n_missing if expand_output else No
+        new_Ni = Ni + n_missing if expand_input else Ni
+
+        new_matrix = np.zeros((new_No, new_Ni + 1))
+
+        # preserve the existing linear part and translation
+        new_matrix[:No, :Ni] = old_matrix[:, :-1]
+        new_matrix[:No, -1] = old_matrix[:, -1]
+
+        if expand_input and expand_output:
+            # pass the new axes through unchanged (identity block)
+            for k in range(n_missing):
+                new_matrix[No + k, Ni + k] = 1.0
+        # if expand_input only: the new input columns are left as zero,
+        #   i.e., the new inputs have no effect on any output.
+        # if expand_output only: the new output rows are left as zero,
+        #   i.e., the new outputs are constant zero, independent of input.
+
+        ret.matrix = new_matrix
+
+        return ret
+
 
 @hierarchy.LinearTransformation.register
 class Linear(Transformation):
@@ -502,6 +755,12 @@ class Linear(Transformation):
         ),
     ] = None
 
+    @property
+    def ndims(self) -> NDims:
+        if self.matrix is None:
+            return NDims(input=0, output=0)
+        return NDims(input=self.matrix.shape[1], output=self.matrix.shape[0])
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.matrix is None:
@@ -512,6 +771,45 @@ class Linear(Transformation):
             input=self.output,
             output=self.input,
         )
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Linear":
+        if not missing:
+            return self
+
+        ret = self._add_missing_axes(missing, side)
+
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        n_missing = len(missing)
+
+        old_matrix = ret.matrix
+        No, Ni1 = old_matrix.shape
+        Ni = Ni1
+
+        new_No = No + n_missing if expand_output else No
+        new_Ni = Ni + n_missing if expand_input else Ni
+
+        new_matrix = np.zeros((new_No, new_Ni))
+
+        # preserve the existing linear part and translation
+        new_matrix[:No, :Ni] = old_matrix[:, :]
+
+        if expand_input and expand_output:
+            # pass the new axes through unchanged (identity block)
+            for k in range(n_missing):
+                new_matrix[No + k, Ni + k] = 1.0
+        # if expand_input only: the new input columns are left as zero,
+        #   i.e., the new inputs have no effect on any output.
+        # if expand_output only: the new output rows are left as zero,
+        #   i.e., the new outputs are constant zero, independent of input.
+
+        ret.matrix = new_matrix
+
+        return ret
 
 
 @hierarchy.SpecialOrthogonalTransformation.register
@@ -559,6 +857,18 @@ class Permutation(Transformation):
         ),
     ] = None
 
+    @property
+    def ndims(self) -> NDims:
+        # TODO: this is very hacky. We need someway to represent can take
+        # multiple different types of inputs
+        if self.permutation is None:
+            return NDims(input=0, output=0)
+        output = len(self.permutation)
+        input = 0
+        if self.input and self.input.axes is not None:
+            input = len(self.input.axes)
+        return NDims(input=input, output=output)
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.permutation is None:
@@ -571,6 +881,24 @@ class Permutation(Transformation):
             input=self.output,
             output=self.input,
         )
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> Transformation:
+        if not missing:
+            return self
+        if side == "both":
+            ret = self._add_missing_axes(missing, side)
+            if ret.permutation is not None:
+                n_missing = len(missing)
+                old_len = len(ret.permutation)
+                old_permutation = list(ret.permutation)
+                new_indices = list(range(old_len, old_len + n_missing))
+                ret.permutation = np.asarray(old_permutation + new_indices)
+            return ret
+        return self.to(Linear)._expand_dims(missing, side)
 
 
 @hierarchy.DiagonalTransformation.register
@@ -590,6 +918,13 @@ class Scaling(Transformation):
         ),
     ] = None
 
+    @property
+    def ndims(self) -> NDims:
+        if self.scale is None:
+            return NDims(input=0, output=0)
+        n = len(self.scale)
+        return NDims(input=n, output=n)
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.scale is None:
@@ -597,6 +932,24 @@ class Scaling(Transformation):
         return cls(
             scale=1.0 / self.scale, input=self.output, output=self.input
         )
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> Transformation:
+        if not missing:
+            return self
+        if side == "both":
+            ret = self._add_missing_axes(missing, side)
+            new_scale = np.ones(len(missing))
+            ret.scale = (
+                np.concatenate([np.asarray(ret.scale), new_scale])
+                if ret.scale is not None
+                else None
+            )
+            return ret
+        return self.to(Linear)._expand_dims(missing, side)
 
 
 @hierarchy.Translation.register
@@ -616,6 +969,13 @@ class Translation(Transformation):
         ),
     ] = None
 
+    @property
+    def ndims(self) -> NDims:
+        if self.translation is None:
+            return NDims(input=0, output=0)
+        n = len(self.translation)
+        return NDims(input=n, output=n)
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         if self.translation is None:
@@ -623,6 +983,24 @@ class Translation(Transformation):
         return cls(
             translation=-self.translation, input=self.output, output=self.input
         )
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> Transformation:
+        if not missing:
+            return self
+        if side == "both":
+            ret = self._add_missing_axes(missing, side)
+            new_translation = np.zeros(len(missing))
+            ret.translation = (
+                np.concatenate([np.asarray(ret.translation), new_translation])
+                if ret.translation is not None
+                else None
+            )
+            return ret
+        return self.to(Affine)._expand_dims(missing, side)
 
 
 @hierarchy.IdentityTransformation.register
@@ -633,9 +1011,21 @@ class Identity(Transformation):
     the input axes to the output axes, while preserving their orders.
     """
 
+    @property
+    def ndims(self) -> NDims:
+        return NDims(input=0, output=0)
+
     def inverse(self) -> tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Identity":
+        ret = self._add_missing_axes(missing, side)
+        return ret
 
 
 # ----------------------------------------------------------------------
@@ -667,6 +1057,10 @@ class Bijection(Transformation):
         )
 
     @property
+    def ndims(self) -> NDims:
+        return self.forward.ndims
+
+    @property
     def guess_input(self) -> tx.Optional[CoordinateSystem]:
         if self.input is not None:
             return self.input
@@ -685,6 +1079,30 @@ class Bijection(Transformation):
         if self.backward is not None:
             return self.backward.input
 
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Bijection":
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        opposite_side = "both"
+        if side == "input":
+            opposite_side = "output"
+        elif side == "output":
+            opposite_side = "input"
+        ret = copy.deepcopy(self)
+        ret.forward = ret.forward._expand_dims(missing, side)
+        ret.backward = ret.backward._expand_dims(missing, opposite_side)
+        if expand_input:
+            ret.input = copy.deepcopy(ret.input)
+            ret.input.axes = ret.input.axes + missing
+        if expand_output:
+            ret.output = copy.deepcopy(ret.output)
+            ret.output.axes = ret.output.axes + missing
+
+        return ret
+
 
 class Inverse(Transformation):
     """
@@ -697,6 +1115,11 @@ class Inverse(Transformation):
     transformation: tx.Annotated[
         tx.Optional[Transformation], tx.Doc("The transformation to invert.")
     ] = None
+
+    @property
+    def ndims(self) -> NDims:
+        inner = self.transformation.ndims
+        return NDims(input=inner.output, output=inner.input)
 
     def compute(self, simplify: bool = False) -> Transformation:
         if self.transformation is None:
@@ -728,6 +1151,31 @@ class Inverse(Transformation):
             return self.transformation.input
         return None
 
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Inverse":
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        opposite_side = "both"
+        if side == "input":
+            opposite_side = "output"
+        elif side == "output":
+            opposite_side = "input"
+        ret = copy.deepcopy(self)
+        ret.transformation = ret.transformation._expand_dims(
+            missing, opposite_side
+        )
+        if expand_input:
+            ret.input = copy.deepcopy(ret.input)
+            ret.input.axes = ret.input.axes + missing
+        if expand_output:
+            ret.output = copy.deepcopy(ret.output)
+            ret.output.axes = ret.output.axes + missing
+
+        return ret
+
 
 class ByDimension(Transformation):
     """
@@ -747,6 +1195,10 @@ class ByDimension(Transformation):
         tx.Optional[npvector[Integral]],
         tx.Doc("The axes of the output coordinate system to transform."),
     ] = None
+
+    @property
+    def ndims(self) -> NDims:
+        return NDims(input=len(self.input_axes), output=len(self.output_axes))
 
     def inverse(self) -> tx.Self:
         cls = type(self)
@@ -794,6 +1246,24 @@ class Sequence(MutableSequence, Transformation):
             """
         ),
     ] = None
+
+    @property
+    def ndims(self) -> NDims:
+        output = None
+        for i in range(len(self.transformations) - 1, -1, -1):
+            out_i = self.transformations[i].ndims.output
+            if out_i != 0:
+                output = out_i
+                break
+
+        input = None
+        for i in range(len(self.transformations)):
+            in_i = self.transformations[i].ndims.input
+            if in_i != 0:
+                input = in_i
+                break
+
+        return NDims(input=input, output=output)
 
     def guess_input(self) -> tx.Optional[CoordinateSystem]:
         if self.input is not None:
@@ -900,6 +1370,37 @@ class Sequence(MutableSequence, Transformation):
         if self.transformations is None:
             raise ValueError("remove from empty sequence")
         self.transformations.remove(value)
+
+    def _expand_dims(
+        self,
+        missing: list,
+        side: tx.Literal["both", "input", "output"] = "both",
+    ) -> "Inverse":
+        expand_input = side in ("input", "both")
+        expand_output = side in ("output", "both")
+        ret = copy.deepcopy(self)
+        if expand_input:
+            for i in range(len(self.transformations)):
+                in_i = self.transformations[i].ndims.input
+                if in_i != 0:
+                    ret.transformations[i] = ret.transformations[
+                        i
+                    ]._expand_dims(missing, "input")
+                    break
+            ret.input = copy.deepcopy(ret.input)
+            ret.input.axes = ret.input.axes + missing
+        if expand_output:
+            for i in range(len(self.transformations) - 1, -1, -1):
+                out_i = self.transformations[i].ndims.output
+                if out_i != 0:
+                    ret.transformations[i] = ret.transformations[
+                        i
+                    ]._expand_dims(missing, "output")
+                    break
+            ret.output = copy.deepcopy(ret.output)
+            ret.output.axes = ret.output.axes + missing
+
+        return ret
 
 
 # ----------------------------------------------------------------------
@@ -1320,6 +1821,81 @@ _COMPOSERS_FASTMAP = {}
 class CompositionError(TypeError): ...
 
 
+def _make_same_axes(
+    x1: Transformation, x2: Transformation
+) -> tx.Tuple[Transformation, Transformation]:
+    """
+    Find the differences in axes between x1 output and x2 input.
+    Afterwards add the differences by expanding the dimensions.
+
+    Parameters
+    ----------
+    x1 : Transformation
+        The transformation whose `input` axes should match the `output`
+        axes of `x2`.
+    x2 : Transformation
+        The transformation whose `output` axes should match the `input`
+        axes of `x1`.
+
+    Returns
+    -------
+    x1_2, x2_2 : Transformation
+        The (possibly expanded) versions of `x1` and `x2`
+
+    Raises
+    ------
+    ValueError
+        If the axes of `x1.input` or `x2.output` are undefined and the
+        output/input dimensionalities of `x1` and `x2` do not match.
+    """
+
+    # if one of the inputs or outputs allow for any amount of axes
+    # (most likely because they are identity) just return the input
+    if x2.ndims.output == 0 or x1.ndims.input == 0:
+        return x1, x2
+
+    # If either coordinate systems are not specified assume they are the same
+    # if they contain the same number of dims. Otherwise throw an error.
+    if x2.output is None or x1.input is None:
+        if x2.ndims.output == x1.ndims.input:
+            return x1, x2
+        raise ValueError()
+
+    x1_2, x2_2 = x1, x2
+    missing_forward = get_missing(x2.output, x1.input)
+    missing_backwards = get_missing(x1.input, x2.output)
+
+    if len(missing_forward) != 0:
+        x1_is_square = x1.ndims.input == x1.ndims.output
+        x1_axes_differ = (
+            len(
+                get_missing(x1.input, x1.output)
+                + get_missing(x1.output, x1.input)
+            )
+            > 0
+        )
+        if not x1_is_square or x1_axes_differ:
+            x1_2 = x1_2._expand_dims(missing_forward, side="input")
+        else:
+            x1_2 = x1_2._expand_dims(missing_forward, side="both")
+
+    if len(missing_backwards) != 0:
+        x2_is_square = x2.ndims.input == x2.ndims.output
+        x2_axes_differ = (
+            len(
+                get_missing(x2.input, x2.output)
+                + get_missing(x2.output, x2.input)
+            )
+            > 0
+        )
+        if not x2_is_square or x2_axes_differ:
+            x2_2 = x2_2._expand_dims(missing_backwards, side="output")
+        else:
+            x2_2 = x2_2._expand_dims(missing_backwards, side="both")
+
+    return x1_2, x2_2
+
+
 def _composer(func: tx.Callable) -> tx.Callable:
     """
     Decorator to register a function as a composer of two transformations.
@@ -1335,7 +1911,15 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
     Dispatch the composition of two transformations to the appropriate
     composer function.
     """
+    # Make sure that both transformations have compatible axes
+    x1, x2 = _make_same_axes(x1, x2)
     t1, t2 = type(x1), type(x2)
+    # find and apply the adaptation transformation between the two coordinate
+    # systems
+    adapt = _adapt(x1, x2)
+    if not is_identity(adapt):
+        x2 = _compose(adapt, x2)
+
     if (t1, t2) in _COMPOSERS_FASTMAP:
         func = _COMPOSERS_FASTMAP[(t1, t2)]
         return func(x1, x2)
@@ -1380,20 +1964,41 @@ def _adaptor(func: tx.Callable) -> tx.Callable:
     return func
 
 
-def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
+def _adapt(x1: Transformation, x2: Transformation) -> Transformation:
     """
-    Dispatch the adaptation between two coordinate systems to the appropriate
-    adaptor function.
+    Find the best adaptor for two transformations.
+    Returns an identity transform if no adaptation is necessary.
     """
-    if (s1, s2) in _ADAPTORS_FASTMAP:
-        func = _ADAPTORS_FASTMAP[(s1, s2)]
-        return func(s1, s2)
-    best_distance, best_func = float("inf"), None
-    for (S1, S2), FUNC in _ADAPTORS.items():
-        distance = _distance(s1, S1) + _distance(s2, S2)
-        if distance < best_distance:
-            best_distance, best_func = distance, FUNC
-    if best_distance < float("inf"):
-        _ADAPTORS_FASTMAP[(s1, s2)] = best_func
-        return best_func(s1, s2)
-    raise AdaptationError(f"No adaptor found for types: {s1}, {s2}")
+    t1, t2 = type(x1), type(x2)
+
+    # Fast cache
+    if (t1, t2) in _ADAPTORS_FASTMAP:
+        func = _ADAPTORS_FASTMAP[(t1, t2)]
+        return func(x1, x2)
+
+    best_distance = float("inf")
+    best_func = None
+
+    for (T1, T2), FUNC in _ADAPTORS.items():
+        if get_origin(T1) in (tx.Union, _t.UnionType):
+            T1s = tx.get_args(T1)
+        else:
+            T1s = (T1,)
+
+        if get_origin(T2) in (tx.Union, _t.UnionType):
+            T2s = tx.get_args(T2)
+        else:
+            T2s = (T2,)
+
+        for TT1, TT2 in itertools.product(T1s, T2s):
+            distance = _distance(t1, TT1) + _distance(t2, TT2)
+
+            if distance < best_distance:
+                best_distance = distance
+                best_func = FUNC
+
+    if best_func is not None:
+        _ADAPTORS_FASTMAP[(t1, t2)] = best_func
+        return best_func(x1, x2)
+
+    return Identity()

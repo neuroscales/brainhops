@@ -159,9 +159,7 @@ def register(cls: type) -> type:
 
 
 def siunit(globals: dict) -> tx.Callable[[type], type]:
-
     def decorator(cls: type) -> type:
-
         base = register(cls)
         if "." in cls.__qualname__:
             qualprefix = cls.__qualname__.rsplit(".")[0] + "."
