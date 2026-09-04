@@ -29,7 +29,6 @@ else:
 
 
 class NiftiBasedParser(DataModelBase, FileParser):
-
     header: _tx.Optional[nb.Nifti1Header] = None
     image: _tx.Optional[nb.Nifti1Image] = None
 
@@ -45,7 +44,9 @@ class NiftiBasedParser(DataModelBase, FileParser):
 
     @classmethod
     def from_bytes(cls, data: bytes) -> _tx.Self:
-        """Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes."""
+        """
+        Create a NiftiVoxelToRAS transformation from a NIfTI file in bytes.
+        """
         return cls.from_nifti(nb.Nifti1Image.from_bytes(data))
 
     @classmethod
