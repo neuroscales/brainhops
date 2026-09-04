@@ -1,14 +1,14 @@
 # externals
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # internals
 from ._enums import LTAType
 from ._struct import LTAStruct
 
 # type hints
-_3Ints = _tx.Tuple[int, int, int]
-_3Flips = _tx.Tuple[_tx.Literal[-1, 1], _tx.Literal[-1, 1], _tx.Literal[-1, 1]]
+_3Ints = tx.Tuple[int, int, int]
+_3Flips = tx.Tuple[tx.Literal[-1, 1], tx.Literal[-1, 1], tx.Literal[-1, 1]]
 
 
 def _get_vox2phys(vol_info: LTAStruct.VolumeInfo) -> np.ndarray:
@@ -111,7 +111,7 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
-def _mat2code(vox2ras: np.ndarray) -> _tx.Tuple[_3Ints, _3Flips]:
+def _mat2code(vox2ras: np.ndarray) -> tx.Tuple[_3Ints, _3Flips]:
     """Convert a vox2ras matrix to an orientation code.
 
     Parameters

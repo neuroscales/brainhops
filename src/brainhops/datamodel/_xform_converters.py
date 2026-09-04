@@ -1,6 +1,7 @@
-# core
-import typing_extensions as _tx
+# dependencies
+import typing_extensions as tx
 
+# core
 from brainhops._core.backends import get_array_backend
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 
@@ -323,7 +324,7 @@ def _(t: Transformation) -> Transformation:
 # ----------------------------------------------------------------------
 
 
-def _make_converter_chain(*types: _tx.List[type]) -> None:
+def _make_converter_chain(*types: tx.List[type]) -> None:
 
     T0, TN = types[0], types[-1]
 

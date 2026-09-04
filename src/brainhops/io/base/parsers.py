@@ -2,7 +2,7 @@
 from collections.abc import Iterable
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # core
 from brainhops._core import path, peek
@@ -108,7 +108,7 @@ class FileSniffer:
     def sniff(
         cls,
         file: path.FileOrContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -154,7 +154,7 @@ class FileSniffer:
     def sniff_file(
         cls,
         file: path.FileLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -200,7 +200,7 @@ class FileSniffer:
     def sniff_content(
         cls,
         content: path.ContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -243,7 +243,7 @@ class FileSniffer:
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -271,7 +271,7 @@ class FileSniffer:
     def sniff_text(
         cls,
         text: str,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -297,8 +297,8 @@ class FileSniffer:
     @classmethod
     def sniff_lines(
         cls,
-        lines: _tx.Iterable[str],
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        lines: tx.Iterable[str],
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -328,7 +328,7 @@ class FileSniffer:
     def sniff_line(
         cls,
         line: str,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         """
@@ -358,7 +358,7 @@ class FileSniffer:
 
 class FileParser(FileSniffer):
     @classmethod
-    def from_(cls, other: path.FileOrContentLike, **kwargs) -> _tx.Self:
+    def from_(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a file (path, file-like object or iterable
         of lines).
@@ -391,7 +391,7 @@ class FileParser(FileSniffer):
         raise ParserTypeError(f"Cannot parse file of type {type(other)}")
 
     @classmethod
-    def from_file(cls, file: path.FileLike, **kwargs) -> _tx.Self:
+    def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """
         Build an object from a file (path or file-like object).
 
@@ -423,7 +423,7 @@ class FileParser(FileSniffer):
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
 
     @classmethod
-    def from_content(cls, content: path.ContentLike, **kwargs) -> _tx.Self:
+    def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a file content (bytes, str, or iterable of lines).
 
@@ -452,7 +452,7 @@ class FileParser(FileSniffer):
         raise ParserTypeError(f"Cannot parse content of type {type(content)}")
 
     @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> _tx.Self:
+    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a binary representation of a file.
 
@@ -473,7 +473,7 @@ class FileParser(FileSniffer):
         )
 
     @classmethod
-    def from_text(cls, text: str, **kwargs) -> _tx.Self:
+    def from_text(cls, text: str, **kwargs) -> tx.Self:
         """
         Build an object from a text representation of a file.
 
@@ -492,7 +492,7 @@ class FileParser(FileSniffer):
         return cls.from_lines(text.splitlines(), **kwargs)
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str], **kwargs) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """
         Build an object from an iterable of lines
         (e.g., the content of a file).
@@ -514,7 +514,7 @@ class FileParser(FileSniffer):
         return cls.from_line(lines.peek(), **kwargs)
 
     @classmethod
-    def from_line(cls, line: str, **kwargs) -> _tx.Self:
+    def from_line(cls, line: str, **kwargs) -> tx.Self:
         """
         Build an object from a single line of text.
 
@@ -631,7 +631,7 @@ class FileParserWriter(FileParser):
         """
         return "\n".join(self.to_lines(**kwargs))
 
-    def to_lines(self, **kwargs) -> _tx.Iterator[str]:
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """
         Return a text version of the file as an iterable of lines.
 
@@ -679,7 +679,7 @@ class TextFileSniffer(FileSniffer):
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> bool:
         kwargs["error"] = error
@@ -689,7 +689,7 @@ class TextFileSniffer(FileSniffer):
 
 class TextFileParser(TextFileSniffer, FileParser):
     @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> _tx.Self:
+    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         encoding = kwargs.pop("encoding", "utf-8")
         return cls.from_text(content.decode(encoding), **kwargs)
 

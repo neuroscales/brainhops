@@ -1,16 +1,6 @@
 __all__ = ["BoundaryCondition", "InterpolationOrder"]
 
-import sys
-from enum import IntEnum
-
-if sys.version_info.minor >= 11:
-    from enum import StrEnum
-else:
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        def __str__(self) -> str:
-            return str(self.value)
+from brainhops._core.enum import IntEnum, StrEnum
 
 
 # ruff: disable[E501]

@@ -1,5 +1,5 @@
 # externals
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # internals
 from brainhops.datamodel import transformations as _xforms
@@ -20,9 +20,9 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     @property
     def transformations(
         self,
-    ) -> _tx.Tuple[
-        _tx.Optional[RASToVoxel],
-        _tx.Optional[RASCoordinatesField],
+    ) -> tx.Tuple[
+        tx.Optional[RASToVoxel],
+        tx.Optional[RASCoordinatesField],
     ]:
         """The transformations that make up the sequence."""
         _transformations = getattr(self, "_transformations", None)
@@ -36,15 +36,15 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     @transformations.setter
     def transformations(
         self,
-        value: _tx.Tuple[
-            _tx.Optional[RASToVoxel],
-            _tx.Optional[RASCoordinatesField],
+        value: tx.Tuple[
+            tx.Optional[RASToVoxel],
+            tx.Optional[RASCoordinatesField],
         ],
     ) -> None:
         self._transformations = tuple(value)
 
     @property
-    def ras2voxel(self) -> _tx.Optional[RASToVoxel]:
+    def ras2voxel(self) -> tx.Optional[RASToVoxel]:
         """The RAS-to-voxel transformation."""
         xform = self.transformations[0]
         if xform is None:
@@ -52,7 +52,7 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         return xform
 
     @property
-    def rasfield(self) -> _tx.Optional[RASCoordinatesField]:
+    def rasfield(self) -> tx.Optional[RASCoordinatesField]:
         """The field of RAS coordinates."""
         xform = self.transformations[1]
         if xform is None:

@@ -4,7 +4,7 @@ from warnings import warn
 
 # dependencies
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
@@ -37,7 +37,7 @@ class TFMTransformParser(
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
-    transform_group: _tx.List[ITKStruct] = Factory(list)
+    transform_group: tx.List[ITKStruct] = Factory(list)
 
     # --- sniff --------------------------------------------------------
 
@@ -51,7 +51,7 @@ class TFMTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
@@ -120,7 +120,7 @@ class TFMTransformParser(
 # ---------------------------------------------------------------------
 
 
-def _read_vector(text: _tx.Optional[str]) -> _tx.List[float]:
+def _read_vector(text: tx.Optional[str]) -> tx.List[float]:
     if not text:
         return []
     return list(map(float, text.split()))

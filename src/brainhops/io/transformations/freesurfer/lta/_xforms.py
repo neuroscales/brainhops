@@ -9,12 +9,9 @@ __all__ = [
 from functools import partial
 from os import PathLike
 
-import numpy as np
-
 # externals
-import typing_extensions as _tx
-
-# _ext
+import numpy as np
+import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
@@ -27,8 +24,8 @@ from ._matrix_utils import _get_phys2phys, _get_vox2vox
 from ._struct import LTAStruct
 from ._systems import LTACoordinateSystem, LTAPhysicalSystem, LTAVoxelSystem
 
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_LTALike = _tx.Union[LTAStruct, _FileLike, bytes, _tx.Iterable[str]]
+_FileLike = tx.Union[tx.IO, PathLike, str]
+_LTALike = tx.Union[LTAStruct, _FileLike, bytes, tx.Iterable[str]]
 
 
 # @register('.lta')
@@ -92,29 +89,29 @@ class LTATransformation(
         self._matrix = value
 
     @classmethod
-    def from_(cls, other: _LTALike) -> _tx.Self:
+    def from_(cls, other: _LTALike) -> tx.Self:
         if isinstance(other, LTAStruct):
             return cls.from_struct(other)
         return cls.from_struct(LTAStruct.from_(other))
 
     @classmethod
-    def from_struct(cls, struct: LTAStruct) -> _tx.Self:
+    def from_struct(cls, struct: LTAStruct) -> tx.Self:
         return cls(struct=struct)
 
     @classmethod
-    def from_file(cls, file: _FileLike) -> _tx.Self:
+    def from_file(cls, file: _FileLike) -> tx.Self:
         return cls.from_struct(LTAStruct.from_file(file))
 
     @classmethod
-    def from_text(cls, text: str) -> _tx.Self:
+    def from_text(cls, text: str) -> tx.Self:
         return cls.from_struct(LTAStruct.from_text(text))
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> _tx.Self:
+    def from_bytes(cls, data: bytes) -> tx.Self:
         return cls.from_struct(LTAStruct.from_bytes(data))
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
         return cls.from_struct(LTAStruct.from_lines(lines))
 
     @classmethod

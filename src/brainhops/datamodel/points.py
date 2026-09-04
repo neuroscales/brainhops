@@ -1,7 +1,6 @@
 # externals
-import typing_extensions as _tx
-
-from brainhops._core.typing import ArrayProtocol
+import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
 # internals
 from .base import DataModelBase
@@ -12,7 +11,7 @@ from .transformations import CoordinatesField, Sequence, Transformation
 class Points(DataModelBase):
     data: ArrayProtocol
     coordinateSystem: CoordinateSystem
-    coordinateTransforms: _tx.List[Transformation] = []
+    coordinateTransforms: tx.List[Transformation] = []
 
     def compute(self) -> ArrayProtocol:
         steps = list(self.coordinateTransforms)

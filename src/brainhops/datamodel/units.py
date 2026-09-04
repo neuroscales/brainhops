@@ -28,28 +28,17 @@ __all__ = [
 ]
 
 # stdlib
-import sys
-
-if sys.version_info.minor >= 11:
-    from enum import StrEnum
-else:
-    from enum import Enum
-
-    class StrEnum(str, Enum):
-        def __str__(self) -> str:
-            return str(self.value)
-
-
 from math import log10
 
 # externals
-import typing_extensions as _tx
-
-# internals
+import typing_extensions as tx
 from bagof.magic import ClassVar, Magic, MetaMagic
 
+# core
+from brainhops._core.enum import StrEnum
 
-def _make_enum(name: str, d: _tx.Dict[str, _tx.Tuple]) -> StrEnum:
+
+def _make_enum(name: str, d: tx.Dict[str, tx.Tuple]) -> StrEnum:
     return StrEnum(
         name,
         [
@@ -141,7 +130,7 @@ UnitSIName = _make_enum("UnitSIName", UNITS_SI)
 
 def _parse_unit_name(
     name: str,
-) -> _tx.Tuple[_tx.Optional[PrefixName], UnitName]:  # type: ignore
+) -> tx.Tuple[tx.Optional[PrefixName], UnitName]:  # type: ignore
     if name in UnitName.__members__:
         return None, UnitName[name]
     for prefix in PrefixName:
@@ -169,7 +158,7 @@ def register(cls: type) -> type:
     return cls
 
 
-def siunit(globals: dict) -> _tx.Callable[[type], type]:
+def siunit(globals: dict) -> tx.Callable[[type], type]:
 
     def decorator(cls: type) -> type:
 
@@ -208,11 +197,11 @@ def siunit(globals: dict) -> _tx.Callable[[type], type]:
 class Unit(
     Magic, convert=True, repr=False, slots=True, init=False, mapping=False
 ):
-    name: ClassVar[_tx.Optional[str]] = None
+    name: ClassVar[tx.Optional[str]] = None
     scale: ClassVar[float] = 1.0
-    type: ClassVar[_tx.Literal["time", "space"]]
+    type: ClassVar[tx.Literal["time", "space"]]
 
-    def __new__(cls, *args, **kwargs) -> _tx.Self:
+    def __new__(cls, *args, **kwargs) -> tx.Self:
         if cls in _REGISTERED_UNITS:
             return _REGISTERED_UNITS[cls]
         name = kwargs.get("name", args[0] if args else None)
@@ -245,7 +234,7 @@ class _MetaUnitSI(MetaMagic):
         return f"{prefix}{cls.base}"
 
     @property
-    def prefixsymbol(cls) -> _tx.Optional[str]:
+    def prefixsymbol(cls) -> tx.Optional[str]:
         if cls.prefix is None:
             return None
         return PREFIX_SI[cls.prefix][1]
@@ -270,7 +259,7 @@ class _MetaUnitSI(MetaMagic):
 
 class UnitSI(Unit, metaclass=_MetaUnitSI):
     base: ClassVar[UnitSIName] = "second"
-    prefix: ClassVar[_tx.Optional[PrefixName]] = None
+    prefix: ClassVar[tx.Optional[PrefixName]] = None
 
     @classmethod
     def _parse_name(cls, *args, **kwargs) -> PrefixName:  # type: ignore
@@ -288,7 +277,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
             base = UnitSIName[base]
         return (prefix or "") + base
 
-    def __new__(cls, *args, **kwargs) -> _tx.Self:
+    def __new__(cls, *args, **kwargs) -> tx.Self:
         name = cls._parse_name(*args, **kwargs)
         args = (name,) + args[1:]
         kwargs.pop("name", None)
@@ -299,7 +288,7 @@ class UnitSI(Unit, metaclass=_MetaUnitSI):
         return type(self).name
 
     @property
-    def prefixsymbol(self) -> _tx.Optional[str]:
+    def prefixsymbol(self) -> tx.Optional[str]:
         return type(self).prefixsymbol
 
     @property
@@ -361,7 +350,7 @@ class KnownUnit(Unit, metaclass=_MetaKnownUnit):
 
 
 class TimeUnit(Unit):
-    type: ClassVar[_tx.Literal["time"]] = "time"
+    type: ClassVar[tx.Literal["time"]] = "time"
 
 
 class TimeUnitSI(UnitSI, TimeUnit):
@@ -404,7 +393,7 @@ class Year(TimeUnit):
 
 
 class SpaceUnit(Unit):
-    type: ClassVar[_tx.Literal["space"]] = "space"
+    type: ClassVar[tx.Literal["space"]] = "space"
 
 
 class SpaceUnitSI(UnitSI, SpaceUnit):

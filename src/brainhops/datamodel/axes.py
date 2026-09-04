@@ -23,9 +23,9 @@ __all__ = [
     "SuperiorToInferiorAxis",
 ]
 # dependencies
-from typing import Optional
+import typing_extensions as tx
 
-# internals
+# core
 from brainhops._core.typing import HiddenConst
 
 # locals
@@ -43,20 +43,20 @@ from .units import SpaceUnit, TimeUnit, Unit
 
 
 class Axis(DataModelBase):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    unit: Optional[Unit] = None
-    discrete: Optional[bool] = None
-    orientation: Optional[Orientation] = None
+    name: tx.Optional[str] = None
+    type: tx.Optional[str] = None
+    unit: tx.Optional[Unit] = None
+    discrete: tx.Optional[bool] = None
+    orientation: tx.Optional[Orientation] = None
 
 
 class SpatialAxis(Axis):
-    unit: Optional[SpaceUnit] = SpaceUnit("millimeter")
+    unit: tx.Optional[SpaceUnit] = SpaceUnit("millimeter")
     type: HiddenConst[str] = "spatial"
 
 
 class TimeAxis(Axis):
-    unit: Optional[TimeUnit] = TimeUnit("second")
+    unit: tx.Optional[TimeUnit] = TimeUnit("second")
     type: HiddenConst[str] = "time"
 
 

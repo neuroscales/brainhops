@@ -10,33 +10,34 @@ __all__ = [
     "dkt",
 ]
 # externals
-import typing_extensions as _tx
+import typing_extensions as tx
+from bagof.hints import array as art
 from bagof.hints import cupy as cpt
 from bagof.hints import dask as dkt
 from bagof.hints import numpy as npt
 from bagof.magic import Frozen, NoInit, NoRepr
 
-T = _tx.TypeVar("T")
-Const = _tx.Annotated[T, Frozen(), NoInit()]
-HiddenConst = _tx.Annotated[Const[T], NoRepr()]
-ArrayProtocol = npt.ArrayProtocol
-ArrayLike = npt.ArrayLike
+T = tx.TypeVar("T")
+Const = tx.Annotated[T, Frozen(), NoInit()]
+HiddenConst = tx.Annotated[Const[T], NoRepr()]
+ArrayProtocol = art.ArrayProtocol
+ArrayLike = art.ArrayLike
 
-npscalar = _tx.Union[T, npt.ndarray[_tx.Tuple[()], npt.dtype[T]]]
-npvector = npt.ndarray[_tx.Tuple[int], npt.dtype[T]]
-npmatrix = npt.ndarray[_tx.Tuple[int, int], npt.dtype[T]]
+npscalar = tx.Union[T, npt.ndarray[tx.Tuple[()], npt.dtype[T]]]
+npvector = npt.ndarray[tx.Tuple[int], npt.dtype[T]]
+npmatrix = npt.ndarray[tx.Tuple[int, int], npt.dtype[T]]
 
 
-def get_origin(type: _tx.Any, unfold: _tx.Any = None) -> _tx.Any:
-    origin = _tx.get_origin(type)
+def get_origin(type: tx.Any, unfold: tx.Any = None) -> tx.Any:
+    origin = tx.get_origin(type)
     if origin is None:
         return type
     if unfold == "all":
-        if _tx.get_args(type):
-            return get_origin(_tx.get_args(type)[0], unfold=unfold)
+        if tx.get_args(type):
+            return get_origin(tx.get_args(type)[0], unfold=unfold)
     if unfold:
         if not isinstance(unfold, (list, tuple, set)):
             unfold = (unfold,)
         if origin in unfold:
-            return get_origin(_tx.get_args(type)[0], unfold=unfold)
+            return get_origin(tx.get_args(type)[0], unfold=unfold)
     return origin

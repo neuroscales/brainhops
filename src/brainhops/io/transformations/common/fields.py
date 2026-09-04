@@ -1,10 +1,9 @@
 # dependencies
-import typing_extensions as _tx
-
-from brainhops._core.backends import da
+import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
 # core
-from brainhops._core.typing import ArrayProtocol
+from brainhops._core.backends import da
 
 # io
 from brainhops.io.transformations.base.fields import RASCoordinatesField
@@ -17,7 +16,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     """
 
     @property
-    def field(self) -> _tx.Optional[ArrayProtocol]:
+    def field(self) -> tx.Optional[ArrayProtocol]:
         """The field of RAS coordinates."""
         field = None
         if self.image is not None:

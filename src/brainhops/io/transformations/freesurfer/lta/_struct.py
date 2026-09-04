@@ -1,9 +1,7 @@
 __all__ = ["LTAStruct"]
 
 # externals
-import typing_extensions as _tx
-
-# _ext
+import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
@@ -11,12 +9,12 @@ from ._enums import LTAMatrixType, LTAType, LTAValidity
 from ._parser import LTAParser, MatrixParser, VolumeInfoParser
 
 # type hints
-_2Ints = _tx.Tuple[int, int]
-_3Ints = _tx.Tuple[int, int, int]
-_3Floats = _tx.Tuple[float, float, float]
-_MatrixFloat = _tx.Tuple[_tx.Tuple[float, ...], ...]
-_MatrixComplex = _tx.Tuple[_tx.Tuple[complex, ...], ...]
-_Matrix = _tx.Union[_MatrixFloat, _MatrixComplex]
+_2Ints = tx.Tuple[int, int]
+_3Ints = tx.Tuple[int, int, int]
+_3Floats = tx.Tuple[float, float, float]
+_MatrixFloat = tx.Tuple[tx.Tuple[float, ...], ...]
+_MatrixComplex = tx.Tuple[tx.Tuple[complex, ...], ...]
+_Matrix = tx.Union[_MatrixFloat, _MatrixComplex]
 
 
 class LTAStruct(LTAParser):
@@ -76,7 +74,7 @@ class LTAStruct(LTAParser):
             return LTAMatrixType.UNKNOWN_MATRIX
 
         @property
-        def dtype(self) -> _tx.Optional[type]:
+        def dtype(self) -> tx.Optional[type]:
             """
             The Python type corresponding to the matrix type.
 
@@ -125,6 +123,6 @@ class LTAStruct(LTAParser):
     mean: _3Floats = (0.0, 0.0, 0.0)
     sigma: float = 0.0
     affine: Affine = Factory(Affine)  # Affine matrix
-    label: _tx.Optional[int] = None  # Optional label
-    src: _tx.Optional[SrcVolumeInfo] = None  # Source volume
-    dst: _tx.Optional[DstVolumeInfo] = None  # Destination volume
+    label: tx.Optional[int] = None  # Optional label
+    src: tx.Optional[SrcVolumeInfo] = None  # Source volume
+    dst: tx.Optional[DstVolumeInfo] = None  # Destination volume

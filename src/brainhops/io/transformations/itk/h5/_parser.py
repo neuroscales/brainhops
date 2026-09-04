@@ -4,7 +4,7 @@ from os import PathLike
 
 # dependencies
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
@@ -17,7 +17,7 @@ from brainhops._core.typing import ArrayProtocol
 from .._common import ITKStruct, ITKTransformClass
 
 # optional
-if _tx.TYPE_CHECKING:
+if tx.TYPE_CHECKING:
     import h5py
 else:
     try:
@@ -30,8 +30,8 @@ else:
 
 
 # typing
-_H5Like = _tx.Union[
-    _tx.BinaryIO,
+_H5Like = tx.Union[
+    tx.BinaryIO,
     PathLike,
     str,
     h5py.File,
@@ -46,25 +46,25 @@ class H5Header(
 ):
     """Header of a ITK H5 file."""
 
-    HDFVersion: _tx.Optional[str] = None
+    HDFVersion: tx.Optional[str] = None
     """
     A string describing the version of the HDF5 library used.
     Ex: "HDF5 library version: 1.10.4"
     """
 
-    ITKVersion: _tx.Optional[str] = None
+    ITKVersion: tx.Optional[str] = None
     """
     A string describing the version of the ITK library used.
     Ex: "5.1.0"
     """
 
-    OSName: _tx.Optional[str] = None
+    OSName: tx.Optional[str] = None
     """
     A string describing the operating system name.
     Ex: "Linux"
     """
 
-    OSVersion: _tx.Optional[str] = None
+    OSVersion: tx.Optional[str] = None
     """
     A string describing the operating system version.
     Ex: "6.1.0-1007-oem"
@@ -77,9 +77,9 @@ class H5TransformParser(
     mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
-    file: _tx.Optional[h5py.File] = None
+    file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
-    transform_group: _tx.List[ITKStruct] = Factory(list)
+    transform_group: tx.List[ITKStruct] = Factory(list)
 
     @classmethod
     def sniff(cls, file: _H5Like) -> bool:
@@ -108,7 +108,7 @@ class H5TransformParser(
     @classmethod
     def from_file(
         cls, file: _H5Like, keep_open: bool = False, load: bool = True
-    ) -> _tx.Self:
+    ) -> tx.Self:
         """
         Build an object from a file (path, file-like object, or HDF5 file).
 
@@ -141,7 +141,7 @@ class H5TransformParser(
         h5file: h5py.File,
         keep_open: bool = False,
         load: bool = True,
-    ) -> _tx.Self:
+    ) -> tx.Self:
         """
         Build an object from an HDF5 file.
 
@@ -261,10 +261,10 @@ class DelayedH5Array:
     def __init__(self, file: _H5Like, path: str) -> None:
         self.file: _H5Like = file
         self.path: str = path
-        self._file: _tx.Optional[h5py.File] = None
-        self._shape: _tx.Optional[_tx.Tuple[int]] = None
-        self._dtype: _tx.Optional[np.dtype] = None
-        self._chunks: _tx.Optional[_tx.Tuple[int]] = None
+        self._file: tx.Optional[h5py.File] = None
+        self._shape: tx.Optional[tx.Tuple[int]] = None
+        self._dtype: tx.Optional[np.dtype] = None
+        self._chunks: tx.Optional[tx.Tuple[int]] = None
 
     def open(self) -> h5py.File:
         self.to_dataset(keep_open=True)
@@ -279,7 +279,7 @@ class DelayedH5Array:
         self.close()
 
     def to_dataset(
-        self, file: _tx.Optional[_H5Like] = None, keep_open: bool = False
+        self, file: tx.Optional[_H5Like] = None, keep_open: bool = False
     ) -> h5py.Dataset:
 
         if file is None:
@@ -325,7 +325,7 @@ class DelayedH5Array:
             array_like = self
         return da.from_array(array_like, **kwargs)
 
-    def __getitem__(self, index: _tx.Any) -> _tx.Any:
+    def __getitem__(self, index: tx.Any) -> tx.Any:
         is_mine = self._file is None
         dataset = self.to_dataset(keep_open=True)
         chunk = dataset[index]

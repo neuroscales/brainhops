@@ -5,13 +5,14 @@ from os import PathLike
 from pathlib import Path as LocalPath
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # optionals
 try:
     from upath import UPath
 except ImportError:
     UPath = None
+
 try:
     from cloudpathlib import AnyPath
 except ImportError:
@@ -20,13 +21,13 @@ except ImportError:
 Path = UPath or AnyPath or LocalPath
 
 # typing
-FilenameLike = _tx.Union[PathLike, str]
-BinaryFileLike = _tx.Union[FilenameLike, _tx.BinaryIO]
-TextFileLike = _tx.Union[FilenameLike, _tx.TextIO]
-FileLike = _tx.Union[BinaryFileLike, TextFileLike]
-BinaryContentLike = _tx.Union[bytes, bytearray, _tx.Iterable[bytes]]
-TextContentLike = _tx.Union[str, _tx.Iterable[str]]
-ContentLike = _tx.Union[BinaryContentLike, TextContentLike]
-FileOrContentLike = _tx.Union[FileLike, ContentLike]
-TextFileOrContentLike = _tx.Union[TextFileLike, TextContentLike]
-BinaryFileOrContentLike = _tx.Union[BinaryFileLike, BinaryContentLike]
+FilenameLike = tx.Union[PathLike, str]
+BinaryFileLike = tx.Union[FilenameLike, tx.BinaryIO]
+TextFileLike = tx.Union[FilenameLike, tx.TextIO]
+FileLike = tx.Union[BinaryFileLike, TextFileLike]
+BinaryContentLike = tx.Union[bytes, bytearray, tx.Iterable[bytes]]
+TextContentLike = tx.Union[str, tx.Iterable[str]]
+ContentLike = tx.Union[BinaryContentLike, TextContentLike]
+FileOrContentLike = tx.Union[FileLike, ContentLike]
+TextFileOrContentLike = tx.Union[TextFileLike, TextContentLike]
+BinaryFileOrContentLike = tx.Union[BinaryFileLike, BinaryContentLike]

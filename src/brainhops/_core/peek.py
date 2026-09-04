@@ -2,10 +2,10 @@
 from collections.abc import Iterator
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # typing
-T = _tx.TypeVar("T")
+T = tx.TypeVar("T")
 
 
 class EMPTY_TYPE:
@@ -27,21 +27,21 @@ class EMPTY_TYPE:
 EMPTY = EMPTY_TYPE()
 
 
-class peekable(Iterator, _tx.Generic[T]):
+class peekable(Iterator, tx.Generic[T]):
     """A peekable iterator."""
 
     EMPTY = EMPTY_TYPE()
 
-    def __init__(self, iterable: _tx.Iterable[T]) -> None:
+    def __init__(self, iterable: tx.Iterable[T]) -> None:
         if not hasattr(iterable, "__next__"):
             # make an iterator (with a state)
             iterable = iter(iterable)
-        self._iterator: _tx.Iterator[T] = iterable
-        self._peeked: T | EMPTY_TYPE = EMPTY
+        self._iterator: tx.Iterator[T] = iterable
+        self._peeked: tx.Union[T, EMPTY_TYPE] = EMPTY
 
     def peek(
         self, preproc: bool = True, valid: bool = True
-    ) -> _tx.Optional[T]:
+    ) -> tx.Optional[T]:
         if self._peeked is EMPTY:
             self._peeked = self._next(preproc=preproc, valid=valid)
         return self._peeked
@@ -57,7 +57,7 @@ class peekable(Iterator, _tx.Generic[T]):
 
     def iter(
         self, preproc: bool = True, valid: bool = True
-    ) -> _tx.Iterator[T]:
+    ) -> tx.Iterator[T]:
         while True:
             try:
                 yield self.next(preproc=preproc, valid=valid)
@@ -77,7 +77,7 @@ class peekable(Iterator, _tx.Generic[T]):
 
     def _next(
         self, preproc: bool = True, valid: bool = True
-    ) -> _tx.Union[T, EMPTY_TYPE]:
+    ) -> tx.Union[T, EMPTY_TYPE]:
         while True:
             item = next(self._iterator, EMPTY)
             if item is EMPTY:
@@ -93,16 +93,16 @@ class peekable_lines(peekable[str]):
     """A peekable iterator over lines of text."""
 
     def __init__(
-        self, lines: _tx.Iterable[str], comment: _tx.Optional[str] = "#"
+        self, lines: tx.Iterable[str], comment: tx.Optional[str] = "#"
     ) -> None:
         super().__init__(lines)
         self.comment = comment
 
     @classmethod
-    def is_valid(cls, item: _tx.Optional[str]) -> bool:
+    def is_valid(cls, item: tx.Optional[str]) -> bool:
         return bool(item)
 
-    def preproc(self, line: _tx.Optional[str]) -> _tx.Optional[str]:
+    def preproc(self, line: tx.Optional[str]) -> tx.Optional[str]:
         if line is None:
             return None
         line = line.rstrip("\r\n")

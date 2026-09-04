@@ -2,19 +2,18 @@
 import itertools
 
 # dependencies
-import typing_extensions as _tx
-
-from .backends import get_array_backend, get_ndimage_backend
+import typing_extensions as tx
+from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # locals
-from .typing import ArrayLike, ArrayProtocol
+from .backends import get_array_backend, get_ndimage_backend
 
 
 def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
     order: int,
-    bound: _tx.Union[str, float],
+    bound: tx.Union[str, float],
     coeff: bool,
 ) -> ArrayProtocol:
     """
@@ -69,7 +68,7 @@ def pull_field(
     field: ArrayLike,
     coords: ArrayLike,
     order: int,
-    bound: _tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     coeff: bool,
 ) -> ArrayLike:
     """
@@ -113,9 +112,9 @@ def pull_field(
 def coeff2value(
     input: ArrayLike,
     order: int,
-    bound: _tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
-    ndim: _tx.Optional[int] = None,
+    ndim: tx.Optional[int] = None,
 ) -> ArrayLike:
     """
     Convert an array of spline coefficients to values by applying the
@@ -176,7 +175,7 @@ def coeff2value(
 def coeff2value_field(
     field: ArrayLike,
     order: int,
-    bound: _tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
 ) -> ArrayLike:
     """
@@ -221,9 +220,9 @@ def coeff2value_field(
 def value2coeff(
     input: ArrayLike,
     order: int,
-    bound: _tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
-    ndim: _tx.Optional[int] = None,
+    ndim: tx.Optional[int] = None,
 ) -> ArrayLike:
     """
     Convert an array of values to spline coefficients by applying the
@@ -281,7 +280,7 @@ def value2coeff(
 def value2coeff_field(
     field: ArrayLike,
     order: int,
-    bound: _tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
     inplace: bool = False,
 ) -> ArrayLike:
     """

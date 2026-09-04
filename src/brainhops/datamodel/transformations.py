@@ -23,23 +23,18 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
 # core
 from brainhops._core.backends import get_array_backend
-from brainhops._core.typing import (
-    ArrayProtocol,
-    get_origin,
-    npmatrix,
-    npvector,
-)
+from brainhops._core.typing import get_origin, npmatrix, npvector
 
 # ext
 from brainhops._ext.invfield import inverse as inverse_disp
 
+# locals
 from . import hierarchy
 from .base import DataModelBase
-
-# locals
 from .enums import BoundaryCondition, InterpolationOrder
 from .systems import CoordinateSystem
 

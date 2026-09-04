@@ -4,19 +4,18 @@ from enum import Enum
 from warnings import warn
 
 # dependencies
-import typing_extensions as _tx
-
-# externals
+import typing_extensions as tx
 from bagof.magic import Magic
 
+# externals
 from brainhops._core.path import Path, PathLike
 
 # core
 from brainhops._core.peek import peekable_lines
 
 # typing
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_FileOrContentLike = _tx.Union[_FileLike, bytes, _tx.Iterable[str]]
+_FileLike = tx.Union[tx.IO, PathLike, str]
+_FileOrContentLike = tx.Union[_FileLike, bytes, tx.Iterable[str]]
 
 
 # ----------------------------------------------------------------------
@@ -74,7 +73,7 @@ class LTAParser(Magic):
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_(cls, other: _FileOrContentLike) -> _tx.Self:
+    def from_(cls, other: _FileOrContentLike) -> tx.Self:
         """
         Build an object from a file (path, file-like object or iterable
         of lines).
@@ -101,7 +100,7 @@ class LTAParser(Magic):
         return cls.from_lines(other)
 
     @classmethod
-    def from_file(cls, fileobj: _FileLike) -> _tx.Self:
+    def from_file(cls, fileobj: _FileLike) -> tx.Self:
         """
         Build an object from a file (path or file-like object).
 
@@ -124,7 +123,7 @@ class LTAParser(Magic):
         return cls.from_lines(fileobj)
 
     @classmethod
-    def from_text(cls, text: str) -> _tx.Self:
+    def from_text(cls, text: str) -> tx.Self:
         """
         Build an object from a string in LTA format.
 
@@ -141,7 +140,7 @@ class LTAParser(Magic):
         return cls.from_lines(text.splitlines())
 
     @classmethod
-    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> _tx.Self:
+    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> tx.Self:
         """
         Build an object from bytes in LTA format.
 
@@ -160,7 +159,7 @@ class LTAParser(Magic):
         return cls.from_text(bytes.decode(encoding))
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
         """
         Build an object from an iterable over lines on an LTA files.
 
@@ -185,7 +184,7 @@ class LTAParser(Magic):
 
     # --- to -----------------------------------------------------------
 
-    def to_file(self, fileobj: _tx.Union[_tx.IO, PathLike, str]) -> None:
+    def to_file(self, fileobj: tx.Union[tx.IO, PathLike, str]) -> None:
         """
         Write the object to a file (path or file-like object).
 
@@ -232,7 +231,7 @@ class LTAParser(Magic):
         """
         return "\n".join(self.to_lines())
 
-    def to_lines(self, **kwargs) -> _tx.Iterator[str]:
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """
         Convert the object to an iterable over lines of an LTA file.
 
@@ -253,7 +252,7 @@ class LTAParser(Magic):
 
 class VolumeInfoParser(LTAParser):
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Optional[_tx.Self]:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Optional[tx.Self]:
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
         line = lines.peek()
@@ -264,14 +263,14 @@ class VolumeInfoParser(LTAParser):
         next(lines)  # consume line
         return super().from_lines(lines)
 
-    def to_lines(self, **kwargs) -> _tx.Generator[str]:
+    def to_lines(self, **kwargs) -> tx.Generator[str]:
         yield f"{self.NAME} volume info"
         yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
 
 
 class MatrixParser(LTAParser):
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
@@ -301,7 +300,7 @@ class MatrixParser(LTAParser):
         # Return object
         return cls(matrix=tuple(matrix))
 
-    def to_lines(self) -> _tx.Iterator[str]:
+    def to_lines(self) -> tx.Iterator[str]:
         dtype = self.dtype
         fmt = "{:+.6f} {:+.6f}   " if dtype is complex else "{:+.6f}  "
         yield _write_values((int(self.matrix_type), *self.shape))
@@ -315,7 +314,7 @@ class MatrixParser(LTAParser):
 
 
 class LTAFieldParser:
-    def __init__(self, key: _tx.Optional[str], type: _tx.Any) -> None:
+    def __init__(self, key: tx.Optional[str], type: tx.Any) -> None:
         """
         Parameters
         ----------
@@ -332,7 +331,7 @@ class LTAFieldParser:
         self.key = key
         self.optional, self.type = _is_optional(type)
 
-    def __call__(self, lines: _tx.Iterator[str]) -> _tx.Any:
+    def __call__(self, lines: tx.Iterator[str]) -> tx.Any:
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
         types = self.type
@@ -347,8 +346,8 @@ class LTAFieldParser:
             return value
 
         # Convert type hint to actual type(s) for parsing
-        if _tx.get_origin(types) in (_tx.Tuple, tuple):
-            types = _tx.get_args(types)
+        if tx.get_origin(types) in (tx.Tuple, tuple):
+            types = tx.get_args(types)
         if isinstance(types, tuple) and len(types) == 1:
             types = types[0]
 
@@ -385,7 +384,7 @@ class LTAFieldParser:
 
 
 class LTAFieldWriter:
-    def __init__(self, key: _tx.Optional[str], **kwargs) -> None:
+    def __init__(self, key: tx.Optional[str], **kwargs) -> None:
         """
         Parameters
         ----------
@@ -397,7 +396,7 @@ class LTAFieldWriter:
         self.key = key
         self.kwargs = kwargs
 
-    def __call__(self, value: _tx.Any, **kwargs) -> _tx.Iterator[str]:
+    def __call__(self, value: tx.Any, **kwargs) -> tx.Iterator[str]:
         if value is None:
             return
         if isinstance(value, LTAParser):
@@ -435,7 +434,7 @@ _COMPILED_PATTERNS = {
 }
 
 
-def _get_pattern(type_: _tx.Any, compiled: bool = False) -> re.Pattern:
+def _get_pattern(type_: tx.Any, compiled: bool = False) -> re.Pattern:
     # Handle enums by using the pattern of their underlying type
     if isinstance(type_, type):
         if issubclass(type_, int):
@@ -447,7 +446,7 @@ def _get_pattern(type_: _tx.Any, compiled: bool = False) -> re.Pattern:
     return _PATTERNS[type_]
 
 
-def _to_type(value: str, type_: _tx.Any) -> _tx.Any:
+def _to_type(value: str, type_: tx.Any) -> tx.Any:
     if isinstance(type_, type):
         if issubclass(type_, Enum) and issubclass(type_, int):
             return type_(int(value))
@@ -455,8 +454,8 @@ def _to_type(value: str, type_: _tx.Any) -> _tx.Any:
 
 
 def _read_key(
-    line: str, key_dict: _tx.Optional[dict] = None
-) -> _tx.Tuple[_tx.Optional[str], _tx.Optional[str]]:
+    line: str, key_dict: tx.Optional[dict] = None
+) -> tx.Tuple[tx.Optional[str], tx.Optional[str]]:
     """Read one `key = value` line from an LTA file
 
     Parameters
@@ -498,8 +497,8 @@ def _read_key(
 
 
 def _read_values(
-    line: str, format: _tx.Union[type, _tx.Sequence[type]]
-) -> _tx.Optional[_tx.Union[str, int, float, _tx.Tuple]]:
+    line: str, format: tx.Union[type, tx.Sequence[type]]
+) -> tx.Optional[tx.Union[str, int, float, tx.Tuple]]:
     """Read one `*values` line from an LTA file
 
     Parameters
@@ -532,11 +531,11 @@ def _read_values(
 
 def _write_key(
     key: str,
-    value: _tx.Union[
-        _tx.Sequence[_tx.Union[int, float, str, Enum]], int, float, str, Enum
+    value: tx.Union[
+        tx.Sequence[tx.Union[int, float, str, Enum]], int, float, str, Enum
     ],
-    sep: _tx.Union[int, str] = 1,
-    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None,
+    sep: tx.Union[int, str] = 1,
+    fmt: tx.Optional[tx.Union[str, tx.Dict[tx.Type, str]]] = None,
 ) -> str:
     """Write a `key = value` line in an LTA file.
 
@@ -564,11 +563,11 @@ def _write_key(
 
 
 def _write_values(
-    value: _tx.Union[
-        _tx.Sequence[_tx.Union[int, float, str, Enum]], int, float, str, Enum
+    value: tx.Union[
+        tx.Sequence[tx.Union[int, float, str, Enum]], int, float, str, Enum
     ],
-    sep: _tx.Union[int, str] = 1,
-    fmt: _tx.Optional[_tx.Union[str, _tx.Dict[_tx.Type, str]]] = None,
+    sep: tx.Union[int, str] = 1,
+    fmt: tx.Optional[tx.Union[str, tx.Dict[tx.Type, str]]] = None,
 ) -> str:
     """Write a `*values` line in an LTA file.
 
@@ -627,16 +626,16 @@ def _write_values(
         return sep.join([_write_values(v, fmt=fmt) for v in value])
 
 
-def _is_optional(type_: _tx.Any) -> _tx.Tuple[bool, _tx.Any]:
+def _is_optional(type_: tx.Any) -> tx.Tuple[bool, tx.Any]:
     """
     Check if a type hint is optional, and return the underlying type.
     """
-    if _tx.get_origin(type_) is _tx.Optional:
-        return True, _tx.get_args(type_)[0]
-    if _tx.get_origin(type_) is _tx.Union and type(None) in _tx.get_args(
+    if tx.get_origin(type_) is tx.Optional:
+        return True, tx.get_args(type_)[0]
+    if tx.get_origin(type_) is tx.Union and type(None) in tx.get_args(
         type_
     ):
-        args = [arg for arg in _tx.get_args(type_) if arg is not type(None)]
+        args = [arg for arg in tx.get_args(type_) if arg is not type(None)]
         if len(args) == 1:
             return True, args[0]
         return True, type_

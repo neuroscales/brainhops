@@ -21,9 +21,9 @@ __all__ = [
     "InferiorToSuperior",
 ]
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
-# internals
+# core
 from brainhops._core.typing import HiddenConst
 
 # locals
@@ -34,8 +34,8 @@ from .enums import OrientationType
 class Orientation(DataModelBase, doc=True):
     """"""
 
-    type: _tx.Optional[OrientationType] = None
-    value: _tx.Optional[str] = None
+    type: tx.Optional[OrientationType] = None
+    value: tx.Optional[str] = None
 
 
 class AnatomicalOrientation(Orientation):

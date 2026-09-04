@@ -13,11 +13,10 @@ the output coordinate system of To.
 """
 
 # dependencies
-import typing_extensions as _tx
-
-from brainhops._core.backends import get_array_backend
+import typing_extensions as tx
 
 # core
+from brainhops._core.backends import get_array_backend
 from brainhops._core.bsplines import pull_field
 
 # internals
@@ -129,8 +128,8 @@ def _(To: Translation, Ti: Translation) -> Translation:
     )
 
 
-_LinearIsh = _tx.Union[Linear, Scaling, Permutation]
-_AffineIsh = _tx.Union[_LinearIsh, Affine, Translation]
+_LinearIsh = tx.Union[Linear, Scaling, Permutation]
+_AffineIsh = tx.Union[_LinearIsh, Affine, Translation]
 
 
 @_composer

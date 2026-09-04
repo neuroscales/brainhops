@@ -2,15 +2,25 @@
 from contextlib import contextmanager
 from types import ModuleType
 
-import typing_extensions as _tx
-
-# internals
-from .typing import ArrayProtocol, cpt, dkt, npt
+# dependencies
+import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
 # optionals
-np = npt.np  # numpy
-cp = cpt.cp  # cupy
-da = dkt.da  # dask.array
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover
+    np = None
+
+try:
+    import cupy as cp
+except ImportError:  # pragma: no cover
+    cp = None
+
+try:
+    import dask.array as da
+except ImportError:  # pragma: no cover
+    da = None
 
 try:
     import scipy.ndimage as npndi
@@ -33,8 +43,8 @@ _BACKEND = "dask"
 
 @contextmanager
 def backend(
-    backend: _tx.Optional[_tx.Union[str, ModuleType]] = None,
-) -> _tx.Iterator[str]:
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
+) -> tx.Generator[str, None, None]:
     """Context manager to temporarily set the array backend"""
     global _BACKEND
     old_backend = _BACKEND
@@ -66,14 +76,14 @@ def set_backend(backend: str) -> None:
 
 
 def to_backend(
-    x: ArrayProtocol, backend: _tx.Optional[_tx.Union[str, ModuleType]] = None
+    x: ArrayProtocol, backend: tx.Optional[tx.Union[str, ModuleType]] = None
 ) -> ArrayProtocol:
     backend = get_array_backend(backend)
     return backend.asarray(x)
 
 
 def get_array_backend(
-    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None,
+    x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
     """Determine the array package for a given array
 
@@ -118,7 +128,7 @@ def get_array_backend(
 
 
 def get_ndimage_backend(
-    x: _tx.Optional[_tx.Union[ArrayProtocol, ModuleType, str]] = None,
+    x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
     """Determine the ndimage package for a given array
 

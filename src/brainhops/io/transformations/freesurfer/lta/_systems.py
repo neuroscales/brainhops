@@ -6,20 +6,19 @@ __all__ = [
 ]
 
 # externals
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # internals
 from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import orientation as _orientation
 from brainhops.datamodel import systems as _systems
 
-from ._matrix_utils import _get_orient
-
 # local
+from ._matrix_utils import _get_orient
 from ._struct import LTAStruct
 
 # type hints
-_3SpatialAxes = _tx.Tuple[
+_3SpatialAxes = tx.Tuple[
     _axes.SpatialAxis,
     _axes.SpatialAxis,
     _axes.SpatialAxis,
@@ -27,9 +26,9 @@ _3SpatialAxes = _tx.Tuple[
 
 
 def _make_axes(
-    names: _tx.Tuple[str, str, str],
-    unit: _tx.Optional[str] = None,
-    orientation: _tx.Optional[str] = None,
+    names: tx.Tuple[str, str, str],
+    unit: tx.Optional[str] = None,
+    orientation: tx.Optional[str] = None,
 ) -> _3SpatialAxes:
     if orientation:
         orientation = tuple(getattr(_orientation, o) for o in orientation)
@@ -74,14 +73,14 @@ class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: str = "voxel"
     axes: _3SpatialAxes = _make_axes(("i", "j", "k"))
-    struct: _tx.Optional[LTAStruct.VolumeInfo] = None
+    struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("i", "j", "k"),
-    ) -> _tx.Self:
+        names: tx.Tuple[str, str, str] = ("i", "j", "k"),
+    ) -> tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             axes=_make_axes(names, orientation=_get_orient(struct)),
@@ -94,14 +93,14 @@ class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: str = "scaled"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit="mm")
-    struct: _tx.Optional[LTAStruct.VolumeInfo] = None
+    struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("x", "y", "z"),
-    ) -> _tx.Self:
+        names: tx.Tuple[str, str, str] = ("x", "y", "z"),
+    ) -> tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
@@ -119,14 +118,14 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: str = "physical"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit="mm")
-    struct: _tx.Optional[LTAStruct.VolumeInfo] = None
+    struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
         struct: LTAStruct.VolumeInfo,
-        names: _tx.Tuple[str, str, str] = ("x", "y", "z"),
-    ) -> _tx.Self:
+        names: tx.Tuple[str, str, str] = ("x", "y", "z"),
+    ) -> tx.Self:
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",

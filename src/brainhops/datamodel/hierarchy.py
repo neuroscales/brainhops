@@ -78,13 +78,15 @@ All classical linear group can be extended with the translation group
       transformations that are classicaly referred to as "similitude"
       (or conformal) transformations. They only preserve angles.
 """
-
-import re
-
-import typing_extensions as _tx
-
 # fmt: off
 # ruff: disable[E501]
+
+# stdlib
+import re
+
+# dependencies
+import typing_extensions as tx
+
 __all__ = [
     "Transformation",
     "Morphism",                                     # ^ alias
@@ -228,8 +230,8 @@ def _fsymbol_to_pattern(fsymbol: str) -> str:
 
 
 def parseType(
-    s: _tx.Union[str, type, int],
-) -> _tx.Tuple[_tx.Optional[type], _tx.Optional[int]]:
+    s: tx.Union[str, type, int],
+) -> tx.Tuple[tx.Optional[type], tx.Optional[int]]:
     """
     Resolve a string to its corresponding class in the transformation
     hierarchy, and extract a dimension if the string encodes one.
