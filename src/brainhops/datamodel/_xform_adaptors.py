@@ -1,6 +1,8 @@
 # TODO/WIP: not working at all yet
 
 # internals
+from brainhops.datamodel.axes import same_axis_type
+
 from .systems import CoordinateSystem
 from .transformations import (
     Identity,
@@ -9,7 +11,6 @@ from .transformations import (
     Sequence,
     Transformation,
     _adaptor,
-    same_axis_type,
 )
 
 
