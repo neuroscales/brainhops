@@ -1182,6 +1182,8 @@ def _compute_sequence(
     children = _mode_children(mode)
     for child in children:
         seq = _compute_sequence(seq, child, memo=memo)
+        if not isinstance(seq, Sequence):
+            return seq
 
     # Mark that we've been through this mode
     # !!! DO NOT RETURN HERE
@@ -1199,7 +1201,12 @@ def _compute_sequence(
         if _matches_mode(item, mode):
             while inputs and _matches_mode(inputs[0], mode):
                 # NOTE: we compose to the left ! (see sequence definition)
-                item = _compose(inputs.pop(0), item)
+                next_input = inputs.pop(0)
+                try:
+                    item = _compose(next_input, item)
+                except CompositionError:
+                    outputs.append(item)
+                    item = next_input
         outputs.append(item)
 
     # Return
