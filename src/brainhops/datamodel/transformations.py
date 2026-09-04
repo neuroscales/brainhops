@@ -1271,8 +1271,7 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError):
-    ...
+class ConversionError(TypeError): ...
 
 
 class LossyConversionError(ConversionError):
@@ -1347,8 +1346,7 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError):
-    ...
+class CompositionError(TypeError): ...
 
 
 def _composer(func: tx.Callable) -> tx.Callable:
@@ -1397,8 +1395,7 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError):
-    ...
+class AdaptationError(TypeError): ...
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:
