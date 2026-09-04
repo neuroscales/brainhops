@@ -1,4 +1,3 @@
-import pytest
 from brainhops.io.transformations.fsl.displacement._xforms import (
     FslDisplacementTransformation,
 )

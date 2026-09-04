@@ -40,7 +40,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
         return None
 
     @header.setter
-    def header(self, value: nb.Nifti1Header):
+    def header(self, value: nb.Nifti1Header) -> None:
         self._header = value
 
     @property
@@ -51,7 +51,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
         return None
 
     @image.setter
-    def image(self, value: nb.Nifti1Image):
+    def image(self, value: nb.Nifti1Image) -> None:
         self._image = value
 
     @classmethod
