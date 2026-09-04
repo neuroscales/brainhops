@@ -28,7 +28,6 @@ assumptions baked into these tests -- adjust if your API differs:
 
 import numpy as np
 import pytest
-
 import typing_extensions as tx
 
 from brainhops.datamodel.axes import (
