@@ -298,7 +298,7 @@ class LayeredTransformation(Transformation):
 
     layers: tx.Annotated[
         tx.Optional[list[Transformation]],
-        tx.Doc("The layers of transformations")
+        tx.Doc("The layers of transformations"),
     ]
     active_layer = 0
 

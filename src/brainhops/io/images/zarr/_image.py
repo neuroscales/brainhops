@@ -10,7 +10,7 @@ class OmeZarrImage(OmeZarrParser, MultiImage):
     def images(self) -> _tx.List[Image]:
         """
         Convert each layer into an image for the MultiImage.
-        Store it in the chached variable _images
+        Store it in the cached variable _images
 
         Returns
         -------
@@ -23,7 +23,8 @@ class OmeZarrImage(OmeZarrParser, MultiImage):
                 self._images = [
                     Image(
                         data=get_ndimage_backend().from_array(
-                            self.group[ds["path"]]),
+                            self.group[ds["path"]]
+                        ),
                         transformations=self._transform_from_multiscale(
                             self._multiscale, i
                         ),

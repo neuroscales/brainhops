@@ -30,7 +30,7 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
         """
         NGFF 0.6+ (RFC-5, https://ngff.openmicroscopy.org/rfc/5/)
         introduced the `"displacement"` axis type. Earlier versions
-        don't define it at all, so treat any pre-0.6 (or unparseable)
+        don't define it at all, so treat any pre-0.6 (or unparsable)
         version as unsupported.
         """
         if version is None:
@@ -109,9 +109,11 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
             if is_displacement:
                 index_shape = [1] * len(grid_shape)
                 index_shape[k] = grid_shape[k]
-                index_k = get_ndimage_backend().arange(
-                    grid_shape[k], dtype=field[..., k].dtype
-                ).reshape(index_shape)
+                index_k = (
+                    get_ndimage_backend()
+                    .arange(grid_shape[k], dtype=field[..., k].dtype)
+                    .reshape(index_shape)
+                )
                 field[..., k] = field[..., k] + index_k
         return field
 
@@ -130,16 +132,16 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
           `_displacement_to_coordinate_field`).
         """
         if self._is_displacement_field:
-            return _xforms.DisplacementField(field=field,
-                                             input=self._axes,
-                                             output=self._axes)
+            return _xforms.DisplacementField(
+                field=field, input=self._axes, output=self._axes
+            )
         if self._has_mixed_displacement_axes:
             field = self._displacement_to_coordinate_field(
                 field, self._displacement_axis_mask
             )
-        return _xforms.CoordinatesField(field=field,
-                                        input=self._axes,
-                                        output=self._axes)
+        return _xforms.CoordinatesField(
+            field=field, input=self._axes, output=self._axes
+        )
 
     @property
     def layers(self) -> _tx.List[_xforms.Transformation]:
@@ -156,7 +158,7 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
                             ),
                         ],
                         input=self._axes,
-                        output=self._axes
+                        output=self._axes,
                     )
                     for i, ds in enumerate(self._multiscale["datasets"])
                 ]
