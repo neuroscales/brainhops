@@ -1,4 +1,3 @@
-from ._enums import *
-from ._struct import *
-from ._systems import *
-from ._xforms import *
+__all__ = ["_enums", "_struct", "_systems", "_xforms"]
+
+from . import _enums, _struct, _systems, _xforms

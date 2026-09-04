@@ -2,11 +2,10 @@
 from collections.abc import Iterable
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # core
 from brainhops._core import path, peek
-
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -18,26 +17,31 @@ from brainhops._core import path, peek
 
 class SnifferError(Exception):
     """Base class for sniffer errors."""
+
     pass
 
 
 class SnifferTypeError(SnifferError, TypeError):
     """Raised when a sniffer encounters an unexpected type."""
+
     pass
 
 
 class SnifferExistsError(SnifferError, FileNotFoundError):
     """Raised when a sniffer encounters an unexpected content."""
+
     pass
 
 
 class SnifferContentError(SnifferError, TypeError):
     """Raised when a sniffer encounters an unexpected content."""
+
     pass
 
 
 class SnifferNotImplementedError(SnifferError, NotImplementedError):
     """Raised when a sniffer function is not implemented."""
+
     pass
 
 
@@ -46,28 +50,32 @@ class SnifferNotImplementedError(SnifferError, NotImplementedError):
 
 class ParserError(Exception):
     """Base class for parser errors."""
+
     pass
 
 
 class ParserTypeError(ParserError, TypeError):
     """Raised when a parser encounters an unexpected type."""
+
     pass
 
 
 class ParserExistsError(ParserError, FileNotFoundError):
     """Raised when a parser encounters an unexpected content."""
+
     pass
 
 
 class ParserContentError(ParserError, TypeError):
     """Raised when a parser encounters an unexpected content."""
+
     pass
 
 
 class ParserNotImplementedError(ParserError, NotImplementedError):
     """Raised when a parser function is not implemented."""
-    pass
 
+    pass
 
 
 # ---- to ------------------------------------------------------------
@@ -75,11 +83,13 @@ class ParserNotImplementedError(ParserError, NotImplementedError):
 
 class WriterError(ParserError):
     """Base class for writer errors."""
+
     pass
 
 
 class WriterNotImplementedError(WriterError, NotImplementedError):
     """Raised when a writer function is not implemented."""
+
     pass
 
 
@@ -92,15 +102,14 @@ class WriterNotImplementedError(WriterError, NotImplementedError):
 
 
 class FileSniffer:
-
     _READ_MODE = "r"
 
     @classmethod
     def sniff(
         cls,
         file: path.FileOrContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can
@@ -120,7 +129,7 @@ class FileSniffer:
         bool
             True if the file is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(file, str) and path.Path(file).exists():
             file = path.Path(file)
@@ -145,8 +154,8 @@ class FileSniffer:
     def sniff_file(
         cls,
         file: path.FileLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can
@@ -166,7 +175,7 @@ class FileSniffer:
         bool
             True if the file is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(file, str):
             file = path.Path(file)
@@ -191,8 +200,8 @@ class FileSniffer:
     def sniff_content(
         cls,
         content: path.ContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given content is of the type that this parser
@@ -212,7 +221,7 @@ class FileSniffer:
         bool
             True if the content is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
 
         if isinstance(content, (bytes, bytearray)):
             return cls.sniff_bytes(content, **kwargs)
@@ -234,8 +243,8 @@ class FileSniffer:
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given file is of the type that this parser can handle.
@@ -262,8 +271,8 @@ class FileSniffer:
     def sniff_text(
         cls,
         text: str,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given text is of the type that this parser can handle.
@@ -282,15 +291,15 @@ class FileSniffer:
         bool
             True if the text is of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
         return cls.sniff_lines(text.splitlines(), **kwargs)
 
     @classmethod
     def sniff_lines(
         cls,
-        lines: _tx.Iterable[str],
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        lines: tx.Iterable[str],
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given lines are of the type that this parser
@@ -310,7 +319,7 @@ class FileSniffer:
         bool
             True if the lines are of the correct type, False otherwise.
         """
-        kwargs['error'] = error
+        kwargs["error"] = error
         if not isinstance(lines, peek.peekable_lines):
             lines = peek.peekable_lines(lines)
         return cls.sniff_line(lines.peek(), **kwargs)
@@ -319,8 +328,8 @@ class FileSniffer:
     def sniff_line(
         cls,
         line: str,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
         """
         Determine if the given line is of the type that this parser can handle.
@@ -348,9 +357,8 @@ class FileSniffer:
 
 
 class FileParser(FileSniffer):
-
     @classmethod
-    def from_(cls, other: path.FileOrContentLike, **kwargs) -> _tx.Self:
+    def from_(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a file (path, file-like object or iterable
         of lines).
@@ -367,23 +375,23 @@ class FileParser(FileSniffer):
         obj
             The parsed object.
         """
-        if isinstance(file, str) and path.Path(file).exists():
-            file = path.Path(file)
+        if isinstance(other, str) and path.Path(other).exists():
+            other = path.Path(other)
 
-        if isinstance(file, path.PathLike):
-            return cls.from_file(file, **kwargs)
+        if isinstance(other, path.PathLike):
+            return cls.from_file(other, **kwargs)
 
-        if hasattr(file, "read"):
-            return cls.from_file(file, **kwargs)
+        if hasattr(other, "read"):
+            return cls.from_file(other, **kwargs)
 
-        if isinstance(file, (bytes, bytearray)):
-            return cls.from_bytes(file, **kwargs)
+        if isinstance(other, (bytes, bytearray)):
+            return cls.from_bytes(other, **kwargs)
 
         # Cannot parse this content -> return False or error
-        raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+        raise ParserTypeError(f"Cannot parse file of type {type(other)}")
 
     @classmethod
-    def from_file(cls, file: path.FileLike, **kwargs) -> _tx.Self:
+    def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """
         Build an object from a file (path or file-like object).
 
@@ -415,7 +423,7 @@ class FileParser(FileSniffer):
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
 
     @classmethod
-    def from_content(cls, content: path.ContentLike, **kwargs) -> _tx.Self:
+    def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a file content (bytes, str, or iterable of lines).
 
@@ -444,7 +452,7 @@ class FileParser(FileSniffer):
         raise ParserTypeError(f"Cannot parse content of type {type(content)}")
 
     @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> _tx.Self:
+    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a binary representation of a file.
 
@@ -465,7 +473,7 @@ class FileParser(FileSniffer):
         )
 
     @classmethod
-    def from_text(cls, text: str, **kwargs) -> _tx.Self:
+    def from_text(cls, text: str, **kwargs) -> tx.Self:
         """
         Build an object from a text representation of a file.
 
@@ -484,7 +492,7 @@ class FileParser(FileSniffer):
         return cls.from_lines(text.splitlines(), **kwargs)
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str], **kwargs) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """
         Build an object from an iterable of lines
         (e.g., the content of a file).
@@ -506,7 +514,7 @@ class FileParser(FileSniffer):
         return cls.from_line(lines.peek(), **kwargs)
 
     @classmethod
-    def from_line(cls, line: str, **kwargs) -> _tx.Self:
+    def from_line(cls, line: str, **kwargs) -> tx.Self:
         """
         Build an object from a single line of text.
 
@@ -531,7 +539,6 @@ class FileParser(FileSniffer):
 
 
 class FileParserWriter(FileParser):
-
     _WRITE_MODE = "w"
 
     def to(self, file: path.FileLike, **kwargs) -> None:
@@ -624,7 +631,7 @@ class FileParserWriter(FileParser):
         """
         return "\n".join(self.to_lines(**kwargs))
 
-    def to_lines(self, **kwargs) -> _tx.Iterator[str]:
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """
         Return a text version of the file as an iterable of lines.
 
@@ -659,40 +666,39 @@ class FileParserWriter(FileParser):
             f"to_line() is not available in writer of type {cls.__name__}"
         )
 
+
 # ----------------------------------------------------------------------
 #   TEXT
 # ----------------------------------------------------------------------
 
 
 class TextFileSniffer(FileSniffer):
-
     _READ_MODE = "rt"
 
     @classmethod
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
-        error: _tx.Union[bool, _tx.Type[Exception]] = False,
-        **kwargs
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
     ) -> bool:
-        kwargs['error'] = error
-        encoding = kwargs.pop('encoding', 'utf-8')
+        kwargs["error"] = error
+        encoding = kwargs.pop("encoding", "utf-8")
         return cls.sniff_text(content.decode(encoding), **kwargs)
 
 
 class TextFileParser(TextFileSniffer, FileParser):
-
     @classmethod
-    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> _tx.Self:
-        encoding = kwargs.pop('encoding', 'utf-8')
+    def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
+        encoding = kwargs.pop("encoding", "utf-8")
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
 class TextFileParserWriter(TextFileParser):
-
     def to_bytes(self, **kwargs) -> bytes:
-        encoding = kwargs.pop('encoding', 'utf-8')
+        encoding = kwargs.pop("encoding", "utf-8")
         return self.to_text(**kwargs).encode(encoding)
+
 
 # ----------------------------------------------------------------------
 #   BINARY
@@ -700,15 +706,11 @@ class TextFileParserWriter(TextFileParser):
 
 
 class BinaryFileSniffer:
-
     _READ_MODE = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer):
-
-    ...
+class BinaryFileParser(BinaryFileSniffer): ...
 
 
 class BinaryFileParserWriter(BinaryFileParser):
-
     _WRITE_MODE = "wb"
