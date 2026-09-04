@@ -18,7 +18,7 @@ __all__ = [
 # stdlib
 import copy
 import itertools
-import types as _t
+import sys
 from collections.abc import MutableSequence
 from functools import partial
 from numbers import Integral, Real
@@ -44,6 +44,14 @@ from . import hierarchy
 from .base import DataModelBase
 from .enums import BoundaryCondition, InterpolationOrder
 from .systems import CoordinateSystem, get_missing
+
+if sys.version_info.minor >= 11:
+    import types as _t
+else:
+
+    class _t:
+        UnionType = tx.Union
+
 
 if False:
     # This is an idea to implement a pipe-like syntax `a |p> b`.
