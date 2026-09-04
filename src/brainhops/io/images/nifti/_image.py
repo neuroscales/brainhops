@@ -32,9 +32,6 @@ class NiftiImage(Image, NiftiBasedParser):
     Parse a Nifti file into an Image
     """
 
-    header: _tx.Optional[nb.Nifti1Header] = None
-    image: _tx.Optional[nb.Nifti1Image] = None
-
     @property
     def transformations(self) -> _tx.Optional[_tx.List[Transformation]]:
         """The affine matrix of the transformation."""
