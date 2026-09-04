@@ -1,8 +1,10 @@
 __all__ = ["BoundaryCondition", "InterpolationOrder"]
 
-from enum import StrEnum, IntEnum
+from brainhops._core.enum import IntEnum, StrEnum
 
 
+# ruff: disable[E501]
+# fmt: off
 class BoundaryCondition(StrEnum):
     """Boundary conditions for interpolation and resampling.
 
@@ -24,6 +26,8 @@ class BoundaryCondition(StrEnum):
     gridwrap = circular = circulant = dft = "grid-wrap"     # (a b c d | a b c d | a b c d)
     wrap = "wrap"                                           # (d b c d | a b c d | b c a b)
     constant = zero = zeros = "constant"                    # (0 0 0 0 | a b c d | 0 0 0 0)
+# fmt: on
+# ruff: enable[E501]
 
 
 class InterpolationOrder(IntEnum):
@@ -44,14 +48,14 @@ class InterpolationOrder(IntEnum):
 
     """
 
-    zeroth = nearest   = 0
-    first  = linear    = 1
+    zeroth = nearest = 0
+    first = linear = 1
     second = quadratic = 2
-    third  = cubic     = 3
-    fourth             = 4
-    fifth              = 5
-    barycentric        = -1
-    fourier            = -2
+    third = cubic = 3
+    fourth = 4
+    fifth = 5
+    barycentric = -1
+    fourier = -2
 
 
 class OrientationType(StrEnum):

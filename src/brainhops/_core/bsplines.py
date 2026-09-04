@@ -2,10 +2,10 @@
 import itertools
 
 # dependencies
-import typing_extensions as _tx
+import typing_extensions as tx
+from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # locals
-from .typing import ArrayProtocol
 from .backends import get_array_backend, get_ndimage_backend
 
 
@@ -13,8 +13,8 @@ def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
     order: int,
-    bound: _tx.Union[str, float],
-    coeff: bool
+    bound: tx.Union[str, float],
+    coeff: bool,
 ) -> ArrayProtocol:
     """
     Interpolate an array using a coordinates field.
@@ -64,7 +64,13 @@ def pull(
     return output
 
 
-def pull_field(field, coords, order, bound, coeff):
+def pull_field(
+    field: ArrayLike,
+    coords: ArrayLike,
+    order: int,
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    coeff: bool,
+) -> ArrayLike:
     """
     Interpolate an displacement or coordinates field using a coordinates field.
 
@@ -103,7 +109,13 @@ def pull_field(field, coords, order, bound, coeff):
     return field
 
 
-def coeff2value(input, order, bound, inplace=False, ndim=None):
+def coeff2value(
+    input: ArrayLike,
+    order: int,
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    inplace: bool = False,
+    ndim: tx.Optional[int] = None,
+) -> ArrayLike:
     """
     Convert an array of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -146,7 +158,9 @@ def coeff2value(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(
+        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
+    )
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
@@ -158,7 +172,12 @@ def coeff2value(input, order, bound, inplace=False, ndim=None):
     return output
 
 
-def coeff2value_field(field, order, bound, inplace=False):
+def coeff2value_field(
+    field: ArrayLike,
+    order: int,
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    inplace: bool = False,
+) -> ArrayLike:
     """
     Convert a field of spline coefficients to values by applying the
     appropriate inverse spline filter.
@@ -198,7 +217,13 @@ def coeff2value_field(field, order, bound, inplace=False):
     return field
 
 
-def value2coeff(input, order, bound, inplace=False, ndim=None):
+def value2coeff(
+    input: ArrayLike,
+    order: int,
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    inplace: bool = False,
+    ndim: tx.Optional[int] = None,
+) -> ArrayLike:
     """
     Convert an array of values to spline coefficients by applying the
     appropriate spline filter.
@@ -238,7 +263,9 @@ def value2coeff(input, order, bound, inplace=False, ndim=None):
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation
-    grid = ab.meshgrid(*(ab.arange(s) for s in input.shape[:-ndim]), indexing='ij')
+    grid = ab.meshgrid(
+        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
+    )
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
@@ -250,7 +277,12 @@ def value2coeff(input, order, bound, inplace=False, ndim=None):
     return output
 
 
-def value2coeff_field(field, order, bound, inplace=False):
+def value2coeff_field(
+    field: ArrayLike,
+    order: int,
+    bound: tx.Literal["nearest", "reflect", "mirror", "grid-wrap", "wrap"],
+    inplace: bool = False,
+) -> ArrayLike:
     """
     Convert a field of values to spline coefficients by applying the
     appropriate spline filter.

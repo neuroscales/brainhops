@@ -4,19 +4,22 @@ i.e., M x (N+1) matrices that do not contain the homogeneous row.
 """
 
 # stdlib
-from types import ModuleType
 from math import prod
+from types import ModuleType
 
 # dependencies
+import typing_extensions as tx
+from bagof.hints.array import ArrayLike, ArrayProtocol
 from numpy import broadcast_shapes
 
 # locals
 from .backends import get_array_backend
-from .typing import ArrayProtocol
 
 
 def inv(
-    A: ArrayProtocol, *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    *,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Invert a M x (N+1) affine matrix (i.e., that does not contain the
@@ -54,8 +57,10 @@ def inv(
 
 
 def matmul(
-    A: ArrayProtocol, B: ArrayProtocol, *Cs: ArrayProtocol,
-    backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *Cs: ArrayProtocol,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Multiply two M x (N+1) affine matrices (i.e., that do not contain
@@ -90,8 +95,10 @@ def matmul(
 
 
 def _matmul(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     backend = get_array_backend(backend or A)
     A = backend.asarray(A, dtype=A.dtype)
@@ -123,7 +130,7 @@ def _matmul_cost(A: ArrayProtocol, B: ArrayProtocol) -> int:
 
 def _chain_matmul(
     *As: ArrayProtocol,
-    backend: str | ModuleType | None = None
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     if not As:
         return None
@@ -135,14 +142,15 @@ def _chain_matmul(
     A0 = As[:best_cost]
     A1 = As[best_cost:]
     return _chain_matmul(
-        *A0, _matmul(*A1[:2], backend=backend), *A1[2:],
-        backend=backend
+        *A0, _matmul(*A1[:2], backend=backend), *A1[2:], backend=backend
     )
 
 
 def matvec(
-    A: ArrayProtocol, b: ArrayProtocol,
-    *, backend: str | ModuleType | None = None
+    A: ArrayProtocol,
+    b: ArrayProtocol,
+    *,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Multiply an M x (N+1) affine matrix (i.e., that does not contain the
@@ -169,15 +177,18 @@ def matvec(
     A = backend.asarray(A, dtype=A.dtype)
     b = backend.asarray(b, dtype=A.dtype)
 
-    c = backend.linalg.matmul(A[..., :-1], b[..., None])[..., 0]
+    c = backend.matmul(A[..., :-1], b[..., None])[..., 0]
     c += A[..., -1]
 
     return c
 
 
 def lmdiv(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, vector: bool = False, backend: str | ModuleType | None = None,
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    vector: bool = False,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Solve the linear system AX = B for X, where A is an M x (N+1) affine
@@ -232,8 +243,10 @@ def lmdiv(
 
 
 def rmdiv(
-    A: ArrayProtocol, B: ArrayProtocol,
-    *, backend: str | ModuleType | None = None,
+    A: ArrayProtocol,
+    B: ArrayProtocol,
+    *,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
 ) -> ArrayProtocol:
     """
     Solve the linear system XB = A for X, where A is an M x (N+1) affine
@@ -268,7 +281,9 @@ def rmdiv(
     B = backend.asarray(B, dtype=A.dtype)
 
     batch = broadcast_shapes(A.shape[:-2], B.shape[:-2])
-    t = lambda X: backend.swapaxes(X, -2, -1)
+
+    def t(X: ArrayLike) -> ArrayLike:
+        return backend.swapaxes(X, -2, -1)
 
     M = A.shape[-2]
     P = B.shape[-2]
