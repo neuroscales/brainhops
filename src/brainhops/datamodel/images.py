@@ -8,12 +8,10 @@ from brainhops._core.bsplines import (
     pull,
 )
 from brainhops.datamodel import hierarchy
-from brainhops.datamodel.hierarchy import AffineTransformation
 from brainhops.datamodel.transformations import is_identity
 
 # internals
 from .base import DataModelBase
-from .systems import CoordinateSystem
 from .transformations import (
     CartesianField,
     CoordinatesField,
@@ -35,7 +33,7 @@ class Image(DataModelBase):
     transformation: _tx.Optional[Transformation] = None
 
     @property
-    def transformation(self) -> Transformation:
+    def transformation(self) -> Transformation:  # noqa: F811
         """
         Compute the composed voxel -> preferred-space transformation.
 
@@ -66,8 +64,10 @@ class Image(DataModelBase):
         self._transformations = [value]
 
     @property
-    def transformations(self) -> _tx.List[Transformation]:
-        """Ordered list of transformations; defaults to [Identity()] if unset."""
+    def transformations(self) -> _tx.List[Transformation]:  # noqa: F811
+        """
+        Ordered list of transformations; defaults to [Identity()] if unset.
+        """
         self._transformations = getattr(self, "_transformations", None)
         if self._transformations is None:
             return [Identity()]
@@ -75,7 +75,10 @@ class Image(DataModelBase):
 
     @transformations.setter
     def transformations(self, value: _tx.List[Transformation]) -> None:
-        """Update transformations and invalidate the cached composed transformation."""
+        """
+        Update transformations and invalidate the cached composed
+        transformation.
+        """
         self._transformation = None
         self._transformations = value
 
@@ -90,7 +93,10 @@ class Image(DataModelBase):
 
     @geometry.setter
     def geometry(self, value: CartesianField) -> None:
-        """Geometry is derived from data + transformation; it cannot be set directly."""
+        """
+        Geometry is derived from data + transformation;
+        it cannot be set directly.
+        """
         raise NotImplementedError("can not set geometry")
 
     def reslice(self, geometry: GeometryLike = None) -> "Image":
@@ -101,7 +107,8 @@ class Image(DataModelBase):
         ----------
         geometry : CartesianField | "preserve" | tuple[int] | None
             The shape/grid the output data should be resampled onto.
-            - None: based on `self.transformations` alone (no extra grid change).
+            - None: based on `self.transformations` alone (no extra grid
+                change).
             - "preserve": keep the current data's shape.
             - tuple[int]: resample onto a grid of this shape.
             - CartesianField: resample onto this explicit grid.
@@ -121,9 +128,13 @@ class Image(DataModelBase):
 
         if isinstance(transformation, Sequence):
             coord_transform = transformation.transformations[1].to(
-                CoordinatesField)
+                CoordinatesField
+            )
             affine_transform = transformation.transformations[0]
-        elif not isinstance(hierarchy.parseType(type(transformation)), hierarchy.AffineTransformation):
+        elif not isinstance(
+            hierarchy.parseType(type(transformation)),
+            hierarchy.AffineTransformation,
+        ):
             coord_transform = transformation.to(CoordinatesField)
             affine_transform = Identity()
         else:
@@ -142,7 +153,9 @@ class Image(DataModelBase):
             )
         return Image(data=new_data, transformation=affine_transform)
 
-    def __call__(self, transform: Transformation, reslice: GeometryLike = None) -> "Image":
+    def __call__(
+        self, transform: Transformation, reslice: GeometryLike = None
+    ) -> "Image":
         """
         Append a transformation to the image without computing/resampling yet.
 
@@ -179,7 +192,10 @@ class MultiImage(Image):
 
     @data.setter
     def data(self, value: da.Array) -> None:
-        warn("setting data for MultiImages is not recommended as it only effects the first layer")
+        warn(
+            "setting data for MultiImages is not recommended as it only "
+            "effects the first layer", stacklevel=1
+        )
         if self.images is not None and len(self.images) > 0:
             self.images[0].data = value
 
@@ -189,7 +205,10 @@ class MultiImage(Image):
 
     @transformations.setter
     def transformations(self, value: _tx.List[Transformation]) -> None:
-        warn("setting transformations for MultiImages is not recommended as it only effects the first layer")
+        warn(
+            "setting transformations for MultiImages is not recommended as it "
+            "only effects the first layer", stacklevel=1
+        )
         if self.images is not None and len(self.images) > 0:
             self.images[0].transformations = value
 
@@ -199,7 +218,10 @@ class MultiImage(Image):
 
     @transformation.setter
     def transformation(self, value: Transformation) -> None:
-        warn("setting transformation for MultiImages is not recommended as it only effects the first layer")
+        warn(
+            "setting transformation for MultiImages is not recommended as it "
+            "only effects the first layer", stacklevel=1
+        )
         if self.images is not None and len(self.images) > 0:
             self.images[0].transformation = value
 
@@ -229,7 +251,9 @@ class MultiImage(Image):
         new_images = [img.reslice(geometry) for img in self.images]
         return MultiImage(images=new_images)
 
-    def __call__(self, transform: Transformation, reslice: GeometryLike = None) -> "MultiImage":
+    def __call__(
+        self, transform: Transformation, reslice: GeometryLike = None
+    ) -> "MultiImage":
         """
         Call each image.
 
@@ -247,4 +271,6 @@ class MultiImage(Image):
         MultiImage
             The updated images.
         """
-        return MultiImage(images=[img(transform, reslice) for img in self.images])
+        return MultiImage(
+            images=[img(transform, reslice) for img in self.images]
+        )
