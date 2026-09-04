@@ -7,3 +7,10 @@ class RASCoordinatesField(_xforms.CoordinatesField):
 
     input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
     output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+
+
+class VoxelDisplacementField(_xforms.DisplacementField):
+    """Field of RAS displacements."""
+
+    input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
