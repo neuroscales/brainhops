@@ -2,7 +2,7 @@ __all__ = [
     "LTATransformation",
     "LTATransformationVoxToVox",
     "LTATransformationPhysToPhys",
-    "LTATransformationRASToRAS"
+    "LTATransformationRASToRAS",
 ]
 
 # stdlib
@@ -10,11 +10,9 @@ from functools import partial
 from os import PathLike
 
 # externals
-import typing_extensions as _tx
 import numpy as np
-
-# _ext
-from brainhops._ext.struct import Factory
+import typing_extensions as tx
+from bagof.magic import Factory
 
 # internals
 from brainhops.datamodel import systems as _systems
@@ -22,13 +20,12 @@ from brainhops.datamodel import transformations as _xforms
 
 # local
 from ._enums import LTAType
-from ._struct import LTAStruct
-from ._systems import LTACoordinateSystem, LTAVoxelSystem, LTAPhysicalSystem
 from ._matrix_utils import _get_phys2phys, _get_vox2vox
+from ._struct import LTAStruct
+from ._systems import LTACoordinateSystem, LTAPhysicalSystem, LTAVoxelSystem
 
-
-_FileLike = _tx.Union[_tx.IO, PathLike, str]
-_LTALike = _tx.Union[LTAStruct, _FileLike, bytes, _tx.Iterable[str]]
+_FileLike = tx.Union[tx.IO, PathLike, str]
+_LTALike = tx.Union[LTAStruct, _FileLike, bytes, tx.Iterable[str]]
 
 
 # @register('.lta')
@@ -57,7 +54,7 @@ class LTATransformation(
             return LTAVoxelSystem.from_struct(self.struct.src)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return LTAPhysicalSystem.from_struct(self.struct.src)
-        assert False, f"unsupported LTA type: {self.struct.type}"
+        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
     def output(self) -> LTACoordinateSystem:
@@ -71,7 +68,7 @@ class LTATransformation(
             return LTAVoxelSystem.from_struct(self.struct.dst)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return LTAPhysicalSystem.from_struct(self.struct.dst)
-        assert False, f"unsupported LTA type: {self.struct.type}"
+        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
     def matrix(self) -> np.ndarray:
@@ -80,41 +77,41 @@ class LTATransformation(
         return np.asarray(self.struct.affine.matrix, dtype=np.float64)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
     @classmethod
-    def from_(cls, other: _LTALike) -> _tx.Self:
+    def from_(cls, other: _LTALike) -> tx.Self:
         if isinstance(other, LTAStruct):
             return cls.from_struct(other)
         return cls.from_struct(LTAStruct.from_(other))
 
     @classmethod
-    def from_struct(cls, struct: LTAStruct) -> _tx.Self:
+    def from_struct(cls, struct: LTAStruct) -> tx.Self:
         return cls(struct=struct)
 
     @classmethod
-    def from_file(cls, file: _FileLike) -> _tx.Self:
+    def from_file(cls, file: _FileLike) -> tx.Self:
         return cls.from_struct(LTAStruct.from_file(file))
 
     @classmethod
-    def from_text(cls, text: str) -> _tx.Self:
+    def from_text(cls, text: str) -> tx.Self:
         return cls.from_struct(LTAStruct.from_text(text))
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> _tx.Self:
+    def from_bytes(cls, data: bytes) -> tx.Self:
         return cls.from_struct(LTAStruct.from_bytes(data))
 
     @classmethod
-    def from_lines(cls, lines: _tx.Iterable[str]) -> _tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
         return cls.from_struct(LTAStruct.from_lines(lines))
 
     @classmethod
@@ -146,12 +143,15 @@ class LTATransformationVoxToVox(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_VOX_TO_VOX,
-        src=LTAStruct.SrcVolumeInfo(),
-        dst=LTAStruct.DstVolumeInfo()
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_VOX_TO_VOX,
+            src=LTAStruct.SrcVolumeInfo(),
+            dst=LTAStruct.DstVolumeInfo(),
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:
@@ -172,16 +172,16 @@ class LTATransformationVoxToVox(LTATransformation):
         return _get_vox2vox(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
 
 class LTATransformationPhysToPhys(LTATransformation):
@@ -190,12 +190,15 @@ class LTATransformationPhysToPhys(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_PHYSVOX_TO_PHYSVOX,
-        src=LTAStruct.SrcVolumeInfo(),
-        dst=LTAStruct.DstVolumeInfo()
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_PHYSVOX_TO_PHYSVOX,
+            src=LTAStruct.SrcVolumeInfo(),
+            dst=LTAStruct.DstVolumeInfo(),
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:
@@ -216,16 +219,16 @@ class LTATransformationPhysToPhys(LTATransformation):
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value
 
 
 class LTATransformationRASToRAS(LTATransformation):
@@ -234,10 +237,13 @@ class LTATransformationRASToRAS(LTATransformation):
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(partial(
-        LTAStruct,
-        type=LTAType.LINEAR_RAS_TO_RAS,
-    ), repr=False)
+    struct: LTAStruct = Factory(
+        partial(
+            LTAStruct,
+            type=LTAType.LINEAR_RAS_TO_RAS,
+        ),
+        repr=False,
+    )
 
     @property
     def input(self) -> LTACoordinateSystem:
@@ -258,13 +264,13 @@ class LTATransformationRASToRAS(LTATransformation):
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem):
-        setattr(self, "_input", value)
+    def input(self, value: LTACoordinateSystem) -> None:
+        self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem):
-        setattr(self, "_output", value)
+    def output(self, value: LTACoordinateSystem) -> None:
+        self._output = value
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
-        setattr(self, "_matrix", value)
+    def matrix(self, value: np.ndarray) -> None:
+        self._matrix = value

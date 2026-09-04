@@ -1,6 +1,6 @@
 # dependencies
 import numpy as np
-import typing_extensions as _tx
+import typing_extensions as tx
 
 # io
 from brainhops.io.base.nifti import NiftiBasedParser
@@ -14,14 +14,14 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedParser):
     """
 
     @property
-    def matrix(self) -> _tx.Optional[np.ndarray]:
+    def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
         if self.header is not None:
             return np.linalg.inverse(self.header.get_best_affine())[:-1]
         return None
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
+    def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
     def inverse(self) -> VoxelToRAS:
@@ -38,14 +38,14 @@ class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedParser):
     """
 
     @property
-    def matrix(self) -> _tx.Optional[np.ndarray]:
+    def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
         if self.header is not None:
             return self.header.get_best_affine()[:-1]
         return None
 
     @matrix.setter
-    def matrix(self, value: np.ndarray):
+    def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
     def inverse(self) -> RASToVoxel:

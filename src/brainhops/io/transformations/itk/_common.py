@@ -1,24 +1,25 @@
 # stdlib
-from enum import StrEnum
 import math
 
 # dependencies
-import typing_extensions as _tx
 import numpy as np
+import typing_extensions as tx
 
 # externals
-from brainhops._ext.struct import Struct
+from bagof.magic import Magic
 
 # core
-from brainhops._core.typing import ArrayProtocol
-from brainhops._core.backends import get_array_backend
 from brainhops._core import affines as _affines
+from brainhops._core.backends import get_array_backend
+from brainhops._core.enum import StrEnum
+from brainhops._core.typing import ArrayProtocol
+from brainhops.datamodel import systems as _systems
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel import systems as _systems
 
 # io
+from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
@@ -72,12 +73,12 @@ class ITKPrecision(StrEnum):
     Double = "double"
 
 
-class ITKStruct(Struct, kw_only=True, convert=True):
+class ITKStruct(Magic, kw_only=True, convert=True):
     """This object represents a single ITK transform block."""
 
-    _REGISTRY: _tx.ClassVar[_tx.Mapping[str, type]] = {}
+    _REGISTRY: tx.ClassVar[tx.Mapping[str, type]] = {}
 
-    def __new__(cls, **kwargs):
+    def __new__(cls, **kwargs) -> None:
         if cls is not ITKStruct:
             return super().__new__(cls)
         if not hasattr(cls, "_REGISTRY"):
@@ -98,13 +99,14 @@ class ITKStruct(Struct, kw_only=True, convert=True):
     """The number of output dimensions."""
 
     parameters: ArrayProtocol = ()
-    """The optimizable parameters of the transform (e.g., translation vector)."""
+    """
+    The optimizable parameters of the transform (e.g., translation vector).
+    """
 
     fixed_parameters: ArrayProtocol = ()
     """The fixed parameters of the transform (e.g., center of rotation)."""
 
-
-    def _check_same_ndim(self, expected_ndim: int | None = None):
+    def _check_same_ndim(self, expected_ndim: tx.Optional[int] = None) -> None:
         if self.ndim_input != self.ndim_output:
             name = self.__class__.__name__
             raise ValueError(
@@ -118,7 +120,7 @@ class ITKStruct(Struct, kw_only=True, convert=True):
                 f"({self.ndim_input} != {expected_ndim})"
             )
 
-    def _check_parameters_length(self, expected_length: int):
+    def _check_parameters_length(self, expected_length: int) -> None:
         if len(self.parameters) != expected_length:
             name = self.__class__.__name__
             raise ValueError(
@@ -126,7 +128,7 @@ class ITKStruct(Struct, kw_only=True, convert=True):
                 f"does not match expected length {expected_length}"
             )
 
-    def _check_fixed_parameters_length(self, expected_length: int):
+    def _check_fixed_parameters_length(self, expected_length: int) -> None:
         if len(self.fixed_parameters) != expected_length:
             name = self.__class__.__name__
             raise ValueError(
@@ -135,12 +137,13 @@ class ITKStruct(Struct, kw_only=True, convert=True):
             )
 
 
-def _register_type(*names: str):
+def _register_type(*names: str) -> tx.Callable:
 
-    def decorator(cls):
+    def decorator(cls: type) -> type:
         for name in names:
             ITKStruct._REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
@@ -148,29 +151,31 @@ def _register_type(*names: str):
 class ITKIdentityStruct(ITKStruct):
     """Identity transform with no parameters."""
 
-    type: _tx.Literal[_ITKT.IdentityTransform] = _ITKT.IdentityTransform
+    type: tx.Literal[_ITKT.IdentityTransform] = _ITKT.IdentityTransform
 
-    parameters: _tx.Tuple[()] = ()
+    parameters: tx.Tuple[tx.Any, ...] = ()
 
-    fixed_parameters: _tx.Tuple[()] = ()
+    fixed_parameters: tx.Tuple[tx.Any, ...] = ()
 
     def to_transform(self) -> _xforms.Identity:
         """Return a copy of the identity transform."""
         return _xforms.Identity(
             input=_make_system(self.ndim_input),
-            output=_make_system(self.ndim_output)
+            output=_make_system(self.ndim_output),
         )
 
 
 @_register_type("TranslationTransform")
 class ITKTranslationStruct(ITKStruct):
-    """Translation transform with parameters for translation in each dimension."""
+    """
+    Translation transform with parameters for translation in each dimension.
+    """
 
-    type: _tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
+    type: tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
 
-    fixed_parameters: _tx.Tuple[()] = ()
+    fixed_parameters: tx.Tuple[tx.Any, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
@@ -179,7 +184,7 @@ class ITKTranslationStruct(ITKStruct):
         return _xforms.Translation(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
-            translation=self.parameters
+            translation=self.parameters,
         )
 
 
@@ -187,9 +192,9 @@ class ITKTranslationStruct(ITKStruct):
 class ITKScaleStruct(ITKStruct):
     """Scale transform with parameters for scaling in each dimension."""
 
-    type: _tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
+    type: tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
@@ -201,32 +206,37 @@ class ITKScaleStruct(ITKStruct):
             transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(self.parameters),
-                _xforms.Translation(self.fixed_parameters)
-            ]
+                _xforms.Translation(self.fixed_parameters),
+            ],
         )
 
 
 @_register_type("ScaleLogarithmicTransform")
 class ITKScaleLogarithmicStruct(ITKStruct):
-    """Scale logarithmic transform with parameters for scaling in each dimension."""
+    """
+    Scale logarithmic transform with parameters for scaling in each dimension.
+    """
 
-    type: _tx.Literal[_ITKT.ScaleLogarithmicTransform] \
-        = _ITKT.ScaleLogarithmicTransform
+    type: tx.Literal[_ITKT.ScaleLogarithmicTransform] = (
+        _ITKT.ScaleLogarithmicTransform
+    )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         self._check_parameters_length(self.ndim_input)
 
     def to_transform(self) -> _xforms.Sequence:
-        """Return a scale logarithmic transform with the specified parameters."""
+        """
+        Return a scale logarithmic transform with the specified parameters.
+        """
         return _xforms.Sequence(
             input=_make_system(self.ndim_input),
             output=_make_system(self.ndim_output),
             transformations=[
                 _xforms.Translation(self.fixed_parameters).inverse(),
                 _xforms.Scaling(np.exp(self.parameters)),
-                _xforms.Translation(self.fixed_parameters)
-            ]
+                _xforms.Translation(self.fixed_parameters),
+            ],
         )
 
 
@@ -234,15 +244,15 @@ class ITKScaleLogarithmicStruct(ITKStruct):
 class ITKEuler2DStruct(ITKStruct):
     """Euler 2D transform with parameters for rotation and translation."""
 
-    type: _tx.Literal[_ITKT.Euler2DTransform] = _ITKT.Euler2DTransform
+    type: tx.Literal[_ITKT.Euler2DTransform] = _ITKT.Euler2DTransform
 
-    ndim_input: _tx.Literal[2] = 2
-    ndim_output: _tx.Literal[2] = 2
+    ndim_input: tx.Literal[2] = 2
+    ndim_output: tx.Literal[2] = 2
 
-    parameters: _tx.Tuple[float, float, float]
+    parameters: tx.Tuple[float, float, float]
     """Rotation angle, followed by translation parameters."""
 
-    fixed_parameters: _tx.Tuple[float, float]
+    fixed_parameters: tx.Tuple[float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -252,10 +262,13 @@ class ITKEuler2DStruct(ITKStruct):
         t = self.parameters[1:3]
         c = self.fixed_parameters
 
-        R = np.array([
-            [math.cos(angle), -math.sin(angle)],
-            [math.sin(angle),  math.cos(angle)]
-        ], dtype=np.float64)
+        R = np.array(
+            [
+                [math.cos(angle), -math.sin(angle)],
+                [math.sin(angle), math.cos(angle)],
+            ],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(2),
@@ -265,7 +278,7 @@ class ITKEuler2DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -273,15 +286,15 @@ class ITKEuler2DStruct(ITKStruct):
 class ITKEuler3DStruct(ITKStruct):
     """Euler 3D transform with parameters for rotation and translation."""
 
-    type: _tx.Literal[_ITKT.Euler3DTransform] = _ITKT.Euler3DTransform
+    type: tx.Literal[_ITKT.Euler3DTransform] = _ITKT.Euler3DTransform
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[float, float, float, float, float, float]
+    parameters: tx.Tuple[float, float, float, float, float, float]
     """Rotation angles (rx, ry, rz), followed by translation parameters."""
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -299,7 +312,7 @@ class ITKEuler3DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -307,18 +320,18 @@ class ITKEuler3DStruct(ITKStruct):
 class ITKVersorStruct(ITKStruct):
     """Versor transform with parameters for rotation in each dimension."""
 
-    type: _tx.Literal[_ITKT.VersorTransform] = _ITKT.VersorTransform
+    type: tx.Literal[_ITKT.VersorTransform] = _ITKT.VersorTransform
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[float, float, float]
+    parameters: tx.Tuple[float, float, float]
     """Quaternion parameters."""
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
 
     def to_transform(self) -> _xforms.Sequence:
@@ -333,24 +346,28 @@ class ITKVersorStruct(ITKStruct):
             transformations=[
                 _xforms.Translation(c).inverse(),
                 _xforms.Rotation(R),
-                _xforms.Translation(c)
-            ]
+                _xforms.Translation(c),
+            ],
         )
 
 
 @_register_type("VersorRigid3DTransform")
 class ITKVersorRigid3DStruct(ITKStruct):
-    """Versor rigid 3D transform with parameters for rotation and translation."""
+    """
+    Versor rigid 3D transform with parameters for rotation and translation.
+    """
 
-    type: _tx.Literal[_ITKT.VersorRigid3DTransform] = _ITKT.VersorRigid3DTransform
+    type: tx.Literal[_ITKT.VersorRigid3DTransform] = (
+        _ITKT.VersorRigid3DTransform
+    )
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[float, float, float, float, float, float]
+    parameters: tx.Tuple[float, float, float, float, float, float]
     """Quaternion parameters followed by translation vector."""
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -359,7 +376,7 @@ class ITKVersorRigid3DStruct(ITKStruct):
         q = ITKVersorStruct(
             precision=self.precision,
             parameters=self.parameters[:3],
-            fixed_parameters=self.fixed_parameters
+            fixed_parameters=self.fixed_parameters,
         )
         t = self.parameters[3:6]
 
@@ -375,15 +392,15 @@ class ITKSimilarity2DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity2DTransform] = _ITKT.Similarity2DTransform
+    type: tx.Literal[_ITKT.Similarity2DTransform] = _ITKT.Similarity2DTransform
 
-    ndim_input: _tx.Literal[2] = 2
-    ndim_output: _tx.Literal[2] = 2
+    ndim_input: tx.Literal[2] = 2
+    ndim_output: tx.Literal[2] = 2
 
-    parameters: _tx.Tuple[float, float, float, float]
+    parameters: tx.Tuple[float, float, float, float]
     """Scale, angle, and (x, y) translation parameters."""
 
-    fixed_parameters: _tx.Tuple[float, float]
+    fixed_parameters: tx.Tuple[float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -391,10 +408,13 @@ class ITKSimilarity2DStruct(ITKStruct):
         scale, angle, tx, ty = self.parameters
         c = self.fixed_parameters
 
-        R = np.array([
-            [math.cos(angle), -math.sin(angle)],
-            [math.sin(angle),  math.cos(angle)]
-        ], dtype=np.float64)
+        R = np.array(
+            [
+                [math.cos(angle), -math.sin(angle)],
+                [math.sin(angle), math.cos(angle)],
+            ],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(2),
@@ -405,7 +425,7 @@ class ITKSimilarity2DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation((tx, ty)),
-            ]
+            ],
         )
 
 
@@ -416,18 +436,18 @@ class ITKSimilarity3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.Similarity3DTransform] = _ITKT.Similarity3DTransform
+    type: tx.Literal[_ITKT.Similarity3DTransform] = _ITKT.Similarity3DTransform
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[float, float, float, float, float, float, float]
+    parameters: tx.Tuple[float, float, float, float, float, float, float]
     """
     (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
     and scale.
     """
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -446,7 +466,7 @@ class ITKSimilarity3DStruct(ITKStruct):
                 _xforms.Rotation(R),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -457,24 +477,23 @@ class ITKScaleVersor3DStruct(ITKStruct):
     and scaling.
     """
 
-    type: _tx.Literal[_ITKT.ScaleVersor3DTransform] \
-        = _ITKT.ScaleVersor3DTransform
+    type: tx.Literal[_ITKT.ScaleVersor3DTransform] = (
+        _ITKT.ScaleVersor3DTransform
+    )
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[
+    parameters: tx.Tuple[
         # 9 parameters
-        float, float, float,
-        float, float, float,
-        float, float, float
+        float, float, float, float, float, float, float, float, float
     ]
     """
     (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
     and (sx, sy, sz) scale parameters.
     """
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -490,10 +509,10 @@ class ITKScaleVersor3DStruct(ITKStruct):
             output=_make_system(3),
             transformations=[
                 _xforms.Translation(c).inverse(),
-                _xforms.Linear(R+S),
+                _xforms.Linear(R + S),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -504,19 +523,30 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
     scaling, and skewing.
     """
 
-    type: _tx.Literal[_ITKT.ScaleSkewVersor3DTransform] \
-        = _ITKT.ScaleSkewVersor3DTransform
+    type: tx.Literal[_ITKT.ScaleSkewVersor3DTransform] = (
+        _ITKT.ScaleSkewVersor3DTransform
+    )
 
-    ndim_input: _tx.Literal[3] = 3
-    ndim_output: _tx.Literal[3] = 3
+    ndim_input: tx.Literal[3] = 3
+    ndim_output: tx.Literal[3] = 3
 
-    parameters: _tx.Tuple[
+    parameters: tx.Tuple[
         # 15 parameters
-        float, float, float,
-        float, float, float,
-        float, float, float,
-        float, float, float,
-        float, float, float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
     ]
     """
     (qx, qy, qz) versor parameters, (tx, ty, tz) translation parameters,
@@ -524,7 +554,7 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
     skew parameters.
     """
 
-    fixed_parameters: _tx.Tuple[float, float, float]
+    fixed_parameters: tx.Tuple[float, float, float]
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
@@ -535,34 +565,32 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
         k = self.parameters[9:15]
         R = _versor_to_matrix(q)
         S = np.diag(np.asarray(s) - 1)
-        K = np.array([
-            [0, k[0], k[1]],
-            [k[2], 0, k[3]],
-            [k[4], k[5], 0]
-        ], dtype=np.float64)
+        K = np.array(
+            [[0, k[0], k[1]], [k[2], 0, k[3]], [k[4], k[5], 0]],
+            dtype=np.float64,
+        )
 
         return _xforms.Sequence(
             input=_make_system(3),
             output=_make_system(3),
             transformations=[
                 _xforms.Translation(c).inverse(),
-                _xforms.Linear(R+S+K),
+                _xforms.Linear(R + S + K),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
 @_register_type("AffineTransform")
 class ITKAffineStruct(ITKStruct):
     """
-    Affine transform with parameters for linear transformation and
-    translation.
+    Affine transform with parameters for linear transformation and translation.
     """
 
-    type: _tx.Literal[_ITKT.AffineTransform] = _ITKT.AffineTransform
+    type: tx.Literal[_ITKT.AffineTransform] = _ITKT.AffineTransform
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_same_ndim()
         ndim = self.ndim_input
         self._check_parameters_length((ndim + 1) * ndim)
@@ -573,7 +601,7 @@ class ITKAffineStruct(ITKStruct):
 
         Di = self.ndim_input
         Do = self.ndim_output
-        L = np.array(self.parameters[:Di * Do], dtype=np.float64)
+        L = np.array(self.parameters[: Di * Do], dtype=np.float64)
         L = L.reshape(Do, Di)
         t = np.array(self.parameters[-Do:], dtype=np.float64)
         c = self.fixed_parameters
@@ -586,7 +614,7 @@ class ITKAffineStruct(ITKStruct):
                 _xforms.Linear(L),
                 _xforms.Translation(c),
                 _xforms.Translation(t),
-            ]
+            ],
         )
 
 
@@ -596,7 +624,9 @@ class ITKDisplacementFieldStruct(ITKStruct):
     Displacement field transform with parameters for a dense deformation map.
     """
 
-    type: _tx.Literal[_ITKT.DisplacementFieldTransform] = _ITKT.DisplacementFieldTransform
+    type: tx.Literal[_ITKT.DisplacementFieldTransform] = (
+        _ITKT.DisplacementFieldTransform
+    )
 
     def to_transform(self) -> _xforms.DisplacementField:
 
@@ -622,17 +652,16 @@ class ITKDisplacementFieldStruct(ITKStruct):
         rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
         disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
-        LPS = _make_system(3)
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.Sequence(
             [
-                LPSToVoxel(lps2vox),
+                LPSToVoxel(matrix=lps2vox),
                 _xforms.DisplacementField(
-                    disp,
+                    field=disp,
                     input=VOX,
                     output=VOX,
                 ),
-                VoxelToLPS(vox2lps),
+                VoxelToLPS(matrix=vox2lps),
             ],
         )
 
@@ -643,7 +672,7 @@ class ITKBSplineStruct(ITKStruct):
     B-spline transform with parameters for a dense deformation map.
     """
 
-    type: _tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
+    type: tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
 
     def to_transform(self) -> _xforms.DisplacementField:
 
@@ -653,6 +682,7 @@ class ITKBSplineStruct(ITKStruct):
 
         # Ensure array-like
         parameters = self.parameters
+        parameters = parameters if parameters is not None else np.array([])
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
@@ -665,6 +695,9 @@ class ITKBSplineStruct(ITKStruct):
         # Compute the linear part of the world-to-voxel affine
         lps2vox = _affines.inv(vox2lps)
 
+        disp = parameters.reshape(3, *reversed(shape))
+        disp = disp.transpose(3, 2, 1, 0)
+
         # Multiply by the world-to-voxel affine to convert from world
         # displacements to voxel displacements
         backend = get_array_backend(disp)
@@ -672,24 +705,23 @@ class ITKBSplineStruct(ITKStruct):
         disp = backend.matmul(rotate, disp[..., None])[..., 0]
 
         VOX = _systems.VoxelCoordinateSystem()
-        LPS = _make_system(3)
         return _xforms.Sequence(
             [
-                LPSToVoxel(lps2vox),
+                LPSToVoxel(matrix=lps2vox),
                 _xforms.DisplacementField(
-                    disp,
+                    field=disp,
                     input=VOX,
                     output=VOX,
                     order=3,
                     coeff=True,
-                    bound="zeros",
+                    bound=BoundaryCondition.zeros,
                 ),
-                VoxelToLPS(vox2lps),
+                VoxelToLPS(matrix=vox2lps),
             ],
         )
 
 
-def _vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
+def _vox2lps(fixed_parameters: tx.Sequence[float]) -> np.ndarray:
     """Compute the node-to-world affine of a B-splines transform."""
 
     fixed_parameters = np.asarray(fixed_parameters, dtype=np.float64)
@@ -706,22 +738,36 @@ def _vox2lps(fixed_parameters: _tx.Sequence[float]) -> np.ndarray:
     return vox2lps, shape
 
 
-def _versor_to_matrix(q: _tx.Sequence[float]) -> np.ndarray:
+def _versor_to_matrix(q: tx.Sequence[float]) -> np.ndarray:
     """Convert a versor (unit quaternion) to a rotation matrix."""
     qx, qy, qz = q
-    norm_sq = qx ** 2 + qy ** 2 + qz ** 2
+    norm_sq = qx**2 + qy**2 + qz**2
     if norm_sq > 1.0:
-        raise ValueError(
-            "Versor quaternion vector part has magnitude > 1")
+        raise ValueError("Versor quaternion vector part has magnitude > 1")
     qw = math.sqrt(max(0.0, 1.0 - norm_sq))
-    return np.array([
-        [1 - 2*(qy**2 + qz**2),     2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
-        [    2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qx*qw)],
-        [    2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
-    ], dtype=np.float64)
+    return np.array(
+        [
+            [
+                1 - 2 * (qy**2 + qz**2),
+                2 * (qx * qy - qz * qw),
+                2 * (qx * qz + qy * qw),
+            ],
+            [
+                2 * (qx * qy + qz * qw),
+                1 - 2 * (qx**2 + qz**2),
+                2 * (qy * qz - qx * qw),
+            ],
+            [
+                2 * (qx * qz - qy * qw),
+                2 * (qy * qz + qx * qw),
+                1 - 2 * (qx**2 + qy**2),
+            ],
+        ],
+        dtype=np.float64,
+    )
 
 
-def _euler_to_matrix(angles: _tx.Sequence[float]) -> np.ndarray:
+def _euler_to_matrix(angles: tx.Sequence[float]) -> np.ndarray:
     """Convert Euler angles to a rotation matrix."""
     cx, cy, cz = np.cos(angles)
     sx, sy, sz = np.sin(angles)
