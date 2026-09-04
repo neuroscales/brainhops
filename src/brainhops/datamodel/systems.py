@@ -8,11 +8,10 @@ __all__ = [
 # externals
 import typing_extensions as tx
 
-# internals
-from .base import DataModelBase
-from .axes import Axis, SpatialAxis, same_axis_type
 from . import axes as _axes
-from .axes import Axis, SpatialAxis
+from .axes import Axis, SpatialAxis, same_axis_type
+
+# internals
 from .base import DataModelBase
 
 _2Axes = tx.Tuple[Axis, Axis]
@@ -83,16 +82,20 @@ class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
     axes: tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
 
 
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
+    ...
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
+    ...
 
 
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
+    ...
 
 
 # ----------------------------------------------------------------------
@@ -312,16 +315,18 @@ class CRSACoordinateSystem(RSACoordinateSystem, CVoxelCoordinateSystem):
     )
 
 
-def get_missing(c1: CoordinateSystem, c2: CoordinateSystem):
+def get_missing(c1: CoordinateSystem, c2: CoordinateSystem) -> tx.List[Axis]:
     """
     Find all axes in c1 that don't match an axis in c2
 
     Parameters
     ----------
     c1: CoordinateSystem
-        The coordinate system containing axes that we would like to see if are missing from c2
+        The coordinate system containing axes that we would like to see if
+        are missing from c2
     c2: CoordinateSystem
-        The coordinate system that we want to see if there are any missing axes in
+        The coordinate system that we want to see if there are any missing
+        axes in
 
     Returns
     -------

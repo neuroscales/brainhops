@@ -6,7 +6,8 @@ These tests exercise the real `brainhops` code, so they need to run in
 an environment where `brainhops` is importable. A few notes on
 assumptions baked into these tests -- adjust if your API differs:
 
-* `LeftToRightAxis()` / `AnteriorToPosteriorAxis()` / `InferiorToSuperiorAxis()`
+* `LeftToRightAxis()` / `AnteriorToPosteriorAxis()` /
+    `InferiorToSuperiorAxis()`
   take no constructor args (matches the example script this suite is
   based on).
 * Importing `brainhops.datamodel._xform_adaptors` is what registers the
