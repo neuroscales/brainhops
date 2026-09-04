@@ -99,7 +99,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
         return False
 
     @classmethod
-    def sniff_file(cls, fileobj: _tx.Union[str, PathLike]) -> bool:
+    def sniff_file(cls, fileobj: tx.Union[str, PathLike]) -> bool:
         """
         Check whether the file at `fileobj` looks like a valid NIfTI
         file (NIfTI-1 or NIfTI-2), without fully loading it.
@@ -114,7 +114,7 @@ class NiftiBasedTransformation(_xforms.Transformation):
                 # NIfTI-1/2 headers are 348/540 bytes; a few extra
                 # bytes of slack doesn't hurt.
                 binaryblock = f.read(552)
-        except (OSError, IOError):
+        except OSError:
             return False
         return cls.sniff_bytes(binaryblock)
 
