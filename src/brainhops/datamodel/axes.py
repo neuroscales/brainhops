@@ -114,8 +114,8 @@ def same_axis_type(a1: Axis, a2: Axis) -> bool:
     Check whether two axes are of a matching type.
 
     Two axes match if they have the same `type`. For `"spatial"` axes,
-    the `name` is also compared to make sure the corrispond to the same
-    spacial axes.
+    the `name` is also compared to make sure the correspond to the same
+    spatial axes.
 
     Parameters
     ----------

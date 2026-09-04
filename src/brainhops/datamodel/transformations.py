@@ -341,7 +341,7 @@ class Transformation(DataModelBase, reverse=True):
         Create a copy of the current transformation but expanded to include
         identity transformation for new axes.
 
-        Paramaters
+        Parameters
         -----------
         missing: list
             A list of misses axes that need to be added.
@@ -371,7 +371,7 @@ class Transformation(DataModelBase, reverse=True):
         Create a copy of the current transformation but with axes added to
         one or both side's coordinate systems.
 
-        Paramaters
+        Parameters
         -----------
         missing: list
             A list of misses axes that need to be added.

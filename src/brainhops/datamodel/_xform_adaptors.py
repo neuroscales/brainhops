@@ -35,7 +35,7 @@ def _(x1: Transformation, x2: Transformation) -> Transformation:
     # Up to two transformations may be needed a permutation and a scaller
     transformations = []
 
-    # Find what axes corrispond to output axes.
+    # Find what axes correspond to output axes.
     # `perm[i] == j` means `inp.output.axes[i]` matches `out.input.axes[j]`.
     perm = []
     for i in range(len(x2.output.axes)):
