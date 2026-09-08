@@ -101,8 +101,29 @@ mov = Image(data=src.data, transformation=xform.inverse() @ src.transformation)
 The transformed image can then be computed by calling:
 
 ```python
-mov = mov.reslice()
-# or mov = src(xform, reslice=True)
+mov = src.reslice(dst.geometry)  # -> geometry = dst.geometry
+mov = src(dsp).reslice(dsp.geometry)  # -> geometry = dsp.geometry
+```
+
+While it is not implemented yet, it might be useful to automatically
+detect transformations that start with a `Geometry` object, allowing
+`reslice` to be called without an argument:
+
+```python
+mov = src(dst.geometry).reslice()
+mov = src(wrp @ dst.geometry).reslice()
+mov = src(disp).reslice()  # -> geometry == CartesianField(vox_disp.shape)
+mov = src(ras2ras).reslice()  # -> raise Exception("Cannot guess geometry")
+```
+
+We may even guess the geometry of transformations that start with a
+displacement of coordinate field (but that may only be the case for
+certain formats, not general fields, and is not well specified in our
+data model yet). For example:
+
+
+```python
+mov = mov.reslice(geometry)
 ```
 
 Note that different behaviours are obtained, depending on whether the
@@ -110,29 +131,8 @@ chain of transformation ends with a `CartesianField`, a `CoordinatesField`
 or another type of transformation:
 
 ```python
-mov = src(dst.geometry).reslice()  # -> geometry == CartesianField(dst.shape)
-mov = src(wrp).reslice()  # -> geometry == CartesianField(ras_coords.shape)
-mov = src(disp).reslice()  # -> geometry == CartesianField(vox_disp.shape)
+mov = src(disp).reslice()  # -> assumes that `disp` has a geometry
 mov = src(ras2ras).reslice()  # -> raise Exception("Cannot guess geometry")
-```
-
-A more explicit reslicing operation can be performed by passing the
-`geometry` of the output image:
-
-```python
-mov = src.reslice(dst.geometry)  # -> geometry = dst.geometry
-mov = src(dsp).reslice(dsp.geometry)  # -> geometry = dsp.geometry
-```
-
-Finally, it is often the case that we want the output geometry to be the
-same as the input geometry. However, the input geometry is lost as soon
-as `src(xform)` is called. The verbose way of obtaining this behaviour
-consists of saving and passing the original geometry, but given the
-ubiquity of this operation, we also provide a shortcut:
-
-```python
-mov = src(vox2ras @ vox_disp @ vox2ras.inverse()).reslice(src.geometry)
-mov = src(vox2ras @ vox_disp @ vox2ras.inverse(), reslice="preserve")
 ```
 
 ## Transformations
