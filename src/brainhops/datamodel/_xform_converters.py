@@ -1,7 +1,10 @@
+# stdlib
 # dependencies
+# core
+import inspect
+
 import typing_extensions as tx
 
-# core
 from brainhops._core.backends import get_array_backend
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 
@@ -58,7 +61,8 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
     # FIXME: this is too hacky
-    params = dict(vars(t))
+    valid_params = set(inspect.signature(CoordinatesField).parameters)
+    params = {k: v for k, v in vars(t).items() if k in valid_params}
     params.update(kwargs)
     return CoordinatesField(**params)
 
@@ -325,7 +329,6 @@ def _(t: Transformation) -> Transformation:
 
 
 def _make_converter_chain(*types: tx.List[type]) -> None:
-
     T0, TN = types[0], types[-1]
 
     @_converter(T0, TN)
