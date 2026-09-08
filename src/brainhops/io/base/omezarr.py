@@ -225,17 +225,27 @@ class OmeZarrParser(FileParser, DataModelBase):
                 ),
             )
         elif kind == "byDimension":
-            return Sequence(
-                transformations=[
-                    cls._json_to_transformation(
-                        transformation["transformations"][i],
-                        transformation["input_axes"][i],
-                        transformation["output_axes"][i],
-                    )
-                    for i in range(len(transformation["transformations"]))
-                ],
-                input=transformation["input_axes"][0],
-                output=transformation["output_axes"][-1],
+            # TODO: Need to use the coordinate systems provided by byDimension
+            return (
+                Sequence(
+                    transformations=[
+                        cls._json_to_transformation(
+                            t, voxel_space, voxel_space
+                        )
+                        for t in transformation["transformations"][:-1]
+                    ]
+                    + [
+                        cls._json_to_transformation(
+                            transformation["transformation"][-1],
+                            voxel_space,
+                            world_space,
+                        )
+                    ],
+                    input=voxel_space,
+                    output=world_space,
+                )
+                if len(transformation["transformations"]) > 0
+                else Identity(input=voxel_space, output=world_space)
             )
         elif kind == "identity":
             return Identity(input=voxel_space, output=world_space)
