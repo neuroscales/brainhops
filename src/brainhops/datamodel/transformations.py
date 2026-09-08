@@ -11,7 +11,8 @@ __all__ = [
     "Identity",
     "Bijection",
     "Inverse",
-    "ByDimension",
+    "SubspaceTransformation",
+    "Projection",
     "Sequence",
 ]
 # stdlib
@@ -100,7 +101,7 @@ class Transformation(DataModelBase, reverse=True):
        typically applied to coordinates using matrix multiplication, with
        the input space "on the right" and the output space "on the left".
 
-    :: warning "Direction of transformation"
+    !!! warning "Direction of transformation"
         This mapping direction is the opposite of the direction that is
         typically used to transform images. For example, a transformation
         that deforms an image from space A to space B, will actually
@@ -729,7 +730,7 @@ class Inverse(Transformation):
         return None
 
 
-class ByDimension(Transformation):
+class SubspaceTransformation(Transformation):
     """
     A transformation that is applied to a subset of the input and output axes.
     """
@@ -758,6 +759,28 @@ class ByDimension(Transformation):
             output=self.input,
             input_axes=self.output_axes,
             output_axes=self.input_axes,
+        )
+
+
+class Projection(Transformation):
+    """
+    A transformation that acts as a projection from a higher dimensional
+    space to a lower-dimensional space by removing one or more axes.
+
+    Or its inverse (i.e., an embedding) that adds one or more axes to a
+    lower-dimensional space.
+    """
+
+    dropped: npvector[Integral]
+    created: npvector[Integral]
+
+    def inverse(self) -> tx.Self:
+        cls = type(self)
+        return cls(
+            dropped=self.created,
+            created=self.dropped,
+            input=self.output,
+            output=self.input,
         )
 
 
