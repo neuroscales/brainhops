@@ -1,3 +1,6 @@
+# stdlib
+import inspect
+
 # dependencies
 # core
 import inspect
