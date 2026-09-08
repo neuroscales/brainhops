@@ -50,7 +50,9 @@ class SingleScaleImage(Image):
         return Identity()
 
     @transformation.setter
-    def transformation(self, value: Transformation) -> None:
+    def transformation(
+        self, value: tx.Union[Transformation, int, str]
+    ) -> None:
         if isinstance(value, int):
             value = self.transformations.pop(value)
         elif isinstance(value, str):
@@ -232,7 +234,9 @@ class MultiScaleImage(Image):
         return Identity()
 
     @transformation.setter
-    def transformation(self, value: Transformation) -> None:
+    def transformation(
+        self, value: tx.Union[Transformation, int, str]
+    ) -> None:
         if isinstance(value, int):
             value = self.transformations.pop(value)
         elif isinstance(value, str):
