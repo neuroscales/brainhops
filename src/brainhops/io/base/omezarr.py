@@ -8,6 +8,8 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
+    Affine,
+    Bijection,
     Identity,
     Scaling,
     Sequence,
@@ -123,8 +125,8 @@ class OmeZarrParser(FileParser, DataModelBase):
 
     @classmethod
     def _transform_from_metadata(
-        cls, metadata: dict, level: int
-    ) -> Transformation:
+        cls, metadata: dict, level: _tx.Optional[int] = None
+    ) -> _tx.List[Transformation]:
         """
         Build the Transformation for one resolution level of metadatas entry.
         """
@@ -132,45 +134,114 @@ class OmeZarrParser(FileParser, DataModelBase):
         voxel_space = CoordinateSystem(axes=axes)
         world_space = CoordinateSystem(axes=axes)
 
-        dataset = metadata["datasets"][level]
+        dataset = (
+            metadata["datasets"][level] if level is not None else metadata
+        )
         # a metadata-wide transform (applied to every level) may also
         # be declared alongside each per-dataset one; apply it first.
-        raw_transforms = list(
-            metadata.get("coordinateTransformations", [])
-        ) + list(dataset.get("coordinateTransformations", []))
+        raw_transforms = list(dataset.get("coordinateTransformations", []))
 
-        pieces: _tx.List[Transformation] = []
-        for t in raw_transforms:
-            kind = t.get("type")
-            if kind == "scale":
-                pieces.append(
-                    Scaling(
-                        scale=np.asarray(t["scale"], dtype=float),
-                        input=voxel_space,
-                        output=world_space,
-                    )
-                )
-            elif kind == "translation":
-                pieces.append(
-                    Translation(
-                        translation=np.asarray(t["translation"], dtype=float),
-                        input=voxel_space,
-                        output=world_space,
-                    )
-                )
-            elif kind == "identity":
-                continue
-            else:
-                raise NotImplementedError(
-                    "Unsupported NGFF coordinateTransformation type: "
-                    f"{kind!r}. Only 'scale' and 'translation' are "
-                    "currently handled."
-                )
+        pieces: _tx.List[Transformation] = [
+            cls._json_to_transformation(t, voxel_space, world_space)
+            for t in raw_transforms
+        ]
 
         if not pieces:
+            return [Identity(input=voxel_space, output=world_space)]
+        return pieces
+
+    @classmethod
+    def _json_to_transformation(
+        cls,
+        transformation: dict,
+        voxel_space: CoordinateSystem,
+        world_space: CoordinateSystem,
+    ) -> Transformation:
+        kind = transformation.get("type")
+        if kind == "scale":
+            return Scaling(
+                scale=np.asarray(transformation["scale"], dtype=float),
+                input=voxel_space,
+                output=world_space,
+            )
+        elif kind == "translation":
+            return Translation(
+                translation=np.asarray(
+                    transformation["translation"], dtype=float
+                ),
+                input=voxel_space,
+                output=world_space,
+            )
+
+        elif kind == "affine":
+            return Affine(
+                matrix=np.asarray(transformation["affine"], dtype=float),
+                input=voxel_space,
+                output=world_space,
+            )
+        elif kind == "rotation":
+            return Affine(
+                matrix=np.asarray(transformation["rotation"], dtype=float),
+                input=voxel_space,
+                output=world_space,
+            )
+        elif kind == "sequence":
+            return (
+                Sequence(
+                    transformations=[
+                        cls._json_to_transformation(
+                            t, voxel_space, voxel_space
+                        )
+                        for t in transformation["transformations"][:-1]
+                    ]
+                    + [
+                        cls._json_to_transformation(
+                            transformation["transformation"][-1],
+                            voxel_space,
+                            world_space,
+                        )
+                    ],
+                    input=voxel_space,
+                    output=world_space,
+                )
+                if len(transformation["transformations"]) > 0
+                else Identity(input=voxel_space, output=world_space)
+            )
+        elif kind == "displacements":
+            raise NotImplementedError(
+                "need to figure out how to do this without circular imports"
+            )
+        elif kind == "coordinates":
+            raise NotImplementedError(
+                "need to figure out how to do this without circular imports"
+            )
+        elif kind == "bijection":
+            return Bijection(
+                input=voxel_space,
+                output=world_space,
+                forward=cls._json_to_transformation(transformation["forward"]),
+                backward=cls._json_to_transformation(
+                    transformation["inverse"]
+                ),
+            )
+        elif kind == "byDimension":
+            return Sequence(
+                transformations=[
+                    cls._json_to_transformation(
+                        transformation["transformations"][i],
+                        transformation["input_axes"][i],
+                        transformation["output_axes"][i],
+                    )
+                    for i in range(len(transformation["transformations"]))
+                ],
+                input=transformation["input_axes"][0],
+                output=transformation["output_axes"][-1],
+            )
+        elif kind == "identity":
             return Identity(input=voxel_space, output=world_space)
-        if len(pieces) == 1:
-            return pieces[0]
-        return Sequence(
-            transformations=pieces, input=voxel_space, output=world_space
-        )
+        else:
+            raise NotImplementedError(
+                "Unsupported NGFF coordinateTransformation type: "
+                f"{kind!r}. Only 'scale' and 'translation' are "
+                "currently handled."
+            )

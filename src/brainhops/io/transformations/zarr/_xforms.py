@@ -153,8 +153,16 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
                     _xforms.Sequence(
                         transformations=[
                             self._field_for_layer(self.fields[i]),
-                            *self._transform_from_multiscale(
-                                self._multiscale, i
+                            *(
+                                [
+                                    self._transform_from_multiscale(
+                                        self._multiscale, i
+                                    )[-1]
+                                ]
+                                if self._transform_from_multiscale(
+                                    self._multiscale, i
+                                )
+                                else []
                             ),
                         ],
                         input=self._axes,
