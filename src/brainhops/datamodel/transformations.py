@@ -1206,6 +1206,7 @@ def _compute_sequence(
     for child in children:
         seq = _compute_sequence(seq, child, memo=memo)
         if not isinstance(seq, Sequence):
+            # NOTE(YB): why this?????
             return seq
 
     # Mark that we've been through this mode
@@ -1228,6 +1229,8 @@ def _compute_sequence(
                 try:
                     item = _compose(next_input, item)
                 except CompositionError:
+                    # NOTE(YB):
+                    # When does this happen? When we don't know how to adapt?
                     outputs.append(item)
                     item = next_input
         outputs.append(item)
