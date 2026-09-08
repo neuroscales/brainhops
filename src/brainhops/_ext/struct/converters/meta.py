@@ -1,8 +1,8 @@
 __all__ = [
-    "AnyConverter", 
-    "UnionConverter", 
-    "OptionalConverter", 
-    "NoneConverter"
+    "AnyConverter",
+    "UnionConverter",
+    "OptionalConverter",
+    "NoneConverter",
 ]
 
 import typing_extensions as _tx
@@ -21,7 +21,6 @@ from .utils import _get_origin, T, ConversionError
 
 @register(_tx.Any)
 class AnyConverter(HintConverter[_tx.Any]):
-
     _DEFAULT = _tx.Any
 
     def _init_check(self) -> bool:
@@ -29,11 +28,10 @@ class AnyConverter(HintConverter[_tx.Any]):
 
     def _convert(self, value: _tx.Any) -> _tx.Any:
         return value
-    
+
 
 @register(_tx.Union, _t.UnionType)
 class UnionConverter(HintConverter[T]):
-
     def _init_check(self) -> bool:
         return _get_origin(self.type) in (_tx.Union, _t.UnionType)
 
@@ -57,7 +55,6 @@ class UnionConverter(HintConverter[T]):
 
 @register(_tx.Optional)
 class OptionalConverter(HintConverter[T]):
-        
     def _init_check(self):
         return _get_origin(self.type) is _tx.Optional
 
@@ -66,7 +63,7 @@ class OptionalConverter(HintConverter[T]):
             f"OptionalConverter can only be used with Optional types,  "
             f"got {self.type}"
         )
-        
+
     def _convert(self, value: _tx.Any) -> T:
         if value is None:
             return None
@@ -76,9 +73,8 @@ class OptionalConverter(HintConverter[T]):
 
 @register(None, _t.NoneType)
 class NoneConverter(HintConverter[None]):
-
     _DEFAULT = None
-    
+
     def _init_check(self):
         return self.type is None or self.type is _t.NoneType
 

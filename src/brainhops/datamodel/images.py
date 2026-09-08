@@ -45,8 +45,8 @@ class SingleScaleImage(Image):
         Changing it appends the new transformation to the list (or
         reorders the list if the value is an integer or a string).
         """
-        if self._transformations:
-            return self._transformations[-1]
+        if self.transformations:
+            return self.transformations[-1]
         return Identity()
 
     @transformation.setter
