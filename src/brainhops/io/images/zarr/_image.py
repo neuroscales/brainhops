@@ -1,6 +1,6 @@
 import typing_extensions as _tx
 
-from brainhops._core.backends import get_ndimage_backend
+from brainhops._core.backends import get_array_backend
 from brainhops.datamodel.images import Image, MultiImage
 from brainhops.io.base.omezarr import OmeZarrParser
 
@@ -17,19 +17,19 @@ class OmeZarrImage(OmeZarrParser, MultiImage):
         list[Image]
         """
         if getattr(self, "_images", None) is None:
-            if self.group is None or self._multiscale is None:
+            if self.group is None or self._metadata is None:
                 self._images = None
             else:
                 self._images = [
                     Image(
-                        data=get_ndimage_backend().from_array(
+                        data=get_array_backend().from_array(
                             self.group[ds["path"]]
                         ),
-                        transformations=self._transform_from_multiscale(
-                            self._multiscale, i
+                        transformations=self._transform_from_metadata(
+                            self._metadata, i
                         ),
                     )
-                    for i, ds in enumerate(self._multiscale["datasets"])
+                    for i, ds in enumerate(self._metadata["datasets"])
                 ]
         return self._images
 

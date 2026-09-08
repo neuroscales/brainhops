@@ -2,7 +2,7 @@ import typing_extensions as _tx
 from numpy.typing import ArrayLike
 
 # datamodel
-from brainhops._core.backends import get_ndimage_backend
+from brainhops._core.backends import get_array_backend
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base.omezarr import OmeZarrParser
 
@@ -110,7 +110,7 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
                 index_shape = [1] * len(grid_shape)
                 index_shape[k] = grid_shape[k]
                 index_k = (
-                    get_ndimage_backend()
+                    get_array_backend()
                     .arange(grid_shape[k], dtype=field[..., k].dtype)
                     .reshape(index_shape)
                 )
