@@ -94,9 +94,11 @@ class OmeZarrParser(FileParser, DataModelBase):
         zarray = path + "/.zarray"
         zattrs = path + "/.zattrs"
         zjson = path + "/zarr.json"
-        if os.path.exists(zarray) or \
-                os.path.exists(zattrs) or \
-                os.path.exists(zjson):
+        if (
+            os.path.exists(zarray)
+            or os.path.exists(zattrs)
+            or os.path.exists(zjson)
+        ):
             return True
         return True
 
