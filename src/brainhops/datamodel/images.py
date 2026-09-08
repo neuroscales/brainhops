@@ -195,7 +195,7 @@ class MultiScaleImage(Image):
             "to different world spaces. The last transformation in the list "
             "is the preferred one."
         ),
-    ]
+    ] = []
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """
@@ -227,8 +227,8 @@ class MultiScaleImage(Image):
         Changing it appends the new transformation to the list (or
         reorders the list if the value is an integer or a string).
         """
-        if self._transformations:
-            return self._transformations[-1]
+        if self.transformations:
+            return self.transformations[-1]
         return Identity()
 
     @transformation.setter
