@@ -1,279 +1,358 @@
-# externals
-from warnings import warn
-
+# dependencies
 import dask.array as da
-import typing_extensions as _tx
+import typing_extensions as tx
+from bagof.hints.array import ArrayProtocol
 
-from brainhops._core.bsplines import (
-    pull,
-)
-from brainhops.datamodel import hierarchy
-from brainhops.datamodel.transformations import is_identity
+# core
+from brainhops._core.bsplines import pull
 
 # internals
 from .base import DataModelBase
-from .transformations import (
-    CartesianField,
-    CoordinatesField,
-    Identity,
-    Sequence,
-    Transformation,
-)
-
-# Type alias for the recurring reslice/geometry parameter shape used across
-# Image.reslice, Image.__call__, and their MultiImage overrides.
-GeometryLike = _tx.Optional[
-    _tx.Union[CartesianField, _tx.Literal["preserve"], _tx.Tuple[int, ...]]
-]
+from .geometry import Geometry
+from .transformations import CartesianField, Identity, Transformation
 
 
 class Image(DataModelBase):
-    data: _tx.Optional[da.Array] = None
-    _transformations: _tx.Optional[_tx.List[Transformation]] = None
-    _transformation: _tx.Optional[Transformation] = None
+    """Base class for all images."""
+
+
+class SingleScaleImage(Image):
+    """Base class for all single-resolution images."""
+
+    data: tx.Annotated[
+        ArrayProtocol,
+        tx.Doc(
+            "The image data. Must be an array-like object that supports "
+            "the array protocol (e.g. numpy, cupy or dask array)."
+        ),
+    ]
+
+    transformations: tx.Annotated[
+        tx.List[Transformation],
+        tx.Doc(
+            "A list of transformations from voxel space (i.e., in terms"
+            "of data's axes) to different world spaces. The last "
+            "transformation in the list is the preferred one."
+        ),
+    ]
 
     @property
-    def transformation(self) -> Transformation:  # noqa: F811
+    def transformation(self) -> Transformation:
         """
-        Compute the composed voxel -> preferred-space transformation.
+        The preferred transformation.
 
-        The result is cached in `_transformation` until `transformations`
-        is reassigned (see the `transformations` setter, which invalidates
-        this cache).
+        It is always the last transformation in the list.
+        Changing it appends the new transformation to the list (or
+        reorders the list if the value is an integer or a string).
         """
-
-        self._transformation = getattr(self, "_transformation", None)
-        self._transformations = getattr(self, "_transformations", None)
-        if self._transformation is None:
-            if len(self.transformations) == 0:
-                self._transformation = Identity()
-            else:
-                self._transformation = Sequence(
-                    transformations=self.transformations,
-                    input=self.transformations[0].input,
-                    output=self.transformations[-1].output,
-                ).compute()
-        return self._transformation
+        if self._transformations:
+            return self._transformations[-1]
+        return Identity()
 
     @transformation.setter
     def transformation(self, value: Transformation) -> None:
-        """
-        Set transformation directly.
-        """
-        self._transformation = value
-        self._transformations = [value]
+        if isinstance(value, int):
+            value = self.transformations.pop(value)
+        elif isinstance(value, str):
+            for i, x in enumerate(self.transformations):
+                if getattr(x.output, "name", None) == value:
+                    value = self.transformations.pop(i)
+                    break
+        self.transformations.append(value)
 
     @property
-    def transformations(self) -> _tx.List[Transformation]:  # noqa: F811
+    def geometry(self) -> Geometry:
         """
-        Ordered list of transformations; defaults to [Identity()] if unset.
-        """
-        self._transformations = getattr(self, "_transformations", None)
-        if self._transformations is None:
-            return [Identity()]
-        return self._transformations
+        A transformation that is the composition of the preferred
+        voxel-to-world transformation and the cartesian field corresponding
+        to the image's shape.
 
-    @transformations.setter
-    def transformations(self, value: _tx.List[Transformation]) -> None:
+        This transformation can be used to reslice any image onto the same
+        grid as this image.
         """
-        Update transformations and invalidate the cached composed
-        transformation.
-        """
-        self._transformation = None
-        self._transformations = value
+        return Geometry(
+            (
+                CartesianField(
+                    shape=self.data.shape,
+                    input=self.transformation.input,
+                    output=self.transformation.input,
+                ),
+                self.transformation,
+            )
+        )
 
-    @property
-    def geometry(self) -> _tx.Optional[CartesianField]:
-        """
-        Shape-only CartesianField matching the data's shape.
-        """
-        if self.data is None:
-            return None
-        return CartesianField(shape=self.data.shape)
-
-    @geometry.setter
-    def geometry(self, value: CartesianField) -> None:
-        """
-        Geometry is derived from data + transformation;
-        it cannot be set directly.
-        """
-        raise NotImplementedError("can not set geometry")
-
-    def reslice(self, geometry: GeometryLike = None) -> "Image":
+    def reslice(
+        self,
+        geometry: tx.Union[tx.Self, Geometry, Transformation],
+        order: int = 1,
+        bound: str = "reflect",
+        coeff: bool = False,
+    ) -> tx.Self:
         """
         Apply transformations to current data and return new image.
 
         Parameters
         ----------
-        geometry : CartesianField | "preserve" | tuple[int] | None
-            The shape/grid the output data should be resampled onto.
-            - None: based on `self.transformations` alone (no extra grid
-                change).
-            - "preserve": keep the current data's shape.
-            - tuple[int]: resample onto a grid of this shape.
-            - CartesianField: resample onto this explicit grid.
+        geometry : Image | Geometry | Transformation
+            Geometry of the output image.
+
+            The geometry is a voxel-to-world transformation that defines
+            the grid onto which the image will be resliced.
+
+            If it is a `Geometry`, then it also defines the shape of the
+            output image. Otherwise, the current shape of the image is used.
+        order : {0..5}
+            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
+            The boundary condition. If a string, one of:
+            - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+            - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+            - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+            - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+            - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+            If a float, the constant value to use beyond the edge.
+        coeff : bool
+            If True, the input image is assumed to already contain spline
+            coefficients. If False, the input image is prefiltered
+            before interpolation.
 
         Returns
         -------
         Image
             The resliced image.
         """
-        transformation = self.transformation
-        if geometry is not None:
-            if geometry == "preserve":
-                geometry = self.geometry
-            elif isinstance(geometry, tuple):
-                geometry = CartesianField(shape=geometry)
-            transformation = (self.transformation @ geometry).compute()
+        opt = dict(order=order, bound=bound, coeff=coeff)
 
-        if isinstance(transformation, Sequence):
-            coord_transform = transformation.transformations[1].to(
-                CoordinatesField
-            )
-            affine_transform = transformation.transformations[0]
-        elif not isinstance(
-            hierarchy.parseType(type(transformation)),
-            hierarchy.AffineTransformation,
-        ):
-            coord_transform = transformation.to(CoordinatesField)
-            affine_transform = Identity()
-        else:
-            affine_transform = transformation
-            coord_transform = Identity()
+        # Guess geometry of output image
+        if isinstance(geometry, Image):
+            geometry = geometry.geometry
+        if not isinstance(geometry, Geometry):
+            geometry = Geometry((self.geometry.grid, geometry))
 
-        if is_identity(coord_transform):
-            new_data = self.data
-        else:
-            new_data = pull(
-                self.data,
-                coord_transform.field,
-                0,
-                0.0,
-                coeff=coord_transform.coeff,
-            )
-        return Image(data=new_data, transformation=affine_transform)
+        # Compute voxel-to-voxel transformation and apply it to the data
+        transformation = self.transformation.inverse() @ geometry
+        transformation = transformation.compute()
+        new_data = pull(self.data, transformation.field, **opt)
+        return Image(data=new_data, transformation=geometry.transformation)
 
-    def __call__(
-        self, transform: Transformation, reslice: GeometryLike = None
-    ) -> "Image":
+    def __call__(self, transform: Transformation) -> "Image":
         """
-        Append a transformation to the image without computing/resampling yet.
+        Apply a transformation to the image, but does not compute.
 
         Parameters
         ----------
-        transform : Transformation
-            The transformation to add
+        transform: Transformation
+            The transformation to apply.
 
-        reslice : CartesianField | "preserve" | tuple[int] | None
-            What the shape of data should be once it gets resliced.
-            If None, this is based on `self.transformations` alone.
+            The **output** space of this transformation should match
+            (or be compatible with) the **output** space of the preferred
+            transformation. That is, the new "voxel-to-world" transformation
+            is defined as `self.transformation @ transform.inverse()`.
+
 
         Returns
         -------
         Image
             The updated (not-yet-resliced) image.
         """
-        transformations = [*self.transformations, transform.inverse()]
-        if reslice == "preserve":
-            transformations = [*transformations, self.geometry]
-        elif isinstance(reslice, CartesianField):
-            transformations = [*transformations, reslice]
-        elif isinstance(reslice, tuple):
-            transformations = [*transformations, CartesianField(shape=reslice)]
+        transform = transform.inverse() @ self.transformation
+        if self.transformations:
+            transformations = self.transformations.copy()
+            transformations.append(transform)
+        else:
+            transformations = [transform]
         return Image(data=self.data, transformations=transformations)
 
+    def __getitem__(
+        self, index: tx.Tuple[tx.Union[int, slice, None], ...]
+    ) -> "Image":
+        """
+        Index into the image data while preserving the geometry of the image.
+        """
+        data = self.data[index]
+        transformations = [
+            Geometry((self.grid, xform))[index].transformation
+            for xform in self.transformations
+        ]
+        return Image(data=data, transformations=transformations)
 
-class MultiImage(Image):
-    images: _tx.Optional[_tx.List[Image]] = None
+
+class MultiScaleImage(Image):
+    """Base class for all multi-scale images."""
+
+    images: tx.Annotated[
+        tx.List[SingleScaleImage],
+        tx.Doc(
+            "Each image in the multi-resolution pyramid, ordered from "
+            "highest to lowest resolution."
+        ),
+    ] = ()
+
+    transformations: tx.Annotated[
+        tx.List[Transformation],
+        tx.Doc(
+            "A list of transformations from each level's preferred space "
+            "to different world spaces. The last transformation in the list "
+            "is the preferred one."
+        ),
+    ]
+
+    def to_singlescale(self, index: int = 0) -> SingleScaleImage:
+        """
+        Return one of the levels as a single-resolution image.
+        """
+        return self.images[index](self.transformation.inverse())
+
+    @property
+    def nscales(self) -> int:
+        """
+        Return the number of scales in the multi-resolution pyramid.
+        """
+        return len(self.images)
+
+    @property
+    def scales(self) -> tx.Iterator[SingleScaleImage]:
+        """
+        Yield all levels as single-resolution images.
+        """
+        for i in range(len(self.images)):
+            yield self.to_singlescale(i)
+
+    @property
+    def transformation(self) -> Transformation:
+        """
+        The preferred transformation.
+
+        It is always the last transformation in the list.
+        Changing it appends the new transformation to the list (or
+        reorders the list if the value is an integer or a string).
+        """
+        if self._transformations:
+            return self._transformations[-1]
+        return Identity()
+
+    @transformation.setter
+    def transformation(self, value: Transformation) -> None:
+        if isinstance(value, int):
+            value = self.transformations.pop(value)
+        elif isinstance(value, str):
+            for i, x in enumerate(self.transformations):
+                if getattr(x.output, "name", None) == value:
+                    value = self.transformations.pop(i)
+                    break
+        self.transformations.append(value)
 
     @property
     def data(self) -> da.Array:
         return self.images[0].data
 
-    @data.setter
-    def data(self, value: da.Array) -> None:
-        warn(
-            "setting data for MultiImages is not recommended as it only "
-            "effects the first layer",
-            stacklevel=1,
-        )
-        if self.images is not None and len(self.images) > 0:
-            self.images[0].data = value
-
     @property
-    def transformations(self) -> _tx.List[Transformation]:
-        return self.images[0].transformations
-
-    @transformations.setter
-    def transformations(self, value: _tx.List[Transformation]) -> None:
-        warn(
-            "setting transformations for MultiImages is not recommended as it "
-            "only effects the first layer",
-            stacklevel=1,
-        )
-        if self.images is not None and len(self.images) > 0:
-            self.images[0].transformations = value
-
-    @property
-    def transformation(self) -> Transformation:
-        return self.images[0].transformation
-
-    @transformation.setter
-    def transformation(self, value: Transformation) -> None:
-        warn(
-            "setting transformation for MultiImages is not recommended as it "
-            "only effects the first layer",
-            stacklevel=1,
-        )
-        if self.images is not None and len(self.images) > 0:
-            self.images[0].transformation = value
-
-    @property
-    def geometry(self) -> _tx.Optional[CartesianField]:
-        return self.images[0].geometry
-
-    @geometry.setter
-    def geometry(self, value: CartesianField) -> None:
-        raise NotImplementedError("can not set geometry")
-
-    def reslice(self, geometry: GeometryLike = None) -> "MultiImage":
+    def geometry(self) -> Geometry:
         """
-        Reslice each image.
+        The geometry of the highest-resolution image in the pyramid.
+
+        A transformation that is the composition of the preferred
+        voxel-to-world transformation and the cartesian field corresponding
+        to the image's shape.
+
+        This transformation can be used to reslice any image onto the same
+        grid as this image.
+        """
+        return Geometry(
+            (
+                CartesianField(
+                    shape=self.data.shape,
+                    input=self.transformation.input,
+                    output=self.transformation.input,
+                ),
+                self.transformation @ self.images[0].transformation,
+            )
+        )
+
+    def reslice(
+        self,
+        geometry: tx.Union[Image, Geometry, Transformation],
+        order: int = 1,
+        bound: str = "reflect",
+        coeff: bool = False,
+    ) -> tx.Self:
+        """
+        Apply transformations to current data and return new image
 
         Parameters
         ----------
-        geometry : CartesianField | "preserve" | tuple[int] | None
-            What the shape of data should be after the reslice.
-            If None, this is based on `self.transformations`.
+        geometry : Image | Geometry | Transformation
+            Geometry of the highest-resolution level of the output image.
+
+            The geometry is a voxel-to-world transformation that defines
+            the grid onto which the image will be resliced.
+
+            If it is a `Geometry`, then it also defines the shape of the
+            output image. Otherwise, the current shape of the image is used.
+        intrinsic : Geometry | Transformation | None
+            An optional transformation that defines the intrinsic geometry
+            of the highest-resolution image in the output pyramid.
+            If provided, it is used to compute the geometry of each
+            level in the output pyramid. If not provided, this function
+            returns a single-scale image instead.
+        order : {0..5}
+            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
+            The boundary condition. If a string, one of:
+            - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
+            - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
+            - 'mirror': mirror at edge        (d c b | a b c d | c b a)
+            - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
+            - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
+            If a float, the constant value to use beyond the edge.
+        coeff : bool
+            If True, the input image is assumed to already contain spline
+            coefficients. If False, the input image is prefiltered
+            before interpolation.
 
         Returns
         -------
-        MultiImage
-            The resliced images.
+        SingleScaleImage
+            The resliced image.
         """
-        new_images = [img.reslice(geometry) for img in self.images]
-        return MultiImage(images=new_images)
+        opt = dict(order=order, bound=bound, coeff=coeff)
+        return self.to_singlescale().reslice(geometry, **opt)
 
-    def __call__(
-        self, transform: Transformation, reslice: GeometryLike = None
-    ) -> "MultiImage":
+        # TODO:
+        #   * find level closest to the output geometry (in terms of
+        #     resolution) for computational efficiency.
+        #   * decide on an API that triggers the whole pyramid to be
+        #     resliced, not just the highest-resolution level.
+        #     It requires a way to specify the intrinsic geometry of the
+        #     output pyramid. Simplest (intermediate) step is to accept
+        #     a MultiScaleImage as the geometry argument.
+
+    def __call__(self, transform: Transformation) -> tx.Self:
         """
-        Call each image.
+        Apply a transformation to the multi-scale image.
 
         Parameters
         ----------
-        transform : Transformation
-            The transformation to add.
+        transform: Transformation
+            The transformation to apply.
 
-        reslice : CartesianField | "preserve" | tuple[int] | None
-            What the shape of data should be once it gets resliced.
-            If None, this is based on `self.transformations`.
+            The **output** space of this transformation should match
+            (or be compatible with) the **output** space of the preferred
+            transformation. That is, the new "intrinsic-to-world"
+            transformation is defined as
+            `self.transformation @ transform.inverse()`.
 
         Returns
         -------
-        MultiImage
-            The updated images.
+        MultiScaleImage
+            The transformed image.
         """
-        return MultiImage(
-            images=[img(transform, reslice) for img in self.images]
+        transform = transform.inverse() @ self.transformation
+        if self.transformations:
+            transformations = self.transformations.copy()
+            transformations.append(transform)
+        else:
+            transformations = [transform]
+        return MultiScaleImage(
+            images=self.images, transformations=transformations
         )
