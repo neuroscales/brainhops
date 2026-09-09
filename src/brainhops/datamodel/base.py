@@ -6,7 +6,7 @@ from collections.abc import Mapping
 # externals
 import typing_extensions as tx
 from bagof.converters import Converter, register_converter
-from bagof.magic import HIDE_IF_NONE, Magic
+from bagof.magic import HIDE_IF_NONE, Magic, fields
 
 
 class DataModelBase(
@@ -31,8 +31,9 @@ class DataModelBase(
         Additional positional and/or keyword arguments can be provided,
         and will take precedence over the values in the dictionary.
         """
-        for key, value in cls.__struct_fields__.items():
-            if value.init and value.kw and key in other:
+        for field in fields(cls):
+            key = field.alias
+            if field.init and field.kw and key in other:
                 kwargs.setdefault(key, other[key])
         return cls(*args, **kwargs)
 
@@ -50,9 +51,11 @@ class DataModelBase(
         Additional positional and/or keyword arguments can be provided,
         and will take precedence over the attributes in the instance.
         """
-        for key, value in cls.__struct_fields__.items():
-            if value.init and value.kw and hasattr(other, key):
-                kwargs.setdefault(key, getattr(other, key))
+        for field in fields(cls):
+            key, _key = field.alias, field.name
+            if field.init and field.kw and hasattr(other, _key):
+                value = getattr(other, _key)
+                kwargs.setdefault(key, value)
         return cls(*args, **kwargs)
 
     @classmethod
