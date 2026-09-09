@@ -3,6 +3,9 @@ description: Test on push
 
 on:
   push:
+    branches:
+      - master
+      - main
     paths:
       - src/**
       - setup.py
