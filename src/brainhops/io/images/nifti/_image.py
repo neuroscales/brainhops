@@ -53,7 +53,8 @@ class NiftiImage(Image, NiftiBasedParser):
     def data(self) -> da.Array:
         """The affine matrix of the transformation."""
         if getattr(self, "_data", None) is None:
-            # TODO: use dask if dask is installed
+            # TODO: This feels janky. I am unsure how I should wrap nifit
+            # files so its lazily loaded in chunks
             self._data = da.from_array(self.image.dataobj, chunks=256)
         return self._data
 
