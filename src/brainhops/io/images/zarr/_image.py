@@ -18,19 +18,19 @@ class OmeZarrImage(OmeZarrParser, MultiScaleImage):
         list[SingleScaleImage]
         """
         if not getattr(self, "_images", None):
-            if self.group is None or self._metadata is None:
+            if self._metadata is None:
                 self._images = None
             else:
                 self._images = [
                     SingleScaleImage(
                         data=get_array_backend().from_array(
-                            self.group[ds["path"]]
+                            self.group[ds.path]
                         ),
                         transformations=self._transform_from_metadata(
                             self._metadata, i
                         ),
                     )
-                    for i, ds in enumerate(self._metadata["datasets"])
+                    for i, ds in enumerate(self._metadata.datasets)
                 ]
         return self._images
 

@@ -15,42 +15,11 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
     """
 
     @property
-    def _ome_version(self) -> _tx.Optional[str]:
-        """The OME-NGFF spec version declared in this store's metadata."""
-        if self.group is None:
-            return None
-        metadata = dict(self.group.attrs)
-        ome = metadata.get("ome")
-        if not isinstance(ome, dict):
-            return None
-        return ome.get("version")
-
-    @staticmethod
-    def _supports_displacement_fields(version: _tx.Optional[str]) -> bool:
-        """
-        NGFF 0.6+ (RFC-5, https://ngff.openmicroscopy.org/rfc/5/)
-        introduced the `"displacement"` axis type. Earlier versions
-        don't define it at all, so treat any pre-0.6 (or unparsable)
-        version as unsupported.
-        """
-        if version is None:
-            return False
-        try:
-            major, minor = (int(p) for p in version.split(".")[:2])
-        except ValueError:
-            return False
-        return (major, minor) >= (0, 6)
-
-    @property
     def _displacement_axis_mask(self) -> _tx.Optional[_tx.List[bool]]:
         """
         A boolean mask, one entry per `self._axes`, marking which
-        axes are `"displacement"`-typed (RFC-5 / NGFF 0.6+). `None`
-        if this store doesn't support the `"displacement"` axis type,
-        or axes are unavailable.
+        axes are `"displacement"`-typed
         """
-        if not self._supports_displacement_fields(self._ome_version):
-            return None
         axes = self._axes
         if axes is None:
             return None
@@ -146,7 +115,7 @@ class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
     @property
     def layers(self) -> _tx.List[_xforms.Transformation]:
         if getattr(self, "_images", None) is None:
-            if self.group is None or self._multiscale is None:
+            if self._multiscale is None:
                 self._layers = None
             else:
                 self._layers = [

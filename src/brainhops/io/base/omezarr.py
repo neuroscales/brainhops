@@ -59,7 +59,9 @@ class OmeZarrParser(FileParser, DataModelBase):
         metadata = self._metadata
         if metadata is None:
             return None
-        return [self._convert_axis(a) for a in metadata["axes"]]
+        # NOTE: This is super janky but this is the only place
+        # I can think to determine axes in v0.6rc0
+        return self._transform_from_metadata(metadata, 0)[-1].output.axes
 
     @classmethod
     def from_(cls, other: _OmeZarrLike) -> _tx.Self:
