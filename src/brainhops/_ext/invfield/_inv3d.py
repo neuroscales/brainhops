@@ -393,7 +393,6 @@ def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_quadrilateral(tetra: np.ndarray, z: np.ndarray) -> np.ndarray:
-
     out = np.empty_like(tetra, shape=(len(tetra), 4, 2))
 
     v0x, v0y, v0z = tetra[:, 0].T
