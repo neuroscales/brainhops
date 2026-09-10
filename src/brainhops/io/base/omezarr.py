@@ -11,6 +11,7 @@ from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
     Identity,
+    Permutation,
     Scaling,
     Sequence,
     Transformation,
@@ -22,12 +23,15 @@ from brainhops.io.base.parsers import FileParser
 # optionals
 if _tx.TYPE_CHECKING:
     from abczarr import ZarrNode, open
+    from abczarr.ome import v0_6rc0
 else:
     try:
         from abczarr import ZarrNode, open
+        from abczarr.ome import v0_6rc0
     except ImportError:
         open = None
         ZarrNode = None
+        v0_6rc0 = None
 
 _OmeZarrLike = _tx.Union[
     ZarrNode,
@@ -40,14 +44,11 @@ class OmeZarrParser(FileParser, DataModelBase):
     group: _tx.Optional[ZarrNode] = None
 
     @property
-    def _metadata(self) -> _tx.Optional[dict]:
+    def _metadata(self) -> v0_6rc0.Multiscale:
         if self.group is None:
             return None
-        metadata = dict(self.group.attrs)
-        # NGFF 0.5+ (zarr v3) nests everything under "ome"; earlier
-        # versions (zarr v2, .zattrs) put `multiscales` at the top level.
-        ome = metadata.get("ome", metadata)
-        multiscales = ome.get("multiscales")
+        ome = self.group.ome.to_version("0.6rc0")
+        multiscales = ome.multiscales
         if not multiscales:
             return None
         return multiscales[0]
@@ -58,7 +59,7 @@ class OmeZarrParser(FileParser, DataModelBase):
         metadata = self._metadata
         if metadata is None:
             return None
-        return [self._axis_from_ngff(a) for a in metadata["axes"]]
+        return [self._convert_axis(a) for a in metadata["axes"]]
 
     @classmethod
     def from_(cls, other: _OmeZarrLike) -> _tx.Self:
@@ -115,143 +116,118 @@ class OmeZarrParser(FileParser, DataModelBase):
             )
 
     @staticmethod
-    def _axis_from_ngff(axis_meta: dict) -> Axis:
+    def _convert_axis(axis_meta: v0_6rc0.Axis) -> Axis:
         """Build an Axis from one entry of axis metadata."""
         return Axis(
-            name=axis_meta["name"],
-            type=axis_meta.get("type"),
-            unit=Unit(axis_meta.get("unit")),
+            name=axis_meta.name if axis_meta.name else None,
+            type=axis_meta.type if axis_meta.type else None,
+            unit=Unit(axis_meta.unit) if axis_meta.unit else None,
         )
 
     @classmethod
     def _transform_from_metadata(
-        cls, metadata: dict, level: _tx.Optional[int] = None
+        cls, metadata: v0_6rc0.Multiscale, level: _tx.Optional[int] = None
     ) -> _tx.List[Transformation]:
         """
         Build the Transformation for one resolution level of metadatas entry.
         """
-        axes = [cls._axis_from_ngff(a) for a in metadata["axes"]]
-        voxel_space = CoordinateSystem(axes=axes)
-        world_space = CoordinateSystem(axes=axes)
+        coordinateSystems = {}
+        for system in metadata.coordinateSystems:
+            coordinateSystems[system.name] = CoordinateSystem(
+                name=system.name,
+                axes=[cls._convert_axis(a) for a in system.axes],
+            )
 
-        dataset = (
-            metadata["datasets"][level] if level is not None else metadata
+        # If level is none use the base file's transformations
+        dataset = metadata.datasets[level] if level is not None else metadata
+
+        raw_transforms = (
+            dataset.coordinateTransformations
+            if dataset.coordinateTransformations
+            else []
         )
-        # a metadata-wide transform (applied to every level) may also
-        # be declared alongside each per-dataset one; apply it first.
-        raw_transforms = list(dataset.get("coordinateTransformations", []))
 
         pieces: _tx.List[Transformation] = [
-            cls._json_to_transformation(t, voxel_space, world_space)
+            cls._json_to_transformation(t, coordinateSystems)
             for t in raw_transforms
         ]
 
         if not pieces:
-            return [Identity(input=voxel_space, output=world_space)]
+            return [Identity()]
         return pieces
+
+    @staticmethod
+    def get_system(systems: dict, space: v0_6rc0.Space):
+        if space:
+            return systems.get(space.name, None)
+        return None
 
     @classmethod
     def _json_to_transformation(
-        cls,
-        transformation: dict,
-        voxel_space: CoordinateSystem,
-        world_space: CoordinateSystem,
+        cls, transformation: v0_6rc0.CoordinateSystem, systems: dict
     ) -> Transformation:
-        kind = transformation.get("type")
+        kind = transformation.type
         if kind == "scale":
             return Scaling(
-                scale=np.asarray(transformation["scale"], dtype=float),
-                input=voxel_space,
-                output=world_space,
+                scale=np.asarray(transformation.scale),
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
             )
         elif kind == "translation":
             return Translation(
-                translation=np.asarray(
-                    transformation["translation"], dtype=float
-                ),
-                input=voxel_space,
-                output=world_space,
+                translation=np.asarray(transformation.translation),
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
+            )
+        elif kind == "mapAxis":
+            return Permutation(
+                permutation=np.asarray(transformation.mapAxis),
+                input=systems.get(transformation.input.name, None),
+                output=cls.get_system(systems, transformation.output),
             )
 
         elif kind == "affine":
             return Affine(
-                matrix=np.asarray(transformation["affine"], dtype=float),
-                input=voxel_space,
-                output=world_space,
+                matrix=np.asarray(transformation.affine),
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
             )
         elif kind == "rotation":
             return Affine(
-                matrix=np.asarray(transformation["rotation"], dtype=float),
-                input=voxel_space,
-                output=world_space,
+                matrix=np.asarray(transformation.rotation),
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
             )
         elif kind == "sequence":
-            return (
-                Sequence(
-                    transformations=[
-                        cls._json_to_transformation(
-                            t, voxel_space, voxel_space
-                        )
-                        for t in transformation["transformations"][:-1]
-                    ]
-                    + [
-                        cls._json_to_transformation(
-                            transformation["transformation"][-1],
-                            voxel_space,
-                            world_space,
-                        )
-                    ],
-                    input=voxel_space,
-                    output=world_space,
-                )
-                if len(transformation["transformations"]) > 0
-                else Identity(input=voxel_space, output=world_space)
+            return Sequence(
+                transformations=[
+                    cls._json_to_transformation(t, systems)
+                    for t in transformation.transformations
+                ],
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
             )
         elif kind == "displacements":
-            raise NotImplementedError(
-                "need to figure out how to do this without circular imports"
-            )
+            raise NotImplementedError("displacements not implemented yet")
         elif kind == "coordinates":
-            raise NotImplementedError(
-                "need to figure out how to do this without circular imports"
-            )
+            raise NotImplementedError("coordinates not implemented yet")
         elif kind == "bijection":
             return Bijection(
-                input=voxel_space,
-                output=world_space,
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
                 forward=cls._json_to_transformation(transformation["forward"]),
                 backward=cls._json_to_transformation(
                     transformation["inverse"]
                 ),
             )
+        elif kind == "projectAxis":
+            raise NotImplementedError("projectAxis not implemented yet")
         elif kind == "byDimension":
-            # TODO: Need to use the coordinate systems provided by byDimension
-            return (
-                Sequence(
-                    transformations=[
-                        cls._json_to_transformation(
-                            t, voxel_space, voxel_space
-                        )
-                        for t in transformation["transformations"][:-1]
-                    ]
-                    + [
-                        cls._json_to_transformation(
-                            transformation["transformation"][-1],
-                            voxel_space,
-                            world_space,
-                        )
-                    ],
-                    input=voxel_space,
-                    output=world_space,
-                )
-                if len(transformation["transformations"]) > 0
-                else Identity(input=voxel_space, output=world_space)
-            )
+            raise NotImplementedError("byDimension not implemented yet")
         elif kind == "identity":
-            return Identity(input=voxel_space, output=world_space)
-        else:
-            raise NotImplementedError(
-                "Unsupported NGFF coordinateTransformation type: "
-                f"{kind!r}. Only 'scale' and 'translation' are "
-                "currently handled."
+            return Identity(
+                input=cls.get_system(systems, transformation.input),
+                output=cls.get_system(systems, transformation.output),
             )
+        else:
+            raise NotImplementedError("Unsupported transformation")
