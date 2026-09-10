@@ -9,7 +9,7 @@ from brainhops.io.base.omezarr import OmeZarrParser
 
 class OmeZarrTransformation(_xforms.LayeredTransformation, OmeZarrParser):
     """
-    Base class for TIRL transformations.
+    Base class for Zarr transformations.
 
     Concrete classes implement the `transform_group` attribute.
     """
