@@ -130,6 +130,7 @@ class OmeZarrParser(FileParser, DataModelBase):
     ) -> _tx.List[Transformation]:
         """
         Build the Transformation for one resolution level of metadatas entry.
+        Or if level is not specified build the Transformations for base.
         """
         coordinateSystems = {}
         for system in metadata.coordinateSystems:
@@ -157,7 +158,9 @@ class OmeZarrParser(FileParser, DataModelBase):
         return pieces
 
     @staticmethod
-    def get_system(systems: dict, space: v0_6rc0.Space):
+    def get_system(
+        systems: dict, space: v0_6rc0.Space
+    ) -> _tx.Optional[CoordinateSystem]:
         if space:
             return systems.get(space.name, None)
         return None
