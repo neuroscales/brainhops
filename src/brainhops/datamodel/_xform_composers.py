@@ -42,12 +42,12 @@ from .transformations import (
 
 @_composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
-    return type(Ti)(Ti, input=Ti.input, output=Ti.output).compute()
+    return Ti
 
 
 @_composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
-    return type(To)(To, input=To.input, output=To.output).compute()
+    return To
 
 
 # ----------------------------------------------------------------------

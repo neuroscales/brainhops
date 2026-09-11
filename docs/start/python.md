@@ -24,11 +24,11 @@ wrp = io.load("warp.nii.gz", hint="spmy")  # -> SPMCoordinatesField
 Alternatively, the appropriate classes could have been used:
 
 ```python
-src = io.Nifti1Image.load("source.nii.gz")
-dst = io.Nifti1Image.load("dest.nii.gz")
-aff = io.LTATransformationRAS2RAS.load("affine.lta")
-dsp = io.NiftiVoxelDisplacementField.load("disp.nii.gz")
-wrp = io.SPMCoordinatesField.load("warp.nii.gz")
+src = io.Nifti1Image.from_("source.nii.gz")
+dst = io.Nifti1Image.from_("dest.nii.gz")
+aff = io.LTATransformationRAS2RAS.from_("affine.lta")
+dsp = io.NiftiVoxelDisplacementField.from_("disp.nii.gz")
+wrp = io.SPMCoordinatesField.from_("warp.nii.gz")
 ```
 
 or loaders specific to subtypes of objects:

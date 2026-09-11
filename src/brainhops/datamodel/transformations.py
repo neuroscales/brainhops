@@ -1331,11 +1331,11 @@ class Sequence(MutableSequence, Transformation):
             return self.transformations[-1].output
         return None
 
-    def inverse(self) -> tx.Self:
+    def inverse(self) -> "Sequence":
         cls = type(self)
         if self.transformations is None:
             return cls(input=self.output, output=self.input)
-        return cls(
+        return Sequence(
             transformations=[
                 t.inverse() for t in reversed(self.transformations)
             ],
@@ -1603,7 +1603,7 @@ def _flatten(self: Sequence) -> tx.Self:
     for k in list(params.keys()):
         if k.startswith("_"):
             del params[k]
-    return type(self)(**params)
+    return Sequence(**params)
 
 
 def _is_flat(self: Sequence) -> bool:
@@ -1736,7 +1736,7 @@ def _compute_sequence(
     for child in children:
         seq = _compute_sequence(seq, child, memo=memo)
         if not isinstance(seq, Sequence):
-            # NOTE(YB): why this?????
+            # Sequence was fully computed early
             return seq
 
     # Mark that we've been through this mode
@@ -1759,8 +1759,8 @@ def _compute_sequence(
                 try:
                     item = _compose(next_input, item)
                 except CompositionError:
-                    # NOTE(YB):
-                    # When does this happen? When we don't know how to adapt?
+                    # This happens when trying to compose an Affine with a field in the wrong order
+                    # Leave them seperate
                     outputs.append(item)
                     item = next_input
         outputs.append(item)
@@ -1805,7 +1805,8 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    ...
 
 
 class LossyConversionError(ConversionError):
@@ -1880,7 +1881,8 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    ...
 
 
 def _make_same_axes(
@@ -2012,7 +2014,8 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    ...
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:

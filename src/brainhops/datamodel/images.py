@@ -1,5 +1,6 @@
 # dependencies
 import dask.array as da
+import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
@@ -25,7 +26,7 @@ class SingleScaleImage(Image):
             "The image data. Must be an array-like object that supports "
             "the array protocol (e.g. numpy, cupy or dask array)."
         ),
-    ]
+    ] = np.array([])
 
     transformations: tx.Annotated[
         tx.List[Transformation],
@@ -34,7 +35,7 @@ class SingleScaleImage(Image):
             "of data's axes) to different world spaces. The last "
             "transformation in the list is the preferred one."
         ),
-    ]
+    ] = []
 
     @property
     def transformation(self) -> Transformation:
@@ -126,7 +127,7 @@ class SingleScaleImage(Image):
         opt = dict(order=order, bound=bound, coeff=coeff)
 
         # Guess geometry of output image
-        if isinstance(geometry, Image):
+        if isinstance(geometry, SingleScaleImage):
             geometry = geometry.geometry
         if not isinstance(geometry, Geometry):
             geometry = Geometry((self.geometry.grid, geometry))
@@ -135,9 +136,9 @@ class SingleScaleImage(Image):
         transformation = self.transformation.inverse() @ geometry
         transformation = transformation.compute()
         new_data = pull(self.data, transformation.field, **opt)
-        return Image(data=new_data, transformation=geometry.transformation)
+        return SingleScaleImage(data=new_data, transformations=[geometry.transformation])
 
-    def __call__(self, transform: Transformation) -> "Image":
+    def __call__(self, transform: Transformation) -> "SingleScaleImage":
         """
         Apply a transformation to the image, but does not compute.
 
@@ -163,20 +164,20 @@ class SingleScaleImage(Image):
             transformations.append(transform)
         else:
             transformations = [transform]
-        return Image(data=self.data, transformations=transformations)
+        return SingleScaleImage(data=self.data, transformations=transformations)
 
     def __getitem__(
         self, index: tx.Tuple[tx.Union[int, slice, None], ...]
-    ) -> "Image":
+    ) -> "SingleScaleImage":
         """
         Index into the image data while preserving the geometry of the image.
         """
         data = self.data[index]
         transformations = [
-            Geometry((self.grid, xform))[index].transformation
+            Geometry((self.geometry.grid, xform))[index].transformation
             for xform in self.transformations
         ]
-        return Image(data=data, transformations=transformations)
+        return SingleScaleImage(data=data, transformations=transformations)
 
 
 class MultiScaleImage(Image):

@@ -49,7 +49,14 @@ class NiftiScalarField(NiftiImageFile, ScalarField): ...
 ```
 """
 
-__all__ = ["images", "transformations", "vectors"]
+__all__ = ["images", "transformations", "vectors", "LTATransformation",
+           "LTATransformationPhysToPhys", "LTATransformationRASToRAS",
+           "LTATransformationVoxToVox", "FslDisplacementTransformation",
+           "FslLinearTransformRASToVoxel", "FslLinearTransformVoxelToRAS",
+           "H5Transform", "TFMTransform", "SPMCoordinatesField",
+           "TIRLTransform", "OmeZarrTransformation", "OmeZarrImage",
+           "Nifti1Image", "NiftiRASCoordinatesField",
+           "NiftiVoxelDisplacementField", "NiftiRASToVoxel", "NiftiVoxelToRAS"]
 
 
 import os
@@ -59,6 +66,31 @@ import typing_extensions as _tx
 from brainhops.datamodel.base import DataModelBase
 
 from . import images, transformations, vectors
+from .images.nifti._image import NiftiImage as Nifti1Image
+from .images.zarr._image import OmeZarrImage
+from .transformations.common.affines import NiftiRASToVoxel, NiftiVoxelToRAS
+from .transformations.common.fields import (
+    NiftiRASCoordinatesField,
+    NiftiVoxelDisplacementField,
+)
+from .transformations.freesurfer.lta._xforms import (
+    LTATransformation,
+    LTATransformationPhysToPhys,
+    LTATransformationRASToRAS,
+    LTATransformationVoxToVox,
+)
+from .transformations.fsl.displacement._xforms import (
+    FslDisplacementTransformation,
+)
+from .transformations.fsl.linear._xforms import (
+    FslLinearTransformRASToVoxel,
+    FslLinearTransformVoxelToRAS,
+)
+from .transformations.itk.h5._xform import H5Transform
+from .transformations.itk.tfm._xform import TFMTransform
+from .transformations.spm.y import SPMCoordinatesField
+from .transformations.tirl._xform import TIRLTransform
+from .transformations.zarr._xforms import OmeZarrTransformation
 
 entries = images.image_entries + transformations.transformation_entries
 

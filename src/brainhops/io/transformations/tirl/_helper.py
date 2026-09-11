@@ -54,7 +54,7 @@ def bytes2int(
     assert len(data) % itemsize == 0
     result = [
         int.from_bytes(
-            data[start : start + itemsize], byteorder, signed=signed
+            data[start: start + itemsize], byteorder, signed=signed
         )
         for start in range(0, len(data), itemsize)
     ]
@@ -76,7 +76,7 @@ def getval(item: tx.Any, tag: str) -> tx.Any:
     Strips the XML-style tag from a tagged string and returns the inner value.
     """
     if isinstance(item, str):
-        return item[len(f"<{tag}>") : -len(f"</{tag}>")]
+        return item[len(f"<{tag}>"): -len(f"</{tag}>")]
     return item
 
 
@@ -144,7 +144,7 @@ def lstcmp(a: tx.Union[list, tuple], b: tx.Union[list, tuple]) -> bool:
 # ----------------------------------------------------------------------
 
 
-def load_array(f: _IO) -> ArrayProtocol:
+def load_array(f: _IO):
     """
     Loads an ndarray block from the file, returning a memory-mapped handle.
     """
@@ -158,27 +158,23 @@ def load_array(f: _IO) -> ArrayProtocol:
         raise ValueError(f"Invalid ndarray header version: {version}")
     order = "F" if fortran_order else "C"
     try:
-        return get_array_backend().array(
-            np.memmap(
-                f.name,
-                dtype=dtype,
-                mode="r+",
-                offset=f.tell(),
-                shape=shape,
-                order=order,
-            )
+        return np.memmap(
+            f.name,
+            dtype=dtype,
+            mode="r+",
+            offset=f.tell(),
+            shape=shape,
+            order=order,
         )
     except PermissionError:
         warn("Data object is read-only.", stacklevel=1)
-        return get_array_backend().array(
-            np.memmap(
-                f.name,
-                dtype=dtype,
-                mode="r",
-                offset=f.tell(),
-                shape=shape,
-                order=order,
-            )
+        return np.memmap(
+            f.name,
+            dtype=dtype,
+            mode="r",
+            offset=f.tell(),
+            shape=shape,
+            order=order,
         )
 
 
@@ -188,7 +184,7 @@ def load_bytes(f: _IO) -> bytes:
     return f.read(blocksize)
 
 
-def load_memmap(f: _IO, mode: str = "r+") -> ArrayProtocol:
+def load_memmap(f: _IO, mode: str = "r+"):
     """
     Returns a memory-mapped array from the file.
     Falls back to read-only if the file is not writable.
@@ -197,27 +193,23 @@ def load_memmap(f: _IO, mode: str = "r+") -> ArrayProtocol:
     shape, dtype, order = json.loads(js_descr)
     order = "C" if order else "F"
     try:
-        return get_array_backend().array(
-            np.memmap(
-                f.name,
-                dtype=np.dtype(dtype),
-                mode=mode,
-                offset=f.tell(),
-                shape=tuple(shape),
-                order=order,
-            )
+        return np.memmap(
+            f.name,
+            dtype=np.dtype(dtype),
+            mode=mode,
+            offset=f.tell(),
+            shape=tuple(shape),
+            order=order,
         )
     except PermissionError:
         warn("Data array is read-only.", stacklevel=1)
-        return get_array_backend().array(
-            np.memmap(
-                f.name,
-                dtype=np.dtype(dtype),
-                mode="r",
-                offset=f.tell(),
-                shape=tuple(shape),
-                order=order,
-            )
+        return np.memmap(
+            f.name,
+            dtype=np.dtype(dtype),
+            mode="r",
+            offset=f.tell(),
+            shape=tuple(shape),
+            order=order,
         )
 
 
