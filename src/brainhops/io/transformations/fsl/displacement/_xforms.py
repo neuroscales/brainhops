@@ -1,6 +1,8 @@
 import typing as tx
 from os import PathLike
 
+from brainhops.io.base.nifti import NiftiBasedParser
+
 # optionals
 if tx.TYPE_CHECKING:
     import nibabel as nb
@@ -18,15 +20,12 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.io.transformations.common.affines import (
     NiftiRASToVoxel,
 )
-from brainhops.io.transformations.common.base import NiftiBasedTransformation
 from brainhops.io.transformations.fsl.displacement._field import (
     FSLDisplacementField,
 )
 
 
-class FslDisplacementTransformation(
-    _xforms.Sequence, NiftiBasedTransformation
-):
+class FslDisplacementTransformation(_xforms.Sequence, NiftiBasedParser):
     """
     A NIfTI-based nonlinear transformation that may be stored either as
     dense displacement fields or as sparse B-spline coefficients
