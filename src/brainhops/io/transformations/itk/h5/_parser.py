@@ -281,7 +281,6 @@ class DelayedH5Array:
     def to_dataset(
         self, file: tx.Optional[_H5Like] = None, keep_open: bool = False
     ) -> h5py.Dataset:
-
         if file is None:
             return self.to_dataset(self.file, keep_open=keep_open)
 

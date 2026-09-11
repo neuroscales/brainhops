@@ -52,7 +52,6 @@ class TFMTransformParser(
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
-
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 

@@ -107,3 +107,31 @@ I = superiorToInferiorAxis = SuperiorToInferiorAxis()
 # Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
 # Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
 # Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")
+
+
+def same_axis_type(a1: Axis, a2: Axis) -> bool:
+    """
+    Check whether two axes are of a matching type.
+
+    Two axes match if they have the same `type`. For `"spatial"` axes,
+    the `name` is also compared to make sure the correspond to the same
+    spatial axes.
+
+    Parameters
+    ----------
+    a1, a2 : Axis
+        The axes to compare.
+
+    Returns
+    -------
+    bool
+        `True` if the axes are considered to be of the same type
+        (and, for spatial axes, orientation), `False` otherwise.
+    """
+    if a1.type == a2.type:
+        if a1.type != "spatial":
+            return True
+        return set(a1.orientation.value.split("-")) == set(
+            a2.orientation.value.split("-")
+        )
+    return False
