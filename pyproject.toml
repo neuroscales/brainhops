@@ -8,7 +8,8 @@ dependencies = [
     "typing_extensions",
     "numpy",
     "scipy",
-    "bagof-magic >= 0.1"
+    "bagof-magic >= 0.1",
+    "abczarr"
 ]
 dynamic = ["version"]
 
