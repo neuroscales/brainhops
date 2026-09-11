@@ -11,17 +11,17 @@ from . import freesurfer, fsl, itk, spm, tirl
 
 
 class TransformationEntry:
-    prefix: _tx.Optional[tuple[str]]
-    extension: tuple[str]
+    prefix: _tx.Optional[_tx.Tuple[str]]
+    extension: _tx.Tuple[str]
     class_value: type
-    hints: tuple[str]
+    hints: _tx.Tuple[str]
 
     def __init__(
         self,
-        prefix: _tx.Optional[_tx.Union[tuple[str], str]],
-        extension: _tx.Union[tuple[str], str],
+        prefix: _tx.Optional[_tx.Union[_tx.Tuple[str], str]],
+        extension: _tx.Union[_tx.Tuple[str], str],
         class_value: type,
-        hints: _tx.Union[tuple[str], str],
+        hints: _tx.Union[_tx.Tuple[str], str],
     ) -> None:
         self.prefix = (
             prefix if isinstance(prefix, (tuple, type(None))) else (prefix,)

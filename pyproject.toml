@@ -9,7 +9,7 @@ dependencies = [
     "numpy",
     "scipy",
     "bagof-magic >= 0.1",
-    "abczarr"
+    "abczarr[zarr-py]"
 ]
 dynamic = ["version"]
 

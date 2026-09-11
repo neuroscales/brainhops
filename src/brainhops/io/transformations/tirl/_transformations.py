@@ -179,7 +179,7 @@ class TIRLLinearStruct(TIRLStruct):
 
     def _read_parameters_and_shape(
         self, param: object, metaparameters: dict
-    ) -> tuple[ArrayProtocol, tuple[int]]:
+    ) -> tx.Tuple[ArrayProtocol, tx.Tuple[int]]:
         """
         Normalises the parameter input into a flat array and resolves the
         matrix shape. Accepts a 2D matrix, a 1D ndarray, a numeric iterable,
