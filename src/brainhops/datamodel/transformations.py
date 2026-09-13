@@ -105,7 +105,10 @@ class NDims(tx.NamedTuple):
 # ----------------------------------------------------------------------
 #    BASE CLASS
 # ----------------------------------------------------------------------
-
+# typing
+_ModeCls = tx.Union[str, tx.Type[hierarchy.Transformation]]
+_ModeLike = tx.Union[tx.Tuple[_ModeCls, tx.Optional[int]], _ModeCls, int]
+ModeLike = tx.Union[_ModeLike, tx.Iterable[_ModeLike]]
 
 @hierarchy.Transformation.register
 class Transformation(DataModelBase, reverse=True):
@@ -170,28 +173,10 @@ class Transformation(DataModelBase, reverse=True):
         ),
     ] = None
 
-    def compute(self, simplify: bool = False) -> tx.Self:
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
         """
-        # We will overload `compute()` in `Sequence`, so here we can
-        # assume that `self` is not a `Sequence`.
-        # For non sequence transformations, this function simplifies
-        # to the simplest compatible kind, whose compatibility can be
-        # detected with (almost) no overhead. For example, if the
-        # parameter of a transformation is set to `None`, the
-        # transformation is treated as an identity transformation.
-        CHECKS = [
-            (is_identity, Identity),
-            (is_translation, Translation),
-            (is_scale, Scaling),
-            (is_permutation, Permutation),
-            (is_rotation, Rotation),
-            (is_linear, Linear),
-        ]
-        for check, cls in CHECKS:
-            if check(self, compute=simplify):
-                return self.to(cls)
         return self
 
     def to(
@@ -423,8 +408,8 @@ class LayeredTransformation(Transformation):
     ]
     active_layer = 0
 
-    def compute(self, simplify: bool = False) -> Transformation:
-        return self.layers[self.active_layer].compute(simplify)
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+        return self.layers[self.active_layer].compute(mode)
 
     @property
     def input(self) -> CoordinateSystem:
@@ -562,11 +547,8 @@ class CartesianField(CoordinatesField):
         return self._field
 
     @field.setter
-    def field(self, value: None) -> None:
-        if value is not None:
-            raise ValueError(
-                "Cannot set field of CartesianField to a non-None value."
-            )
+    def field(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._field = value
 
     def inverse(self) -> tx.Self:
         # Inverse is itself, with switched input and output.
@@ -1089,6 +1071,9 @@ class Bijection(Transformation):
     @property
     def ndims(self) -> NDims:
         return self.forward.ndims
+    
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+        return self.forward.compute(mode)
 
     @property
     def guess_input(self) -> tx.Optional[CoordinateSystem]:
@@ -1151,14 +1136,10 @@ class Inverse(Transformation):
         inner = self.transformation.ndims
         return NDims(input=inner.output, output=inner.input)
 
-    def compute(self, simplify: bool = False) -> Transformation:
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
         if self.transformation is None:
-            return (
-                Identity(input=self.input, output=self.output)
-                if simplify
-                else self
-            )
-        return self.transformation.inverse().compute(simplify=simplify)
+            return Identity(input=self.input, output=self.output)
+        return self.transformation.inverse().compute(mode=mode)
 
     def inverse(self) -> Transformation:
         return self.transformation.to(
@@ -1269,10 +1250,7 @@ class Projection(Transformation):
 #    SEQUENCE
 # ----------------------------------------------------------------------
 
-# typing
-_ModeCls = tx.Union[str, tx.Type[hierarchy.Transformation]]
-_ModeLike = tx.Union[tx.Tuple[_ModeCls, tx.Optional[int]], _ModeCls, int]
-ModeLike = tx.Union[_ModeLike, tx.Iterable[_ModeLike]]
+
 
 
 class Sequence(MutableSequence, Transformation):
@@ -1722,6 +1700,9 @@ def _compute_sequence(
     # > Recuerse with a memo
     if memo is None:
         memo = set()
+        for i in range(len(seq.transformations)):
+            # compute inverse or bijections
+            seq.transformations[i] = seq.transformations[i].compute()
         for submode in mode:
             seq = _compute_sequence(seq, submode, memo=memo)
         return seq

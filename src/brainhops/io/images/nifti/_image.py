@@ -53,13 +53,13 @@ class NiftiImage(SingleScaleImage, NiftiBasedParser):
     @property
     def data(self) -> ArrayProtocol:
         """The affine matrix of the transformation."""
-        if getattr(self, "_data", None) is None:
+        if getattr(self, "_image_data", None) is None or len(self._image_data) == 0:
             # TODO: This feels janky. I am unsure how I should wrap nifit
             # files so its lazily loaded in chunks
-            self._data = da.from_array(self.image.dataobj, chunks=256)
-        return self._data
+            self._image_data = da.from_array(self.image.dataobj, chunks=256)
+        return self._image_data
 
     @data.setter
     def data(self, value: _tx.Optional[ArrayProtocol]) -> None:
         """Update data to be the given value."""
-        self._data = value
+        self._image_data = value

@@ -320,10 +320,7 @@ def _(t: DisplacementField) -> Identity:
 
 @_converter
 def _(t: Transformation, **kwargs) -> Transformation:
-    transform_dict = dict(t)
-    for i in kwargs.keys():
-        transform_dict[i] = kwargs[i]
-    return type(t)(**transform_dict)
+    return t
 
 
 # ----------------------------------------------------------------------

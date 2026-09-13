@@ -10,7 +10,7 @@ from brainhops._core.bsplines import pull
 # internals
 from .base import DataModelBase
 from .geometry import Geometry
-from .transformations import CartesianField, Identity, Transformation
+from .transformations import CartesianField, Identity, Transformation, Inverse
 
 
 class Image(DataModelBase):
@@ -133,7 +133,7 @@ class SingleScaleImage(Image):
             geometry = Geometry((self.geometry.grid, geometry))
 
         # Compute voxel-to-voxel transformation and apply it to the data
-        transformation = self.transformation.inverse() @ geometry
+        transformation = Inverse(self.transformation, output=self.transformation.input, input=self.transformation.output) @ geometry
         transformation = transformation.compute()
         new_data = pull(self.data, transformation.field, **opt)
         return SingleScaleImage(data=new_data, transformations=[geometry.transformation])
@@ -158,7 +158,7 @@ class SingleScaleImage(Image):
         Image
             The updated (not-yet-resliced) image.
         """
-        transform = transform.inverse() @ self.transformation
+        transform = Inverse(transform, input=transform.output, output=transform.input) @ self.transformation
         if self.transformations:
             transformations = self.transformations.copy()
             transformations.append(transform)
