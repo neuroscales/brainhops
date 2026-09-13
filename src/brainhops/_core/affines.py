@@ -13,7 +13,7 @@ from bagof.hints.array import ArrayLike, ArrayProtocol
 from numpy import broadcast_shapes
 
 # locals
-from .backends import get_array_backend
+from ..backends import get_array_backend
 
 
 def inv(

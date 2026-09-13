@@ -4,7 +4,7 @@ __all__ = ["Geometry"]
 import typing_extensions as tx
 
 # core
-from brainhops._core.backends import get_array_backend
+from brainhops.backends import get_array_backend
 
 # internals
 from .axes import Axis

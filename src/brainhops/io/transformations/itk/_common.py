@@ -10,7 +10,7 @@ from bagof.magic import Magic
 
 # core
 from brainhops._core import affines as _affines
-from brainhops._core.backends import get_array_backend
+from src.brainhops.backends import get_array_backend
 from brainhops._core.enum import StrEnum
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel import systems as _systems

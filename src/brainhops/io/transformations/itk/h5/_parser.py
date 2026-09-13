@@ -10,7 +10,7 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # core
-from brainhops._core.backends import da
+from src.brainhops.backends import da
 from brainhops._core.typing import ArrayProtocol
 
 # locals

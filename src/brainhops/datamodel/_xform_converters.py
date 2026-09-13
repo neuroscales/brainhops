@@ -1,12 +1,12 @@
 # stdlib
-# dependencies
-# core
 import inspect
 
+# dependencies
 import typing_extensions as tx
 
-from brainhops._core.backends import get_array_backend
+# core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+from brainhops.backends import get_array_backend
 
 # locals
 from .transformations import (

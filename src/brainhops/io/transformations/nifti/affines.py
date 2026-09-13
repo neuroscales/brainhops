@@ -3,11 +3,11 @@ import numpy as np
 import typing_extensions as tx
 
 # io
-from brainhops.io.base.nifti import NiftiBasedParser
+from brainhops.io.base.nifti import NiftiParser
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 
-class NiftiRASToVoxel(RASToVoxel, NiftiBasedParser):
+class NiftiRASToVoxel(RASToVoxel, NiftiParser):
     """
     Affine transformation from RAS space to voxel space, derived from a
     NIfTI header.
@@ -16,8 +16,10 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedParser):
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
+        if getattr(self, "_matrix", None) is not None:
+            return self._matrix
         if self.header is not None:
-            return np.linalg.inverse(self.header.get_best_affine())[:-1]
+            return np.linalg.inv(self.header.get_best_affine())[:-1]
         return None
 
     @matrix.setter
@@ -31,7 +33,7 @@ class NiftiRASToVoxel(RASToVoxel, NiftiBasedParser):
         return super().inverse().to(VoxelToRAS)
 
 
-class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedParser):
+class NiftiVoxelToRAS(VoxelToRAS, NiftiParser):
     """
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.
@@ -40,6 +42,8 @@ class NiftiVoxelToRAS(VoxelToRAS, NiftiBasedParser):
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
+        if getattr(self, "_matrix", None) is not None:
+            return self._matrix
         if self.header is not None:
             return self.header.get_best_affine()[:-1]
         return None
