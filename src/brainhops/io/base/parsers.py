@@ -6,6 +6,7 @@ import typing_extensions as tx
 
 # core
 from brainhops._core import path, peek
+from brainhops._core.streams import preserve_position
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -78,6 +79,24 @@ class ParserNotImplementedError(ParserError, NotImplementedError):
     pass
 
 
+class AmbiguousFormatError(ParserError):
+    """
+    Raised when several parsers claim the same content, equally well.
+
+    Reaching this means two parsers agree on the confidence score, the
+    extension they matched, the constraints they declare and their
+    explicit priority, yet build different objects. There is no
+    meaningful way to choose between them, and picking one at random
+    would silently return the wrong kind of object.
+
+    The fix belongs in the parsers, not in the caller: give one of them a
+    sniffer that can tell the two apart (a magic number, an intent code,
+    a filename constraint), or set an explicit `PRIORITY`.
+    """
+
+    pass
+
+
 # ---- to ------------------------------------------------------------
 
 
@@ -94,6 +113,34 @@ class WriterNotImplementedError(WriterError, NotImplementedError):
 
 
 # ----------------------------------------------------------------------
+#   CONFIDENCE
+# ----------------------------------------------------------------------
+
+
+class Confidence:
+    """
+    Named confidence levels for sniffers.
+
+    These are plain floats; a sniffer may return any value in `[0, 1]`.
+    """
+
+    NO: float = 0.0
+    """The content is definitely not of this type."""
+
+    WEAK: float = 0.25
+    """The content can be read as this type, but probably is not one."""
+
+    MAYBE: float = 0.5
+    """The content is plausibly of this type."""
+
+    LIKELY: float = 0.75
+    """The content is very likely of this type."""
+
+    CERTAIN: float = 1.0
+    """The content is definitely of this type."""
+
+
+# ----------------------------------------------------------------------
 #   BASES
 # ----------------------------------------------------------------------
 
@@ -106,7 +153,44 @@ class FileSniffer:
     A class that can sniff files to determine if they are of a certain type.
     """
 
-    _READ_MODE = "r"
+    _READ_MODE: str = "r"
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """
+    File extensions handled by this parser, e.g. `(".nii", ".nii.gz")`.
+
+    Used as a first, cheap dispatch pass. When several parsers match,
+    the *longest* matching extension wins, so a parser declaring
+    `".nii.gz"` takes precedence over one declaring `".gz"`.
+    """
+
+    PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ()
+    """
+    Filename prefixes required by this parser, e.g. `("y_", "iy_")`.
+
+    An empty tuple means "no constraint". A parser that constrains the
+    prefix is more specific than one that does not, and wins ties.
+
+    Declaring `EXTENSIONS` and `PREFIXES` separately states the
+    cross-product implicitly, which is how these conventions actually
+    work: SPM's four names are `{y_, iy_}` x `{.nii, .nii.gz}`.
+    """
+
+    # TODO: neither attribute can express an *infix* constraint, which
+    # some conventions need -- BIDS suffixes (`*_T1w.nii.gz`) and
+    # FreeSurfer names (`lh.white`, `rh.pial`) among them. If such a
+    # format shows up, add an optional `PATTERNS` of globs as an escape
+    # hatch *alongside* these two rather than replacing them: globs
+    # would force the cross-product above to be enumerated, which is
+    # more verbose for the common case. Specificity generalizes
+    # cleanly -- count the literal, non-wildcard characters matched,
+    # which is what `_match_name` already measures for the simple case.
+
+    PRIORITY: tx.ClassVar[int] = 0
+    """
+    Explicit tie-breaker, consulted only when specificity cannot decide.
+    Higher wins. Leave at `0` unless two parsers genuinely collide.
+    """
 
     @classmethod
     def sniff(
@@ -114,7 +198,7 @@ class FileSniffer:
         file: path.FileOrContentLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given file is of the type that this parser can
         handle.
@@ -130,8 +214,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the file is of the correct type, False otherwise.
+        float
+            Confidence that the file is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
 
@@ -160,7 +244,7 @@ class FileSniffer:
         file: path.FileLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given file is of the type that this parser can
         handle.
@@ -176,8 +260,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the file is of the correct type, False otherwise.
+        float
+            Confidence that the file is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
 
@@ -186,7 +270,11 @@ class FileSniffer:
 
         if isinstance(file, path.PathLike):
             if not file.exists():
-                return False
+                if error:
+                    if error is True:
+                        error = SnifferExistsError
+                    raise error(f"No such file: {file}")
+                return Confidence.NO
             with file.open(cls._READ_MODE) as f:
                 return cls.sniff_fileobj(f, **kwargs)
 
@@ -206,7 +294,7 @@ class FileSniffer:
         file: tx.IO,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given file-like object is of the type that this
         parser can handle.
@@ -222,11 +310,12 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the file is of the correct type, False otherwise.
+        float
+            Confidence that the file is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
-        return cls.sniff_content(file.read(), **kwargs)
+        with preserve_position(file):
+            return cls.sniff_content(file.read(), **kwargs)
 
     @classmethod
     def sniff_content(
@@ -234,7 +323,7 @@ class FileSniffer:
         content: path.ContentLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given content is of the type that this parser
         can handle.
@@ -250,8 +339,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the content is of the correct type, False otherwise.
+        float
+            Confidence that the content is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
 
@@ -277,7 +366,7 @@ class FileSniffer:
         content: path.BinaryContentLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given file is of the type that this parser can handle.
 
@@ -292,8 +381,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the content is of the correct type, False otherwise.
+        float
+            Confidence that the content is of this type, in `[0, 1]`.
         """
         raise SnifferNotImplementedError(
             f"sniff_bytes() is not available in parser of type {cls.__name__}"
@@ -305,7 +394,7 @@ class FileSniffer:
         text: str,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given text is of the type that this parser can handle.
 
@@ -320,8 +409,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the text is of the correct type, False otherwise.
+        float
+            Confidence that the text is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
         return cls.sniff_lines(text.splitlines(), **kwargs)
@@ -332,7 +421,7 @@ class FileSniffer:
         lines: tx.Iterable[str],
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given lines are of the type that this parser
         can handle.
@@ -348,8 +437,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the lines are of the correct type, False otherwise.
+        float
+            Confidence that the lines is of this type, in `[0, 1]`.
         """
         kwargs["error"] = error
         if not isinstance(lines, peek.peekable_lines):
@@ -362,7 +451,7 @@ class FileSniffer:
         line: str,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         """
         Determine if the given line is of the type that this parser can handle.
 
@@ -377,8 +466,8 @@ class FileSniffer:
 
         Returns
         -------
-        bool
-            True if the line is of the correct type, False otherwise.
+        float
+            Confidence that the line is of this type, in `[0, 1]`.
         """
         raise SnifferNotImplementedError(
             f"sniff_line() is not available in parser of type {cls.__name__}"
@@ -392,10 +481,13 @@ class FileParser(FileSniffer):
     """A class that can read files of a certain type."""
 
     @classmethod
-    def from_(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
+    def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """
         Build an object from a file (path, file-like object or iterable
         of lines).
+
+        This is the generic front door to the `from_*` family: it looks
+        at what it was handed and calls the right one.
 
         Parameters
         ----------
@@ -446,7 +538,7 @@ class FileParser(FileSniffer):
 
         if isinstance(file, path.PathLike):
             if not file.exists():
-                return False
+                raise ParserExistsError(f"No such file: {file}")
             with file.open(cls._READ_MODE) as f:
                 return cls.from_fileobj(f, **kwargs)
 
@@ -473,7 +565,8 @@ class FileParser(FileSniffer):
         obj
             The parsed object.
         """
-        return cls.from_content(file.read(), **kwargs)
+        with preserve_position(file):
+            return cls.from_content(file.read(), **kwargs)
 
     @classmethod
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
@@ -596,9 +689,15 @@ class FileParserWriter(FileParser):
 
     _WRITE_MODE = "w"
 
-    def to(self, file: path.FileLike, **kwargs) -> None:
+    def save(self, file: path.FileLike, **kwargs) -> None:
         """
         Write the object to a file (path or file-like object).
+
+        This is the generic front door to the `to_*` family. It is named
+        `save` rather than `to` because `to` already means something else
+        on the data models these parsers are mixed into: `Transformation.to`
+        converts an object to another *type*. A writer's `to` was shadowed
+        by it on every writable transformation.
 
         Parameters
         ----------
@@ -607,17 +706,18 @@ class FileParserWriter(FileParser):
         **kwargs
             Parser-specific options.
         """
-        if isinstance(file, str) and path.Path(file).exists():
+        # NOTE: unlike `load`, we must not require the path to exist --
+        # writing to a new file is the common case.
+        if isinstance(file, str):
             file = path.Path(file)
 
         if isinstance(file, path.PathLike):
             return self.to_file(file, **kwargs)
 
-        if hasattr(file, "write"):
-            return self.to_file(file, **kwargs)
+        if hasattr(file, "write") or hasattr(file, "writelines"):
+            return self.to_fileobj(file, **kwargs)
 
-        # Cannot parse this content -> return False or error
-        raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+        raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """
@@ -634,22 +734,32 @@ class FileParserWriter(FileParser):
             file = path.Path(file)
 
         if isinstance(file, path.PathLike):
-            if not file.exists():
-                return False
             with file.open(self._WRITE_MODE) as f:
-                return self.to_file(f, **kwargs)
+                return self.to_fileobj(f, **kwargs)
 
-        if hasattr(file, "writelines"):
-            file.writelines(self.to_lines(**kwargs))
+        if hasattr(file, "write") or hasattr(file, "writelines"):
+            return self.to_fileobj(file, **kwargs)
 
-        elif hasattr(file, "write"):
-            if "b" in self._WRITE_MODE:
-                file.write(self.to_bytes(**kwargs))
-            else:
-                file.write(self.to_text(**kwargs))
+        raise ParserTypeError(f"Cannot write file of type {type(file)}")
 
-        # Cannot parse this content -> return False or error
-        raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """
+        Write the object to a file-like object open for writing.
+
+        Parameters
+        ----------
+        file : IO
+            A file object open for writing.
+        **kwargs
+            Parser-specific options.
+        """
+        if "b" in self._WRITE_MODE:
+            file.write(self.to_bytes(**kwargs))
+        elif hasattr(file, "writelines"):
+            # `to_lines` yields lines without their terminator.
+            file.writelines(line + "\n" for line in self.to_lines(**kwargs))
+        else:
+            file.write(self.to_text(**kwargs))
 
     def to_bytes(self, **kwargs) -> bytes:
         """
@@ -733,7 +843,7 @@ class TextFileSniffer(FileSniffer):
     certain type.
     """
 
-    _READ_MODE = "rt"
+    _READ_MODE: str = "rt"
 
     @classmethod
     def sniff_bytes(
@@ -741,7 +851,7 @@ class TextFileSniffer(FileSniffer):
         content: path.BinaryContentLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         kwargs["error"] = error
         encoding = kwargs.pop("encoding", "utf-8")
         return cls.sniff_text(content.decode(encoding), **kwargs)
@@ -756,7 +866,7 @@ class TextFileParser(TextFileSniffer, FileParser):
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
-class TextFileParserWriter(TextFileParser):
+class TextFileParserWriter(TextFileParser, FileParserWriter):
     """A class that can read and write text files of a certain type."""
 
     def to_bytes(self, **kwargs) -> bytes:
@@ -769,22 +879,22 @@ class TextFileParserWriter(TextFileParser):
 # ----------------------------------------------------------------------
 
 
-class BinaryFileSniffer:
+class BinaryFileSniffer(FileSniffer):
     """
     A class that can sniff binary files to determine if they are of a
     certain type.
     """
 
-    _READ_MODE = "rb"
+    _READ_MODE: str = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer):
+class BinaryFileParser(BinaryFileSniffer, FileParser):
     """A class that can read binary files of a certain type."""
 
     ...
 
 
-class BinaryFileParserWriter(BinaryFileParser):
+class BinaryFileParserWriter(BinaryFileParser, FileParserWriter):
     """A class that can read and write binary files of a certain type."""
 
-    _WRITE_MODE = "wb"
+    _WRITE_MODE: str = "wb"

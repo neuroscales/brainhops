@@ -1,5 +1,6 @@
 # dependencies
 import nibabel as nb
+import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
@@ -9,17 +10,65 @@ from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import Unit
-from brainhops.io.base.nifti import NiftiParser, _nifti_to_axes
+from brainhops.io.base._base import register_format
+from brainhops.io.base.nifti import (
+    _NIFTI_FIELD_INTENTS,
+    _NIFTI_INTENT_NONE,
+    NiftiParser,
+    _nifti_intent,
+    _nifti_shape,
+    _nifti_to_axes,
+    _NiftiObject,
+)
+from brainhops.io.base.parsers import Confidence
+from brainhops.io.images.base import FileBasedImage
 
 
-class NiftiImage(SingleScaleImage, NiftiParser):
+@register_format
+class NiftiImage(NiftiParser, FileBasedImage, SingleScaleImage):
     """
     An image that is encoded by a NIfTI file.
+
+    !!! note "Why the bases are in this order"
+        `SingleScaleImage.data` has no default, while `NiftiParser`
+        contributes `image` and `_header`, which do. Struct fields are
+        collected in reverse MRO order, so `SingleScaleImage` has to come
+        *last* or `data` ends up behind a defaulted field and `bagof`
+        rejects the signature. Leading with `NiftiParser` also lets its
+        lazy `data`/`system` properties -- which pull from the nibabel
+        image on demand -- take precedence over the plain fields.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+
+    @classmethod
+    def _score_nibabel(cls, header: _NiftiObject) -> float:
+        """
+        float a NIfTI header as a plain image.
+
+        Any NIfTI can be read as an image, so this is never zero -- but
+        a file whose intent code says "displacement field" is very
+        probably wanted as a transformation, not as an image.
+        """
+        intent = _nifti_intent(header)
+        if intent is None:
+            return Confidence.MAYBE
+        if intent in _NIFTI_FIELD_INTENTS:
+            return Confidence.WEAK
+        # An intent code is often left unset, so the shape has to be
+        # read too: a trailing axis of length 3 on a 4D-or-more volume
+        # may be a deformation field, and reading it as a plain image
+        # would be technically valid but almost never what was wanted.
+        shape = _nifti_shape(header)
+        if shape and len(shape) >= 4 and shape[-1] == 3:
+            return Confidence.WEAK
+        if intent == _NIFTI_INTENT_NONE:
+            return Confidence.LIKELY
+        return Confidence.MAYBE
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        if getattr(self, "_transformations", None) is not None:
+        if getattr(self, "_transformations", None):
             return self._transformations
         return _nifti_to_transformations(self.header)
 
@@ -117,41 +166,52 @@ def _nifti_to_transformations(
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=zooms)
     xforms.append(vox2phys)
 
+    def _coded_affine(matrix: np.ndarray, label: str) -> Affine:
+        """Build the voxel-to-RAS affine for a qform/sform matrix."""
+        matrix = matrix[keep_dims + [-1], :][:, keep_dims + [-1]]
+        return Affine(
+            input=voxel_space,
+            output=replace(ras_space, name=label),
+            matrix=matrix[:-1],
+        )
+
     # --- qform --------------------------------------------------------
-    qform, qcode = header.get_qform(coded=True)
-    qform = qform[keep_dims + [-1], :][:, keep_dims + [-1]]
-    qname = _NIFTI_XCODES.get(qcode, "unknown")
-    qform = Affine(
-        input=voxel_space,
-        output=replace(ras_space, name="qform"),
-        matrix=qform[:-1],
-    )
-    xforms.append(qform)
+    # `get_qform`/`get_sform` return `None` when the corresponding code
+    # is 0, i.e. the form is simply not set. Only one of the two is
+    # required to be present.
+    qmatrix, qcode = header.get_qform(coded=True)
+    qform = None
+    if qmatrix is not None:
+        qname = _NIFTI_XCODES.get(qcode, "unknown")
+        qform = _coded_affine(qmatrix, "qform")
+        xforms.append(qform)
 
     # --- sform --------------------------------------------------------
-    sform, scode = header.get_sform(coded=True)
-    keep_dims = [
-        i
-        for i, axis in enumerate(axes)
-        if axis.name is not None and axis.type == "space"
-    ]
-    sform = sform[keep_dims + [-1], :][:, keep_dims + [-1]]
-    sname = _NIFTI_XCODES.get(scode, "unknown")
-    sform = Affine(
-        input=voxel_space,
-        output=replace(ras_space, name="sform"),
-        matrix=sform[:-1],
-    )
-    xforms.append(sform)
+    smatrix, scode = header.get_sform(coded=True)
+    sform = None
+    if smatrix is not None:
+        sname = _NIFTI_XCODES.get(scode, "unknown")
+        sform = _coded_affine(smatrix, "sform")
+        xforms.append(sform)
 
     # --- named & best affines -----------------------------------------
-    if scode == qcode:
-        xforms.append(replace(sform, name=sname))
-    elif sform != 0:
-        xforms.append(replace(qform, name=qname))
-        xforms.append(replace(sform, name=sname))
-    elif qform != 0:
-        xforms.append(replace(sform, name=sname))
-        xforms.append(replace(qform, name=qname))
+    # The last transformation in the list must be the one nibabel calls
+    # the "best" affine, but named after its code rather than its form.
+    if sform is not None and qform is not None:
+        if scode == qcode:
+            xforms.append(
+                replace(sform, output=replace(ras_space, name=sname))
+            )
+        else:
+            xforms.append(
+                replace(qform, output=replace(ras_space, name=qname))
+            )
+            xforms.append(
+                replace(sform, output=replace(ras_space, name=sname))
+            )
+    elif sform is not None:
+        xforms.append(replace(sform, output=replace(ras_space, name=sname)))
+    elif qform is not None:
+        xforms.append(replace(qform, output=replace(ras_space, name=qname)))
 
     return xforms

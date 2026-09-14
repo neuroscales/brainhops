@@ -7,16 +7,25 @@ from io import BytesIO
 import nibabel as nb
 import typing_extensions as tx
 
+from brainhops._core import path
+from brainhops._core.streams import open_compressed
+
 # internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.io.base.parsers import BinaryFileParser, SnifferContentError
+from brainhops.io.base.parsers import (
+    BinaryFileParser,
+    Confidence,
+    ParserExistsError,
+    SnifferContentError,
+    preserve_position,
+)
 
 # typing
-NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
+_NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
 
 _NIFTI_AXES = [
@@ -54,6 +63,49 @@ _NIFTI_SPECIFIC_AXES = {
     2008: _AXES_DISP,  # FSL_DCT_COEFFICIENTS
     2009: _AXES_DISP,  # FSL_QUADRATIC_SPLINE_COEFFICIENTS
 }
+
+
+_NIFTI_FIELD_INTENTS = frozenset(
+    {
+        1006,  # DISPVECT
+        1007,  # VECTOR
+        2006,  # FSL_FNIRT_DISPLACEMENT_FIELD
+        2007,  # FSL_CUBIC_SPLINE_COEFFICIENTS
+        2008,  # FSL_DCT_COEFFICIENTS
+        2009,  # FSL_QUADRATIC_SPLINE_COEFFICIENTS
+    }
+)
+"""
+Intent codes that mark a NIfTI file as holding a deformation field.
+
+A NIfTI file is legitimately an image *and* a set of affines *and*,
+sometimes, a field -- so the container alone cannot say which object the
+caller wants. The intent code can, and is what lets sniffers score
+themselves instead of relying on an arbitrary precedence between kinds.
+"""
+
+_NIFTI_INTENT_NONE = 0
+"""Intent code of a plain image: no specialized interpretation."""
+
+
+def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
+    """The intent code of a NIfTI header, or `None` if unreadable."""
+    try:
+        if isinstance(header, nb.Nifti1Image):
+            header = header.header
+        return int(header["intent_code"])
+    except Exception:
+        return None
+
+
+def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
+    """The data shape of a NIfTI header, or `None` if unreadable."""
+    try:
+        if isinstance(header, nb.Nifti1Image):
+            header = header.header
+        return tuple(int(d) for d in header.get_data_shape())
+    except Exception:
+        return None
 
 
 class NiftiParser(DataModelBase, BinaryFileParser):
@@ -178,13 +230,39 @@ class NiftiParser(DataModelBase, BinaryFileParser):
     # --- BinaryFileParser API -----------------------------------------
 
     @classmethod
+    def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
+        """
+        Build the object from a NIfTI file.
+
+        For a real path, `nibabel` is handed the path rather than an open
+        stream, so that it owns the file handle. Its array proxy reads
+        the voxels lazily, long after the call returns, and would find a
+        closed file if we opened the stream ourselves.
+        """
+        if isinstance(file, str):
+            file = path.Path(file)
+        if isinstance(file, path.PathLike):
+            if not file.exists():
+                raise ParserExistsError(f"No such file: {file}")
+            return cls.from_nibabel(nb.load(str(file), **kwargs))
+        return super().from_file(file, **kwargs)
+
+    @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
-        try:
-            obj = nb.Nifti1Image.from_file_map(
-                {"header": fileobj, "image": fileobj}, **kwargs
-            )
-        except Exception:
-            obj = nb.Nifti1Header.from_fileobj(fileobj, **kwargs)
+        # `from_file_map` wants `FileHolder`s, not raw file objects; handed
+        # a bare stream it raises, and the header-only fallback below used
+        # to swallow that -- so the image data was never read at all.
+        # `ImageOpener` transparently handles gzipped streams.
+        with preserve_position(fileobj):
+            f = open_compressed(fileobj)
+            try:
+                holder = nb.FileHolder(fileobj=f)
+                obj = nb.Nifti1Image.from_file_map(
+                    {"header": holder, "image": holder}, **kwargs
+                )
+            except Exception:
+                f = open_compressed(fileobj)
+                obj = nb.Nifti1Header.from_fileobj(f, **kwargs)
         return cls.from_nibabel(obj)
 
     @classmethod
@@ -192,7 +270,7 @@ class NiftiParser(DataModelBase, BinaryFileParser):
         return cls.from_fileobj(BytesIO(data), **kwargs)
 
     @classmethod
-    def from_nibabel(cls, nifti: NiftiObject, **kwargs) -> tx.Self:
+    def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti, **kwargs)
         if isinstance(nifti, nb.Nifti1Image):
@@ -209,31 +287,33 @@ class NiftiParser(DataModelBase, BinaryFileParser):
         *,
         version: tx.Optional[int] = None,
         **kwargs,
-    ) -> bool:
+    ) -> float:
 
         # --- If nifti version not provided, try both NIfTI-1 and NIfTI-2
         if version is None:
+            best = Confidence.NO
             for version in (1, 2):
-                if cls.sniff_fileobj(
-                    file, error=False, version=version, **kwargs
-                ):
-                    return True
+                best = max(
+                    best,
+                    cls.sniff_fileobj(
+                        file, error=False, version=version, **kwargs
+                    ),
+                )
+            if best:
+                return best
             if error:
                 if error is True:
                     error = SnifferContentError
                 raise error("Content is not a valid NIfTI-1 or NIfTI-2 file")
-            return False
+            return Confidence.NO
 
         # --- Version hint is provided, use appropriate nibabel class
         NiftiHeader = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
         kwargs["error"] = error
-        try:
-            pos = file.tell() if hasattr(file, "tell") else 0
-        except Exception:
-            pos = 0
         base_error = None
         try:
-            with nb.openers.ImageOpener(file, cls._READ_MODE) as f:
+            with preserve_position(file):
+                f = open_compressed(file)
                 nbkwargs = {}
                 if "endianness" in kwargs:
                     nbkwargs["endianness"] = kwargs.pop("endianness")
@@ -245,16 +325,10 @@ class NiftiParser(DataModelBase, BinaryFileParser):
                 result = cls.sniff_nibabel(obj, **kwargs)
         except Exception as e:
             base_error = e
-            result = False
-        finally:
-            if hasattr(file, "seek"):
-                try:
-                    file.seek(pos)
-                except Exception:
-                    pass
+            result = Confidence.NO
 
         if result:
-            return True
+            return result
 
         # Cannot parse this content -> return False or error
         if error:
@@ -265,23 +339,27 @@ class NiftiParser(DataModelBase, BinaryFileParser):
                 raise error from base_error
             else:
                 raise error
-        return False
+        return Confidence.NO
 
     @classmethod
     def sniff_nibabel(
         cls,
-        nifti: NiftiObject,
+        nifti: _NiftiObject,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         if isinstance(nifti, nb.Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
         if isinstance(nifti, nb.Nifti2Header):
             result = nifti["sizeof_hdr"] == 540
         elif isinstance(nifti, nb.Nifti1Header):
             result = nifti["sizeof_hdr"] == 348
+        else:
+            result = False
         if result:
-            return True
+            # The magic number only says "this is a NIfTI". How *well* it
+            # matches this particular class is for the subclass to say.
+            return cls._score_nibabel(nifti)
         if error:
             if error is True:
                 error = SnifferContentError
@@ -292,12 +370,43 @@ class NiftiParser(DataModelBase, BinaryFileParser):
         return False
 
     @classmethod
+    def _score_nibabel(cls, header: _NiftiObject) -> float:
+        """
+        How well a valid NIfTI header matches *this* class.
+
+        Called once the magic number has been checked, so the answer is
+        never "not a NIfTI" -- it is "how likely is this NIfTI to be the
+        kind of object I build". A displacement field and a plain image
+        live in the same container and can only be told apart by the
+        intent code, or failing that the data shape.
+
+        !!! note "Why this is a separate, overridable method"
+            It is the one piece of sniffing that differs per format, so
+            it is a hook rather than inline code: `sniff_nibabel` keeps
+            the part every NIfTI format shares -- validating the
+            container -- and delegates the rest. Overriding
+            `sniff_nibabel` directly would make each format re-implement
+            the magic-number check, and get it subtly wrong.
+
+            It is private because it is an extension point for formats in
+            this package, not something callers invoke: ask `sniff` which
+            format matches, or a concrete format how confident it is.
+
+        Returns
+        -------
+        score : float
+            Confidence in `[0, 1]`; `Confidence.MAYBE` by default,
+            meaning "readable, nothing more".
+        """
+        return Confidence.MAYBE
+
+    @classmethod
     def sniff_bytes(
         cls,
         data: bytes,
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
-    ) -> bool:
+    ) -> float:
         kwargs["error"] = error
         return cls.sniff_fileobj(BytesIO(data), **kwargs)
 
@@ -318,9 +427,12 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     # Get names and types of existing axes
     axes = _NIFTI_AXES[:ndim]
 
-    # Apply specific knowledge from intent code
-    if header["intent_code"] in _NIFTI_SPECIFIC_AXES:
-        axes_map = _NIFTI_SPECIFIC_AXES[header["intent_code"]]
+    # Apply specific knowledge from intent code.
+    # `header[...]` hands back a 0-d numpy array, which is unhashable and
+    # cannot be looked up in a dict, so go through `_nifti_intent`.
+    intent = _nifti_intent(header)
+    if intent in _NIFTI_SPECIFIC_AXES:
+        axes_map = _NIFTI_SPECIFIC_AXES[intent]
         axes = [axes_map.get(i, axis) for i, axis in enumerate(axes)]
 
     return axes
