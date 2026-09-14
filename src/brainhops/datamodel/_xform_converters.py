@@ -1,8 +1,6 @@
-# stdlib
-import inspect
-
 # dependencies
 import typing_extensions as tx
+from bagof.magic import replace
 
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
@@ -32,7 +30,12 @@ from .transformations import (
 
 @_converter
 def _(t: Transformation, **kwargs) -> Transformation:
-    return Transformation(t, **kwargs)
+    # A same-type conversion with no overrides is a pass-through; with
+    # overrides it rebuilds the transform of the same type, applying the
+    # named fields on top of the existing ones.
+    if not kwargs:
+        return t
+    return replace(t, **kwargs)
 
 
 @_converter
@@ -46,7 +49,7 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
             bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
-    return DisplacementField(t, **kwargs)
+    return replace(t, **kwargs)
 
 
 @_converter
@@ -60,11 +63,7 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
-    # FIXME: this is too hacky
-    valid_params = set(inspect.signature(CoordinatesField).parameters)
-    params = {k: v for k, v in vars(t).items() if k in valid_params}
-    params.update(kwargs)
-    return CoordinatesField(**params)
+    return replace(t, **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -316,11 +315,6 @@ def _(t: DisplacementField) -> Identity:
         if t.field.any():
             raise LossyConversionError(result=u)
     return u
-
-
-@_converter
-def _(t: Transformation) -> Transformation:
-    return t
 
 
 # ----------------------------------------------------------------------

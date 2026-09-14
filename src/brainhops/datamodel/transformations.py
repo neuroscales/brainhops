@@ -24,6 +24,7 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import replace
 
 # core
 from brainhops._core.typing import (
@@ -1070,13 +1071,7 @@ def _flatten(self: Sequence) -> tx.Self:
         else:
             flattened.append(t)
 
-    # FIXME: this is too hacky
-    params = dict(vars(self))
-    params["transformations"] = flattened
-    for k in list(params.keys()):
-        if k.startswith("_"):
-            del params[k]
-    return type(self)(**params)
+    return replace(self, transformations=flattened)
 
 
 def _is_flat(self: Sequence) -> bool:
