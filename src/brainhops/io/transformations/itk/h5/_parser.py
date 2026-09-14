@@ -86,6 +86,7 @@ class H5TransformParser(
     Magic,
     BinaryFileParser,
     convert=True,
+    repr=HIDE_IF_NONE,
 ):
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)

@@ -7,7 +7,7 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import Factory, Magic
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
@@ -38,6 +38,7 @@ class TFMTransformParser(
     Magic,
     TextFileParser,
     convert=True,
+    repr=HIDE_IF_NONE,
 ):
     transform_group: tx.List[ITKStruct] = Factory(list)
 
@@ -54,7 +55,9 @@ class TFMTransformParser(
         # "Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}".
         # The version header is a comment, and `peekable_lines` has
         # already dropped it, so the first line seen here is the block.
-        if _TRANSFORM_RE.match(line.strip()) is not None:
+        # A file that is only a header has no such line: `peekable_lines`
+        # yields its end sentinel, which is not a string.
+        if isinstance(line, str) and _TRANSFORM_RE.match(line.strip()):
             return Confidence.CERTAIN
         if error:
             if error is True:

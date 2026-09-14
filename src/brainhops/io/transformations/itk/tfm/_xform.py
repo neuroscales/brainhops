@@ -20,7 +20,6 @@ class TFMTransform(
     TFMTransformParser,
     ITKTransform,
     mapping=HIDE_IF_NONE,
-    repr=HIDE_IF_NONE,
 ):
     """A transformation stored in an ITK text (`.tfm`) file."""
 

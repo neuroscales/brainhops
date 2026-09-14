@@ -20,7 +20,6 @@ class H5Transform(
     H5TransformParser,
     ITKTransform,
     mapping=HIDE_IF_NONE,
-    repr=HIDE_IF_NONE,
 ):
     """A transformation stored in an ITK binary (`.h5`) file."""
 
