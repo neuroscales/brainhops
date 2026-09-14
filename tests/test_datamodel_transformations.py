@@ -7,12 +7,15 @@ run twice.
 """
 
 import numpy as np
+from bagof.magic import fields_dict, replace
 
 from brainhops.datamodel import _xform_converters as xc
+from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
+    CoordinatesField,
     DisplacementField,
     Sequence,
     Translation,
@@ -92,6 +95,73 @@ def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
     # CartesianField through the same-type converter.
     result = seq.compute()
     assert result is not None
+
+
+def test_cartesian_field_is_not_an_init_field_but_base_is() -> None:
+    # `field` is computed from `shape` on a CartesianField, so it is not a
+    # constructor-taken field there. The base CoordinatesField keeps
+    # `field` as a normal init field.
+    assert "field" not in fields_dict(CartesianField)
+    assert "field" in fields_dict(CoordinatesField)
+
+
+def test_replace_cartesian_field_changes_endpoints_and_keeps_shape() -> None:
+    inp = CoordinateSystem(name="in")
+    out = CoordinateSystem(name="out")
+    cf = CartesianField(shape=(4, 5, 6))
+    replaced = replace(cf, input=inp, output=out)
+    assert isinstance(replaced, CartesianField)
+    assert replaced.shape == (4, 5, 6)
+    assert replaced.input is inp
+    assert replaced.output is out
+    # The field is regenerated lazily from the shape.
+    assert replaced.field.shape == (4, 5, 6, 3)
+    expected = np.stack(
+        np.meshgrid(*(np.arange(s) for s in (4, 5, 6)), indexing="ij"), -1
+    )
+    np.testing.assert_array_equal(np.asarray(replaced.field), expected)
+
+
+def test_replace_cartesian_field_changes_order_and_bound() -> None:
+    cf = CartesianField(shape=(3, 4))
+    replaced = replace(
+        cf,
+        order=InterpolationOrder.cubic,
+        bound=BoundaryCondition.reflect,
+    )
+    assert isinstance(replaced, CartesianField)
+    assert replaced.order == InterpolationOrder.cubic
+    assert replaced.bound == BoundaryCondition.reflect
+    # Everything not named is carried over unchanged.
+    assert replaced.shape == (3, 4)
+    assert replaced.coeff is False
+    assert replaced.field.shape == (3, 4, 2)
+
+
+def test_to_same_type_cartesian_field_changes_output() -> None:
+    # The converter path (`.to`) rebuilds a CartesianField with the
+    # endpoint changed, without its explicit `field=None` workaround, and
+    # the field is still absent from the constructor and lazily computable.
+    output = CoordinateSystem(name="out")
+    rebuilt = CartesianField(shape=(4, 5)).to(output=output)
+    assert isinstance(rebuilt, CartesianField)
+    assert rebuilt.output is output
+    assert rebuilt.shape == (4, 5)
+    assert "field" not in fields_dict(type(rebuilt))
+    assert rebuilt.field.shape == (4, 5, 2)
+
+
+def test_replace_coordinates_field_round_trips_explicit_field() -> None:
+    # Guard against regressing the base: CoordinatesField takes `field` as
+    # a normal init field, so replace carries an explicit array over.
+    values = np.zeros((5, 6, 2))
+    cf = CoordinatesField(field=values.copy(), order=3, coeff=True)
+    replaced = replace(cf, order=1)
+    assert isinstance(replaced, CoordinatesField)
+    assert not isinstance(replaced, CartesianField)
+    assert replaced.order == 1
+    assert replaced.coeff is True
+    np.testing.assert_array_equal(np.asarray(replaced.field), values)
 
 
 def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001

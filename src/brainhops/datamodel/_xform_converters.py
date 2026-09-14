@@ -69,11 +69,12 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
 
 @_converter
 def _(t: CartesianField, **kwargs) -> CartesianField:
-    # A CartesianField generates its `field` on demand from `shape`, and
-    # its setter rejects any non-None `field`. A rebuild therefore drops
-    # the generated field and lets the new instance regenerate it.
+    # A CartesianField generates its `field` on demand from `shape`, so
+    # `field` is not a constructor argument here. A rebuild carries
+    # `shape` over and lets the new instance regenerate the field, and any
+    # `field` override is dropped.
     kwargs.pop("field", None)
-    return replace(t, field=None, **kwargs)
+    return replace(t, **kwargs)
 
 
 # ----------------------------------------------------------------------
