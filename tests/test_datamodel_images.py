@@ -1,6 +1,7 @@
 """Unit tests for the image data model (reslice, indexing, geometry)."""
 
 import numpy as np
+import pytest
 
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import (
@@ -51,10 +52,14 @@ def test_call_then_reslice_returns_single_scale_image() -> None:
     # The applied transformation is appended as the preferred one.
     assert len(moved.transformations) == len(img.transformations) + 1
 
-    resliced = moved.reslice(img.geometry)
+    # Reslicing onto its own grid resamples the image without moving it.
+    resliced = moved.reslice()
 
     assert isinstance(resliced, SingleScaleImage)
     assert resliced.shape == img.shape
+    assert np.allclose(np.asarray(resliced), np.asarray(img))
+    matrix = np.asarray(resliced.transformation.compute().to(Affine).matrix)
+    assert np.allclose(matrix, np.asarray(_voxel_to_ras().matrix))
 
 
 def test_getitem_preserves_geometry() -> None:
@@ -112,6 +117,35 @@ def test_selecting_transformation_by_index_reorders() -> None:
 
     assert len(img.transformations) == 2
     assert img.transformation is first
+
+
+def test_selecting_transformation_by_unknown_name_raises() -> None:
+    img = _image()
+
+    with pytest.raises(KeyError):
+        img.transformation = "no-such-space"
+
+
+def test_multiscale_reslice_onto_own_grid() -> None:
+    level0 = _image()
+    model_to_world = Affine(
+        matrix=np.eye(4)[:-1],
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    pyramid = MultiScaleImage(
+        images=[level0], transformations=[model_to_world]
+    )
+
+    resliced = pyramid.reslice()
+
+    assert isinstance(resliced, SingleScaleImage)
+    assert resliced.shape == level0.shape
+    assert np.allclose(np.asarray(resliced), np.asarray(level0))
+    # The pyramid-level transform is the identity, so the resliced
+    # voxel-to-world matrix is the highest-resolution level's own.
+    matrix = np.asarray(resliced.transformation.compute().to(Affine).matrix)
+    assert np.allclose(matrix, np.asarray(_voxel_to_ras().matrix))
 
 
 def test_multiscale_geometry_grid_lives_in_level_zero_voxel_space() -> None:

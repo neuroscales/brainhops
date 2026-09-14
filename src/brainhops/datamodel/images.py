@@ -81,8 +81,16 @@ class SingleScaleImage(Image):
         The preferred transformation.
 
         It is always the last transformation in the list.
-        Changing it appends the new transformation to the list (or
-        reorders the list if the value is an integer or a string).
+
+        Assigning a transformation appends it as the new preferred
+        transformation. Assigning an integer or a string selects an
+        existing transformation by position or by output-space name and
+        moves it to the end. Assigning a transformation that is already
+        in the list moves it to the end instead of adding a copy.
+
+        A transformation is recognized as already present by identity. A
+        distinct transformation that merely compares equal to one in the
+        list is appended as a new preferred transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -100,6 +108,10 @@ class SingleScaleImage(Image):
                 if getattr(x.output, "name", None) == value:
                     value = transformations.pop(i)
                     break
+            else:
+                raise KeyError(
+                    f"no transformation with output space named {value!r}"
+                )
         else:
             for i, x in enumerate(transformations):
                 if x is value:
@@ -186,7 +198,11 @@ class SingleScaleImage(Image):
             geometry = Geometry((self.geometry.grid, geometry))
 
         # Compute voxel-to-voxel transformation and apply it to the data
-        transformation = self.transformation.inverse().compute() @ geometry
+        transformation = (
+            self.transformation.inverse()
+            @ geometry.transformation
+            @ geometry.grid
+        )
         transformation = transformation.compute()
         new_data = pull(self.data, transformation.field, **opt)
         return SingleScaleImage(
@@ -289,8 +305,16 @@ class MultiScaleImage(Image):
         The preferred transformation.
 
         It is always the last transformation in the list.
-        Changing it appends the new transformation to the list (or
-        reorders the list if the value is an integer or a string).
+
+        Assigning a transformation appends it as the new preferred
+        transformation. Assigning an integer or a string selects an
+        existing transformation by position or by output-space name and
+        moves it to the end. Assigning a transformation that is already
+        in the list moves it to the end instead of adding a copy.
+
+        A transformation is recognized as already present by identity. A
+        distinct transformation that merely compares equal to one in the
+        list is appended as a new preferred transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -308,6 +332,10 @@ class MultiScaleImage(Image):
                 if getattr(x.output, "name", None) == value:
                     value = transformations.pop(i)
                     break
+            else:
+                raise KeyError(
+                    f"no transformation with output space named {value!r}"
+                )
         else:
             for i, x in enumerate(transformations):
                 if x is value:
