@@ -42,12 +42,20 @@ class SingleScaleImage(Image):
     """Base class for all single-resolution images."""
 
     data: tx.Annotated[
-        ArrayProtocol,
+        tx.Optional[ArrayProtocol],
         tx.Doc(
-            "The image data. Must be an array-like object that supports "
-            "the array protocol (e.g. numpy, cupy or dask array)."
+            """
+            The image data. Must be an array-like object that supports
+            the array protocol (e.g. numpy, cupy or dask array).
+
+            It defaults to `None` so that subclasses can derive it
+            lazily -- a format reader typically holds a handle to the
+            file and materializes the array on first access, and cannot
+            supply it at construction time. This mirrors
+            `Affine.matrix`, which is optional for the same reason.
+            """
         ),
-    ]
+    ] = None
 
     transformations: tx.Annotated[
         tx.List[Transformation],

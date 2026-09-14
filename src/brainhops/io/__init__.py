@@ -1,54 +1,25 @@
 """
-This module should implement generic APIs for interacting with
+This module implements a generic API for interacting with
 transformations, images, meshes, or streamlines that are stored in
-some format on disk or on the clkoud.
+some format on disk or on the cloud.
 
-Each format should implement the more general
-transformation/images/meshes/streamlines API that does not assume that
-the data is stored at a specific path.
-
-E.g.
-```python
-# -------------------
-# in brainhops.images
-# -------------------
-class Image(Struct): ...
-    data: ArrayLike
-    coordinateSystem: CoordinateSystem | None = None
-    coordinateTransformations: List[CoordinateTransformation] | None = None
-
-
-class MultiscaleImage(Struct):
-    datasets: List[Image]
-    coordinateSystem: CoordinateSystem | None = None
-    coordinateTransformations: List[CoordinateTransformation] | None = None
-
-class 2DImage(Image): ...
-class 3DImage(Image): ...
-class ScalarField(Image): ...
-class VectorField(Image): ...
-class MatrixField(Image): ...
-
-# ---------------------------
-# in brainhops.io.images.base
-# ---------------------------
-from brainhops.images import Image
-
-class ImageFile(Image): ...
-    path: str | None = None
-    fileobj: FileLike | None = None
-
-# ----------------------------
-# in brainhops.io.images.nifti
-# ----------------------------
-from brainhops.io.images import ImageFile, ScalarField
-
-class NiftiImageFile(ImageFile): ...
-class NiftiScalarField(NiftiImageFile, ScalarField): ...
-
-```
+Each format also implements the more general
+transformations/images/meshes/streamlines API that does not assume that
+the data is stored at a specific path. In other words, a file-backed
+object is a special case of a generic object, and the file-backed API
+is a special case of the generic API.
 """
 
-__all__ = ["images", "transformations", "vectors"]
+__all__ = [
+    "FileBasedObject",
+    "WritableFileBasedObject",
+    "base",
+    "images",
+    "load",
+    "sniff",
+    "transformations",
+    "vectors",
+]
 
-from . import images, transformations, vectors
+from . import base, images, transformations, vectors
+from .base import FileBasedObject, WritableFileBasedObject, load, sniff
