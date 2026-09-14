@@ -1,4 +1,5 @@
 zensical>=0.0.11
 mkdocstrings[python]>=1.0.0
 markdown-grid-tables
-griffe-bagof-magic[dynamic]
+# not yet on PyPI; install from source until published
+griffe-bagof-magic[dynamic] @ git+https://github.com/bagofseeds/griffe-bagof-magic
