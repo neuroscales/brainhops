@@ -9,7 +9,13 @@ from brainhops.backends import get_array_backend
 # internals
 from .axes import Axis
 from .systems import CoordinateSystem
-from .transformations import Affine, CartesianField, Sequence, Transformation
+from .transformations import (
+    Affine,
+    CartesianField,
+    ModeLike,
+    Sequence,
+    Transformation,
+)
 
 
 class Geometry(Sequence):
@@ -70,6 +76,47 @@ class Geometry(Sequence):
             (self.grid, other @ self.transformation),
             input=self.grid.input,
             output=other.output,
+        )
+
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> tx.Self:
+        """
+        Compute the geometry by simplifying its transformation.
+
+        A `Geometry` holds a grid and a voxel-to-world transformation. The
+        transformation part is computed, and the result is returned as a
+        `Geometry` with the same grid and the simplified transformation.
+        The grid is preserved, so the geometry keeps its grid-and-
+        transformation pair and the domain it defines is never lost.
+        """
+        flat = self._flattened()
+        transformation = flat.transformation
+        if isinstance(transformation, Sequence):
+            transformation = transformation.compute(mode)
+        return Geometry(
+            (flat.grid, transformation),
+            input=self.input,
+            output=self.output,
+        )
+
+    def _flattened(self) -> tx.Self:
+        # A `Geometry` keeps its (grid, transformation) pair. Only the
+        # transformation part is flattened, so the grid that restricts the
+        # domain is never merged into the surrounding sequence. The
+        # geometry's own input and output are propagated onto the grid and
+        # the transformation, matching `Sequence._flattened`.
+        grid, transformation = self.grid, self.transformation
+        if grid.input is None and self.input is not None:
+            grid = grid.to(input=self.input)
+        if transformation.output is None and self.output is not None:
+            transformation = transformation.to(output=self.output)
+        if isinstance(transformation, Sequence):
+            flat_seq = transformation._flattened()
+            flat = flat_seq.transformations or []
+            transformation = flat[0] if len(flat) == 1 else flat_seq
+        return Geometry(
+            (grid, transformation),
+            input=self.input,
+            output=self.output,
         )
 
     def __getitem__(

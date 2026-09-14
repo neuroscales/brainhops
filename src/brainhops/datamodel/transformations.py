@@ -898,6 +898,30 @@ class Sequence(MutableSequence, Transformation):
             return self  # No-op
         return _compute_sequence(self, mode=mode)
 
+    def _flattened(self) -> tx.Self:
+        # Flatten nested sequences into a single sequence, and propagate
+        # the sequence's own input and output onto its first and last
+        # transformations. Subclasses that must keep a fixed shape (such
+        # as `Geometry`) override this.
+        if self.transformations is None:
+            return self
+        inp, out = self.input, self.output
+        flattened = []
+        for i, t in enumerate(self.transformations):
+            if i == 0 and t.input is None and inp is not None:
+                t = t.to(input=inp)
+            elif i == len(self) - 1 and t.output is None and out is not None:
+                t = t.to(output=out)
+            if isinstance(t, Sequence):
+                # A `Geometry` child contributes its grid followed by its
+                # transformation, which may itself still be a sequence. That
+                # leaves one level of nesting in the splice, which is fine:
+                # `_compute_sequence` re-flattens on the next pass.
+                flattened.extend(t._flattened().transformations or [])
+            else:
+                flattened.append(t)
+        return replace(self, transformations=flattened)
+
     # --- sequence API ---
 
     def __len__(self) -> int:
@@ -956,13 +980,19 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is the identity.
 
     A transformation is recognized as the identity when its parameters
-    are unset, or when it is an instance of [`Identity`][] or of
-    [`CartesianField`][]. When `compute` is true, the parameters of a
-    transformation such as [`Translation`][], [`Scaling`][],
-    [`Permutation`][], [`Linear`][], [`Affine`][], or
-    [`DisplacementField`][] are also inspected, so that a transformation
-    whose parameters happen to encode the identity is recognized as such
-    even though it is not stored as one.
+    are unset, or when it is an instance of [`Identity`][]. When
+    `compute` is true, the parameters of a transformation such as
+    [`Translation`][], [`Scaling`][], [`Permutation`][], [`Linear`][],
+    [`Affine`][], or [`DisplacementField`][] are also inspected, so that
+    a transformation whose parameters happen to encode the identity is
+    recognized as such even though it is not stored as one.
+
+    A [`CartesianField`][] that carries a grid is never recognized as the
+    identity. Even though its coordinates coincide with the identity map,
+    the field restricts the domain to that grid, so treating it as the
+    identity would discard the grid. A [`CartesianField`][] with no grid
+    has an unset `field` parameter and is recognized as the identity by
+    the parameter check.
     """
     parameter_names = getattr(xform, "parameter_names", ())
     if isinstance(parameter_names, str):
@@ -970,8 +1000,6 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     if all(getattr(xform, param) is None for param in parameter_names):
         return True
     if isinstance(xform, Identity):
-        return True
-    if isinstance(xform, CartesianField):
         return True
     if not compute:
         return False
@@ -1125,25 +1153,6 @@ _XFORMHIERARCHY = {
 }
 
 
-def _flatten(self: Sequence) -> tx.Self:
-    # Flatten nested sequences of transformations into a single sequence.
-    if self.transformations is None:
-        return self
-    inp, out = self.input, self.output
-    flattened = []
-    for i, t in enumerate(self.transformations):
-        if i == 0 and t.input is None and inp is not None:
-            t = t.to(input=inp)
-        elif i == len(self) - 1 and t.output is None and out is not None:
-            t = t.to(output=out)
-        if isinstance(t, Sequence):
-            flattened.extend(_flatten(t).transformations or [])
-        else:
-            flattened.append(t)
-
-    return replace(self, transformations=flattened)
-
-
 def _is_flat(self: Sequence) -> bool:
     # Check if the sequence is flat (does not contain any nested sequences).
     if self.transformations is None:
@@ -1250,7 +1259,7 @@ def _compute_sequence(
 
     # --- Flatten sequence
     if not _is_flat(seq):
-        seq = _flatten(seq)
+        seq = seq._flattened()
 
     # --- Check if nothing to do
     if len(seq.transformations or []) < 1:

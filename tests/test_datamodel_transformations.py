@@ -17,9 +17,10 @@ from brainhops.datamodel.transformations import (
     CartesianField,
     CoordinatesField,
     DisplacementField,
+    Identity,
     Sequence,
     Translation,
-    _flatten,
+    is_identity,
 )
 
 
@@ -32,7 +33,7 @@ def test_flatten_removes_nesting_and_keeps_endpoints() -> None:
         input=inp,
         output=out,
     )
-    flat = _flatten(outer)
+    flat = outer._flattened()
     assert isinstance(flat, Sequence)
     assert flat.input is inp
     assert flat.output is out
@@ -46,7 +47,7 @@ def test_flatten_propagates_endpoints_to_first_and_last() -> None:
     first = Translation(translation=[1.0, 2.0])
     last = Translation(translation=[3.0, 4.0])
     seq = Sequence(transformations=[first, last], input=inp, output=out)
-    flat = _flatten(seq)
+    flat = seq._flattened()
     assert flat.transformations[0].input is inp
     assert flat.transformations[-1].output is out
 
@@ -95,6 +96,44 @@ def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
     # CartesianField through the same-type converter.
     result = seq.compute()
     assert result is not None
+
+
+def test_gridded_cartesian_field_is_not_the_identity() -> None:
+    # A `CartesianField` that carries a grid restricts the domain to that
+    # grid. Recognizing it as the identity would let simplification drop
+    # the grid, so `is_identity` must reject it even though its
+    # coordinates coincide with the identity map.
+    grid = CartesianField(shape=(4, 5))
+    assert is_identity(grid) is False
+    assert is_identity(grid, compute=True) is False
+
+
+def test_empty_cartesian_field_is_the_identity() -> None:
+    # With no grid, the `field` parameter is unset, so an empty
+    # `CartesianField` is recognized as the identity by the parameter
+    # check.
+    assert is_identity(CartesianField()) is True
+
+
+def test_compute_preserves_a_leading_cartesian_field() -> None:
+    # A leading grid is a domain restriction, not an identity. Computing a
+    # sequence that starts from a grid must keep the grid as a coordinate
+    # field rather than fold it away, so the resulting field carries the
+    # grid's shape.
+    grid = CartesianField(shape=(4, 5))
+    affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    result = Sequence(transformations=[grid, affine]).compute()
+    assert result.field is not None
+    assert result.field.shape == (4, 5, 2)
+    # The affine scales the grid coordinates by two.
+    np.testing.assert_allclose(result.field, np.asarray(grid.field) * 2.0)
+
+
+def test_computing_an_identity_only_sequence_still_simplifies() -> None:
+    # Removing the `CartesianField` branch from `is_identity` must not
+    # affect a genuine identity, which still simplifies to `Identity`.
+    seq = Sequence(transformations=[Affine(matrix=np.eye(3)[:-1])])
+    assert isinstance(seq.compute().to(Identity), Identity)
 
 
 def test_cartesian_field_is_not_an_init_field_but_base_is() -> None:

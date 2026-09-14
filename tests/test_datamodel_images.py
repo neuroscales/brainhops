@@ -38,6 +38,24 @@ def test_reslice_onto_own_grid_returns_working_single_scale_image() -> None:
     assert np.allclose(np.asarray(resliced), np.asarray(img))
 
 
+def test_reslice_no_argument_with_identity_transform_round_trips() -> None:
+    data = np.arange(24, dtype=float).reshape(2, 3, 4)
+    identity = Affine(
+        matrix=np.eye(4)[:-1],
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
+    )
+    img = SingleScaleImage(data=data, transformations=[identity])
+
+    resliced = img.reslice()
+
+    assert isinstance(resliced, SingleScaleImage)
+    assert resliced.shape == img.shape
+    # Resampling an identity-transformed image onto its own grid returns
+    # the same data.
+    assert np.allclose(np.asarray(resliced), data)
+
+
 def test_call_then_reslice_returns_single_scale_image() -> None:
     img = _image()
     identity = Affine(
