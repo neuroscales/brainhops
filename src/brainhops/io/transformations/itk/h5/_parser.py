@@ -1,8 +1,10 @@
 # stdlib
 import os.path as op
+from io import BytesIO
 from os import PathLike
 
 # dependencies
+import h5py
 import numpy as np
 import typing_extensions as tx
 
@@ -10,24 +12,21 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # core
+from brainhops._core import path
+from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import da
 
+# io
+from brainhops.io.base.parsers import (
+    BinaryFileParser,
+    Confidence,
+    ParserExistsError,
+    SnifferContentError,
+)
+
 # locals
 from .._common import ITKStruct, ITKTransformClass
-
-# optional
-if tx.TYPE_CHECKING:
-    import h5py
-else:
-    try:
-        import h5py
-    except ImportError:
-
-        class h5py:
-            File = None
-            Dataset = None
-
 
 # typing
 _H5Like = tx.Union[
@@ -73,41 +72,98 @@ class H5Header(
 
 class H5TransformParser(
     Magic,
+    BinaryFileParser,
     convert=True,
-    mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
     transform_group: tx.List[ITKStruct] = Factory(list)
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
-    def sniff(cls, file: _H5Like) -> bool:
-        """
-        Check if the file is a valid HDF5 transform file.
+    def sniff_h5(
+        cls,
+        h5file: h5py.File,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+    ) -> float:
+        # An ITK transform file records the ITK version at the root.
+        if "ITKVersion" in h5file.keys():
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error("HDF5 file is not an ITK transform file")
+        return Confidence.NO
 
-        Parameters
-        ----------
-        file : str | PathLike | IO | h5py.File
-            Input file.
+    @classmethod
+    def sniff_file(
+        cls,
+        file: _H5Like,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        if isinstance(file, h5py.File):
+            return cls.sniff_h5(file, error=error)
 
-        Returns
-        -------
-        bool
-            True if the file is a valid HDF5 transform file, False otherwise.
-        """
-        if not isinstance(file, h5py.File):
-            if not h5py.is_hdf5(file):
-                return False
+        if isinstance(file, str):
+            file = path.Path(file)
 
-            with h5py.File(file, "r") as f:
-                return cls.sniff(f)
+        if isinstance(file, path.PathLike):
+            if not file.exists():
+                if error:
+                    if error is True:
+                        error = ParserExistsError
+                    raise error(f"No such file: {file}")
+                return Confidence.NO
+            if not h5py.is_hdf5(str(file)):
+                if error:
+                    if error is True:
+                        error = SnifferContentError
+                    raise error(f"Not an HDF5 file: {file}")
+                return Confidence.NO
+            with h5py.File(str(file), "r") as f:
+                return cls.sniff_h5(f, error=error)
 
-        return "ITKVersion" in file.keys()
+        return cls.sniff_fileobj(file, error=error, **kwargs)
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        with preserve_position(file):
+            try:
+                with h5py.File(file, "r") as f:
+                    return cls.sniff_h5(f, error=error)
+            except Exception as e:
+                if error:
+                    if error is True:
+                        error = SnifferContentError
+                    raise error("Content is not an ITK HDF5 file") from e
+                return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_file(
-        cls, file: _H5Like, keep_open: bool = False, load: bool = True
+        cls,
+        file: _H5Like,
+        keep_open: bool = False,
+        load: bool = True,
+        **kwargs,
     ) -> tx.Self:
         """
         Build an object from a file (path, file-like object, or HDF5 file).
@@ -125,15 +181,41 @@ class H5TransformParser(
             If True, load the data into memory. I
             f False, keep the data on disk.
         """
-        if not isinstance(file, h5py.File):
-            if keep_open:
-                f = h5py.File(file, "r")
-                return cls.from_file(f, keep_open=keep_open, load=load)
-            else:
-                with h5py.File(file, "r") as f:
-                    return cls.from_file(f, keep_open=keep_open, load=load)
+        if isinstance(file, h5py.File):
+            return cls.from_h5(file, load=load, keep_open=keep_open)
 
-        return cls.from_h5(file, load=load, keep_open=keep_open)
+        if isinstance(file, str):
+            file = path.Path(file)
+
+        # A real path is handed to `h5py` directly rather than as an open
+        # stream, so that the file is reopened by name when a displacement
+        # field is read lazily (`load=False`), long after this returns.
+        if isinstance(file, path.PathLike):
+            if not file.exists():
+                raise ParserExistsError(f"No such file: {file}")
+            if keep_open:
+                f = h5py.File(str(file), "r")
+                return cls.from_h5(f, keep_open=keep_open, load=load)
+            with h5py.File(str(file), "r") as f:
+                return cls.from_h5(f, keep_open=keep_open, load=load)
+
+        return cls.from_fileobj(file, keep_open=keep_open, load=load)
+
+    @classmethod
+    def from_fileobj(
+        cls,
+        file: tx.IO,
+        keep_open: bool = False,
+        load: bool = True,
+        **kwargs,
+    ) -> tx.Self:
+        with preserve_position(file):
+            f = h5py.File(file, "r")
+            return cls.from_h5(f, keep_open=keep_open, load=load)
+
+    @classmethod
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        return cls.from_fileobj(BytesIO(content), **kwargs)
 
     @classmethod
     def from_h5(

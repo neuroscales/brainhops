@@ -13,7 +13,11 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops._core.peek import peekable_lines
 
 # io
-from brainhops.io.base.parsers import TextFileParser
+from brainhops.io.base.parsers import (
+    Confidence,
+    SnifferContentError,
+    TextFileParser,
+)
 
 from .._common import ITKStruct, ITKTransformClass
 
@@ -31,10 +35,9 @@ _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
 class TFMTransformParser(
-    TextFileParser,
     Magic,
+    TextFileParser,
     convert=True,
-    mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
     transform_group: tx.List[ITKStruct] = Factory(list)
@@ -42,16 +45,30 @@ class TFMTransformParser(
     # --- sniff --------------------------------------------------------
 
     @classmethod
-    def sniff_line(cls, line: str) -> bool:
+    def sniff_line(
+        cls,
+        line: str,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
         # The first (non-comment) line should be
-        # "Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}"
-        # Note that I am not checking for the header comment.
-        return _TRANSFORM_RE.match(line.strip()) is not None
+        # "Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}".
+        # The version header is a comment, and `peekable_lines` has
+        # already dropped it, so the first line seen here is the block.
+        # A file that is only a header has no such line: `peekable_lines`
+        # yields its end sentinel, which is not a string.
+        if isinstance(line, str) and _TRANSFORM_RE.match(line.strip()):
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error(f"Not an ITK transform block: {line!r}")
+        return Confidence.NO
 
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
