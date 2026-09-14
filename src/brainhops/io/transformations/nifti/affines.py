@@ -5,7 +5,13 @@ import typing_extensions as tx
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import _new_nifti, _NiftiObject, _voxel_to_ras
+from brainhops.io.base.nifti import (
+    _apply_like,
+    _new_nifti,
+    _NiftiObject,
+    _strip_bad_extensions,
+    _voxel_to_ras,
+)
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
@@ -43,7 +49,7 @@ class _NiftiAffine(NiftiBasedTransformation):
                 return int(code)
         return 2
 
-    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+    def to_nibabel(self, like: tx.Any = None, **kwargs) -> nb.Nifti1Image:
         """
         Build a `nibabel` image whose affine is this transformation.
 
@@ -51,13 +57,18 @@ class _NiftiAffine(NiftiBasedTransformation):
         single-voxel placeholder volume carries it. The voxel-to-RAS
         matrix becomes both the sform and the qform, under the code the
         source header recorded.
+
+        When `like` is given, non-geometry header fields are copied from it.
+        The geometry always comes from this transformation.
         """
         matrix = self._voxel_to_ras_matrix()
         data = np.zeros((1, 1, 1), dtype="float32")
         code = self._xform_code()
         image = _new_nifti(data, matrix)
+        _apply_like(image, like)
         image.header.set_sform(matrix, code=code)
         image.header.set_qform(matrix, code=code)
+        _strip_bad_extensions(image)
         return image
 
 

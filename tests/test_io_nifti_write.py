@@ -7,6 +7,9 @@ should all survive a save-and-reload round trip. A transformation that
 NIfTI cannot represent should be refused rather than silently resampled.
 """
 
+import struct
+import warnings
+
 import numpy as np
 import pytest
 
@@ -17,6 +20,8 @@ from bagof.magic import replace  # noqa: E402
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.systems import (  # noqa: E402
+    CoordinateSystem,
+    LPSCoordinateSystem,
     RASCoordinateSystem,
     VoxelCoordinateSystem,
 )
@@ -26,6 +31,7 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     Scaling,
     Sequence,
 )
+from brainhops.datamodel.units import SpaceUnit  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
@@ -323,3 +329,231 @@ def test_the_writer_is_registered_for_the_image_kind() -> None:
 
     assert NiftiImage in WritableFileBasedImage._REGISTRY
     assert issubclass(NiftiImage, SingleScaleImage)
+
+
+# ----------------------------------------------------------------------
+#   REVIEW FOLLOW-UPS (#44)
+# ----------------------------------------------------------------------
+
+
+def test_a_dask_field_is_not_coerced_to_numpy() -> None:
+    """
+    A field on a non-numpy backend keeps that backend through the writer.
+
+    The field writer must resolve the array package from the data rather
+    than force a numpy array, so a lazy dask array is passed through
+    untouched.
+    """
+    da = pytest.importorskip("dask.array")
+    field = da.zeros((4, 5, 6, 3), dtype="float32")
+
+    image = NiftiRASCoordinatesField(field=field)
+    nifti = image.to_nibabel()
+
+    assert not isinstance(nifti.dataobj, np.ndarray)
+    assert nifti.shape == (4, 5, 6, 1, 3)
+
+
+def test_a_non_nifti_unit_is_scaled_to_a_valid_one(tmp_path) -> None:  # noqa: ANN001
+    """
+    A spatial unit NIfTI cannot store is converted to one it can.
+
+    A centimeter is not a NIfTI unit, so the affine is scaled into
+    millimeters and the file records millimeters. The physical size is
+    preserved: a one-centimeter voxel becomes a ten-millimeter voxel.
+    """
+    ras_cm = replace(
+        RASCoordinateSystem(),
+        axes=[
+            replace(axis, unit=SpaceUnit("centimeter"))
+            for axis in RASCoordinateSystem().axes
+        ],
+    )
+    affine = Affine(
+        matrix=np.eye(3, 4),
+        input=VoxelCoordinateSystem(),
+        output=ras_cm,
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[affine],
+    )
+    target = tmp_path / "cm.nii"
+    image.save(target)
+
+    header = nb.load(str(target)).header
+    assert header.get_xyzt_units()[0] == "mm"
+    assert np.allclose(np.diag(nb.load(str(target)).affine), [10, 10, 10, 1])
+
+
+def test_the_sform_code_is_derived_from_orientation_not_name(tmp_path) -> None:  # noqa: ANN001
+    """
+    An anonymous RAS space still writes a valid, non-zero sform code.
+
+    The world space carries no name, so the code cannot come from one. It
+    is derived from the axes and defaults to a non-zero code, because a
+    zero sform code makes NIfTI ignore the sform.
+    """
+    ras = CoordinateSystem(name=None, axes=list(RASCoordinateSystem().axes))
+    affine = Affine(
+        matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
+        input=VoxelCoordinateSystem(),
+        output=ras,
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[affine],
+    )
+    target = tmp_path / "anon.nii"
+    image.save(target)
+
+    header = nb.load(str(target)).header
+    assert int(header["sform_code"]) != 0
+    assert np.allclose(np.diag(nb.load(str(target)).affine), [2, 3, 4, 1])
+
+
+def test_the_ras_flip_follows_orientation_not_the_name(tmp_path) -> None:  # noqa: ANN001
+    """
+    An anonymous LPS space is flipped to RAS from its axes' orientation.
+
+    The world space carries no name, so the flip cannot come from one. The
+    axes point left, posterior and superior, so the first two are flipped
+    to become RAS.
+    """
+    lps = CoordinateSystem(name=None, axes=list(LPSCoordinateSystem().axes))
+    affine = Affine(
+        matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
+        input=VoxelCoordinateSystem(),
+        output=lps,
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[affine],
+    )
+    target = tmp_path / "lps.nii"
+    image.save(target)
+
+    affine_out = nb.load(str(target)).affine
+    assert np.allclose(np.diag(affine_out), [-2, -3, 4, 1])
+
+
+def test_a_more_than_3d_geometry_is_rejected(tmp_path) -> None:  # noqa: ANN001
+    """
+    NIfTI stores a three-dimensional affine, so a 4D map is refused.
+
+    A spatial transformation of more than three dimensions has no NIfTI
+    geometry to be written into, and raises a clear error rather than being
+    truncated to three dimensions.
+    """
+    image = NiftiImage(
+        data=np.zeros((2, 2, 2, 2), dtype="float32"),
+        transformations=[Affine(matrix=np.eye(4, 5))],
+    )
+    with pytest.raises(WriterError) as info:
+        image.save(tmp_path / "four.nii")
+    assert "three-dimensional" in str(info.value)
+
+
+def test_a_large_image_is_written_as_nifti2() -> None:
+    """
+    An array too large for NIfTI-1's dimension fields becomes NIfTI-2.
+
+    NIfTI-1 records each dimension in a signed 16-bit field. An extent
+    beyond that limit selects NIfTI-2. A smaller array stays NIfTI-1.
+    """
+    small = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[Affine(matrix=np.eye(3, 4))],
+    )
+    assert isinstance(small.to_nibabel(), nb.Nifti1Image)
+    assert not isinstance(small.to_nibabel(), nb.Nifti2Image)
+
+    large = NiftiImage(
+        data=np.zeros((40000, 1, 1), dtype="float32"),
+        transformations=[Affine(matrix=np.eye(3, 4))],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        image = large.to_nibabel()
+    assert isinstance(image, nb.Nifti2Image)
+
+
+def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: ANN001
+    """
+    A `like` template supplies non-geometry fields, never the geometry.
+
+    The description, the intent and the data scaling come from the
+    template. The sform matrix and its code come from the object being
+    written, so the geometry is unaffected by the template's own geometry.
+    """
+    # The template's own geometry (diag 9, 9, 9) must not reach the output.
+    template = nb.Nifti1Header()
+    template.set_sform(np.diag([9.0, 9.0, 9.0, 1.0]), code=2)
+    template["descrip"] = b"from the template"
+    template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
+    template["scl_slope"] = 2.0
+    template["scl_inter"] = 1.0
+
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])],
+    )
+
+    # The produced header carries the template's non-geometry fields.
+    built = image.to_nibabel(like=template)
+    assert built.header["descrip"].tobytes().startswith(b"from the template")
+    assert int(built.header["intent_code"]) == 1011
+    assert float(built.header["scl_slope"]) == 2.0
+    assert float(built.header["scl_inter"]) == 1.0
+
+    # The geometry is the object's, not the template's diag(9, 9, 9).
+    target = tmp_path / "out.nii"
+    image.save(target, like=template)
+    assert np.allclose(np.diag(nb.load(str(target)).affine), [2, 3, 4, 1])
+    reloaded = nb.load(str(target)).header
+    assert reloaded["descrip"].tobytes().startswith(b"from the template")
+    assert int(reloaded["intent_code"]) == 1011
+
+
+def _write_malformed_extension(path) -> None:  # noqa: ANN001
+    """Write a NIfTI file whose one extension has a non-16-byte size."""
+    valid = nb.Nifti1Image(np.zeros((3, 4, 5), dtype="float32"), np.eye(4))
+    raw = bytearray(nb.Nifti1Image.to_bytes(valid))
+    header = raw[:352]
+    header[348] = 1  # turn the extension flag on
+    esize = 20  # not a multiple of 16
+    extension = struct.pack("<ii", esize, 6) + b"malformed zz"[: esize - 8]
+    data = np.zeros((3, 4, 5), dtype="float32").tobytes(order="F")
+    out = bytearray(header) + bytearray(extension) + bytearray(data)
+    struct.pack_into("<f", out, 108, float(352 + esize))  # vox_offset
+    path.write_bytes(bytes(out))
+
+
+def test_a_clean_save_does_not_warn_about_extension_size(tmp_path) -> None:  # noqa: ANN001
+    """
+    Saving does not propagate a malformed extension from the source.
+
+    A source header can carry an extension whose stored size is not a
+    multiple of 16 bytes, which makes `nibabel` warn on every read. The
+    writer must not carry such an extension into the written file, so the
+    save itself emits no such warning.
+    """
+    source = tmp_path / "malformed.nii"
+    _write_malformed_extension(source)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        loaded = io.images.load(source)
+
+    target = tmp_path / "clean.nii"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        loaded.save(target)
+    messages = [str(w.message) for w in caught]
+    assert not any("multiple of 16" in message for message in messages)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        # Reloading and parsing the header must not warn either.
+        reloaded = nb.load(str(target))
+        assert list(reloaded.header.extensions) == []

@@ -2,6 +2,7 @@ __all__ = ["NiftiParser"]
 
 # stdlib
 from io import BytesIO
+from math import log10
 
 # dependencies
 import nibabel as nb
@@ -139,6 +140,55 @@ _NIFTI_TIME_UNITS = {
     "microsecond": "usec",
 }
 """The NIfTI time-unit label for a time unit's name."""
+
+_NIFTI_SPACE_UNIT_METERS = {
+    "meter": 1.0,
+    "mm": 1e-3,
+    "micron": 1e-6,
+}
+"""
+The size in meters of each spatial unit NIfTI can store.
+
+NIfTI records a spatial unit as one of `meter`, `mm` or `micron`. A unit
+outside that set is written by converting it to the nearest of these three
+and scaling the affine, so the stored geometry keeps the same physical
+size.
+"""
+
+_RAS_FROM_ORIENTATION = {
+    "left-to-right": (0, 1.0),
+    "right-to-left": (0, -1.0),
+    "posterior-to-anterior": (1, 1.0),
+    "anterior-to-posterior": (1, -1.0),
+    "inferior-to-superior": (2, 1.0),
+    "superior-to-inferior": (2, -1.0),
+}
+"""
+The RAS axis and sign that an anatomical orientation points along.
+
+Each key is the value of an anatomical orientation carried by an axis. The
+first element of the pair is the index of the RAS axis the orientation runs
+along, and the second is its sign. This drives the conversion of a
+voxel-to-world affine into voxel-to-RAS from the axes themselves, rather
+than from the world space's name.
+"""
+
+_NIFTI_DEFAULT_XFORM_CODE = 2
+"""
+The xform code stored when the world space names no known reference.
+
+NIfTI ignores a form whose code is zero, so a form that carries real
+geometry is stored with a non-zero code. The value `2` is NIfTI's
+"aligned" code.
+"""
+
+_NIFTI1_MAX_DIM = 2**15 - 1
+"""
+The largest array dimension NIfTI-1 can store.
+
+NIfTI-1 records each dimension in a signed 16-bit field. An array with a
+larger extent along any axis is written as NIfTI-2 instead.
+"""
 
 
 def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
@@ -535,22 +585,93 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
 
 def _new_nifti(
-    data: np.ndarray, affine: tx.Optional[np.ndarray]
-) -> nb.Nifti1Image:
+    data: ArrayProtocol, affine: tx.Optional[np.ndarray]
+) -> _NiftiObject:
     """
     Build a `nibabel` image, reporting an unwritable dtype as a writer error.
+
+    The array is stored as it is given. Any object that follows the array
+    protocol is accepted, including a `cupy` or `dask` array, so a lazy or
+    device array is not materialized into `numpy` here.
+
+    NIfTI-1 records each dimension in a signed 16-bit field. An array whose
+    extent along any axis exceeds that limit is written as NIfTI-2, which
+    stores dimensions in 64-bit fields. A smaller array is written as
+    NIfTI-1.
 
     NIfTI-1 cannot store some array types, such as 64-bit integers.
     `nibabel` raises a bare `ValueError` for one, which is re-raised as a
     `WriterError` that names the dtype.
     """
-    array = np.asarray(data)
+    shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
+    image_cls = nb.Nifti1Image
+    if any(d > _NIFTI1_MAX_DIM for d in shape):
+        image_cls = nb.Nifti2Image
     try:
-        return nb.Nifti1Image(array, affine)
+        return image_cls(data, affine)
     except ValueError as error:
+        dtype = getattr(data, "dtype", "unknown")
         raise WriterError(
-            f"NIfTI cannot store an array of type {array.dtype}: {error}"
+            f"NIfTI cannot store an array of type {dtype}: {error}"
         ) from error
+
+
+def _embed_affine(matrix: np.ndarray) -> np.ndarray:
+    """
+    Embed a homogeneous voxel-to-world matrix in the `(4, 4)` NIfTI stores.
+
+    NIfTI stores a three-dimensional voxel-to-world affine. A
+    two-dimensional map yields a `(3, 3)` homogeneous matrix, whose
+    rotation and translation are placed in a `(4, 4)` matrix whose extra
+    axis is the identity. A three-dimensional map is already `(4, 4)` and
+    is returned unchanged.
+
+    A spatial map of more than three dimensions has no NIfTI geometry to be
+    written into, and raises `WriterError`.
+    """
+    out_dim = matrix.shape[0] - 1
+    in_dim = matrix.shape[1] - 1
+    if out_dim > 3 or in_dim > 3:
+        raise WriterError(
+            f"NIfTI stores a three-dimensional voxel-to-world affine, so a "
+            f"{out_dim}D-to-{in_dim}D transformation cannot be written. "
+            f"Reduce the transformation to three spatial dimensions before "
+            f"writing it to NIfTI."
+        )
+    embedded = np.eye(4)
+    embedded[:out_dim, :in_dim] = matrix[:out_dim, :in_dim]
+    embedded[:out_dim, 3] = matrix[:out_dim, in_dim]
+    return embedded
+
+
+def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
+    """
+    The `(4, 4)` matrix that maps a world space's coordinates into RAS.
+
+    The matrix is built from the anatomical orientation carried by each
+    axis, not from the world space's name. An LPS space becomes a flip of
+    the first two axes, an RSA space becomes a permutation, and a space
+    already in RAS becomes the identity.
+
+    The conversion is derived only when all three leading axes carry a
+    recognized anatomical orientation. When any of them does not, the
+    identity is returned, so a space with no orientation is stored as it
+    is.
+    """
+    axes = list(getattr(system, "axes", None) or [])[:3]
+    mapping = []
+    for axis in axes:
+        value = getattr(getattr(axis, "orientation", None), "value", None)
+        if value not in _RAS_FROM_ORIENTATION:
+            return np.eye(4)
+        mapping.append(_RAS_FROM_ORIENTATION[value])
+    if len(mapping) != 3:
+        return np.eye(4)
+    conversion = np.zeros((4, 4))
+    conversion[3, 3] = 1.0
+    for column, (row, sign) in enumerate(mapping):
+        conversion[row, column] = sign
+    return conversion
 
 
 def _voxel_to_ras(xform: Transformation) -> np.ndarray:
@@ -561,12 +682,13 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     affine transformation is used directly. A transformation of any other
     kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
     affines, is converted first. A two-dimensional affine is embedded in a
-    `(4, 4)` matrix, which is the shape NIfTI stores. A world space named
-    "LPS" is flipped to RAS, which is the convention NIfTI stores.
+    `(4, 4)` matrix, which is the shape NIfTI stores. The world space is
+    turned into RAS from the anatomical orientation of its axes.
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
-    `UnrepresentableTransformationError`.
+    `UnrepresentableTransformationError`. A spatial transformation of more
+    than three dimensions raises `WriterError`.
     """
     reduced = xform.compute() if isinstance(xform, Sequence) else xform
     error = None
@@ -590,22 +712,26 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     if matrix is None:
         matrix = np.eye(4)
     matrix = np.asarray(matrix, dtype=float)
+    matrix = _embed_affine(matrix)
 
-    if matrix.shape != (4, 4):
-        # A 2D image yields a `(3, 3)` matrix; embed its rotation and
-        # translation in a `(4, 4)` matrix whose extra axis is the identity.
-        ndim = min(matrix.shape[0] - 1, 3)
-        embedded = np.eye(4)
-        embedded[:ndim, :ndim] = matrix[:ndim, :ndim]
-        embedded[:ndim, 3] = matrix[:ndim, matrix.shape[1] - 1]
-        matrix = embedded
+    conversion = _ras_conversion(getattr(affine, "output", None))
+    return conversion @ matrix
 
-    if getattr(affine.output, "name", None) == "LPS":
-        # NIfTI stores voxel-to-RAS, so an LPS world is flipped on its
-        # first two axes to become RAS.
-        matrix = np.diag([-1.0, -1.0, 1.0, 1.0]) @ matrix
 
-    return matrix
+def _reference_code(system: tx.Optional[CoordinateSystem]) -> int:
+    """
+    The NIfTI xform code for a world space, which is never zero.
+
+    The code names the world reference the matrix maps into, one of
+    scanner, aligned, talairach, mni or template. It is taken from the
+    world space's name only when that name is one of those references. An
+    orientation name, an unnamed space, or an unrecognized reference yields
+    the "aligned" code, so a form that carries real geometry is never
+    stored with a zero code, which `nibabel` would ignore.
+    """
+    name = getattr(system, "name", None)
+    code = _NIFTI_XFORM_CODE_BY_NAME.get(name, _NIFTI_DEFAULT_XFORM_CODE)
+    return code or _NIFTI_DEFAULT_XFORM_CODE
 
 
 def _sform_and_qform(
@@ -618,10 +744,10 @@ def _sform_and_qform(
 
     The matrix and the code always describe the same world space. The
     first transformation other than the preferred one whose world space is
-    named after an xform code provides both. Failing that, the rigid edge
-    the reader names "qform" provides the matrix, under the sform's code.
-    Failing that, the qform is the sform, which `nibabel` reduces to its
-    rigid part, under the sform's code.
+    named after a known reference provides both. Failing that, the rigid
+    edge the reader names "qform" provides the matrix, under the sform's
+    code. Failing that, the qform is the sform, which `nibabel` reduces to
+    its rigid part, under the sform's code.
     """
     preferred = transformations[-1] if transformations else None
 
@@ -629,7 +755,7 @@ def _sform_and_qform(
         if xform is preferred:
             continue
         name = getattr(getattr(xform, "output", None), "name", None)
-        if name in _NIFTI_XFORM_CODE_BY_NAME:
+        if _NIFTI_XFORM_CODE_BY_NAME.get(name):
             return _voxel_to_ras(xform), _NIFTI_XFORM_CODE_BY_NAME[name]
 
     for xform in transformations:
@@ -642,16 +768,24 @@ def _sform_and_qform(
 
 def _xyzt_units(
     transformations: tx.Sequence[Transformation],
-) -> tx.Tuple[str, str]:
+) -> tx.Tuple[str, str, float]:
     """
     Read the spatial and temporal NIfTI unit labels off the axes.
 
-    The first spatial axis that carries a recognized unit gives the
-    spatial label, and the first temporal axis gives the temporal label.
-    An axis with no recognized unit leaves the label "unknown".
+    The first spatial axis that carries a usable unit gives the spatial
+    label, and the first temporal axis that carries a representable unit
+    gives the temporal label. An axis with no usable unit leaves the label
+    "unknown".
+
+    A spatial unit that NIfTI cannot store, such as a centimeter, is
+    converted to the nearest of NIfTI's three spatial units. The returned
+    scale factor is what the affine is multiplied by so the stored geometry
+    keeps the same physical size. A unit NIfTI can store directly leaves
+    the scale factor at `1`.
     """
     space = "unknown"
     time = "unknown"
+    scale = 1.0
     for xform in transformations:
         for system in (
             getattr(xform, "input", None),
@@ -662,33 +796,172 @@ def _xyzt_units(
                 name = getattr(unit, "name", None)
                 if not isinstance(name, str):
                     continue
-                if space == "unknown" and name in _NIFTI_SPACE_UNITS:
-                    space = _NIFTI_SPACE_UNITS[name]
-                elif time == "unknown" and name in _NIFTI_TIME_UNITS:
+                if space == "unknown":
+                    label, factor = _nifti_space_unit(name, unit)
+                    if label is not None:
+                        space, scale = label, factor
+                        continue
+                if time == "unknown" and name in _NIFTI_TIME_UNITS:
                     time = _NIFTI_TIME_UNITS[name]
-    return space, time
+    return space, time, scale
+
+
+def _nifti_space_unit(
+    name: str, unit: tx.Any
+) -> tx.Tuple[tx.Optional[str], float]:
+    """
+    The NIfTI spatial label and affine scale factor for a spatial unit.
+
+    A unit NIfTI can store directly returns its label and a scale factor of
+    `1`. A spatial unit outside NIfTI's set returns the label of the
+    nearest NIfTI spatial unit and the factor that rescales the affine to
+    it. A unit that is not spatial, or whose size is unknown, returns
+    `None`.
+    """
+    if name in _NIFTI_SPACE_UNITS:
+        return _NIFTI_SPACE_UNITS[name], 1.0
+    meters = getattr(unit, "scale", None)
+    unit_type = getattr(unit, "type", None)
+    if unit_type != "space":
+        return None, 1.0
+    if not isinstance(meters, (int, float)) or meters <= 0:
+        return None, 1.0
+    label, base = min(
+        _NIFTI_SPACE_UNIT_METERS.items(),
+        key=lambda item: abs(log10(meters) - log10(item[1])),
+    )
+    return label, meters / base
+
+
+def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
+    """
+    Scale the spatial rows of a `(4, 4)` voxel-to-world matrix.
+
+    The three spatial rows carry the world coordinates, so multiplying them
+    by the factor converts those coordinates into another spatial unit. The
+    bottom row is left unchanged.
+    """
+    if factor == 1.0:
+        return matrix
+    scaled = np.array(matrix, dtype=float, copy=True)
+    scaled[:3, :] *= factor
+    return scaled
+
+
+def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
+    """
+    Resolve a `like` template to the NIfTI header to copy fields from.
+
+    The template may be a path to a NIfTI file, a `nibabel` image or
+    header, or an object built by this package that carries a header. An
+    object with no readable header resolves to `None`.
+    """
+    if like is None:
+        return None
+    if isinstance(like, (nb.Nifti1Header, nb.Nifti2Header)):
+        return like
+    if isinstance(like, (nb.Nifti1Image, nb.Nifti2Image)):
+        return like.header
+    header = getattr(like, "header", None)
+    if header is not None:
+        return header
+    if isinstance(like, (str, path.PathLike)):
+        return nb.load(str(like)).header
+    return None
+
+
+def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
+    """
+    Copy non-geometry header fields from a template onto an image.
+
+    The geometry of the written image always comes from the object being
+    written, so the sform, the qform and their codes are never copied. The
+    description, the data scaling, and the intent are taken from the
+    template. The intent is copied only when the image has none of its own,
+    so a field's own intent is preserved.
+
+    The image is returned so calls can be chained.
+    """
+    header = _like_header(like)
+    if header is None:
+        return image
+    target = image.header
+    for field in ("descrip", "scl_slope", "scl_inter"):
+        try:
+            target[field] = header[field]
+        except (KeyError, ValueError):
+            pass
+    if int(target["intent_code"]) == 0:
+        for field in (
+            "intent_code",
+            "intent_name",
+            "intent_p1",
+            "intent_p2",
+            "intent_p3",
+        ):
+            try:
+                target[field] = header[field]
+            except (KeyError, ValueError):
+                pass
+    return image
+
+
+def _strip_bad_extensions(image: _NiftiObject) -> _NiftiObject:
+    """
+    Remove any header extension whose on-disk size is malformed.
+
+    A NIfTI extension is stored in a block whose size is a multiple of 16
+    bytes. An extension copied verbatim from a source header can carry a
+    size that breaks that rule, which makes `nibabel` warn every time the
+    file is read. Such an extension is dropped so the written file is
+    clean. A well-formed extension is kept.
+
+    The image is returned so calls can be chained.
+    """
+    extensions = getattr(image.header, "extensions", None)
+    if not extensions:
+        return image
+    kept = nb.nifti1.Nifti1Extensions()
+    for extension in list(extensions):
+        try:
+            size = extension.get_sizeondisk()
+        except Exception:
+            continue
+        if size % 16 == 0:
+            kept.append(extension)
+    image.header.extensions = kept
+    return image
 
 
 def _image_with_geometry(
-    data: np.ndarray,
+    data: ArrayProtocol,
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
-) -> nb.Nifti1Image:
+    like: tx.Any = None,
+) -> _NiftiObject:
     """
     Build a NIfTI image from data and its voxel-to-world geometry.
 
-    The preferred transformation becomes the sform, and its world space's
-    name becomes the sform code. The qform is the rigid edge among the
+    The preferred transformation becomes the sform, and its world space
+    supplies the sform code. The qform is the rigid edge among the
     transformations when present, and the rigid part of the sform
-    otherwise. The spatial and temporal units are read off the axes.
+    otherwise. The spatial and temporal units are read off the axes, and a
+    spatial unit NIfTI cannot store is converted to one it can, scaling the
+    affine to match. Non-geometry header fields are taken from `like` when
+    it is given.
     """
     sform = _voxel_to_ras(transformation)
-    scode = _NIFTI_XFORM_CODE_BY_NAME.get(
-        getattr(transformation.output, "name", None), 2
-    )
+    scode = _reference_code(getattr(transformation, "output", None))
     qform, qcode = _sform_and_qform(transformations, sform, scode)
+
+    space, time, scale = _xyzt_units(transformations)
+    sform = _scale_spatial(sform, scale)
+    qform = _scale_spatial(qform, scale)
+
     image = _new_nifti(data, sform)
+    _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
-    image.header.set_xyzt_units(*_xyzt_units(transformations))
+    image.header.set_xyzt_units(space, time)
+    _strip_bad_extensions(image)
     return image
