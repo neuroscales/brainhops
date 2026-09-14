@@ -194,6 +194,25 @@ def test_flirt_requires_both_images() -> None:
         _ = flirt.transformations
 
 
+def test_flirt_repr_and_inspection_do_not_raise() -> None:
+    """A FLIRT matrix with no images is printable and inspectable."""
+    flirt = FLIRTTransform(matrix=FLIRT_MATRIX)
+    assert "FLIRTTransform" in repr(flirt)
+    assert list(flirt) == []
+    assert len(flirt) == 0
+
+
+def test_flirt_from_lines_accepts_an_array_moving() -> None:
+    """An array-like `moving=` does not trip an ambiguous truth value."""
+    lines = ["1 0 0 0", "0 1 0 0", "0 0 1 0", "0 0 0 1"]
+    moving = np.eye(4)
+    flirt = FLIRTTransform.from_lines(lines, moving=moving)
+    assert flirt.moving is moving
+    # The `src` alias is resolved the same way.
+    other = FLIRTTransform.from_lines(lines, src=moving)
+    assert other.moving is moving
+
+
 def test_flirt_is_dispatched_from_a_mat_file(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "src2ref.mat"
     np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
@@ -319,6 +338,28 @@ def test_fnirt_requires_a_moving_image() -> None:
         _ = warp.transformations
 
 
+def test_fnirt_warp_repr_and_inspection_do_not_raise() -> None:
+    """A warp loaded without `moving=` is printable and inspectable."""
+    _, absolute, _ = _fnirt_setup()
+    img = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
+    img.header["intent_code"] = 2006
+    warp = FNIRTDeformationField.from_nibabel(img)
+    assert "FNIRTDeformationField" in repr(warp)
+    assert list(warp) == []
+    assert len(warp) == 0
+
+
+def test_fnirt_deformation_type_change_is_not_cached() -> None:
+    """Changing `deformation_type` after a first access changes the result."""
+    _, absolute, _ = _fnirt_setup()
+    warp = _warp(absolute)
+    warp.deformation_type = "absolute"
+    first = np.asarray(warp.transformations[1].field).copy()
+    warp.deformation_type = "relative"
+    second = np.asarray(warp.transformations[1].field)
+    assert not np.allclose(first, second)
+
+
 def test_fnirt_field_is_dispatched() -> None:
     path = data_dir / "fsl_field.nii.gz"
     assert io.transformations.sniff(path) is FNIRTDeformationField
@@ -362,3 +403,11 @@ def test_coefficient_field_transformations_is_deferred() -> None:
     coef = io.transformations.load(data_dir / "fsl_coef.nii.gz")
     with pytest.raises(NotImplementedError, match="B-spline basis"):
         _ = coef.transformations
+
+
+def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
+    """A coefficient field is printable and inspectable without resolving."""
+    coef = io.transformations.load(data_dir / "fsl_coef.nii.gz")
+    assert "FNIRTCoefficientField" in repr(coef)
+    assert list(coef) == []
+    assert len(coef) == 0

@@ -11,6 +11,7 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
 from brainhops.io.base.parsers import Confidence
 
+from .._repr import stored_repr
 from ._base import (
     FSL_CUBIC_SPLINE_COEFFICIENTS,
     FSL_DCT_COEFFICIENTS,
@@ -98,9 +99,16 @@ class FNIRTCoefficientField(
 
     @property
     def transformations(self) -> tx.List[_xforms.Transformation]:
-        """Not implemented: evaluating the spline basis is not supported."""
-        if getattr(self, "_transformations", None) is not None:
-            return self._transformations
+        """Not implemented: evaluating the spline basis is not supported.
+
+        A coefficient field is not yet convertible to a transformation
+        chain, so reading this property raises. The stored parameters are
+        available as attributes, and `repr`, `len` and iteration do not
+        raise.
+        """
+        explicit = getattr(self, "_transformations", None)
+        if explicit is not None:
+            return explicit
         if _nifti_intent(self.header) == FSL_DCT_COEFFICIENTS:
             raise NotImplementedError(
                 "FNIRT discrete-cosine-transform coefficient fields are not "
@@ -121,3 +129,29 @@ class FNIRTCoefficientField(
         self, value: tx.Optional[tx.List[_xforms.Transformation]]
     ) -> None:
         self._transformations = None if value is None else list(value)
+
+    def _inspect(self) -> tx.List[_xforms.Transformation]:
+        """The transformations for repr, length and iteration.
+
+        A coefficient field never resolves to a chain, so only an
+        explicitly assigned list is inspectable. Inspecting a coefficient
+        field therefore does not trip the not-implemented error.
+        """
+        explicit = getattr(self, "_transformations", None)
+        return explicit if explicit is not None else []
+
+    def __repr__(self) -> str:
+        return stored_repr(
+            self, ("spline_order", "knot_spacing", "moving", "reference")
+        )
+
+    def __len__(self) -> int:
+        return len(self._inspect())
+
+    def __iter__(self) -> tx.Iterator[_xforms.Transformation]:
+        return iter(self._inspect())
+
+    def __getitem__(
+        self, index: tx.Union[int, slice]
+    ) -> _xforms.Transformation:
+        return self._inspect()[index]

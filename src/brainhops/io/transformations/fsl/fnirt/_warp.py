@@ -19,6 +19,7 @@ from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 
 from .._affines import ImageGeometry, ScaledMMToVoxel
 from .._fields import ScaledMMCoordinatesField
+from .._repr import stored_repr
 from ._base import FSL_FNIRT_DISPLACEMENT_FIELD, FNIRTTransformation
 
 
@@ -55,9 +56,16 @@ class FNIRTDeformationField(
 
     @property
     def transformations(self) -> tx.List[_xforms.Transformation]:
-        """The transformations mapping reference RAS to moving RAS."""
-        if getattr(self, "_transformations", None) is not None:
-            return self._transformations
+        """The transformations mapping reference RAS to moving RAS.
+
+        Reading this property resolves the chain from the warp data and
+        the moving image geometry. It raises when the moving image is
+        missing. The chain is recomputed on each access, so a later
+        change to `deformation_type` or an input image is reflected.
+        """
+        explicit = getattr(self, "_transformations", None)
+        if explicit is not None:
+            return explicit
 
         if self.header is None:
             return []
@@ -99,19 +107,50 @@ class FNIRTDeformationField(
                 f"not {deformation_type!r}."
             )
 
-        self._transformations = [
+        return [
             RASToVoxel(matrix=ref.ras2vox[:-1]),
             ScaledMMCoordinatesField(field=absolute),
             ScaledMMToVoxel(matrix=mov.fsl2vox[:-1]),
             VoxelToRAS(matrix=mov.vox2ras[:-1]),
         ]
-        return self._transformations
 
     @transformations.setter
     def transformations(
         self, value: tx.Optional[tx.List[_xforms.Transformation]]
     ) -> None:
         self._transformations = None if value is None else list(value)
+
+    def _inspect(self) -> tx.List[_xforms.Transformation]:
+        """The transformations for repr, length and iteration.
+
+        Returns the resolved chain when the warp data and moving image
+        are present and the deformation type is one it can interpret, an
+        explicitly assigned list when one was set, and an empty list
+        otherwise. Inspecting an incompletely specified warp therefore
+        does not raise.
+        """
+        explicit = getattr(self, "_transformations", None)
+        if explicit is not None:
+            return explicit
+        if self.header is None or self.moving is None:
+            return []
+        if self.deformation_type not in (None, "absolute", "relative"):
+            return []
+        return self.transformations
+
+    def __repr__(self) -> str:
+        return stored_repr(self, ("deformation_type", "moving", "reference"))
+
+    def __len__(self) -> int:
+        return len(self._inspect())
+
+    def __iter__(self) -> tx.Iterator[_xforms.Transformation]:
+        return iter(self._inspect())
+
+    def __getitem__(
+        self, index: tx.Union[int, slice]
+    ) -> _xforms.Transformation:
+        return self._inspect()[index]
 
 
 # ----------------------------------------------------------------------

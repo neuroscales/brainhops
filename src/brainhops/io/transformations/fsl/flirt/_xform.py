@@ -19,6 +19,7 @@ from .._affines import (
     ScaledMMToVoxel,
     VoxelToScaledMM,
 )
+from .._repr import stored_repr
 from ._parser import FLIRTMatrixParser
 
 
@@ -47,9 +48,17 @@ class FLIRTTransform(
 
     @property
     def transformations(self) -> tx.List[_xforms.Transformation]:
-        """The affines that map reference RAS to moving RAS, in order."""
-        if getattr(self, "_transformations", None) is not None:
-            return self._transformations
+        """The affines that map reference RAS to moving RAS, in order.
+
+        Reading this property resolves the chain from the matrix and the
+        two image geometries. It raises when the matrix is present but
+        either image is missing, because the chain cannot be placed in
+        world coordinates without both. The chain is recomputed on each
+        access, so a later change to the matrix or an image is reflected.
+        """
+        explicit = getattr(self, "_transformations", None)
+        if explicit is not None:
+            return explicit
 
         if self.matrix is None:
             return []
@@ -66,17 +75,49 @@ class FLIRTTransform(
         flirt = np.asarray(self.matrix, dtype=np.float64)
         flirt_inv = np.linalg.inv(flirt)
 
-        self._transformations = [
+        return [
             RASToVoxel(matrix=ref.ras2vox[:-1]),
             VoxelToScaledMM(matrix=ref.vox2fsl[:-1]),
             ScaledMMToScaledMM(matrix=flirt_inv[:-1]),
             ScaledMMToVoxel(matrix=mov.fsl2vox[:-1]),
             VoxelToRAS(matrix=mov.vox2ras[:-1]),
         ]
-        return self._transformations
 
     @transformations.setter
     def transformations(
         self, value: tx.Optional[tx.List[_xforms.Transformation]]
     ) -> None:
         self._transformations = None if value is None else list(value)
+
+    def _inspect(self) -> tx.List[_xforms.Transformation]:
+        """The transformations for repr, length and iteration.
+
+        Returns the resolved chain when the matrix and both images are
+        present, an explicitly assigned list when one was set, and an
+        empty list otherwise. Inspecting an incompletely specified
+        transform therefore does not raise.
+        """
+        explicit = getattr(self, "_transformations", None)
+        if explicit is not None:
+            return explicit
+        if (
+            self.matrix is None
+            or self.reference is None
+            or self.moving is None
+        ):
+            return []
+        return self.transformations
+
+    def __repr__(self) -> str:
+        return stored_repr(self, ("matrix", "moving", "reference"))
+
+    def __len__(self) -> int:
+        return len(self._inspect())
+
+    def __iter__(self) -> tx.Iterator[_xforms.Transformation]:
+        return iter(self._inspect())
+
+    def __getitem__(
+        self, index: tx.Union[int, slice]
+    ) -> _xforms.Transformation:
+        return self._inspect()[index]
