@@ -83,6 +83,40 @@ def test_at_level_selects_a_coarser_level_and_keeps_the_pyramid() -> None:
     np.testing.assert_allclose(np.asarray(field.field), fine)
 
 
+def test_replace_follows_the_active_level_rather_than_freezing_it() -> None:
+    from bagof.magic import replace
+
+    rng = np.random.default_rng(20)
+    fine = rng.normal(size=(6, 5, 2))
+    coarse = rng.normal(size=(3, 3, 2))
+    field = MultiscaleDisplacementField(levels=[fine, coarse])
+    switched = replace(field, level=1)
+    assert switched.level == 1
+    np.testing.assert_allclose(np.asarray(switched.field), coarse)
+    # The finest array was not frozen onto the rebuilt field.
+    np.testing.assert_allclose(np.asarray(field.field), fine)
+
+
+def test_to_selects_a_level_without_freezing_the_array() -> None:
+    rng = np.random.default_rng(21)
+    fine = rng.normal(size=(6, 5, 2))
+    coarse = rng.normal(size=(3, 3, 2))
+    field = MultiscaleDisplacementField(levels=[fine, coarse])
+    switched = field.to(level=1)
+    np.testing.assert_allclose(np.asarray(switched.field), coarse)
+    assert len(switched.levels) == 2
+
+
+def test_inverse_of_a_multiscale_field_keeps_the_pyramid() -> None:
+    rng = np.random.default_rng(22)
+    fine = rng.normal(size=(6, 5, 2))
+    coarse = rng.normal(size=(3, 3, 2))
+    field = MultiscaleDisplacementField(levels=[fine, coarse])
+    inverse = field.inverse()
+    assert isinstance(inverse, MultiscaleDisplacementField)
+    assert len(inverse.levels) == 2
+
+
 # --- type transparency in composition ----------------------------------
 
 
@@ -182,18 +216,94 @@ def test_coordinate_normalization_uses_the_inverse_placement() -> None:
     np.testing.assert_allclose(np.asarray(normalized), expected)
 
 
+def test_placed_field_preserves_the_world_displacement() -> None:
+    # A ground-truth check, not a restatement of the normalization
+    # expression: the voxel-space field mapped back through the linear
+    # part of the placement recovers the original world-unit displacement.
+    placement, linear = _rotated_anisotropic_affine()
+    rng = np.random.default_rng(9)
+    raw = rng.normal(size=(6, 5, 2))
+    voxel_field = X.normalize_ome_displacement(raw, placement)
+    recovered = np.asarray(voxel_field) @ linear.T
+    np.testing.assert_allclose(recovered, raw)
+
+
+def test_sandwich_moves_world_points_by_the_world_field() -> None:
+    # End to end: placing a displacement field and applying it to the
+    # world coordinates of its own voxels shifts each point by exactly the
+    # world-unit displacement stored for that voxel.
+    placement, linear = _rotated_anisotropic_affine()
+    rng = np.random.default_rng(10)
+    raw = rng.normal(size=(6, 5, 2))
+    voxel_field = X.normalize_ome_displacement(raw, placement)
+    field = MultiscaleDisplacementField(levels=[voxel_field])
+    sandwich = X.place_ome_field(field, placement)
+    grid = np.stack(
+        np.meshgrid(np.arange(6), np.arange(5), indexing="ij"), axis=-1
+    ).astype(float)
+    world = grid @ linear.T + placement.matrix[:, -1]
+    moved = (sandwich @ X.CoordinatesField(field=world)).compute()
+    np.testing.assert_allclose(np.asarray(moved.field), world + raw, atol=1e-6)
+
+
+def test_undimensioned_placement_takes_its_size_from_the_field() -> None:
+    # An identity placement carries no size; `place_ome_field` reads the
+    # dimensionality from the field's array rather than crashing later.
+    field = MultiscaleDisplacementField(levels=[np.zeros((4, 3, 2))])
+    sandwich = X.place_ome_field(field, Identity())
+    right = sandwich.transformations[2]
+    assert np.asarray(X._affine_scale(right)).shape == (2,)
+
+
 # --- refusals ----------------------------------------------------------
 
 
 def test_mixed_displacement_and_coordinate_axes_are_refused() -> None:
-    axes = [Axis(type="displacement"), Axis(type="space")]
+    # A field that names both a displacement axis and a coordinate axis is
+    # the true mixed case: its vectors cannot be read as one kind.
+    axes = [
+        Axis(type="space"),
+        Axis(type="displacement"),
+        Axis(type="coordinate"),
+    ]
     with pytest.raises(OmePlacementError):
         X.check_ome_axes(axes)
 
 
 def test_pure_axis_kinds_are_classified() -> None:
-    assert X.check_ome_axes([Axis(type="displacement")] * 2) == "displacement"
-    assert X.check_ome_axes([Axis(type="space")] * 2) == "coordinate"
+    # A spec-conformant field lists its input space axes and exactly one
+    # displacement or coordinate axis for the vector components.
+    displacement = [
+        Axis(type="space"),
+        Axis(type="space"),
+        Axis(type="displacement"),
+    ]
+    coordinate = [
+        Axis(type="space"),
+        Axis(type="space"),
+        Axis(type="coordinate"),
+    ]
+    assert X.check_ome_axes(displacement) == "displacement"
+    assert X.check_ome_axes(coordinate) == "coordinate"
+    assert X.ome_vector_axis(displacement) == 2
+    assert X.ome_vector_axis(coordinate) == 2
+
+
+def test_axes_without_a_vector_axis_are_malformed() -> None:
+    # A field must carry one vector axis; a purely spatial axes list names
+    # none and cannot be read.
+    with pytest.raises(OmePlacementError):
+        X.check_ome_axes([Axis(type="space"), Axis(type="space")])
+
+
+def test_vector_axis_need_not_be_last() -> None:
+    axes = [
+        Axis(type="displacement"),
+        Axis(type="space"),
+        Axis(type="space"),
+    ]
+    assert X.check_ome_axes(axes) == "displacement"
+    assert X.ome_vector_axis(axes) == 0
 
 
 def test_nonlinear_placed_displacement_is_refused() -> None:
@@ -211,16 +321,16 @@ def test_affine_placed_displacement_is_accepted() -> None:
 # --- reslice wiring ----------------------------------------------------
 
 
-def test_resolve_multiscale_level_selects_from_a_bare_field() -> None:
+def test_resolve_multiscale_level_leaves_a_bare_field_unchanged() -> None:
+    # Without a placement the target resolution cannot be expressed
+    # relative to the finest grid, so a bare field is returned unchanged
+    # on its finest level, which reslices correctly at any resolution.
     field = MultiscaleDisplacementField(
         levels=[np.zeros((8, 8, 2)), np.zeros((4, 4, 2))],
         level_transforms=[Identity(), Scaling(scale=[2.0, 2.0])],
     )
     coarse_target = Affine(matrix=np.array([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]))
-    resolved = X.resolve_multiscale_level(field, coarse_target)
-    assert resolved.level == 1
-    fine_target = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
-    assert X.resolve_multiscale_level(field, fine_target).level == 0
+    assert X.resolve_multiscale_level(field, coarse_target) is field
 
 
 def test_resolve_multiscale_level_selects_inside_a_sandwich() -> None:

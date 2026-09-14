@@ -11,6 +11,9 @@ unchanged.
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
+# backends
+from brainhops.backends import get_array_backend
+
 # internals
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.transformations import (
@@ -20,6 +23,7 @@ from brainhops.datamodel.transformations import (
     check_ome_displacement_placement,
     normalize_ome_coordinates,
     normalize_ome_displacement,
+    ome_vector_axis,
     place_ome_field,
 )
 
@@ -102,14 +106,23 @@ class OmeZarrField(_xforms.Sequence):
         return check_ome_axes(self.axes)
 
     @property
-    def field(self) -> _xforms.Transformation:
+    def placed_field(self) -> _xforms.Transformation:
         """The placed multiscale field, in voxel-to-voxel form.
 
         The values read from the file are in world units. Each level is
         converted to voxel-to-voxel form against its own placement, so
-        the field works in voxel coordinates inside the sandwich.
+        the field works in voxel coordinates inside the sandwich. The
+        vector components are moved to the last array axis, so every level
+        has the `(*grid_shape, ndim)` shape the field expects.
+
+        The built field is cached, so the levels are normalized once
+        rather than on every access.
         """
+        cached = getattr(self, "_placed_field", None)
+        if cached is not None:
+            return cached
         kind = self.kind
+        vector_axis = ome_vector_axis(self.axes)
         placement = self.placement
         transforms = self.level_transforms or [
             _xforms.Identity() for _ in (self.raw_levels or [])
@@ -123,14 +136,17 @@ class OmeZarrField(_xforms.Sequence):
             field_cls = MultiscaleCoordinatesField
         levels = []
         for index, raw in enumerate(self.raw_levels or []):
+            raw = _vector_axis_last(raw, vector_axis)
             level_placement = _level_placement(placement, transforms, index)
             levels.append(normalize(raw, level_placement))
-        return field_cls(
+        built = field_cls(
             levels=levels,
             level_transforms=transforms,
             input=placement.output,
             output=placement.output,
         )
+        self._placed_field = built
+        return built
 
     @property
     def transformations(
@@ -143,7 +159,13 @@ class OmeZarrField(_xforms.Sequence):
         cached = getattr(self, "_transformations", None)
         if cached is not None:
             return cached
-        return place_ome_field(self.field, self.placement).transformations
+        built = getattr(self, "_sandwich", None)
+        if built is None:
+            built = place_ome_field(
+                self.placed_field, self.placement
+            ).transformations
+            self._sandwich = built
+        return built
 
     @transformations.setter
     def transformations(
@@ -162,6 +184,21 @@ class OmeZarrField(_xforms.Sequence):
         metadata unchanged.
         """
         return self.ome_metadata
+
+
+def _vector_axis_last(
+    raw: ArrayProtocol, vector_axis: tx.Optional[int]
+) -> ArrayProtocol:
+    # Move the vector-component axis to the last position, so the array
+    # has the `(*grid_shape, ndim)` shape the field expects. A `None`
+    # index, or one already last, leaves the array unchanged.
+    if vector_axis is None:
+        return raw
+    ndim = len(raw.shape)
+    if vector_axis in (-1, ndim - 1):
+        return raw
+    ab = get_array_backend(raw)
+    return ab.moveaxis(raw, vector_axis, -1)
 
 
 def _level_placement(

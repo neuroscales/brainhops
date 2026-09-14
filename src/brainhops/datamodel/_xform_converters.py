@@ -69,21 +69,42 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     return replace(t, **kwargs)
 
 
+def _multiscale_coeff_levels(t: Transformation, kwargs: dict) -> dict:
+    # Apply a change of the `coeff` flag to every stored level, mirroring
+    # the single-scale field converters. When `coeff` flips from values to
+    # coefficients each level is prefiltered, and the reverse when it flips
+    # back. The array of each level is served through the `field` property
+    # rather than stored, so `field` is never a constructor argument for a
+    # multiscale field and any incoming `field` override is dropped.
+    kwargs.pop("field", None)
+    if not t.levels or "levels" in kwargs:
+        return kwargs
+    was, now = t.coeff, kwargs.get("coeff", t.coeff)
+    if was == now:
+        return kwargs
+    if was and not now:
+        kwargs["levels"] = [
+            coeff2value_field(level, order=t.order, bound=t.bound)
+            for level in t.levels
+        ]
+    else:
+        order = kwargs.get("order", t.order)
+        bound = kwargs.get("bound", t.bound)
+        kwargs["levels"] = [
+            value2coeff_field(level, order=order, bound=bound)
+            for level in t.levels
+        ]
+    return kwargs
+
+
 @_converter
 def _(t: MultiscaleCoordinatesField, **kwargs) -> MultiscaleCoordinatesField:
-    # The active level's array is served through the `field` property,
-    # backed by `levels`. A rebuild must drop that derived field and let
-    # the new instance serve the array of its (possibly changed) active
-    # level, rather than freeze the old level's array onto `field`.
-    kwargs.pop("field", None)
-    return replace(t, field=None, **kwargs)
+    return replace(t, **_multiscale_coeff_levels(t, kwargs))
 
 
 @_converter
 def _(t: MultiscaleDisplacementField, **kwargs) -> MultiscaleDisplacementField:
-    # See the note on the multiscale coordinate converter above.
-    kwargs.pop("field", None)
-    return replace(t, field=None, **kwargs)
+    return replace(t, **_multiscale_coeff_levels(t, kwargs))
 
 
 @_converter

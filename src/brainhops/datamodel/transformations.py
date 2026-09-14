@@ -17,6 +17,8 @@ __all__ = [
     "SubspaceTransformation",
     "Projection",
     "Sequence",
+    "PlacedOmeField",
+    "ome_vector_axis",
     "is_identity",
     "is_translation",
     "is_scale",
@@ -518,6 +520,14 @@ class MultiscaleCoordinatesField(CoordinatesField):
         ),
     ] = 0
 
+    # `field` is served on demand from the active level by the property
+    # below, so it is not a stored, constructor-taken field here.
+    # Declaring it a `ClassVar` overrides the inherited init-field from
+    # `CoordinatesField` and keeps `field` out of `__init__`, `fields()`,
+    # `replace()` and `from_instance()`, so a rebuild never freezes one
+    # level's array while the active level changes.
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
         """The coordinate array of the active resolution level."""
@@ -525,7 +535,11 @@ class MultiscaleCoordinatesField(CoordinatesField):
 
     @field.setter
     def field(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self._field = value
+        if value is not None:
+            raise ValueError(
+                "The field of a multiscale field is determined by its "
+                "levels and cannot be set directly."
+            )
 
     def at_level(self, level: int) -> tx.Self:
         """Return this field with a different resolution level active.
@@ -547,11 +561,13 @@ class MultiscaleCoordinatesField(CoordinatesField):
         return self.at_level(multiscale_level_for(self, target))
 
     @property
-    def level_scales(self) -> tx.List[ArrayProtocol]:
+    def level_scales(self) -> tx.List[tx.Optional[ArrayProtocol]]:
         """The per-axis downsampling factor of each level.
 
-        The factor is expressed relative to the finest grid, so the
-        finest level has a factor of one on every axis.
+        The factor is expressed relative to the finest grid. The finest
+        level, and any level without a stored cross-level transformation,
+        is reported as `None`, which stands for a factor of one on every
+        axis.
         """
         return _multiscale_level_scales(self)
 
@@ -608,6 +624,11 @@ class MultiscaleDisplacementField(DisplacementField):
         ),
     ] = 0
 
+    # See the note on `MultiscaleCoordinatesField.field`. Declaring
+    # `field` a `ClassVar` keeps it out of the constructor so a rebuild
+    # follows the active level rather than freezing one level's array.
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
         """The displacement array of the active resolution level."""
@@ -615,7 +636,23 @@ class MultiscaleDisplacementField(DisplacementField):
 
     @field.setter
     def field(self, value: tx.Optional[ArrayProtocol]) -> None:
-        self._field = value
+        if value is not None:
+            raise ValueError(
+                "The field of a multiscale field is determined by its "
+                "levels and cannot be set directly."
+            )
+
+    def inverse(self) -> tx.Self:
+        cls = type(self)
+        if not self.levels:
+            return cls(input=self.output, output=self.input)
+        return cls(
+            levels=[inverse_disp(level) for level in self.levels],
+            level_transforms=self.level_transforms,
+            level=self.level,
+            input=self.output,
+            output=self.input,
+        )
 
     def at_level(self, level: int) -> tx.Self:
         """Return this field with a different resolution level active.
@@ -637,11 +674,13 @@ class MultiscaleDisplacementField(DisplacementField):
         return self.at_level(multiscale_level_for(self, target))
 
     @property
-    def level_scales(self) -> tx.List[ArrayProtocol]:
+    def level_scales(self) -> tx.List[tx.Optional[ArrayProtocol]]:
         """The per-axis downsampling factor of each level.
 
-        The factor is expressed relative to the finest grid, so the
-        finest level has a factor of one on every axis.
+        The factor is expressed relative to the finest grid. The finest
+        level, and any level without a stored cross-level transformation,
+        is reported as `None`, which stands for a factor of one on every
+        axis.
         """
         return _multiscale_level_scales(self)
 
@@ -1172,13 +1211,9 @@ class OmePlacementError(ValueError):
 
 
 def _multiscale_field(field: Transformation) -> tx.Optional[ArrayProtocol]:
-    # The active level's array, or an explicit override set through the
-    # `field` setter (which rebuilds route through, e.g. a plain
-    # single-level conversion). The override lets a multiscale field be
-    # treated as an ordinary field once it has been collapsed.
-    override = getattr(field, "_field", None)
-    if override is not None:
-        return override
+    # The array of the active resolution level. It is served on demand
+    # from `levels` rather than stored, so a rebuild that changes the
+    # active level serves the new level's array.
     levels = field.levels
     if not levels:
         return None
@@ -1211,9 +1246,11 @@ def _affine_scale(xform: Transformation) -> ArrayProtocol:
 
 
 def _linear_part(xform: Transformation) -> npmatrix:
-    # The (ndim, ndim) linear part of a transformation, as an array.
+    # The (ndim, ndim) linear part of a transformation, as an array. A
+    # transformation that does not reduce to an affine with a defined
+    # matrix has no linear part and is refused.
     affine = xform.compute().to(Affine)
-    if affine.matrix is None:
+    if not isinstance(affine, Affine) or affine.matrix is None:
         raise OmePlacementError(
             "The placement of an OME field must be a defined affine "
             "transformation, but this one has no matrix."
@@ -1259,21 +1296,66 @@ def multiscale_level_for(field: Transformation, target: tx.Any) -> int:
     return best_index
 
 
-def _ome_axis_kind(axes: tx.Optional[tx.Sequence[tx.Any]]) -> str:
-    # Classify the axes of an OME field by the `type` of each axis. The
-    # result is one of "coordinate", "displacement", or "mixed". Axes
-    # that carry neither type are treated as coordinate axes, which is
-    # how a plain spatial field is read.
+def _ome_axis_kind(
+    axes: tx.Optional[tx.Sequence[tx.Any]],
+) -> tx.Tuple[str, tx.Optional[int]]:
+    # Classify the axes of an OME field by the `type` of each axis, and
+    # report which axis holds the vector components. Per the OME-NGFF
+    # coordinate-field specification, the axes list every input `space`
+    # axis together with exactly one `displacement` or `coordinate` axis,
+    # which carries the vector components. The result is a pair of the
+    # kind and the index of that vector axis.
+    #
+    # The kind is one of "coordinate", "displacement", "mixed", or
+    # "malformed". Exactly one displacement axis and no coordinate axis is
+    # a displacement field. Exactly one coordinate axis and no
+    # displacement axis is a coordinate field. Both present, or more than
+    # one of either, is a mixed field. Neither present is malformed. When
+    # no axes are given at all, the field is read as a coordinate field
+    # with its vector axis last by convention.
     if not axes:
-        return "coordinate"
+        return "coordinate", None
     displacement = [
-        getattr(axis, "type", None) == "displacement" for axis in axes
+        i
+        for i, a in enumerate(axes)
+        if getattr(a, "type", None) == "displacement"
     ]
-    if all(displacement):
-        return "displacement"
-    if any(displacement):
-        return "mixed"
-    return "coordinate"
+    coordinate = [
+        i
+        for i, a in enumerate(axes)
+        if getattr(a, "type", None) == "coordinate"
+    ]
+    if len(displacement) == 1 and not coordinate:
+        return "displacement", displacement[0]
+    if len(coordinate) == 1 and not displacement:
+        return "coordinate", coordinate[0]
+    if displacement or coordinate:
+        return "mixed", None
+    return "malformed", None
+
+
+class PlacedOmeField(Sequence):
+    """An OME field placed in world space by the sandwich construction.
+
+    The sequence is `Sequence([~xform_0, field, xform_0])`, where
+    `xform_0` is the finest level's voxel-to-world transformation. A
+    `PlacedOmeField` behaves as that sequence, and additionally keeps
+    `xform_0` on the `placement` attribute. That placement records the
+    finest grid, so a later reslice can match the target resolution to a
+    level and rebuild the sandwich without recovering the placement from
+    the sequence by position.
+    """
+
+    placement: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc(
+            """
+            The finest level's voxel-to-world transformation, `xform_0`.
+            It is kept so a reslice can select a resolution level from the
+            grid it is resliced onto.
+            """
+        ),
+    ] = None
 
 
 def place_ome_field(
@@ -1281,7 +1363,7 @@ def place_ome_field(
     placement: Transformation,
     *,
     level: tx.Optional[int] = None,
-) -> Sequence:
+) -> "PlacedOmeField":
     """Place an OME field in world space with the sandwich construction.
 
     The `field` is a voxel-to-voxel field, either single-scale or
@@ -1300,16 +1382,53 @@ def place_ome_field(
     field's voxel grid, the field is applied there, and the voxel-to-world
     affine on the left converts the result back to world coordinates.
 
-    When `field` is multiscale and `level` is given, the placement is
-    adjusted to that level's grid, so the returned sequence samples the
-    chosen level. When `level` is `None`, the finest level is used.
+    When `level` names a resolution level of a multiscale `field`, that
+    level is activated. In every case the affines of the sandwich are
+    built for the field's active level, so a coarse level is sampled on
+    its own grid. When `level` is `None`, the field's current active
+    level is used. The returned [`PlacedOmeField`][] keeps `xform_0`, the
+    finest level's placement, so a reslice can select a level later.
     """
     if level is not None and getattr(field, "levels", None):
         field = field.to(level=int(level))
-        placement = _level_placement(field, placement)
-    return Sequence(
-        transformations=[placement.inverse(), field, placement],
+    placement = _dimensioned_placement(placement, field)
+    level_place = _level_placement(field, placement)
+    return PlacedOmeField(
+        transformations=[level_place.inverse(), field, level_place],
+        placement=placement,
         input=placement.output,
+        output=placement.output,
+    )
+
+
+def _dimensioned_placement(
+    placement: Transformation, field: Transformation
+) -> Transformation:
+    # A placement must supply a linear part for the voxel-to-voxel
+    # normalization. An undimensioned identity or scaling supplies none,
+    # so its size is taken from the field's array, which is
+    # `(*grid_shape, ndim)`, and an identity placement of that size is
+    # used in its place.
+    try:
+        _linear_part(placement)
+        return placement
+    except OmePlacementError:
+        pass
+    array = getattr(field, "field", None)
+    if array is None:
+        raise OmePlacementError(
+            "This OME field has no placement of a defined size, and its "
+            "array is empty, so the number of dimensions cannot be "
+            "determined. Give the placement a defined affine "
+            "transformation."
+        )
+    ndim = int(array.shape[-1])
+    return Affine(
+        matrix=[
+            [1.0 if i == j else 0.0 for j in range(ndim + 1)]
+            for i in range(ndim)
+        ],
+        input=placement.input,
         output=placement.output,
     )
 
@@ -1377,14 +1496,17 @@ def normalize_ome_coordinates(
 
 
 def check_ome_axes(axes: tx.Optional[tx.Sequence[tx.Any]]) -> str:
-    """Return the kind of an OME field, or refuse a mixed field.
+    """Return the kind of an OME field, or refuse an unreadable one.
 
-    The axes are classified by the `type` of each axis. When every axis
-    is a displacement axis the field is a displacement field. When no
-    axis is a displacement axis the field is a coordinate field. A field
-    whose axes mix the two is refused with an [`OmePlacementError`][].
+    The axes are classified by the `type` of each axis. A field carries
+    every input `space` axis together with exactly one vector axis. A
+    single `displacement` axis makes a displacement field, and a single
+    `coordinate` axis makes a coordinate field. A field whose axes mix
+    the two types, or that repeats either type, is refused. A field whose
+    axes name no vector axis at all is refused as malformed. Both
+    refusals raise an [`OmePlacementError`][].
     """
-    kind = _ome_axis_kind(axes)
+    kind, _ = _ome_axis_kind(axes)
     if kind == "mixed":
         raise OmePlacementError(
             "This OME field mixes displacement axes and coordinate axes "
@@ -1392,65 +1514,109 @@ def check_ome_axes(axes: tx.Optional[tx.Sequence[tx.Any]]) -> str:
             "the displacement axes and the coordinate axes as separate "
             "fields."
         )
+    if kind == "malformed":
+        raise OmePlacementError(
+            "This OME field names no displacement axis and no coordinate "
+            "axis, so its vector components cannot be identified. A field "
+            "must carry exactly one axis of type displacement or "
+            "coordinate."
+        )
     return kind
+
+
+def ome_vector_axis(
+    axes: tx.Optional[tx.Sequence[tx.Any]],
+) -> tx.Optional[int]:
+    """Return the index of the axis that holds an OME field's vectors.
+
+    The vector axis is the single `displacement` or `coordinate` axis of
+    the field. The result is `None` when no axes are given, which reads
+    the field with its vector components on the last array axis.
+    """
+    check_ome_axes(axes)
+    _, index = _ome_axis_kind(axes)
+    return index
+
+
+def _multiscale_element(
+    transformation: Transformation,
+) -> tx.Optional[Transformation]:
+    # The multiscale field carried by a transformation, or `None`. A field
+    # is recognized by its levels, and is searched for through any nesting
+    # of sequences rather than by position, so a composed or wrapped
+    # sandwich still finds it.
+    if getattr(transformation, "levels", None):
+        return transformation
+    if isinstance(transformation, Sequence):
+        for part in transformation.transformations or []:
+            found = _multiscale_element(part)
+            if found is not None:
+                return found
+    return None
 
 
 def resolve_multiscale_level(
     transformation: Transformation, target: Transformation
 ) -> Transformation:
-    """Activate the resolution-matched level of a multiscale field.
+    """Activate the resolution-matched level of a placed multiscale field.
 
     The `transformation` is a voxel-to-world transformation that may
-    contain a multiscale field. The `target` is the voxel-to-world
-    transformation of the grid onto which an image is being resliced.
-    The level whose world resolution is closest to the target grid is
-    activated, and the transformation is returned with that level in
-    place. A transformation that contains no multiscale field is returned
-    unchanged, so the finest level stays active.
+    contain a multiscale field placed by
+    [`place_ome_field`][brainhops.datamodel.transformations.place_ome_field].
+    The `target` is the voxel-to-world transformation of the grid onto
+    which an image is being resliced. The level whose world resolution is
+    closest to the target grid is activated, and the sandwich is rebuilt
+    with that level and its placement.
 
-    Two shapes are recognized. A field placed by
-    [`place_ome_field`][brainhops.datamodel.transformations.place_ome_field]
-    is a sequence of a world-to-voxel affine, the field, and a
-    voxel-to-world affine. In that case the target resolution is compared
-    against the placement, and the placement is adjusted to the chosen
-    level. A bare multiscale field is matched directly against the target
-    resolution.
+    Level selection needs the field's placement, so the target resolution
+    can be expressed relative to the finest grid. The placement is read
+    from the `placement` attribute that a placed field carries, not
+    recovered from the sequence by position. A transformation that carries
+    no multiscale field, and a bare multiscale field with no known
+    placement, are both returned unchanged. A bare field is left on its
+    finest level, which reslices correctly at any target resolution.
     """
-    # A transformation without a multiscale field is left untouched, and
-    # the target resolution is not even inspected, so an ordinary reslice
-    # is unaffected.
-    if isinstance(transformation, Sequence):
-        parts = list(transformation.transformations or [])
-        if len(parts) == 3 and getattr(parts[1], "levels", None):
-            field, placement = parts[1], parts[2]
-            target_scale = _affine_scale(target)
-            finest_scale = _affine_scale(placement)
-            relative = target_scale / finest_scale
-            level = multiscale_level_for(field, relative)
-            return place_ome_field(field, placement, level=level)
+    field = _multiscale_element(transformation)
+    if field is None:
         return transformation
-    if getattr(transformation, "levels", None):
-        target_scale = _affine_scale(target)
-        level = multiscale_level_for(transformation, target_scale)
-        return transformation.to(level=level)
-    return transformation
+    placement = getattr(transformation, "placement", None)
+    if placement is None:
+        return transformation
+    target_scale = _affine_scale(target)
+    finest_scale = _affine_scale(placement)
+    relative = target_scale / finest_scale
+    level = multiscale_level_for(field, relative)
+    return place_ome_field(field, placement, level=level)
 
 
 def check_ome_displacement_placement(placement: Transformation) -> None:
-    """Refuse a displacement field placed by a non-linear transformation.
+    """Confirm that a displacement field's placement is affine.
 
     A displacement field is placed by mapping its world-unit vectors
-    through the linear part of the placement. A non-linear placement,
-    such as another displacement field, has no single linear part, so the
-    field is refused with an [`OmePlacementError`][].
+    through the linear part of the placement, so the placement must reduce
+    to an affine transformation. An identity placement, and a
+    [`CartesianField`][] placement, are pure regrids that need no
+    rescaling and are accepted. Any other placement is reduced to an
+    [`Affine`][]. A placement that cannot be reduced, such as another
+    displacement field, is refused with an [`OmePlacementError`][].
     """
-    resolved = placement.compute()
-    if isinstance(resolved, (CoordinatesField, DisplacementField)):
+    if isinstance(placement, CartesianField) or is_identity(placement):
+        return
+    try:
+        affine = placement.compute().to(Affine)
+    except ConversionError as error:
         raise OmePlacementError(
-            "This OME displacement field is placed by a non-linear "
-            "transformation, which cannot be reduced to a linear rescaling "
-            "of the displacements. Only an affine placement is supported "
-            "for a displacement field."
+            "This OME displacement field is placed by a transformation "
+            "that cannot be reduced to an affine, so the displacements "
+            "cannot be rescaled to voxel units. Only an affine placement "
+            "is supported for a displacement field."
+        ) from error
+    if not isinstance(affine, Affine) or affine.matrix is None:
+        raise OmePlacementError(
+            "This OME displacement field is placed by a transformation "
+            "that cannot be reduced to an affine, so the displacements "
+            "cannot be rescaled to voxel units. Only an affine placement "
+            "is supported for a displacement field."
         )
 
 

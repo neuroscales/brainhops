@@ -44,7 +44,11 @@ def _displacement_reader() -> tuple:
         raw_levels=[fine, coarse],
         placement=placement,
         level_transforms=[Identity(), Scaling(scale=[2.0, 2.0])],
-        axes=[Axis(type="displacement"), Axis(type="displacement")],
+        axes=[
+            Axis(type="space"),
+            Axis(type="space"),
+            Axis(type="displacement"),
+        ],
         ome_metadata=metadata,
     )
     return reader, placement, linear, fine, coarse, metadata
@@ -78,7 +82,11 @@ def test_coordinate_reader_normalizes_by_the_inverse_placement() -> None:
     reader = OmeZarrField(
         raw_levels=[raw],
         placement=placement,
-        axes=[Axis(type="space"), Axis(type="space")],
+        axes=[
+            Axis(type="space"),
+            Axis(type="space"),
+            Axis(type="coordinate"),
+        ],
     )
     assert reader.kind == "coordinate"
     field = reader.transformations[1]
@@ -100,7 +108,11 @@ def test_reader_refuses_mixed_axes() -> None:
     reader = OmeZarrField(
         raw_levels=[np.zeros((4, 4, 2))],
         placement=placement,
-        axes=[Axis(type="displacement"), Axis(type="space")],
+        axes=[
+            Axis(type="space"),
+            Axis(type="displacement"),
+            Axis(type="coordinate"),
+        ],
     )
     with pytest.raises(OmePlacementError):
         _ = reader.kind
@@ -110,7 +122,11 @@ def test_reader_refuses_nonlinear_placed_displacement() -> None:
     reader = OmeZarrField(
         raw_levels=[np.zeros((4, 4, 2))],
         placement=X.DisplacementField(field=np.zeros((4, 4, 2))),
-        axes=[Axis(type="displacement"), Axis(type="displacement")],
+        axes=[
+            Axis(type="space"),
+            Axis(type="space"),
+            Axis(type="displacement"),
+        ],
     )
     with pytest.raises(OmePlacementError):
         _ = reader.transformations
