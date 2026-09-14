@@ -12,11 +12,19 @@ import pytest
 
 nb = pytest.importorskip("nibabel")
 
+from bagof.magic import replace  # noqa: E402
+
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
+from brainhops.datamodel.systems import (  # noqa: E402
+    RASCoordinateSystem,
+    VoxelCoordinateSystem,
+)
 from brainhops.datamodel.transformations import (  # noqa: E402
+    Affine,
     DisplacementField,
     Scaling,
+    Sequence,
 )
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
@@ -124,6 +132,102 @@ def test_a_scaling_geometry_is_representable(tmp_path) -> None:  # noqa: ANN001
     assert np.allclose(np.diag(nb.load(str(target)).affine), [2, 3, 4, 1])
 
 
+def test_a_sequence_of_affines_writes_the_composed_sform(tmp_path) -> None:  # noqa: ANN001
+    """
+    The preferred transform may be a sequence of affines, which composes
+    to a single affine. That composition is written as the sform.
+    """
+    first = Affine(
+        matrix=np.array([[2.0, 0, 0, 1], [0, 2, 0, 2], [0, 0, 2, 3]])
+    )
+    second = Affine(
+        matrix=np.array([[0.0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0]])
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[Sequence([first, second])],
+    )
+    target = tmp_path / "seq.nii"
+    image.save(target)
+
+    first_h = np.vstack([first.matrix, [0, 0, 0, 1]])
+    second_h = np.vstack([second.matrix, [0, 0, 0, 1]])
+    assert np.allclose(nb.load(str(target)).affine, second_h @ first_h)
+
+
+def test_the_qform_matrix_and_code_come_from_one_edge(tmp_path) -> None:  # noqa: ANN001
+    """
+    The qform matrix and its code must describe the same world space. With
+    a scanner edge and an mni edge, the mni becomes the preferred sform,
+    and the scanner supplies both the qform matrix and its code.
+    """
+    ras, voxel = RASCoordinateSystem(), VoxelCoordinateSystem()
+    scanner = Affine(
+        matrix=np.eye(3, 4),
+        input=voxel,
+        output=replace(ras, name="scanner"),
+    )
+    mni = Affine(
+        matrix=np.diag([2.0, 2.0, 2.0, 1.0])[:3],
+        input=voxel,
+        output=replace(ras, name="mni"),
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[scanner, mni],
+    )
+    target = tmp_path / "coded.nii"
+    image.save(target)
+
+    header = nb.load(str(target)).header
+    assert int(header["sform_code"]) == 4  # mni
+    assert int(header["qform_code"]) == 1  # scanner
+    assert np.allclose(header.get_qform(), np.eye(4))
+
+
+def test_a_2d_nifti_round_trips(tmp_path) -> None:  # noqa: ANN001
+    """
+    A 2D image yields a `(3, 3)` matrix, which is embedded in the `(4, 4)`
+    matrix NIfTI stores.
+    """
+    data = np.arange(4 * 5, dtype="float32").reshape(4, 5)
+    img = nb.Nifti1Image(data, np.diag([2.0, 3.0, 1.0, 1.0]))
+    source = tmp_path / "plane.nii"
+    nb.save(img, str(source))
+
+    target = tmp_path / "out.nii"
+    io.images.load(source).save(target)
+
+    reloaded = io.images.load(target)
+    assert np.array_equal(np.asarray(reloaded), data)
+    assert np.allclose(
+        nb.load(str(source)).affine, nb.load(str(target)).affine
+    )
+
+
+def test_the_units_survive_the_round_trip(tmp_path) -> None:  # noqa: ANN001
+    """The spatial and temporal units are read off the axes and written."""
+    img = nb.Nifti1Image(np.zeros((4, 5, 6, 2), dtype="float32"), np.eye(4))
+    img.header.set_xyzt_units("mm", "sec")
+    source = tmp_path / "units.nii"
+    nb.save(img, str(source))
+
+    target = tmp_path / "out.nii"
+    io.images.load(source).save(target)
+
+    assert nb.load(str(target)).header.get_xyzt_units() == ("mm", "sec")
+
+
+def test_int64_data_is_reported_as_a_writer_error(tmp_path) -> None:  # noqa: ANN001
+    """NIfTI-1 cannot store 64-bit integers, and the writer says so."""
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="int64"),
+        transformations=[Affine(matrix=np.eye(3, 4))],
+    )
+    with pytest.raises(WriterError):
+        image.save(tmp_path / "big.nii")
+
+
 def test_an_image_without_data_cannot_be_written(tmp_path) -> None:  # noqa: ANN001
     with pytest.raises(WriterError):
         NiftiImage().save(tmp_path / "empty.nii")
@@ -145,6 +249,9 @@ def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
 
     reloaded = NiftiVoxelToRAS.from_file(target)
     assert np.allclose(affine.matrix, reloaded.matrix)
+    # The affine is written over a minimal placeholder volume, not the
+    # full source data.
+    assert nb.load(str(target)).shape == (1, 1, 1)
 
 
 def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: ANN001
@@ -169,6 +276,24 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
     assert isinstance(reloaded, NiftiRASCoordinatesField)
     assert np.array_equal(np.asarray(reloaded.field), field)
     assert int(nb.load(str(target)).header["intent_code"]) == 1006
+
+
+def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
+    """
+    A field shaped `(X, Y, Z, C)` is written as `(X, Y, Z, 1, C)`, so the
+    component axis is not mistaken for a time axis on reload.
+    """
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 0] = 1.0
+    source = NiftiRASCoordinatesField(field=field)
+
+    target = tmp_path / "field.nii"
+    source.save(target)
+
+    assert nb.load(str(target)).shape == (4, 5, 6, 1, 3)
+    assert isinstance(
+        io.transformations.load(target), NiftiRASCoordinatesField
+    )
 
 
 # ----------------------------------------------------------------------

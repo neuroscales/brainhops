@@ -29,6 +29,8 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     SnifferContentError,
     UnrepresentableTransformationError,
+    WriterError,
+    WriterNotImplementedError,
     preserve_position,
 )
 
@@ -122,6 +124,21 @@ _NIFTI_XFORM_CODE_BY_NAME = {
 
 _QFORM_NAME = "qform"
 """The name the reader gives the rigid voxel-to-RAS affine of the qform."""
+
+_NIFTI_SPACE_UNITS = {
+    "meter": "meter",
+    "millimeter": "mm",
+    "micrometer": "micron",
+    "micron": "micron",
+}
+"""The NIfTI spatial-unit label for a space unit's name."""
+
+_NIFTI_TIME_UNITS = {
+    "second": "sec",
+    "millisecond": "msec",
+    "microsecond": "usec",
+}
+"""The NIfTI time-unit label for a time unit's name."""
 
 
 def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
@@ -324,7 +341,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         are defined in terms of this one.
         """
         cls = type(self)
-        raise UnrepresentableTransformationError(
+        raise WriterNotImplementedError(
             f"{cls.__name__} does not know how to write itself to NIfTI."
         )
 
@@ -517,6 +534,25 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 # ----------------------------------------------------------------------
 
 
+def _new_nifti(
+    data: np.ndarray, affine: tx.Optional[np.ndarray]
+) -> nb.Nifti1Image:
+    """
+    Build a `nibabel` image, reporting an unwritable dtype as a writer error.
+
+    NIfTI-1 cannot store some array types, such as 64-bit integers.
+    `nibabel` raises a bare `ValueError` for one, which is re-raised as a
+    `WriterError` that names the dtype.
+    """
+    array = np.asarray(data)
+    try:
+        return nb.Nifti1Image(array, affine)
+    except ValueError as error:
+        raise WriterError(
+            f"NIfTI cannot store an array of type {array.dtype}: {error}"
+        ) from error
+
+
 def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     """
     Compute the `(4, 4)` voxel-to-RAS matrix of a transformation.
@@ -524,16 +560,15 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     The transformation must map voxel coordinates to a world space. An
     affine transformation is used directly. A transformation of any other
     kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
-    affines, is converted first. A world space named "LPS" is flipped to
-    RAS, which is the convention NIfTI stores.
+    affines, is converted first. A two-dimensional affine is embedded in a
+    `(4, 4)` matrix, which is the shape NIfTI stores. A world space named
+    "LPS" is flipped to RAS, which is the convention NIfTI stores.
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
     `UnrepresentableTransformationError`.
     """
-    reduced = (
-        xform.compute(simplify=True) if isinstance(xform, Sequence) else xform
-    )
+    reduced = xform.compute() if isinstance(xform, Sequence) else xform
     error = None
     affine = reduced
     if not isinstance(affine, Affine):
@@ -542,8 +577,9 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
         except ConversionError as exc:
             error = exc
     if not isinstance(affine, Affine):
-        # A field returns itself from a conversion to `Affine`, so the
-        # result has to be checked rather than trusted.
+        # A field returns itself from a conversion to `Affine`, and a
+        # `Sequence` of a non-affine reduces to one, so the result has to
+        # be checked rather than trusted.
         raise UnrepresentableTransformationError(
             f"A {type(xform).__name__} cannot be written as NIfTI geometry: "
             f"NIfTI stores an affine voxel-to-world matrix, and this "
@@ -554,6 +590,15 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     if matrix is None:
         matrix = np.eye(4)
     matrix = np.asarray(matrix, dtype=float)
+
+    if matrix.shape != (4, 4):
+        # A 2D image yields a `(3, 3)` matrix; embed its rotation and
+        # translation in a `(4, 4)` matrix whose extra axis is the identity.
+        ndim = min(matrix.shape[0] - 1, 3)
+        embedded = np.eye(4)
+        embedded[:ndim, :ndim] = matrix[:ndim, :ndim]
+        embedded[:ndim, 3] = matrix[:ndim, matrix.shape[1] - 1]
+        matrix = embedded
 
     if getattr(affine.output, "name", None) == "LPS":
         # NIfTI stores voxel-to-RAS, so an LPS world is flipped on its
@@ -571,35 +616,57 @@ def _sform_and_qform(
     """
     Choose the qform matrix and code to store alongside an sform.
 
-    The qform is taken from a rigid voxel-to-RAS edge among the
-    transformations when the reader recorded one, and otherwise from the
-    sform itself, which `nibabel` reduces to its rigid part. The code is
-    the one that names the qform's world space, and falls back to the
-    sform's code when no separate qform world is recorded.
+    The matrix and the code always describe the same world space. The
+    first transformation other than the preferred one whose world space is
+    named after an xform code provides both. Failing that, the rigid edge
+    the reader names "qform" provides the matrix, under the sform's code.
+    Failing that, the qform is the sform, which `nibabel` reduces to its
+    rigid part, under the sform's code.
     """
     preferred = transformations[-1] if transformations else None
 
-    qform = None
-    for xform in transformations:
-        name = getattr(getattr(xform, "output", None), "name", None)
-        if name == _QFORM_NAME:
-            qform = _voxel_to_ras(xform)
-            break
-    if qform is None:
-        qform = sform
-
-    qcode = None
     for xform in transformations:
         if xform is preferred:
             continue
         name = getattr(getattr(xform, "output", None), "name", None)
         if name in _NIFTI_XFORM_CODE_BY_NAME:
-            qcode = _NIFTI_XFORM_CODE_BY_NAME[name]
-            break
-    if qcode is None:
-        qcode = scode
+            return _voxel_to_ras(xform), _NIFTI_XFORM_CODE_BY_NAME[name]
 
-    return qform, qcode
+    for xform in transformations:
+        name = getattr(getattr(xform, "output", None), "name", None)
+        if name == _QFORM_NAME:
+            return _voxel_to_ras(xform), scode
+
+    return sform, scode
+
+
+def _xyzt_units(
+    transformations: tx.Sequence[Transformation],
+) -> tx.Tuple[str, str]:
+    """
+    Read the spatial and temporal NIfTI unit labels off the axes.
+
+    The first spatial axis that carries a recognized unit gives the
+    spatial label, and the first temporal axis gives the temporal label.
+    An axis with no recognized unit leaves the label "unknown".
+    """
+    space = "unknown"
+    time = "unknown"
+    for xform in transformations:
+        for system in (
+            getattr(xform, "input", None),
+            getattr(xform, "output", None),
+        ):
+            for axis in getattr(system, "axes", None) or ():
+                unit = getattr(axis, "unit", None)
+                name = getattr(unit, "name", None)
+                if not isinstance(name, str):
+                    continue
+                if space == "unknown" and name in _NIFTI_SPACE_UNITS:
+                    space = _NIFTI_SPACE_UNITS[name]
+                elif time == "unknown" and name in _NIFTI_TIME_UNITS:
+                    time = _NIFTI_TIME_UNITS[name]
+    return space, time
 
 
 def _image_with_geometry(
@@ -613,14 +680,15 @@ def _image_with_geometry(
     The preferred transformation becomes the sform, and its world space's
     name becomes the sform code. The qform is the rigid edge among the
     transformations when present, and the rigid part of the sform
-    otherwise.
+    otherwise. The spatial and temporal units are read off the axes.
     """
     sform = _voxel_to_ras(transformation)
     scode = _NIFTI_XFORM_CODE_BY_NAME.get(
         getattr(transformation.output, "name", None), 2
     )
     qform, qcode = _sform_and_qform(transformations, sform, scode)
-    image = nb.Nifti1Image(np.asarray(data), sform)
+    image = _new_nifti(data, sform)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
+    image.header.set_xyzt_units(*_xyzt_units(transformations))
     return image
