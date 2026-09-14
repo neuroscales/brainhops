@@ -112,6 +112,20 @@ class WriterNotImplementedError(WriterError, NotImplementedError):
     pass
 
 
+class UnrepresentableTransformationError(WriterError):
+    """
+    Raised when a transformation cannot be encoded in the target format.
+
+    A format that stores only affine geometry, such as NIfTI, cannot hold
+    an arbitrary transformation. When the object being written carries one
+    that the format has no way to represent, the writer raises this error
+    rather than resampling the data or discarding the transformation. The
+    message names the transformation that could not be written.
+    """
+
+    pass
+
+
 # ----------------------------------------------------------------------
 #   CONFIDENCE
 # ----------------------------------------------------------------------

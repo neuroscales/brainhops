@@ -14,18 +14,20 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
+    _NIFTI_XCODES,
     NiftiParser,
+    _image_with_geometry,
     _nifti_intent,
     _nifti_shape,
     _nifti_to_axes,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.images.base import WritableFileBasedImage
 
 
 @register_format
-class NiftiImage(NiftiParser, FileBasedImage, SingleScaleImage):
+class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
     """
     An image that is encoded by a NIfTI file.
 
@@ -76,15 +78,26 @@ class NiftiImage(NiftiParser, FileBasedImage, SingleScaleImage):
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
 
+    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+        """
+        Build the `nibabel` image that encodes this image.
 
-_NIFTI_XCODES = {
-    0: "unknown",
-    1: "scanner",
-    2: "aligned",
-    3: "talairach",
-    4: "mni",
-    5: "template",
-}
+        The image data becomes the NIfTI data array. The preferred
+        transformation becomes the sform, and a rigid transformation among
+        the others, or the rigid part of the sform, becomes the qform.
+
+        A preferred transformation that is not an affine, such as a
+        displacement field, cannot describe NIfTI geometry, and raises
+        `UnrepresentableTransformationError`.
+        """
+        data = self.data
+        if data is None:
+            raise WriterError(
+                "This image has no data, so there is nothing to write."
+            )
+        return _image_with_geometry(
+            data, self.transformation, self.transformations
+        )
 
 
 def _nifti_to_transformations(
