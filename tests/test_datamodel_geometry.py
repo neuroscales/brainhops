@@ -63,6 +63,20 @@ def test_geometry_flatten_preserves_the_pair_and_the_grid() -> None:
     assert flat.transformations[0].shape == (2, 3, 4)
 
 
+def test_geometry_flatten_propagates_endpoints() -> None:
+    # Like `Sequence._flattened`, flattening a Geometry must push its own
+    # input onto the grid and its own output onto the transformation.
+    voxel = VoxelCoordinateSystem()
+    ras = RASCoordinateSystem()
+    nested = Sequence(transformations=[_affine()])
+    geom = Geometry((_grid(), nested), input=voxel, output=ras)
+
+    flat = _flatten(geom)
+
+    assert flat.grid.input is voxel
+    assert flat.transformation.output is ras
+
+
 def test_composing_a_sequence_onto_a_geometry_keeps_a_geometry() -> None:
     # When the left operand is itself a sequence, `sequence @ geometry`
     # routes through `Geometry.__rmatmul__` and produces a geometry whose

@@ -88,11 +88,12 @@ class Geometry(Sequence):
         The grid is preserved, so the geometry keeps its grid-and-
         transformation pair and the domain it defines is never lost.
         """
-        transformation = self.transformation
+        flat = self._flattened()
+        transformation = flat.transformation
         if isinstance(transformation, Sequence):
             transformation = transformation.compute(mode)
         return Geometry(
-            (self.grid, transformation),
+            (flat.grid, transformation),
             input=self.input,
             output=self.output,
         )
@@ -100,16 +101,20 @@ class Geometry(Sequence):
     def _flattened(self) -> tx.Self:
         # A `Geometry` keeps its (grid, transformation) pair. Only the
         # transformation part is flattened, so the grid that restricts the
-        # domain is never merged into the surrounding sequence.
-        transformation = self.transformation
+        # domain is never merged into the surrounding sequence. The
+        # geometry's own input and output are propagated onto the grid and
+        # the transformation, matching `Sequence._flattened`.
+        grid, transformation = self.grid, self.transformation
+        if grid.input is None and self.input is not None:
+            grid = grid.to(input=self.input)
+        if transformation.output is None and self.output is not None:
+            transformation = transformation.to(output=self.output)
         if isinstance(transformation, Sequence):
-            flat = transformation._flattened().transformations or []
-            if len(flat) == 1:
-                transformation = flat[0]
-            else:
-                transformation = Sequence(transformations=list(flat))
+            flat_seq = transformation._flattened()
+            flat = flat_seq.transformations or []
+            transformation = flat[0] if len(flat) == 1 else flat_seq
         return Geometry(
-            (self.grid, transformation),
+            (grid, transformation),
             input=self.input,
             output=self.output,
         )

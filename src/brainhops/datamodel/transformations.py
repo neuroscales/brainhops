@@ -906,6 +906,10 @@ class Sequence(MutableSequence, Transformation):
             elif i == len(self) - 1 and t.output is None and out is not None:
                 t = t.to(output=out)
             if isinstance(t, Sequence):
+                # A `Geometry` child contributes its grid followed by its
+                # transformation, which may itself still be a sequence. That
+                # leaves one level of nesting in the splice, which is fine:
+                # `_compute_sequence` re-flattens on the next pass.
                 flattened.extend(t._flattened().transformations or [])
             else:
                 flattened.append(t)
