@@ -14,7 +14,7 @@ from .transformations import (
     CartesianField,
     Identity,
     Transformation,
-    resolve_multiscale_level,
+    _at_resolution,
 )
 
 
@@ -203,10 +203,10 @@ class SingleScaleImage(Image):
             geometry = Geometry((self.geometry.grid, geometry))
 
         # When the preferred transformation carries a multiscale field,
-        # activate the level whose resolution matches the output grid.
-        # A transformation without such a field is returned unchanged, so
-        # its finest level stays active.
-        preferred = resolve_multiscale_level(
+        # select the level whose resolution matches the output grid. A
+        # transformation without such a field is returned unchanged, so
+        # its finest level is used.
+        preferred = _at_resolution(
             self.transformation, geometry.transformation
         )
 
