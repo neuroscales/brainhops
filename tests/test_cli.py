@@ -6,7 +6,7 @@ import pytest
 from brainhops.cli import main
 from brainhops.cli._errors import WritingUnavailable
 from brainhops.cli._io import _writable_image_formats
-from brainhops.cli._reslice import reslice_image
+from brainhops.cli._reslice import _load_push_transform, reslice_image
 from brainhops.datamodel.images import Image
 
 nb = pytest.importorskip("nibabel")
@@ -72,6 +72,48 @@ def test_reslice_command_reports_when_writing_is_unavailable(
     # The reslice succeeds but the output cannot be written yet.
     assert code == WritingUnavailable.exit_code
     assert not output.exists()
+
+
+class _FakeTransform:
+    """A stand-in transform that records whether it was inverted."""
+
+    def __init__(self, inverted: bool = False) -> None:
+        self.inverted = inverted
+
+    def inverse(self) -> "_FakeTransform":
+        return _FakeTransform(inverted=not self.inverted)
+
+
+def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa: ANN001
+    seen = {}
+
+    def fake_load(path):  # noqa: ANN001, ANN202
+        seen["path"] = path
+        return _FakeTransform()
+
+    monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
+
+    transform = _load_push_transform("warp.nii.gz")
+
+    assert seen["path"] == "warp.nii.gz"
+    assert transform.inverted is False
+
+
+def test_inv_prefix_strips_and_inverts_the_transform(monkeypatch) -> None:  # noqa: ANN001
+    seen = {}
+
+    def fake_load(path):  # noqa: ANN001, ANN202
+        seen["path"] = path
+        return _FakeTransform()
+
+    monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
+
+    transform = _load_push_transform("inv:warp.nii.gz")
+
+    # The prefix is stripped before the path reaches the loader.
+    assert seen["path"] == "warp.nii.gz"
+    # The loaded transform is inverted before it is composed.
+    assert transform.inverted is True
 
 
 def test_compose_reports_not_implemented(capsys) -> None:  # noqa: ANN001
