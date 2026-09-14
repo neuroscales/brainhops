@@ -5,6 +5,7 @@ from io import BytesIO
 
 # dependencies
 import nibabel as nb
+import numpy as np
 import typing_extensions as tx
 
 from brainhops._core import path
@@ -16,11 +17,20 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.transformations import (
+    Affine,
+    ConversionError,
+    Sequence,
+    Transformation,
+)
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileParserWriter,
     Confidence,
     ParserExistsError,
     SnifferContentError,
+    UnrepresentableTransformationError,
+    WriterError,
+    WriterNotImplementedError,
     preserve_position,
 )
 
@@ -87,6 +97,49 @@ themselves instead of relying on an arbitrary precedence between kinds.
 _NIFTI_INTENT_NONE = 0
 """Intent code of a plain image: no specialized interpretation."""
 
+_NIFTI_INTENT_DISPVECT = 1006
+"""Intent code that marks a NIfTI file as a displacement or vector field."""
+
+
+_NIFTI_XCODES = {
+    0: "unknown",
+    1: "scanner",
+    2: "aligned",
+    3: "talairach",
+    4: "mni",
+    5: "template",
+}
+"""
+The world space each NIfTI xform code names.
+
+A qform or sform code labels the world space its matrix maps voxels into.
+The reader names each affine after its code, and the writer reads that
+name back to choose the code to store.
+"""
+
+_NIFTI_XFORM_CODE_BY_NAME = {
+    name: code for code, name in _NIFTI_XCODES.items()
+}
+"""The xform code for a world-space name, the reverse of `_NIFTI_XCODES`."""
+
+_QFORM_NAME = "qform"
+"""The name the reader gives the rigid voxel-to-RAS affine of the qform."""
+
+_NIFTI_SPACE_UNITS = {
+    "meter": "meter",
+    "millimeter": "mm",
+    "micrometer": "micron",
+    "micron": "micron",
+}
+"""The NIfTI spatial-unit label for a space unit's name."""
+
+_NIFTI_TIME_UNITS = {
+    "second": "sec",
+    "millisecond": "msec",
+    "microsecond": "usec",
+}
+"""The NIfTI time-unit label for a time unit's name."""
+
 
 def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
     """The intent code of a NIfTI header, or `None` if unreadable."""
@@ -108,7 +161,7 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
         return None
 
 
-class NiftiParser(DataModelBase, BinaryFileParser):
+class NiftiParser(DataModelBase, BinaryFileParserWriter):
     """
     Base class for objects that are encoded by a NIfTI file.
 
@@ -277,6 +330,44 @@ class NiftiParser(DataModelBase, BinaryFileParser):
             return cls(image=nifti, header=nifti.header, **kwargs)
         raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
 
+    # --- FileParserWriter API -----------------------------------------
+
+    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+        """
+        Build the `nibabel` image that encodes this object.
+
+        Each concrete NIfTI format overrides this method to describe how
+        its own contents map onto a NIfTI image. The other writer methods
+        are defined in terms of this one.
+        """
+        cls = type(self)
+        raise WriterNotImplementedError(
+            f"{cls.__name__} does not know how to write itself to NIfTI."
+        )
+
+    def to_file(self, file: path.FileLike, **kwargs) -> None:
+        """
+        Write the object to a NIfTI file.
+
+        For a real path, `nibabel` is handed the path rather than an open
+        stream, so that it chooses gzip compression from the `.nii.gz`
+        extension. A file-like object is written the uncompressed NIfTI-1
+        bytes.
+        """
+        if isinstance(file, str):
+            file = path.Path(file)
+        if isinstance(file, path.PathLike):
+            nb.save(self.to_nibabel(**kwargs), str(file))
+            return
+        return super().to_file(file, **kwargs)
+
+    def to_bytes(self, **kwargs) -> bytes:
+        """Return the uncompressed NIfTI-1 encoding of the object."""
+        return self.to_nibabel(**kwargs).to_bytes()
+
+    def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        file.write(self.to_bytes(**kwargs))
+
     # --- BinaryFileSniffer API ----------------------------------------
 
     @classmethod
@@ -436,3 +527,168 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
         axes = [axes_map.get(i, axis) for i, axis in enumerate(axes)]
 
     return axes
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+def _new_nifti(
+    data: np.ndarray, affine: tx.Optional[np.ndarray]
+) -> nb.Nifti1Image:
+    """
+    Build a `nibabel` image, reporting an unwritable dtype as a writer error.
+
+    NIfTI-1 cannot store some array types, such as 64-bit integers.
+    `nibabel` raises a bare `ValueError` for one, which is re-raised as a
+    `WriterError` that names the dtype.
+    """
+    array = np.asarray(data)
+    try:
+        return nb.Nifti1Image(array, affine)
+    except ValueError as error:
+        raise WriterError(
+            f"NIfTI cannot store an array of type {array.dtype}: {error}"
+        ) from error
+
+
+def _voxel_to_ras(xform: Transformation) -> np.ndarray:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation.
+
+    The transformation must map voxel coordinates to a world space. An
+    affine transformation is used directly. A transformation of any other
+    kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
+    affines, is converted first. A two-dimensional affine is embedded in a
+    `(4, 4)` matrix, which is the shape NIfTI stores. A world space named
+    "LPS" is flipped to RAS, which is the convention NIfTI stores.
+
+    A transformation that has no affine representation, such as a
+    displacement field, cannot be written as NIfTI geometry, and raises
+    `UnrepresentableTransformationError`.
+    """
+    reduced = xform.compute() if isinstance(xform, Sequence) else xform
+    error = None
+    affine = reduced
+    if not isinstance(affine, Affine):
+        try:
+            affine = reduced.to(Affine)
+        except ConversionError as exc:
+            error = exc
+    if not isinstance(affine, Affine):
+        # A field returns itself from a conversion to `Affine`, and a
+        # `Sequence` of a non-affine reduces to one, so the result has to
+        # be checked rather than trusted.
+        raise UnrepresentableTransformationError(
+            f"A {type(xform).__name__} cannot be written as NIfTI geometry: "
+            f"NIfTI stores an affine voxel-to-world matrix, and this "
+            f"transformation has no affine representation."
+        ) from error
+
+    matrix = affine.homogeneous_matrix
+    if matrix is None:
+        matrix = np.eye(4)
+    matrix = np.asarray(matrix, dtype=float)
+
+    if matrix.shape != (4, 4):
+        # A 2D image yields a `(3, 3)` matrix; embed its rotation and
+        # translation in a `(4, 4)` matrix whose extra axis is the identity.
+        ndim = min(matrix.shape[0] - 1, 3)
+        embedded = np.eye(4)
+        embedded[:ndim, :ndim] = matrix[:ndim, :ndim]
+        embedded[:ndim, 3] = matrix[:ndim, matrix.shape[1] - 1]
+        matrix = embedded
+
+    if getattr(affine.output, "name", None) == "LPS":
+        # NIfTI stores voxel-to-RAS, so an LPS world is flipped on its
+        # first two axes to become RAS.
+        matrix = np.diag([-1.0, -1.0, 1.0, 1.0]) @ matrix
+
+    return matrix
+
+
+def _sform_and_qform(
+    transformations: tx.Sequence[Transformation],
+    sform: np.ndarray,
+    scode: int,
+) -> tx.Tuple[np.ndarray, int]:
+    """
+    Choose the qform matrix and code to store alongside an sform.
+
+    The matrix and the code always describe the same world space. The
+    first transformation other than the preferred one whose world space is
+    named after an xform code provides both. Failing that, the rigid edge
+    the reader names "qform" provides the matrix, under the sform's code.
+    Failing that, the qform is the sform, which `nibabel` reduces to its
+    rigid part, under the sform's code.
+    """
+    preferred = transformations[-1] if transformations else None
+
+    for xform in transformations:
+        if xform is preferred:
+            continue
+        name = getattr(getattr(xform, "output", None), "name", None)
+        if name in _NIFTI_XFORM_CODE_BY_NAME:
+            return _voxel_to_ras(xform), _NIFTI_XFORM_CODE_BY_NAME[name]
+
+    for xform in transformations:
+        name = getattr(getattr(xform, "output", None), "name", None)
+        if name == _QFORM_NAME:
+            return _voxel_to_ras(xform), scode
+
+    return sform, scode
+
+
+def _xyzt_units(
+    transformations: tx.Sequence[Transformation],
+) -> tx.Tuple[str, str]:
+    """
+    Read the spatial and temporal NIfTI unit labels off the axes.
+
+    The first spatial axis that carries a recognized unit gives the
+    spatial label, and the first temporal axis gives the temporal label.
+    An axis with no recognized unit leaves the label "unknown".
+    """
+    space = "unknown"
+    time = "unknown"
+    for xform in transformations:
+        for system in (
+            getattr(xform, "input", None),
+            getattr(xform, "output", None),
+        ):
+            for axis in getattr(system, "axes", None) or ():
+                unit = getattr(axis, "unit", None)
+                name = getattr(unit, "name", None)
+                if not isinstance(name, str):
+                    continue
+                if space == "unknown" and name in _NIFTI_SPACE_UNITS:
+                    space = _NIFTI_SPACE_UNITS[name]
+                elif time == "unknown" and name in _NIFTI_TIME_UNITS:
+                    time = _NIFTI_TIME_UNITS[name]
+    return space, time
+
+
+def _image_with_geometry(
+    data: np.ndarray,
+    transformation: Transformation,
+    transformations: tx.Sequence[Transformation],
+) -> nb.Nifti1Image:
+    """
+    Build a NIfTI image from data and its voxel-to-world geometry.
+
+    The preferred transformation becomes the sform, and its world space's
+    name becomes the sform code. The qform is the rigid edge among the
+    transformations when present, and the rigid part of the sform
+    otherwise. The spatial and temporal units are read off the axes.
+    """
+    sform = _voxel_to_ras(transformation)
+    scode = _NIFTI_XFORM_CODE_BY_NAME.get(
+        getattr(transformation.output, "name", None), 2
+    )
+    qform, qcode = _sform_and_qform(transformations, sform, scode)
+    image = _new_nifti(data, sform)
+    image.header.set_sform(sform, code=scode)
+    image.header.set_qform(qform, code=qcode)
+    image.header.set_xyzt_units(*_xyzt_units(transformations))
+    return image

@@ -1,17 +1,18 @@
 # dependencies
+import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import _NiftiObject
+from brainhops.io.base.nifti import _new_nifti, _NiftiObject, _voxel_to_ras
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
 class _NiftiAffine(NiftiBasedTransformation):
-    """Shared scoring for affines derived from a NIfTI header."""
+    """Shared scoring and writing for affines derived from a NIfTI header."""
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -25,6 +26,39 @@ class _NiftiAffine(NiftiBasedTransformation):
         resort without letting them outrank an image or a field.
         """
         return Confidence.WEAK
+
+    def _voxel_to_ras_matrix(self) -> np.ndarray:
+        """The `(4, 4)` voxel-to-RAS matrix this affine encodes."""
+        raise NotImplementedError
+
+    def _xform_code(self) -> int:
+        """The xform code to store, taken from the source header."""
+        header = self.header
+        if header is not None:
+            _, code = header.get_sform(coded=True)
+            if code:
+                return int(code)
+            _, code = header.get_qform(coded=True)
+            if code:
+                return int(code)
+        return 2
+
+    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+        """
+        Build a `nibabel` image whose affine is this transformation.
+
+        NIfTI stores an affine only as the geometry of a data array, so a
+        single-voxel placeholder volume carries it. The voxel-to-RAS
+        matrix becomes both the sform and the qform, under the code the
+        source header recorded.
+        """
+        matrix = self._voxel_to_ras_matrix()
+        data = np.zeros((1, 1, 1), dtype="float32")
+        code = self._xform_code()
+        image = _new_nifti(data, matrix)
+        image.header.set_sform(matrix, code=code)
+        image.header.set_qform(matrix, code=code)
+        return image
 
 
 class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
@@ -60,6 +94,11 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
             return NiftiVoxelToRAS(image=self.image, header=self.header)
         return super().inverse().to(VoxelToRAS)
 
+    def _voxel_to_ras_matrix(self) -> np.ndarray:
+        # This transformation maps RAS to voxel, so its inverse maps
+        # voxel to RAS, which is what NIfTI stores.
+        return _voxel_to_ras(self.inverse())
+
 
 @register_format
 class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
@@ -86,3 +125,6 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         if getattr(self, "_matrix", None) is None:
             return NiftiRASToVoxel(image=self.image, header=self.header)
         return super().inverse().to(RASToVoxel)
+
+    def _voxel_to_ras_matrix(self) -> np.ndarray:
+        return _voxel_to_ras(self)

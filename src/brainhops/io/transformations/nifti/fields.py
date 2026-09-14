@@ -1,4 +1,6 @@
 # dependencies
+import nibabel as nb
+import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
@@ -6,11 +8,13 @@ from bagof.hints.array import ArrayProtocol
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_FIELD_INTENTS,
+    _NIFTI_INTENT_DISPVECT,
+    _new_nifti,
     _nifti_intent,
     _nifti_shape,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence
+from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.transformations.base.fields import RASCoordinatesField
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
@@ -52,3 +56,33 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         # must stay one value. Without a setter the struct's generated
         # `__init__` cannot assign the inherited `field` at all.
         self.data = value
+
+    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+        """
+        Build the `nibabel` image that encodes this field of RAS coordinates.
+
+        The field array becomes the NIfTI data array, and the header
+        carries the displacement-vector intent code that marks the file as
+        a field rather than a plain image. The voxel-to-RAS affine of the
+        grid is taken from the source header when the field was read from
+        one, and is the identity otherwise.
+        """
+        field = self.field
+        if field is None:
+            raise WriterError(
+                "This field has no coordinates, so there is nothing to write."
+            )
+        field = np.asarray(field)
+        if field.ndim == 4:
+            # NIfTI stores a vector field as a five-dimensional array,
+            # with the components in the fifth axis and a singleton axis
+            # before them. A four-dimensional array would put the
+            # components in the time axis, which the reader misreads.
+            field = np.expand_dims(field, axis=3)
+        if self.header is not None:
+            affine = self.header.get_best_affine()
+        else:
+            affine = np.eye(4)
+        image = _new_nifti(field, affine)
+        image.header.set_intent(_NIFTI_INTENT_DISPVECT)
+        return image
