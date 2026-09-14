@@ -891,7 +891,7 @@ class Sequence(MutableSequence, Transformation):
             return self  # No-op
         return _compute_sequence(self, mode=mode)
 
-    def _flattened(self) -> "Sequence":
+    def _flattened(self) -> tx.Self:
         # Flatten nested sequences into a single sequence, and propagate
         # the sequence's own input and output onto its first and last
         # transformations. Subclasses that must keep a fixed shape (such
@@ -1146,14 +1146,6 @@ _XFORMHIERARCHY = {
 }
 
 
-def _flatten(self: Sequence) -> Sequence:
-    # Flatten nested sequences of transformations into a single sequence.
-    # The work is dispatched to `Sequence._flattened`, so a subclass that
-    # must preserve its own shape (such as `Geometry`, which keeps its
-    # grid and transformation as a pair) can flatten only its inner part.
-    return self._flattened()
-
-
 def _is_flat(self: Sequence) -> bool:
     # Check if the sequence is flat (does not contain any nested sequences).
     if self.transformations is None:
@@ -1260,7 +1252,7 @@ def _compute_sequence(
 
     # --- Flatten sequence
     if not _is_flat(seq):
-        seq = _flatten(seq)
+        seq = seq._flattened()
 
     # --- Check if nothing to do
     if len(seq.transformations or []) < 1:

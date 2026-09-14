@@ -17,7 +17,6 @@ from brainhops.datamodel.transformations import (
     Identity,
     Sequence,
     Translation,
-    _flatten,
     is_identity,
 )
 
@@ -31,7 +30,7 @@ def test_flatten_removes_nesting_and_keeps_endpoints() -> None:
         input=inp,
         output=out,
     )
-    flat = _flatten(outer)
+    flat = outer._flattened()
     assert isinstance(flat, Sequence)
     assert flat.input is inp
     assert flat.output is out
@@ -45,7 +44,7 @@ def test_flatten_propagates_endpoints_to_first_and_last() -> None:
     first = Translation(translation=[1.0, 2.0])
     last = Translation(translation=[3.0, 4.0])
     seq = Sequence(transformations=[first, last], input=inp, output=out)
-    flat = _flatten(seq)
+    flat = seq._flattened()
     assert flat.transformations[0].input is inp
     assert flat.transformations[-1].output is out
 
