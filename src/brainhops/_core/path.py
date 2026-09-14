@@ -25,7 +25,7 @@ from bagof.paths import Path
 # typing
 
 FilenameLike = tx.Union[PathLike, str]
-"""A [`PathLike`][os.PathLike] or [`str`][str] that represents a filename."""
+"""A `PathLike` or `str` that represents a filename."""
 
 BinaryFileLike = tx.Union[FilenameLike, tx.BinaryIO]
 """A path to a file or a binary file object."""
@@ -39,13 +39,13 @@ FileLike = tx.Union[BinaryFileLike, TextFileLike]
 BinaryContentLike = tx.Union[bytes, bytearray, tx.Iterable[bytes]]
 """
 The content of a binary file:
-a [`bytes`][], [`bytearray`][] or an iterable of [`bytes`][].
+a `bytes`, `bytearray` or an iterable of `bytes`.
 """
 
 TextContentLike = tx.Union[str, tx.Iterable[str]]
 """
 The content of a text file:
-a [`str`][str] or an iterable of [`str`][str].
+a `str` or an iterable of `str`.
 """
 
 ContentLike = tx.Union[BinaryContentLike, TextContentLike]

@@ -32,6 +32,8 @@ nav = [
     ]},
     {"For developers" = [
         {"invfield" = "api/_ext/invfield/index.md"},
+        {"_core.typing" = "api/_core/typing.md"},
+        {"_core.path" = "api/_core/path.md"},
     ]}
   ]}
 ]

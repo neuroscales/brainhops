@@ -5,6 +5,13 @@ from enum import Enum
 
 
 class LTAType(int, Enum):
+    """The affine transformation type recorded in an LTA file header.
+
+    This enumeration identifies the coordinate systems that the
+    transformation maps between, such as voxel-to-voxel or
+    RAS-to-RAS.
+    """
+
     # Affine transformation types
     LINEAR_VOX_TO_VOX = 0
     LINEAR_VOXEL_TO_VOXEL = LINEAR_VOX_TO_VOX
@@ -21,11 +28,15 @@ class LTAType(int, Enum):
 
 
 class LTAMatrixType(int, Enum):
+    """The element type of a matrix parsed from an LTA file."""
+
     UNKNOWN_MATRIX = 0
     REAL_MATRIX = 1
     COMPLEX_MATRIX = 2
 
 
 class LTAValidity(int, Enum):
+    """Whether a volume-geometry block in an LTA file is populated."""
+
     VOLUME_INFO_INVALID = 0
     VOLUME_INFO_VALID = 1

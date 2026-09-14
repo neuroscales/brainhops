@@ -24,9 +24,18 @@ from bagof.hints.numpy import dtype, ndarray
 from bagof.magic import Frozen, NoInit, NoRepr
 
 T = tx.TypeVar("T")
+
 Const = tx.Annotated[T, Frozen(), NoInit()]
+"""A field that is frozen and cannot be set through the constructor."""
+
 HiddenConst = tx.Annotated[Const[T], NoRepr()]
+"""A `Const` field that is also hidden from the generated `__repr__`."""
 
 npscalar = tx.Union[T, ndarray[tx.Tuple[()], dtype[T]]]
+"""A plain scalar, or a zero-dimensional array holding one."""
+
 npvector = ndarray[tx.Tuple[int], dtype[T]]
+"""A one-dimensional array."""
+
 npmatrix = ndarray[tx.Tuple[int, int], dtype[T]]
+"""A two-dimensional array."""

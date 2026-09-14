@@ -5,6 +5,7 @@ __all__ = [
     "DisplacementField",
     "Affine",
     "Linear",
+    "Rotation",
     "Permutation",
     "Scaling",
     "Translation",
@@ -14,6 +15,16 @@ __all__ = [
     "SubspaceTransformation",
     "Projection",
     "Sequence",
+    "is_identity",
+    "is_translation",
+    "is_scale",
+    "is_permutation",
+    "is_rotation",
+    "is_linear",
+    "ConversionError",
+    "LossyConversionError",
+    "CompositionError",
+    "AdaptationError",
 ]
 # stdlib
 import itertools
@@ -189,7 +200,7 @@ class Transformation(DataModelBase, reverse=True):
         **kwargs : dict
             Attributes to override in the converted transform.
             This allows transformations to be modified within their type.
-            For example, a `DisplacementField` can be converted from
+            For example, a [`DisplacementField`][] can be converted from
             a field of values to a field of spline coefficients by
             setting `coeff=True` in `kwargs`.
 
@@ -934,6 +945,17 @@ class Sequence(MutableSequence, Transformation):
 
 
 def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is the identity.
+
+    A transformation is recognized as the identity when its parameters
+    are unset, or when it is an instance of [`Identity`][] or of
+    [`CartesianField`][]. When `compute` is true, the parameters of a
+    transformation such as [`Translation`][], [`Scaling`][],
+    [`Permutation`][], [`Linear`][], [`Affine`][], or
+    [`DisplacementField`][] are also inspected, so that a transformation
+    whose parameters happen to encode the identity is recognized as such
+    even though it is not stored as one.
+    """
     parameter_names = getattr(xform, "parameter_names", ())
     if isinstance(parameter_names, str):
         parameter_names = (parameter_names,)
@@ -966,6 +988,14 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
 
 
 def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is a pure translation.
+
+    A transformation is recognized as a translation when it is an
+    instance of [`Translation`][], or when [`is_identity`][] recognizes
+    it as the identity, which is itself a translation by zero. When
+    `compute` is true, the matrix of an [`Affine`][] transformation is
+    also inspected for a linear part equal to the identity.
+    """
     if isinstance(xform, Translation):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
@@ -974,6 +1004,14 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
 
 
 def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is a pure scaling.
+
+    A transformation is recognized as a scaling when it is an instance
+    of [`Scaling`][], or when [`is_identity`][] recognizes it as the
+    identity, which is itself a scaling by one. When `compute` is true,
+    the matrix of a [`Linear`][] or [`Affine`][] transformation is also
+    inspected for a diagonal structure.
+    """
     if isinstance(xform, Scaling):
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
@@ -989,6 +1027,15 @@ def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
 
 
 def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is a pure permutation of axes.
+
+    A transformation is recognized as a permutation when it is an
+    instance of [`Permutation`][], or when [`is_identity`][] recognizes
+    it as the identity, which is itself a trivial permutation. When
+    `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
+    transformation is also inspected for a binary, one-per-row and
+    one-per-column structure.
+    """
     if isinstance(xform, Permutation):
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
@@ -1005,6 +1052,14 @@ def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
 
 
 def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is a pure rotation.
+
+    A transformation is recognized as a rotation when it is an instance
+    of [`Rotation`][], or when [`is_identity`][] recognizes it as the
+    identity, which is itself a rotation by zero. When `compute` is
+    true, the matrix of a [`Linear`][] or [`Affine`][] transformation is
+    also inspected for orthogonality and a positive determinant.
+    """
     if isinstance(xform, Rotation):
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
@@ -1022,6 +1077,14 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
 
 
 def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
+    """Return whether a transformation is linear, without a translation.
+
+    A transformation is recognized as linear when it is an instance of
+    [`Linear`][], or when [`is_identity`][] recognizes it as the
+    identity, which is itself linear. When `compute` is true, the matrix
+    of an [`Affine`][] transformation is also inspected for a zero
+    translation component.
+    """
     if isinstance(xform, Linear):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
@@ -1278,10 +1341,19 @@ _CONVERTERS = {}
 _CONVERTERS_FASTMAP = {}
 
 
-class ConversionError(TypeError): ...
+class ConversionError(TypeError):
+    """Raised when a transformation cannot be converted to another type."""
 
 
 class LossyConversionError(ConversionError):
+    """Raised when a conversion would discard information.
+
+    This error is raised by [`Transformation.to`][] when a conversion is
+    only possible at the cost of losing information, and the conversion
+    was not explicitly allowed to be lossy. The `result` attribute holds
+    the transformation that the conversion would have produced.
+    """
+
     def __init__(
         self,
         *args,
@@ -1353,7 +1425,8 @@ _COMPOSERS = {}
 _COMPOSERS_FASTMAP = {}
 
 
-class CompositionError(TypeError): ...
+class CompositionError(TypeError):
+    """Raised when two transformations cannot be composed."""
 
 
 def _composer(func: tx.Callable) -> tx.Callable:
@@ -1408,7 +1481,9 @@ _ADAPTORS = {}
 _ADAPTORS_FASTMAP = {}
 
 
-class AdaptationError(TypeError): ...
+class AdaptationError(TypeError):
+    """Raised when no transformation adapts one coordinate system to
+    another."""
 
 
 def _adaptor(func: tx.Callable) -> tx.Callable:
