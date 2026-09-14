@@ -987,12 +987,20 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     a transformation whose parameters happen to encode the identity is
     recognized as such even though it is not stored as one.
 
-    A [`CartesianField`][] that carries a grid is never recognized as the
-    identity. Even though its coordinates coincide with the identity map,
-    the field restricts the domain to that grid, so treating it as the
-    identity would discard the grid. A [`CartesianField`][] with no grid
-    has an unset `field` parameter and is recognized as the identity by
-    the parameter check.
+    A [`CartesianField`][] is a regular grid of coordinates, which is the
+    identity map over its grid by construction. When `compute` is true, a
+    [`CartesianField`][] is therefore recognized as the identity. When
+    `compute` is false, a [`CartesianField`][] that carries a grid is not
+    recognized as the identity, because its `field` parameter is set. A
+    [`CartesianField`][] with no grid has an unset `field` parameter and
+    is recognized as the identity by the parameter check under either
+    value of `compute`.
+
+    Recognizing a grid as the identity does not mean a grid may be dropped
+    on sight. A grid also defines the sampling domain onto which data is
+    resampled. The decision to factor a grid away is made by the sequence
+    simplifier, which only does so for a grid that sits strictly between
+    two other transformations.
     """
     parameter_names = getattr(xform, "parameter_names", ())
     if isinstance(parameter_names, str):
@@ -1020,6 +1028,8 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
         return (xform.matrix == ab.eye(ndim + 1)[:-1]).all()
     if isinstance(xform, DisplacementField):
         return (xform.field == 0).all()
+    if isinstance(xform, CartesianField):
+        return True
     return False
 
 
@@ -1233,6 +1243,43 @@ def _ensure_proper_modes(mode: ModeLike) -> tx.List[_ModePair]:
     ]
 
 
+def _drop_interior_grids(seq: Sequence) -> Sequence:
+    """Remove every strictly interior grid from a sequence.
+
+    A [`CartesianField`][] is the identity map over its grid. A grid that
+    sits strictly between two other transformations is therefore
+    redundant. The transformation before it and the transformation after
+    it overwrite its coordinates, so `A @ grid @ B` computes the same
+    field as `A @ B`. Each such interior grid is removed, which lets the
+    two neighbours compose directly.
+
+    The first element, the last element, and a standalone element are left
+    in place. A grid in one of those positions defines the sampling domain
+    onto which data is resampled, and removing it would lose that domain.
+    A sequence of one or two transformations has no interior, so it is
+    returned unchanged.
+
+    Only a [`CartesianField`][] is removed, because only a grid is the
+    identity map by construction. A general field of coordinates or a
+    field of displacements carries its own values, which the neighbours do
+    not reproduce, so such a field is kept wherever it appears.
+    """
+    xforms = seq.transformations or []
+    if len(xforms) <= 2:
+        return seq
+    kept = [xforms[0]]
+    for elem in xforms[1:-1]:
+        if isinstance(elem, CartesianField) and is_identity(
+            elem, compute=True
+        ):
+            continue
+        kept.append(elem)
+    kept.append(xforms[-1])
+    if len(kept) == len(xforms):
+        return seq
+    return replace(seq, transformations=kept)
+
+
 def _compute_sequence(
     seq: Sequence,
     mode: tx.List[_ModePair],
@@ -1268,6 +1315,12 @@ def _compute_sequence(
     # --- If we are called from the public method, `mode`` is a `list`
     # > Recuerse with a memo
     if memo is None:
+        # Factor away any strictly interior grid before composing. An
+        # interior `CartesianField` is the identity map over its grid, and
+        # its neighbours overwrite those coordinates, so it is redundant
+        # and is removed. The first and last elements define the sampling
+        # domain and are left in place.
+        seq = _drop_interior_grids(seq)
         memo = set()
         for submode in mode:
             seq = _compute_sequence(seq, submode, memo=memo)

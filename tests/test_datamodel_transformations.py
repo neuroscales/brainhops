@@ -98,14 +98,15 @@ def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
     assert result is not None
 
 
-def test_gridded_cartesian_field_is_not_the_identity() -> None:
-    # A `CartesianField` that carries a grid restricts the domain to that
-    # grid. Recognizing it as the identity would let simplification drop
-    # the grid, so `is_identity` must reject it even though its
-    # coordinates coincide with the identity map.
+def test_gridded_cartesian_field_is_the_identity_only_under_compute() -> None:
+    # A `CartesianField` is the identity map over its grid by
+    # construction. Under `compute=True` it is recognized as the identity,
+    # which is the predicate the sequence simplifier uses to factor away an
+    # interior grid. Under `compute=False` the check stays conservative,
+    # because the grid's `field` parameter is set.
     grid = CartesianField(shape=(4, 5))
     assert is_identity(grid) is False
-    assert is_identity(grid, compute=True) is False
+    assert is_identity(grid, compute=True) is True
 
 
 def test_empty_cartesian_field_is_the_identity() -> None:
@@ -201,6 +202,101 @@ def test_replace_coordinates_field_round_trips_explicit_field() -> None:
     assert replaced.order == 1
     assert replaced.coeff is True
     np.testing.assert_array_equal(np.asarray(replaced.field), values)
+
+
+def _contains_cartesian_field(result) -> bool:  # noqa: ANN001
+    # Walk a computed result and report whether any `CartesianField`
+    # survives, descending into a `Sequence` result.
+    if isinstance(result, CartesianField):
+        return True
+    if isinstance(result, Sequence):
+        return any(_contains_cartesian_field(t) for t in result)
+    return False
+
+
+def test_interior_grid_is_factored_away() -> None:
+    # A grid that sits strictly between two transformations is the
+    # identity map over its grid, and its neighbours overwrite those
+    # coordinates. Computing the sequence must drop the grid and yield the
+    # same transformation as the sequence without it.
+    a = Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, -2.0]])
+    b = Affine(matrix=[[1.0, 0.0, 4.0], [0.0, 1.0, 5.0]])
+    grid = CartesianField(shape=(4, 5))
+    result = Sequence(transformations=[a, grid, b]).compute()
+    assert not _contains_cartesian_field(result)
+    reference = Sequence(transformations=[a, b]).compute()
+    np.testing.assert_allclose(result.matrix, reference.matrix)
+
+
+def test_multiple_interior_grids_are_all_factored_away() -> None:
+    # Every strictly interior grid is factored away, not just the first.
+    a = Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, -2.0]])
+    b = Affine(matrix=[[1.0, 0.0, 4.0], [0.0, 1.0, 5.0]])
+    grid1 = CartesianField(shape=(4, 5))
+    grid2 = CartesianField(shape=(6, 7))
+    result = Sequence(transformations=[a, grid1, grid2, b]).compute()
+    assert not _contains_cartesian_field(result)
+    reference = Sequence(transformations=[a, b]).compute()
+    np.testing.assert_allclose(result.matrix, reference.matrix)
+
+
+def test_interior_grid_preserves_endpoint_systems() -> None:
+    # Factoring an interior grid away must keep the endpoints of the
+    # chain: the result spans the input of the first transformation and
+    # the output of the last one.
+    inp = CoordinateSystem(name="in")
+    mid = CoordinateSystem(name="mid")
+    out = CoordinateSystem(name="out")
+    a = Affine(
+        matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, -2.0]], input=inp, output=mid
+    )
+    grid = CartesianField(shape=(4, 5), input=mid, output=mid)
+    b = Affine(
+        matrix=[[1.0, 0.0, 4.0], [0.0, 1.0, 5.0]], input=mid, output=out
+    )
+    result = Sequence(transformations=[a, grid, b]).compute()
+    assert result.input is inp
+    assert result.output is out
+
+
+def test_trailing_grid_is_preserved() -> None:
+    # A grid in the last position defines the sampling domain and is not
+    # interior, so computing the sequence must keep it.
+    affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    grid = CartesianField(shape=(4, 5))
+    result = Sequence(transformations=[affine, grid]).compute()
+    assert _contains_cartesian_field(result)
+
+
+def test_standalone_grid_is_preserved() -> None:
+    # A grid computed on its own is neither interior nor part of a
+    # sequence, so it keeps its grid rather than collapsing to an
+    # `Identity`.
+    grid = CartesianField(shape=(4, 5))
+    result = grid.compute()
+    assert isinstance(result, CartesianField)
+    assert not isinstance(result, Identity)
+    assert result.field.shape == (4, 5, 2)
+
+
+def test_interior_non_identity_field_is_preserved() -> None:
+    # Only a grid is the identity map by construction. A displacement
+    # field carries its own values that the neighbours do not reproduce,
+    # so an interior displacement field must survive computation.
+    a = Affine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    b = Affine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    disp = DisplacementField(field=np.ones((4, 5, 2)))
+    assert not is_identity(disp, compute=True)
+    result = Sequence(transformations=[a, disp, b]).compute()
+
+    def _has_displacement(res) -> bool:  # noqa: ANN001
+        if isinstance(res, DisplacementField):
+            return True
+        if isinstance(res, Sequence):
+            return any(_has_displacement(t) for t in res)
+        return False
+
+    assert _has_displacement(result)
 
 
 def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
