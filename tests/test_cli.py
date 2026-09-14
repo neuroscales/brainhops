@@ -4,9 +4,13 @@ import numpy as np
 import pytest
 
 from brainhops.cli import main
-from brainhops.cli._errors import WritingUnavailable
+from brainhops.cli._errors import CliError, WritingUnavailable
 from brainhops.cli._io import _writable_image_formats
-from brainhops.cli._reslice import _load_push_transform, reslice_image
+from brainhops.cli._reslice import (
+    _load_push_transform,
+    _split_operators,
+    reslice_image,
+)
 from brainhops.datamodel.images import Image
 
 nb = pytest.importorskip("nibabel")
@@ -84,6 +88,29 @@ class _FakeTransform:
         return _FakeTransform(inverted=not self.inverted)
 
 
+def test_split_operators_peels_known_ops_from_the_right() -> None:
+    assert _split_operators("warp.nii.gz") == ("warp.nii.gz", [])
+    assert _split_operators("warp.nii.gz|inv") == ("warp.nii.gz", ["inv"])
+    # Operators are kept in written order.
+    assert _split_operators("warp|inv|inv") == ("warp", ["inv", "inv"])
+
+
+def test_split_operators_keeps_a_pipe_inside_a_source_path() -> None:
+    # A source that itself contains '|' (a cloud URI, say) is not split:
+    # only trailing tokens that name a known operator are peeled off.
+    assert _split_operators("s3://bucket/a|b/warp.nii.gz") == (
+        "s3://bucket/a|b/warp.nii.gz",
+        [],
+    )
+    assert _split_operators("s3://bucket/a|b/warp.nii.gz|inv") == (
+        "s3://bucket/a|b/warp.nii.gz",
+        ["inv"],
+    )
+    # A single segment that happens to match an operator name stays the
+    # source: at least one segment is always kept.
+    assert _split_operators("inv") == ("inv", [])
+
+
 def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa: ANN001
     seen = {}
 
@@ -99,7 +126,7 @@ def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa:
     assert transform.inverted is False
 
 
-def test_inv_prefix_strips_and_inverts_the_transform(monkeypatch) -> None:  # noqa: ANN001
+def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa: ANN001
     seen = {}
 
     def fake_load(path):  # noqa: ANN001, ANN202
@@ -108,12 +135,26 @@ def test_inv_prefix_strips_and_inverts_the_transform(monkeypatch) -> None:  # no
 
     monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
 
-    transform = _load_push_transform("inv:warp.nii.gz")
+    transform = _load_push_transform("warp.nii.gz|inv")
 
-    # The prefix is stripped before the path reaches the loader.
+    # The operator is stripped before the path reaches the loader.
     assert seen["path"] == "warp.nii.gz"
     # The loaded transform is inverted before it is composed.
     assert transform.inverted is True
+
+
+def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "brainhops.cli._reslice.load_transform",
+        lambda path: _FakeTransform(),  # noqa: ARG005
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        _load_push_transform("warp.nii.gz|sqrt")
+
+    message = str(excinfo.value)
+    assert "sqrt" in message
+    assert "#47" in message
 
 
 def test_compose_reports_not_implemented(capsys) -> None:  # noqa: ANN001

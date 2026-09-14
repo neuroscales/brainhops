@@ -22,19 +22,28 @@ behalf.
 Many warp files are stored the other way round, as pull maps that run
 from the reference to the moving image. ANTs, SPM and FSL warps are
 usually of this kind. Such a file must be inverted before it can be used
-as a push transform here. The ``inv:`` prefix on a transform value does
-exactly that.
+as a push transform here. A pipe-separated operator on the transform
+value does exactly that: ``path/to/warp.nii.gz|inv``.
 """
 
 from __future__ import annotations
 
 import argparse
 
+import typing_extensions as tx
+
 from brainhops.datamodel.images import Image
 
+from ._errors import CliError
 from ._io import load_image, load_transform, save_image
 
-_INVERSE_PREFIX = "inv:"
+# Operators that a transform value may carry after a `|`, and that are
+# applied to the loaded transform in written order. `inv` inverts the
+# transform. The rest are recognised so they parse and report cleanly,
+# but are not implemented yet (tracked in issue #47).
+_IMPLEMENTED_OPS = frozenset({"inv"})
+_UNIMPLEMENTED_OPS = frozenset({"sqrt", "square", "exp", "log"})
+_RECOGNIZED_OPS = _IMPLEMENTED_OPS | _UNIMPLEMENTED_OPS
 
 
 def add_parser(
@@ -52,7 +61,7 @@ def add_parser(
             "resampler pulls internally, inverting the composed map to "
             "sample the reference grid. A warp stored as a pull map "
             "(reference to moving), as ANTs, SPM and FSL warps usually "
-            "are, must be inverted first with the 'inv:' prefix."
+            "are, must be inverted first with the '|inv' operator."
         ),
     )
     parser.add_argument(
@@ -74,14 +83,18 @@ def add_parser(
         "--transform",
         action="append",
         default=[],
-        metavar="FILE",
+        metavar="SOURCE",
         dest="transforms",
         help=(
-            "A forward (push) transformation file to apply to the input "
-            "image. Repeat the option to apply several, in the order "
-            "given. Prefix the value with 'inv:' (for example "
-            "'inv:warp.nii.gz') to apply the inverse of the transform "
-            "instead, which is what a pull-convention warp needs."
+            "A forward (push) transformation to apply to the input image. "
+            "Repeat the option to apply several, in the order given. The "
+            "value is a path, optionally followed by pipe-separated "
+            "operators applied in written order, for example "
+            "'warp.nii.gz|inv'. The '|inv' operator inverts the "
+            "transform, which is what a pull-convention warp needs. The "
+            "'|' usually needs shell quoting. The operators 'sqrt', "
+            "'square', 'exp' and 'log' are recognised but not implemented "
+            "yet (tracked in issue #47)."
         ),
     )
     parser.add_argument(
@@ -107,18 +120,54 @@ def add_parser(
     return parser
 
 
-def _load_push_transform(spec: str) -> Image:
-    """Read one transform value, honouring an ``inv:`` prefix.
+def _split_operators(spec: str) -> tx.Tuple[str, tx.List[str]]:
+    """Split a transform value into its source and its operator chain.
 
-    A value such as ``inv:warp.nii.gz`` reads ``warp.nii.gz`` and returns
-    its inverse. A plain value returns the transform unchanged. The
-    returned transform is a forward (push) map, ready to compose.
+    Operators are recognised by peeling matching tokens off the *right*
+    end of the value. The value is split on `|`, and each trailing
+    segment that names a recognised operator is taken as an operator, in
+    written order. Peeling stops at the first segment that is not a
+    recognised operator, and the remaining leading segments are rejoined
+    with `|` as the source.
+
+    Peeling from the right, and only for known operators, keeps a source
+    that itself contains `|` -- a path or a cloud URI -- from being
+    misread. At least one segment is always kept as the source, so a file
+    literally named after an operator is never mistaken for one.
     """
-    inverted = spec.startswith(_INVERSE_PREFIX)
-    path = spec[len(_INVERSE_PREFIX) :] if inverted else spec
-    transform = load_transform(path)
-    if inverted:
-        transform = transform.inverse()
+    segments = spec.split("|")
+    operators: tx.List[str] = []
+    while len(segments) > 1 and segments[-1] in _RECOGNIZED_OPS:
+        operators.insert(0, segments.pop())
+    return "|".join(segments), operators
+
+
+def _apply_operator(transform: Image, operator: str) -> Image:
+    """Apply one operator to a loaded transform.
+
+    `inv` returns the inverse of the transform. A recognised but
+    unimplemented operator raises a `CliError` pointing at issue #47.
+    """
+    if operator == "inv":
+        return transform.inverse()
+    raise CliError(
+        f"Transform operator '{operator}' is not implemented yet; "
+        f"tracked in issue #47."
+    )
+
+
+def _load_push_transform(spec: str) -> Image:
+    """Read one transform value, honouring its operator chain.
+
+    A value such as `warp.nii.gz|inv` reads `warp.nii.gz` and returns its
+    inverse. Operators are applied in written order, as function
+    composition over the loaded transform, so `warp|a|b` is `b(a(load))`.
+    The returned transform is a forward (push) map, ready to compose.
+    """
+    source, operators = _split_operators(spec)
+    transform = load_transform(source)
+    for operator in operators:
+        transform = _apply_operator(transform, operator)
     return transform
 
 
@@ -146,9 +195,12 @@ def reslice_image(
 
     A warp stored as a pull map, running from the reference to the moving
     image, is the opposite direction and must be inverted before use.
-    ANTs, SPM and FSL warps are usually of this kind. An entry may be
-    prefixed with `inv:` (for example `inv:warp.nii.gz`) to apply the
-    inverse of that transform, which is what such a warp needs.
+    ANTs, SPM and FSL warps are usually of this kind. An entry may carry
+    pipe-separated operators after its path, applied in written order.
+    The `inv` operator inverts the transform, so `warp.nii.gz|inv` is
+    what such a warp needs. The `|` usually needs shell quoting. The
+    operators `sqrt`, `square`, `exp` and `log` are recognised but not
+    implemented yet, and are tracked in issue #47.
 
     This function performs no file writing, so it can be exercised on its
     own. The command wraps it with the step that writes the result to
