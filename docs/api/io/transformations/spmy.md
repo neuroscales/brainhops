@@ -1,3 +1,3 @@
 # spmy
 
-::: brainhops.io.transformations.spmy
+::: brainhops.io.transformations.spm.y

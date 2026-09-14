@@ -25,20 +25,13 @@ nav = [
     ]},
     {"io" = [
       {"transformations" = [
-        "api/io/index.md",
-        "api/io/lta.md",
-        "api/io/index.md",
+        "api/io/transformations/index.md",
+        "api/io/transformations/lta.md",
+        "api/io/transformations/spmy.md",
       ]},
-      {"images" = []},
-      {"vectors" = []},
     ]},
     {"For developers" = [
-        {"struct" = [
-          "api/_ext/struct/index.md",
-          "api/_ext/struct/converters.md",
-          "api/_ext/struct/validators.md",
-        ]},
-        {"invfield" = "api/_ext/invfield.md"},
+        {"invfield" = "api/_ext/invfield/index.md"},
     ]}
   ]}
 ]
@@ -125,6 +118,7 @@ inventories = ["https://docs.python.org/3/objects.inv"]
 paths = ["src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
+extensions = ["griffe_bagof_magic:MagicExtension"]
 docstring_style = "numpy"
 inherited_members = true
 show_source = false
