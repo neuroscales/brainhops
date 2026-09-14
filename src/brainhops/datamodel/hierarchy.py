@@ -20,15 +20,15 @@ inheritance describes set inclusion (i.e., `isubclass(A, B)` implies
 ℝⁿ, and are assigned a "composition" operator.
 
 Some of these transformation sets (but not all!) are groups under the
-composition operator. This is indicated by the `@group` decorator.
+composition operator. This is indicated by the [`group`][] decorator.
 If a set A is a subset of set B, and both A and B are groups, then A is
 a subgroup of B.
 
 Many linear transformations, when constrained to be invertible, can
 be thought of as members of a Lie group, i.e. they are smooth manifolds,
 and their group operations (composition and inversion) are smooth maps.
-This is indicated by the `@liegroup` decorator. Note that the set A may
-be a subgroup of a Lie group B without being a Lie group itself!
+This is indicated by the [`liegroup`][] decorator. Note that the set A
+may be a subgroup of a Lie group B without being a Lie group itself!
 
 Lie groups
 ----------
@@ -88,6 +88,16 @@ import re
 import typing_extensions as tx
 
 __all__ = [
+    "is_group",
+    "is_lie_group",
+    "is_connected",
+    "is_simplyconnected",
+    "group",
+    "liegroup",
+    "connected",
+    "simplyconnected",
+    "parseType",
+    "TransformationBaseClass",
     "Transformation",
     "Morphism",                                     # ^ alias
     "BijectiveTransformation",
@@ -133,6 +143,7 @@ __all__ = [
     "Reflection",                                   #
     "FiniteReflection",                             #
     "SpecialDiagonalTransformation",                # SΔ               (det =±1)
+    "CardinalReflection",                           # ^ alias
     "MultiplicativeTransformation",                 # ℝ
     "InvertibleMultiplicativeTransformation",       # ℝ*               (det ≠ 0)
     "Homothety",                                    # ^ alias
@@ -157,18 +168,39 @@ SYMBOLTOCLASS = {}
 
 
 def is_group(cls: type) -> bool:
+    """Return whether a set of transformations forms a group.
+
+    A class is recognized as a group when it, or one of its ancestors,
+    was marked with the [`group`][] or [`liegroup`][] decorator.
+    """
     return cls in GROUPS
 
 
 def is_lie_group(cls: type) -> bool:
+    """Return whether a set of transformations forms a Lie group.
+
+    A class is recognized as a Lie group when it, or one of its
+    ancestors, was marked with the [`liegroup`][] decorator.
+    """
     return cls in LIE_GROUPS
 
 
 def is_connected(cls: type) -> bool:
+    """Return whether a set of transformations is connected.
+
+    A class is recognized as connected when it, or one of its
+    ancestors, was marked with the [`connected`][] or
+    [`simplyconnected`][] decorator.
+    """
     return cls in CONNECTED
 
 
 def is_simplyconnected(cls: type) -> bool:
+    """Return whether a set of transformations is simply connected.
+
+    A class is recognized as simply connected when it, or one of its
+    ancestors, was marked with the [`simplyconnected`][] decorator.
+    """
     return cls in SIMPLYCONNECTED
 
 
@@ -270,6 +302,15 @@ def parseType(
 
 
 class TransformationBaseClass(ABC):
+    """The root of the transformation hierarchy.
+
+    A subclass declares its `SYMBOL` (a short mathematical symbol, such
+    as `"SO"`), its `FSYMBOL` (the same symbol with a dimension
+    placeholder, such as `"SO({n})"`), and its `NAME` (one or more
+    plain-text names). These are recorded automatically on subclassing,
+    and are what [`parseType`][] resolves a string against.
+    """
+
     SYMBOL: str
     FSYMBOL: str
     NAME: tuple

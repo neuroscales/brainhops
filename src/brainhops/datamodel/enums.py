@@ -1,4 +1,4 @@
-__all__ = ["BoundaryCondition", "InterpolationOrder"]
+__all__ = ["BoundaryCondition", "InterpolationOrder", "OrientationType"]
 
 from brainhops._core.enum import IntEnum, StrEnum
 

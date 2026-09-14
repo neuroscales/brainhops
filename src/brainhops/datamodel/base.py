@@ -1,4 +1,4 @@
-__all__ = ["DataModelBase"]
+__all__ = ["DataModelBase", "DataModelConverter"]
 
 # stdlib
 from collections.abc import Mapping
@@ -77,6 +77,15 @@ class DataModelBase(
 
 @register_converter(DataModelBase)
 class DataModelConverter(Converter[DataModelBase, tx.Any]):
+    """Converts a value to a [`DataModelBase`][] instance.
+
+    This converter is registered for [`DataModelBase`][], and is used
+    automatically wherever a field is typed with [`DataModelBase`][] or
+    one of its subclasses and conversion is enabled. A value that is
+    already an instance of the target type is returned unchanged. Any
+    other value is converted through [`DataModelBase.from_other`][].
+    """
+
     _DEFAULT = DataModelBase
 
     def _convert(self, value: tx.Any) -> DataModelBase:

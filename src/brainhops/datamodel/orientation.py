@@ -32,7 +32,13 @@ from .enums import OrientationType
 
 
 class Orientation(DataModelBase, doc=True):
-    """"""
+    """Describes the orientation of an axis or a space.
+
+    An orientation has a `type`, drawn from [`OrientationType`][], that
+    names the frame of reference it belongs to. Its `value` identifies
+    the specific orientation within that frame, for example
+    `"left-to-right"` for an anatomical orientation.
+    """
 
     type: tx.Optional[OrientationType] = None
     value: tx.Optional[str] = None

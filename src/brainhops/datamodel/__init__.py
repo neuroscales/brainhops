@@ -29,7 +29,6 @@ __all__ = [
     "orientation",
     "systems",
     "transformations",
-    "typing",
     "units",
 ]
 

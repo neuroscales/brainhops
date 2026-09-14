@@ -1,9 +1,34 @@
 __all__ = [
     "CoordinateSystem",
+    "CoordinateSystem2D",
+    "CoordinateSystem3D",
+    "ArrayCoordinateSystem",
+    "CArrayCoordinateSystem",
+    "FArrayCoordinateSystem",
+    "ArrayCoordinateSystem2D",
+    "ArrayCoordinateSystem3D",
+    "CArrayCoordinateSystem2D",
+    "CArrayCoordinateSystem3D",
+    "FArrayCoordinateSystem2D",
+    "FArrayCoordinateSystem3D",
     "SpatialCoordinateSystem",
+    "SpatialCoordinateSystem2D",
     "SpatialCoordinateSystem3D",
+    "PixelCoordinateSystem",
+    "VoxelCoordinateSystem",
+    "CPixelCoordinateSystem",
+    "FPixelCoordinateSystem",
+    "CVoxelCoordinateSystem",
+    "FVoxelCoordinateSystem",
     "RASCoordinateSystem",
     "LPSCoordinateSystem",
+    "RSACoordinateSystem",
+    "FRASCoordinateSystem",
+    "FLPSCoordinateSystem",
+    "FRSACoordinateSystem",
+    "CRASCoordinateSystem",
+    "CLPSCoordinateSystem",
+    "CRSACoordinateSystem",
 ]
 # externals
 import typing_extensions as tx
@@ -197,7 +222,13 @@ class FVoxelCoordinateSystem(
 
 
 class RASCoordinateSystem(SpatialCoordinateSystem3D):
-    # Used in NIfTI files, and many others.
+    """The RAS anatomical coordinate system.
+
+    Coordinates increase toward the right, the anterior, and the
+    superior directions. This coordinate system is used by NIfTI files,
+    and by many other neuroimaging formats.
+    """
+
     name: str = "RAS"
     axes: tx.Tuple[
         _axes.LeftToRightAxis,
@@ -207,7 +238,13 @@ class RASCoordinateSystem(SpatialCoordinateSystem3D):
 
 
 class LPSCoordinateSystem(SpatialCoordinateSystem3D):
-    # Used in ITK (and therefore also ANTs, Slicer, etc.)
+    """The LPS anatomical coordinate system.
+
+    Coordinates increase toward the left, the posterior, and the
+    superior directions. This coordinate system is used by ITK, and
+    therefore also by ANTs, 3D Slicer, and other ITK-based tools.
+    """
+
     name: str = "LPS"
     axes: tx.Tuple[
         _axes.RightToLeftAxis,
@@ -217,7 +254,13 @@ class LPSCoordinateSystem(SpatialCoordinateSystem3D):
 
 
 class RSACoordinateSystem(SpatialCoordinateSystem3D):
-    # Used in some (rare) Freesurfer LTAs.
+    """The RSA anatomical coordinate system.
+
+    Coordinates increase toward the right, the superior, and the
+    anterior directions. This coordinate system appears in some
+    FreeSurfer LTA files.
+    """
+
     name: str = "RSA"
     axes: tx.Tuple[
         _axes.LeftToRightAxis,
@@ -227,6 +270,12 @@ class RSACoordinateSystem(SpatialCoordinateSystem3D):
 
 
 class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
+    """Combines [`RASCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
+
+    This coordinate system describes an F-ordered voxel grid whose axes
+    already point in RAS order.
+    """
+
     name: str = "fRAS"
     axes: tx.Tuple[
         _axes.LeftToRightAxis,
@@ -240,6 +289,12 @@ class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
 
 
 class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
+    """Combines [`LPSCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
+
+    This coordinate system describes an F-ordered voxel grid whose axes
+    already point in LPS order.
+    """
+
     name: str = "fLPS"
     axes: tx.Tuple[
         _axes.RightToLeftAxis,
@@ -253,6 +308,12 @@ class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
 
 
 class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
+    """Combines [`RSACoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
+
+    This coordinate system describes an F-ordered voxel grid whose axes
+    already point in RSA order.
+    """
+
     name: str = "fRSA"
     axes: tx.Tuple[
         _axes.LeftToRightAxis,
@@ -266,6 +327,12 @@ class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
 
 
 class CRASCoordinateSystem(RASCoordinateSystem, CVoxelCoordinateSystem):
+    """Combines [`RASCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
+
+    This coordinate system describes a C-ordered voxel grid whose axes
+    already point in RAS order.
+    """
+
     name: str = "cRAS"
     axes: tx.Tuple[
         _axes.InferiorToSuperiorAxis,
@@ -279,6 +346,12 @@ class CRASCoordinateSystem(RASCoordinateSystem, CVoxelCoordinateSystem):
 
 
 class CLPSCoordinateSystem(LPSCoordinateSystem, CVoxelCoordinateSystem):
+    """Combines [`LPSCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
+
+    This coordinate system describes a C-ordered voxel grid whose axes
+    already point in LPS order.
+    """
+
     name: str = "cLPS"
     axes: tx.Tuple[
         _axes.InferiorToSuperiorAxis,
@@ -292,6 +365,12 @@ class CLPSCoordinateSystem(LPSCoordinateSystem, CVoxelCoordinateSystem):
 
 
 class CRSACoordinateSystem(RSACoordinateSystem, CVoxelCoordinateSystem):
+    """Combines [`RSACoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
+
+    This coordinate system describes a C-ordered voxel grid whose axes
+    already point in RSA order.
+    """
+
     name: str = "cRSA"
     axes: tx.Tuple[
         _axes.PosteriorToAnteriorAxis,
