@@ -37,6 +37,15 @@ class Image(DataModelBase):
         """The data type of the image data."""
         return self.data.dtype
 
+    @property
+    def grid(self) -> CartesianField:
+        """
+        The Cartesian field that defines the sampling grid of the image.
+
+        This is the grid of the image's geometry.
+        """
+        return self.geometry.grid
+
 
 class SingleScaleImage(Image):
     """Base class for all single-resolution images."""
@@ -72,8 +81,16 @@ class SingleScaleImage(Image):
         The preferred transformation.
 
         It is always the last transformation in the list.
-        Changing it appends the new transformation to the list (or
-        reorders the list if the value is an integer or a string).
+
+        Assigning a transformation appends it as the new preferred
+        transformation. Assigning an integer or a string selects an
+        existing transformation by position or by output-space name and
+        moves it to the end. Assigning a transformation that is already
+        in the list moves it to the end instead of adding a copy.
+
+        A transformation is recognized as already present by identity. A
+        distinct transformation that merely compares equal to one in the
+        list is appended as a new preferred transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -83,14 +100,25 @@ class SingleScaleImage(Image):
     def transformation(
         self, value: tx.Union[Transformation, int, str]
     ) -> None:
+        transformations = list(self.transformations)
         if isinstance(value, int):
-            value = self.transformations.pop(value)
+            value = transformations.pop(value)
         elif isinstance(value, str):
-            for i, x in enumerate(self.transformations):
+            for i, x in enumerate(transformations):
                 if getattr(x.output, "name", None) == value:
-                    value = self.transformations.pop(i)
+                    value = transformations.pop(i)
                     break
-        self.transformations.append(value)
+            else:
+                raise KeyError(
+                    f"no transformation with output space named {value!r}"
+                )
+        else:
+            for i, x in enumerate(transformations):
+                if x is value:
+                    del transformations[i]
+                    break
+        transformations.append(value)
+        self.transformations = transformations
 
     @property
     def geometry(self) -> Geometry:
@@ -117,7 +145,9 @@ class SingleScaleImage(Image):
 
     def reslice(
         self,
-        geometry: tx.Union[tx.Self, Geometry, Transformation],
+        geometry: tx.Optional[
+            tx.Union[tx.Self, Geometry, Transformation]
+        ] = None,
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
@@ -127,7 +157,7 @@ class SingleScaleImage(Image):
 
         Parameters
         ----------
-        geometry : Image | Geometry | Transformation
+        geometry : Image | Geometry | Transformation, optional
             Geometry of the output image.
 
             The geometry is a voxel-to-world transformation that defines
@@ -135,6 +165,8 @@ class SingleScaleImage(Image):
 
             If it is a `Geometry`, then it also defines the shape of the
             output image. Otherwise, the current shape of the image is used.
+
+            If it is `None`, the image is resampled onto its own grid.
         order : {0..5}
             The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
         bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
@@ -158,18 +190,26 @@ class SingleScaleImage(Image):
         opt = dict(order=order, bound=bound, coeff=coeff)
 
         # Guess geometry of output image
+        if geometry is None:
+            geometry = self.geometry
         if isinstance(geometry, Image):
             geometry = geometry.geometry
         if not isinstance(geometry, Geometry):
             geometry = Geometry((self.geometry.grid, geometry))
 
         # Compute voxel-to-voxel transformation and apply it to the data
-        transformation = self.transformation.inverse() @ geometry
+        transformation = (
+            self.transformation.inverse()
+            @ geometry.transformation
+            @ geometry.grid
+        )
         transformation = transformation.compute()
         new_data = pull(self.data, transformation.field, **opt)
-        return Image(data=new_data, transformation=geometry.transformation)
+        return SingleScaleImage(
+            data=new_data, transformations=[geometry.transformation]
+        )
 
-    def __call__(self, transform: Transformation) -> "Image":
+    def __call__(self, transform: Transformation) -> "SingleScaleImage":
         """
         Apply a transformation to the image, but do not compute.
 
@@ -191,24 +231,27 @@ class SingleScaleImage(Image):
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
-            transformations = self.transformations.copy()
+            transformations = list(self.transformations)
             transformations.append(transform)
         else:
             transformations = [transform]
-        return Image(data=self.data, transformations=transformations)
+        return SingleScaleImage(
+            data=self.data, transformations=transformations
+        )
 
     def __getitem__(
         self, index: tx.Tuple[tx.Union[int, slice, None], ...]
-    ) -> "Image":
+    ) -> "SingleScaleImage":
         """
         Index into the image data while preserving the geometry of the image.
         """
         data = self.data[index]
+        grid = self.grid
         transformations = [
-            Geometry((self.grid, xform))[index].transformation
+            Geometry((grid, xform))[index].transformation
             for xform in self.transformations
         ]
-        return Image(data=data, transformations=transformations)
+        return SingleScaleImage(data=data, transformations=transformations)
 
 
 class MultiScaleImage(Image):
@@ -229,7 +272,7 @@ class MultiScaleImage(Image):
             "to different world spaces. The last transformation in the list "
             "is the preferred one."
         ),
-    ] = []
+    ] = ()
 
     @property
     def data(self) -> ArrayProtocol:
@@ -262,8 +305,16 @@ class MultiScaleImage(Image):
         The preferred transformation.
 
         It is always the last transformation in the list.
-        Changing it appends the new transformation to the list (or
-        reorders the list if the value is an integer or a string).
+
+        Assigning a transformation appends it as the new preferred
+        transformation. Assigning an integer or a string selects an
+        existing transformation by position or by output-space name and
+        moves it to the end. Assigning a transformation that is already
+        in the list moves it to the end instead of adding a copy.
+
+        A transformation is recognized as already present by identity. A
+        distinct transformation that merely compares equal to one in the
+        list is appended as a new preferred transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -273,14 +324,25 @@ class MultiScaleImage(Image):
     def transformation(
         self, value: tx.Union[Transformation, int, str]
     ) -> None:
+        transformations = list(self.transformations)
         if isinstance(value, int):
-            value = self.transformations.pop(value)
+            value = transformations.pop(value)
         elif isinstance(value, str):
-            for i, x in enumerate(self.transformations):
+            for i, x in enumerate(transformations):
                 if getattr(x.output, "name", None) == value:
-                    value = self.transformations.pop(i)
+                    value = transformations.pop(i)
                     break
-        self.transformations.append(value)
+            else:
+                raise KeyError(
+                    f"no transformation with output space named {value!r}"
+                )
+        else:
+            for i, x in enumerate(transformations):
+                if x is value:
+                    del transformations[i]
+                    break
+        transformations.append(value)
+        self.transformations = transformations
 
     @property
     def geometry(self) -> Geometry:
@@ -296,18 +358,16 @@ class MultiScaleImage(Image):
         """
         return Geometry(
             (
-                CartesianField(
-                    shape=self.data.shape,
-                    input=self.transformation.input,
-                    output=self.transformation.input,
-                ),
+                self.images[0].geometry.grid,
                 self.transformation @ self.images[0].transformation,
             )
         )
 
     def reslice(
         self,
-        geometry: tx.Union[Image, Geometry, Transformation],
+        geometry: tx.Optional[
+            tx.Union[Image, Geometry, Transformation]
+        ] = None,
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
@@ -317,7 +377,7 @@ class MultiScaleImage(Image):
 
         Parameters
         ----------
-        geometry : Image | Geometry | Transformation
+        geometry : Image | Geometry | Transformation, optional
             Geometry of the highest-resolution level of the output image.
 
             The geometry is a voxel-to-world transformation that defines
@@ -325,6 +385,8 @@ class MultiScaleImage(Image):
 
             If it is a `Geometry`, then it also defines the shape of the
             output image. Otherwise, the current shape of the image is used.
+
+            If it is `None`, the image is resampled onto its own grid.
         intrinsic : Geometry | Transformation | None
             An optional transformation that defines the intrinsic geometry
             of the highest-resolution image in the output pyramid.

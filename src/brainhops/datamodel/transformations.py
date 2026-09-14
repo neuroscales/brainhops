@@ -45,6 +45,10 @@ from .base import DataModelBase
 from .enums import BoundaryCondition, InterpolationOrder
 from .systems import CoordinateSystem
 
+# `types.UnionType` (the runtime type of a PEP 604 `X | Y` union) only
+# exists on Python 3.10+. It is `None` on older interpreters.
+_UnionType = getattr(_t, "UnionType", None)
+
 if False:
     # This is an idea to implement a pipe-like syntax `a |p> b`.
     # It's not very pythonic!
@@ -1380,11 +1384,17 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
         return func(x1, x2)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _COMPOSERS.items():
-        if safe_get_origin(T1) in (tx.Union, _t.UnionType):
+        origin1 = safe_get_origin(T1)
+        if origin1 is tx.Union or (
+            _UnionType is not None and origin1 is _UnionType
+        ):
             T1s = tx.get_args(T1)
         else:
             T1s = (T1,)
-        if safe_get_origin(T2) in (tx.Union, _t.UnionType):
+        origin2 = safe_get_origin(T2)
+        if origin2 is tx.Union or (
+            _UnionType is not None and origin2 is _UnionType
+        ):
             T2s = tx.get_args(T2)
         else:
             T2s = (T2,)
