@@ -1,3 +1,3 @@
 # lta
 
-::: brainhops.io.transformations.lta
+::: brainhops.io.transformations.freesurfer.lta

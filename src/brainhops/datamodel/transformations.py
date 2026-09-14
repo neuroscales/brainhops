@@ -113,13 +113,6 @@ class Transformation(DataModelBase, reverse=True):
         that deforms an image from space A to space B, will actually
         map coordinates from space B to space A. In our model, this
         transformation would be represented as `Transform(input=B, output=A)`.
-
-    Parameters
-    ----------
-    input, output : CoordinateSystem, optional
-        The input and output coordinate systems of the transformation.
-        If not specified, they can be inferred from the context
-        (e.g., from the coordinate system of the image being transformed).
     """
 
     parameter_names: tx.Annotated[
