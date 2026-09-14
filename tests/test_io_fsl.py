@@ -22,11 +22,10 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.transformations.fsl import (  # noqa: E402
-    FLIRTTransform,
-    ImageGeometry,
-)
+from brainhops.datamodel import transformations as _xforms  # noqa: E402
+from brainhops.io.transformations.fsl import FLIRTTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
+    ImageGeometry,
     VoxelToScaledMM,
 )
 from brainhops.io.transformations.fsl.fnirt import (  # noqa: E402
@@ -265,32 +264,54 @@ def _warp(field, intent=2006):  # noqa: ANN001, ANN202
     return warp
 
 
-def _chain_at_voxels(warp, grid):  # noqa: ANN001, ANN202
-    """Evaluate the warp chain at each reference voxel centre."""
-    sequence = warp.transformations
-    field = np.asarray(sequence[1].field)
-    voxels = np.rint(grid).astype(int)
-    looked_up = field[voxels[..., 0], voxels[..., 1], voxels[..., 2]]
-    tail = _homogeneous(sequence[3]) @ _homogeneous(sequence[2])
-    return _apply(tail, looked_up)
+def _world_field(warp, reference=None):  # noqa: ANN001, ANN202
+    """The moving-RAS coordinate each reference voxel maps to.
+
+    The warp is a lazy sequence that maps reference RAS to moving RAS.
+    This feeds it the reference RAS coordinate of every voxel and computes
+    the sequence, which evaluates the spline basis of the warp field.
+    """
+    if reference is None:
+        reference = _image(REF_SHAPE, REF_AFFINE)
+    ref = ImageGeometry(reference)
+    shape = ref.shape
+    grid = np.stack(
+        np.meshgrid(*[np.arange(s) for s in shape], indexing="ij"), -1
+    ).astype(float)
+    ras = _apply(ref.vox2ras, grid)
+    sequence = _xforms.Sequence(
+        transformations=[_xforms.CoordinatesField(field=ras)]
+        + list(warp.transformations)
+    )
+    return np.asarray(sequence.compute().field)
 
 
 def test_fnirt_absolute_and_relative_agree() -> None:
     """A relative warp and its absolute form map to the same moving RAS."""
-    grid, absolute, relative = _fnirt_setup()
-    out_abs = _chain_at_voxels(_warp(absolute), grid)
-    out_rel = _chain_at_voxels(_warp(relative), grid)
+    _, absolute, relative = _fnirt_setup()
+    out_abs = _world_field(_warp(absolute))
+    out_rel = _world_field(_warp(relative))
     assert np.allclose(out_abs, out_rel, atol=1e-3)
 
 
 def test_fnirt_maps_to_moving_ras() -> None:
     """The stored coordinates convert to moving RAS via moving scaled-mm."""
-    grid, absolute, _ = _fnirt_setup()
+    _, absolute, _ = _fnirt_setup()
     mov_v2f = _fsl_vox2scaled(MOV_AFFINE, MOV_SHAPE, [1.5, 1.5, 3.0])
     mov_fsl2ras = MOV_AFFINE @ np.linalg.inv(mov_v2f)
     expected = _apply(mov_fsl2ras, absolute)
-    out = _chain_at_voxels(_warp(absolute), grid)
+    out = _world_field(_warp(absolute))
     assert np.allclose(out, expected, atol=1e-3)
+
+
+def test_fnirt_deformation_field_is_a_displacement_field() -> None:
+    """A dense warp reads as a first-order displacement field on its grid."""
+    _, absolute, _ = _fnirt_setup()
+    field = _warp(absolute).transformations[1]
+    assert type(field) is _xforms.DisplacementField
+    assert field.order == 1
+    assert field.coeff is False
+    assert np.asarray(field.field).shape == REF_SHAPE + (3,)
 
 
 def test_fnirt_detects_absolute_and_relative() -> None:
@@ -317,14 +338,14 @@ def test_fnirt_detects_absolute_and_relative() -> None:
 
 def test_fnirt_deformation_type_override() -> None:
     """A caller can force the interpretation of a warp field."""
-    grid, absolute, relative = _fnirt_setup()
+    _, absolute, relative = _fnirt_setup()
     forced_abs = _warp(absolute)
     forced_abs.deformation_type = "absolute"
     forced_rel = _warp(relative)
     forced_rel.deformation_type = "relative"
     assert np.allclose(
-        _chain_at_voxels(forced_abs, grid),
-        _chain_at_voxels(forced_rel, grid),
+        _world_field(forced_abs),
+        _world_field(forced_rel),
         atol=1e-3,
     )
 
@@ -368,15 +389,14 @@ def test_fnirt_field_is_dispatched() -> None:
 
 
 def test_fnirt_field_fixture_builds_a_chain() -> None:
-    """The real dense-field fixture reads into a four-step world chain."""
+    """The real dense-field fixture reads into a three-step world chain."""
     warp = io.transformations.load(data_dir / "fsl_field.nii.gz")
     warp.moving = _image((30, 30, 30), MOV_AFFINE)
     names = [type(t).__name__ for t in warp.transformations]
     assert names == [
-        "RASToVoxel",
-        "ScaledMMCoordinatesField",
-        "ScaledMMToVoxel",
-        "VoxelToRAS",
+        "RASToWarpField",
+        "DisplacementField",
+        "WarpFieldToRAS",
     ]
 
 
@@ -399,9 +419,91 @@ def test_coefficient_field_exposes_parameters() -> None:
     assert coef.initial_affine.shape == (4, 4)
 
 
-def test_coefficient_field_transformations_is_deferred() -> None:
+# The reference geometry the coefficient fixture was generated for: a
+# 2 mm reference (its pixel size, stored in the intent parameters, is 2).
+COEF_REF_AFFINE = np.array(
+    [[-2, 0, 0, 40], [0, 2, 0, -40], [0, 0, 2, -40], [0, 0, 0, 1]], float
+)
+COEF_REF_SHAPE = (40, 40, 40)
+
+
+def test_coefficient_field_needs_both_images() -> None:
+    """Placing a coefficient field needs the reference and moving images."""
     coef = io.transformations.load(data_dir / "fsl_coef.nii.gz")
-    with pytest.raises(NotImplementedError, match="B-spline basis"):
+    with pytest.raises(ValueError, match="moving image is needed"):
+        _ = coef.transformations
+    coef.moving = _image((30, 30, 30), MOV_AFFINE)
+    with pytest.raises(ValueError, match="reference image is needed"):
+        _ = coef.transformations
+
+
+def test_coefficient_field_resolves_to_a_usable_transform() -> None:
+    """A cubic coefficient field reads into a spline displacement chain."""
+    coef = io.transformations.load(
+        data_dir / "fsl_coef.nii.gz",
+        reference=_image(COEF_REF_SHAPE, COEF_REF_AFFINE),
+        moving=_image((30, 30, 30), MOV_AFFINE),
+    )
+    chain = coef.transformations
+    names = [type(t).__name__ for t in chain]
+    assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
+    field = chain[1]
+    # The coefficients stay on the coarse knot grid, evaluated as a
+    # third-order spline of coefficients when the chain is computed.
+    assert type(field) is _xforms.DisplacementField
+    assert field.order == 3
+    assert field.coeff is True
+    assert np.asarray(field.field).shape == (11, 11, 11, 3)
+    # The chain computes to a finite moving-RAS field over the reference.
+    world = _world_field(
+        coef, reference=_image(COEF_REF_SHAPE, COEF_REF_AFFINE)
+    )
+    assert np.all(np.isfinite(world))
+
+
+def test_coefficient_field_matches_fnirtfileutils() -> None:
+    """Evaluating the spline reproduces fslpy's expanded deformation."""
+    fsl_image = pytest.importorskip("fsl.data.image")
+    fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
+
+    ref_img = _image(COEF_REF_SHAPE, COEF_REF_AFFINE)
+    mov_img = _image((30, 30, 30), MOV_AFFINE)
+    coef = io.transformations.load(
+        data_dir / "fsl_coef.nii.gz", reference=ref_img, moving=mov_img
+    )
+    out = _world_field(coef, reference=ref_img)
+
+    # fslpy's fnirtfileutils-equivalent expansion, taken to moving RAS.
+    fref = fsl_image.Image(
+        np.zeros(COEF_REF_SHAPE, np.float32), xform=COEF_REF_AFFINE
+    )
+    fsrc = fsl_image.Image(
+        np.zeros((30, 30, 30), np.float32), xform=MOV_AFFINE
+    )
+    field = fsl_fnirt.readFnirt(
+        str(data_dir / "fsl_coef.nii.gz"), src=fsrc, ref=fref
+    )
+    absolute = field.asDeformationField(defType="absolute", premat=True)
+    src_fsl = np.asarray(absolute.data).reshape(-1, 3)
+    mov = ImageGeometry(mov_img)
+    oracle = _apply(mov.fsl2ras, src_fsl).reshape(COEF_REF_SHAPE + (3,))
+    assert np.allclose(out, oracle, atol=1e-4)
+
+
+def test_dct_coefficient_field_is_refused() -> None:
+    """A discrete-cosine coefficient field is recognized but refused."""
+    img = nb.load(str(data_dir / "fsl_coef.nii.gz"))
+    img = nb.Nifti1Image(
+        np.asarray(img.dataobj, np.float32), img.affine, img.header
+    )
+    img.header["intent_code"] = 2008
+    coef = FNIRTCoefficientField.from_nibabel(img)
+    coef.reference = _image(COEF_REF_SHAPE, COEF_REF_AFFINE)
+    coef.moving = _image((30, 30, 30), MOV_AFFINE)
+    # Recognized as a coefficient field, and inspectable without raising.
+    assert type(coef) is FNIRTCoefficientField
+    assert list(coef) == []
+    with pytest.raises(NotImplementedError, match="discrete-cosine"):
         _ = coef.transformations
 
 

@@ -7,10 +7,11 @@ Both express displacements in FSL scaled-mm coordinates.
 
 __all__ = [
     "FNIRTTransformation",
+    "FNIRTWarpField",
     "FNIRTDeformationField",
     "FNIRTCoefficientField",
 ]
 
-from ._base import FNIRTTransformation
+from ._base import FNIRTTransformation, FNIRTWarpField
 from ._coeff import FNIRTCoefficientField
 from ._warp import FNIRTDeformationField

@@ -10,25 +10,19 @@ from brainhops.backends import get_array_backend
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
+
+# io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
 from brainhops.io.base.parsers import Confidence
 
-# io
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-
-from .._affines import ImageGeometry, ScaledMMToVoxel
-from .._fields import ScaledMMCoordinatesField
+from .._affines import ImageGeometry
 from .._repr import stored_repr
-from ._base import FSL_FNIRT_DISPLACEMENT_FIELD, FNIRTTransformation
+from ._base import FSL_FNIRT_DISPLACEMENT_FIELD, FNIRTWarpField
 
 
 @register_format
-class FNIRTDeformationField(
-    FNIRTTransformation,
-    _xforms.Sequence,
-    mapping=HIDE_IF_NONE,
-):
+class FNIRTDeformationField(FNIRTWarpField, mapping=HIDE_IF_NONE):
     """A FNIRT deformation (warp) field stored in a NIfTI file.
 
     The field is defined on the reference image grid, and each voxel
@@ -39,9 +33,10 @@ class FNIRTDeformationField(
     which, so the storage type is inferred from the data, and can be
     overridden with `deformation_type`.
 
-    The reader returns a sequence of transformations that maps
-    reference-image world (RAS) coordinates to moving-image world (RAS)
-    coordinates.
+    A deformation field is a first-order B-spline field on the reference
+    grid. The reader represents it as a displacement field, and returns a
+    sequence of transformations that maps reference-image world (RAS)
+    coordinates to moving-image world (RAS) coordinates.
     """
 
     deformation_type: tx.Optional[str] = None
@@ -54,42 +49,45 @@ class FNIRTDeformationField(
             return Confidence.CERTAIN
         return Confidence.NO
 
-    @property
-    def transformations(self) -> tx.List[_xforms.Transformation]:
-        """The transformations mapping reference RAS to moving RAS.
+    # --- warp pieces --------------------------------------------------
 
-        Reading this property resolves the chain from the warp data and
-        the moving image geometry. It raises when the moving image is
-        missing. The chain is recomputed on each access, so a later
-        change to `deformation_type` or an input image is reflected.
-        """
-        explicit = getattr(self, "_transformations", None)
-        if explicit is not None:
-            return explicit
+    def _spline_order(self) -> int:
+        return 1
 
-        if self.header is None:
-            return []
-        if self.moving is None:
-            raise ValueError(
-                "A FNIRT warp maps to the moving image, whose geometry the "
-                "warp file does not contain, so the moving image is needed "
-                "to place the warp in world coordinates. Pass moving=... "
-                "when loading, or set it on the transformation."
-            )
+    def _field_coeff(self) -> bool:
+        return False
 
+    def _field_bound(self) -> tx.Union[str, float]:
+        return "nearest"
+
+    def _ref_to_field(self, ref: ImageGeometry) -> np.ndarray:
+        # The field is stored on the reference grid, so the warp grid is
+        # the reference grid and the two coincide.
+        return np.eye(4, dtype=np.float64)
+
+    def _initial_affine(self) -> np.ndarray:
+        # A deformation field already has the initial FLIRT affine folded
+        # into its displacements, so nothing more is applied here.
+        return np.eye(4, dtype=np.float64)
+
+    def _reference_geometry(self) -> ImageGeometry:
         reference = self.reference
         if reference is None:
             reference = self.header
-        ref = ImageGeometry(reference)
-        mov = ImageGeometry(self.moving)
+        return ImageGeometry(reference)
 
+    def _raw_field(self) -> np.ndarray:
         backend = get_array_backend()
         field = backend.asarray(self.data)
         # A NIfTI vector field is often five-dimensional, with a singleton
         # axis before the three components. Collapse it to `(nx, ny, nz, 3)`.
         if field.ndim == 5 and field.shape[3] == 1:
             field = field[:, :, :, 0, :]
+        return field
 
+    def _field_array(self, ref: ImageGeometry) -> np.ndarray:
+        backend = get_array_backend()
+        field = self._raw_field()
         shape = tuple(int(s) for s in field.shape[:3])
         ref_scaled = _voxel_grid_in_scaled_mm(shape, ref.vox2fsl, backend)
 
@@ -98,45 +96,18 @@ class FNIRTDeformationField(
             deformation_type = _detect_deformation_type(field, ref_scaled)
 
         if deformation_type == "absolute":
-            absolute = field
-        elif deformation_type == "relative":
-            absolute = field + ref_scaled
-        else:
-            raise ValueError(
-                'deformation_type must be "absolute", "relative" or None, '
-                f"not {deformation_type!r}."
-            )
+            return np.asarray(field - ref_scaled, dtype=np.float64)
+        if deformation_type == "relative":
+            return np.asarray(field, dtype=np.float64)
+        raise ValueError(
+            'deformation_type must be "absolute", "relative" or None, '
+            f"not {deformation_type!r}."
+        )
 
-        return [
-            RASToVoxel(matrix=ref.ras2vox[:-1]),
-            ScaledMMCoordinatesField(field=absolute),
-            ScaledMMToVoxel(matrix=mov.fsl2vox[:-1]),
-            VoxelToRAS(matrix=mov.vox2ras[:-1]),
-        ]
-
-    @transformations.setter
-    def transformations(
-        self, value: tx.Optional[tx.List[_xforms.Transformation]]
-    ) -> None:
-        self._transformations = None if value is None else list(value)
-
-    def _inspect(self) -> tx.List[_xforms.Transformation]:
-        """The transformations for repr, length and iteration.
-
-        Returns the resolved chain when the warp data and moving image
-        are present and the deformation type is one it can interpret, an
-        explicitly assigned list when one was set, and an empty list
-        otherwise. Inspecting an incompletely specified warp therefore
-        does not raise.
-        """
-        explicit = getattr(self, "_transformations", None)
-        if explicit is not None:
-            return explicit
+    def _resolvable(self) -> bool:
         if self.header is None or self.moving is None:
-            return []
-        if self.deformation_type not in (None, "absolute", "relative"):
-            return []
-        return self.transformations
+            return False
+        return self.deformation_type in (None, "absolute", "relative")
 
     def __repr__(self) -> str:
         return stored_repr(self, ("deformation_type", "moving", "reference"))

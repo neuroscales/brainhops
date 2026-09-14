@@ -9,7 +9,6 @@ transformation as a NIfTI warp field or coefficient field.
 
 __all__ = [
     "FSLCoordinateSystem",
-    "ImageGeometry",
     "flirt",
     "fnirt",
     "FLIRTTransform",
@@ -18,7 +17,6 @@ __all__ = [
 ]
 
 from . import flirt, fnirt
-from ._affines import ImageGeometry
 from ._systems import FSLCoordinateSystem
 from .flirt import FLIRTTransform
 from .fnirt import FNIRTCoefficientField, FNIRTDeformationField

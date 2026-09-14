@@ -7,13 +7,22 @@ from bagof.magic import HIDE_IF_NONE, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
+from brainhops._core.typing import ArrayLike
+
+# datamodel
+from brainhops.datamodel.images import Image
 
 # io
+from brainhops.io.base.nifti import _NiftiObject
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
     TextFileParser,
 )
+
+# The moving and reference images may be a nibabel header or image, or a
+# brainhops image. This is the type FLIRT accepts for either of them.
+_ImageLike = tx.Union[_NiftiObject, Image]
 
 
 class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
@@ -25,14 +34,20 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     matrix to be turned into a world-space transformation.
     """
 
-    matrix: tx.Optional[tx.Any] = None
-    """The raw `(4, 4)` FLIRT matrix, as read from the file."""
+    matrix: tx.Optional[ArrayLike] = None
+    """The raw `(4, 4)` FLIRT matrix, as read from the file.
 
-    moving: tx.Optional[tx.Any] = None
-    """The moving (source) image, a nibabel image or header."""
+    An array-like of shape `(4, 4)`. It is converted to a NumPy array and
+    used to build the world-space transformation chain.
+    """
 
-    reference: tx.Optional[tx.Any] = None
-    """The reference image, a nibabel image or header."""
+    moving: tx.Optional[_ImageLike] = None
+    """The moving (source) image, a nibabel image or header, or a
+    brainhops image."""
+
+    reference: tx.Optional[_ImageLike] = None
+    """The reference image, a nibabel image or header, or a brainhops
+    image."""
 
     # --- sniff --------------------------------------------------------
 
