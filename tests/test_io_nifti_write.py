@@ -7,7 +7,6 @@ should all survive a save-and-reload round trip. A transformation that
 NIfTI cannot represent should be refused rather than silently resampled.
 """
 
-import struct
 import warnings
 
 import numpy as np
@@ -491,20 +490,16 @@ def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: A
     template.set_sform(np.diag([9.0, 9.0, 9.0, 1.0]), code=2)
     template["descrip"] = b"from the template"
     template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
-    template["scl_slope"] = 2.0
-    template["scl_inter"] = 1.0
 
     image = NiftiImage(
         data=np.zeros((3, 4, 5), dtype="float32"),
         transformations=[Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])],
     )
 
-    # The produced header carries the template's non-geometry fields.
+    # The produced header carries the template's non-encoding fields.
     built = image.to_nibabel(like=template)
     assert built.header["descrip"].tobytes().startswith(b"from the template")
     assert int(built.header["intent_code"]) == 1011
-    assert float(built.header["scl_slope"]) == 2.0
-    assert float(built.header["scl_inter"]) == 1.0
 
     # The geometry is the object's, not the template's diag(9, 9, 9).
     target = tmp_path / "out.nii"
@@ -515,45 +510,120 @@ def test_like_copies_non_geometry_but_not_geometry(tmp_path) -> None:  # noqa: A
     assert int(reloaded["intent_code"]) == 1011
 
 
-def _write_malformed_extension(path) -> None:  # noqa: ANN001
-    """Write a NIfTI file whose one extension has a non-16-byte size."""
-    valid = nb.Nifti1Image(np.zeros((3, 4, 5), dtype="float32"), np.eye(4))
-    raw = bytearray(nb.Nifti1Image.to_bytes(valid))
-    header = raw[:352]
-    header[348] = 1  # turn the extension flag on
-    esize = 20  # not a multiple of 16
-    extension = struct.pack("<ii", esize, 6) + b"malformed zz"[: esize - 8]
-    data = np.zeros((3, 4, 5), dtype="float32").tobytes(order="F")
-    out = bytearray(header) + bytearray(extension) + bytearray(data)
-    struct.pack_into("<f", out, 108, float(352 + esize))  # vox_offset
-    path.write_bytes(bytes(out))
-
-
-def test_a_clean_save_does_not_warn_about_extension_size(tmp_path) -> None:  # noqa: ANN001
+def test_like_does_not_rescale_the_data(tmp_path) -> None:  # noqa: ANN001
     """
-    Saving does not propagate a malformed extension from the source.
+    A template's data scaling must not rescale the written values.
 
-    A source header can carry an extension whose stored size is not a
-    multiple of 16 bytes, which makes `nibabel` warn on every read. The
-    writer must not carry such an extension into the written file, so the
-    save itself emits no such warning.
+    A `like` header can carry `scl_slope` and `scl_inter`, which reinterpret
+    every stored value. Copying them would corrupt the data, so they are not
+    taken from the template. An array of ones is read back as ones, not as
+    `slope * 1 + inter`.
     """
-    source = tmp_path / "malformed.nii"
-    _write_malformed_extension(source)
+    template = nb.Nifti1Header()
+    template["scl_slope"] = 2.0
+    template["scl_inter"] = 1.0
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        loaded = io.images.load(source)
+    image = NiftiImage(
+        data=np.ones((3, 4, 5), dtype="float32"),
+        transformations=[Affine(matrix=np.eye(3, 4))],
+    )
+    target = tmp_path / "ones.nii"
+    image.save(target, like=template)
 
-    target = tmp_path / "clean.nii"
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        loaded.save(target)
-    messages = [str(w.message) for w in caught]
-    assert not any("multiple of 16" in message for message in messages)
+    assert np.allclose(nb.load(str(target)).get_fdata(), 1.0)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        # Reloading and parsing the header must not warn either.
-        reloaded = nb.load(str(target))
-        assert list(reloaded.header.extensions) == []
+
+def test_the_unit_scale_comes_from_the_preferred_transform(tmp_path) -> None:  # noqa: ANN001
+    """
+    The written unit is the preferred transformation's, not another edge's.
+
+    An image can carry several voxel-to-world edges in different units. The
+    stored unit and its scale come from the preferred transformation. A
+    centimeter preferred sform is written as ten-scaled millimeters even
+    when a separate millimeter edge is present.
+    """
+    ras_cm = replace(
+        RASCoordinateSystem(),
+        axes=[
+            replace(axis, unit=SpaceUnit("centimeter"))
+            for axis in RASCoordinateSystem().axes
+        ],
+    )
+    scanner_mm = Affine(
+        matrix=np.eye(3, 4),
+        input=VoxelCoordinateSystem(),
+        output=replace(RASCoordinateSystem(), name="scanner"),
+    )
+    preferred_cm = Affine(
+        matrix=np.eye(3, 4),
+        input=VoxelCoordinateSystem(),
+        output=ras_cm,
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[scanner_mm, preferred_cm],
+    )
+    target = tmp_path / "mixed.nii"
+    image.save(target)
+
+    header = nb.load(str(target)).header
+    assert header.get_xyzt_units()[0] == "mm"
+    assert np.allclose(np.diag(nb.load(str(target)).affine), [10, 10, 10, 1])
+
+
+def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: ANN001
+    """
+    Any anatomical orientation triple is reoriented to RAS from the axes.
+
+    The axes here point anterior, right and superior, which is neither RAS,
+    LPS nor RSA. The written affine permutes the first two axes so the
+    result maps voxels to RAS.
+    """
+    from brainhops.datamodel import axes as _axes
+
+    ars = CoordinateSystem(name=None, axes=[_axes.A, _axes.R, _axes.S])
+    affine = Affine(
+        matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
+        input=VoxelCoordinateSystem(),
+        output=ars,
+    )
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[affine],
+    )
+    target = tmp_path / "ars.nii"
+    image.save(target)
+
+    expected = np.array(
+        [
+            [0.0, 3.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 4.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    assert np.allclose(nb.load(str(target)).affine, expected)
+
+
+def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # noqa: ANN001
+    """
+    An explicit header override wins over both the object and a template.
+
+    The stored data type and the intent are set from keyword arguments,
+    which are applied after the derived values and after `like`, so they
+    override both. The array's own data type is kept when no override is
+    given.
+    """
+    template = nb.Nifti1Header()
+    template.set_intent(1011)  # NIFTI_INTENT_ESTIMATE
+
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5), dtype="float32"),
+        transformations=[Affine(matrix=np.eye(3, 4))],
+    )
+    target = tmp_path / "override.nii"
+    image.save(target, like=template, dtype="int16", intent=2001)
+
+    header = nb.load(str(target)).header
+    assert header.get_data_dtype() == np.dtype("int16")
+    assert int(header["intent_code"]) == 2001

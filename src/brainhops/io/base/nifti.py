@@ -738,9 +738,9 @@ def _sform_and_qform(
     transformations: tx.Sequence[Transformation],
     sform: np.ndarray,
     scode: int,
-) -> tx.Tuple[np.ndarray, int]:
+) -> tx.Tuple[np.ndarray, int, tx.Optional[CoordinateSystem]]:
     """
-    Choose the qform matrix and code to store alongside an sform.
+    Choose the qform matrix, code and world space to store with an sform.
 
     The matrix and the code always describe the same world space. The
     first transformation other than the preferred one whose world space is
@@ -748,89 +748,127 @@ def _sform_and_qform(
     edge the reader names "qform" provides the matrix, under the sform's
     code. Failing that, the qform is the sform, which `nibabel` reduces to
     its rigid part, under the sform's code.
+
+    The world space that supplies the matrix is returned alongside it, so
+    the caller can read the qform's own spatial unit rather than assuming
+    it matches the sform's.
     """
     preferred = transformations[-1] if transformations else None
 
     for xform in transformations:
         if xform is preferred:
             continue
-        name = getattr(getattr(xform, "output", None), "name", None)
+        output = getattr(xform, "output", None)
+        name = getattr(output, "name", None)
         if _NIFTI_XFORM_CODE_BY_NAME.get(name):
-            return _voxel_to_ras(xform), _NIFTI_XFORM_CODE_BY_NAME[name]
+            return (
+                _voxel_to_ras(xform),
+                _NIFTI_XFORM_CODE_BY_NAME[name],
+                output,
+            )
 
     for xform in transformations:
-        name = getattr(getattr(xform, "output", None), "name", None)
-        if name == _QFORM_NAME:
-            return _voxel_to_ras(xform), scode
+        output = getattr(xform, "output", None)
+        if getattr(output, "name", None) == _QFORM_NAME:
+            return _voxel_to_ras(xform), scode, output
 
-    return sform, scode
+    return sform, scode, getattr(preferred, "output", None)
 
 
-def _xyzt_units(
-    transformations: tx.Sequence[Transformation],
-) -> tx.Tuple[str, str, float]:
+def _nifti_space_label(name: str, unit: tx.Any) -> tx.Optional[str]:
     """
-    Read the spatial and temporal NIfTI unit labels off the axes.
+    The NIfTI spatial label a unit is stored under, or `None`.
+
+    A unit NIfTI can store directly returns its own label. A spatial unit
+    outside NIfTI's set returns the label of the nearest of NIfTI's three
+    spatial units, measured in log space. A unit that is not spatial, or
+    whose size is unknown, returns `None`.
+    """
+    if name in _NIFTI_SPACE_UNITS:
+        return _NIFTI_SPACE_UNITS[name]
+    meters = getattr(unit, "scale", None)
+    if getattr(unit, "type", None) != "space":
+        return None
+    if not isinstance(meters, (int, float)) or meters <= 0:
+        return None
+    label, _ = min(
+        _NIFTI_SPACE_UNIT_METERS.items(),
+        key=lambda item: abs(log10(meters) - log10(item[1])),
+    )
+    return label
+
+
+def _space_unit_meters(
+    system: tx.Optional[CoordinateSystem],
+) -> tx.Optional[float]:
+    """
+    The size in meters of a world space's first spatial unit, or `None`.
+
+    A NIfTI spatial label carried directly on an axis resolves to its own
+    size in meters. Any other spatial unit resolves to its `scale`, which
+    the unit reports in meters. A space with no usable spatial unit returns
+    `None`.
+    """
+    for axis in getattr(system, "axes", None) or ():
+        unit = getattr(axis, "unit", None)
+        name = getattr(unit, "name", None)
+        if not isinstance(name, str):
+            continue
+        for label, meters in _NIFTI_SPACE_UNIT_METERS.items():
+            if _NIFTI_SPACE_UNITS.get(name) == label:
+                return meters
+        if getattr(unit, "type", None) == "space":
+            meters = getattr(unit, "scale", None)
+            if isinstance(meters, (int, float)) and meters > 0:
+                return meters
+    return None
+
+
+def _xyzt_labels(
+    system: tx.Optional[CoordinateSystem],
+) -> tx.Tuple[str, str]:
+    """
+    The NIfTI spatial and temporal labels for a world space.
 
     The first spatial axis that carries a usable unit gives the spatial
     label, and the first temporal axis that carries a representable unit
     gives the temporal label. An axis with no usable unit leaves the label
-    "unknown".
-
-    A spatial unit that NIfTI cannot store, such as a centimeter, is
-    converted to the nearest of NIfTI's three spatial units. The returned
-    scale factor is what the affine is multiplied by so the stored geometry
-    keeps the same physical size. A unit NIfTI can store directly leaves
-    the scale factor at `1`.
+    "unknown". The labels are read from one world space, the preferred
+    transformation's output, so a different edge does not change them.
     """
     space = "unknown"
     time = "unknown"
-    scale = 1.0
-    for xform in transformations:
-        for system in (
-            getattr(xform, "input", None),
-            getattr(xform, "output", None),
-        ):
-            for axis in getattr(system, "axes", None) or ():
-                unit = getattr(axis, "unit", None)
-                name = getattr(unit, "name", None)
-                if not isinstance(name, str):
-                    continue
-                if space == "unknown":
-                    label, factor = _nifti_space_unit(name, unit)
-                    if label is not None:
-                        space, scale = label, factor
-                        continue
-                if time == "unknown" and name in _NIFTI_TIME_UNITS:
-                    time = _NIFTI_TIME_UNITS[name]
-    return space, time, scale
+    for axis in getattr(system, "axes", None) or ():
+        unit = getattr(axis, "unit", None)
+        name = getattr(unit, "name", None)
+        if not isinstance(name, str):
+            continue
+        if space == "unknown":
+            label = _nifti_space_label(name, unit)
+            if label is not None:
+                space = label
+                continue
+        if time == "unknown" and name in _NIFTI_TIME_UNITS:
+            time = _NIFTI_TIME_UNITS[name]
+    return space, time
 
 
-def _nifti_space_unit(
-    name: str, unit: tx.Any
-) -> tx.Tuple[tx.Optional[str], float]:
+def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     """
-    The NIfTI spatial label and affine scale factor for a spatial unit.
+    The factor that rescales a world space's affine into a NIfTI unit.
 
-    A unit NIfTI can store directly returns its label and a scale factor of
-    `1`. A spatial unit outside NIfTI's set returns the label of the
-    nearest NIfTI spatial unit and the factor that rescales the affine to
-    it. A unit that is not spatial, or whose size is unknown, returns
-    `None`.
+    A world space measured in one spatial unit is stored under the NIfTI
+    label `label`, which is a different unit. The affine is multiplied by
+    this factor so the stored geometry keeps the same physical size. A
+    space whose unit is unknown, or a label NIfTI cannot store, leaves the
+    factor at `1`.
     """
-    if name in _NIFTI_SPACE_UNITS:
-        return _NIFTI_SPACE_UNITS[name], 1.0
-    meters = getattr(unit, "scale", None)
-    unit_type = getattr(unit, "type", None)
-    if unit_type != "space":
-        return None, 1.0
-    if not isinstance(meters, (int, float)) or meters <= 0:
-        return None, 1.0
-    label, base = min(
-        _NIFTI_SPACE_UNIT_METERS.items(),
-        key=lambda item: abs(log10(meters) - log10(item[1])),
-    )
-    return label, meters / base
+    if label not in _NIFTI_SPACE_UNIT_METERS:
+        return 1.0
+    meters = _space_unit_meters(system)
+    if meters is None:
+        return 1.0
+    return meters / _NIFTI_SPACE_UNIT_METERS[label]
 
 
 def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
@@ -872,13 +910,18 @@ def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
 
 def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
     """
-    Copy non-geometry header fields from a template onto an image.
+    Copy non-encoding header fields from a template onto an image.
 
     The geometry of the written image always comes from the object being
     written, so the sform, the qform and their codes are never copied. The
-    description, the data scaling, and the intent are taken from the
-    template. The intent is copied only when the image has none of its own,
-    so a field's own intent is preserved.
+    description is taken from the template. The intent is taken from the
+    template only when the image has none of its own, so a field's own
+    intent is preserved.
+
+    Fields that change how the voxels are read back are never copied. The
+    data scaling (`scl_slope`, `scl_inter`) rescales every value, and the
+    stored data type reinterprets the bytes, so both are left as the image
+    computed them from its own array.
 
     The image is returned so calls can be chained.
     """
@@ -886,11 +929,10 @@ def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
     if header is None:
         return image
     target = image.header
-    for field in ("descrip", "scl_slope", "scl_inter"):
-        try:
-            target[field] = header[field]
-        except (KeyError, ValueError):
-            pass
+    try:
+        target["descrip"] = header["descrip"]
+    except (KeyError, ValueError):
+        pass
     if int(target["intent_code"]) == 0:
         for field in (
             "intent_code",
@@ -906,30 +948,35 @@ def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
     return image
 
 
-def _strip_bad_extensions(image: _NiftiObject) -> _NiftiObject:
+def _apply_overrides(
+    image: _NiftiObject, overrides: tx.Mapping
+) -> _NiftiObject:
     """
-    Remove any header extension whose on-disk size is malformed.
+    Apply caller-supplied header overrides onto an image.
 
-    A NIfTI extension is stored in a block whose size is a multiple of 16
-    bytes. An extension copied verbatim from a source header can carry a
-    size that breaks that rule, which makes `nibabel` warn every time the
-    file is read. Such an extension is dropped so the written file is
-    clean. A well-formed extension is kept.
+    The overrides are applied last, after the derived geometry and after
+    any `like` template, so an explicit value always wins. `dtype` sets the
+    stored data type, `intent` sets the intent code, and `descrip` sets the
+    description. Any other name is written straight to the header field of
+    that name.
 
-    The image is returned so calls can be chained.
+    The array's own data type is kept unless `dtype` is given, so the
+    override is opt in. The image is returned so calls can be chained.
     """
-    extensions = getattr(image.header, "extensions", None)
-    if not extensions:
-        return image
-    kept = nb.nifti1.Nifti1Extensions()
-    for extension in list(extensions):
-        try:
-            size = extension.get_sizeondisk()
-        except Exception:
-            continue
-        if size % 16 == 0:
-            kept.append(extension)
-    image.header.extensions = kept
+    overrides = dict(overrides or {})
+    dtype = overrides.pop("dtype", None)
+    intent = overrides.pop("intent", None)
+    descrip = overrides.pop("descrip", None)
+    if dtype is not None:
+        image.header.set_data_dtype(dtype)
+    if intent is not None:
+        image.header.set_intent(intent)
+    if descrip is not None:
+        if isinstance(descrip, str):
+            descrip = descrip.encode("utf-8", "replace")
+        image.header["descrip"] = descrip
+    for field, value in overrides.items():
+        image.header[field] = value
     return image
 
 
@@ -938,6 +985,7 @@ def _image_with_geometry(
     transformation: Transformation,
     transformations: tx.Sequence[Transformation],
     like: tx.Any = None,
+    overrides: tx.Optional[tx.Mapping] = None,
 ) -> _NiftiObject:
     """
     Build a NIfTI image from data and its voxel-to-world geometry.
@@ -945,23 +993,33 @@ def _image_with_geometry(
     The preferred transformation becomes the sform, and its world space
     supplies the sform code. The qform is the rigid edge among the
     transformations when present, and the rigid part of the sform
-    otherwise. The spatial and temporal units are read off the axes, and a
-    spatial unit NIfTI cannot store is converted to one it can, scaling the
-    affine to match. Non-geometry header fields are taken from `like` when
-    it is given.
-    """
-    sform = _voxel_to_ras(transformation)
-    scode = _reference_code(getattr(transformation, "output", None))
-    qform, qcode = _sform_and_qform(transformations, sform, scode)
+    otherwise.
 
-    space, time, scale = _xyzt_units(transformations)
-    sform = _scale_spatial(sform, scale)
-    qform = _scale_spatial(qform, scale)
+    The spatial and temporal units are read from the preferred
+    transformation's output space. A spatial unit NIfTI cannot store is
+    converted to the nearest one it can, and each form's affine is scaled
+    from its own world space's unit, so the stored geometry keeps its
+    physical size.
+
+    Non-encoding header fields are taken from `like` when it is given, and
+    caller `overrides` are applied last so an explicit value wins.
+    """
+    preferred_output = getattr(transformation, "output", None)
+    space, time = _xyzt_labels(preferred_output)
+
+    sform_raw = _voxel_to_ras(transformation)
+    scode = _reference_code(preferred_output)
+    qform_raw, qcode, qform_output = _sform_and_qform(
+        transformations, sform_raw, scode
+    )
+
+    sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
+    qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     image = _new_nifti(data, sform)
     _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
-    _strip_bad_extensions(image)
+    _apply_overrides(image, overrides)
     return image

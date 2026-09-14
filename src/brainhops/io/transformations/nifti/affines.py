@@ -7,9 +7,9 @@ import typing_extensions as tx
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _apply_like,
+    _apply_overrides,
     _new_nifti,
     _NiftiObject,
-    _strip_bad_extensions,
     _voxel_to_ras,
 )
 from brainhops.io.base.parsers import Confidence
@@ -49,7 +49,9 @@ class _NiftiAffine(NiftiBasedTransformation):
                 return int(code)
         return 2
 
-    def to_nibabel(self, like: tx.Any = None, **kwargs) -> nb.Nifti1Image:
+    def to_nibabel(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
         Build a `nibabel` image whose affine is this transformation.
 
@@ -58,8 +60,9 @@ class _NiftiAffine(NiftiBasedTransformation):
         matrix becomes both the sform and the qform, under the code the
         source header recorded.
 
-        When `like` is given, non-geometry header fields are copied from it.
-        The geometry always comes from this transformation.
+        When `like` is given, non-encoding header fields are copied from it.
+        Keyword arguments override header fields last. The geometry always
+        comes from this transformation.
         """
         matrix = self._voxel_to_ras_matrix()
         data = np.zeros((1, 1, 1), dtype="float32")
@@ -68,7 +71,7 @@ class _NiftiAffine(NiftiBasedTransformation):
         _apply_like(image, like)
         image.header.set_sform(matrix, code=code)
         image.header.set_qform(matrix, code=code)
-        _strip_bad_extensions(image)
+        _apply_overrides(image, overrides)
         return image
 
 

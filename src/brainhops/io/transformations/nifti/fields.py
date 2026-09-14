@@ -11,11 +11,11 @@ from brainhops.io.base.nifti import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_DISPVECT,
     _apply_like,
+    _apply_overrides,
     _new_nifti,
     _nifti_intent,
     _nifti_shape,
     _NiftiObject,
-    _strip_bad_extensions,
 )
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.transformations.base.fields import RASCoordinatesField
@@ -60,7 +60,9 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         # `__init__` cannot assign the inherited `field` at all.
         self.data = value
 
-    def to_nibabel(self, like: tx.Any = None, **kwargs) -> nb.Nifti1Image:
+    def to_nibabel(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
         Build the `nibabel` image that encodes this field of RAS coordinates.
 
@@ -72,7 +74,9 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         The field array keeps its own array backend. A `cupy` or `dask`
         array is passed through rather than coerced into `numpy`. When
-        `like` is given, non-geometry header fields are copied from it.
+        `like` is given, non-encoding header fields are copied from it.
+        Keyword arguments override header fields last, so an explicit value
+        wins.
         """
         field = self.field
         if field is None:
@@ -94,5 +98,5 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         image = _new_nifti(field, affine)
         image.header.set_intent(_NIFTI_INTENT_DISPVECT)
         _apply_like(image, like)
-        _strip_bad_extensions(image)
+        _apply_overrides(image, overrides)
         return image
