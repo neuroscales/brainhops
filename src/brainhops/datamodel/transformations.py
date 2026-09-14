@@ -374,6 +374,13 @@ class CartesianField(CoordinatesField):
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
+    # `field` is computed on demand from `shape` by the property below,
+    # so it is not a stored, constructor-taken field here. Declaring it a
+    # `ClassVar` overrides the inherited init-field from `CoordinatesField`
+    # and keeps `field` out of `__init__`, `fields()` and `replace()`,
+    # while the property keeps serving reads.
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
         if self.shape is None:
