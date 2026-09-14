@@ -12,6 +12,7 @@ from brainhops.datamodel import _xform_converters as xc
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    CartesianField,
     DisplacementField,
     Sequence,
     Translation,
@@ -66,6 +67,33 @@ def test_same_type_conversion_without_overrides_is_passthrough() -> None:
     assert affine.to(Affine) is affine
 
 
+def test_cartesian_field_same_type_rebuild_keeps_shape() -> None:
+    # A CartesianField serves `field` through a property backed by
+    # `shape`, and its setter rejects a non-None `field`. The rebuild
+    # must route to the CartesianField converter (which drops `field`),
+    # not the generic CoordinatesField one that feeds the generated
+    # field back into the constructor and raises.
+    system = CoordinateSystem(name="grid")
+    rebuilt = CartesianField(shape=(4, 5)).to(input=system)
+    assert isinstance(rebuilt, CartesianField)
+    assert rebuilt.shape == (4, 5)
+    assert rebuilt.input is system
+    assert rebuilt.field.shape == (4, 5, 2)
+
+
+def test_cartesian_field_flattens_and_computes_in_a_sequence() -> None:
+    output = CoordinateSystem(name="B")
+    affine = Affine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    seq = Sequence(
+        transformations=[affine, CartesianField(shape=(4, 5))],
+        output=output,
+    )
+    # `compute` flattens the sequence first, which rebuilds the
+    # CartesianField through the same-type converter.
+    result = seq.compute()
+    assert result is not None
+
+
 def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     # The value-to-coefficient conversion is deliberately non-idempotent.
     # Rebuilding through ``replace`` must reuse the already-converted
@@ -83,3 +111,11 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     assert coeffs.coeff is True
     assert calls["count"] == 1
     np.testing.assert_allclose(coeffs.field, values + 1.0)
+
+    # Passing `field=` explicitly supplies the already-converted field,
+    # so the conversion is suppressed rather than run a second time.
+    calls["count"] = 0
+    supplied = np.full((5, 6, 2), 7.0)
+    result = field.to(coeff=True, field=supplied)
+    assert calls["count"] == 0
+    np.testing.assert_allclose(result.field, supplied)

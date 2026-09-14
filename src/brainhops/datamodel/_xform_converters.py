@@ -9,6 +9,7 @@ from brainhops.backends import get_array_backend
 # locals
 from .transformations import (
     Affine,
+    CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -64,6 +65,15 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
     return replace(t, **kwargs)
+
+
+@_converter
+def _(t: CartesianField, **kwargs) -> CartesianField:
+    # A CartesianField generates its `field` on demand from `shape`, and
+    # its setter rejects any non-None `field`. A rebuild therefore drops
+    # the generated field and lets the new instance regenerate it.
+    kwargs.pop("field", None)
+    return replace(t, field=None, **kwargs)
 
 
 # ----------------------------------------------------------------------
