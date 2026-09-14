@@ -4,6 +4,7 @@ from io import BytesIO
 from os import PathLike
 
 # dependencies
+import h5py
 import numpy as np
 import typing_extensions as tx
 
@@ -26,19 +27,6 @@ from brainhops.io.base.parsers import (
 
 # locals
 from .._common import ITKStruct, ITKTransformClass
-
-# optional
-if tx.TYPE_CHECKING:
-    import h5py
-else:
-    try:
-        import h5py
-    except ImportError:
-
-        class h5py:
-            File = None
-            Dataset = None
-
 
 # typing
 _H5Like = tx.Union[
@@ -95,7 +83,7 @@ class H5TransformParser(
     # --- sniff --------------------------------------------------------
 
     @classmethod
-    def _sniff_h5(
+    def sniff_h5(
         cls,
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
@@ -117,7 +105,7 @@ class H5TransformParser(
         **kwargs,
     ) -> float:
         if isinstance(file, h5py.File):
-            return cls._sniff_h5(file, error=error)
+            return cls.sniff_h5(file, error=error)
 
         if isinstance(file, str):
             file = path.Path(file)
@@ -136,7 +124,7 @@ class H5TransformParser(
                     raise error(f"Not an HDF5 file: {file}")
                 return Confidence.NO
             with h5py.File(str(file), "r") as f:
-                return cls._sniff_h5(f, error=error)
+                return cls.sniff_h5(f, error=error)
 
         return cls.sniff_fileobj(file, error=error, **kwargs)
 
@@ -150,7 +138,7 @@ class H5TransformParser(
         with preserve_position(file):
             try:
                 with h5py.File(file, "r") as f:
-                    return cls._sniff_h5(f, error=error)
+                    return cls.sniff_h5(f, error=error)
             except Exception as e:
                 if error:
                     if error is True:

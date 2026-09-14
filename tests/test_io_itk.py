@@ -5,29 +5,22 @@ from pathlib import Path
 import pytest
 
 # internals
-import brainhops.io as io
-from brainhops.io.transformations.itk.tfm import TFMTransform
-
-try:
-    from brainhops.io.transformations.itk.h5 import H5Transform
-except ImportError:  # h5py is optional
-    H5Transform = None
+from brainhops import io
 
 data_dir = Path(__file__).parent / "data"
 
 FILES_H5 = list(data_dir.glob("*.h5"))
 FILES_TFM = list(data_dir.glob("*.tfm"))
 
-requires_h5py = pytest.mark.skipif(
-    H5Transform is None, reason="h5py is not installed"
-)
+TFMTransform = io.transformations.itk.tfm.TFMTransform
 
 
-@requires_h5py
 @pytest.mark.parametrize("filename", FILES_H5)
 @pytest.mark.parametrize("load", [True, False])
 @pytest.mark.parametrize("keep_open", [True, False])
 def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
+    pytest.importorskip("h5py")
+    H5Transform = io.transformations.itk.h5.H5Transform
     transform = H5Transform.from_file(filename, load=load, keep_open=keep_open)
     # trigger conversion
     transforms = transform.transformations  # noqa: F841
@@ -57,9 +50,10 @@ def test_tfm_is_dispatched(filename: str) -> None:
     assert type(io.load(filename)) is TFMTransform
 
 
-@requires_h5py
 @pytest.mark.parametrize("filename", FILES_H5)
 def test_h5_is_dispatched(filename: str) -> None:
+    pytest.importorskip("h5py")
+    H5Transform = io.transformations.itk.h5.H5Transform
     assert io.transformations.sniff(filename) is H5Transform
     assert io.sniff(filename) is H5Transform
     assert type(io.transformations.load(filename)) is H5Transform
