@@ -9,7 +9,13 @@ from brainhops.backends import get_array_backend
 # internals
 from .axes import Axis
 from .systems import CoordinateSystem
-from .transformations import Affine, CartesianField, Sequence, Transformation
+from .transformations import (
+    Affine,
+    CartesianField,
+    ModeLike,
+    Sequence,
+    Transformation,
+)
 
 
 class Geometry(Sequence):
@@ -70,6 +76,42 @@ class Geometry(Sequence):
             (self.grid, other @ self.transformation),
             input=self.grid.input,
             output=other.output,
+        )
+
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> tx.Self:
+        """
+        Compute the geometry by simplifying its transformation.
+
+        A `Geometry` holds a grid and a voxel-to-world transformation. The
+        transformation part is computed, and the result is returned as a
+        `Geometry` with the same grid and the simplified transformation.
+        The grid is preserved, so the geometry keeps its grid-and-
+        transformation pair and the domain it defines is never lost.
+        """
+        transformation = self.transformation
+        if isinstance(transformation, Sequence):
+            transformation = transformation.compute(mode)
+        return Geometry(
+            (self.grid, transformation),
+            input=self.input,
+            output=self.output,
+        )
+
+    def _flattened(self) -> tx.Self:
+        # A `Geometry` keeps its (grid, transformation) pair. Only the
+        # transformation part is flattened, so the grid that restricts the
+        # domain is never merged into the surrounding sequence.
+        transformation = self.transformation
+        if isinstance(transformation, Sequence):
+            flat = transformation._flattened().transformations or []
+            if len(flat) == 1:
+                transformation = flat[0]
+            else:
+                transformation = Sequence(transformations=list(flat))
+        return Geometry(
+            (self.grid, transformation),
+            input=self.input,
+            output=self.output,
         )
 
     def __getitem__(
