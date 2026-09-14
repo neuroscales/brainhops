@@ -15,6 +15,8 @@ from .transformations import (
     Identity,
     Linear,
     LossyConversionError,
+    MultiscaleCoordinatesField,
+    MultiscaleDisplacementField,
     Permutation,
     Scaling,
     Transformation,
@@ -65,6 +67,23 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
     return replace(t, **kwargs)
+
+
+@_converter
+def _(t: MultiscaleCoordinatesField, **kwargs) -> MultiscaleCoordinatesField:
+    # The active level's array is served through the `field` property,
+    # backed by `levels`. A rebuild must drop that derived field and let
+    # the new instance serve the array of its (possibly changed) active
+    # level, rather than freeze the old level's array onto `field`.
+    kwargs.pop("field", None)
+    return replace(t, field=None, **kwargs)
+
+
+@_converter
+def _(t: MultiscaleDisplacementField, **kwargs) -> MultiscaleDisplacementField:
+    # See the note on the multiscale coordinate converter above.
+    kwargs.pop("field", None)
+    return replace(t, field=None, **kwargs)
 
 
 @_converter
