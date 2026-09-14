@@ -1,10 +1,11 @@
 # dependencies
-import dask.array as da
+import numpy as np
 import typing_extensions as tx
-from bagof.hints.array import ArrayProtocol
+from bagof.hints.numpy import DTypeLike
 
 # core
 from brainhops._core.bsplines import pull
+from brainhops._core.typing import ArrayProtocol
 
 # internals
 from .base import DataModelBase
@@ -14,6 +15,27 @@ from .transformations import CartesianField, Identity, Transformation
 
 class Image(DataModelBase):
     """Base class for all images."""
+
+    # --- array API ----------------------------------------------------
+
+    def __array__(self, dtype: tx.Optional[DTypeLike] = None) -> np.ndarray:
+        """Return the image data as an array."""
+        return np.asarray(self.data, dtype=dtype)
+
+    @property
+    def shape(self) -> tx.Tuple[int, ...]:
+        """The shape of the image data."""
+        return self.data.shape
+
+    @property
+    def ndim(self) -> int:
+        """The number of dimensions of the image data."""
+        return len(self.shape)
+
+    @property
+    def dtype(self) -> np.dtype:
+        """The data type of the image data."""
+        return self.data.dtype
 
 
 class SingleScaleImage(Image):
@@ -34,7 +56,7 @@ class SingleScaleImage(Image):
             "of data's axes) to different world spaces. The last "
             "transformation in the list is the preferred one."
         ),
-    ]
+    ] = ()
 
     @property
     def transformation(self) -> Transformation:
@@ -82,6 +104,8 @@ class SingleScaleImage(Image):
                 self.transformation,
             )
         )
+
+    # --- methods ------------------------------------------------------
 
     def reslice(
         self,
@@ -139,7 +163,7 @@ class SingleScaleImage(Image):
 
     def __call__(self, transform: Transformation) -> "Image":
         """
-        Apply a transformation to the image, but does not compute.
+        Apply a transformation to the image, but do not compute.
 
         Parameters
         ----------
@@ -199,6 +223,10 @@ class MultiScaleImage(Image):
         ),
     ] = []
 
+    @property
+    def data(self) -> ArrayProtocol:
+        return self.images[0].data
+
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:
         """
         Return one of the levels as a single-resolution image.
@@ -245,10 +273,6 @@ class MultiScaleImage(Image):
                     value = self.transformations.pop(i)
                     break
         self.transformations.append(value)
-
-    @property
-    def data(self) -> da.Array:
-        return self.images[0].data
 
     @property
     def geometry(self) -> Geometry:

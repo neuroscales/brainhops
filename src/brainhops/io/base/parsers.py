@@ -102,6 +102,10 @@ class WriterNotImplementedError(WriterError, NotImplementedError):
 
 
 class FileSniffer:
+    """
+    A class that can sniff files to determine if they are of a certain type.
+    """
+
     _READ_MODE = "r"
 
     @classmethod
@@ -184,10 +188,10 @@ class FileSniffer:
             if not file.exists():
                 return False
             with file.open(cls._READ_MODE) as f:
-                return cls.sniff_file(f, **kwargs)
+                return cls.sniff_fileobj(f, **kwargs)
 
         if hasattr(file, "read"):
-            return cls.sniff_content(file.read(), **kwargs)
+            return cls.sniff_fileobj(file, **kwargs)
 
         # Cannot parse this content -> return False or error
         if error:
@@ -195,6 +199,34 @@ class FileSniffer:
                 error = SnifferTypeError
             raise error(f"Cannot sniff file of type {type(file)}")
         return False
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> bool:
+        """
+        Determine if the given file-like object is of the type that this
+        parser can handle.
+
+        Parameters
+        ----------
+        file : IO
+            A file object open for reading.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the file cannot be sniffed.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        bool
+            True if the file is of the correct type, False otherwise.
+        """
+        kwargs["error"] = error
+        return cls.sniff_content(file.read(), **kwargs)
 
     @classmethod
     def sniff_content(
@@ -357,6 +389,8 @@ class FileSniffer:
 
 
 class FileParser(FileSniffer):
+    """A class that can read files of a certain type."""
+
     @classmethod
     def from_(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """
@@ -414,13 +448,32 @@ class FileParser(FileSniffer):
             if not file.exists():
                 return False
             with file.open(cls._READ_MODE) as f:
-                return cls.from_file(f, **kwargs)
+                return cls.from_fileobj(f, **kwargs)
 
         if hasattr(file, "read"):
-            return cls.from_content(file.read(), **kwargs)
+            return cls.from_fileobj(file, **kwargs)
 
         # Cannot parse this content -> return False or error
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
+        """
+        Build an object from a file-like object.
+
+        Parameters
+        ----------
+        file : IO
+            A file object open for reading.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        obj
+            The parsed object.
+        """
+        return cls.from_content(file.read(), **kwargs)
 
     @classmethod
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
@@ -539,6 +592,8 @@ class FileParser(FileSniffer):
 
 
 class FileParserWriter(FileParser):
+    """A class that can read and write files of a certain type."""
+
     _WRITE_MODE = "w"
 
     def to(self, file: path.FileLike, **kwargs) -> None:
@@ -673,6 +728,11 @@ class FileParserWriter(FileParser):
 
 
 class TextFileSniffer(FileSniffer):
+    """
+    A class that can sniff text files to determine if they are of a
+    certain type.
+    """
+
     _READ_MODE = "rt"
 
     @classmethod
@@ -688,6 +748,8 @@ class TextFileSniffer(FileSniffer):
 
 
 class TextFileParser(TextFileSniffer, FileParser):
+    """A class that can read text files of a certain type."""
+
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
         encoding = kwargs.pop("encoding", "utf-8")
@@ -695,6 +757,8 @@ class TextFileParser(TextFileSniffer, FileParser):
 
 
 class TextFileParserWriter(TextFileParser):
+    """A class that can read and write text files of a certain type."""
+
     def to_bytes(self, **kwargs) -> bytes:
         encoding = kwargs.pop("encoding", "utf-8")
         return self.to_text(**kwargs).encode(encoding)
@@ -706,11 +770,21 @@ class TextFileParserWriter(TextFileParser):
 
 
 class BinaryFileSniffer:
+    """
+    A class that can sniff binary files to determine if they are of a
+    certain type.
+    """
+
     _READ_MODE = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer): ...
+class BinaryFileParser(BinaryFileSniffer):
+    """A class that can read binary files of a certain type."""
+
+    ...
 
 
 class BinaryFileParserWriter(BinaryFileParser):
+    """A class that can read and write binary files of a certain type."""
+
     _WRITE_MODE = "wb"

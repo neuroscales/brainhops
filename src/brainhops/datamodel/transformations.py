@@ -24,14 +24,20 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.hints.array import ArrayProtocol
 
 # core
-from brainhops._core.backends import get_array_backend
-from brainhops._core.typing import get_origin, npmatrix, npvector
+from brainhops._core.typing import (
+    ArrayProtocol,
+    npmatrix,
+    npvector,
+    safe_get_origin,
+)
 
 # ext
 from brainhops._ext.invfield import inverse as inverse_disp
+
+# backends
+from brainhops.backends import get_array_backend
 
 # locals
 from . import hierarchy
@@ -1374,11 +1380,11 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
         return func(x1, x2)
     best_distance, best_func = float("inf"), None
     for (T1, T2), FUNC in _COMPOSERS.items():
-        if get_origin(T1) in (tx.Union, _t.UnionType):
+        if safe_get_origin(T1) in (tx.Union, _t.UnionType):
             T1s = tx.get_args(T1)
         else:
             T1s = (T1,)
-        if get_origin(T2) in (tx.Union, _t.UnionType):
+        if safe_get_origin(T2) in (tx.Union, _t.UnionType):
             T2s = tx.get_args(T2)
         else:
             T2s = (T2,)

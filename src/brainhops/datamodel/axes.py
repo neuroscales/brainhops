@@ -52,7 +52,7 @@ class Axis(DataModelBase):
 
 class SpatialAxis(Axis):
     unit: tx.Optional[SpaceUnit] = SpaceUnit("millimeter")
-    type: HiddenConst[str] = "spatial"
+    type: HiddenConst[str] = "space"
 
 
 class TimeAxis(Axis):

@@ -5,8 +5,8 @@ import itertools
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
-# locals
-from .backends import get_array_backend, get_ndimage_backend
+# core
+from brainhops.backends import get_array_backend, get_ndimage_backend
 
 
 def pull(

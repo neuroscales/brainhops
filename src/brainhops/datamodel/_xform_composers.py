@@ -16,8 +16,8 @@ the output coordinate system of To.
 import typing_extensions as tx
 
 # core
-from brainhops._core.backends import get_array_backend
 from brainhops._core.bsplines import pull_field
+from brainhops.backends import get_array_backend
 
 # internals
 from .transformations import (
