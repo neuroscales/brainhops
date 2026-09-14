@@ -78,17 +78,32 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
 
-    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+    def to_nibabel(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
         Build the `nibabel` image that encodes this image.
 
         The image data becomes the NIfTI data array. The preferred
         transformation becomes the sform, and a rigid transformation among
-        the others, or the rigid part of the sform, becomes the qform.
+        the others, or the rigid part of the sform, becomes the qform. A
+        large array is written as NIfTI-2, and a smaller one as NIfTI-1.
 
         A preferred transformation that is not an affine, such as a
         displacement field, cannot describe NIfTI geometry, and raises
         `UnrepresentableTransformationError`.
+
+        When `like` is given, non-encoding header fields such as the
+        description and the intent are copied from it. The template may be a
+        path to a NIfTI file, a `nibabel` image or header, or another object
+        read from NIfTI. The geometry always comes from this image, never
+        from the template.
+
+        Keyword arguments override header fields after the derived values
+        and after `like`, so an explicit value always wins. `dtype` sets the
+        stored data type, `intent` the intent code, and `descrip` the
+        description. The array's own data type is kept unless `dtype` is
+        given.
         """
         data = self.data
         if data is None:
@@ -96,7 +111,11 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
                 "This image has no data, so there is nothing to write."
             )
         return _image_with_geometry(
-            data, self.transformation, self.transformations
+            data,
+            self.transformation,
+            self.transformations,
+            like=like,
+            overrides=overrides,
         )
 
 
