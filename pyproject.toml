@@ -14,6 +14,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+brainhops = "brainhops.cli:main"
+
 [project.optional-dependencies]
 
 # backends
