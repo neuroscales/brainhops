@@ -3,7 +3,7 @@ __all__ = [
     "CoordinatesField",
     "CartesianField",
     "DisplacementField",
-    "ImmutableSequence",
+    "ImmutableSequenceMixin",
     "Multiscale",
     "MultiscaleField",
     "Affine",
@@ -981,7 +981,7 @@ class Sequence(MutableSequence, Transformation):
 # ----------------------------------------------------------------------
 
 
-class ImmutableSequence:
+class ImmutableSequenceMixin:
     """A [`Sequence`][] whose contents cannot be edited in place.
 
     A subclass mixes this in ahead of the mutable sequence base to block
@@ -1074,7 +1074,7 @@ class Multiscale(DataModelBase):
         return best_index
 
 
-class MultiscaleField(Multiscale, ImmutableSequence, Sequence):
+class MultiscaleField(Multiscale, ImmutableSequenceMixin, Sequence):
     """A field of coordinates or displacements at several resolutions.
 
     Each scale is a [`Sequence`][] that maps the multiscale's input space
@@ -1097,10 +1097,10 @@ class MultiscaleField(Multiscale, ImmutableSequence, Sequence):
     """
 
     # The subscript hooks are regenerated on every class the data model
-    # builds, so the immutable ones from `ImmutableSequence` are restated
+    # builds, so the immutable ones from `ImmutableSequenceMixin` are restated
     # here to keep them. `insert` is not regenerated and is inherited.
-    __setitem__ = ImmutableSequence.__setitem__
-    __delitem__ = ImmutableSequence.__delitem__
+    __setitem__ = ImmutableSequenceMixin.__setitem__
+    __delitem__ = ImmutableSequenceMixin.__delitem__
 
     scales: tx.Annotated[
         tx.Optional[tx.List[Sequence]],
