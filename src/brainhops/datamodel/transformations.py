@@ -3,6 +3,9 @@ __all__ = [
     "CoordinatesField",
     "CartesianField",
     "DisplacementField",
+    "ImmutableSequenceMixin",
+    "Multiscale",
+    "MultiscaleField",
     "Affine",
     "Linear",
     "Rotation",
@@ -38,6 +41,8 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # core
+from brainhops._core.affines import axis_scales
+from brainhops._core.affines import inv as _affine_inv
 from brainhops._core.typing import (
     ArrayProtocol,
     npmatrix,
@@ -969,6 +974,258 @@ class Sequence(MutableSequence, Transformation):
         if self.transformations is None:
             raise ValueError("remove from empty sequence")
         self.transformations.remove(value)
+
+
+# ----------------------------------------------------------------------
+#    MULTISCALE
+# ----------------------------------------------------------------------
+
+
+class ImmutableSequenceMixin:
+    """A [`Sequence`][] whose contents cannot be edited in place.
+
+    A subclass mixes this in ahead of the mutable sequence base to block
+    item assignment, deletion, and insertion. Every in-place edit raises
+    `TypeError`.
+
+    The data model regenerates the subscript hooks on every class it
+    builds, so a subclass restates `__setitem__` and `__delitem__` in its
+    own body, bound to the versions defined here.
+    """
+
+    def _refuse_in_place_edit(self, *args: tx.Any) -> tx.NoReturn:
+        raise TypeError(f"{type(self).__name__} cannot be edited in place.")
+
+    __setitem__ = _refuse_in_place_edit
+    __delitem__ = _refuse_in_place_edit
+    insert = _refuse_in_place_edit
+
+
+class Multiscale(DataModelBase):
+    """A pyramid of resolution scales, ordered from finest to coarsest.
+
+    This mixin gives a transformation a list of scales and the operations
+    that select one of them. The scales are ordered from finest to
+    coarsest, so the first scale is the highest resolution one.
+
+    The mixin does not say what a scale is. A subclass supplies the scales
+    and, through the `_level_resolution` hook, the physical grid size of
+    each one. With those, `_nearest_level` picks the scale whose
+    resolution is closest to a target grid.
+    """
+
+    scales: tx.Annotated[
+        tx.Optional[tx.List[tx.Any]],
+        tx.Doc("The resolution scales, ordered from finest to coarsest."),
+    ] = None
+
+    @property
+    def nscales(self) -> int:
+        """The number of resolution scales."""
+        return len(self.scales or [])
+
+    @property
+    def _finest(self) -> tx.Any:
+        # The finest resolution scale, or `None` when there are no scales.
+        scales = self.scales or []
+        return scales[0] if scales else None
+
+    def to_singlescale(self, index: int = 0) -> tx.Any:
+        """Return the resolution scale at a given index.
+
+        Index `0` is the finest scale. The scale is returned as it is
+        stored, so for a field it is the plain transformation of that
+        scale rather than the multiscale field.
+        """
+        return (self.scales or [])[int(index)]
+
+    def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
+        # The physical grid size of a level, as a per-axis vector in the
+        # input units of the multiscale. `None` means the resolution of
+        # the level is unknown. A subclass overrides this hook.
+        return None
+
+    def _nearest_level(self, voxel2world: "Transformation") -> int:
+        # The index of the level whose resolution is closest to the grid
+        # described by `voxel2world`. The comparison is made in
+        # logarithmic scale, so the level above and the level below the
+        # target are weighed evenly, and the finer level wins a tie. When
+        # the resolution of any level, or of the target, is unknown, the
+        # finest scale is returned.
+        scales = self.scales or []
+        if len(scales) <= 1:
+            return 0
+        resolutions = [self._level_resolution(i) for i in range(len(scales))]
+        if any(resolution is None for resolution in resolutions):
+            return 0
+        target = axis_scales(_affine_matrix(voxel2world))
+        if target is None:
+            return 0
+        ab = get_array_backend()
+        log_target = float(ab.log(ab.abs(ab.asarray(target))).mean())
+        best_index, best_distance = 0, None
+        for index, resolution in enumerate(resolutions):
+            log_resolution = float(
+                ab.log(ab.abs(ab.asarray(resolution))).mean()
+            )
+            distance = abs(log_resolution - log_target)
+            if best_distance is None or distance < best_distance:
+                best_index, best_distance = index, distance
+        return best_index
+
+
+class MultiscaleField(Multiscale, ImmutableSequenceMixin, Sequence):
+    """A field of coordinates or displacements at several resolutions.
+
+    Each scale is a [`Sequence`][] that maps the multiscale's input space
+    to its output space, sampled on that scale's grid. A coordinate scale
+    is a two-element sequence of a world-to-voxel affine and a field of
+    coordinates. A displacement scale is a three-element sequence of a
+    world-to-voxel affine, a field of displacements in voxel units, and
+    the voxel-to-world affine. The container treats a scale as a plain
+    sequence, so the same class carries both kinds.
+
+    A `MultiscaleField` behaves as its finest scale. It composes with
+    other transformations exactly as the finest scale would, and reduces
+    to the finest scale when it is computed. The finest scale is the one
+    used unless a scale is selected with `to_singlescale`.
+
+    The scales replace this class as the unit that is edited. A scale is
+    selected with `to_singlescale`, and the returned sequence is edited in
+    place. The container itself does not support item assignment,
+    insertion, or deletion.
+    """
+
+    # The subscript hooks are regenerated on every class the data model
+    # builds, so the immutable ones from `ImmutableSequenceMixin` are restated
+    # here to keep them. `insert` is not regenerated and is inherited.
+    __setitem__ = ImmutableSequenceMixin.__setitem__
+    __delitem__ = ImmutableSequenceMixin.__delitem__
+
+    scales: tx.Annotated[
+        tx.Optional[tx.List[Sequence]],
+        tx.Doc(
+            "The resolution scales, ordered from finest to coarsest. Each "
+            "scale is a sequence that maps the input space to the output "
+            "space, sampled on that scale's grid."
+        ),
+    ] = None
+
+    # `transformations` is served on demand from the finest scale rather
+    # than stored, so it is not a constructor-taken field here. Declaring
+    # it a `ClassVar` overrides the inherited init-field from `Sequence`
+    # and keeps it out of `__init__`, `fields()` and `replace()`, while
+    # the property keeps the container reading as the finest scale.
+    transformations: tx.ClassVar[tx.Optional[tx.List[Transformation]]]
+
+    @property
+    def transformations(self) -> tx.Optional[tx.List[Transformation]]:
+        """The transformations of the finest scale."""
+        finest = self._finest
+        return finest.transformations if finest is not None else None
+
+    @transformations.setter
+    def transformations(
+        self, value: tx.Optional[tx.List[Transformation]]
+    ) -> None:
+        if value is not None:
+            raise TypeError(
+                "The elements of a multiscale field are determined by its "
+                "scales. Select a scale with to_singlescale() and edit that "
+                "sequence."
+            )
+
+    def _as_sequence(self) -> Sequence:
+        # The finest scale as a plain sequence, carrying the container's
+        # input and output. `compute` and `_flattened` go through this, so
+        # they operate on a real init-field sequence rather than on the
+        # container, whose `transformations` is derived and cannot be
+        # rebuilt by `replace`.
+        finest = self._finest
+        transformations = (
+            None if finest is None else list(finest.transformations or [])
+        )
+        return Sequence(
+            transformations=transformations,
+            input=self.input,
+            output=self.output,
+        )
+
+    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+        """Compute the field as a plain transformation.
+
+        The finest scale is composed and returned. The result is an
+        ordinary transformation, with no pyramid, so it computes exactly
+        as the finest scale would on its own.
+        """
+        return self._as_sequence().compute(mode)
+
+    def _flattened(self) -> Sequence:
+        # Flatten through the finest scale. A multiscale field spliced
+        # into a surrounding sequence contributes the elements of its
+        # finest scale.
+        return self._as_sequence()._flattened()
+
+    def inverse(self) -> tx.Self:
+        return replace(
+            self,
+            scales=[scale.inverse() for scale in (self.scales or [])],
+            input=self.output,
+            output=self.input,
+        )
+
+    def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
+        # The physical grid size of a scale, read from the scale's leading
+        # world-to-voxel affine. The inverse of that affine is the scale's
+        # voxel-to-world transformation, and the norm of each of its
+        # columns is the voxel size along one axis. A scale whose leading
+        # element is not a defined affine has an unknown resolution.
+        scales = self.scales or []
+        if not 0 <= index < len(scales):
+            return None
+        scale = scales[index]
+        if not len(scale):
+            return None
+        matrix = _affine_matrix(scale[0])
+        if matrix is None:
+            return None
+        return axis_scales(_affine_inv(matrix))
+
+
+def _affine_matrix(xform: Transformation) -> tx.Optional[npmatrix]:
+    # The compact affine matrix of a transformation, or `None`. A
+    # transformation that does not reduce to an affine with a defined
+    # matrix has no matrix, and is reported as `None` rather than refused.
+    try:
+        affine = xform.compute().to(Affine)
+    except ConversionError:
+        return None
+    if not isinstance(affine, Affine) or affine.matrix is None:
+        return None
+    return affine.matrix
+
+
+def _at_resolution(
+    transformation: Transformation, voxel2world: Transformation
+) -> Transformation:
+    # Select, inside a transformation, the scale of every multiscale field
+    # whose resolution matches a target grid. The `voxel2world` is the
+    # voxel-to-world transformation of the grid onto which an image is
+    # resliced. Each multiscale field is replaced by its resolution-
+    # matched scale, walking through any nesting of sequences. A
+    # transformation that carries no multiscale field is returned
+    # unchanged.
+    if isinstance(transformation, Multiscale):
+        return transformation.to_singlescale(
+            transformation._nearest_level(voxel2world)
+        )
+    if isinstance(transformation, Sequence):
+        parts = transformation.transformations or []
+        resolved = [_at_resolution(part, voxel2world) for part in parts]
+        if any(new is not old for new, old in zip(resolved, parts)):
+            return replace(transformation, transformations=resolved)
+        return transformation
+    return transformation
 
 
 # ----------------------------------------------------------------------

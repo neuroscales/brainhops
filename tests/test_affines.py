@@ -123,3 +123,31 @@ def test_rmdiv_matches_homogeneous_baseline() -> None:
     Bh = _to_homogeneous(B)
     exp_mat = _from_homogeneous(np.matmul(Ah, np.linalg.inv(Bh)))
     np.testing.assert_allclose(got_mat, exp_mat, rtol=1e-10, atol=1e-10)
+
+
+def test_axis_scales_of_a_rotated_anisotropic_matrix() -> None:
+    # The per-axis scale is the norm of each column of the linear part,
+    # and is invariant to rotation, so a rotated anisotropic affine
+    # reports its true voxel size on each axis.
+    theta = 0.4
+    rot = np.array(
+        [
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)],
+        ]
+    )
+    linear = rot @ np.diag([2.0, 0.5])
+    matrix = np.concatenate([linear, np.array([[3.0], [1.0]])], axis=1)
+    np.testing.assert_allclose(
+        np.asarray(affines.axis_scales(matrix)), [2.0, 0.5]
+    )
+
+
+def test_axis_scales_is_batched() -> None:
+    A0 = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    A1 = np.array([[3.0, 0.0, 5.0], [0.0, 4.0, 7.0]])
+    A = np.stack([A0, A1], axis=0)
+    got = np.asarray(affines.axis_scales(A))
+    assert got.shape == (2, 2)
+    np.testing.assert_allclose(got[0], [1.0, 1.0])
+    np.testing.assert_allclose(got[1], [3.0, 4.0])

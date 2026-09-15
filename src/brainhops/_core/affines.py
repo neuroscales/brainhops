@@ -56,6 +56,40 @@ def inv(
     return C
 
 
+def axis_scales(
+    A: ArrayProtocol,
+    *,
+    backend: tx.Optional[tx.Union[str, ModuleType]] = None,
+) -> ArrayProtocol:
+    """
+    The per-axis scale of a compact affine matrix.
+
+    The scale of an input axis is the Euclidean norm of the corresponding
+    column of the linear part of the matrix. For a voxel-to-world affine,
+    this is the physical size of a voxel along each axis. The measure is
+    invariant to rotation, so a rotated affine reports the same per-axis
+    scale as the axis-aligned affine with the same voxel sizes.
+
+    Parameters
+    ----------
+    A : (..., M, N+1) array-like
+        An M x (N+1) affine matrix, without the homogeneous row,
+        eventually batched.
+    backend : {"numpy", "cupy", "dask"}, optional
+        The array backend to use. If `None`, the backend is inferred
+        from the input array `A`.
+
+    Returns
+    -------
+    s : (..., N) array-like
+        The Euclidean norm of each column of the linear part of `A`.
+    """
+    backend = get_array_backend(backend or A)
+    A = backend.asarray(A)
+    linear = A[..., :-1]
+    return (linear**2).sum(axis=-2) ** 0.5
+
+
 def matmul(
     A: ArrayProtocol,
     B: ArrayProtocol,

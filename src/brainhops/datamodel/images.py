@@ -10,7 +10,12 @@ from brainhops._core.typing import ArrayProtocol
 # internals
 from .base import DataModelBase
 from .geometry import Geometry
-from .transformations import CartesianField, Identity, Transformation
+from .transformations import (
+    CartesianField,
+    Identity,
+    Transformation,
+    _at_resolution,
+)
 
 
 class Image(DataModelBase):
@@ -197,11 +202,17 @@ class SingleScaleImage(Image):
         if not isinstance(geometry, Geometry):
             geometry = Geometry((self.geometry.grid, geometry))
 
+        # When the preferred transformation carries a multiscale field,
+        # select the level whose resolution matches the output grid. A
+        # transformation without such a field is returned unchanged, so
+        # its finest level is used.
+        preferred = _at_resolution(
+            self.transformation, geometry.transformation
+        )
+
         # Compute voxel-to-voxel transformation and apply it to the data
         transformation = (
-            self.transformation.inverse()
-            @ geometry.transformation
-            @ geometry.grid
+            preferred.inverse() @ geometry.transformation @ geometry.grid
         )
         transformation = transformation.compute()
         new_data = pull(self.data, transformation.field, **opt)
