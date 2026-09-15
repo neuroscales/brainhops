@@ -19,6 +19,15 @@ the **coordinate-system adaptor**:
 
 The design below builds the adaptor once and lets the other two fall out of it.
 
+**Related tracking issues.** This spec is the design deliverable for the second
+and third steps of #7 ("compute() on sequences": compatible compose is done,
+then adaptor bridges, then separability), for #10 (bridge non-compatible
+input/output spaces) and #11 (separable transforms). It supersedes the ad-hoc
+direction of PR #15 (james/adaptor1), the existing partial adaptor that handles
+only permutation, direction, and scale. It also touches #54 (collapsing the
+axes/coordinate-system subclasses), whose outcome changes how axis keys in §3
+are compared but not the matching algorithm itself.
+
 ## 1. Current state (audit)
 
 ### 1.1 Coordinate systems already encode order
