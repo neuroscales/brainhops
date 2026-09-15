@@ -34,11 +34,8 @@ from abczarr.ome.v0_6rc0 import transformations as _ot
 # internals
 from brainhops.datamodel.transformations import (
     Affine,
-    CoordinatesField,
-    DisplacementField,
     Identity,
     Linear,
-    LossyConversionError,
     Permutation,
     Projection,
     Rotation,
@@ -48,12 +45,7 @@ from brainhops.datamodel.transformations import (
     Translation,
     _affine_matrix,
     _distance,
-    scale_translation_from_affine,
 )
-
-#: The brainhops transformations that reduce to an affine. A field must be
-#: surrounded only by these, so it can be inverted and its vectors rotated.
-_AFFINE_ISH = (Affine, Rotation, Scaling, Translation, Identity)
 
 
 class OmeMappingError(ValueError):
@@ -280,7 +272,6 @@ def _(
         from_ome(inner, perm, ndim, read_field)
         for inner in transform.transformations
     ]
-    gate_field_surround(children)
     return Sequence(children)
 
 
@@ -295,59 +286,13 @@ def _read_field(
 
 
 # ----------------------------------------------------------------------
-#   field surround
-# ----------------------------------------------------------------------
-
-
-def _is_field(transformation: Transformation) -> bool:
-    return isinstance(transformation, (DisplacementField, CoordinatesField))
-
-
-def _is_affine_ish(transformation: Transformation) -> bool:
-    if isinstance(transformation, Sequence):
-        return all(
-            _is_affine_ish(one)
-            for one in (transformation.transformations or [])
-        )
-    return isinstance(transformation, _AFFINE_ISH)
-
-
-def gate_field_surround(mapped: tx.Sequence[Transformation]) -> None:
-    """Refuse a field that is not surrounded only by affine transformations.
-
-    A field is inverted and its vectors are rotated through the linear part
-    of the transformations around it, so it must be surrounded only by
-    affine transformations. More than one field, or a field beside a
-    non-affine transformation, is refused with an
-    [`OmeMappingError`][brainhops.io.transformations.zarr._map.OmeMappingError].
-    """
-    fields = [one for one in mapped if _is_field(one)]
-    if not fields:
-        return
-    if len(fields) > 1:
-        raise OmeMappingError(
-            "This OME-Zarr image composes more than one field, which "
-            "brainhops does not read. A field must be surrounded only by "
-            "affine transformations."
-        )
-    for one in mapped:
-        if not _is_field(one) and not _is_affine_ish(one):
-            raise OmeMappingError(
-                "This OME-Zarr image surrounds a field with a "
-                f"{type(one).__name__} transformation. A field must be "
-                "surrounded only by affine transformations, so that it can "
-                "be inverted and its vectors rotated."
-            )
-
-
-# ----------------------------------------------------------------------
 #   write: brainhops transformation -> OME-Zarr coordinate transformation
 # ----------------------------------------------------------------------
 #
 # The result of the write mapping is the JSON of one OME coordinate
 # transformation, ready to be placed in a dataset's
 # `coordinateTransformations`. The parameters are reordered from the
-# brainhops axis order into the stored OME order by `sperm`.
+# brainhops axis order into the stored OME order by `storage_perm`.
 
 #: The OME transformation types that only a richer OME-NGFF version carries.
 #: A per-axis scale and a translation are expressible in every version; a
@@ -369,16 +314,16 @@ def _to_ome_for(brainhops_type: type) -> tx.Callable:
 
 
 def to_ome(
-    transform: Transformation, sperm: tx.Sequence[int], ndim: int
+    transform: Transformation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     """Map a brainhops transformation to an OME-Zarr coordinate transformation.
 
-    The result is the JSON of one OME coordinate transformation. `sperm`
-    reorders each parameter from the brainhops axis order into the stored
-    OME order. A transformation that reduces to a per-axis scale and
-    translation is written in that leanest form. Any other affine is
-    written as a full affine, and a sequence is written as a sequence of the
-    mapped children, so a rotation, a shear, or a composed placement is
+    The result is the JSON of one OME coordinate transformation.
+    `storage_perm` reorders each parameter from the brainhops axis order
+    into the stored OME order. A transformation that reduces to a per-axis
+    scale and translation is written in that leanest form. Any other affine
+    is written as a full affine, and a sequence is written as a sequence of
+    the mapped children, so a rotation, a shear, or a composed placement is
     kept.
 
     A transformation that does not reduce to an affine, such as a field, is
@@ -392,8 +337,36 @@ def to_ome(
         if distance < best_distance:
             best_distance, best = distance, func
     if best is not None and best_distance < float("inf"):
-        return best(transform, sperm, ndim)
-    return _affine_to_ome(transform, sperm, ndim)
+        return best(transform, storage_perm, ndim)
+    return _affine_to_ome(transform, storage_perm, ndim)
+
+
+def scale_translation_from_affine(
+    matrix: tx.Any, ndim: int
+) -> tx.Optional[tx.Tuple[np.ndarray, np.ndarray]]:
+    """Return the per-axis scale and translation of a diagonal affine.
+
+    `matrix` is the compact ``(n, n + 1)`` affine matrix, or `None` for the
+    identity. The result is a pair of vectors of length `ndim`: the scale
+    read from the diagonal of the linear block, and the translation read
+    from the last column. The identity decomposes to a scale of ones and a
+    translation of zeros.
+
+    The result is `None` when the matrix has an off-diagonal term, such as a
+    rotation or a shear, since such an affine is not a per-axis scale and
+    translation and must instead be written in full.
+    """
+    if matrix is None:
+        return np.ones(ndim), np.zeros(ndim)
+    matrix = np.asarray(matrix, dtype=float)
+    linear = matrix[:, :-1]
+    rows, cols = linear.shape[0], linear.shape[1]
+    if rows != cols:
+        return None
+    off_diagonal = linear * (1 - np.eye(rows))
+    if bool((np.abs(off_diagonal) > 1e-8).any()):
+        return None
+    return np.diag(linear), matrix[:, -1]
 
 
 def needs_rich_version(entry: tx.Dict[str, tx.Any]) -> bool:
@@ -440,7 +413,7 @@ def _scale_translation_entry(
 
 
 def _affine_to_ome(
-    transform: Transformation, sperm: tx.Sequence[int], ndim: int
+    transform: Transformation, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     # The default writer for a transformation that reduces to an affine. A
     # diagonal affine is written as a scale and a translation; any other
@@ -451,19 +424,17 @@ def _affine_to_ome(
             "This image is placed by a transformation that is not an affine, "
             "so it cannot be written as OME-Zarr multiscale metadata."
         )
-    matrix = permute_affine(matrix, sperm)
-    try:
-        scale, translation = scale_translation_from_affine(
-            Affine(matrix=matrix), ndim
-        )
-    except LossyConversionError:
+    matrix = permute_affine(matrix, storage_perm)
+    decomposed = scale_translation_from_affine(matrix, ndim)
+    if decomposed is None:
         return {"type": "affine", "affine": _matrix_to_list(matrix)}
+    scale, translation = decomposed
     return _scale_translation_entry(scale, translation)
 
 
 @_to_ome_for(Identity)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     scale, translation = scale_translation_from_affine(None, ndim)
     return _scale_translation_entry(scale, translation)
@@ -471,30 +442,33 @@ def _(
 
 @_to_ome_for(Scaling)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     if transform.scale is None:
         scale, translation = scale_translation_from_affine(None, ndim)
         return _scale_translation_entry(scale, translation)
-    return {"type": "scale", "scale": permute_vector(transform.scale, sperm)}
+    return {
+        "type": "scale",
+        "scale": permute_vector(transform.scale, storage_perm),
+    }
 
 
 @_to_ome_for(Translation)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     if transform.translation is None:
         scale, translation = scale_translation_from_affine(None, ndim)
         return _scale_translation_entry(scale, translation)
     return {
         "type": "translation",
-        "translation": permute_vector(transform.translation, sperm),
+        "translation": permute_vector(transform.translation, storage_perm),
     }
 
 
 @_to_ome_for(Rotation)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     matrix = _affine_matrix(transform)
     if matrix is None:
@@ -502,18 +476,22 @@ def _(
             "This rotation has no matrix, so it cannot be written as OME-Zarr "
             "metadata."
         )
-    linear = permute_linear(np.asarray(matrix, dtype=float)[:, :-1], sperm)
+    linear = permute_linear(
+        np.asarray(matrix, dtype=float)[:, :-1], storage_perm
+    )
     return {"type": "rotation", "rotation": _matrix_to_list(linear)}
 
 
 @_to_ome_for(Sequence)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
     children = transform.transformations or []
     return {
         "type": "sequence",
-        "transformations": [to_ome(child, sperm, ndim) for child in children],
+        "transformations": [
+            to_ome(child, storage_perm, ndim) for child in children
+        ],
     }
 
 
@@ -522,13 +500,13 @@ def _(
 # dispatch exact for an affine rather than routing it through the fallback.
 @_to_ome_for(Affine)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    return _affine_to_ome(transform, sperm, ndim)
+    return _affine_to_ome(transform, storage_perm, ndim)
 
 
 @_to_ome_for(Linear)
 def _(
-    transform: tx.Any, sperm: tx.Sequence[int], ndim: int
+    transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    return _affine_to_ome(transform, sperm, ndim)
+    return _affine_to_ome(transform, storage_perm, ndim)

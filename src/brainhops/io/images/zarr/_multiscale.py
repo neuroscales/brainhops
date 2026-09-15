@@ -190,9 +190,14 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
             )
         ndim = len(images[0].data.shape)
         axes = self._write_axes(ndim)
-        sperm = _axisorder.to_storage(axes)
-        storage_axes = _axisorder.permute(axes, sperm)
-        per_level_chunks = _resolve_chunks(chunks, len(images))
+        storage_perm = _axisorder.to_storage(axes)
+        storage_axes = _axisorder.permute(axes, storage_perm)
+        # One chunking is used for every level, reordered from the brainhops
+        # axis order into the stored order. This matches abczarr, whose
+        # pyramid construction chunks every level the same way.
+        stored_chunks = (
+            None if chunks is None else tuple(chunks[p] for p in storage_perm)
+        )
 
         backend = get_array_backend()
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
@@ -205,7 +210,9 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
                 )
             try:
                 entry = _map.to_ome(
-                    self._level_transform(image), sperm, len(data.shape)
+                    self._level_transform(image),
+                    storage_perm,
+                    len(data.shape),
                 )
             except _map.OmeMappingError as error:
                 raise WriterError(
@@ -213,11 +220,10 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
                     f"OME-Zarr metadata. {error}"
                 ) from error
             rich = rich or _map.needs_rich_version(entry)
-            stored = backend.transpose(data, sperm)
+            stored = backend.transpose(data, storage_perm)
             options = dict(kwargs)
-            level_chunks = per_level_chunks[index]
-            if level_chunks is not None:
-                options["chunks"] = tuple(level_chunks[p] for p in sperm)
+            if stored_chunks is not None:
+                options["chunks"] = stored_chunks
             node.create_array(str(index), data=stored, **options)
             levels.append((str(index), entry))
 
@@ -258,26 +264,6 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         if self.transformations:
             return (self.transformation @ image.transformation).compute()
         return image.transformation
-
-
-def _resolve_chunks(
-    chunks: tx.Any, nlevels: int
-) -> tx.List[tx.Optional[tx.Sequence[int]]]:
-    # Normalize the `chunks` argument to one entry per level. `None` lets
-    # each level choose its own chunking. A single shape is used for every
-    # level. A per-level sequence gives one shape (or `None`) per level, so
-    # a coarse level need not carry the finest level's chunk shape.
-    if chunks is None:
-        return [None] * nlevels
-    if (
-        isinstance(chunks, (list, tuple))
-        and len(chunks) == nlevels
-        and all(
-            item is None or isinstance(item, (list, tuple)) for item in chunks
-        )
-    ):
-        return list(chunks)
-    return [chunks] * nlevels
 
 
 def _default_canonical_axes(ndim: int) -> tx.List[Axis]:

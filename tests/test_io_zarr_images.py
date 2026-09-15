@@ -617,18 +617,19 @@ def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
     assert getattr(back.images[1], "_data", None) is None
 
 
-# ---- per-level chunks ------------------------------------------------
+# ---- chunking --------------------------------------------------------
 
 
-def test_per_level_chunks_are_applied_independently(tmp_path: Path) -> None:
+def test_one_chunking_is_applied_to_every_level(tmp_path: Path) -> None:
     path = str(tmp_path / "chunked.zarr")
-    # Chunks are given per level, in the brainhops axis order, and stored in
-    # the OME order after transposition.
-    _small_pyramid().save(path, chunks=[(2, 2, 2), (1, 1, 1)])
+    # A single chunk shape is given in the brainhops axis order and used for
+    # every level, stored in the OME order after transposition. A chunk
+    # larger than a coarse level is clamped to that level's shape.
+    _small_pyramid().save(path, chunks=(2, 2, 2))
 
     group = abczarr.open(path, mode="r")
     assert tuple(group["0"].chunks) == (2, 2, 2)
-    assert tuple(group["1"].chunks) == (1, 1, 1)
+    assert tuple(group["1"].chunks) == (2, 2, 2)
 
 
 # ---- the vector component axis ---------------------------------------
@@ -1117,7 +1118,18 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
     assert isinstance(geometry.transformations[1], DisplacementField)
 
 
-def test_reader_refuses_a_non_affine_surrounded_field(tmp_path: Path) -> None:
+def test_reader_maps_a_multi_field_sequence_without_banning(
+    tmp_path: Path,
+) -> None:
+    # The image reader maps any OME composition faithfully. It does not ban
+    # a level that composes more than one field, or a field beside a
+    # non-affine transformation. The affine constraint belongs to a field's
+    # own intrinsic-to-world placement, which the field object enforces.
+    from brainhops.datamodel.transformations import (
+        DisplacementField,
+        Sequence,
+    )
+
     path = _authored_pyramid(
         tmp_path,
         {
@@ -1131,5 +1143,9 @@ def test_reader_refuses_a_non_affine_surrounded_field(tmp_path: Path) -> None:
         (6, 5, 4),
         arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
-    with pytest.raises(OmeImageError):
-        OmeZarrImage.from_store(path)
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Sequence)
+    assert all(
+        isinstance(part, DisplacementField)
+        for part in geometry.transformations
+    )

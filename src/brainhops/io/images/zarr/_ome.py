@@ -267,10 +267,6 @@ def level_transformation(
         mapped.extend(
             _map_transform(one, perm, ndim, node, store_axes) for one in common
         )
-    try:
-        _map.gate_field_surround(mapped)
-    except _map.OmeMappingError as error:
-        raise OmeImageError(str(error)) from error
 
     if not mapped:
         return Identity(input=input, output=output)
