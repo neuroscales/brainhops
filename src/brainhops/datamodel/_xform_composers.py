@@ -31,12 +31,9 @@ from .transformations import (
     Permutation,
     Scaling,
     Sequence,
-    SubspaceTransformation,
     Transformation,
     Translation,
-    _compose,
     _composer,
-    _Evaluated,
 )
 
 # ----------------------------------------------------------------------
@@ -147,73 +144,236 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 
 
 # ----------------------------------------------------------------------
-#     AFFINE-ISH o SAMPLING DOMAIN
+#     AFFINE o COORDINATES
 # ----------------------------------------------------------------------
-#
-# An affine applied to a sampling domain -- a query grid or an explicit
-# point set that has already been evaluated -- is folded onto the
-# coordinates pointwise. This is exact, because the coordinates are the
-# values the affine acts on, and it is the terminal step of reslicing.
-#
-# There is deliberately no composer for an affine applied to a raw stored
-# `CoordinatesField` or `DisplacementField`. Folding an affine into a
-# stored field changes the transform once the field is interpolated, so a
-# stored field that does not lead a sequence matches nothing here, raises
-# `CompositionError`, and is kept as a separate step in application order.
-
-
-def _apply_affine(To: _AffineIsh, coords: object) -> object:
-    # Apply an affine-like transform to a coordinate array, pointwise. The
-    # transform is taken through its `Affine` form, so every affine-like
-    # kind is handled by one expression.
-    affine = To.to(Affine)
-    return coords @ affine.matrix[:, :-1].T + affine.matrix[:, -1]
 
 
 @_composer
-def _(To: _AffineIsh, Ti: CartesianField) -> _Evaluated:
-    field = _apply_affine(To, Ti.field)
-    return _Evaluated(field=field, input=Ti.input, output=To.output)
+def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field + To.translation
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
 
 
 @_composer
-def _(To: _AffineIsh, Ti: _Evaluated) -> _Evaluated:
-    field = _apply_affine(To, Ti.field)
-    return _Evaluated(field=field, input=Ti.input, output=To.output)
-
-
-# ----------------------------------------------------------------------
-#     STORED FIELD o SAMPLING DOMAIN
-# ----------------------------------------------------------------------
-#
-# A stored field evaluated on a sampling domain is the one legitimate
-# interpolation. The field is interpolated at the domain's coordinates,
-# in the field's own frame, and the result is again a set of evaluated
-# coordinates. The right operand must be a sampling domain, so these fire
-# only when the field is applied to a leading grid or point set, never
-# when one stored field is folded into another.
-
-_Domain = tx.Union[CartesianField, _Evaluated]
+def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field * To.scale
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
 
 
 @_composer
-def _(To: DisplacementField, Ti: _Domain) -> _Evaluated:
-    coords = Ti.field
+def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field[..., To.permutation]
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field @ To.matrix.T
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+# ----------------------------------------------------------------------
+#     AFFINE o DISPLACEMENTS
+# ----------------------------------------------------------------------
+
+
+@_composer
+def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    field = Ti.field + To.translation
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = To.scale * Ti.field + (To.scale - 1) * grid
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field)[..., To.permutation] - grid
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field) @ To.matrix.T - grid
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
+    coeff = Ti.coeff
+    if coeff:
+        Ti = Ti.to(coeff=False)
+    grid = CartesianField(shape=Ti.field.shape[:-1]).field
+    field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+# ----------------------------------------------------------------------
+#     DISPLACEMENTS & COORDINATES
+# ----------------------------------------------------------------------
+
+
+@_composer
+def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
+    Ti = Ti.to(coeff=False)
+    x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
             To.field,
-            coords=coords,
+            coords=x2.field,
             order=To.order,
             bound=To.bound,
             coeff=To.coeff,
         )
-        + coords
+        + Ti.field
     )
-    return _Evaluated(field=field, input=Ti.input, output=To.output)
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=To.order,
+        bound=To.bound,
+        coeff=False,
+    ).to(coeff=To.coeff)
 
 
 @_composer
-def _(To: CoordinatesField, Ti: _Domain) -> _Evaluated:
+def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
+    Ti = Ti.to(coeff=False)
+    x2 = Ti.to(CoordinatesField)
+    field = (
+        pull_field(
+            To.field,
+            coords=x2.field,
+            order=To.order,
+            bound=To.bound,
+            coeff=To.coeff,
+        )
+        + x2.field
+    )
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=Ti.coeff)
+
+
+@_composer
+def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
+    coeff = Ti.coeff
+    Ti = Ti.to(coeff=False)
     field = pull_field(
         To.field,
         coords=Ti.field,
@@ -221,35 +381,11 @@ def _(To: CoordinatesField, Ti: _Domain) -> _Evaluated:
         bound=To.bound,
         coeff=To.coeff,
     )
-    return _Evaluated(field=field, input=Ti.input, output=To.output)
-
-
-# ----------------------------------------------------------------------
-#     SUBSPACE o SAMPLING DOMAIN
-# ----------------------------------------------------------------------
-
-
-@_composer
-def _(To: SubspaceTransformation, Ti: _Evaluated) -> _Evaluated:
-    # Apply the inner transform to the input-axis columns of the evaluated
-    # coordinates, write the result onto the output-axis columns, and pass
-    # every other column through unchanged.
-    coords = Ti.field
-    ab = get_array_backend(coords)
-    in_axes = [int(a) for a in To.input_axes]
-    out_axes = (
-        in_axes if To.output_axes is None else [int(a) for a in To.output_axes]
-    )
-    sub = coords[..., in_axes]
-    inner = To.transformation
-    if inner is None:
-        moved = sub
-    else:
-        moved = _compose(inner, _Evaluated(field=sub)).field
-    scatter = {axis: k for k, axis in enumerate(out_axes)}
-    columns = [
-        moved[..., scatter[axis]] if axis in scatter else coords[..., axis]
-        for axis in range(coords.shape[-1])
-    ]
-    field = ab.stack(columns, -1)
-    return _Evaluated(field=field, input=Ti.input, output=To.output)
+    return CoordinatesField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)

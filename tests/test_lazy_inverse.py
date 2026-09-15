@@ -336,20 +336,14 @@ def test_composed_lazy_inverse_equals_composed_eager_inverse() -> None:
     values = _small_field(seed=5)
     df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
     t = Translation(translation=[1.0, 2.0])
+
+    lazy = Sequence(transformations=[df.inverse(), t]).compute()
     eager = DisplacementField(
         field=inverse_disp(values), order=1, bound="nearest", coeff=False
     )
+    expected = Sequence(transformations=[eager, t]).compute()
 
-    # With no leading sampling domain, a stored field followed by a
-    # translation stays a `Sequence` rather than folding into one field
-    # (the fold-ordering contract, #66). The lazy and eager inverses are
-    # therefore compared by evaluating both compositions on a query grid,
-    # which is how a reslice would consume them.
-    query = CoordinatesField(field=_small_field(seed=9))
-    lazy = Sequence(transformations=[query, df.inverse(), t]).compute()
-    expected = Sequence(transformations=[query, eager, t]).compute()
-
-    assert isinstance(lazy, CoordinatesField)
+    assert isinstance(lazy, DisplacementField)
     np.testing.assert_allclose(
         np.asarray(lazy.field), np.asarray(expected.field)
     )
