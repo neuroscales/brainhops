@@ -19,6 +19,7 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     Sequence,
+    SubspaceTransformation,
     Translation,
     is_identity,
 )
@@ -324,3 +325,41 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     result = field.to(coeff=True, field=supplied)
     assert calls["count"] == 0
     np.testing.assert_allclose(result.field, supplied)
+
+
+def test_subspace_inverse_without_transform_swaps_axes() -> None:
+    # With no inner transformation, `inverse` only swaps the input/output
+    # spaces and their axes; it must not touch a `transformations`
+    # attribute that does not exist.
+    inp = CoordinateSystem(name="in")
+    out = CoordinateSystem(name="out")
+    subspace = SubspaceTransformation(
+        input=inp,
+        output=out,
+        input_axes=[0, 1],
+        output_axes=[2, 3],
+    )
+    inverse = subspace.inverse()
+    assert inverse.transformation is None
+    assert inverse.input is out
+    assert inverse.output is inp
+    np.testing.assert_array_equal(inverse.input_axes, [2, 3])
+    np.testing.assert_array_equal(inverse.output_axes, [0, 1])
+
+
+def test_subspace_inverse_wraps_inner_transform() -> None:
+    # With an inner transformation, `inverse` inverts it and swaps the
+    # input/output spaces and their axes.
+    inner = Translation(translation=np.array([1.0, 2.0]))
+    subspace = SubspaceTransformation(
+        transformation=inner,
+        input_axes=[0, 1],
+        output_axes=[2, 3],
+    )
+    inverse = subspace.inverse()
+    assert isinstance(inverse.transformation, Translation)
+    np.testing.assert_allclose(
+        inverse.transformation.translation, [-1.0, -2.0]
+    )
+    np.testing.assert_array_equal(inverse.input_axes, [2, 3])
+    np.testing.assert_array_equal(inverse.output_axes, [0, 1])
