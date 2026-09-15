@@ -9,7 +9,7 @@ __all__ = [
 ]
 
 # internals
-from brainhops._core.dependencies import HAS_NIBABEL
+from brainhops._core.dependencies import HAS_ABCZARR, HAS_NIBABEL
 
 from . import base
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
@@ -21,3 +21,8 @@ if HAS_NIBABEL:
     from . import nifti
 
     __all__ += ["nifti"]
+
+if HAS_ABCZARR:
+    from . import zarr
+
+    __all__ += ["zarr"]

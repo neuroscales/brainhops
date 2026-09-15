@@ -29,7 +29,8 @@ itk = ["h5py"]
 nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
-io = ["brainhops[itk]", "brainhops[nibabel]"]
+zarr = ["abczarr >= 0.1", "zarr"]
+io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
 
 # test
 test = [
@@ -38,6 +39,8 @@ test = [
     "h5py",
     "nibabel",
     "dask",
+    "abczarr >= 0.1",
+    "zarr",
 ]
 
 # doc

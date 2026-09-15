@@ -11,6 +11,7 @@ import typing_extensions as tx
 # ---- I/O -------------------------------------------------------------
 _NIBABEL = ("nb", "nibabel", "HAS_NIBABEL")
 _H5PY = ("h5", "h5py", "HAS_H5PY")
+_ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
 
 # ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
@@ -25,6 +26,7 @@ _DASK_NDIMAGE = ("dkndi", "dask_image.ndinterp", "HAS_DASK_NDIMAGE")
 _LAZY_NAMES = (
     _NIBABEL
     + _H5PY
+    + _ABCZARR
     + _NUMPY
     + _CUPY
     + _DASK
@@ -49,6 +51,9 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _H5PY:
         return _lazy_import(globals(), name, "h5py", "h5")
+
+    if name in _ABCZARR:
+        return _lazy_import(globals(), name, "abczarr", "abczarr")
 
     # ==================================================================
     #
