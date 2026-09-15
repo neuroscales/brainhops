@@ -2,6 +2,7 @@ __all__ = ["DataModelBase", "DataModelConverter"]
 
 # externals
 from collections.abc import Mapping
+
 import typing_extensions as tx
 from bagof.converters import Converter, register_converter
 from bagof.magic import HIDE_IF_NONE, Magic, fields
@@ -36,9 +37,7 @@ class DataModelBase(
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_instance(
-        cls, other: tx.Self, *args, **kwargs
-    ) -> tx.Self:
+    def from_instance(cls, other: tx.Self, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from an instance of a similar
         class.
