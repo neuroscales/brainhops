@@ -1,6 +1,7 @@
 __all__ = ["DataModelBase", "DataModelConverter"]
 
 # externals
+from collections.abc import Mapping
 import typing_extensions as tx
 from bagof.converters import Converter, register_converter
 from bagof.magic import HIDE_IF_NONE, Magic, fields
