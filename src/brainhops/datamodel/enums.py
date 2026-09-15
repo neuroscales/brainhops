@@ -87,10 +87,10 @@ class AnatomicalOrientationValue(StrEnum):
 
     | Name                    | Value                     | Description             |
     |-------------------------|---------------------------|-------------------------|
-    | `left_to_right`         | `"left-to-right"`         | 
-    | `right_to_left`         | `"right-to-left"`         | 
-    | `proximal_to_distal`    | `"proximal-to-distal"`    | 
-    | `distal_to_proximal`    | `"distal-to-proximal"`    | 
+    | `left_to_right`         | `"left-to-right"`         |
+    | `right_to_left`         | `"right-to-left"`         |
+    | `proximal_to_distal`    | `"proximal-to-distal"`    |
+    | `distal_to_proximal`    | `"distal-to-proximal"`    |
     | `anterior_to_posterior` | `"anterior-to-posterior"` | front-to-back
     | `posterior_to_anterior` | `"posterior-to-anterior"` | back-to-front
     | `inferior_to_superior`  | `"inferior-to-superior"`  | feet-to-head
@@ -127,7 +127,7 @@ class AnatomicalOrientationValue(StrEnum):
     palmar_to_dorsal = "palmar-to-dorsal"
     dorsal_to_plantar = "dorsal-to-plantar"
     plantar_to_dorsal = "plantar-to-dorsal"
-    
+
     # Primarily for quadrupeds:
     rostral_to_caudal = "rostral-to-caudal"
     caudal_to_rostral = "caudal-to-rostral"
@@ -135,7 +135,7 @@ class AnatomicalOrientationValue(StrEnum):
     caudal_to_cranial = "caudal-to-cranial"
     dorsal_to_ventral = "dorsal-to-ventral"
     ventral_to_dorsal = "ventral-to-dorsal"
-    
+
     # For layered and polarized tissues (subject-local):
     superficial_to_deep = "superficial-to-deep"
     deep_to_superficial = "deep-to-superficial"
