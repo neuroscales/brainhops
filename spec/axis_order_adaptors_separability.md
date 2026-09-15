@@ -130,14 +130,17 @@ changes no transformation math; track it and move on. For a field acting on both
 `c` and `t`, the k-th vector component *is* the k-th acted-on axis, so swapping
 `c` and `t` forces the matching swap of vector components.
 
-**[DECISION] Canonical working order.** Recommend the nibabel convention:
-F-order `(x, y, z, t, c)` — spatial first in `x, y, z`, then time, then channel.
-This makes the non-spatial order `(t, c)` (nibabel's dim-4 is time, the vector /
-component dimension is last). Adopting it answers "(c,t) vs (t,c)" as **(t, c)**.
+**[DECIDED] Canonical working order = nibabel F-order `(x, y, z, t, c)`.**
+Spatial first in `x, y, z`, then time, then channel. The non-spatial order is
+therefore `(t, c)`, which answers "(c,t) vs (t,c)" as **(t, c)**.
 
-**[DECISION] Vector/component axis position.** Recommend **last**, matching
-OME RFC-5 and the NIfTI vector dimension (dim-5). A format that stores it first
-is reconciled to last at the boundary.
+**[DECIDED] Vector/component axis position = last**, matching OME RFC-5 and the
+NIfTI vector dimension. A format that stores it first is reconciled to last at
+the boundary. The B1 zarr image reader already implements this in a single seam
+(`io/images/zarr/_axisorder.py`): canonical role order `(space, time, channel,
+other, vector)`, storage role order `(time, channel, other, space, vector)`,
+one permutation over the full axis list applied to the array, the axis list, and
+any per-axis vector.
 
 ## 5. Separability ("by-dimension" transforms)
 
@@ -147,9 +150,17 @@ acting on a disjoint axis group with no cross-coupling. Then `T` applies
 group-by-group, which for resampling means a product of low-dimensional
 interpolations instead of one high-dimensional one — the main efficiency win.
 
-**Representation.** A `Separable` (a.k.a. `PerDimension`) transform holding an
-ordered mapping `{axis-group → sub-transform}`, identity on any unlisted axis.
-**[DECISION]** approve the type and its name.
+**Representation. [DECIDED] Reuse the existing `SubspaceTransformation`**, not a
+new type. `SubspaceTransformation` already applies a `transformation` to an axis
+subset named by `input_axes`/`output_axes`. A separable transform is then a
+composition of `SubspaceTransformation`s over disjoint axis groups, with the
+identity implied on any unlisted axis. The sibling `Projection` transform adds or
+drops axes, which covers the dimension-change (embed/project) case in §2(e).
+
+Note a latent bug to fix alongside this work: `SubspaceTransformation.inverse()`
+reads `self.transformations` and passes a `transformations=` keyword, but the
+field is the singular `transformation`, so `inverse()` raises `AttributeError`
+as written.
 
 **Detection.**
 - Trivially separable: `Permutation`, `Scaling`, per-axis `Translation`, and any
@@ -212,18 +223,25 @@ identity-dropping and lazy-inverse cancellation work: `adapt(S1,S2)` followed by
     and simplify away, so the adaptor emits only exactly-invertible pieces
     (`Permutation`, `Scaling`, `Translation`).
 
-## 8. Decisions needed from the maintainer
+## 8. Decisions — status
 
-- **[D1]** Canonical working order = nibabel F-order `(x, y, z, t, c)`, hence
-  non-spatial order `(t, c)`?
-- **[D2]** Vector/component axis canonical position = last?
-- **[D3]** Approve a `Separable` / `PerDimension` transform type (and its name).
-- **[D4]** Wire `_adapt` into composition boundaries now, or land the adaptor
-  standalone first and wire later?
-- **[D5]** Scope of the first #15 cut: full matcher (cases a–f) or a first cut
-  covering a–c (permutation / scale / flip between known systems)?
-- **[D6]** Corner cases 2 and 8: flip-offset semantics, and unitless-vs-metric
-  policy.
+- **[D1] DECIDED.** Canonical order = nibabel F-order `(x, y, z, t, c)`,
+  non-spatial `(t, c)`.
+- **[D2] DECIDED.** Vector/component axis position = last.
+- **[D3] DECIDED.** No new type — reuse `SubspaceTransformation` (+ `Projection`
+  for dimension changes). See §5.
+- **[D4] / [D5] UNDER DISCUSSION.** The maintainer is not yet satisfied the
+  adaptor design is sound. Open threads: whether the backbone should be the
+  type-keyed `_adapt` registry or a single value-based matching routine; whether
+  adaptation is implicit inside `compute()` or explicit/opt-in; the failure
+  policy for underspecified axes; and whether adaptation happens only at I/O
+  boundaries (to canonical) or arbitrarily mid-sequence. Do not implement the
+  adaptor until this settles.
+- **[D6] PARTIAL.** Deferred with the adaptor discussion (flip-offset and
+  unitless-vs-metric policy are adaptor behaviour). Independent of the adaptor,
+  the maintainer approved a **dedicated `compute()`/reslice pass, Fable-planned**,
+  for the "do not fold an affine into an interpolated field" principle
+  (right-to-left application; coordinate with the #31 lazy-inverse cancellation).
 
 ## 9. Suggested build order
 
@@ -231,7 +249,8 @@ identity-dropping and lazy-inverse cancellation work: `adapt(S1,S2)` followed by
    the named systems in `systems.py` (fRAS↔cRAS, fVoxel↔cVoxel, RAS↔LPS).
 2. Replace the `NotImplementedError` adaptor with cases (a)–(d).
 3. Wire `_adapt` into `Sequence` composition, with identity simplification.
-4. `Separable` type + the block-diagonal detector (case (e) and B5).
+4. Separability via `SubspaceTransformation` + the block-diagonal detector
+   (case (e) and B5).
 5. Field component-axis lockstep permutation at the OME/zarr boundary (feeds B1).
 
 ## 10. What to route to Fable
