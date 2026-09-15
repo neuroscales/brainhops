@@ -120,7 +120,10 @@ inventories = ["https://docs.python.org/3/objects.inv"]
 paths = ["src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
-extensions = ["griffe_bagof_magic:MagicExtension"]
+extensions = [
+  "griffe_bagof_magic:MagicExtension",
+  "griffe_typing_extensions:TypingExtensionsToTyping",
+]
 docstring_style = "numpy"
 inherited_members = true
 show_source = false
@@ -137,6 +140,9 @@ allow_inspection = true
 filters = "public"
 group_by_category = true
 show_category_heading = true
+show_signature_annotations = true
+signature_crossrefs = true
+modernize_annotations = true
 
 # ----------------------------------------------------------------------------
 # Markdown extras
