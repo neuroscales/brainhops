@@ -440,6 +440,23 @@ class CartesianField(CoordinatesField):
         return cls(shape=self.shape, input=self.output, output=self.input)
 
 
+class _Evaluated(CoordinatesField):
+    # Coordinates that have already been evaluated on a sampling domain,
+    # such as a query grid or an explicit point set. An `_Evaluated` is
+    # never interpolated. It carries concrete coordinates onto which the
+    # transformations that follow are applied pointwise.
+    #
+    # The root compose pass marks the leading sampling domain of a
+    # sequence as `_Evaluated`. That mark is what lets an affine fold onto
+    # the query coordinates (exact, because the coordinates are the values
+    # being folded into) and lets a stored field interpolate against them.
+    # A stored field that does not lead matches no such composer, so it is
+    # never folded into. The pass demotes its result back to a plain
+    # `CoordinatesField` before returning it, so this marker never leaves
+    # the compose pass.
+    pass
+
+
 class DisplacementField(Transformation):
     """
     A field of displacements defined on a regular grid.
@@ -1177,20 +1194,22 @@ class Sequence(MutableSequence, Transformation):
         """
         Compute the resulting transform of the sequence of transformations.
 
-        If all transformations in the sequence are affine-like transformations,
-        `compute()` returns an affine-like transform.
+        When every transformation in the sequence is affine-like,
+        `compute()` returns a single affine-like transform.
 
-        If the first (= rightmost) transform in the sequence is a
-        coordinate field, `compute()` returns a coordinate field.
+        The first transformation of the sequence is the sampling domain: a
+        grid or a point set on which the transforms that follow are
+        evaluated. When the sequence starts from such a field of
+        coordinates, `compute()` evaluates the whole chain on it and
+        returns a single field of coordinates, ready to sample from.
 
-        If the first (= rightmost) transform in the sequence is an
-        affine-like transform, and the sequence contains at least one
-        non-affine-like transform, `compute()` returns a sequence of two
-        transformations:
-        1. the composition of all affine-like transformations that appear
-           before the first non-affine-like transform in the sequence, and
-        2. the composition of all transformations in the sequence, starting
-           from the first non-affine-like transform in the sequence.
+        A stored field of coordinates or displacements that is not the
+        first transformation is not a sampling domain. An affine is never
+        folded into it, because folding would change the transform once the
+        field is interpolated. Such a field stays a separate step. In that
+        case `compute()` returns a sequence, in which each run of adjacent
+        affine-like transforms has been merged into one affine and each
+        stored field is kept in its place in application order.
 
         Parameters
         ----------
@@ -1930,6 +1949,70 @@ def _drop_interior_grids(seq: Sequence) -> Sequence:
     return replace(seq, transformations=kept)
 
 
+def _as_coordinates(field: "_Evaluated") -> CoordinatesField:
+    # Rebuild an evaluated field as a plain `CoordinatesField`, carrying
+    # its coordinates and interpolation settings across unchanged. Used to
+    # strip the internal `_Evaluated` marker before a result is returned.
+    return CoordinatesField(
+        field=field.field,
+        input=field.input,
+        output=field.output,
+        order=field.order,
+        bound=field.bound,
+        coeff=field.coeff,
+    )
+
+
+def _promote_domain(seq: Sequence) -> Sequence:
+    # Mark a leading raw `CoordinatesField` as the sampling domain of the
+    # sequence. The first element of a sequence is the point set or query
+    # grid on which the following transformations are evaluated. Marking it
+    # `_Evaluated` lets an affine fold onto those coordinates exactly and
+    # lets a stored field interpolate against them, while a stored field
+    # that does not lead matches no such composer and stays separate.
+    #
+    # A `CartesianField` already has dedicated composers and generates its
+    # grid on demand, so it is left as it is. An empty field carries no
+    # coordinates and is left to the identity handling.
+    xforms = seq.transformations or []
+    if not xforms:
+        return seq
+    first = xforms[0]
+    is_raw_coordinates = isinstance(
+        first, CoordinatesField
+    ) and not isinstance(first, (CartesianField, _Evaluated))
+    if is_raw_coordinates and first.field is not None:
+        promoted = _Evaluated(
+            field=first.field,
+            input=first.input,
+            output=first.output,
+            order=first.order,
+            bound=first.bound,
+            coeff=first.coeff,
+        )
+        return replace(seq, transformations=[promoted] + list(xforms[1:]))
+    return seq
+
+
+def _demote_evaluated(result: Transformation) -> Transformation:
+    # Strip the internal `_Evaluated` marker from a computed result. A
+    # single evaluated field becomes a plain `CoordinatesField`. A result
+    # that stayed a `Sequence`, because an element could not be applied to
+    # the domain, has each evaluated element demoted the same way, so the
+    # marker never leaves the compose pass.
+    if isinstance(result, _Evaluated):
+        return _as_coordinates(result)
+    if isinstance(result, Sequence):
+        xforms = result.transformations or []
+        if any(isinstance(t, _Evaluated) for t in xforms):
+            demoted = [
+                _as_coordinates(t) if isinstance(t, _Evaluated) else t
+                for t in xforms
+            ]
+            return replace(result, transformations=demoted)
+    return result
+
+
 def _compute_sequence(
     seq: Sequence,
     mode: tx.List[_ModePair],
@@ -1974,7 +2057,7 @@ def _compute_sequence(
             flat = _unnest(seq.transformations)
             before = len(flat)
             if before < 1:
-                return replace(seq, transformations=flat)
+                return _demote_evaluated(replace(seq, transformations=flat))
             seq = replace(seq, transformations=flat)
             # Factor away any strictly interior grid before composing. An
             # interior `CartesianField` is the identity map over its grid,
@@ -1984,7 +2067,7 @@ def _compute_sequence(
             seq = _drop_interior_grids(seq)
             cancelled = _cancel_adjacent_inverses(seq)
             if not isinstance(cancelled, Sequence):
-                return cancelled
+                return _demote_evaluated(cancelled)
             seq = cancelled
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
@@ -1992,15 +2075,22 @@ def _compute_sequence(
             # composition.
             if seq.input is not None or seq.output is not None:
                 seq = seq._flattened()
+            # Mark a leading sampling domain (#66) so the transforms that
+            # follow are evaluated on it rather than folded into a stored
+            # field. This runs *after* cancellation, so a leading field that
+            # cancels with its own inverse is cancelled rather than marked
+            # as a domain. The marker is internal and stripped from every
+            # result below; re-marking an already-marked domain is a no-op.
+            seq = _promote_domain(seq)
             submemo: tx.Set[_ModePair] = set()
             for submode in mode:
                 seq = _compute_sequence(seq, submode, memo=submemo)
                 if not isinstance(seq, Sequence):
-                    return seq
+                    return _demote_evaluated(seq)
             if len(_unnest(seq.transformations)) >= before:
                 # No pass shrank the sequence, so a further cancellation
                 # cannot either. Nothing left to simplify.
-                return seq
+                return _demote_evaluated(seq)
 
     # --- Flatten sequence
     if not _is_flat(seq):

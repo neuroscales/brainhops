@@ -12,7 +12,9 @@ from .base import DataModelBase
 from .geometry import Geometry
 from .transformations import (
     CartesianField,
+    CoordinatesField,
     Identity,
+    Sequence,
     Transformation,
     _at_resolution,
 )
@@ -215,6 +217,24 @@ class SingleScaleImage(Image):
             preferred.inverse() @ geometry.transformation @ geometry.grid
         )
         transformation = transformation.compute()
+        if not isinstance(transformation, CoordinatesField):
+            # With a leading grid every step folds onto the sampled
+            # coordinates, so a computed reslice map is a field of
+            # coordinates. A result that is still a sequence carries a step
+            # that could not be applied to the grid, such as a stored field
+            # reached out of order.
+            remaining = (
+                transformation.transformations
+                if isinstance(transformation, Sequence)
+                else [transformation]
+            )
+            names = ", ".join(type(t).__name__ for t in (remaining or []))
+            raise ValueError(
+                "The transformation chain could not be resolved to a field "
+                "of coordinates on the reference grid. These steps could "
+                f"not be applied to the grid: {names}. A stored field is "
+                "applied only when the grid is sampled before it."
+            )
         new_data = pull(self.data, transformation.field, **opt)
         return SingleScaleImage(
             data=new_data, transformations=[geometry.transformation]

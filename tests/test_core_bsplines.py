@@ -11,14 +11,15 @@ broken in two ways that no test covered:
 
 Together these made ``DisplacementField.to(coeff=...)`` and
 ``CoordinatesField.to(coeff=...)`` raise for any field carrying data, and
-therefore made composing any ``coeff=True`` field fail (the composers call
-``Ti.to(coeff=False)``).
+therefore made interpolating any ``coeff=True`` field fail (the field's
+coefficients are read by ``pull_field`` when it is evaluated on a grid).
 """
 
 import numpy as np
 import pytest
 
 from brainhops.datamodel.transformations import (
+    CartesianField,
     CoordinatesField,
     DisplacementField,
     _compose,
@@ -65,16 +66,15 @@ def test_repro_from_report() -> None:
 
 
 @pytest.mark.parametrize("order", ORDERS)
-def test_compose_coeff_fields_does_not_raise(order) -> None:  # noqa: ANN001
-    # Composition routes through ``Ti.to(coeff=False)``, so a broken
-    # coefficient conversion made composing any ``coeff=True`` field fail.
+def test_compose_coeff_field_on_a_grid_does_not_raise(order) -> None:  # noqa: ANN001
+    # Evaluating a coefficient field on a sampling grid reads its
+    # coefficients through ``pull_field``, so a broken coefficient
+    # conversion made interpolating any ``coeff=True`` field fail.
     rng = np.random.default_rng(1)
     d1 = DisplacementField(field=_random_field(rng, 2), order=order).to(
         coeff=True
     )
-    d2 = DisplacementField(field=_random_field(rng, 2), order=order).to(
-        coeff=True
-    )
+    grid = CartesianField(shape=(6, 7))
 
-    out = _compose(d1, d2)
-    assert isinstance(out, DisplacementField)
+    out = _compose(d1, grid)
+    assert out.field is not None
