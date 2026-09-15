@@ -45,36 +45,61 @@ class Orientation(DataModelBase, doc=True):
 
 
 class AnatomicalOrientation(Orientation):
+    """Describes the anatomical orientation of a spatial axis."""
+
     type: HiddenConst[OrientationType] = OrientationType.anatomical
 
 
 class LeftToRight(AnatomicalOrientation):
+    """Left-to-right orientation type."""
+
     value: HiddenConst[str] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
+    """Right-to-left orientation type."""
+
     value: HiddenConst[str] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
+    """Anterior-to-posterior orientation type."""
+
     value: HiddenConst[str] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
+    """Posterior-to-anterior orientation type."""
+
     value: HiddenConst[str] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
+    """Inferior-to-superior orientation type."""
+
     value: HiddenConst[str] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
+    """Superior-to-inferior orientation type."""
+
     value: HiddenConst[str] = "superior-to-inferior"
 
 
 R = leftToRight = LeftToRight()
+"""Singleton left-to-right orientation."""
+
 L = rightToLeft = RightToLeft()
+"""Singleton right-to-left orientation."""
+
 A = posteriorToAnterior = PosteriorToAnterior()
+"""Singleton posterior-to-anterior orientation."""
+
 P = anteriorToPosterior = AnteriorToPosterior()
+"""Singleton anterior-to-posterior orientation."""
+
 I = superiorToInferior = SuperiorToInferior()
+"""Singleton superior-to-inferior orientation."""
+
 S = inferiorToSuperior = InferiorToSuperior()
+"""Singleton inferior-to-superior orientation."""
