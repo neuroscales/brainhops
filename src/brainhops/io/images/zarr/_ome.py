@@ -7,6 +7,12 @@ coordinate transformation. The reader can therefore assume one
 transformation specification per level, whatever version the group was
 written in.
 
+Each OME coordinate transformation is mapped to the brainhops
+transformation of the same kind, rather than being collapsed into an
+affine. A scale becomes a `Scaling`, a translation a `Translation`, a
+rotation a `Rotation`, and a sequence a `Sequence` of the mapped children,
+so the geometry a level carries is the one the metadata describes.
+
 Malformed or missing metadata is rejected by abczarr while it parses, so a
 level with no transformation, or one placed by a transformation that is
 misspelled or of the wrong shape, raises rather than being read as an
@@ -24,12 +30,21 @@ from abczarr.ome import v0_6rc0 as _v6
 from abczarr.ome.v0_6rc0.images import Dataset, Multiscale
 from abczarr.ome.v0_6rc0.ome import OME
 from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
+from bagof.magic import replace
 
 # internals
-from brainhops._core import affines
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import Affine
+from brainhops.datamodel.transformations import (
+    Affine,
+    Identity,
+    Permutation,
+    Rotation,
+    Scaling,
+    Sequence,
+    Transformation,
+    Translation,
+)
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.transformations.zarr._axes import _to_axis
 
@@ -125,81 +140,12 @@ def multiscale_axes(multiscale: Multiscale) -> tx.List[Axis]:
     return [_to_axis(axis.to_json()) for axis in system.axes]
 
 
-def _compact(linear: np.ndarray, translation: np.ndarray) -> np.ndarray:
-    # Assemble a compact ``(n, n + 1)`` affine from its linear block and its
-    # translation column. This is the matrix shape the brainhops affine and
-    # `brainhops._core.affines` both work in, so no homogeneous row is added.
-    return np.concatenate([linear, translation[:, None]], axis=1)
-
-
-def _transform_matrix(
-    transform: CoordinateTransformation, ndim: int
-) -> np.ndarray:
-    # The compact ``(ndim, ndim + 1)`` affine of one 0.6rc0 coordinate
-    # transformation, in the stored axis order.
-    #
-    # A voxel-to-world geometry does not have to be affine in OME-Zarr; a
-    # coordinate transformation may sample a displacement or coordinate
-    # field, or reorder axes. brainhops does not yet build those geometries
-    # from a group (a displacement or coordinate field would be a
-    # `DisplacementField` or `CoordinatesField`), so a transformation that is
-    # not a scale, a translation, an affine, a rotation, or a sequence of
-    # those is refused here rather than read as a wrong affine.
-    kind = getattr(transform, "type", None)
-    if kind == "identity":
-        return np.eye(ndim, ndim + 1)
-    if kind == "scale" and isinstance(getattr(transform, "scale", None), list):
-        return _compact(np.diag(transform.scale), np.zeros(ndim))
-    if kind == "translation" and isinstance(
-        getattr(transform, "translation", None), list
-    ):
-        return _compact(np.eye(ndim), np.asarray(transform.translation, float))
-    if kind in ("affine", "rotation"):
-        inline = getattr(transform, kind, None)
-        if isinstance(inline, list):
-            matrix = np.asarray(inline, dtype=float)
-            if matrix.shape == (ndim, ndim):
-                return _compact(matrix, np.zeros(ndim))
-            if matrix.shape == (ndim, ndim + 1):
-                return matrix
-            # A full (ndim + 1, ndim + 1) homogeneous matrix drops its last
-            # row to become compact.
-            if matrix.shape == (ndim + 1, ndim + 1):
-                return matrix[:ndim]
-    if kind == "sequence":
-        matrix = np.eye(ndim, ndim + 1)
-        for inner in transform.transformations:
-            matrix = affines.matmul(_transform_matrix(inner, ndim), matrix)
-        return matrix
-    raise OmeImageError(
-        "This OME-Zarr image is placed by a "
-        f"{kind!r} coordinate transformation, which brainhops cannot yet "
-        "read as an image geometry. Only a scale, a translation, an affine, "
-        "a rotation, or a sequence of those is supported."
-    )
-
-
-def level_matrix(
-    multiscale: Multiscale, dataset: Dataset, ndim: int
-) -> np.ndarray:
-    """Return the voxel-to-world matrix of one level, in stored axis order.
-
-    The level's own transformation is composed with the multiscale
-    transformations that apply to every level. The result is a compact
-    ``(ndim, ndim + 1)`` affine.
-    """
-    matrix = np.eye(ndim, ndim + 1)
-    # A dataset's own (intrinsic) transformation is safe to read as an
-    # affine: the OME spec limits it to scales and translations, so it never
-    # carries a field or an axis reordering that an affine could not hold.
-    transforms = list(dataset.coordinateTransformations)
-    if transforms:
-        matrix = affines.matmul(_transform_matrix(transforms[0], ndim), matrix)
-    common = getattr(multiscale, "coordinateTransformations", None)
-    if isinstance(common, list):
-        for transform in common:
-            matrix = affines.matmul(_transform_matrix(transform, ndim), matrix)
-    return matrix
+def _permute_vector(
+    values: tx.Sequence[float], perm: tx.Sequence[int]
+) -> tx.List[float]:
+    # Reorder a per-axis vector, such as a scale or a translation, from the
+    # stored axis order into the brainhops order.
+    return [float(values[p]) for p in perm]
 
 
 def permute_affine(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
@@ -216,15 +162,114 @@ def permute_affine(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
     return np.concatenate([linear, translation[:, None]], axis=1)
 
 
-def affine_from_matrix(
-    matrix: np.ndarray,
+def _permute_linear(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
+    # Reorder the rows and columns of a square linear matrix by `perm`.
+    matrix = np.asarray(matrix, dtype=float)
+    perm = list(perm)
+    return matrix[np.ix_(perm, perm)]
+
+
+def _invert_perm(perm: tx.Sequence[int]) -> tx.List[int]:
+    # The inverse permutation: `inverse[perm[i]] == i`. `perm[i]` is the
+    # stored index at brainhops position `i`, so `inverse` maps a stored
+    # index back to its brainhops position.
+    inverse = [0] * len(perm)
+    for position, stored in enumerate(perm):
+        inverse[stored] = position
+    return inverse
+
+
+def _map_transform(
+    transform: CoordinateTransformation, perm: tx.Sequence[int], ndim: int
+) -> Transformation:
+    # Map one 0.6rc0 coordinate transformation to the brainhops
+    # transformation of the same kind, with its parameters reordered from
+    # the stored axis order into the brainhops order.
+    kind = getattr(transform, "type", None)
+    if kind == "identity":
+        return Identity()
+    if kind == "scale" and isinstance(getattr(transform, "scale", None), list):
+        return Scaling(scale=_permute_vector(transform.scale, perm))
+    if kind == "translation" and isinstance(
+        getattr(transform, "translation", None), list
+    ):
+        return Translation(
+            translation=_permute_vector(transform.translation, perm)
+        )
+    if kind == "affine" and isinstance(
+        getattr(transform, "affine", None), list
+    ):
+        matrix = np.asarray(transform.affine, dtype=float)
+        if matrix.shape == (ndim + 1, ndim + 1):
+            matrix = matrix[:ndim]
+        return Affine(matrix=permute_affine(matrix, perm))
+    if kind == "rotation" and isinstance(
+        getattr(transform, "rotation", None), list
+    ):
+        return Rotation(matrix=_permute_linear(transform.rotation, perm))
+    if kind == "mapAxis" and isinstance(
+        getattr(transform, "mapAxis", None), list
+    ):
+        mapping = list(transform.mapAxis)
+        if sorted(mapping) == list(range(ndim)):
+            # Rewrite the axis map from the stored order into the brainhops
+            # order on both its input and output sides. The output axis at
+            # brainhops position `o` is stored axis `perm[o]`, and the input
+            # axis it names maps back through the inverse permutation.
+            inverse = _invert_perm(perm)
+            permutation = [inverse[mapping[p]] for p in perm]
+            return Permutation(permutation=permutation)
+    if kind == "sequence":
+        return Sequence(
+            [
+                _map_transform(inner, perm, ndim)
+                for inner in transform.transformations
+            ]
+        )
+    if kind in ("displacements", "coordinates"):
+        raise OmeImageError(
+            "This OME-Zarr image is placed by a "
+            f"{kind!r} field transformation, which brainhops does not yet "
+            "read from a group. The coordinate transformation around such a "
+            "field must be affine, so that the field can be inverted and its "
+            "vectors rotated."
+        )
+    raise OmeImageError(
+        "This OME-Zarr image is placed by a "
+        f"{kind!r} coordinate transformation, which brainhops cannot yet "
+        "read as an image geometry."
+    )
+
+
+def level_transformation(
+    multiscale: Multiscale,
+    dataset: Dataset,
+    perm: tx.Sequence[int],
+    ndim: int,
     input: tx.Optional[CoordinateSystem] = None,
     output: tx.Optional[CoordinateSystem] = None,
-) -> Affine:
-    """Build a voxel-to-world affine from an ``(n, n + 1)`` matrix."""
-    return Affine(
-        matrix=np.asarray(matrix, dtype=float), input=input, output=output
-    )
+) -> Transformation:
+    """Return the voxel-to-world transformation of one level.
+
+    Each OME coordinate transformation is mapped to the brainhops
+    transformation of the same kind. The level's own transformation runs
+    first, then the multiscale transformations that apply to every level. A
+    level with more than one transformation becomes a `Sequence` in that
+    application order.
+    """
+    mapped = []  # type: tx.List[Transformation]
+    transforms = list(dataset.coordinateTransformations)
+    if transforms:
+        mapped.append(_map_transform(transforms[0], perm, ndim))
+    common = getattr(multiscale, "coordinateTransformations", None)
+    if isinstance(common, list):
+        mapped.extend(_map_transform(one, perm, ndim) for one in common)
+
+    if not mapped:
+        return Identity(input=input, output=output)
+    if len(mapped) == 1:
+        return replace(mapped[0], input=input, output=output)
+    return Sequence(mapped, input=input, output=output)
 
 
 def scale_translation_from_affine(

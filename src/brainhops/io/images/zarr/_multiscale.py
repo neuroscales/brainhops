@@ -28,11 +28,9 @@ from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.images.zarr._ome import (
     OmeImageError,
-    affine_from_matrix,
-    level_matrix,
+    level_transformation,
     looks_like_multiscale,
     multiscale_axes,
-    permute_affine,
     read_multiscale,
     resolve_write_version,
     scale_translation_from_affine,
@@ -155,13 +153,15 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         images = []  # type: tx.List[SingleScaleImage]
         for dataset in datasets:
             array = node[str(dataset.path)]
-            matrix = level_matrix(multiscale, dataset, ndim)
-            affine = affine_from_matrix(
-                permute_affine(matrix, perm),
+            geometry = level_transformation(
+                multiscale,
+                dataset,
+                perm,
+                ndim,
                 input=input_system,
                 output=output_system,
             )
-            level = _ZarrLevel(transformations=[affine])
+            level = _ZarrLevel(transformations=[geometry])
             level._node = array
             level._perm = perm
             images.append(level)

@@ -57,6 +57,11 @@ def _diag_affine(
     return Affine(matrix=matrix)
 
 
+def _world_matrix(transformation: tx.Any) -> np.ndarray:
+    """The affine matrix a transformation reduces to, for verification."""
+    return np.asarray(transformation.compute().to(Affine).matrix)
+
+
 def _spatial_axes() -> tx.List[SpatialAxis]:
     return [
         SpatialAxis(name="x"),
@@ -200,8 +205,8 @@ def test_multiscale_round_trip_preserves_data_and_geometry(
             np.asarray(original.images[level].data),
         )
         np.testing.assert_allclose(
-            np.asarray(back.images[level].transformation.matrix),
-            np.asarray(original.images[level].transformation.matrix),
+            _world_matrix(back.images[level].transformation),
+            _world_matrix(original.images[level].transformation),
         )
 
 
@@ -280,11 +285,26 @@ def test_reader_builds_geometry_from_coordinate_transformations(
     )
 
     back = images.load(path)
-    matrix = np.asarray(back.images[0].transformation.matrix)
+    # The scale and translation are read as their own brainhops
+    # transformations, kept in a sequence rather than collapsed to an affine.
+    from brainhops.datamodel.transformations import (
+        Scaling,
+        Sequence,
+        Translation,
+    )
+
+    geometry = back.images[0].transformation
+    assert isinstance(geometry, Sequence)
+    assert isinstance(geometry.transformations[0], Scaling)
+    assert isinstance(geometry.transformations[1], Translation)
     # The stored (z, y, x) scale (3, 2, 1) becomes the canonical (x, y, z)
     # scale (1, 2, 3), and likewise the translation.
-    np.testing.assert_allclose(np.diag(matrix[:, :-1]), [1.0, 2.0, 3.0])
-    np.testing.assert_allclose(matrix[:, -1], [10.0, 20.0, 30.0])
+    np.testing.assert_allclose(
+        geometry.transformations[0].scale, [1.0, 2.0, 3.0]
+    )
+    np.testing.assert_allclose(
+        geometry.transformations[1].translation, [10.0, 20.0, 30.0]
+    )
 
 
 def test_reader_refuses_missing_transformations(tmp_path: Path) -> None:
@@ -639,3 +659,128 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     back.save(target)
     block = dict(abczarr.open(target, mode="r").attrs)["multiscales"][0]
     assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]
+
+
+# ---- native transformation mapping -----------------------------------
+
+
+def _authored_pyramid(
+    tmp_path: Path, transform: dict, axes: tx.List[dict], shape: tuple
+) -> str:
+    """Write a 0.6rc0 group whose one level carries `transform`."""
+    from abczarr.ome import v0_6rc0 as v6
+
+    path = str(tmp_path / "authored.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.ones(shape, "float32"))
+    group.ome = v6.OME.from_json(
+        {
+            "version": "0.6rc0",
+            "multiscales": [
+                {
+                    "coordinateSystems": [{"name": "phys", "axes": axes}],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                dict(
+                                    transform,
+                                    input={"path": "0"},
+                                    output={"name": "phys"},
+                                )
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return path
+
+
+_SPACE3 = [
+    {"name": "z", "type": "space"},
+    {"name": "y", "type": "space"},
+    {"name": "x", "type": "space"},
+]
+_SPACE2 = [{"name": "y", "type": "space"}, {"name": "x", "type": "space"}]
+
+
+def test_reader_maps_a_rotation_to_a_rotation(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import Rotation
+
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "rotation", "rotation": [[0.0, -1.0], [1.0, 0.0]]},
+        _SPACE2,
+        (5, 4),
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Rotation)
+    # Stored (y, x) rotation reordered to canonical (x, y).
+    np.testing.assert_allclose(
+        np.asarray(geometry.matrix), [[0.0, 1.0], [-1.0, 0.0]]
+    )
+
+
+def test_reader_maps_an_affine_to_an_affine(tmp_path: Path) -> None:
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "affine", "affine": [[2.0, 0.0, 5.0], [0.0, 3.0, 6.0]]},
+        _SPACE2,
+        (5, 4),
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Affine)
+    np.testing.assert_allclose(
+        np.asarray(geometry.matrix), [[3.0, 0.0, 6.0], [0.0, 2.0, 5.0]]
+    )
+
+
+def test_reader_maps_a_sequence_to_a_sequence(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import (
+        Scaling,
+        Sequence,
+        Translation,
+    )
+
+    path = _authored_pyramid(
+        tmp_path,
+        {
+            "type": "sequence",
+            "transformations": [
+                {"type": "scale", "scale": [3.0, 2.0, 1.0]},
+                {"type": "translation", "translation": [30.0, 20.0, 10.0]},
+            ],
+        },
+        _SPACE3,
+        (6, 5, 4),
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Sequence)
+    assert isinstance(geometry.transformations[0], Scaling)
+    assert isinstance(geometry.transformations[1], Translation)
+
+
+def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import Permutation
+
+    path = _authored_pyramid(
+        tmp_path, {"type": "mapAxis", "mapAxis": [1, 0]}, _SPACE2, (5, 4)
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Permutation)
+    np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
+
+
+def test_reader_refuses_a_displacement_field(tmp_path: Path) -> None:
+    # A field transformation is not read yet; the reader refuses it with a
+    # clear message rather than guessing a geometry.
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "displacements", "path": "field"},
+        _SPACE2,
+        (5, 4),
+    )
+    with pytest.raises(OmeImageError):
+        OmeZarrImage.from_store(path)
