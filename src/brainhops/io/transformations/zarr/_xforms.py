@@ -1,14 +1,18 @@
-"""The OME-Zarr multiscale field reader.
+"""The OME-Zarr multiscale field format.
 
-An OME-Zarr coordinate or displacement field is read as a
-[`MultiscaleField`][brainhops.datamodel.transformations.MultiscaleField].
-Each resolution level is built as a sequence that samples the field on
-that level's grid. The reader keeps the arrays and the metadata exactly
-as they were read, so a field that is read and written again re-emits its
-OME metadata unchanged.
+An OME-Zarr coordinate or displacement field is a Zarr store, so it is a
+file format. It is read into a
+[`MultiscaleField`][brainhops.datamodel.transformations.MultiscaleField]
+and written back out, and it registers so that
+[`load`][brainhops.io.transformations.load] discovers it like any other
+transformation format. Each resolution level is built as a sequence that
+samples the field on that level's grid. The reader keeps the arrays and the
+metadata exactly as they were read, so a field that is read and written
+again re-emits its OME metadata unchanged.
 """
 
 # dependencies
+import abczarr
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
@@ -32,6 +36,11 @@ from brainhops.datamodel.transformations import (
     _affine_matrix,
     is_identity,
 )
+from brainhops.io.base._base import register_format
+from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.zarr import ZarrParser
+from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.zarr import _map, _node
 
 
 class OmeFieldError(ValueError):
@@ -45,8 +54,21 @@ class OmeFieldError(ValueError):
     """
 
 
-class OmeZarrField(MultiscaleField):
-    """A coordinate or displacement field read from OME-Zarr.
+@register_format
+class OmeZarrField(
+    ZarrParser, WritableFileBasedTransformation, MultiscaleField
+):
+    """A coordinate or displacement field stored as OME-Zarr.
+
+    An OME-Zarr field is a Zarr store, so this is a file format. It is read
+    from a store with
+    [`from_store`][brainhops.io.base.zarr.ZarrParser.from_store] and written
+    with [`to_store`][brainhops.io.base.zarr.ZarrParser.to_store], and it is
+    discoverable through
+    [`load`][brainhops.io.transformations.load] like any other
+    transformation format. An already-opened Zarr node is read with
+    [`from_node`][brainhops.io.base.zarr.ZarrParser.from_node] and written
+    with [`to_node`][brainhops.io.base.zarr.ZarrParser.to_node].
 
     The field is a
     [`MultiscaleField`][brainhops.datamodel.transformations.MultiscaleField],
@@ -67,6 +89,8 @@ class OmeZarrField(MultiscaleField):
     field whose axes mix the displacement and coordinate types is refused
     with an [`AxisError`][brainhops.datamodel.axes.AxisError].
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
 
     raw_levels: tx.Annotated[
         tx.Optional[tx.List[ArrayProtocol]],
@@ -144,6 +168,123 @@ class OmeZarrField(MultiscaleField):
         metadata unchanged.
         """
         return self.ome
+
+    @classmethod
+    def _score_store(cls, node: tx.Any) -> float:
+        # An OME-Zarr field is a group whose own OME metadata names a
+        # displacement or coordinate component axis. A plain image pyramid
+        # names no such axis, so it is not read as a field.
+        if not isinstance(node, abczarr.ZarrGroup):
+            return Confidence.NO
+        for system in _node.coordinate_systems(node):
+            for axis in getattr(system, "axes", None) or []:
+                kind = getattr(axis, "type", None)
+                if kind in ("displacement", "coordinate"):
+                    return Confidence.CERTAIN
+        return Confidence.NO
+
+    @classmethod
+    def _read_node(cls, node: tx.Any, **kwargs) -> "OmeZarrField":
+        # Build the field from an opened node whose own OME metadata
+        # describes it. The typed axes name the axis that holds the vector
+        # components, the resolution levels are read from the datasets the
+        # metadata names, and the placement of each level is mapped from the
+        # level's coordinate transformation. The arrays and the metadata are
+        # kept exactly as read, so a field that is read and written again
+        # re-emits its OME metadata unchanged.
+        ome = getattr(node, "ome", None)
+        if ome is None:
+            raise OmeFieldError(
+                "This node carries no OME metadata, so no field can be read "
+                "from it."
+            )
+        try:
+            normalized = ome.to_version("0.6rc0")
+        except Exception as error:
+            raise OmeFieldError(
+                "This node's OME metadata could not be read as a field. "
+                + str(error)
+            ) from error
+        multiscales = getattr(normalized, "multiscales", None) or []
+        datasets = list(multiscales[0].datasets) if multiscales else []
+        if not datasets:
+            raise OmeFieldError(
+                "This node's OME metadata names no field datasets, so it has "
+                "no resolution levels to read."
+            )
+        backend = get_array_backend()
+        raw_levels = [
+            backend.asarray(_node.follow_path(node, str(ds.path))[...])
+            for ds in datasets
+        ]
+        ndim = int(raw_levels[0].ndim)
+        axes = _node.typed_axes(node, ndim)
+        vector_count = sum(
+            1
+            for axis in (axes or [])
+            if axis.type in ("displacement", "coordinate")
+        )
+        spatial_ndim = ndim - vector_count
+        perm = list(range(spatial_ndim))
+        placements = [
+            _dataset_placement(ds, perm, spatial_ndim) for ds in datasets
+        ]
+        voxel2world = placements[0]
+        world2voxel = voxel2world.inverse()
+        level_transforms = [
+            (world2voxel @ placement).compute() for placement in placements
+        ]
+        return cls(
+            raw_levels=raw_levels,
+            voxel2world=voxel2world,
+            level_transforms=level_transforms,
+            axes=axes,
+            ome=ome,
+            **kwargs,
+        )
+
+    def _write_node(self, node: tx.Any, **kwargs) -> None:
+        # Write the field's arrays and its OME metadata into an opened group.
+        # Each level array is written to the dataset path the metadata names,
+        # and the metadata is re-emitted unchanged, so a read followed by a
+        # write round-trips the store.
+        if not isinstance(node, abczarr.ZarrGroup):
+            raise WriterError(
+                "An OME-Zarr field is written into a group, not a plain array."
+            )
+        ome = self.to_ome()
+        if ome is None:
+            raise WriterError(
+                "This OME-Zarr field has no OME metadata, so there is nothing "
+                "to write."
+            )
+        raw_levels = self.raw_levels or []
+        if not raw_levels:
+            raise WriterError(
+                "This OME-Zarr field has no resolution levels to write."
+            )
+        try:
+            normalized = ome.to_version("0.6rc0")
+        except Exception:
+            normalized = ome
+        multiscales = getattr(normalized, "multiscales", None) or []
+        datasets = list(multiscales[0].datasets) if multiscales else []
+        backend = get_array_backend()
+        for index, array in enumerate(raw_levels):
+            dataset_path = (
+                str(datasets[index].path)
+                if index < len(datasets)
+                else str(index)
+            )
+            node.create_array(
+                dataset_path, data=backend.asarray(array), **kwargs
+            )
+        node.ome = ome
+
+    def _create_store(self, location: str, **kwargs) -> None:
+        # Create a store at `location` and write the field into it.
+        group = abczarr.open_group(location, mode="w")
+        self._write_node(group, **kwargs)
 
     # --- level construction ---
 
@@ -251,6 +392,20 @@ def _to_voxel_displacement(
     ab = get_array_backend(matrix)
     raw = ab.asarray(raw)
     return raw @ inverse[:, :-1].T
+
+
+def _dataset_placement(
+    dataset: tx.Any, perm: tx.Sequence[int], ndim: int
+) -> Transformation:
+    # The voxel-to-world placement of one field level, mapped from the
+    # dataset's first coordinate transformation. A dataset that names no
+    # transformation is placed by the identity.
+    transforms = list(
+        getattr(dataset, "coordinateTransformations", None) or []
+    )
+    if not transforms:
+        return Identity()
+    return _map.from_ome(transforms[0], perm, ndim)
 
 
 def _as_affine(xform: Transformation, ndim: int) -> Transformation:

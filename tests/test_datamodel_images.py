@@ -200,6 +200,11 @@ def test_reslice_selects_the_multiscale_level_that_matches_the_target() -> (
     import numpy as np
 
     from brainhops.datamodel.transformations import Identity, Scaling
+
+    # OmeZarrField is an OME-Zarr file format, so it is available only when
+    # abczarr is installed. It is used here only as a convenient builder of a
+    # multiscale field for the reslice check.
+    pytest.importorskip("abczarr")
     from brainhops.io.transformations.zarr import OmeZarrField
 
     voxel2world = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))

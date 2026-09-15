@@ -12,7 +12,7 @@ __all__ = [
     "register_format",
 ]
 
-from brainhops._core.dependencies import HAS_NIBABEL
+from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 
 from . import parsers
 from ._base import (
@@ -31,3 +31,11 @@ if HAS_NIBABEL:
     from . import nifti
 
     __all__ += ["nifti"]
+
+# The Zarr store adapter needs abczarr and at least one backend driver.
+# abczarr alone cannot open a store, so the adapter is exposed only when a
+# driver is present.
+if has_abczarr_driver():
+    from . import zarr
+
+    __all__ += ["zarr"]
