@@ -1599,13 +1599,23 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
         ndim = len(xform.permutation)
         return (xform.permutation == list(range(ndim))).all()
     if isinstance(xform, Linear):
-        ndim = xform.matrix.shape[0]
+        rows, cols = xform.matrix.shape
+        if rows != cols:
+            # A transform between spaces of different dimension is never
+            # the identity, and its matrix cannot be compared to a square
+            # identity matrix.
+            return False
         ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(ndim)).all()
+        return (xform.matrix == ab.eye(rows)).all()
     if isinstance(xform, Affine):
-        ndim = xform.matrix.shape[0] - 1
+        rows, cols = xform.matrix.shape
+        if cols != rows + 1:
+            # An affine whose input and output have different dimensions is
+            # never the identity. Its matrix is `(No, Ni + 1)`, so the
+            # identity requires `No == Ni`.
+            return False
         ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(ndim + 1)[:-1]).all()
+        return (xform.matrix == ab.eye(rows + 1)[:-1]).all()
     if isinstance(xform, DisplacementField):
         return (xform.field == 0).all()
     if isinstance(xform, CartesianField):
@@ -1982,7 +1992,17 @@ def _compute_sequence(
             # that link by identity, and `_flattened` (used below to
             # propagate coordinate systems) would rebuild the first and
             # last elements and break it.
-            flat = _unnest(seq.transformations)
+            # Reconcile any boundary where two adjacent transforms disagree
+            # on the system they share, before those transforms are
+            # flattened and composed. The composers assume compatible
+            # systems, so the bridge that reorders, rescales, or flips the
+            # mismatched axes is inserted here. Bridging runs on the direct
+            # children, because a nested sequence carries its endpoint
+            # systems on itself and flattening would drop them. A bridge is
+            # built from exactly invertible pieces, so two opposite bridges
+            # cancel and simplify away.
+            bridged = _insert_bridges(seq.transformations or [])
+            flat = _unnest(bridged)
             before = len(flat)
             if before < 1:
                 return replace(seq, transformations=flat)
@@ -2236,40 +2256,106 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
 # ----------------------------------------------------------------------
 #   ADAPTORS
 # ----------------------------------------------------------------------
-_ADAPTORS = {}
-_ADAPTORS_FASTMAP = {}
 
 
 class AdaptationError(TypeError):
-    """Raised when no transformation adapts one coordinate system to
-    another."""
+    """Raised when one coordinate system cannot be adapted to another.
+
+    Adaptation reorders, rescales, and flips the axes that two coordinate
+    systems share, so it succeeds only when every axis of one system
+    corresponds to an axis of the other. This error is raised when an axis
+    that must be matched has no correspondence, or when two matched axes
+    carry incompatible units. Its message names the two systems and the
+    axes that could not be reconciled.
+    """
 
 
-def _adaptor(func: tx.Callable) -> tx.Callable:
-    """
-    Decorator to register a function as an adaptor between two
-    coordinate systems.
-    """
-    types = tuple(tx.get_type_hints(func).values())[:2]
-    _ADAPTORS[types] = func
-    _ADAPTORS_FASTMAP.clear()
-    return func
+# The bridge builder lives in `_xform_adaptors`, which imports this module.
+# It registers itself here at import time, so the sequence machinery can
+# call it without importing that module at load time and forming a cycle.
+_BRIDGE: tx.Optional[tx.Callable[..., "Transformation"]] = None
 
 
-def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
+def _register_bridge(func: tx.Callable[..., "Transformation"]) -> None:
+    """Register the routine that builds a bridge between two systems."""
+    global _BRIDGE
+    _BRIDGE = func
+
+
+def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> "Transformation":
+    """Return the bridge that carries `s1` coordinates to `s2`.
+
+    The work is done by the routine registered from `_xform_adaptors`.
+    This raises [`AdaptationError`][] when no such routine is registered.
     """
-    Dispatch the adaptation between two coordinate systems to the appropriate
-    adaptor function.
-    """
-    if (s1, s2) in _ADAPTORS_FASTMAP:
-        func = _ADAPTORS_FASTMAP[(s1, s2)]
-        return func(s1, s2)
-    best_distance, best_func = float("inf"), None
-    for (S1, S2), FUNC in _ADAPTORS.items():
-        distance = _distance(s1, S1) + _distance(s2, S2)
-        if distance < best_distance:
-            best_distance, best_func = distance, FUNC
-    if best_distance < float("inf"):
-        _ADAPTORS_FASTMAP[(s1, s2)] = best_func
-        return best_func(s1, s2)
-    raise AdaptationError(f"No adaptor found for types: {s1}, {s2}")
+    if _BRIDGE is None:
+        raise AdaptationError(
+            "No coordinate-system adaptor is registered. Import "
+            "`brainhops.datamodel` so the adaptor is installed."
+        )
+    return _BRIDGE(s1, s2)
+
+
+def _systems_disagree(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+) -> bool:
+    # Whether a bridge is needed between two adjacent systems. A system
+    # that is unspecified, or that carries no axes, is treated as
+    # compatible with its neighbour, so only two fully described and
+    # unequal systems disagree.
+    if source is None or target is None:
+        return False
+    if source.axes is None or target.axes is None:
+        return False
+    return source != target
+
+
+def _boundary_output(t: "Transformation") -> tx.Optional[CoordinateSystem]:
+    # The system in which a transform leaves its coordinates, looking past
+    # a sequence that carries the system on its last element rather than on
+    # itself. This is the system a following transform meets.
+    if t.output is not None:
+        return t.output
+    if isinstance(t, Sequence) and t.transformations:
+        return _boundary_output(t.transformations[-1])
+    return None
+
+
+def _boundary_input(t: "Transformation") -> tx.Optional[CoordinateSystem]:
+    # The system in which a transform expects its coordinates, looking past
+    # a sequence that carries the system on its first element rather than
+    # on itself. This is the system a preceding transform must reach.
+    if t.input is not None:
+        return t.input
+    if isinstance(t, Sequence) and t.transformations:
+        return _boundary_input(t.transformations[0])
+    return None
+
+
+def _insert_bridges(
+    transformations: tx.List["Transformation"],
+) -> tx.List["Transformation"]:
+    # Splice a bridge into every boundary where two adjacent transforms
+    # disagree on the system they share. The output system of one and the
+    # input system of the next are reconciled by the adaptor, whose pieces
+    # are inserted between the two transforms. A boundary whose systems
+    # already agree, or where either system is unspecified, is left alone.
+    # Bridging runs before the sequence is flattened, because a nested
+    # sequence carries its endpoint systems on the sequence and not on the
+    # leaves that flattening would expose.
+    if _BRIDGE is None or len(transformations) < 2:
+        return transformations
+    spliced: tx.List[Transformation] = [transformations[0]]
+    for nxt in transformations[1:]:
+        source = _boundary_output(spliced[-1])
+        target = _boundary_input(nxt)
+        if _systems_disagree(source, target):
+            between = _adapt(source, target)
+            if not is_identity(between):
+                if isinstance(between, Sequence):
+                    spliced.extend(between.transformations or [])
+                else:
+                    spliced.append(between)
+        spliced.append(nxt)
+    return spliced
