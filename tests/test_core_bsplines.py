@@ -52,9 +52,7 @@ def test_value_coeff_round_trip(field_type, ndim, order, bound) -> None:  # noqa
 
     recovered = coeffs.to(coeff=False)
     assert recovered.coeff is False
-    np.testing.assert_allclose(
-        np.asarray(recovered.field), values, atol=1e-6
-    )
+    np.testing.assert_allclose(np.asarray(recovered.field), values, atol=1e-6)
 
 
 def test_repro_from_report() -> None:
@@ -71,12 +69,12 @@ def test_compose_coeff_fields_does_not_raise(order) -> None:  # noqa: ANN001
     # Composition routes through ``Ti.to(coeff=False)``, so a broken
     # coefficient conversion made composing any ``coeff=True`` field fail.
     rng = np.random.default_rng(1)
-    d1 = DisplacementField(
-        field=_random_field(rng, 2), order=order
-    ).to(coeff=True)
-    d2 = DisplacementField(
-        field=_random_field(rng, 2), order=order
-    ).to(coeff=True)
+    d1 = DisplacementField(field=_random_field(rng, 2), order=order).to(
+        coeff=True
+    )
+    d2 = DisplacementField(field=_random_field(rng, 2), order=order).to(
+        coeff=True
+    )
 
     out = _compose(d1, d2)
     assert isinstance(out, DisplacementField)
