@@ -227,6 +227,40 @@ def _follow_path(node: ZarrGroup, path: str) -> tx.Any:
     return current
 
 
+def _field_coordinate_systems(field_node: tx.Any) -> tx.List[tx.Any]:
+    # The coordinate systems a field node declares in its own OME metadata.
+    # A field node is a full OME-Zarr node whose ``ome`` carries typed axes.
+    try:
+        ome = field_node.ome
+    except Exception:
+        return []
+    if ome is None:
+        return []
+    systems = list(getattr(ome, "coordinateSystems", None) or [])
+    for multiscale in getattr(ome, "multiscales", None) or []:
+        systems.extend(getattr(multiscale, "coordinateSystems", None) or [])
+    return systems
+
+
+def _field_typed_axes(
+    field_node: tx.Any, ndim: int
+) -> tx.Optional[tx.List[Axis]]:
+    # The field node's own axes, as brainhops axes with types, in the field
+    # array's stored dimension order. The coordinate system that describes
+    # the field array is the one with one axis per dimension, preferring the
+    # one that names a displacement or coordinate component axis.
+    fallback = None  # type: tx.Optional[tx.List[Axis]]
+    for system in _field_coordinate_systems(field_node):
+        axes = [_to_axis(axis.to_json()) for axis in system.axes]
+        if len(axes) != ndim:
+            continue
+        if any(axis.type in ("displacement", "coordinate") for axis in axes):
+            return axes
+        if fallback is None:
+            fallback = axes
+    return fallback
+
+
 def _read_field(
     transform: CoordinateTransformation,
     kind: str,
@@ -234,10 +268,10 @@ def _read_field(
     store_axes: tx.Sequence[Axis],
     ndim: int,
 ) -> Transformation:
-    # Build a brainhops displacement or coordinate field from the array the
-    # transformation points at. The field array's own axis names, read from
-    # the node's ``dimension_names``, say which axis holds the vector
-    # components and how the spatial axes are ordered.
+    # Build a brainhops displacement or coordinate field from the node the
+    # transformation points at. A field node is a full OME-Zarr node, so its
+    # own ``ome`` metadata names its typed axes; those say which axis holds
+    # the vector components and how the spatial axes are ordered.
     path = getattr(transform, "path", None)
     if not isinstance(path, str):
         raise OmeImageError(
@@ -245,18 +279,48 @@ def _read_field(
             "be read."
         )
     field_node = _follow_path(node, path)
+    backend = get_array_backend()
+    raw = backend.asarray(field_node[...])
 
+    typed_axes = _field_typed_axes(field_node, field_node.ndim)
+    if typed_axes is not None:
+        # The field node's own typed axes place the component axis (a
+        # displacement or coordinate axis, which the axis-order seam groups
+        # with the channel position) and order the spatial axes. Sorting into
+        # the brainhops order lays the field out as (*spatial, component).
+        data = backend.transpose(raw, _axisorder.to_canonical(typed_axes))
+    else:
+        # A field node that is only a bare array carries no typed axes, just
+        # dimension names. This is an edge case; match the names against the
+        # image axes to find the component axis.
+        data = _field_from_names(raw, field_node, store_axes, kind, path)
+
+    order = _INTERPOLATION_ORDER.get(
+        getattr(transform, "interpolation", None), 1
+    )
+    field_cls = (
+        DisplacementField if kind == "displacements" else CoordinatesField
+    )
+    return field_cls(field=data, order=order)
+
+
+def _field_from_names(
+    raw: tx.Any,
+    field_node: tx.Any,
+    store_axes: tx.Sequence[Axis],
+    kind: str,
+    path: str,
+) -> tx.Any:
+    # Lay a bare field array out as (*spatial, component) from its axis names
+    # alone. The array shares the image's spatial axes by name; the remaining
+    # axis is the component axis.
     names = getattr(field_node.metadata, "dimension_names", None)
     if not names or None in names or len(names) != field_node.ndim:
         raise OmeImageError(
-            f"The {kind} field at {path!r} does not name its axes (it has no "
-            "dimension_names), so brainhops cannot tell which axis holds the "
+            f"The {kind} field at {path!r} has neither OME metadata nor "
+            "dimension names, so brainhops cannot tell which axis holds the "
             "vector components."
         )
-
-    # The field array shares the image's spatial axes by name; the remaining
-    # axis is the component axis. Reading the names from the node avoids any
-    # assumption about which axis leads.
     image_names = [axis.name for axis in store_axes]
     spatial_dims = [i for i, name in enumerate(names) if name in image_names]
     component_dims = [i for i in range(len(names)) if i not in spatial_dims]
@@ -266,26 +330,12 @@ def _read_field(
             f"not match the image axes {tuple(image_names)} together with a "
             "single component axis."
         )
-
-    # Lay the field out as (*spatial, component): the spatial axes in the
-    # brainhops order, then the component axis. Only axes are moved; the
-    # component values are not reordered, since rotating the vectors is the
-    # job of the affine that surrounds the field.
     canonical_axes = _axisorder.permute(
         store_axes, _axisorder.to_canonical(store_axes)
     )
     by_name = {names[i]: i for i in spatial_dims}
     target = [by_name[axis.name] for axis in canonical_axes] + component_dims
-
-    backend = get_array_backend()
-    data = backend.transpose(backend.asarray(field_node[...]), target)
-    order = _INTERPOLATION_ORDER.get(
-        getattr(transform, "interpolation", None), 1
-    )
-    field_cls = (
-        DisplacementField if kind == "displacements" else CoordinatesField
-    )
-    return field_cls(field=data, order=order)
+    return get_array_backend().transpose(raw, target)
 
 
 def _map_transform(

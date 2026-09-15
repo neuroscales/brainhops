@@ -819,9 +819,107 @@ def _field_array() -> np.ndarray:
     return field
 
 
+def _typed_axes(spec: tx.Sequence[tx.Tuple[str, str]]) -> tx.List[dict]:
+    return [{"name": name, "type": type_} for name, type_ in spec]
+
+
+def _authored_field_pyramid(
+    tmp_path: Path,
+    field: np.ndarray,
+    field_axes: tx.Sequence[tx.Tuple[str, str]],
+) -> str:
+    """Write a pyramid whose level is placed by a displacement field node.
+
+    The field node is a full OME-Zarr node carrying its own typed axes, the
+    way a real 0.6rc0 field is stored. It names no dimension_names, so the
+    reader must find the component axis from the field node's own `ome`.
+    """
+    from abczarr.ome import v0_6rc0 as v6
+
+    path = str(tmp_path / "field_ome.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.ones((6, 5, 4), "float32"))
+    node = group.create_array("disp", data=field)
+    node.ome = v6.OME.from_json(
+        {
+            "version": "0.6rc0",
+            "multiscales": [
+                {
+                    "coordinateSystems": [
+                        {"name": "field", "axes": _typed_axes(field_axes)}
+                    ],
+                    "datasets": [
+                        {
+                            "path": ".",
+                            "coordinateTransformations": [
+                                {
+                                    "type": "identity",
+                                    "input": {"path": "."},
+                                    "output": {"name": "field"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    group.ome = v6.OME.from_json(
+        {
+            "version": "0.6rc0",
+            "multiscales": [
+                {
+                    "coordinateSystems": [{"name": "phys", "axes": _SPACE3}],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                {
+                                    "type": "displacements",
+                                    "path": "disp",
+                                    "input": {"path": "0"},
+                                    "output": {"name": "phys"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return path
+
+
+def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import DisplacementField
+
+    # A real 0.6rc0 field node carries its own typed axes. Here the component
+    # axis is stored LAST and the node has no dimension_names, so the reader
+    # must find the component axis by its type through the node's `ome`.
+    field = np.moveaxis(_field_array(), 0, -1)  # (z, y, x, d)
+    path = _authored_field_pyramid(
+        tmp_path,
+        field,
+        [
+            ("z", "space"),
+            ("y", "space"),
+            ("x", "space"),
+            ("d", "displacement"),
+        ],
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, DisplacementField)
+    result = np.asarray(geometry.field)
+    # Read into (x, y, z, component); component values are not reordered.
+    assert result.shape == (4, 5, 6, 3)
+    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+
+
 def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
+    # Fallback path: the field node is a bare array that names its axes with
+    # dimension_names but carries no typed OME metadata.
     path = _authored_pyramid(
         tmp_path,
         {"type": "displacements", "path": "disp"},
