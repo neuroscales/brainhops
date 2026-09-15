@@ -2283,10 +2283,10 @@ class AdaptationError(TypeError):
 # The bridge builder lives in `_xform_adaptors`, which imports this module.
 # It registers itself here at import time, so the sequence machinery can
 # call it without importing that module at load time and forming a cycle.
-_BRIDGE: tx.Optional[tx.Callable[..., "Transformation"]] = None
+_BRIDGE: tx.Optional[tx.Callable[..., Transformation]] = None
 
 
-def _register_bridge(func: tx.Callable[..., "Transformation"]) -> None:
+def _register_bridge(func: tx.Callable[..., Transformation]) -> None:
     """Register the routine that builds a bridge between two systems."""
     global _BRIDGE
     _BRIDGE = func
@@ -2297,10 +2297,10 @@ def _register_bridge(func: tx.Callable[..., "Transformation"]) -> None:
 # boundary's axes into the full axis space, leaving the extra axes as the
 # identity, so a lower-dimensional transform meets a higher-dimensional
 # neighbour without a dimensionality change.
-_SUBSPACE_WRAP: tx.Optional[tx.Callable[..., "Transformation"]] = None
+_SUBSPACE_WRAP: tx.Optional[tx.Callable[..., Transformation]] = None
 
 
-def _register_subspace_wrap(func: tx.Callable[..., "Transformation"]) -> None:
+def _register_subspace_wrap(func: tx.Callable[..., Transformation]) -> None:
     """Register the routine that lifts a transform into a fuller space."""
     global _SUBSPACE_WRAP
     _SUBSPACE_WRAP = func
@@ -2310,30 +2310,24 @@ def _adapt(
     s1: CoordinateSystem,
     s2: CoordinateSystem,
     extents: tx.Optional[tx.Any] = None,
-) -> "Transformation":
+) -> Transformation:
     """Return the bridge that carries `s1` coordinates to `s2`.
 
     The work is done by the routine registered from `_xform_adaptors`.
-    This raises [`AdaptationError`][] when no such routine is registered.
 
-    This is the implicit adaptation that composition inserts, so it enables
-    the positional fallback for axes that carry neither an orientation nor a
-    unit on either side. Those axes describe a single well-defined array
-    embedding, and pairing them by position is safe. A genuinely ambiguous
-    mismatch is still reported. When a reversed array-index axis needs the
-    number of samples along it, `extents` supplies them from a neighbouring
-    grid.
+    This is the implicit adaptation that composition inserts, so it pairs
+    any still-unmatched axes by order within each type group. Axes of the
+    same type describe the same well-defined ordering, so pairing them by
+    position is safe, while a pairing across two types is refused. A type
+    group whose counts disagree is reported rather than guessed. When a
+    reversed array-index axis needs the number of samples along it,
+    `extents` supplies them from a neighbouring grid.
     """
-    if _BRIDGE is None:
-        raise AdaptationError(
-            "No coordinate-system adaptor is registered. Import "
-            "`brainhops.datamodel` so the adaptor is installed."
-        )
     return _BRIDGE(
         s1,
         s2,
         extents=extents,
-        allow_underspecified_positional=True,
+        allow_type_grouped_positional=True,
     )
 
 
@@ -2352,7 +2346,7 @@ def _systems_disagree(
     return source != target
 
 
-def _boundary_output(t: "Transformation") -> tx.Optional[CoordinateSystem]:
+def _boundary_output(t: Transformation) -> tx.Optional[CoordinateSystem]:
     # The system in which a transform leaves its coordinates, looking past
     # a sequence that carries the system on its last element rather than on
     # itself. This is the system a following transform meets.
@@ -2363,7 +2357,7 @@ def _boundary_output(t: "Transformation") -> tx.Optional[CoordinateSystem]:
     return None
 
 
-def _boundary_input(t: "Transformation") -> tx.Optional[CoordinateSystem]:
+def _boundary_input(t: Transformation) -> tx.Optional[CoordinateSystem]:
     # The system in which a transform expects its coordinates, looking past
     # a sequence that carries the system on its first element rather than
     # on itself. This is the system a preceding transform must reach.
@@ -2405,13 +2399,12 @@ def _insert_bridges(
     # Splice a bridge into every boundary where two adjacent transforms
     # disagree on the system they share. The output system of one and the
     # input system of the next are reconciled by the adaptor, whose pieces
-    # are inserted between the two transforms. A boundary whose systems
-    # already agree, or where either system is unspecified, is left alone.
-    # Bridging runs before the sequence is flattened, because a nested
-    # sequence carries its endpoint systems on the sequence and not on the
-    # leaves that flattening would expose.
-    if _BRIDGE is None:
-        return transformations
+    # are spliced in at that boundary so the result still contains both
+    # transforms. A boundary whose systems already agree, or where either
+    # system is unspecified, is left alone. Bridging runs before the
+    # sequence is flattened, because a nested sequence carries its endpoint
+    # systems on the sequence and not on the leaves that flattening would
+    # expose.
     # A boundary can hide inside a nested sequence or behind a generic
     # inverse, both of which the flattening later removes. So each nested
     # sequence has its own children bridged first, keeping its endpoints,
@@ -2451,15 +2444,13 @@ def _insert_bridges(
                 # carries, it is lifted into the full axis space, leaving
                 # the extra axes as the identity. A genuine dimensionality
                 # mismatch is refused by the adaptor below.
-                wrapped = None
-                if _SUBSPACE_WRAP is not None:
-                    wrapped = _SUBSPACE_WRAP(
-                        source,
-                        target,
-                        nxt,
-                        _boundary_output(nxt),
-                        extents=extents or None,
-                    )
+                wrapped = _SUBSPACE_WRAP(
+                    source,
+                    target,
+                    nxt,
+                    _boundary_output(nxt),
+                    extents=extents or None,
+                )
                 if wrapped is not None:
                     spliced.append(wrapped)
                     continue
@@ -2467,11 +2458,11 @@ def _insert_bridges(
                 # its explicit error, rather than dropping or inventing an
                 # axis.
                 _adapt(source, target, extents or None)
-            between = _adapt(source, target, extents or None)
-            if not is_identity(between):
-                if isinstance(between, Sequence):
-                    spliced.extend(between.transformations or [])
+            reconciler = _adapt(source, target, extents or None)
+            if not is_identity(reconciler):
+                if isinstance(reconciler, Sequence):
+                    spliced.extend(reconciler.transformations or [])
                 else:
-                    spliced.append(between)
+                    spliced.append(reconciler)
         spliced.append(nxt)
     return spliced

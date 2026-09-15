@@ -11,18 +11,20 @@ The bridge is built from the axis descriptions alone, by matching the
 axes of the two systems and reading off the reordering, the unit ratios,
 and the orientation signs the match implies. Matching compares axes in
 priority order: first their type and orientation, then their name, then
-their type alone, and finally, only when explicitly permitted, their
-position. A unit is not used to match two axes. Once two axes are
-matched, the ratio between their units is read off and applied as part of
-the scaling.
+their unit, and finally, only when a positional pairing is permitted,
+their position. Two axes that name different types are never matched,
+whatever else they share. A positional pairing keeps to each type group,
+so a spatial axis pairs with a spatial axis and never with a time axis.
+Once two axes are matched, the ratio between their units is read off and
+applied as part of the scaling.
 
 There are two entry points.
 [`bridge`][brainhops.datamodel._xform_adaptors.bridge] returns the bridge
-between two systems. The bridge is a single primitive, a sequence of
-primitives, or the identity, and not always a sequence.
+from one system to another. The bridge is a single primitive, a sequence
+of primitives, or the identity, and not always a sequence.
 [`adapt`][brainhops.datamodel._xform_adaptors.adapt] ingests two
 consecutive transformations and returns a sequence that contains both of
-them with the bridge inserted between them.
+them, with the reconciling bridge placed where the two systems meet.
 """
 
 # externals
@@ -183,26 +185,62 @@ def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
     return int(value)
 
 
-def _fully_underspecified(axis: Axis) -> bool:
-    # Whether an axis carries nothing that could match it to another axis
-    # beyond its type. Such an axis has no orientation and no unit, so a
-    # pairing with another axis like it rests on position alone.
-    if _orientation_line(axis) is not None:
+def _type_conflict(source: Axis, target: Axis) -> bool:
+    # Whether two axes carry definite, different types. A shared name, a
+    # shared unit, or a shared position never matches two axes across such
+    # a conflict. An axis whose type is unset places no constraint, so a
+    # conflict is present only when both axes name a type and the two types
+    # differ.
+    source_type = getattr(source, "type", None)
+    target_type = getattr(target, "type", None)
+    if source_type is None or target_type is None:
         return False
-    return getattr(axis, "unit", None) is None
+    return source_type != target_type
+
+
+def _same_unit_kind(source: Axis, target: Axis) -> bool:
+    # Whether two axes are measured in units of the same kind, such as two
+    # lengths or two durations. Two axes matched this way have a defined
+    # conversion factor between their units. An axis with no unit is not
+    # matched by unit at all.
+    source_unit = getattr(source, "unit", None)
+    target_unit = getattr(target, "unit", None)
+    if source_unit is None or target_unit is None:
+        return False
+    return getattr(source_unit, "type", None) == getattr(
+        target_unit, "type", None
+    )
+
+
+def _group_by_type(
+    axes: tx.List[Axis], indices: tx.List[int]
+) -> "tx.Dict[tx.Optional[str], tx.List[int]]":
+    # The given axis indices grouped by the `type` of the axis, keeping the
+    # indices of each group in ascending order. An axis with no type forms
+    # a group of its own, keyed by ``None``.
+    groups: tx.Dict[tx.Optional[str], tx.List[int]] = {}
+    for i in indices:
+        key = getattr(axes[i], "type", None)
+        groups.setdefault(key, []).append(i)
+    return groups
 
 
 def _match_axes(
     source_axes: tx.List[Axis],
     target_axes: tx.List[Axis],
     allow_positional: bool,
-    allow_underspecified_positional: bool = False,
+    allow_type_grouped_positional: bool = False,
 ) -> tx.List[int]:
     # Establish, for each target axis, the source axis that corresponds to
     # it. The result is a list `match` where `match[j]` is the index of the
     # source axis that feeds target axis `j`. An axis for which no unique
     # correspondence is found is left unmatched, and the caller reports the
     # failure.
+    #
+    # Two axes that both name a type, and name different types, are never
+    # matched. A shared name, a shared unit, or a shared position is a
+    # coincidence that a definite type conflict overrides, so a spatial
+    # axis and a time axis that happen to share a name stay unmatched.
     n_source, n_target = len(source_axes), len(target_axes)
     match: tx.List[tx.Optional[int]] = [None] * n_target
     used = [False] * n_source
@@ -234,9 +272,9 @@ def _match_axes(
             if len(named) == 1:
                 take(j, named[0])
 
-    # Second tier: axes that share a name. Two axes that are oriented along
-    # different lines are never paired, because a shared name cannot align
-    # a rotation.
+    # Second tier: axes that share a name. A shared name does not match two
+    # axes of different types, and two axes oriented along different lines
+    # are never paired, because a shared name cannot align a rotation.
     for j, target in enumerate(target_axes):
         if match[j] is not None or target.name is None:
             continue
@@ -245,72 +283,76 @@ def _match_axes(
             for i, source in enumerate(source_axes)
             if not used[i]
             and source.name == target.name
+            and not _type_conflict(source, target)
             and _collinear(source, target)
         ]
         if len(candidates) == 1:
             take(j, candidates[0])
 
-    # Third tier: axes of the same type, when only one such axis remains on
-    # each side, so the pairing is unambiguous. Two axes oriented along
-    # different lines are again not paired.
+    # Third tier: axes measured in the same kind of unit, when only one
+    # such axis remains on each side, so the pairing is unambiguous. A
+    # shared unit does not match two axes of different types, and two axes
+    # oriented along different lines are again not paired.
     for j, target in enumerate(target_axes):
-        if match[j] is not None or target.type is None:
+        if match[j] is not None:
             continue
         candidates = [
             i
             for i, source in enumerate(source_axes)
             if not used[i]
-            and source.type == target.type
+            and _same_unit_kind(source, target)
+            and not _type_conflict(source, target)
             and _collinear(source, target)
         ]
         if len(candidates) == 1:
             take(j, candidates[0])
 
     # Last tier: position. A positional pairing can mask a genuine
-    # mismatch, so it warns and is used only under one of two conditions.
+    # mismatch, so it warns and is used only when the caller permits it.
     if allow_positional and n_source == n_target:
         # The caller permitted a positional pairing outright. Any axis
-        # still unmatched is paired with the source axis in its position.
+        # still unmatched is paired with the source axis in its position,
+        # unless the two axes at that position name conflicting types.
         paired = False
         for j in range(n_target):
             if match[j] is None and not used[j]:
+                if _type_conflict(source_axes[j], target_axes[j]):
+                    continue
                 take(j, j)
                 paired = True
         if paired:
             warnings.warn(
                 "Some axes were paired by position, because no stronger "
-                "correspondence was found between them. Check that the two "
-                "coordinate systems describe the same axes in the same "
-                "order.",
+                "correspondence was found. Check that the two coordinate "
+                "systems describe the same axes in the same order.",
                 stacklevel=2,
             )
-    elif allow_underspecified_positional:
-        # An implicit bridge pairs by position only when every axis still
-        # unmatched, on both sides, carries neither an orientation nor a
-        # unit, and the two sides have the same number of them. This is the
-        # single well-defined embedding space of unlabelled array axes. A
-        # genuinely ambiguous mismatch, such as one oriented axis against
-        # an unoriented one, or a unit on one side only, is left unmatched
-        # and reported.
-        unmatched_target = [j for j in range(n_target) if match[j] is None]
+    elif allow_type_grouped_positional:
+        # An implicit bridge pairs the still-unmatched axes by order within
+        # each type group: spatial axes with spatial axes, time with time,
+        # and so on, with the axes of no type forming a group of their own.
+        # A group is paired only when the same number of its axes remain on
+        # each side. Two axes are never paired across a type, so a spatial
+        # axis with no spatial counterpart is left unmatched and reported.
+        # A group whose counts disagree is likewise left unmatched, rather
+        # than pairing some of its axes and inventing the rest.
         unmatched_source = [i for i in range(n_source) if not used[i]]
-        if (
-            unmatched_target
-            and len(unmatched_target) == len(unmatched_source)
-            and all(
-                _fully_underspecified(target_axes[j]) for j in unmatched_target
-            )
-            and all(
-                _fully_underspecified(source_axes[i]) for i in unmatched_source
-            )
-        ):
-            for j, i in zip(unmatched_target, unmatched_source):
-                take(j, i)
+        unmatched_target = [j for j in range(n_target) if match[j] is None]
+        source_groups = _group_by_type(source_axes, unmatched_source)
+        target_groups = _group_by_type(target_axes, unmatched_target)
+        paired = False
+        for key, targets in target_groups.items():
+            sources = source_groups.get(key, [])
+            if targets and len(sources) == len(targets):
+                for j, i in zip(targets, sources):
+                    take(j, i)
+                paired = True
+        if paired:
             warnings.warn(
-                "Some axes were paired by position, because they carry no "
-                "orientation and no unit and nothing else distinguishes "
-                "them. Check that the two coordinate systems describe the "
-                "same axes in the same order.",
+                "Some axes were paired by position within their type group, "
+                "because no name, unit, or orientation distinguished them. "
+                "Check that the two coordinate systems describe the same "
+                "axes in the same order.",
                 stacklevel=2,
             )
 
@@ -357,7 +399,7 @@ def bridge(
     *,
     extents: tx.Optional[Extents] = None,
     allow_positional: bool = False,
-    allow_underspecified_positional: bool = False,
+    allow_type_grouped_positional: bool = False,
 ) -> Transformation:
     """Return the transformation that carries `source` coordinates to `target`.
 
@@ -369,8 +411,9 @@ def bridge(
     inverse is the bridge from `target` back to `source`.
 
     The axes of the two systems are matched by type and orientation, then
-    by name, then by type alone, and finally, only when `allow_positional`
-    is true, by position. A unit is not used to match two axes. From the
+    by name, then by unit, and finally, only when a positional pairing is
+    permitted, by position. Two axes that name different types are never
+    matched, whatever else they share. From the
     match the bridge derives a
     [`Permutation`][brainhops.datamodel.transformations.Permutation] that
     reorders the axes, a
@@ -399,13 +442,13 @@ def bridge(
     allow_positional : bool, default False
         Whether to pair axes by position when no stronger correspondence
         is found. A positional pairing warns.
-    allow_underspecified_positional : bool, default False
-        Whether to pair axes by position when every axis that remains
-        unmatched, on both sides, carries neither an orientation nor a
-        unit, and the two sides have the same number of them. A pairing
-        made this way warns. A genuinely ambiguous mismatch, such as an
-        oriented axis against an unoriented one, is left unmatched and
-        reported.
+    allow_type_grouped_positional : bool, default False
+        Whether to pair the still-unmatched axes by order within each type
+        group, so spatial axes pair with spatial axes and time with time.
+        A group is paired only when the same number of its axes remain on
+        each side. A pairing made this way warns. Axes are never paired
+        across a type, and a type group whose counts disagree is left
+        unmatched and reported.
 
     Returns
     -------
@@ -441,7 +484,7 @@ def bridge(
         source_axes,
         target_axes,
         allow_positional,
-        allow_underspecified_positional,
+        allow_type_grouped_positional,
     )
     if any(i is None for i in match):
         _unmatched_report(source, target, match)
@@ -525,14 +568,15 @@ def adapt(
 
     The transformation `first` is applied before `second`. The output
     system of `first` and the input system of `second` meet at the
-    boundary between them. When the two systems disagree, the bridge that
-    reconciles them is inserted between the two transformations. The
-    result is a [`Sequence`][brainhops.datamodel.transformations.Sequence]
-    that contains `first`, then the bridge, then `second`, so applying it
-    is applying `first`, adapting the coordinates, and applying `second`.
+    boundary where the two are composed. The result always contains both
+    `first` and `second`. When their systems disagree, the bridge that
+    reconciles them is placed at that boundary, so the result is a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] of `first`,
+    the bridge, and `second`, and applying it is applying `first`, adapting
+    the coordinates, and applying `second`.
 
-    When the two systems already agree, no bridge is inserted and the
-    result is a sequence of `first` and `second` alone.
+    When the two systems already agree, the result is a sequence of
+    `first` and `second` with nothing added.
 
     Parameters
     ----------
@@ -552,7 +596,8 @@ def adapt(
     Returns
     -------
     Transformation
-        A sequence of `first`, the bridge, and `second`.
+        A sequence that contains both `first` and `second`, with the
+        reconciling bridge placed where their systems meet.
     """
     source = first.output
     target = second.input
@@ -572,18 +617,18 @@ def adapt(
                 input=first.input,
                 output=wrapped.output,
             )
-    between = bridge(
+    reconciler = bridge(
         first.output,
         second.input,
         extents=extents,
         allow_positional=allow_positional,
     )
     elements: tx.List[Transformation] = [first]
-    if not is_identity(between):
-        if isinstance(between, Sequence):
-            elements.extend(between.transformations or [])
+    if not is_identity(reconciler):
+        if isinstance(reconciler, Sequence):
+            elements.extend(reconciler.transformations or [])
         else:
-            elements.append(between)
+            elements.append(reconciler)
     elements.append(second)
     return Sequence(
         transformations=elements, input=first.input, output=second.output
@@ -607,7 +652,7 @@ def _subset_positions(
         full_axes,
         sub_axes,
         allow_positional=False,
-        allow_underspecified_positional=False,
+        allow_type_grouped_positional=False,
     )
     if any(i is None for i in match):
         return None
@@ -697,7 +742,7 @@ def _subspace_wrap(
         sub_source,
         target,
         extents=extents,
-        allow_underspecified_positional=True,
+        allow_type_grouped_positional=True,
     )
     if is_identity(sub_bridge):
         inner: Transformation = transform

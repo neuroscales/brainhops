@@ -18,6 +18,7 @@ import brainhops.datamodel  # noqa: F401  (registers the adaptor)
 from brainhops.datamodel._xform_adaptors import adapt, bridge
 from brainhops.datamodel.axes import (
     A,
+    Axis,
     R,
     S,
     SpatialAxis,
@@ -577,11 +578,12 @@ def test_explicit_bridge_does_not_fall_back_to_position() -> None:
         bridge(VoxelCoordinateSystem(), _xyz_index_system())
 
 
-def test_oriented_against_unoriented_is_not_paired_by_position() -> None:
-    # When two axes of the same type remain on each side, so the pairing is
-    # no longer unambiguous, an oriented axis and an unoriented one are a
-    # genuine mismatch. The implicit fallback declines and it is reported,
-    # rather than pairing them by position.
+def test_same_type_group_pairs_by_position_even_when_oriented() -> None:
+    # Two spatial axes on each side form a spatial type group of equal
+    # count, so the implicit fallback pairs them by order within the group,
+    # even though one axis carries an orientation the other lacks. The
+    # pairing warns, because position is a weaker signal than a shared
+    # name, unit, or orientation.
     oriented = CoordinateSystem(
         name="oriented",
         axes=[
@@ -598,8 +600,140 @@ def test_oriented_against_unoriented_is_not_paired_by_position() -> None:
     )
     first = Affine(matrix=np.eye(2, 3), input=oriented, output=oriented)
     second = Affine(matrix=np.eye(2, 3), input=plain, output=plain)
+    with pytest.warns(UserWarning):
+        result = Sequence([first, second]).compute()
+    # An oriented axis paired with an unoriented one is a pass-through, so
+    # the composition reduces to the identity on both axes.
+    np.testing.assert_allclose(_homogeneous(result), np.eye(3))
+
+
+def test_same_type_group_pairs_by_position_when_united() -> None:
+    # Two spatial axes on each side all carry a length unit, so neither the
+    # name nor the unit tier resolves a unique pairing. The implicit
+    # fallback pairs them by order within the spatial group, warns, and the
+    # unit ratio of each pair becomes its scaling.
+    source = CoordinateSystem(
+        name="mm",
+        axes=[
+            SpatialAxis(name="a", unit="millimeter"),
+            SpatialAxis(name="b", unit="millimeter"),
+        ],
+    )
+    target = CoordinateSystem(
+        name="um",
+        axes=[
+            SpatialAxis(name="c", unit="micrometer"),
+            SpatialAxis(name="d", unit="micrometer"),
+        ],
+    )
+    first = Affine(matrix=np.eye(2, 3), input=source, output=source)
+    second = Affine(matrix=np.eye(2, 3), input=target, output=target)
+    with pytest.warns(UserWarning):
+        result = Sequence([first, second]).compute()
+    # a -> c and b -> d by position, each a millimetre-to-micrometre
+    # scaling of one thousand.
+    np.testing.assert_allclose(
+        np.diag(_homogeneous(result)), [1000.0, 1000.0, 1.0]
+    )
+
+
+def test_type_grouped_positional_keeps_each_type_to_its_own_group() -> None:
+    # A naive pairing by absolute position would cross a time axis with a
+    # spatial one. The type-grouped fallback pairs spatial with spatial and
+    # time with time instead, so the bridge reorders the axes rather than
+    # mismatching their types.
+    source = CoordinateSystem(
+        name="s",
+        axes=[
+            TimeAxis(name="t", unit=None),
+            SpatialAxis(name="a", unit=None),
+        ],
+    )
+    target = CoordinateSystem(
+        name="t",
+        axes=[
+            SpatialAxis(name="c", unit=None),
+            TimeAxis(name="u", unit=None),
+        ],
+    )
+    first = Affine(matrix=np.eye(2, 3), input=source, output=source)
+    second = Affine(matrix=np.eye(2, 3), input=target, output=target)
+    with pytest.warns(UserWarning):
+        result = Sequence([first, second]).compute()
+    # The spatial axis feeds the spatial axis and the time axis feeds the
+    # time axis: the two axes are swapped, not crossed by type.
+    expected = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    np.testing.assert_allclose(_homogeneous(result), expected)
+
+
+def test_type_group_count_mismatch_raises() -> None:
+    # The two systems carry the same number of axes, but the spatial and
+    # time groups have different counts on each side. No group can be paired
+    # by position without inventing an axis, so the mismatch is reported.
+    source = CoordinateSystem(
+        name="s",
+        axes=[
+            SpatialAxis(name="a", unit=None),
+            SpatialAxis(name="b", unit=None),
+            TimeAxis(name="t", unit=None),
+        ],
+    )
+    target = CoordinateSystem(
+        name="t",
+        axes=[
+            SpatialAxis(name="c", unit=None),
+            TimeAxis(name="u", unit=None),
+            TimeAxis(name="v", unit=None),
+        ],
+    )
+    first = Affine(matrix=np.eye(3, 4), input=source, output=source)
+    second = Affine(matrix=np.eye(3, 4), input=target, output=target)
     with pytest.raises(AdaptationError):
         Sequence([first, second]).compute()
+
+
+# ----------------------------------------------------------------------
+#   TYPE CONFLICTS OVERRIDE A NAME OR UNIT COINCIDENCE (comment #1)
+# ----------------------------------------------------------------------
+
+
+def test_shared_name_across_different_types_is_not_matched() -> None:
+    # A spatial axis and a time axis that happen to share a name must not be
+    # matched: a definite type conflict overrides the shared name.
+    source = CoordinateSystem(
+        name="s", axes=[SpatialAxis(name="t", unit=None)]
+    )
+    target = CoordinateSystem(name="t", axes=[TimeAxis(name="t", unit=None)])
+    with pytest.raises(AdaptationError):
+        bridge(source, target)
+
+
+def test_shared_unit_across_different_types_is_not_matched() -> None:
+    # Two axes measured in the same kind of unit but of different types must
+    # not be matched by that shared unit.
+    source = CoordinateSystem(
+        name="s", axes=[SpatialAxis(name="a", unit="millimeter")]
+    )
+    target = CoordinateSystem(
+        name="t",
+        axes=[Axis(name="b", type="time", unit="millimeter")],
+    )
+    with pytest.raises(AdaptationError):
+        bridge(source, target)
+
+
+def test_axes_match_by_unit_when_names_differ() -> None:
+    # Two spatial axes with different names and no orientation are matched
+    # by their shared kind of unit, and the unit ratio becomes the scaling.
+    source = CoordinateSystem(
+        name="mm", axes=[SpatialAxis(name="a", unit="millimeter")]
+    )
+    target = CoordinateSystem(
+        name="um", axes=[SpatialAxis(name="b", unit="micrometer")]
+    )
+    result = bridge(source, target)
+    assert isinstance(result, Scaling)
+    np.testing.assert_allclose(result.scale, [1000.0])
 
 
 # ----------------------------------------------------------------------
