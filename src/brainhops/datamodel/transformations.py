@@ -778,10 +778,15 @@ class SubspaceTransformation(Transformation):
 
     def inverse(self) -> tx.Self:
         cls = type(self)
-        if self.transformations is None:
-            return cls(input=self.output, output=self.input)
+        if self.transformation is None:
+            return cls(
+                input=self.output,
+                output=self.input,
+                input_axes=self.output_axes,
+                output_axes=self.input_axes,
+            )
         return cls(
-            transformations=[t.inverse() for t in self.transformations],
+            transformation=self.transformation.inverse(),
             input=self.output,
             output=self.input,
             input_axes=self.output_axes,
