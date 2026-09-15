@@ -155,11 +155,15 @@ def coeff2value(
     ab = get_array_backend(input)
     ib = get_ndimage_backend(input)
     # Get dimensions
+    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
+    # are spatial"; a genuine ndim=0 is meaningless for interpolation, so
+    # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Create coordinates field for interpolation
+    # Create coordinates field for interpolation, sampling at the center of
+    # each voxel of the *spatial* dimensions (the last `ndim` axes).
     grid = ab.meshgrid(
-        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
+        *(ab.arange(s) for s in input.shape[-ndim:]), indexing="ij"
     )
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
@@ -260,18 +264,21 @@ def value2coeff(
     ab = get_array_backend(input)
     ib = get_ndimage_backend(input)
     # Get dimensions
+    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
+    # are spatial"; a genuine ndim=0 is meaningless for a spline filter, so
+    # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Create coordinates field for interpolation
-    grid = ab.meshgrid(
-        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
-    )
-    grid = ab.stack(grid, axis=0)
-    # Prepare for map_coordinates
+    # Prepare for spline_filter.
+    # `spline_filter` only accepts `order`, `output` and `mode` -- there is no
+    # `cval` argument, so a float `bound` (a constant fill value) cannot be
+    # forwarded. We prefilter a float bound with mode='constant', matching how
+    # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
+    # exact for string bounds and consistent (if not a strict inverse) for
+    # float bounds.
     output = ab.empty_like(input) if not inplace else input
-    mode = "constant" if not isinstance(bound, str) else bound
-    cval = 0 if isinstance(bound, str) else bound
-    opts = dict(order=order, mode=mode, cval=cval)
+    mode = bound if isinstance(bound, str) else "constant"
+    opts = dict(order=order, mode=mode)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = ib.spline_filter(input[index], **opts)
     return output

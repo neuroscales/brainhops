@@ -355,33 +355,39 @@ def test_identity_composes_with_affine_in_both_orders() -> None:
     np.testing.assert_allclose(last.matrix, affine.matrix)
 
 
-def test_subspace_transformation_inverse_round_trips() -> None:
-    # Regression: `SubspaceTransformation.inverse` read a non-existent
-    # plural `transformations` field. It now inverts the single
-    # `transformation`, swaps the endpoints, and swaps the axes.
-    a = CoordinateSystem(name="A")
-    b = CoordinateSystem(name="B")
-    inner = Translation(translation=[1.0, 2.0], input=a, output=b)
+def test_subspace_inverse_without_transform_swaps_axes() -> None:
+    # With no inner transformation, `inverse` only swaps the input/output
+    # spaces and their axes; it must not touch a `transformations`
+    # attribute that does not exist.
+    inp = CoordinateSystem(name="in")
+    out = CoordinateSystem(name="out")
+    subspace = SubspaceTransformation(
+        input=inp,
+        output=out,
+        input_axes=[0, 1],
+        output_axes=[2, 3],
+    )
+    inverse = subspace.inverse()
+    assert inverse.transformation is None
+    assert inverse.input is out
+    assert inverse.output is inp
+    np.testing.assert_array_equal(inverse.input_axes, [2, 3])
+    np.testing.assert_array_equal(inverse.output_axes, [0, 1])
+
+
+def test_subspace_inverse_wraps_inner_transform() -> None:
+    # With an inner transformation, `inverse` inverts it and swaps the
+    # input/output spaces and their axes.
+    inner = Translation(translation=np.array([1.0, 2.0]))
     subspace = SubspaceTransformation(
         transformation=inner,
         input_axes=[0, 1],
-        output_axes=[1, 0],
-        input=a,
-        output=b,
+        output_axes=[2, 3],
     )
-
     inverse = subspace.inverse()
-    assert inverse.input is b
-    assert inverse.output is a
-    assert list(inverse.input_axes) == [1, 0]
-    assert list(inverse.output_axes) == [0, 1]
+    assert isinstance(inverse.transformation, Translation)
     np.testing.assert_allclose(
         inverse.transformation.translation, [-1.0, -2.0]
     )
-
-    twice = inverse.inverse()
-    assert twice.input is a
-    assert twice.output is b
-    assert list(twice.input_axes) == [0, 1]
-    assert list(twice.output_axes) == [1, 0]
-    np.testing.assert_allclose(twice.transformation.translation, [1.0, 2.0])
+    np.testing.assert_array_equal(inverse.input_axes, [2, 3])
+    np.testing.assert_array_equal(inverse.output_axes, [0, 1])
