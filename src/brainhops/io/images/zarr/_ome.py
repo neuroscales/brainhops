@@ -34,7 +34,7 @@ from bagof.magic import replace
 
 # internals
 from brainhops.backends import get_array_backend
-from brainhops.datamodel.axes import Axis, DisplacementAxis
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -218,6 +218,15 @@ def _map_axis_transform(
     )
 
 
+def _follow_path(node: ZarrGroup, path: str) -> tx.Any:
+    # Open the node the field transformation points at, following a path that
+    # may descend through subgroups (``"coordinateTransformations/dfield"``).
+    current = node  # type: tx.Any
+    for segment in path.strip("/").split("/"):
+        current = current[segment]
+    return current
+
+
 def _read_field(
     transform: CoordinateTransformation,
     kind: str,
@@ -226,32 +235,50 @@ def _read_field(
     ndim: int,
 ) -> Transformation:
     # Build a brainhops displacement or coordinate field from the array the
-    # transformation references. abczarr's field transformation carries only
-    # the array path and an optional interpolation, so the field's layout is
-    # taken from the storage convention: the component axis sits in the
-    # channel position, stored ahead of the spatial axes.
+    # transformation points at. The field array's own axis names, read from
+    # the node's ``dimension_names``, say which axis holds the vector
+    # components and how the spatial axes are ordered.
     path = getattr(transform, "path", None)
     if not isinstance(path, str):
         raise OmeImageError(
             f"This OME-Zarr {kind} field names no array, so its field cannot "
             "be read."
         )
-    array = node[path]
-    if array.ndim != ndim + 1 or int(array.shape[0]) != ndim:
+    field_node = _follow_path(node, path)
+
+    names = getattr(field_node.metadata, "dimension_names", None)
+    if not names or None in names or len(names) != field_node.ndim:
         raise OmeImageError(
-            f"The {kind} field at {path!r} has shape "
-            f"{tuple(array.shape)}, but a field over {ndim} axes is stored as "
-            f"(component, *spatial) with a leading component axis of length "
-            f"{ndim}."
+            f"The {kind} field at {path!r} does not name its axes (it has no "
+            "dimension_names), so brainhops cannot tell which axis holds the "
+            "vector components."
         )
-    # Move the component axis to the end and the spatial axes into the
-    # brainhops order, so the field is shaped (*spatial, component). The
-    # component values are not reordered: rotating the vectors is the job of
-    # the affine that surrounds the field.
-    field_axes = [DisplacementAxis(name="d")] + list(store_axes)
-    field_perm = _axisorder.to_canonical(field_axes)
+
+    # The field array shares the image's spatial axes by name; the remaining
+    # axis is the component axis. Reading the names from the node avoids any
+    # assumption about which axis leads.
+    image_names = [axis.name for axis in store_axes]
+    spatial_dims = [i for i, name in enumerate(names) if name in image_names]
+    component_dims = [i for i in range(len(names)) if i not in spatial_dims]
+    if len(component_dims) != 1 or len(spatial_dims) != len(store_axes):
+        raise OmeImageError(
+            f"The {kind} field at {path!r} has axes {tuple(names)}, which do "
+            f"not match the image axes {tuple(image_names)} together with a "
+            "single component axis."
+        )
+
+    # Lay the field out as (*spatial, component): the spatial axes in the
+    # brainhops order, then the component axis. Only axes are moved; the
+    # component values are not reordered, since rotating the vectors is the
+    # job of the affine that surrounds the field.
+    canonical_axes = _axisorder.permute(
+        store_axes, _axisorder.to_canonical(store_axes)
+    )
+    by_name = {names[i]: i for i in spatial_dims}
+    target = [by_name[axis.name] for axis in canonical_axes] + component_dims
+
     backend = get_array_backend()
-    data = backend.transpose(backend.asarray(array[...]), field_perm)
+    data = backend.transpose(backend.asarray(field_node[...]), target)
     order = _INTERPOLATION_ORDER.get(
         getattr(transform, "interpolation", None), 1
     )

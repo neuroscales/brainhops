@@ -682,7 +682,13 @@ def _authored_pyramid(
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones(shape, "float32"))
     for name, array in (arrays or {}).items():
-        group.create_array(name, data=array)
+        # A value may be a plain array, or an (array, dimension_names) pair
+        # when the array needs to name its axes (a field array does).
+        if isinstance(array, tuple):
+            data, names = array
+            group.create_array(name, data=data, dimension_names=names)
+        else:
+            group.create_array(name, data=array)
     group.ome = v6.OME.from_json(
         {
             "version": "0.6rc0",
@@ -821,7 +827,7 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
         {"type": "displacements", "path": "disp"},
         _SPACE3,
         (6, 5, 4),
-        arrays={"disp": _field_array()},
+        arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, DisplacementField)
@@ -833,6 +839,46 @@ def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
     np.testing.assert_allclose(field[0, 0, 0, :], [100.0, 200.0, 300.0])
 
 
+def test_reader_reads_a_field_by_its_axis_names_not_position(
+    tmp_path: Path,
+) -> None:
+    from brainhops.datamodel.transformations import DisplacementField
+
+    # The same field, stored with the component axis LAST instead of first,
+    # and the spatial axes in a different order. The reader identifies the
+    # component axis from the node's dimension_names, so the result is the
+    # same (*spatial, component) layout regardless of the stored order.
+    field = np.moveaxis(_field_array(), 0, -1)  # (z, y, x, d)
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "displacements", "path": "disp"},
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"disp": (field, ("z", "y", "x", "d"))},
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, DisplacementField)
+    result = np.asarray(geometry.field)
+    assert result.shape == (4, 5, 6, 3)
+    np.testing.assert_allclose(result[0, 0, 0, :], [100.0, 200.0, 300.0])
+
+
+def test_reader_refuses_a_field_that_does_not_name_its_axes(
+    tmp_path: Path,
+) -> None:
+    # Without dimension_names on the field node, the component axis cannot be
+    # identified, so the reader refuses rather than guessing.
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "displacements", "path": "disp"},
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"disp": _field_array()},
+    )
+    with pytest.raises(OmeImageError):
+        OmeZarrImage.from_store(path)
+
+
 def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import CoordinatesField
 
@@ -841,7 +887,7 @@ def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
         {"type": "coordinates", "path": "coord"},
         _SPACE3,
         (6, 5, 4),
-        arrays={"coord": _field_array()},
+        arrays={"coord": (_field_array(), ("d", "z", "y", "x"))},
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, CoordinatesField)
@@ -866,7 +912,7 @@ def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
         },
         _SPACE3,
         (6, 5, 4),
-        arrays={"disp": _field_array()},
+        arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
     geometry = OmeZarrImage.from_store(path).images[0].transformation
     assert isinstance(geometry, Sequence)
@@ -886,7 +932,7 @@ def test_reader_refuses_a_non_affine_surrounded_field(tmp_path: Path) -> None:
         },
         _SPACE3,
         (6, 5, 4),
-        arrays={"disp": _field_array()},
+        arrays={"disp": (_field_array(), ("d", "z", "y", "x"))},
     )
     with pytest.raises(OmeImageError):
         OmeZarrImage.from_store(path)
