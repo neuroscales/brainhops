@@ -6,6 +6,7 @@ seam maps the brainhops F-order ``(x, y, z, t, c)`` to the OME-Zarr C-order
 ``(t, c, z, y, x)`` at the boundary.
 """
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,18 @@ from brainhops.io.images.zarr import (
 )
 
 abczarr = pytest.importorskip("abczarr")
+
+# The zarr I/O runs through abczarr's zarr-python driver, and that driver
+# requires zarr-python 3, which itself requires Python 3.11 or newer. On an
+# older interpreter the driver cannot be installed at all, so the whole
+# feature is unavailable there. These tests are gated on the interpreter
+# version, not on driver presence: on every supported interpreter a driver
+# is guaranteed by the test dependencies, so a missing driver there is a
+# real failure rather than a skip.
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="zarr I/O requires zarr-python 3, which needs Python 3.11 or newer",
+)
 
 
 def _diag_affine(

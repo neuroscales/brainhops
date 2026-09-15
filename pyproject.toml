@@ -30,8 +30,14 @@ nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
 # abczarr reads and writes Zarr through a driver; the default pulls in the
-# zarr-python driver, and the other drivers are available on their own.
-zarr = ["abczarr[zarr-py] >= 0.1"]
+# zarr-python driver, and the other drivers are available on their own. The
+# zarr-python driver needs zarr-python 3, which requires Python 3.11 or
+# newer, so the zarr-python dependency is pinned to that on capable
+# interpreters and the I/O is unavailable on older ones.
+zarr = [
+    "abczarr[zarr-py] >= 0.1",
+    "zarr >= 3; python_version >= '3.11'",
+]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.1"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.1"]
 io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
@@ -44,6 +50,9 @@ test = [
     "nibabel",
     "dask",
     "abczarr[zarr-py] >= 0.1",
+    # Guarantee the zarr-python 3 driver on every interpreter that can run
+    # it, so the zarr I/O tests exercise a real driver rather than skipping.
+    "zarr >= 3; python_version >= '3.11'",
 ]
 
 # doc
