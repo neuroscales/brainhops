@@ -21,17 +21,21 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     Inverse,
+    InverseAffine,
+    InverseCoordinatesField,
+    InverseDisplacementField,
+    InverseLinear,
+    InversePermutation,
+    InverseRotation,
+    InverseScaling,
+    InverseTranslation,
     Linear,
     Permutation,
     Rotation,
     Scaling,
     Sequence,
+    Transformation,
     Translation,
-    _LazyInverse,
-    _LazyInverseAffine,
-    _LazyInverseCoordinatesField,
-    _LazyInverseDisplacementField,
-    _LazyInverseLinear,
     is_identity,
 )
 
@@ -51,39 +55,37 @@ def _small_field(shape: tuple = (6, 7, 2), seed: int = 0) -> np.ndarray:
 def test_displacement_field_inverse_is_lazy() -> None:
     df = DisplacementField(field=_small_field())
     inv = df.inverse()
-    assert isinstance(inv, _LazyInverseDisplacementField)
+    assert isinstance(inv, InverseDisplacementField)
     # It stays an instance of its family, so the compose engine and the
     # kind checks treat it transparently.
     assert isinstance(inv, DisplacementField)
-    assert inv.operand is df
+    assert inv.forward is df
 
 
 def test_coordinates_field_inverse_is_lazy() -> None:
     cf = CoordinatesField(field=_small_field())
     inv = cf.inverse()
-    assert isinstance(inv, _LazyInverseCoordinatesField)
+    assert isinstance(inv, InverseCoordinatesField)
     assert isinstance(inv, CoordinatesField)
-    assert inv.operand is cf
+    assert inv.forward is cf
 
 
 def test_empty_field_inverse_stays_eager() -> None:
     # With no field there is nothing to invert, so the inverse is the
     # eager endpoint-swapped transform, not a lazy wrapper.
     df = DisplacementField()
-    assert not isinstance(df.inverse(), _LazyInverse)
+    assert not isinstance(df.inverse(), Inverse)
     assert type(df.inverse()) is DisplacementField
     cf = CoordinatesField()
-    assert not isinstance(cf.inverse(), _LazyInverse)
+    assert not isinstance(cf.inverse(), Inverse)
     assert type(cf.inverse()) is CoordinatesField
 
 
-def test_trivial_families_stay_eager() -> None:
+def test_meta_families_stay_eager() -> None:
+    # Identity is its own inverse, and a Bijection carries its own inverse,
+    # so neither defers to an `Inverse` wrapper.
     cases = [
         Identity(),
-        Translation(translation=[1.0, 2.0]),
-        Scaling(scale=[2.0, 3.0]),
-        Permutation(permutation=[1, 0]),
-        Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]]),
         Bijection(
             forward=Translation(translation=[1.0]),
             backward=Translation(translation=[-1.0]),
@@ -91,8 +93,30 @@ def test_trivial_families_stay_eager() -> None:
     ]
     for t in cases:
         inv = t.inverse()
-        assert not isinstance(inv, _LazyInverse), type(t).__name__
+        assert not isinstance(inv, Inverse), type(t).__name__
         assert type(inv) is type(t), type(t).__name__
+
+
+def test_trivial_families_are_lazy() -> None:
+    # A translation, scaling, rotation and permutation each defer their
+    # inverse to a type-transparent wrapper. The inverse remains an
+    # instance of the family it inverts, so it cancels symbolically next to
+    # the forward transform instead of composing numerically.
+    cases = [
+        (Translation(translation=[1.0, 2.0]), InverseTranslation, Translation),
+        (Scaling(scale=[2.0, 3.0]), InverseScaling, Scaling),
+        (Permutation(permutation=[1, 0]), InversePermutation, Permutation),
+        (
+            Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]]),
+            InverseRotation,
+            Rotation,
+        ),
+    ]
+    for fwd, wrapper, family in cases:
+        inv = fwd.inverse()
+        assert isinstance(inv, wrapper), type(fwd).__name__
+        assert isinstance(inv, family), type(fwd).__name__
+        assert inv.forward is fwd, type(fwd).__name__
 
 
 def test_affine_and_linear_inverse_is_lazy() -> None:
@@ -102,15 +126,15 @@ def test_affine_and_linear_inverse_is_lazy() -> None:
     # matrix.
     affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
     inv = affine.inverse()
-    assert isinstance(inv, _LazyInverseAffine)
+    assert isinstance(inv, InverseAffine)
     assert isinstance(inv, Affine)
-    assert inv.operand is affine
+    assert inv.forward is affine
 
     linear = Linear(matrix=[[2.0, 0.0], [0.0, 4.0]])
     inv = linear.inverse()
-    assert isinstance(inv, _LazyInverseLinear)
+    assert isinstance(inv, InverseLinear)
     assert isinstance(inv, Linear)
-    assert inv.operand is linear
+    assert inv.forward is linear
 
 
 def test_affine_materialization_matches_matrix_inverse() -> None:
@@ -241,8 +265,8 @@ def test_double_inverse_returns_operand() -> None:
 
 def test_invert_operator_matches_inverse() -> None:
     df = DisplacementField(field=_small_field())
-    assert isinstance(~df, _LazyInverseDisplacementField)
-    assert (~df).operand is df
+    assert isinstance(~df, InverseDisplacementField)
+    assert (~df).forward is df
 
 
 # ----------------------------------------------------------------------
@@ -328,7 +352,7 @@ def test_composed_lazy_inverse_equals_composed_eager_inverse() -> None:
 def test_standalone_lazy_inverse_survives_compute() -> None:
     df = DisplacementField(field=_small_field())
     result = Sequence(transformations=[df.inverse()]).compute()
-    assert isinstance(result, _LazyInverseDisplacementField)
+    assert isinstance(result, InverseDisplacementField)
 
 
 # ----------------------------------------------------------------------
@@ -405,7 +429,7 @@ def test_is_identity_recognizes_an_empty_lazy_inverse() -> None:
     # The inverse of an identity-valued field is the identity. With no
     # field there is no wrapper, but a wrapper whose operand is empty is
     # recognized from the operand.
-    inv = _LazyInverseDisplacementField(operand=DisplacementField())
+    inv = InverseDisplacementField(forward=DisplacementField())
     assert is_identity(inv, compute=False) is True
 
 
@@ -469,22 +493,18 @@ def test_collapsed_identity_takes_first_input_and_last_output() -> None:
 
 
 def test_public_inverse_wrapper_cancels_in_a_sequence() -> None:
-    # A public Inverse(transformation=X) placed next to X is computed into
-    # X's concrete inverse and cancels.
+    # A generic Inverse(forward=X) placed next to X is expanded into X's
+    # typed inverse and cancels.
     df = DisplacementField(field=_small_field())
-    result = Sequence(
-        transformations=[df, Inverse(transformation=df)]
-    ).compute()
+    result = Sequence(transformations=[df, Inverse(forward=df)]).compute()
     assert isinstance(result, Identity)
-    result = Sequence(
-        transformations=[Inverse(transformation=df), df]
-    ).compute()
+    result = Sequence(transformations=[Inverse(forward=df), df]).compute()
     assert isinstance(result, Identity)
 
 
 def test_public_inverse_of_affine_cancels() -> None:
     affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
-    seq = Sequence(transformations=[affine, Inverse(transformation=affine)])
+    seq = Sequence(transformations=[affine, Inverse(forward=affine)])
     assert isinstance(seq.compute(), Identity)
 
 
@@ -502,8 +522,8 @@ def test_inverse_preserves_endpoint_edits() -> None:
     edited = inv.to(output=world)
     # The endpoint edit survives, and the wrapper stays lazy.
     assert edited.output is world
-    assert isinstance(edited, _LazyInverseDisplacementField)
-    assert edited.operand is df
+    assert isinstance(edited, InverseDisplacementField)
+    assert edited.forward is df
     # Its own inverse reflects the edited endpoint rather than dropping it.
     back = edited.inverse()
     assert back.input is world
@@ -550,3 +570,101 @@ def test_coordinate_inverse_reports_a_clear_message() -> None:
     cf = CoordinatesField(field=_small_field())
     with pytest.raises(NotImplementedError, match="coordinate field"):
         cf.inverse().compute()
+
+
+# ----------------------------------------------------------------------
+#   TRIVIAL INVERSES CANCEL AND MATERIALIZE
+# ----------------------------------------------------------------------
+
+
+def _trivial_cases() -> list:
+    return [
+        Translation(translation=[1.0, 2.0]),
+        Scaling(scale=[2.0, 3.0]),
+        Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]]),
+        Permutation(permutation=[1, 0]),
+    ]
+
+
+@pytest.mark.parametrize("t", _trivial_cases())
+def test_trivial_inverse_cancels_both_orders(t: Transformation) -> None:
+    # A translation, scaling, rotation or permutation placed next to its
+    # own inverse collapses to the identity by symbolic cancellation, the
+    # same way an affine does.
+    assert isinstance(
+        Sequence(transformations=[t, t.inverse()]).compute(), Identity
+    )
+    assert isinstance(
+        Sequence(transformations=[t.inverse(), t]).compute(), Identity
+    )
+
+
+@pytest.mark.parametrize("t", _trivial_cases())
+def test_trivial_inverse_cancels_through_generic_inverse(
+    t: Transformation,
+) -> None:
+    # The same cancellation holds for the generic Inverse(forward=X) front
+    # door placed next to X.
+    assert isinstance(
+        Sequence(transformations=[t, Inverse(forward=t)]).compute(), Identity
+    )
+    assert isinstance(
+        Sequence(transformations=[Inverse(forward=t), t]).compute(), Identity
+    )
+
+
+def test_trivial_inverse_materializes_to_closed_form() -> None:
+    # Each trivial inverse materializes cheaply to the closed-form inverse
+    # of its parameter, and the materialized transform is a plain instance
+    # of the forward family.
+    negated = Translation(translation=[1.0, -2.0]).inverse().compute()
+    assert type(negated) is Translation
+    np.testing.assert_allclose(np.asarray(negated.translation), [-1.0, 2.0])
+
+    reciprocal = Scaling(scale=[2.0, 4.0]).inverse().compute()
+    assert type(reciprocal) is Scaling
+    np.testing.assert_allclose(np.asarray(reciprocal.scale), [0.5, 0.25])
+
+    transposed = Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]]).inverse().compute()
+    assert type(transposed) is Rotation
+    np.testing.assert_allclose(
+        np.asarray(transposed.matrix), [[0.0, 1.0], [-1.0, 0.0]]
+    )
+
+    argsorted = Permutation(permutation=[2, 0, 1]).inverse().compute()
+    assert type(argsorted) is Permutation
+    np.testing.assert_array_equal(np.asarray(argsorted.permutation), [1, 2, 0])
+
+
+def test_distinct_trivial_inverse_does_not_falsely_cancel() -> None:
+    # An inverse only cancels against the exact transform it wraps. Two
+    # different translations do not cancel, and their sequence composes to
+    # the difference of the two.
+    t1 = Translation(translation=[1.0, 2.0])
+    t2 = Translation(translation=[10.0, 20.0])
+    result = Sequence(transformations=[t1, t2.inverse()]).compute()
+    assert isinstance(result, Translation)
+    np.testing.assert_allclose(np.asarray(result.translation), [-9.0, -18.0])
+
+
+# ----------------------------------------------------------------------
+#   PUBLIC API
+# ----------------------------------------------------------------------
+
+
+def test_inverse_classes_are_public() -> None:
+    # Every typed inverse, and the generic front door, are part of the
+    # module's public API and reachable by name.
+    for name in (
+        "Inverse",
+        "InverseTranslation",
+        "InverseScaling",
+        "InverseRotation",
+        "InversePermutation",
+        "InverseLinear",
+        "InverseAffine",
+        "InverseDisplacementField",
+        "InverseCoordinatesField",
+    ):
+        assert name in _xf.__all__, name
+        assert isinstance(getattr(_xf, name), type), name

@@ -15,6 +15,14 @@ __all__ = [
     "Identity",
     "Bijection",
     "Inverse",
+    "InverseTranslation",
+    "InverseScaling",
+    "InverseRotation",
+    "InversePermutation",
+    "InverseLinear",
+    "InverseAffine",
+    "InverseDisplacementField",
+    "InverseCoordinatesField",
     "SubspaceTransformation",
     "Projection",
     "Sequence",
@@ -310,6 +318,37 @@ class Transformation(DataModelBase, reverse=True):
 # ----------------------------------------------------------------------
 
 
+# The materialized inverse parameter is cached on the *forward* transform,
+# under this attribute name, rather than on the wrapper. A wrapper rebuilt
+# by `replace` or `.to(...)` keeps the same forward transform, so the cache
+# survives the rebuild and the inversion is not run again. The cache
+# assumes the forward transform is not mutated in place after it is
+# wrapped: a forward transform whose parameter is replaced by editing the
+# same object would keep serving the stale inverse.
+_INVERSE_CACHE = "_inverse_param_cache"
+
+# Each forward transformation type is paired with the `Inverse` subclass
+# that represents its inverse. `_lazy_inverse` looks the wrapper up here,
+# and the table is filled in once the wrapper classes are defined below.
+_INVERSE_WRAPPERS: tx.Dict[tx.Type["Transformation"], tx.Type["Inverse"]] = {}
+
+
+def _lazy_inverse(self: "Transformation") -> "Transformation":
+    # The shared `inverse()` of every forward type that defers its
+    # inversion to a type-transparent `Inverse` wrapper. A transformation
+    # with an unset parameter has nothing to invert, so its inverse is the
+    # plain endpoint-swapped transform. Otherwise the wrapper for this type
+    # is built, holding the transform as its `forward` and materializing
+    # the inverse only when its parameter is read or it is computed.
+    cls = type(self)
+    param = cls.parameter_names
+    if getattr(self, param) is None:
+        return cls(input=self.output, output=self.input)
+    return _INVERSE_WRAPPERS[cls](
+        forward=self, input=self.output, output=self.input
+    )
+
+
 class CoordinatesField(Transformation):
     """
     A field of coordinates defined on a regular grid.
@@ -350,21 +389,7 @@ class CoordinatesField(Transformation):
         ),
     ] = False
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.field is None:
-            return cls(input=self.output, output=self.input)
-        # A coordinate field has no cheap closed-form inverse, so the
-        # inversion is deferred to a lazy wrapper that keeps this field as
-        # its operand and carries `order`, `bound` and `coeff` across.
-        return _LazyInverseCoordinatesField(
-            operand=self,
-            order=self.order,
-            bound=self.bound,
-            coeff=self.coeff,
-            input=self.output,
-            output=self.input,
-        )
+    inverse = _lazy_inverse
 
 
 class CartesianField(CoordinatesField):
@@ -456,22 +481,7 @@ class DisplacementField(Transformation):
         ),
     ] = False
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.field is None:
-            return cls(input=self.output, output=self.input)
-        # Displacement field inversion is expensive and approximate, so
-        # the inversion is deferred to a lazy wrapper. The wrapper keeps
-        # this field as its operand and carries `order`, `bound` and
-        # `coeff` across, none of which the eager inversion preserved.
-        return _LazyInverseDisplacementField(
-            operand=self,
-            order=self.order,
-            bound=self.bound,
-            coeff=self.coeff,
-            input=self.output,
-            output=self.input,
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.AffineTransformation.register
@@ -510,17 +520,7 @@ class Affine(Transformation):
         homogeneous_matrix[-1, -1] = 1
         return homogeneous_matrix
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.matrix is None:
-            return cls(input=self.output, output=self.input)
-        # The matrix inverse is cheap and exact, but it is deferred to a
-        # lazy wrapper so that an affine placed next to its own inverse
-        # cancels symbolically in a sequence, rather than composing to a
-        # numerically-identity matrix that is not recognized as `Identity`.
-        return _LazyInverseAffine(
-            operand=self, input=self.output, output=self.input
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.LinearTransformation.register
@@ -540,16 +540,7 @@ class Linear(Transformation):
         ),
     ] = None
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.matrix is None:
-            return cls(input=self.output, output=self.input)
-        # Deferred to a lazy wrapper so that a linear map placed next to
-        # its own inverse cancels symbolically in a sequence. The matrix
-        # inverse itself is cheap and exact, and is computed on demand.
-        return _LazyInverseLinear(
-            operand=self, input=self.output, output=self.input
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.SpecialOrthogonalTransformation.register
@@ -571,11 +562,7 @@ class Rotation(Linear):
         ),
     ] = None
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.matrix is None:
-            return cls(input=self.output, output=self.input)
-        return cls(matrix=self.matrix.T, input=self.output, output=self.input)
+    inverse = _lazy_inverse
 
 
 @hierarchy.Permutation.register
@@ -597,18 +584,7 @@ class Permutation(Transformation):
         ),
     ] = None
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.permutation is None:
-            return cls(input=self.output, output=self.input)
-        inverse_permutation = [0] * len(self.permutation)
-        for i, p in enumerate(self.permutation):
-            inverse_permutation[p] = i
-        return cls(
-            permutation=inverse_permutation,
-            input=self.output,
-            output=self.input,
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.DiagonalTransformation.register
@@ -628,13 +604,7 @@ class Scaling(Transformation):
         ),
     ] = None
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.scale is None:
-            return cls(input=self.output, output=self.input)
-        return cls(
-            scale=1.0 / self.scale, input=self.output, output=self.input
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.Translation.register
@@ -654,13 +624,7 @@ class Translation(Transformation):
         ),
     ] = None
 
-    def inverse(self) -> tx.Self:
-        cls = type(self)
-        if self.translation is None:
-            return cls(input=self.output, output=self.input)
-        return cls(
-            translation=-self.translation, input=self.output, output=self.input
-        )
+    inverse = _lazy_inverse
 
 
 @hierarchy.IdentityTransformation.register
@@ -725,87 +689,48 @@ class Bijection(Transformation):
 
 
 class Inverse(Transformation):
-    """
-    The inverse of a transformation.
+    """The inverse of a transformation, resolved on demand.
 
-    This is a delayed transformation that computes the inverse of the
-    original transformation on demand when applied or computed.
+    An `Inverse` holds a forward transformation and represents its
+    inverse. The inverse is not computed when the wrapper is built. It is
+    computed only when the wrapper is applied, computed, or converted to a
+    concrete type. Placed next to its forward transformation in a
+    [`Sequence`][], the two cancel to the identity, and no inverse is ever
+    computed.
+
+    Constructing `Inverse(forward=t)` represents the inverse of any
+    transformation `t`. Each family of transformations also has its own
+    typed inverse, such as [`InverseAffine`][] or
+    [`InverseDisplacementField`][], which a transformation returns from its
+    `inverse()` method. A typed inverse remains an instance of the family
+    it inverts, so composition and the kind checks treat it exactly like a
+    forward transformation of that family.
     """
 
-    transformation: tx.Annotated[
-        tx.Optional[Transformation], tx.Doc("The transformation to invert.")
+    forward: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The forward transformation whose inverse this represents."),
     ] = None
 
-    def compute(self, simplify: bool = False) -> Transformation:
-        if self.transformation is None:
-            return (
-                Identity(input=self.input, output=self.output)
-                if simplify
-                else self
-            )
-        return self.transformation.inverse().compute(simplify=simplify)
+    # The forward transformation type a typed inverse inverts. It is unset
+    # on the generic `Inverse` front-door and set on each typed subclass,
+    # which drives both the materialization below and the wrapper registry.
+    _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
 
     def inverse(self) -> Transformation:
-        return self.transformation.to(
-            input=self.guess_output, output=self.guess_input
-        )
+        """Return the forward transformation, with the endpoints restored.
 
-    @property
-    def guess_input(self) -> tx.Optional[CoordinateSystem]:
-        if self.input is not None:
-            return self.input
-        if self.transformation is not None:
-            return self.transformation.output
-        return None
-
-    @property
-    def guess_output(self) -> tx.Optional[CoordinateSystem]:
-        if self.output is not None:
-            return self.output
-        if self.transformation is not None:
-            return self.transformation.input
-        return None
-
-
-# ----------------------------------------------------------------------
-#    LAZY INVERSE
-# ----------------------------------------------------------------------
-
-
-# The materialized inverse parameter is cached on the *operand*, under
-# this attribute name, rather than on the wrapper. A wrapper rebuilt by
-# `replace` or `.to(...)` keeps the same operand, so the cache survives the
-# rebuild and the inversion is not run again.
-_LAZY_INVERSE_CACHE = "_lazy_inverse_param"
-
-
-class _LazyInverse:
-    """
-    Mixin for a lazily inverted transformation.
-
-    A lazy inverse wraps the transformation it inverts as `operand` and
-    remains an instance of the operand's own type, so the compose engine,
-    the kind checks and attribute access all treat it transparently. The
-    concrete inverse is materialized only when the wrapped parameter is
-    read or the wrapper is computed, and never while the wrapper is being
-    cancelled in a sequence.
-    """
-
-    # The concrete plain type produced when the inverse is materialized,
-    # and the name of the expensive parameter that the inversion fills in.
-    _plain_base: tx.ClassVar[tx.Type[Transformation]]
-    _param_name: tx.ClassVar[str]
-
-    def inverse(self) -> Transformation:
-        # The inverse of a lazy inverse is its operand. The operand object
-        # itself is returned when the wrapper still carries the swapped
-        # endpoints it was built with, so the identity link that
-        # cancellation relies on is preserved. An endpoint edit made on the
-        # wrapper is reflected back onto a rebuilt operand.
-        operand = self.operand
-        if self.input is operand.output and self.output is operand.input:
-            return operand
-        return replace(operand, input=self.output, output=self.input)
+        The inverse of an inverse is the original forward transformation.
+        An endpoint edit made on the wrapper is carried onto it.
+        """
+        forward = self.forward
+        if forward is None:
+            return Identity(input=self.input, output=self.output)
+        new_input = self.output if self.output is not None else forward.input
+        new_output = self.input if self.input is not None else forward.output
+        if new_input is forward.input and new_output is forward.output:
+            return forward
+        return replace(forward, input=new_input, output=new_output)
 
     def to(
         self,
@@ -815,165 +740,318 @@ class _LazyInverse:
         **kwargs,
     ) -> Transformation:
         if cls is None or cls is type(self):
-            # An endpoint or metadata edit keeps the inverse lazy, reusing
-            # the operand and its cached materialization.
+            # An endpoint or metadata edit keeps the inverse unresolved,
+            # reusing the forward transform and its cached materialization.
             return replace(self, **kwargs) if kwargs else self
-        # A conversion to another type, including the plain base type,
+        # A conversion to another type, including the forward type,
         # materializes the concrete inverse first, then converts onward.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
 
     def compute(self, simplify: bool = False) -> Transformation:
-        # Computing a lazy inverse materializes it to a plain instance,
-        # then simplifies that. This is the eager escape hatch for a
-        # standalone inverse that is not going to cancel.
+        # Computing an inverse materializes it to a concrete instance, then
+        # simplifies that. This is the eager path for a standalone inverse
+        # that is not going to cancel in a sequence.
         return self._materialize().compute(simplify=simplify)
 
+    def _materialize(self) -> Transformation:
+        # The concrete inverse. A typed inverse builds a plain instance of
+        # the forward type holding the inverted parameter, with the
+        # wrapper's (swapped) endpoints. The generic front-door defers to
+        # the forward transform's own inverse, which resolves to the typed
+        # inverse of that family.
+        forward = self.forward
+        inverseof = type(self)._inverseof
+        if inverseof is None:
+            if forward is None:
+                return Identity(input=self.input, output=self.output)
+            resolved = forward.inverse()
+            edits = {}
+            if self.input is not None:
+                edits["input"] = self.input
+            if self.output is not None:
+                edits["output"] = self.output
+            return resolved.to(**edits) if edits else resolved
+        if forward is None:
+            return inverseof(input=self.input, output=self.output)
+        return replace(
+            forward,
+            input=self.input,
+            output=self.output,
+            **{inverseof.parameter_names: self._cached_inverse_param()},
+        )
+
     def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
-        # The expensive inverse parameter, worked out from the operand. A
-        # subclass implements the actual inversion.
+        # The inverted parameter, worked out from the forward transform.
+        # Each typed inverse implements the actual inversion.
         raise NotImplementedError
 
     def _cached_inverse_param(self) -> tx.Optional[ArrayProtocol]:
-        operand = self.operand
-        if operand is None or getattr(operand, self._param_name) is None:
+        forward = self.forward
+        param = type(self)._inverseof.parameter_names
+        if forward is None or getattr(forward, param) is None:
             return None
-        cached = operand.__dict__.get(_LAZY_INVERSE_CACHE)
+        cached = forward.__dict__.get(_INVERSE_CACHE)
         if cached is None:
             # A one-tuple is stored so that a genuine `None` result is
             # cached rather than recomputed.
             cached = (self._inverse_param(),)
-            operand.__dict__[_LAZY_INVERSE_CACHE] = cached
+            forward.__dict__[_INVERSE_CACHE] = cached
         return cached[0]
 
-    def _materialize(self) -> Transformation:
-        # A plain instance of the operand's own type holding the concrete
-        # inverse, with the wrapper's (swapped) endpoints.
-        operand = self.operand
-        if operand is None:
-            return self._plain_base(input=self.input, output=self.output)
-        return replace(
-            operand,
-            input=self.input,
-            output=self.output,
-            **{self._param_name: self._cached_inverse_param()},
-        )
 
+class InverseTranslation(Inverse, Translation):
+    """The inverse of a [`Translation`][], resolved on demand."""
 
-class _LazyInverseDisplacementField(_LazyInverse, DisplacementField):
-    """The inverse of a [`DisplacementField`][], materialized on demand."""
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
 
-    _plain_base: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
-    _param_name: tx.ClassVar[str] = "field"
-
-    operand: tx.Annotated[
-        tx.Optional[DisplacementField],
-        tx.Doc("The displacement field whose inverse is represented."),
+    forward: tx.Annotated[
+        tx.Optional[Translation],
+        tx.Doc("The translation whose inverse this represents."),
     ] = None
 
-    # `field` is computed on demand from `operand`, so it is not a stored,
-    # constructor-taken field here. Declaring it a `ClassVar` overrides the
-    # inherited init-field and keeps `field` out of `__init__`, `fields()`
-    # and `replace()`, while the property below serves reads.
-    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+    # `translation` is computed on demand from `forward`, so it is not a
+    # stored, constructor-taken field here. Declaring it a `ClassVar`
+    # overrides the inherited init-field and keeps it out of `__init__`,
+    # `fields()` and `replace()`, while the property below serves reads.
+    translation: tx.ClassVar[tx.Optional[npvector[Real]]]
 
     @property
-    def field(self) -> tx.Optional[ArrayProtocol]:
+    def translation(self) -> tx.Optional[ArrayProtocol]:
         return self._cached_inverse_param()
 
     def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
-        operand = self.operand
-        if not operand.coeff:
-            return inverse_disp(operand.field)
-        # A coefficient field is inverted by re-fitting: the coefficients
-        # are read out as values, the value field is inverted, and the
-        # result is fitted back to coefficients. The inverse of a
-        # coefficient field is itself a coefficient field.
-        values = coeff2value_field(
-            operand.field, order=operand.order, bound=operand.bound
-        )
-        inverse_values = inverse_disp(values)
-        return value2coeff_field(
-            inverse_values, order=operand.order, bound=operand.bound
-        )
+        return -self.forward.translation
 
 
-class _LazyInverseCoordinatesField(_LazyInverse, CoordinatesField):
-    """The inverse of a [`CoordinatesField`][], materialized on demand.
+class InverseScaling(Inverse, Scaling):
+    """The inverse of a [`Scaling`][], resolved on demand."""
 
-    A coordinate field has no cheap closed-form inverse, so a direct
-    materialization is not supported. The wrapper still carries `order`,
-    `bound` and `coeff`, and it cancels against the original field in a
-    sequence. Reading its `field`, or converting or computing it outside a
-    cancellation, raises.
-    """
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
 
-    _plain_base: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
-    _param_name: tx.ClassVar[str] = "field"
-
-    operand: tx.Annotated[
-        tx.Optional[CoordinatesField],
-        tx.Doc("The coordinate field whose inverse is represented."),
+    forward: tx.Annotated[
+        tx.Optional[Scaling],
+        tx.Doc("The scaling whose inverse this represents."),
     ] = None
 
+    scale: tx.ClassVar[tx.Optional[npvector[Real]]]
+
+    @property
+    def scale(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        return 1.0 / self.forward.scale
+
+
+class InverseRotation(Inverse, Rotation):
+    """The inverse of a [`Rotation`][], resolved on demand."""
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
+
+    forward: tx.Annotated[
+        tx.Optional[Rotation],
+        tx.Doc("The rotation whose inverse this represents."),
+    ] = None
+
+    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        # A rotation is orthogonal, so its inverse is its transpose.
+        return self.forward.matrix.T
+
+
+class InversePermutation(Inverse, Permutation):
+    """The inverse of a [`Permutation`][], resolved on demand."""
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
+
+    forward: tx.Annotated[
+        tx.Optional[Permutation],
+        tx.Doc("The permutation whose inverse this represents."),
+    ] = None
+
+    permutation: tx.ClassVar[tx.Optional[npvector[Integral]]]
+
+    @property
+    def permutation(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        forward = self.forward.permutation
+        inverse_permutation = [0] * len(forward)
+        for i, p in enumerate(forward):
+            inverse_permutation[p] = i
+        return inverse_permutation
+
+
+class InverseLinear(Inverse, Linear):
+    """The inverse of a [`Linear`][] transformation, resolved on demand."""
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
+
+    forward: tx.Annotated[
+        tx.Optional[Linear],
+        tx.Doc("The linear transformation whose inverse this represents."),
+    ] = None
+
+    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        ab = get_array_backend(self.forward.matrix)
+        return ab.linalg.inv(self.forward.matrix)
+
+
+class InverseAffine(Inverse, Affine):
+    """The inverse of an [`Affine`][] transformation, resolved on demand."""
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
+
+    forward: tx.Annotated[
+        tx.Optional[Affine],
+        tx.Doc("The affine transformation whose inverse this represents."),
+    ] = None
+
+    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        ab = get_array_backend(self.forward.matrix)
+        return ab.linalg.inv(self.forward.homogeneous_matrix)[:-1]
+
+
+class InverseDisplacementField(Inverse, DisplacementField):
+    """The inverse of a [`DisplacementField`][], resolved on demand.
+
+    The wrapper reports the `order`, `bound` and `coeff` of the forward
+    field, and the inverse field it materializes preserves them. A field
+    of spline coefficients is inverted by re-fitting, and its inverse is
+    itself a field of coefficients.
+    """
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
+
+    forward: tx.Annotated[
+        tx.Optional[DisplacementField],
+        tx.Doc("The displacement field whose inverse this represents."),
+    ] = None
+
+    # `field` is computed on demand from `forward`, and `order`, `bound`
+    # and `coeff` are read from `forward`, so none of them is a stored,
+    # constructor-taken field here. Declaring each a `ClassVar` overrides
+    # the inherited init-field and keeps it out of `__init__`, `fields()`
+    # and `replace()`, while the properties below serve reads.
     field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+    order: tx.ClassVar[InterpolationOrder]
+    bound: tx.ClassVar[tx.Union[BoundaryCondition, float]]
+    coeff: tx.ClassVar[bool]
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
         return self._cached_inverse_param()
+
+    @property
+    def order(self) -> InterpolationOrder:
+        return self.forward.order
+
+    @property
+    def bound(self) -> tx.Union[BoundaryCondition, float]:
+        return self.forward.bound
+
+    @property
+    def coeff(self) -> bool:
+        return self.forward.coeff
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        forward = self.forward
+        if not forward.coeff:
+            return inverse_disp(forward.field)
+        # A coefficient field is inverted by re-fitting: the coefficients
+        # are read out as values, the value field is inverted, and the
+        # result is fitted back to coefficients.
+        values = coeff2value_field(
+            forward.field, order=forward.order, bound=forward.bound
+        )
+        inverse_values = inverse_disp(values)
+        return value2coeff_field(
+            inverse_values, order=forward.order, bound=forward.bound
+        )
+
+
+class InverseCoordinatesField(Inverse, CoordinatesField):
+    """The inverse of a [`CoordinatesField`][], resolved on demand.
+
+    A coordinate field has no cheap closed-form inverse, so it cannot be
+    materialized directly. The wrapper reports the `order`, `bound` and
+    `coeff` of the forward field, and it cancels against the original field
+    in a sequence. Reading its `field`, or converting or computing it
+    outside a cancellation, raises.
+    """
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
+
+    forward: tx.Annotated[
+        tx.Optional[CoordinatesField],
+        tx.Doc("The coordinate field whose inverse this represents."),
+    ] = None
+
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+    order: tx.ClassVar[InterpolationOrder]
+    bound: tx.ClassVar[tx.Union[BoundaryCondition, float]]
+    coeff: tx.ClassVar[bool]
+
+    @property
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    @property
+    def order(self) -> InterpolationOrder:
+        return self.forward.order
+
+    @property
+    def bound(self) -> tx.Union[BoundaryCondition, float]:
+        return self.forward.bound
+
+    @property
+    def coeff(self) -> bool:
+        return self.forward.coeff
 
     def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
         raise NotImplementedError(
             "The inverse of a coordinate field cannot be materialized "
-            "directly. Keep the inverse lazy so that it cancels in a "
+            "directly. Keep the inverse unresolved so that it cancels in a "
             "sequence, or compose it away, rather than reading, converting "
             "or computing its field on its own."
         )
 
 
-class _LazyInverseAffine(_LazyInverse, Affine):
-    """The inverse of an [`Affine`][], materialized on demand."""
-
-    _plain_base: tx.ClassVar[tx.Type[Transformation]] = Affine
-    _param_name: tx.ClassVar[str] = "matrix"
-
-    operand: tx.Annotated[
-        tx.Optional[Affine],
-        tx.Doc("The affine transformation whose inverse is represented."),
-    ] = None
-
-    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
-
-    @property
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        return self._cached_inverse_param()
-
-    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
-        operand = self.operand
-        ab = get_array_backend(operand.matrix)
-        return ab.linalg.inv(operand.homogeneous_matrix)[:-1]
-
-
-class _LazyInverseLinear(_LazyInverse, Linear):
-    """The inverse of a [`Linear`][], materialized on demand."""
-
-    _plain_base: tx.ClassVar[tx.Type[Transformation]] = Linear
-    _param_name: tx.ClassVar[str] = "matrix"
-
-    operand: tx.Annotated[
-        tx.Optional[Linear],
-        tx.Doc("The linear transformation whose inverse is represented."),
-    ] = None
-
-    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
-
-    @property
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        return self._cached_inverse_param()
-
-    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
-        operand = self.operand
-        ab = get_array_backend(operand.matrix)
-        return ab.linalg.inv(operand.matrix)
+# Pair each forward transformation type with the typed inverse that
+# represents it, keyed by the type each inverse names in `_inverseof`.
+_INVERSE_WRAPPERS.update(
+    {
+        cls._inverseof: cls
+        for cls in (
+            InverseTranslation,
+            InverseScaling,
+            InverseRotation,
+            InversePermutation,
+            InverseLinear,
+            InverseAffine,
+            InverseDisplacementField,
+            InverseCoordinatesField,
+        )
+    }
+)
 
 
 class SubspaceTransformation(Transformation):
@@ -1483,13 +1561,16 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     simplifier, which only does so for a grid that sits strictly between
     two other transformations.
     """
-    if isinstance(xform, _LazyInverse):
-        # A lazy inverse is the identity exactly when the transform it
-        # inverts is. The answer is read from the operand so that neither
-        # the check with `compute=False` nor the one with `compute=True`
-        # materializes the deferred (and possibly unmaterializable)
-        # inverse of a field.
-        return is_identity(xform.operand, compute=compute)
+    if isinstance(xform, Inverse):
+        # An inverse is the identity exactly when the transform it inverts
+        # is, so the answer is read from `forward`. This reads neither the
+        # check with `compute=False` nor the one with `compute=True` into
+        # materializing the (possibly unmaterializable) inverse of a field.
+        # An inverse of nothing is itself the identity.
+        forward = xform.forward
+        if forward is None:
+            return True
+        return is_identity(forward, compute=compute)
     parameter_names = getattr(xform, "parameter_names", ())
     if isinstance(parameter_names, str):
         parameter_names = (parameter_names,)
@@ -1659,19 +1740,18 @@ def _is_flat(self: Sequence) -> bool:
 
 
 def _normalize_inverse(t: Transformation) -> Transformation:
-    # Expand a public `Inverse` wrapper into the concrete (lazy or eager)
-    # inverse of the transform it wraps, so the sequence engine actually
-    # computes it and cancellation can recognize it like any other inverse.
-    # An endpoint override on the `Inverse` is carried onto the result.
-    # This is the one mechanism that reconciles the public `Inverse` with
-    # the internal lazy wrappers: `Inverse(transformation=X)` becomes
-    # `X.inverse()`, which for a field or an affine is a lazy wrapper whose
-    # `operand` is `X`.
-    if not isinstance(t, Inverse):
+    # Expand a generic `Inverse` front-door into the typed inverse of the
+    # transform it holds, so the sequence engine computes it and
+    # cancellation recognizes it like any other inverse. An endpoint
+    # override on the `Inverse` is carried onto the result. A typed inverse
+    # (its `_inverseof` is set) is already such a result and is left as is:
+    # `Inverse(forward=X)` becomes `X.inverse()`, which for a field or an
+    # affine is the typed inverse whose `forward` is `X`.
+    if not isinstance(t, Inverse) or t._inverseof is not None:
         return t
-    if t.transformation is None:
+    if t.forward is None:
         return Identity(input=t.input, output=t.output)
-    inv = t.transformation.inverse()
+    inv = t.forward.inverse()
     kwargs = {}
     if t.input is not None:
         kwargs["input"] = t.input
@@ -1684,8 +1764,8 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
     # Flatten nested sequences into a single list, without touching the
     # endpoints of any transform (unlike `_flatten`, which may rebuild the
     # first and last transform to propagate coordinate systems, and in
-    # doing so would read a lazy field). A public `Inverse` wrapper is
-    # expanded to its concrete inverse along the way.
+    # doing so would read a lazy field). A generic `Inverse` front-door is
+    # expanded to its typed inverse along the way.
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
@@ -1698,19 +1778,13 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 def _cancels(first: Transformation, second: Transformation) -> bool:
     # `first` is applied before `second`. The two cancel when `second` is
-    # the inverse of `first`, or `first` is the inverse of `second`. A lazy
-    # inverse names the transform it undoes as its `operand`, so the test
-    # is a plain identity check that materializes neither field.
-    if isinstance(second, _LazyInverse) and second.operand is first:
+    # the inverse of `first`, or `first` is the inverse of `second`. An
+    # inverse names the transform it undoes as its `forward`, so the test
+    # is a plain identity check that materializes neither field. This
+    # covers both a typed inverse and a generic `Inverse(forward=X)`.
+    if isinstance(second, Inverse) and second.forward is first:
         return True
-    if isinstance(first, _LazyInverse) and first.operand is second:
-        return True
-    # A public `Inverse` is normally expanded before this point, but
-    # recognize it directly too, so `Inverse(transformation=X)` cancels
-    # against `X`.
-    if isinstance(second, Inverse) and second.transformation is first:
-        return True
-    if isinstance(first, Inverse) and first.transformation is second:
+    if isinstance(first, Inverse) and first.forward is second:
         return True
     return False
 
