@@ -24,7 +24,6 @@ from brainhops.backends import get_array_backend
 from .transformations import (
     Affine,
     CartesianField,
-    CompositionError,
     CoordinatesField,
     DisplacementField,
     Identity,

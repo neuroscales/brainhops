@@ -23,10 +23,7 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
-from brainhops.datamodel.transformations import (  # noqa: E402
-    CompositionError,
-    _compose,
-)
+from brainhops.datamodel.transformations import _compose  # noqa: E402
 from brainhops.io.transformations.fsl import FLIRTTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
     VoxelToScaledMM,
@@ -440,28 +437,35 @@ def test_coefficient_field_chain_shape() -> None:
     assert np.all(np.isfinite(world))
 
 
-@pytest.mark.parametrize(
-    "name", ["coefficientfield.nii.gz", "displacementfield.nii.gz"]
-)
-def test_fnirt_fixture_matches_fslpy(name) -> None:  # noqa: ANN001
-    """The reader reproduces fslpy's world-to-world FNIRT deformation."""
+def _fnirt_world_oracle(name, shape):  # noqa: ANN001, ANN202
+    """The fslpy world-to-world FNIRT deformation for a fixture.
+
+    The test is skipped where fslpy is not installed.
+    """
     fsl_image = pytest.importorskip("fsl.data.image")
     fsl_fnirt = pytest.importorskip("fsl.transform.fnirt")
     nonlinear = pytest.importorskip("fsl.transform.nonlinear")
-
-    ref_img, src_img = _real_ref(), _real_src()
-    warp = io.transformations.load(
-        fsl_dir / name, reference=ref_img, moving=src_img
-    )
-    out = _world_field(warp, ref_img)
 
     fref = fsl_image.Image(str(fsl_dir / "ref.nii.gz"))
     fsrc = fsl_image.Image(str(fsl_dir / "src.nii.gz"))
     field = fsl_fnirt.readFnirt(str(fsl_dir / name), src=fsrc, ref=fref)
     world = fsl_fnirt.fromFnirt(field, "world", "world")
-    oracle = np.asarray(
+    return np.asarray(
         nonlinear.convertDeformationType(world, "absolute")
-    ).reshape(out.shape)
+    ).reshape(shape)
+
+
+@pytest.mark.parametrize(
+    "name", ["coefficientfield.nii.gz", "displacementfield.nii.gz"]
+)
+def test_fnirt_fixture_matches_fslpy(name) -> None:  # noqa: ANN001
+    """The reader reproduces fslpy's world-to-world FNIRT deformation."""
+    ref_img, src_img = _real_ref(), _real_src()
+    warp = io.transformations.load(
+        fsl_dir / name, reference=ref_img, moving=src_img
+    )
+    out = _world_field(warp, ref_img)
+    oracle = _fnirt_world_oracle(name, out.shape)
     assert np.allclose(out, oracle, atol=1e-4)
 
 
@@ -525,12 +529,19 @@ def test_constant_boundary_maps_to_grid_constant() -> None:
 
 
 # ----------------------------------------------------------------------
-#   C2 -- composing an affine with a warp field
+#   C2 -- folding an affine into a warp field
 # ----------------------------------------------------------------------
 
 
-def test_affine_does_not_fold_into_a_coefficient_field() -> None:
-    """A coefficient field stays uncomposed rather than being corrupted."""
+def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
+    """Folding the trailing affine into a coefficient field keeps the warp.
+
+    An explicit ``compute()`` with no leading sampling domain folds the
+    trailing affine into the field. The three-step chain collapses to two
+    steps, and the coefficient state of the field is carried through. When
+    the warp instead leads with a sampling grid, it is evaluated exactly and
+    reproduces the fslpy reference across the field of view.
+    """
     coef = io.transformations.load(
         fsl_dir / "coefficientfield.nii.gz",
         reference=_real_ref(),
@@ -538,22 +549,35 @@ def test_affine_does_not_fold_into_a_coefficient_field() -> None:
     )
     _, disp, post = coef.transformations
     assert disp.coeff is True
-    with pytest.raises(CompositionError, match="interpolated in its own"):
-        _ = _compose(post, disp)
-    # compute() therefore keeps the three-step chain intact.
+
+    # The affine folds into the field rather than raising. The result is a
+    # displacement field again, and its coefficient state is preserved.
+    folded = _compose(post, disp)
+    assert type(folded) is _xforms.DisplacementField
+    assert folded.coeff is True
+
+    # compute() therefore folds the trailing affine into the field, leaving
+    # two steps in place of three.
     computed = _xforms.Sequence(
         transformations=list(coef.transformations)
     ).compute()
     names = [type(t).__name__ for t in computed.transformations]
-    assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
+    assert names == ["RASToWarpField", "DisplacementField"]
+
+    # Led by a sampling grid, the full warp reproduces the fslpy reference.
+    out = _world_field(coef, _real_ref())
+    oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
+    assert np.allclose(out, oracle, atol=1e-4)
 
 
-def test_affine_does_not_fold_into_a_dense_field() -> None:
-    """A dense field is not folded either, because it too is interpolated.
+def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
+    """Folding the trailing affine into a dense field is exact in the FOV.
 
-    An affine folded into the field would be baked into values that are
-    interpolated in the field's own grid frame, which changes the encoded
-    transform once a boundary or a spline order above one is involved.
+    A dense displacement field has spline order one, so interpolation
+    reproduces an affine exactly at every grid node. Folding the trailing
+    affine into the field and evaluating the collapsed two-step warp against
+    a sampling grid therefore agrees with the full three-step warp and with
+    the fslpy reference across the field of view.
     """
     warp = io.transformations.load(
         fsl_dir / "displacementfield.nii.gz",
@@ -562,11 +586,21 @@ def test_affine_does_not_fold_into_a_dense_field() -> None:
     )
     _, disp, post = warp.transformations
     assert disp.coeff is False
-    with pytest.raises(CompositionError, match="interpolated in its own"):
-        _ = _compose(post, disp)
-    # compute() therefore keeps the three-step chain intact.
+
+    folded = _compose(post, disp)
+    assert type(folded) is _xforms.DisplacementField
+    assert folded.coeff is False
+
     computed = _xforms.Sequence(
         transformations=list(warp.transformations)
     ).compute()
     names = [type(t).__name__ for t in computed.transformations]
-    assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
+    assert names == ["RASToWarpField", "DisplacementField"]
+
+    # The full three-step warp and the folded two-step warp both reproduce
+    # the fslpy reference when they lead with a sampling grid.
+    out_full = _world_field(warp, _real_ref())
+    out_folded = _world_field(computed, _real_ref())
+    oracle = _fnirt_world_oracle("displacementfield.nii.gz", out_full.shape)
+    assert np.allclose(out_full, oracle, atol=1e-4)
+    assert np.allclose(out_folded, oracle, atol=1e-4)
