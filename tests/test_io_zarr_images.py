@@ -226,7 +226,8 @@ def test_multiscale_stores_axes_in_ome_order(tmp_path: Path) -> None:
     OmeZarrImage(images=[image], axes=axes).save(path)
 
     stored = abczarr.open(path, mode="r")
-    block = dict(stored.attrs)["multiscales"][0]
+    attrs = dict(stored.attrs)
+    block = attrs.get("ome", attrs)["multiscales"][0]
     assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]
     # The stored array is transposed to the OME order, so the shape is the
     # F-order shape read back to front.
@@ -695,16 +696,14 @@ def test_field_components_are_not_reordered_by_the_axis_permutation(
 # ---- the OME version option ------------------------------------------
 
 
-def test_write_version_defaults_to_a_bare_envelope(tmp_path: Path) -> None:
+def test_write_version_defaults_to_zarr_v3(tmp_path: Path) -> None:
     path = str(tmp_path / "default.zarr")
     _small_pyramid().save(path)
 
-    attrs = dict(abczarr.open(path, mode="r").attrs)
-    # With no source version and scale-and-translation content, the leanest
-    # version that carries it is written, whose metadata sits directly in the
-    # attributes.
-    assert "multiscales" in attrs
-    assert "ome" not in attrs
+    # With no source version and scale-and-translation content, the default
+    # is OME-NGFF 0.5, the Zarr v3 encoding.
+    node = abczarr.open(path, mode="r")
+    assert node.ome.version == "0.5"
 
 
 def test_write_version_can_be_requested(tmp_path: Path) -> None:
@@ -756,7 +755,8 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     # Re-saving derives the axes from `ome`, so their stored order is kept.
     target = str(tmp_path / "resaved.zarr")
     back.save(target)
-    block = dict(abczarr.open(target, mode="r").attrs)["multiscales"][0]
+    attrs = dict(abczarr.open(target, mode="r").attrs)
+    block = attrs.get("ome", attrs)["multiscales"][0]
     assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]
 
 

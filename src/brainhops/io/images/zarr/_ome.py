@@ -25,7 +25,7 @@ from collections.abc import Mapping
 # dependencies
 import typing_extensions as tx
 from abczarr.abc.sync import ZarrGroup
-from abczarr.ome import v0_6rc0 as _v6
+from abczarr.ome import v0_6rc0 as _v06
 from abczarr.ome.v0_6rc0.images import Dataset, Multiscale
 from abczarr.ome.v0_6rc0.ome import OME
 from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
@@ -58,10 +58,12 @@ _Level = tx.Tuple[str, _Entry]
 #: The OME-NGFF version the reader normalizes every group to.
 NORMALIZED_VERSION = "0.6rc0"
 
-#: The OME-NGFF version the writer emits when nothing else selects one. A
-#: per-axis scale and translation is expressible in every version, and this
-#: is the leanest that carries it.
-DEFAULT_WRITE_VERSION = "0.4"
+#: The OME-NGFF version the writer emits when nothing else selects one.
+#: Version 0.4 is stored as Zarr v2 and version 0.5 as Zarr v3. brainhops
+#: writes Zarr v3, so version 0.5 is the default. A placement that version
+#: 0.5 cannot express, such as a rotation, raises the written version to
+#: 0.6rc0.
+DEFAULT_WRITE_VERSION = "0.5"
 
 
 class OmeImageError(ParserContentError):
@@ -366,7 +368,7 @@ def build_ome(
     }  # type: tx.Dict[str, tx.Any]
     if name is not None:
         block["name"] = name
-    ome = _v6.OME.from_json(
+    ome = _v06.OME.from_json(
         {"version": NORMALIZED_VERSION, "multiscales": [block]}
     )
     if version != NORMALIZED_VERSION:
