@@ -67,7 +67,7 @@ def test_reader_is_a_multiscale_field() -> None:
     reader, _, _, _, _, _ = _displacement_reader()
     assert isinstance(reader, MultiscaleField)
     assert isinstance(reader, X.Sequence)
-    assert reader.nlevels == 2
+    assert reader.nscales == 2
 
 
 def test_finest_displacement_level_is_the_three_element_sandwich() -> None:

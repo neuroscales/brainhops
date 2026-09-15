@@ -3,6 +3,7 @@ __all__ = [
     "CoordinatesField",
     "CartesianField",
     "DisplacementField",
+    "ImmutableSequence",
     "Multiscale",
     "MultiscaleField",
     "Affine",
@@ -980,43 +981,63 @@ class Sequence(MutableSequence, Transformation):
 # ----------------------------------------------------------------------
 
 
+class ImmutableSequence:
+    """A [`Sequence`][] whose contents cannot be edited in place.
+
+    A subclass mixes this in ahead of the mutable sequence base to block
+    item assignment, deletion, and insertion. Every in-place edit raises
+    `TypeError`.
+
+    The data model regenerates the subscript hooks on every class it
+    builds, so a subclass restates `__setitem__` and `__delitem__` in its
+    own body, bound to the versions defined here.
+    """
+
+    def _refuse_in_place_edit(self, *args: tx.Any) -> tx.NoReturn:
+        raise TypeError(f"{type(self).__name__} cannot be edited in place.")
+
+    __setitem__ = _refuse_in_place_edit
+    __delitem__ = _refuse_in_place_edit
+    insert = _refuse_in_place_edit
+
+
 class Multiscale(DataModelBase):
-    """A pyramid of resolution levels, ordered from finest to coarsest.
+    """A pyramid of resolution scales, ordered from finest to coarsest.
 
-    This mixin gives a transformation a list of levels and the operations
-    that select one of them. The levels are ordered from finest to
-    coarsest, so the first level is the highest resolution one.
+    This mixin gives a transformation a list of scales and the operations
+    that select one of them. The scales are ordered from finest to
+    coarsest, so the first scale is the highest resolution one.
 
-    The mixin does not say what a level is. A subclass supplies the levels
+    The mixin does not say what a scale is. A subclass supplies the scales
     and, through the `_level_resolution` hook, the physical grid size of
-    each one. With those, `_nearest_level` picks the level whose
+    each one. With those, `_nearest_level` picks the scale whose
     resolution is closest to a target grid.
     """
 
-    levels: tx.Annotated[
+    scales: tx.Annotated[
         tx.Optional[tx.List[tx.Any]],
-        tx.Doc("The resolution levels, ordered from finest to coarsest."),
+        tx.Doc("The resolution scales, ordered from finest to coarsest."),
     ] = None
 
     @property
-    def nlevels(self) -> int:
-        """The number of resolution levels."""
-        return len(self.levels or [])
+    def nscales(self) -> int:
+        """The number of resolution scales."""
+        return len(self.scales or [])
 
     @property
-    def finest(self) -> tx.Any:
-        """The finest resolution level, or `None` when there are no levels."""
-        levels = self.levels or []
-        return levels[0] if levels else None
+    def _finest(self) -> tx.Any:
+        # The finest resolution scale, or `None` when there are no scales.
+        scales = self.scales or []
+        return scales[0] if scales else None
 
-    def at_level(self, index: int) -> tx.Any:
-        """Return the resolution level at a given index.
+    def to_singlescale(self, index: int = 0) -> tx.Any:
+        """Return the resolution scale at a given index.
 
-        Level `0` is the finest level. The level is returned as it is
+        Index `0` is the finest scale. The scale is returned as it is
         stored, so for a field it is the plain transformation of that
-        level rather than the multiscale field.
+        scale rather than the multiscale field.
         """
-        return (self.levels or [])[int(index)]
+        return (self.scales or [])[int(index)]
 
     def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
         # The physical grid size of a level, as a per-axis vector in the
@@ -1030,11 +1051,11 @@ class Multiscale(DataModelBase):
         # logarithmic scale, so the level above and the level below the
         # target are weighed evenly, and the finer level wins a tie. When
         # the resolution of any level, or of the target, is unknown, the
-        # finest level is returned.
-        levels = self.levels or []
-        if len(levels) <= 1:
+        # finest scale is returned.
+        scales = self.scales or []
+        if len(scales) <= 1:
             return 0
-        resolutions = [self._level_resolution(i) for i in range(len(levels))]
+        resolutions = [self._level_resolution(i) for i in range(len(scales))]
         if any(resolution is None for resolution in resolutions):
             return 0
         target = axis_scales(_affine_matrix(voxel2world))
@@ -1053,48 +1074,54 @@ class Multiscale(DataModelBase):
         return best_index
 
 
-class MultiscaleField(Multiscale, Sequence):
+class MultiscaleField(Multiscale, ImmutableSequence, Sequence):
     """A field of coordinates or displacements at several resolutions.
 
-    Each level is a [`Sequence`][] that maps the multiscale's input space
-    to its output space, sampled on that level's grid. A coordinate level
+    Each scale is a [`Sequence`][] that maps the multiscale's input space
+    to its output space, sampled on that scale's grid. A coordinate scale
     is a two-element sequence of a world-to-voxel affine and a field of
-    coordinates. A displacement level is a three-element sequence of a
+    coordinates. A displacement scale is a three-element sequence of a
     world-to-voxel affine, a field of displacements in voxel units, and
-    the voxel-to-world affine. The container treats a level as a plain
+    the voxel-to-world affine. The container treats a scale as a plain
     sequence, so the same class carries both kinds.
 
-    A `MultiscaleField` behaves as its finest level. It composes with
-    other transformations exactly as the finest level would, and reduces
-    to the finest level when it is computed. The finest level is the one
-    used unless a level is selected with `at_level`.
+    A `MultiscaleField` behaves as its finest scale. It composes with
+    other transformations exactly as the finest scale would, and reduces
+    to the finest scale when it is computed. The finest scale is the one
+    used unless a scale is selected with `to_singlescale`.
 
-    The levels replace this class as the unit that is edited. A level is
-    selected with `at_level`, and the returned sequence is edited in
+    The scales replace this class as the unit that is edited. A scale is
+    selected with `to_singlescale`, and the returned sequence is edited in
     place. The container itself does not support item assignment,
     insertion, or deletion.
     """
 
-    levels: tx.Annotated[
+    # The subscript hooks are regenerated on every class the data model
+    # builds, so the immutable ones from `ImmutableSequence` are restated
+    # here to keep them. `insert` is not regenerated and is inherited.
+    __setitem__ = ImmutableSequence.__setitem__
+    __delitem__ = ImmutableSequence.__delitem__
+
+    scales: tx.Annotated[
         tx.Optional[tx.List[Sequence]],
         tx.Doc(
-            "The resolution levels, ordered from finest to coarsest. Each "
-            "level is a sequence that maps the input space to the output "
-            "space, sampled on that level's grid."
+            "The resolution scales, ordered from finest to coarsest. Each "
+            "scale is a sequence that maps the input space to the output "
+            "space, sampled on that scale's grid."
         ),
     ] = None
 
-    # `transformations` is served on demand from the finest level rather
+    # `transformations` is served on demand from the finest scale rather
     # than stored, so it is not a constructor-taken field here. Declaring
     # it a `ClassVar` overrides the inherited init-field from `Sequence`
     # and keeps it out of `__init__`, `fields()` and `replace()`, while
-    # the property keeps the container reading as the finest level.
+    # the property keeps the container reading as the finest scale.
     transformations: tx.ClassVar[tx.Optional[tx.List[Transformation]]]
 
     @property
     def transformations(self) -> tx.Optional[tx.List[Transformation]]:
-        """The transformations of the finest level."""
-        finest = self.finest
+        """The transformations of the finest scale."""
+        finest = self._finest
         return finest.transformations if finest is not None else None
 
     @transformations.setter
@@ -1104,17 +1131,17 @@ class MultiscaleField(Multiscale, Sequence):
         if value is not None:
             raise TypeError(
                 "The elements of a multiscale field are determined by its "
-                "levels. Select a level with at_level() and edit that "
+                "scales. Select a scale with to_singlescale() and edit that "
                 "sequence."
             )
 
     def _as_sequence(self) -> Sequence:
-        # The finest level as a plain sequence, carrying the container's
+        # The finest scale as a plain sequence, carrying the container's
         # input and output. `compute` and `_flattened` go through this, so
         # they operate on a real init-field sequence rather than on the
         # container, whose `transformations` is derived and cannot be
         # rebuilt by `replace`.
-        finest = self.finest
+        finest = self._finest
         transformations = (
             None if finest is None else list(finest.transformations or [])
         )
@@ -1127,62 +1154,42 @@ class MultiscaleField(Multiscale, Sequence):
     def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
         """Compute the field as a plain transformation.
 
-        The finest level is composed and returned. The result is an
+        The finest scale is composed and returned. The result is an
         ordinary transformation, with no pyramid, so it computes exactly
-        as the finest level would on its own.
+        as the finest scale would on its own.
         """
         return self._as_sequence().compute(mode)
 
     def _flattened(self) -> Sequence:
-        # Flatten through the finest level. A multiscale field spliced
+        # Flatten through the finest scale. A multiscale field spliced
         # into a surrounding sequence contributes the elements of its
-        # finest level.
+        # finest scale.
         return self._as_sequence()._flattened()
 
     def inverse(self) -> tx.Self:
         return replace(
             self,
-            levels=[level.inverse() for level in (self.levels or [])],
+            scales=[scale.inverse() for scale in (self.scales or [])],
             input=self.output,
             output=self.input,
         )
 
     def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
-        # The physical grid size of a level, read from the level's leading
-        # world-to-voxel affine. The inverse of that affine is the level's
+        # The physical grid size of a scale, read from the scale's leading
+        # world-to-voxel affine. The inverse of that affine is the scale's
         # voxel-to-world transformation, and the norm of each of its
-        # columns is the voxel size along one axis. A level whose leading
+        # columns is the voxel size along one axis. A scale whose leading
         # element is not a defined affine has an unknown resolution.
-        levels = self.levels or []
-        if not 0 <= index < len(levels):
+        scales = self.scales or []
+        if not 0 <= index < len(scales):
             return None
-        level = levels[index]
-        if not len(level):
+        scale = scales[index]
+        if not len(scale):
             return None
-        matrix = _affine_matrix(level[0])
+        matrix = _affine_matrix(scale[0])
         if matrix is None:
             return None
         return axis_scales(_affine_inv(matrix))
-
-    # --- the container is not itself mutable ---
-
-    def __setitem__(self, index: tx.Any, value: tx.Any) -> None:
-        raise TypeError(
-            "A multiscale field cannot be edited in place. Select a level "
-            "with at_level() and edit that sequence."
-        )
-
-    def __delitem__(self, index: tx.Any) -> None:
-        raise TypeError(
-            "A multiscale field cannot be edited in place. Select a level "
-            "with at_level() and edit that sequence."
-        )
-
-    def insert(self, index: int, value: Transformation) -> None:
-        raise TypeError(
-            "A multiscale field cannot be edited in place. Select a level "
-            "with at_level() and edit that sequence."
-        )
 
 
 def _affine_matrix(xform: Transformation) -> tx.Optional[npmatrix]:
@@ -1201,15 +1208,15 @@ def _affine_matrix(xform: Transformation) -> tx.Optional[npmatrix]:
 def _at_resolution(
     transformation: Transformation, voxel2world: Transformation
 ) -> Transformation:
-    # Select, inside a transformation, the level of every multiscale field
+    # Select, inside a transformation, the scale of every multiscale field
     # whose resolution matches a target grid. The `voxel2world` is the
     # voxel-to-world transformation of the grid onto which an image is
     # resliced. Each multiscale field is replaced by its resolution-
-    # matched level, walking through any nesting of sequences. A
+    # matched scale, walking through any nesting of sequences. A
     # transformation that carries no multiscale field is returned
     # unchanged.
     if isinstance(transformation, Multiscale):
-        return transformation.at_level(
+        return transformation.to_singlescale(
             transformation._nearest_level(voxel2world)
         )
     if isinstance(transformation, Sequence):

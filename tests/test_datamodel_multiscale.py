@@ -84,7 +84,7 @@ def _two_level_displacement(rng: np.random.Generator) -> tuple:
     raw1 = rng.normal(size=(3, 3, 2))
     l0 = _displacement_level(raw0, xf0, lin0)
     l1 = _displacement_level(raw1, xf1, lin1)
-    field = MultiscaleField(levels=[l0, l1])
+    field = MultiscaleField(scales=[l0, l1])
     return field, (l0, l1), (xf0, lin0, raw0), (xf1, lin1, raw1)
 
 
@@ -98,32 +98,32 @@ def test_a_level_is_a_sequence() -> None:
     assert isinstance(l1, Sequence)
 
 
-def test_transformations_are_the_finest_levels() -> None:
+def test_transformations_are_the_finest_scales() -> None:
     field, (l0, _), *_ = _two_level_displacement(np.random.default_rng(1))
     assert field.transformations is l0.transformations
     assert len(field) == len(l0)
 
 
-def test_nlevels_and_at_level() -> None:
+def test_nscales_and_to_singlescale() -> None:
     field, (l0, l1), *_ = _two_level_displacement(np.random.default_rng(2))
-    assert field.nlevels == 2
-    assert field.finest is l0
-    assert field.at_level(0) is l0
-    assert field.at_level(1) is l1
+    assert field.nscales == 2
+    assert field.to_singlescale() is l0
+    assert field.to_singlescale(0) is l0
+    assert field.to_singlescale(1) is l1
 
 
-def test_at_level_returns_a_plain_sequence() -> None:
+def test_to_singlescale_returns_a_plain_sequence() -> None:
     field, (l0, _), *_ = _two_level_displacement(np.random.default_rng(3))
-    level = field.at_level(1)
-    assert isinstance(level, Sequence)
-    assert not isinstance(level, MultiscaleField)
+    scale = field.to_singlescale(1)
+    assert isinstance(scale, Sequence)
+    assert not isinstance(scale, MultiscaleField)
 
 
 def test_inverse_keeps_the_pyramid() -> None:
     field, *_ = _two_level_displacement(np.random.default_rng(4))
     inverse = field.inverse()
     assert isinstance(inverse, MultiscaleField)
-    assert inverse.nlevels == 2
+    assert inverse.nscales == 2
 
 
 def test_the_container_is_not_mutable() -> None:
@@ -146,7 +146,7 @@ def test_composes_like_its_finest_level() -> None:
     outer = Scaling(scale=[3.0, 4.0])
     world = CoordinatesField(field=_world_grid((6, 5), lin0, xf0))
     from_field = ((outer @ field) @ world).compute()
-    from_finest = ((outer @ field.finest) @ world).compute()
+    from_finest = ((outer @ field.to_singlescale()) @ world).compute()
     np.testing.assert_allclose(
         np.asarray(from_field.field), np.asarray(from_finest.field), atol=1e-6
     )
@@ -191,7 +191,7 @@ def test_level_resolution_reads_the_leading_affine() -> None:
 def test_an_identity_led_level_has_no_resolution() -> None:
     xf1, _ = _rotated_anisotropic_affine(4.0, 1.0)
     field = MultiscaleField(
-        levels=[
+        scales=[
             Sequence(
                 [Identity(), DisplacementField(field=np.zeros((4, 4, 2)))]
             ),

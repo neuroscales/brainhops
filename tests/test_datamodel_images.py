@@ -227,12 +227,12 @@ def test_reslice_selects_the_multiscale_level_that_matches_the_target() -> (
     )
     by_coarse = np.asarray(
         SingleScaleImage(
-            data=data, transformations=[field.at_level(1)]
+            data=data, transformations=[field.to_singlescale(1)]
         ).reslice(coarse_target)
     )
     by_fine = np.asarray(
         SingleScaleImage(
-            data=data, transformations=[field.at_level(0)]
+            data=data, transformations=[field.to_singlescale(0)]
         ).reslice(coarse_target)
     )
 

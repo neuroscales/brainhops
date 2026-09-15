@@ -116,24 +116,24 @@ class OmeZarrField(MultiscaleField):
         ),
     ] = None
 
-    # `levels` is built on demand from the arrays and the placement rather
+    # `scales` is built on demand from the arrays and the placement rather
     # than stored, so it is not a constructor-taken field here. Declaring
     # it a `ClassVar` overrides the inherited init-field from
     # `MultiscaleField` and keeps it out of `__init__`, `fields()` and
-    # `replace()`, while the property builds and caches each level once.
-    levels: tx.ClassVar[tx.Optional[tx.List[Sequence]]]
+    # `replace()`, while the property builds and caches each scale once.
+    scales: tx.ClassVar[tx.Optional[tx.List[Sequence]]]
 
     @property
-    def levels(self) -> tx.Optional[tx.List[Sequence]]:
-        """The resolution levels, each built as a sequence."""
-        cached = getattr(self, "_levels", None)
+    def scales(self) -> tx.Optional[tx.List[Sequence]]:
+        """The resolution scales, each built as a sequence."""
+        cached = getattr(self, "_scales", None)
         if cached is not None:
             return cached
         count = len(self.raw_levels or [])
         if self._kind == "displacement":
             self._check_affine_voxel2world()
         built = [self._level(index) for index in range(count)]
-        self._levels = built
+        self._scales = built
         return built
 
     def to_ome(self) -> tx.Any:
