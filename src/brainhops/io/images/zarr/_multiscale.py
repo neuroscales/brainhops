@@ -20,6 +20,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.zarr import ZarrParser
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.images.zarr._ome import (
@@ -31,7 +32,6 @@ from brainhops.io.images.zarr._ome import (
     resolve_write_version,
     write_multiscale,
 )
-from brainhops.io.images.zarr._store import ZarrParser
 from brainhops.io.transformations.zarr import _map
 
 

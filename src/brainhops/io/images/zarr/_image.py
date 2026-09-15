@@ -16,8 +16,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.base.zarr import ZarrParser
 from brainhops.io.images.base import WritableFileBasedImage
-from brainhops.io.images.zarr._store import ZarrParser
 
 
 @register_format

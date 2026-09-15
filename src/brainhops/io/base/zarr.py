@@ -6,17 +6,21 @@ opens the store through abczarr instead. It inherits the common parser
 class so that dispatch, `load`, and `save` reach it the same way they reach
 every other reader, and it routes their file operations to a store path.
 
-A concrete image class supplies the store-specific behaviour through three
-hooks. `_score_store` scores an opened node, `_read_node` builds the image
-from one, and `_write_node` writes the image into one. The public entry
-points pair an open-node door with a location door in each direction:
-[from_node][brainhops.io.images.zarr._store.ZarrParser.from_node] and
-[to_node][brainhops.io.images.zarr._store.ZarrParser.to_node] operate on an
-opened node, and
-[from_store][brainhops.io.images.zarr._store.ZarrParser.from_store] and
-[to_store][brainhops.io.images.zarr._store.ZarrParser.to_store] operate on a
-store location.
+The mixin is object-agnostic. An image reader and a transformation reader
+both mix it in and share its store handling, and each supplies the
+store-specific behaviour through the hooks. `_score_store` scores an opened
+node, `_read_node` builds the object from one, and `_write_node` writes the
+object into one. The public entry points pair an open-node door with a
+location door in each direction:
+[from_node][brainhops.io.base.zarr.ZarrParser.from_node] and
+[to_node][brainhops.io.base.zarr.ZarrParser.to_node] operate on an opened
+node, and
+[from_store][brainhops.io.base.zarr.ZarrParser.from_store] and
+[to_store][brainhops.io.base.zarr.ZarrParser.to_store] operate on a store
+location.
 """
+
+__all__ = ["ZarrParser", "StoreLike"]
 
 # dependencies
 import abczarr
@@ -103,10 +107,10 @@ def _as_node(source: tx.Any) -> tx.Optional[ZarrNode]:
 class ZarrParser(FileParserWriter):
     """Read and write a Zarr store through abczarr.
 
-    A concrete image class mixes this in ahead of the file-based image
-    bases. The class scores a store with `_score_store`, reads an image
-    from an opened node with `_read_node`, and writes itself into an opened
-    node with `_write_node`.
+    A concrete class mixes this in ahead of the file-based bases, whether it
+    reads an image or a transformation. The class scores a store with
+    `_score_store`, reads itself from an opened node with `_read_node`, and
+    writes itself into an opened node with `_write_node`.
     """
 
     _READ_MODE = "r"
@@ -115,12 +119,12 @@ class ZarrParser(FileParserWriter):
 
     @classmethod
     def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
-        """Read the image from an opened Zarr array or group.
+        """Read the object from an opened Zarr array or group.
 
         `node` is an abczarr node, or a driver-native array or group from
         zarr-python, TensorStore, or zarrista, which is wrapped in an
         abczarr node before it is read. This is the reading counterpart of
-        [to_node][brainhops.io.images.zarr._store.ZarrParser.to_node].
+        [to_node][brainhops.io.base.zarr.ZarrParser.to_node].
         """
         opened = _as_node(node)
         if opened is None:
@@ -132,7 +136,7 @@ class ZarrParser(FileParserWriter):
 
     @classmethod
     def from_store(cls, location: StoreLike, **kwargs) -> tx.Self:
-        """Read the image from a store location or an opened store.
+        """Read the object from a store location or an opened store.
 
         `location` is a path, given as a string or an `os.PathLike`, or an
         already-opened abczarr or driver-native store.
@@ -143,7 +147,7 @@ class ZarrParser(FileParserWriter):
         return cls._read_node(node, **kwargs)
 
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
-        """Write the image into an opened Zarr node, and return it.
+        """Write the object into an opened Zarr node, and return it.
 
         `node` is an abczarr node, or a driver-native array or group that
         is wrapped before it is written.
@@ -158,7 +162,7 @@ class ZarrParser(FileParserWriter):
         return wrapped
 
     def to_store(self, location: StoreLike, **kwargs) -> None:
-        """Write the image to a store location, or into an opened store.
+        """Write the object to a store location, or into an opened store.
 
         `location` is a path, given as a string or an `os.PathLike`, or an
         already-opened abczarr or driver-native store.
@@ -223,13 +227,13 @@ class ZarrParser(FileParserWriter):
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         raise ParserTypeError(
-            "A Zarr image is read from a store path, not from a file object."
+            "A Zarr store is read from a store path, not from a file object."
         )
 
     @classmethod
     def from_bytes(cls, content: tx.Any, **kwargs) -> tx.Self:
         raise ParserTypeError(
-            "A Zarr image is read from a store path, not from bytes."
+            "A Zarr store is read from a store path, not from bytes."
         )
 
     # ---- write -------------------------------------------------------
@@ -239,25 +243,25 @@ class ZarrParser(FileParserWriter):
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         raise WriterError(
-            "A Zarr image is written to a store path, not to a file object."
+            "A Zarr store is written to a store path, not to a file object."
         )
 
     # ---- hooks -------------------------------------------------------
 
     @classmethod
     def _score_store(cls, node: ZarrNode) -> float:
-        """Score how well `node` matches this image class."""
+        """Score how well `node` matches this class."""
         raise NotImplementedError
 
     @classmethod
     def _read_node(cls, node: ZarrNode, **kwargs) -> tx.Self:
-        """Build the image from an opened Zarr `node`."""
+        """Build the object from an opened Zarr `node`."""
         raise NotImplementedError
 
     def _write_node(self, node: ZarrNode, **kwargs) -> None:
-        """Write this image into the opened Zarr `node`."""
+        """Write this object into the opened Zarr `node`."""
         raise NotImplementedError
 
     def _create_store(self, location: str, **kwargs) -> None:
-        """Create a store at `location` and write this image into it."""
+        """Create a store at `location` and write this object into it."""
         raise NotImplementedError

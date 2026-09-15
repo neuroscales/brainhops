@@ -1,8 +1,8 @@
-"""Tests for the OME-Zarr field reader.
+"""Tests for the OME-Zarr field format.
 
-The reader is exercised from in-memory arrays and metadata rather than a
-real OME-Zarr store. The placement is anisotropic and rotated so that the
-voxel-to-voxel normalization is visible.
+The field is exercised both from in-memory arrays and metadata and through
+real store round-trips. The placement is anisotropic and rotated so that
+the voxel-to-voxel normalization is visible.
 """
 
 import sys
@@ -32,13 +32,14 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.transformations.zarr import OmeFieldError, OmeZarrField
 from brainhops.io.transformations.zarr._axes import _to_axis
 
-# The node reader runs through abczarr's zarr-python driver, which needs
-# zarr-python 3 and therefore Python 3.11 or newer. The in-memory reader
-# tests above have no such requirement, so only the node reader is gated,
-# and abczarr is imported inside the gated tests rather than at module load.
-_needs_driver = pytest.mark.skipif(
+# OmeZarrField is an OME-Zarr file format, so it is available only when
+# abczarr is installed, and opening a store runs through abczarr's
+# zarr-python driver, which needs zarr-python 3 and therefore Python 3.11 or
+# newer. The whole module is gated the same way the image-zarr tests are.
+abczarr = pytest.importorskip("abczarr")
+pytestmark = pytest.mark.skipif(
     sys.version_info < (3, 11),
-    reason="the node reader requires zarr-python 3, which needs Python 3.11",
+    reason="OME-Zarr fields need zarr-python 3, which needs Python 3.11",
 )
 
 
@@ -47,16 +48,16 @@ def _write_field_store(
     field: np.ndarray,
     axes: list,
     transform: dict,
+    name: str = "field.zarr",
 ) -> str:
     """Write a standalone OME-Zarr field node and return its path.
 
     The node carries its own typed OME metadata, naming the field's axes
     and the coordinate transformation that places its one level.
     """
-    import abczarr
     from abczarr.ome import v0_6rc0 as v6
 
-    path = str(tmp_path / "field.zarr")
+    path = str(tmp_path / name)
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=field)
     group.ome = v6.OME.from_json(
@@ -92,10 +93,7 @@ def _write_field_store(
     return path
 
 
-@_needs_driver
 def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
-    import abczarr
-
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
     path = _write_field_store(
@@ -122,10 +120,7 @@ def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
     assert reader.to_ome() is reader.ome
 
 
-@_needs_driver
 def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
-    import abczarr
-
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     path = _write_field_store(
         tmp_path,
@@ -153,16 +148,99 @@ def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
     assert X._affine_matrix(parts[2]) is not None
 
 
-@_needs_driver
 def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:
-    import abczarr
-
     path = str(tmp_path / "plain.zarr")
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.zeros((4, 4, 2), "float32"))
     node = abczarr.open_group(path, mode="r")
     with pytest.raises(OmeFieldError):
         OmeZarrField.from_node(node)
+
+
+def test_field_is_a_registered_file_format() -> None:
+    from brainhops.io.transformations.base import (
+        WritableFileBasedTransformation,
+    )
+
+    # The field is a writable, file-based transformation, so load() and
+    # save() reach it the way they reach every other transformation format.
+    assert issubclass(OmeZarrField, WritableFileBasedTransformation)
+
+
+def test_load_discovers_the_field_format(tmp_path: Path) -> None:
+    import brainhops.io.transformations as transformations
+
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 0] = 1.0
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
+        {"type": "identity"},
+        name="discover.zarr",
+    )
+
+    # Dispatch recognizes the store as an OME-Zarr field and reads it, the
+    # same path any other transformation format is reached through.
+    assert transformations.sniff(path) is OmeZarrField
+    assert isinstance(transformations.load(path), OmeZarrField)
+
+
+def test_coordinate_field_round_trips_through_a_store(tmp_path: Path) -> None:
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 0] = 7.0
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
+        {"type": "identity"},
+        name="coord_src.zarr",
+    )
+
+    # Read from a path, write back to a new path, and read again. The field
+    # is a real file format, so this round-trips its arrays and its geometry.
+    read = OmeZarrField.from_store(path)
+    out = str(tmp_path / "coord_dst.zarr")
+    read.to_store(out)
+    back = OmeZarrField.from_store(out)
+
+    assert isinstance(back, MultiscaleField)
+    assert isinstance(back.transformations[-1], CoordinatesField)
+    np.testing.assert_allclose(
+        np.asarray(back.raw_levels[0]), np.asarray(read.raw_levels[0])
+    )
+
+
+def test_displacement_field_round_trips_through_a_store(
+    tmp_path: Path,
+) -> None:
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 1] = 3.0
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [
+            ("z", "space"),
+            ("y", "space"),
+            ("x", "space"),
+            ("d", "displacement"),
+        ],
+        {"type": "scale", "scale": [2.0, 3.0, 4.0]},
+        name="disp_src.zarr",
+    )
+
+    read = OmeZarrField.from_store(path)
+    out = str(tmp_path / "disp_dst.zarr")
+    read.to_store(out)
+    back = OmeZarrField.from_store(out)
+
+    assert isinstance(back, MultiscaleField)
+    parts = back.transformations
+    assert len(parts) == 3
+    assert isinstance(parts[1], DisplacementField)
+    np.testing.assert_allclose(
+        np.asarray(back.raw_levels[0]), np.asarray(read.raw_levels[0])
+    )
 
 
 def _rotated_anisotropic_affine() -> tuple:

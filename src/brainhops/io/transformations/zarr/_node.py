@@ -42,9 +42,12 @@ def follow_path(node: tx.Any, path: str) -> tx.Any:
     return current
 
 
-def _coordinate_systems(field_node: tx.Any) -> tx.List[tx.Any]:
-    # The coordinate systems a field node declares in its own OME metadata,
-    # both the top-level systems and those a multiscale carries.
+def coordinate_systems(field_node: tx.Any) -> tx.List[tx.Any]:
+    """Return the coordinate systems a node declares in its OME metadata.
+
+    Both the top-level systems and those each multiscale carries are
+    collected. A node with no OME metadata contributes no systems.
+    """
     try:
         ome = field_node.ome
     except Exception:
@@ -69,7 +72,7 @@ def typed_axes(field_node: tx.Any, ndim: int) -> tx.Optional[tx.List[Axis]]:
     such system.
     """
     fallback = None  # type: tx.Optional[tx.List[Axis]]
-    for system in _coordinate_systems(field_node):
+    for system in coordinate_systems(field_node):
         axes = [_to_axis(axis.to_json()) for axis in system.axes]
         if len(axes) != ndim:
             continue
