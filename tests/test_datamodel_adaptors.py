@@ -19,7 +19,9 @@ from brainhops.datamodel._xform_adaptors import adapt, bridge
 from brainhops.datamodel.axes import (
     A,
     Axis,
+    LeftToRightAxis,
     R,
+    RightToLeftAxis,
     S,
     SpatialAxis,
     TimeAxis,
@@ -160,12 +162,10 @@ def test_unit_difference_is_a_scaling() -> None:
 
 
 def test_unit_present_on_one_side_only_raises() -> None:
-    source = CoordinateSystem(
-        name="mm",
-        axes=[
-            SpatialAxis(name="x", unit="millimeter", orientation=LeftToRight())
-        ],
-    )
+    # The standard LeftToRightAxis carries a millimetre unit; the target is
+    # the same oriented axis stripped of its unit, so the two match on
+    # orientation and the missing unit is what raises.
+    source = CoordinateSystem(name="mm", axes=[LeftToRightAxis()])
     target = CoordinateSystem(
         name="index",
         axes=[SpatialAxis(name="x", unit=None, orientation=LeftToRight())],
@@ -189,19 +189,11 @@ def _oriented_index_system(
 
 
 def test_world_flip_carries_no_offset() -> None:
-    # Between world systems a reversed axis is a pure sign flip.
-    source = CoordinateSystem(
-        name="R",
-        axes=[
-            SpatialAxis(name="x", unit="millimeter", orientation=LeftToRight())
-        ],
-    )
-    target = CoordinateSystem(
-        name="L",
-        axes=[
-            SpatialAxis(name="x", unit="millimeter", orientation=RightToLeft())
-        ],
-    )
+    # Between world systems a reversed axis is a pure sign flip. The
+    # standard oriented axes carry a millimetre unit, so both sides are
+    # world systems.
+    source = CoordinateSystem(name="R", axes=[LeftToRightAxis()])
+    target = CoordinateSystem(name="L", axes=[RightToLeftAxis()])
     result = bridge(source, target)
     assert isinstance(result, Scaling)
     np.testing.assert_array_equal(result.scale, [-1.0])
