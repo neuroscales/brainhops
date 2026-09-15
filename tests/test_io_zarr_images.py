@@ -274,9 +274,10 @@ def test_reader_builds_geometry_from_coordinate_transformations(
     np.testing.assert_allclose(matrix[:, -1], [10.0, 20.0, 30.0])
 
 
-def test_reader_treats_missing_transformations_as_identity(
-    tmp_path: Path,
-) -> None:
+def test_reader_refuses_missing_transformations(tmp_path: Path) -> None:
+    # A level with no coordinate transformations is malformed metadata.
+    # abczarr rejects it while parsing, so the reader reports the fault
+    # rather than reading the level with a silent identity geometry.
     path = str(tmp_path / "bare.zarr")
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones((3, 3, 2), "float32"))
@@ -296,9 +297,41 @@ def test_reader_treats_missing_transformations_as_identity(
         }
     )
 
-    back = images.load(path)
-    matrix = np.asarray(back.images[0].transformation.matrix)
-    np.testing.assert_allclose(matrix, np.eye(3, 4))
+    with pytest.raises(OmeImageError):
+        OmeZarrImage.load(path)
+
+
+def test_reader_refuses_misspelled_transform_type(tmp_path: Path) -> None:
+    # A transformation whose type is misspelled is malformed metadata.
+    # abczarr rejects it rather than skipping it, so a wrong geometry is
+    # never produced silently.
+    path = str(tmp_path / "typo.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.ones((3, 3), "float32"))
+    group.update_attributes(
+        {
+            "multiscales": [
+                {
+                    "version": "0.4",
+                    "axes": [
+                        {"name": "y", "type": "space"},
+                        {"name": "x", "type": "space"},
+                    ],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                {"type": "scal", "scale": [2.0, 2.0]}
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(OmeImageError):
+        OmeZarrImage.load(path)
 
 
 def test_writer_refuses_a_non_axis_aligned_geometry(tmp_path: Path) -> None:
@@ -347,3 +380,218 @@ def test_reader_refuses_unsupported_coordinate_transformation(
     # is exercised directly here.
     with pytest.raises(OmeImageError):
         OmeZarrImage.load(path)
+
+
+# ---- public read/write API -------------------------------------------
+
+
+def test_from_store_and_to_store_round_trip(tmp_path: Path) -> None:
+    data = np.arange(12, dtype="float32").reshape(3, 4)
+    path = str(tmp_path / "api.zarr")
+
+    ZarrImage(data=data).to_store(path)
+    back = ZarrImage.from_store(path)
+
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_from_store_accepts_a_pathlike(tmp_path: Path) -> None:
+    data = np.arange(6, dtype="float32").reshape(2, 3)
+    path = tmp_path / "pathlike.zarr"
+    ZarrImage(data=data).to_store(path)
+
+    back = ZarrImage.from_store(path)
+
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_from_zarr_reads_an_opened_abczarr_node(tmp_path: Path) -> None:
+    data = np.arange(6, dtype="float32").reshape(2, 3)
+    path = str(tmp_path / "node.zarr")
+    ZarrImage(data=data).to_store(path)
+
+    node = abczarr.open(path, mode="r")
+    back = ZarrImage.from_zarr(node)
+
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_from_zarr_wraps_a_driver_native_array(tmp_path: Path) -> None:
+    # A raw driver object, here a zarr-python array, is wrapped in an
+    # abczarr node before it is read.
+    zarrpy = pytest.importorskip("zarr")
+    data = np.arange(6, dtype="float32").reshape(2, 3)
+    path = str(tmp_path / "native.zarr")
+    ZarrImage(data=data).to_store(path)
+
+    native = zarrpy.open(path, mode="r")
+    assert isinstance(native, zarrpy.Array)
+    back = ZarrImage.from_zarr(native)
+
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_to_node_writes_into_an_existing_array(tmp_path: Path) -> None:
+    data = np.arange(6, dtype="float32").reshape(2, 3)
+    path = str(tmp_path / "target.zarr")
+    node = abczarr.open(path, mode="w", shape=(2, 3), dtype="float32")
+
+    ZarrImage(data=data).to_node(node)
+    back = ZarrImage.from_store(path)
+
+    assert np.array_equal(np.asarray(back.data), data)
+
+
+def test_multiscale_from_store_to_store_round_trip(tmp_path: Path) -> None:
+    original = _small_pyramid()
+    path = str(tmp_path / "ms.zarr")
+
+    original.to_store(path)
+    back = OmeZarrImage.from_store(path)
+
+    assert back.nscales == original.nscales
+    for level in range(back.nscales):
+        assert np.array_equal(
+            np.asarray(back.images[level].data),
+            np.asarray(original.images[level].data),
+        )
+
+
+def test_multiscale_to_node_writes_into_a_group(tmp_path: Path) -> None:
+    path = str(tmp_path / "grp.zarr")
+    group = abczarr.open_group(path, mode="w")
+
+    _small_pyramid().to_node(group)
+    back = OmeZarrImage.from_store(path)
+
+    assert back.nscales == 2
+
+
+# ---- laziness --------------------------------------------------------
+
+
+def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
+    path = str(tmp_path / "lazy.zarr")
+    _small_pyramid().save(path)
+
+    back = OmeZarrImage.from_store(path)
+
+    # No level's data has been materialized yet: each level holds its array
+    # handle and reads it only on access.
+    for level in back.images:
+        assert getattr(level, "_data", None) is None
+    # Accessing one level reads that level, and leaves the others untouched.
+    _ = np.asarray(back.images[0].data)
+    assert getattr(back.images[0], "_data", None) is not None
+    assert getattr(back.images[1], "_data", None) is None
+
+
+# ---- per-level chunks ------------------------------------------------
+
+
+def test_per_level_chunks_are_applied_independently(tmp_path: Path) -> None:
+    path = str(tmp_path / "chunked.zarr")
+    # Chunks are given per level, in the brainhops axis order, and stored in
+    # the OME order after transposition.
+    _small_pyramid().save(path, chunks=[(2, 2, 2), (1, 1, 1)])
+
+    group = abczarr.open(path, mode="r")
+    assert tuple(group["0"].chunks) == (2, 2, 2)
+    assert tuple(group["1"].chunks) == (1, 1, 1)
+
+
+# ---- the vector component axis ---------------------------------------
+
+
+def _displacement_field() -> OmeZarrImage:
+    from brainhops.datamodel.axes import DisplacementAxis
+
+    axes = [
+        SpatialAxis(name="x"),
+        SpatialAxis(name="y"),
+        SpatialAxis(name="z"),
+        DisplacementAxis(name="v"),
+    ]
+    data = np.zeros((2, 3, 4, 3), dtype="float32")
+    # Each component encodes the spatial axis it belongs to.
+    data[..., 0] = 10.0
+    data[..., 1] = 20.0
+    data[..., 2] = 30.0
+    image = SingleScaleImage(
+        data=data, transformations=[_diag_affine([1, 1, 1, 1], [0, 0, 0, 0])]
+    )
+    return OmeZarrImage(images=[image], axes=axes)
+
+
+def test_vector_axis_is_grouped_with_the_channel_position() -> None:
+    from brainhops.datamodel.axes import DisplacementAxis
+
+    axes = [
+        SpatialAxis(name="x"),
+        SpatialAxis(name="y"),
+        SpatialAxis(name="z"),
+        DisplacementAxis(name="v"),
+    ]
+    stored = _axisorder.permute(axes, _axisorder.to_storage(axes))
+    # The component axis leads, in the position a channel axis would take,
+    # then the spatial axes in z, y, x.
+    assert [a.name for a in stored] == ["v", "z", "y", "x"]
+
+
+def test_vector_components_flip_in_lockstep_with_spatial_axes(
+    tmp_path: Path,
+) -> None:
+    path = str(tmp_path / "field.zarr")
+    _displacement_field().save(path, version="0.6rc0")
+
+    stored = np.asarray(abczarr.open(path, mode="r")["0"][...])
+    # The stored order is (v, z, y, x), and the components have been
+    # reordered from (x, y, z) to (z, y, x) in lockstep, so the leading
+    # component now holds the z value.
+    np.testing.assert_allclose(stored[:, 0, 0, 0], [30.0, 20.0, 10.0])
+
+    back = OmeZarrImage.from_store(path)
+    read = np.asarray(back.images[0].data)
+    # Reading undoes the flip, so each component is back on its own axis.
+    np.testing.assert_allclose(read[0, 0, 0, :], [10.0, 20.0, 30.0])
+    assert np.array_equal(
+        read, np.asarray(_displacement_field().images[0].data)
+    )
+
+
+# ---- the OME version option ------------------------------------------
+
+
+def test_write_version_defaults_to_a_bare_envelope(tmp_path: Path) -> None:
+    path = str(tmp_path / "default.zarr")
+    _small_pyramid().save(path)
+
+    attrs = dict(abczarr.open(path, mode="r").attrs)
+    # With no source version and scale-and-translation content, the leanest
+    # version that carries it is written, whose metadata sits directly in the
+    # attributes.
+    assert "multiscales" in attrs
+    assert "ome" not in attrs
+
+
+def test_write_version_can_be_requested(tmp_path: Path) -> None:
+    path = str(tmp_path / "explicit.zarr")
+    _small_pyramid().save(path, version="0.6rc0")
+
+    node = abczarr.open(path, mode="r")
+    assert node.ome.version == "0.6rc0"
+
+
+def test_write_version_falls_back_to_the_source_version(
+    tmp_path: Path,
+) -> None:
+    source = str(tmp_path / "source.zarr")
+    _small_pyramid().save(source, version="0.6rc0")
+
+    # A pyramid read from a 0.6rc0 store is written back in 0.6rc0 without
+    # the version being restated.
+    back = OmeZarrImage.from_store(source)
+    target = str(tmp_path / "target.zarr")
+    back.save(target)
+
+    assert abczarr.open(target, mode="r").ome.version == "0.6rc0"

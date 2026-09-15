@@ -92,6 +92,23 @@ def __getattr__(name: str) -> tx.Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def has_abczarr_driver() -> bool:
+    """Whether abczarr is installed together with at least one backend driver.
+
+    abczarr reads and writes Zarr through a driver, one of zarr-python,
+    TensorStore, or zarrista. The core installs none of them, so abczarr
+    being importable is not enough on its own. This returns `True` only when
+    abczarr is present and at least one driver is available to it.
+    """
+    abczarr = __getattr__("abczarr")
+    if abczarr is None:
+        return False
+    try:
+        return bool(abczarr.available_drivers())
+    except Exception:
+        return False
+
+
 def __dir__() -> tx.List[str]:
     """
     List the lazily importable names alongside the usual ones.

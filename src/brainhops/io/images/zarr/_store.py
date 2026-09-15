@@ -2,10 +2,17 @@
 
 A Zarr node is a directory-backed store rather than a single file, so the
 file-handle machinery of the parser base does not apply to it. This mixin
-opens the store through abczarr instead. It routes sniffing, reading, and
-writing to a store path, and leaves the scoring, the node reading, and the
-node writing to the concrete image class through the
-`_score_store`, `_from_node`, and `_to_store` hooks.
+opens the store through abczarr instead. It inherits the common parser
+class so that dispatch, `load`, and `save` reach it the same way they reach
+every other reader, and it routes their file operations to a store path.
+
+A concrete image class supplies the store-specific behaviour through three
+hooks. `_score_store` scores an opened node, `_read_node` builds the image
+from one, and `_write_node` writes the image into one. The public entry
+points are [from_zarr][brainhops.io.images.zarr._store.ZarrParser.from_zarr],
+[from_store][brainhops.io.images.zarr._store.ZarrParser.from_store],
+[to_node][brainhops.io.images.zarr._store.ZarrParser.to_node], and
+[to_store][brainhops.io.images.zarr._store.ZarrParser.to_store].
 """
 
 # dependencies
@@ -16,26 +23,158 @@ import typing_extensions as tx
 from brainhops._core import path
 
 # internals
-from brainhops.io.base.parsers import Confidence, ParserExistsError
+from brainhops.io.base.parsers import (
+    Confidence,
+    FileParserWriter,
+    ParserExistsError,
+    ParserTypeError,
+    WriterError,
+)
+
+#: A location is a store path or an already-opened store or node object.
+StoreLike = tx.Union[str, "path.PathLike", tx.Any]
 
 
-class ZarrParser:
+def _wrap_native(source: tx.Any) -> tx.Optional[tx.Any]:
+    """Wrap a driver-native array or group in an abczarr node, or `None`.
+
+    Each abczarr driver is tried only if its backend is installed, since
+    the set of installed drivers is not known ahead of time. A source that
+    is not a recognized native object returns `None`.
+    """
+    try:
+        import zarr
+
+        if isinstance(source, zarr.Group):
+            from abczarr.drivers.zarr_python import ZarrPythonGroup
+
+            return ZarrPythonGroup(source)
+        if isinstance(source, zarr.Array):
+            from abczarr.drivers.zarr_python import ZarrPythonArray
+
+            return ZarrPythonArray(source)
+    except ImportError:
+        pass
+
+    try:
+        import tensorstore as ts
+
+        if isinstance(source, ts.TensorStore):
+            from abczarr.drivers.tensorstore import TensorStoreArray
+
+            return TensorStoreArray(source)
+    except ImportError:
+        pass
+
+    try:
+        import zarrista
+
+        if isinstance(source, zarrista.Array):
+            from abczarr.drivers.zarrista import ZarristaArray
+
+            location = getattr(source, "path", None) or getattr(
+                source, "store_path", ""
+            )
+            return ZarristaArray(source, location)
+    except ImportError:
+        pass
+
+    return None
+
+
+def _as_node(source: tx.Any) -> tx.Optional[tx.Any]:
+    """Return `source` as an abczarr node, or `None` when it is a location.
+
+    An abczarr node is returned unchanged. A driver-native array or group
+    is wrapped. A string or path, which names a store rather than being an
+    open node, returns `None`.
+    """
+    if isinstance(source, abczarr.ZarrNode):
+        return source
+    if isinstance(source, (str, path.PathLike)):
+        return None
+    return _wrap_native(source)
+
+
+class ZarrParser(FileParserWriter):
     """Read and write a Zarr store through abczarr.
 
     A concrete image class mixes this in ahead of the file-based image
     bases. The class scores a store with `_score_store`, reads an image
-    from an opened node with `_from_node`, and writes itself to a store
-    path with `_to_store`.
+    from an opened node with `_read_node`, and writes itself into an opened
+    node with `_write_node`.
     """
 
     _READ_MODE = "r"
 
+    # ---- public API --------------------------------------------------
+
     @classmethod
-    def _open(cls, file: path.FileLike, mode: str) -> tx.Any:
-        """Open the Zarr node at `file`, or return `None` when it is absent."""
-        if not isinstance(file, (str, path.PathLike)):
+    def from_zarr(cls, source: tx.Any, **kwargs) -> tx.Self:
+        """Read the image from an opened Zarr array or group.
+
+        `source` is an abczarr node, or a driver-native array or group
+        from zarr-python, TensorStore, or zarrista, which is wrapped in an
+        abczarr node before it is read.
+        """
+        node = _as_node(source)
+        if node is None:
+            raise ParserTypeError(
+                "from_zarr expects an opened Zarr array or group; pass a "
+                "store path to from_store instead."
+            )
+        return cls._read_node(node, **kwargs)
+
+    @classmethod
+    def from_store(cls, location: StoreLike, **kwargs) -> tx.Self:
+        """Read the image from a store location or an opened store.
+
+        `location` is a path, given as a string or an `os.PathLike`, or an
+        already-opened abczarr or driver-native store.
+        """
+        node = cls._open(location, cls._READ_MODE)
+        if node is None:
+            raise ParserExistsError(f"No Zarr store at {location}")
+        return cls._read_node(node, **kwargs)
+
+    def to_node(self, node: tx.Any, **kwargs) -> tx.Any:
+        """Write the image into an opened Zarr node, and return it.
+
+        `node` is an abczarr node, or a driver-native array or group that
+        is wrapped before it is written.
+        """
+        wrapped = _as_node(node)
+        if wrapped is None:
+            raise WriterError(
+                "to_node expects an opened Zarr array or group; pass a store "
+                "path to to_store instead."
+            )
+        self._write_node(wrapped, **kwargs)
+        return wrapped
+
+    def to_store(self, location: StoreLike, **kwargs) -> None:
+        """Write the image to a store location, or into an opened store.
+
+        `location` is a path, given as a string or an `os.PathLike`, or an
+        already-opened abczarr or driver-native store.
+        """
+        node = _as_node(location)
+        if node is not None:
+            self._write_node(node, **kwargs)
+            return
+        self._create_store(str(location).rstrip("/"), **kwargs)
+
+    # ---- open --------------------------------------------------------
+
+    @classmethod
+    def _open(cls, source: tx.Any, mode: str) -> tx.Optional[tx.Any]:
+        """Open `source` as a node, or return `None` when it is absent."""
+        node = _as_node(source)
+        if node is not None:
+            return node
+        if not isinstance(source, (str, path.PathLike)):
             return None
-        location = str(file).rstrip("/")
+        location = str(source).rstrip("/")
         if not path.Path(location).exists():
             return None
         try:
@@ -48,7 +187,7 @@ class ZarrParser:
     @classmethod
     def sniff_file(
         cls,
-        file: path.FileLike,
+        file: "path.FileLike",
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
@@ -73,20 +212,28 @@ class ZarrParser:
     # ---- read --------------------------------------------------------
 
     @classmethod
-    def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
-        node = cls._open(file, cls._READ_MODE)
-        if node is None:
-            raise ParserExistsError(f"No Zarr store at {file}")
-        return cls._from_node(node, **kwargs)
+    def from_file(cls, file: "path.FileLike", **kwargs) -> tx.Self:
+        return cls.from_store(file, **kwargs)
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
+        raise ParserTypeError(
+            "A Zarr image is read from a store path, not from a file object."
+        )
+
+    @classmethod
+    def from_bytes(cls, content: tx.Any, **kwargs) -> tx.Self:
+        raise ParserTypeError(
+            "A Zarr image is read from a store path, not from bytes."
+        )
 
     # ---- write -------------------------------------------------------
 
-    def to_file(self, file: path.FileLike, **kwargs) -> None:
-        location = str(file).rstrip("/")
-        self._to_store(location, **kwargs)
+    def to_file(self, file: "path.FileLike", **kwargs) -> None:
+        self.to_store(file, **kwargs)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
-        raise NotImplementedError(
+        raise WriterError(
             "A Zarr image is written to a store path, not to a file object."
         )
 
@@ -98,10 +245,14 @@ class ZarrParser:
         raise NotImplementedError
 
     @classmethod
-    def _from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
+    def _read_node(cls, node: tx.Any, **kwargs) -> tx.Self:
         """Build the image from an opened Zarr `node`."""
         raise NotImplementedError
 
-    def _to_store(self, location: str, **kwargs) -> None:
-        """Write this image to the store at `location`."""
+    def _write_node(self, node: tx.Any, **kwargs) -> None:
+        """Write this image into the opened Zarr `node`."""
+        raise NotImplementedError
+
+    def _create_store(self, location: str, **kwargs) -> None:
+        """Create a store at `location` and write this image into it."""
         raise NotImplementedError

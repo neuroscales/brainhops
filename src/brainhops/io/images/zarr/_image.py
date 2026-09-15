@@ -9,7 +9,11 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    WriterError,
+)
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr._store import ZarrParser
 
@@ -23,9 +27,27 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
     through the `transformation` argument. An OME-Zarr pyramid, whose group
     carries a multiscale geometry, is read by
     [OmeZarrImage][brainhops.io.images.zarr.OmeZarrImage] instead.
+
+    The array is held as a handle and its data is read on first access, so
+    opening the image does not read the array.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
+
+    @property
+    def data(self) -> tx.Any:
+        cached = getattr(self, "_data", None)
+        if cached is not None:
+            return cached
+        node = getattr(self, "_node", None)
+        if node is not None:
+            self._data = get_array_backend().asarray(node[...])
+            return self._data
+        return None
+
+    @data.setter
+    def data(self, value: tx.Any) -> None:
+        self._data = value
 
     @classmethod
     def _score_store(cls, node: tx.Any) -> float:
@@ -36,24 +58,38 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
         return Confidence.NO
 
     @classmethod
-    def _from_node(
+    def _read_node(
         cls,
         node: tx.Any,
         transformation: tx.Optional[Transformation] = None,
         **kwargs,
     ) -> tx.Self:
         if not isinstance(node, abczarr.ZarrArray):
-            raise WriterError(
+            raise ParserContentError(
                 "This Zarr store is a group, not a plain array, so it "
                 "cannot be read as a single-scale image."
             )
-        data = get_array_backend().asarray(node[...])
         transformations = (
             [transformation] if transformation is not None else []
         )
-        return cls(data=data, transformations=transformations)
+        image = cls(transformations=transformations)
+        image._node = node
+        return image
 
-    def _to_store(
+    def _write_node(self, node: tx.Any, **kwargs) -> None:
+        data = self.data
+        if data is None:
+            raise WriterError(
+                "This image has no data, so there is nothing to write."
+            )
+        if not isinstance(node, abczarr.ZarrArray):
+            raise WriterError(
+                "A plain Zarr image is written into an array node, not a "
+                "group. Pass a store path to to_store instead."
+            )
+        node[...] = data
+
+    def _create_store(
         self,
         location: str,
         chunks: tx.Any = None,

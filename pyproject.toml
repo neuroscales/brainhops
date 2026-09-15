@@ -29,7 +29,11 @@ itk = ["h5py"]
 nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
-zarr = ["abczarr >= 0.1", "zarr"]
+# abczarr reads and writes Zarr through a driver; the default pulls in the
+# zarr-python driver, and the other drivers are available on their own.
+zarr = ["abczarr[zarr-py] >= 0.1"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.1"]
+zarr-zarrista = ["abczarr[zarrista] >= 0.1"]
 io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
 
 # test
@@ -39,8 +43,7 @@ test = [
     "h5py",
     "nibabel",
     "dask",
-    "abczarr >= 0.1",
-    "zarr",
+    "abczarr[zarr-py] >= 0.1",
 ]
 
 # doc
