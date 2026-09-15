@@ -1,3 +1,1 @@
-# nifti
-
-::: brainhops.io.base.nifti
+# ::: brainhops.io.base.nifti

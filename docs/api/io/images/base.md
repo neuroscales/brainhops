@@ -1,3 +1,1 @@
-# base
-
-::: brainhops.io.images.base
+# ::: brainhops.io.images.base
