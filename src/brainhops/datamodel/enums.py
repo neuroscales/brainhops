@@ -1,6 +1,6 @@
 __all__ = [
-    "BoundaryCondition", 
-    "InterpolationOrder", 
+    "BoundaryCondition",
+    "InterpolationOrder",
     "OrientationType",
     "AnatomicalOrientationValue",
 ]
@@ -66,7 +66,7 @@ class InterpolationOrder(IntEnum):
 class OrientationType(StrEnum):
     """
     Orientation types for coordinate systems and transformations.
-    
+
     Currently, only the `"anatomical"` orientation is supported.
 
     | Name          | Value          | Description             |
@@ -82,7 +82,7 @@ class OrientationType(StrEnum):
 class AnatomicalOrientationValue(StrEnum):
     """
     Anatomical orientation values for coordinate systems and transformations.
-    
+
     The following values are supported:
 
     | Name                    | Value                     | Description             |
