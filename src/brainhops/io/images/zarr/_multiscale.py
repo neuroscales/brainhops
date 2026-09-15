@@ -158,6 +158,8 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
                 dataset,
                 perm,
                 ndim,
+                node=node,
+                store_axes=store_axes,
                 input=input_system,
                 output=output_system,
             )

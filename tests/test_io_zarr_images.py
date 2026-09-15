@@ -665,14 +665,24 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
 
 
 def _authored_pyramid(
-    tmp_path: Path, transform: dict, axes: tx.List[dict], shape: tuple
+    tmp_path: Path,
+    transform: dict,
+    axes: tx.List[dict],
+    shape: tuple,
+    arrays: tx.Optional[dict] = None,
 ) -> str:
-    """Write a 0.6rc0 group whose one level carries `transform`."""
+    """Write a 0.6rc0 group whose one level carries `transform`.
+
+    `arrays` names extra arrays to write into the group, such as the field
+    array a displacement transformation references.
+    """
     from abczarr.ome import v0_6rc0 as v6
 
     path = str(tmp_path / "authored.zarr")
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=np.ones(shape, "float32"))
+    for name, array in (arrays or {}).items():
+        group.create_array(name, data=array)
     group.ome = v6.OME.from_json(
         {
             "version": "0.6rc0",
@@ -773,14 +783,110 @@ def test_reader_maps_a_map_axis_to_a_permutation(tmp_path: Path) -> None:
     np.testing.assert_array_equal(np.asarray(geometry.permutation), [1, 0])
 
 
-def test_reader_refuses_a_displacement_field(tmp_path: Path) -> None:
-    # A field transformation is not read yet; the reader refuses it with a
-    # clear message rather than guessing a geometry.
+def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
+    # A mapAxis that names a subset of the input axes drops the rest; it maps
+    # to a Projection. This is exercised on the mapping directly, since a
+    # dimensionality-changing level is not otherwise wired through the reader.
+    from brainhops.datamodel.transformations import Projection
+    from brainhops.io.images.zarr import _ome
+
+    class _MapAxis:
+        type = "mapAxis"
+        mapAxis = [0, 2]
+
+    projection = _ome._map_transform(_MapAxis(), perm=[0, 1, 2], ndim=3)
+    assert isinstance(projection, Projection)
+    np.testing.assert_array_equal(np.asarray(projection.dropped), [1])
+    np.testing.assert_array_equal(np.asarray(projection.created), [])
+
+
+# ---- displacement and coordinate fields ------------------------------
+
+
+def _field_array() -> np.ndarray:
+    # A field stored as (component, z, y, x); each component is a constant so
+    # the component order is visible after reading.
+    field = np.zeros((3, 6, 5, 4), dtype="float32")
+    field[0] = 100.0
+    field[1] = 200.0
+    field[2] = 300.0
+    return field
+
+
+def test_reader_reads_a_displacement_field(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import DisplacementField
+
     path = _authored_pyramid(
         tmp_path,
-        {"type": "displacements", "path": "field"},
-        _SPACE2,
-        (5, 4),
+        {"type": "displacements", "path": "disp"},
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"disp": _field_array()},
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, DisplacementField)
+    field = np.asarray(geometry.field)
+    # The spatial axes are read into (x, y, z) and the component axis moved
+    # to the end, giving (*spatial, component).
+    assert field.shape == (4, 5, 6, 3)
+    # The component values are not reordered.
+    np.testing.assert_allclose(field[0, 0, 0, :], [100.0, 200.0, 300.0])
+
+
+def test_reader_reads_a_coordinate_field(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import CoordinatesField
+
+    path = _authored_pyramid(
+        tmp_path,
+        {"type": "coordinates", "path": "coord"},
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"coord": _field_array()},
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, CoordinatesField)
+    assert np.asarray(geometry.field).shape == (4, 5, 6, 3)
+
+
+def test_reader_reads_an_affine_surrounded_field(tmp_path: Path) -> None:
+    from brainhops.datamodel.transformations import (
+        DisplacementField,
+        Scaling,
+        Sequence,
+    )
+
+    path = _authored_pyramid(
+        tmp_path,
+        {
+            "type": "sequence",
+            "transformations": [
+                {"type": "scale", "scale": [1.0, 1.0, 1.0]},
+                {"type": "displacements", "path": "disp"},
+            ],
+        },
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"disp": _field_array()},
+    )
+    geometry = OmeZarrImage.from_store(path).images[0].transformation
+    assert isinstance(geometry, Sequence)
+    assert isinstance(geometry.transformations[0], Scaling)
+    assert isinstance(geometry.transformations[1], DisplacementField)
+
+
+def test_reader_refuses_a_non_affine_surrounded_field(tmp_path: Path) -> None:
+    path = _authored_pyramid(
+        tmp_path,
+        {
+            "type": "sequence",
+            "transformations": [
+                {"type": "displacements", "path": "disp"},
+                {"type": "displacements", "path": "disp"},
+            ],
+        },
+        _SPACE3,
+        (6, 5, 4),
+        arrays={"disp": _field_array()},
     )
     with pytest.raises(OmeImageError):
         OmeZarrImage.from_store(path)

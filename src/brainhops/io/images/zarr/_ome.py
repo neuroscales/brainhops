@@ -33,12 +33,16 @@ from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
 from bagof.magic import replace
 
 # internals
-from brainhops.datamodel.axes import Axis
+from brainhops.backends import get_array_backend
+from brainhops.datamodel.axes import Axis, DisplacementAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    CoordinatesField,
+    DisplacementField,
     Identity,
     Permutation,
+    Projection,
     Rotation,
     Scaling,
     Sequence,
@@ -46,7 +50,15 @@ from brainhops.datamodel.transformations import (
     Translation,
 )
 from brainhops.io.base.parsers import ParserContentError, WriterError
+from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr._axes import _to_axis
+
+#: The brainhops spline order each OME interpolation name maps to.
+_INTERPOLATION_ORDER = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
+
+#: The brainhops transformations that reduce to an affine. A field must be
+#: surrounded only by these, so it can be inverted and its vectors rotated.
+_AFFINE_ISH = (Affine, Rotation, Scaling, Translation, Identity)
 
 #: A per-axis scale or translation, and the placement of one level: its
 #: array path with the per-axis scale and translation that place it.
@@ -179,8 +191,82 @@ def _invert_perm(perm: tx.Sequence[int]) -> tx.List[int]:
     return inverse
 
 
+def _map_axis_transform(
+    mapping: tx.Sequence[int], perm: tx.Sequence[int], ndim: int
+) -> Transformation:
+    # A bijective axis map is a permutation; one that names a subset of the
+    # input axes is a projection that drops the rest.
+    mapping = list(mapping)
+    inverse = _invert_perm(perm)
+    if sorted(mapping) == list(range(ndim)):
+        # Rewrite the axis map from the stored order into the brainhops order
+        # on both its input and output sides. The output axis at brainhops
+        # position `o` is stored axis `perm[o]`, and the input axis it names
+        # maps back through the inverse permutation.
+        return Permutation(permutation=[inverse[mapping[p]] for p in perm])
+    if mapping == sorted(mapping) and set(mapping) <= set(range(ndim)):
+        # A strictly increasing subset drops the input axes it omits, keeping
+        # the rest in order. The dropped axes are reported in the brainhops
+        # order, and no axis is created.
+        dropped_stored = [i for i in range(ndim) if i not in mapping]
+        dropped = sorted(inverse[i] for i in dropped_stored)
+        return Projection(dropped=dropped, created=[])
+    raise OmeImageError(
+        "This OME-Zarr image is placed by a mapAxis transformation that both "
+        "drops and reorders axes, which brainhops does not read as a single "
+        "transformation."
+    )
+
+
+def _read_field(
+    transform: CoordinateTransformation,
+    kind: str,
+    node: ZarrGroup,
+    store_axes: tx.Sequence[Axis],
+    ndim: int,
+) -> Transformation:
+    # Build a brainhops displacement or coordinate field from the array the
+    # transformation references. abczarr's field transformation carries only
+    # the array path and an optional interpolation, so the field's layout is
+    # taken from the storage convention: the component axis sits in the
+    # channel position, stored ahead of the spatial axes.
+    path = getattr(transform, "path", None)
+    if not isinstance(path, str):
+        raise OmeImageError(
+            f"This OME-Zarr {kind} field names no array, so its field cannot "
+            "be read."
+        )
+    array = node[path]
+    if array.ndim != ndim + 1 or int(array.shape[0]) != ndim:
+        raise OmeImageError(
+            f"The {kind} field at {path!r} has shape "
+            f"{tuple(array.shape)}, but a field over {ndim} axes is stored as "
+            f"(component, *spatial) with a leading component axis of length "
+            f"{ndim}."
+        )
+    # Move the component axis to the end and the spatial axes into the
+    # brainhops order, so the field is shaped (*spatial, component). The
+    # component values are not reordered: rotating the vectors is the job of
+    # the affine that surrounds the field.
+    field_axes = [DisplacementAxis(name="d")] + list(store_axes)
+    field_perm = _axisorder.to_canonical(field_axes)
+    backend = get_array_backend()
+    data = backend.transpose(backend.asarray(array[...]), field_perm)
+    order = _INTERPOLATION_ORDER.get(
+        getattr(transform, "interpolation", None), 1
+    )
+    field_cls = (
+        DisplacementField if kind == "displacements" else CoordinatesField
+    )
+    return field_cls(field=data, order=order)
+
+
 def _map_transform(
-    transform: CoordinateTransformation, perm: tx.Sequence[int], ndim: int
+    transform: CoordinateTransformation,
+    perm: tx.Sequence[int],
+    ndim: int,
+    node: tx.Optional[ZarrGroup] = None,
+    store_axes: tx.Optional[tx.Sequence[Axis]] = None,
 ) -> Transformation:
     # Map one 0.6rc0 coordinate transformation to the brainhops
     # transformation of the same kind, with its parameters reordered from
@@ -210,30 +296,20 @@ def _map_transform(
     if kind == "mapAxis" and isinstance(
         getattr(transform, "mapAxis", None), list
     ):
-        mapping = list(transform.mapAxis)
-        if sorted(mapping) == list(range(ndim)):
-            # Rewrite the axis map from the stored order into the brainhops
-            # order on both its input and output sides. The output axis at
-            # brainhops position `o` is stored axis `perm[o]`, and the input
-            # axis it names maps back through the inverse permutation.
-            inverse = _invert_perm(perm)
-            permutation = [inverse[mapping[p]] for p in perm]
-            return Permutation(permutation=permutation)
-    if kind == "sequence":
-        return Sequence(
-            [
-                _map_transform(inner, perm, ndim)
-                for inner in transform.transformations
-            ]
-        )
+        return _map_axis_transform(transform.mapAxis, perm, ndim)
     if kind in ("displacements", "coordinates"):
-        raise OmeImageError(
-            "This OME-Zarr image is placed by a "
-            f"{kind!r} field transformation, which brainhops does not yet "
-            "read from a group. The coordinate transformation around such a "
-            "field must be affine, so that the field can be inverted and its "
-            "vectors rotated."
-        )
+        if node is None or store_axes is None:
+            raise OmeImageError(
+                "A field transformation can only be read from a group."
+            )
+        return _read_field(transform, kind, node, store_axes, ndim)
+    if kind == "sequence":
+        children = [
+            _map_transform(inner, perm, ndim, node, store_axes)
+            for inner in transform.transformations
+        ]
+        _gate_field_surround(children)
+        return Sequence(children)
     raise OmeImageError(
         "This OME-Zarr image is placed by a "
         f"{kind!r} coordinate transformation, which brainhops cannot yet "
@@ -241,11 +317,49 @@ def _map_transform(
     )
 
 
+def _is_field(transformation: Transformation) -> bool:
+    return isinstance(transformation, (DisplacementField, CoordinatesField))
+
+
+def _is_affine_ish(transformation: Transformation) -> bool:
+    if isinstance(transformation, Sequence):
+        return all(
+            _is_affine_ish(one)
+            for one in (transformation.transformations or [])
+        )
+    return isinstance(transformation, _AFFINE_ISH)
+
+
+def _gate_field_surround(mapped: tx.Sequence[Transformation]) -> None:
+    # A field must be surrounded only by affine transformations, so that the
+    # field can be inverted and its vectors rotated. More than one field, or
+    # a field beside a non-affine transformation, is refused.
+    fields = [one for one in mapped if _is_field(one)]
+    if not fields:
+        return
+    if len(fields) > 1:
+        raise OmeImageError(
+            "This OME-Zarr image composes more than one field, which "
+            "brainhops does not read. A field must be surrounded only by "
+            "affine transformations."
+        )
+    for one in mapped:
+        if not _is_field(one) and not _is_affine_ish(one):
+            raise OmeImageError(
+                "This OME-Zarr image surrounds a field with a "
+                f"{type(one).__name__} transformation. A field must be "
+                "surrounded only by affine transformations, so that it can "
+                "be inverted and its vectors rotated."
+            )
+
+
 def level_transformation(
     multiscale: Multiscale,
     dataset: Dataset,
     perm: tx.Sequence[int],
     ndim: int,
+    node: tx.Optional[ZarrGroup] = None,
+    store_axes: tx.Optional[tx.Sequence[Axis]] = None,
     input: tx.Optional[CoordinateSystem] = None,
     output: tx.Optional[CoordinateSystem] = None,
 ) -> Transformation:
@@ -260,10 +374,15 @@ def level_transformation(
     mapped = []  # type: tx.List[Transformation]
     transforms = list(dataset.coordinateTransformations)
     if transforms:
-        mapped.append(_map_transform(transforms[0], perm, ndim))
+        mapped.append(
+            _map_transform(transforms[0], perm, ndim, node, store_axes)
+        )
     common = getattr(multiscale, "coordinateTransformations", None)
     if isinstance(common, list):
-        mapped.extend(_map_transform(one, perm, ndim) for one in common)
+        mapped.extend(
+            _map_transform(one, perm, ndim, node, store_axes) for one in common
+        )
+    _gate_field_surround(mapped)
 
     if not mapped:
         return Identity(input=input, output=output)
