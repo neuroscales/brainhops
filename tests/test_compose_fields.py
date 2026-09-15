@@ -60,9 +60,9 @@ def _evaluate(field, points):  # noqa: ANN001, ANN202
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
 @pytest.mark.parametrize("order, coeff", ORDER_COEFF)
 def test_fold_affine_into_field_keeps_interpolation_settings(
-    field_type,
-    order,
-    coeff,  # noqa: ANN001
+    field_type: type,
+    order: int,
+    coeff: bool,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
@@ -81,9 +81,9 @@ def test_fold_affine_into_field_keeps_interpolation_settings(
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
 @pytest.mark.parametrize("order, coeff", ORDER_COEFF)
 def test_fold_affine_into_field_matches_inorder_reference(
-    field_type,
-    order,
-    coeff,  # noqa: ANN001
+    field_type: type,
+    order: int,
+    coeff: bool,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
