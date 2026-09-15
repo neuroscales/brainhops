@@ -7,15 +7,20 @@ adjacent transform/inverse cancellation in a ``Sequence``, and the
 equivalence of a materialized lazy inverse with the former eager inverse.
 """
 
+from unittest import mock
+
 import numpy as np
 import pytest
 
 from brainhops._ext.invfield import inverse as inverse_disp
+from brainhops.datamodel import transformations as _xf
 from brainhops.datamodel.transformations import (
     Affine,
+    Bijection,
     CoordinatesField,
     DisplacementField,
     Identity,
+    Inverse,
     Linear,
     Permutation,
     Rotation,
@@ -23,8 +28,11 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Translation,
     _LazyInverse,
+    _LazyInverseAffine,
     _LazyInverseCoordinatesField,
     _LazyInverseDisplacementField,
+    _LazyInverseLinear,
+    is_identity,
 )
 
 
@@ -75,14 +83,60 @@ def test_trivial_families_stay_eager() -> None:
         Translation(translation=[1.0, 2.0]),
         Scaling(scale=[2.0, 3.0]),
         Permutation(permutation=[1, 0]),
-        Linear(matrix=[[2.0, 0.0], [0.0, 4.0]]),
-        Affine(matrix=[[1.0, 0.0, 3.0], [0.0, 1.0, 4.0]]),
         Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]]),
+        Bijection(
+            forward=Translation(translation=[1.0]),
+            backward=Translation(translation=[-1.0]),
+        ),
     ]
     for t in cases:
         inv = t.inverse()
         assert not isinstance(inv, _LazyInverse), type(t).__name__
         assert type(inv) is type(t), type(t).__name__
+
+
+def test_affine_and_linear_inverse_is_lazy() -> None:
+    # The general affine/linear family defers its inverse to a lazy,
+    # type-transparent wrapper, so an affine placed next to its own inverse
+    # cancels symbolically instead of composing to a numerically-identity
+    # matrix.
+    affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
+    inv = affine.inverse()
+    assert isinstance(inv, _LazyInverseAffine)
+    assert isinstance(inv, Affine)
+    assert inv.operand is affine
+
+    linear = Linear(matrix=[[2.0, 0.0], [0.0, 4.0]])
+    inv = linear.inverse()
+    assert isinstance(inv, _LazyInverseLinear)
+    assert isinstance(inv, Linear)
+    assert inv.operand is linear
+
+
+def test_affine_materialization_matches_matrix_inverse() -> None:
+    matrix = np.array([[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
+    affine = Affine(matrix=matrix)
+    inv = affine.inverse()
+    homogeneous = np.concatenate([matrix, [[0.0, 0.0, 1.0]]], axis=0)
+    expected = np.linalg.inv(homogeneous)[:-1]
+    np.testing.assert_allclose(np.asarray(inv.matrix), expected)
+
+
+def test_affine_cancels_symbolically_with_zero_matrix_inversions() -> None:
+    # A[-1] @ A collapses to the identity by symbolic cancellation, without
+    # ever computing the matrix inverse.
+    affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
+    calls = {"n": 0}
+    real_inv = np.linalg.inv
+
+    def counting_inv(m: np.ndarray) -> np.ndarray:
+        calls["n"] += 1
+        return real_inv(m)
+
+    with mock.patch.object(np.linalg, "inv", counting_inv):
+        result = Sequence(transformations=[affine, affine.inverse()]).compute()
+    assert isinstance(result, Identity)
+    assert calls["n"] == 0
 
 
 # ----------------------------------------------------------------------
@@ -130,12 +184,41 @@ def test_materialized_field_is_cached() -> None:
     assert inv.field is first
 
 
-def test_coefficient_inverse_is_not_materialized() -> None:
-    # Inverting spline coefficients directly would approximate the field,
-    # so a forced materialization is refused rather than approximated.
-    df = DisplacementField(field=_small_field(), order=3, coeff=True)
-    with pytest.raises(NotImplementedError):
-        _ = df.inverse().field
+def test_coefficient_inverse_is_a_coefficient_field() -> None:
+    # The inverse of a coefficient field is itself a coefficient field. The
+    # metadata carries across without materializing anything.
+    df = DisplacementField(
+        field=_small_field(), order=3, bound=2.0, coeff=True
+    )
+    inv = df.inverse()
+    assert inv.coeff is True
+    assert inv.order == 3
+    assert inv.bound == 2.0
+
+
+@pytest.mark.xfail(
+    reason="#63: bsplines coeff2value/value2coeff are broken on this base; "
+    "the coeff re-fit round-trip is fixed in a separate session.",
+    strict=False,
+)
+def test_coefficient_inverse_refits_to_coefficients() -> None:
+    # A coefficient field is inverted by re-fitting: coeff -> value ->
+    # inverse -> coeff. The numeric round-trip depends on the corrected
+    # bsplines conversions (#63).
+    order, bound = 3, "nearest"
+    values = _small_field(seed=7)
+    df = DisplacementField(field=values, order=order, bound=bound, coeff=False)
+    coeff = df.to(coeff=True)
+    materialized = coeff.inverse().field
+    expected = inverse_disp(values)
+    # Reading the coefficient inverse back as values should recover the
+    # inverse displacement field.
+    from brainhops._core.bsplines import coeff2value_field
+
+    recovered = coeff2value_field(
+        np.asarray(materialized), order=order, bound=bound
+    )
+    np.testing.assert_allclose(np.asarray(recovered), expected, atol=1e-6)
 
 
 def test_coordinate_inverse_is_not_materialized() -> None:
@@ -246,3 +329,224 @@ def test_standalone_lazy_inverse_survives_compute() -> None:
     df = DisplacementField(field=_small_field())
     result = Sequence(transformations=[df.inverse()]).compute()
     assert isinstance(result, _LazyInverseDisplacementField)
+
+
+# ----------------------------------------------------------------------
+#   THE ARCHETYPAL CASE: level^-1 @ level  (#57)
+# ----------------------------------------------------------------------
+
+
+def _displacement_level() -> tuple:
+    # A displacement level as built by the OME-Zarr reader (#57): the
+    # world-to-voxel affine, the displacement in voxel units, and the
+    # voxel-to-world affine.
+    voxel2world = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
+    world2voxel = voxel2world.inverse()
+    field = DisplacementField(field=_small_field())
+    level = Sequence(transformations=[world2voxel, field, voxel2world])
+    return level, field
+
+
+def test_level_inv_at_level_cancels_zero_field_inversions() -> None:
+    # level^-1 @ level must collapse to the identity with ZERO field
+    # inversions: the affines and the field each cancel against their own
+    # lazy inverse symbolically, before any numeric inversion runs.
+    level, _ = _displacement_level()
+    calls = {"n": 0}
+    real = _xf.inverse_disp
+
+    def counting(field: np.ndarray) -> np.ndarray:
+        calls["n"] += 1
+        return real(field)
+
+    with mock.patch.object(_xf, "inverse_disp", counting):
+        result = (level.inverse() @ level).compute()
+
+    assert isinstance(result, Identity)
+    assert calls["n"] == 0
+
+
+def test_level_at_level_inv_cancels_zero_field_inversions() -> None:
+    # The other order, level @ level^-1, cancels the same way.
+    level, _ = _displacement_level()
+    calls = {"n": 0}
+    real = _xf.inverse_disp
+
+    def counting(field: np.ndarray) -> np.ndarray:
+        calls["n"] += 1
+        return real(field)
+
+    with mock.patch.object(_xf, "inverse_disp", counting):
+        result = (level @ level.inverse()).compute()
+
+    assert isinstance(result, Identity)
+    assert calls["n"] == 0
+
+
+# ----------------------------------------------------------------------
+#   is_identity IS COST-FREE ON A LAZY INVERSE  (#2)
+# ----------------------------------------------------------------------
+
+
+def test_is_identity_compute_false_does_not_materialize() -> None:
+    # A coefficient inverse cannot be materialized on this base (its
+    # re-fit goes through the broken bsplines, #63), and a coordinate
+    # inverse never can. is_identity(compute=False) must answer from the
+    # operand without reading the lazy field, so it must not raise.
+    for operand in (
+        DisplacementField(field=_small_field(), order=3, coeff=True),
+        CoordinatesField(field=_small_field()),
+    ):
+        inv = operand.inverse()
+        assert is_identity(inv, compute=False) is False
+
+
+def test_is_identity_recognizes_an_empty_lazy_inverse() -> None:
+    # The inverse of an identity-valued field is the identity. With no
+    # field there is no wrapper, but a wrapper whose operand is empty is
+    # recognized from the operand.
+    inv = _LazyInverseDisplacementField(operand=DisplacementField())
+    assert is_identity(inv, compute=False) is True
+
+
+# ----------------------------------------------------------------------
+#   CANCELLATION AFTER GRID DROP AND TO A FIXPOINT  (#4)
+# ----------------------------------------------------------------------
+
+
+def test_cancellation_after_interior_grid_drop() -> None:
+    # An interior CartesianField grid sits between a field and its inverse.
+    # The grid is dropped first, which makes the pair adjacent, and then
+    # they cancel. Cancellation must run after the grid drop.
+    from brainhops.datamodel.transformations import CartesianField
+
+    df = DisplacementField(field=_small_field())
+    grid = CartesianField(shape=(6, 7))
+    # Two outer transforms keep the grid strictly interior.
+    a = Translation(translation=[1.0, 2.0])
+    b = Translation(translation=[3.0, 4.0])
+    seq = Sequence(transformations=[a, df, grid, df.inverse(), b])
+    result = seq.compute()
+    # a and b survive and combine; the field pair cancels across the grid.
+    assert isinstance(result, (Translation, Identity))
+
+
+def test_cancellation_reaches_a_fixpoint() -> None:
+    # Nested inverse pairs collapse fully in one compute, even when an
+    # interior grid separates a pair.
+    from brainhops.datamodel.transformations import CartesianField
+
+    x = DisplacementField(field=_small_field(seed=1))
+    y = DisplacementField(field=_small_field(seed=2))
+    grid = CartesianField(shape=(6, 7))
+    seq = Sequence(transformations=[y, x, grid, x.inverse(), y.inverse()])
+    assert isinstance(seq.compute(), Identity)
+
+
+# ----------------------------------------------------------------------
+#   COLLAPSED IDENTITY TAKES THE ENDPOINTS  (#5)
+# ----------------------------------------------------------------------
+
+
+def test_collapsed_identity_takes_first_input_and_last_output() -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+
+    world = CoordinateSystem(name="world")
+    voxel = CoordinateSystem(name="voxel")
+    df = DisplacementField(field=_small_field(), input=world, output=voxel)
+    inv = df.inverse()  # input=voxel, output=world
+    result = Sequence(transformations=[df, inv]).compute()
+    assert isinstance(result, Identity)
+    # The identity runs from the first element's input to the last
+    # element's output, not from the (unset) sequence endpoints.
+    assert result.input is world
+    assert result.output is world
+
+
+# ----------------------------------------------------------------------
+#   PUBLIC Inverse RECONCILIATION  (#6)
+# ----------------------------------------------------------------------
+
+
+def test_public_inverse_wrapper_cancels_in_a_sequence() -> None:
+    # A public Inverse(transformation=X) placed next to X is computed into
+    # X's concrete inverse and cancels.
+    df = DisplacementField(field=_small_field())
+    result = Sequence(
+        transformations=[df, Inverse(transformation=df)]
+    ).compute()
+    assert isinstance(result, Identity)
+    result = Sequence(
+        transformations=[Inverse(transformation=df), df]
+    ).compute()
+    assert isinstance(result, Identity)
+
+
+def test_public_inverse_of_affine_cancels() -> None:
+    affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
+    seq = Sequence(transformations=[affine, Inverse(transformation=affine)])
+    assert isinstance(seq.compute(), Identity)
+
+
+# ----------------------------------------------------------------------
+#   ENDPOINT EDITS AND CACHING  (#7, #8, #10)
+# ----------------------------------------------------------------------
+
+
+def test_inverse_preserves_endpoint_edits() -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+
+    world = CoordinateSystem(name="world")
+    df = DisplacementField(field=_small_field())
+    inv = df.inverse()
+    edited = inv.to(output=world)
+    # The endpoint edit survives, and the wrapper stays lazy.
+    assert edited.output is world
+    assert isinstance(edited, _LazyInverseDisplacementField)
+    assert edited.operand is df
+    # Its own inverse reflects the edited endpoint rather than dropping it.
+    back = edited.inverse()
+    assert back.input is world
+
+
+def test_materialization_cached_across_replace_and_to() -> None:
+    df = DisplacementField(field=_small_field(seed=8))
+    inv = df.inverse()
+    first = np.asarray(inv.field)
+    calls = {"n": 0}
+    real = _xf.inverse_disp
+
+    def counting(field: np.ndarray) -> np.ndarray:
+        calls["n"] += 1
+        return real(field)
+
+    with mock.patch.object(_xf, "inverse_disp", counting):
+        rebuilt = inv.to(input=None)  # a plain endpoint edit
+        again = np.asarray(rebuilt.field)
+    # The rebuilt wrapper reused the cached materialization on the operand.
+    assert calls["n"] == 0
+    np.testing.assert_array_equal(first, again)
+
+
+def test_compute_materializes_to_a_plain_instance() -> None:
+    values = _small_field(seed=9)
+    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    computed = df.inverse().compute()
+    assert type(computed) is DisplacementField
+    np.testing.assert_allclose(
+        np.asarray(computed.field), inverse_disp(values)
+    )
+
+
+def test_to_plain_type_materializes() -> None:
+    values = _small_field(seed=10)
+    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    plain = df.inverse().to(DisplacementField)
+    assert type(plain) is DisplacementField
+    np.testing.assert_allclose(np.asarray(plain.field), inverse_disp(values))
+
+
+def test_coordinate_inverse_reports_a_clear_message() -> None:
+    cf = CoordinatesField(field=_small_field())
+    with pytest.raises(NotImplementedError, match="coordinate field"):
+        cf.inverse().compute()

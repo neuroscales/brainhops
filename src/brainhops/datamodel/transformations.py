@@ -43,6 +43,7 @@ from bagof.magic import replace
 # core
 from brainhops._core.affines import axis_scales
 from brainhops._core.affines import inv as _affine_inv
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.typing import (
     ArrayProtocol,
     npmatrix,
@@ -513,11 +514,12 @@ class Affine(Transformation):
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
-        ab = get_array_backend(self.matrix)
-        return cls(
-            matrix=ab.linalg.inv(self.homogeneous_matrix)[:-1],
-            input=self.output,
-            output=self.input,
+        # The matrix inverse is cheap and exact, but it is deferred to a
+        # lazy wrapper so that an affine placed next to its own inverse
+        # cancels symbolically in a sequence, rather than composing to a
+        # numerically-identity matrix that is not recognized as `Identity`.
+        return _LazyInverseAffine(
+            operand=self, input=self.output, output=self.input
         )
 
 
@@ -542,11 +544,11 @@ class Linear(Transformation):
         cls = type(self)
         if self.matrix is None:
             return cls(input=self.output, output=self.input)
-        ab = get_array_backend(self.matrix)
-        return cls(
-            matrix=ab.linalg.inv(self.matrix),
-            input=self.output,
-            output=self.input,
+        # Deferred to a lazy wrapper so that a linear map placed next to
+        # its own inverse cancels symbolically in a sequence. The matrix
+        # inverse itself is cheap and exact, and is computed on demand.
+        return _LazyInverseLinear(
+            operand=self, input=self.output, output=self.input
         )
 
 
@@ -770,6 +772,13 @@ class Inverse(Transformation):
 # ----------------------------------------------------------------------
 
 
+# The materialized inverse parameter is cached on the *operand*, under
+# this attribute name, rather than on the wrapper. A wrapper rebuilt by
+# `replace` or `.to(...)` keeps the same operand, so the cache survives the
+# rebuild and the inversion is not run again.
+_LAZY_INVERSE_CACHE = "_lazy_inverse_param"
+
+
 class _LazyInverse:
     """
     Mixin for a lazily inverted transformation.
@@ -778,17 +787,83 @@ class _LazyInverse:
     remains an instance of the operand's own type, so the compose engine,
     the kind checks and attribute access all treat it transparently. The
     concrete inverse is materialized only when the wrapped parameter is
-    read, and never while the wrapper is being cancelled in a sequence.
+    read or the wrapper is computed, and never while the wrapper is being
+    cancelled in a sequence.
     """
 
+    # The concrete plain type produced when the inverse is materialized,
+    # and the name of the expensive parameter that the inversion fills in.
+    _plain_base: tx.ClassVar[tx.Type[Transformation]]
+    _param_name: tx.ClassVar[str]
+
     def inverse(self) -> Transformation:
-        # Inverting a lazy inverse hands back the original operand, so a
-        # double inverse cancels without materializing anything.
-        return self.operand
+        # The inverse of a lazy inverse is its operand. The operand object
+        # itself is returned when the wrapper still carries the swapped
+        # endpoints it was built with, so the identity link that
+        # cancellation relies on is preserved. An endpoint edit made on the
+        # wrapper is reflected back onto a rebuilt operand.
+        operand = self.operand
+        if self.input is operand.output and self.output is operand.input:
+            return operand
+        return replace(operand, input=self.output, output=self.input)
+
+    def to(
+        self,
+        cls: tx.Optional[tx.Type[Transformation]] = None,
+        *,
+        lossy: bool = False,
+        **kwargs,
+    ) -> Transformation:
+        if cls is None or cls is type(self):
+            # An endpoint or metadata edit keeps the inverse lazy, reusing
+            # the operand and its cached materialization.
+            return replace(self, **kwargs) if kwargs else self
+        # A conversion to another type, including the plain base type,
+        # materializes the concrete inverse first, then converts onward.
+        return self._materialize().to(cls, lossy=lossy, **kwargs)
+
+    def compute(self, simplify: bool = False) -> Transformation:
+        # Computing a lazy inverse materializes it to a plain instance,
+        # then simplifies that. This is the eager escape hatch for a
+        # standalone inverse that is not going to cancel.
+        return self._materialize().compute(simplify=simplify)
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        # The expensive inverse parameter, worked out from the operand. A
+        # subclass implements the actual inversion.
+        raise NotImplementedError
+
+    def _cached_inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        operand = self.operand
+        if operand is None or getattr(operand, self._param_name) is None:
+            return None
+        cached = operand.__dict__.get(_LAZY_INVERSE_CACHE)
+        if cached is None:
+            # A one-tuple is stored so that a genuine `None` result is
+            # cached rather than recomputed.
+            cached = (self._inverse_param(),)
+            operand.__dict__[_LAZY_INVERSE_CACHE] = cached
+        return cached[0]
+
+    def _materialize(self) -> Transformation:
+        # A plain instance of the operand's own type holding the concrete
+        # inverse, with the wrapper's (swapped) endpoints.
+        operand = self.operand
+        if operand is None:
+            return self._plain_base(input=self.input, output=self.output)
+        return replace(
+            operand,
+            input=self.input,
+            output=self.output,
+            **{self._param_name: self._cached_inverse_param()},
+        )
 
 
 class _LazyInverseDisplacementField(_LazyInverse, DisplacementField):
     """The inverse of a [`DisplacementField`][], materialized on demand."""
+
+    _plain_base: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
+    _param_name: tx.ClassVar[str] = "field"
 
     operand: tx.Annotated[
         tx.Optional[DisplacementField],
@@ -803,24 +878,37 @@ class _LazyInverseDisplacementField(_LazyInverse, DisplacementField):
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
-        if getattr(self, "_field", None) is None:
-            operand = self.operand
-            if operand is None or operand.field is None:
-                return None
-            if operand.coeff:
-                raise NotImplementedError(
-                    "The inverse of a coefficient displacement field is "
-                    "not materialized, because inverting the coefficients "
-                    "would approximate the field. Convert it to a value "
-                    "field (coeff=False) before inverting, or keep the "
-                    "inverse lazy so that it cancels in a sequence."
-                )
-            self._field = inverse_disp(operand.field)
-        return self._field
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        operand = self.operand
+        if not operand.coeff:
+            return inverse_disp(operand.field)
+        # A coefficient field is inverted by re-fitting: the coefficients
+        # are read out as values, the value field is inverted, and the
+        # result is fitted back to coefficients. The inverse of a
+        # coefficient field is itself a coefficient field.
+        values = coeff2value_field(
+            operand.field, order=operand.order, bound=operand.bound
+        )
+        inverse_values = inverse_disp(values)
+        return value2coeff_field(
+            inverse_values, order=operand.order, bound=operand.bound
+        )
 
 
 class _LazyInverseCoordinatesField(_LazyInverse, CoordinatesField):
-    """The inverse of a [`CoordinatesField`][], materialized on demand."""
+    """The inverse of a [`CoordinatesField`][], materialized on demand.
+
+    A coordinate field has no cheap closed-form inverse, so a direct
+    materialization is not supported. The wrapper still carries `order`,
+    `bound` and `coeff`, and it cancels against the original field in a
+    sequence. Reading its `field`, or converting or computing it outside a
+    cancellation, raises.
+    """
+
+    _plain_base: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
+    _param_name: tx.ClassVar[str] = "field"
 
     operand: tx.Annotated[
         tx.Optional[CoordinatesField],
@@ -831,18 +919,61 @@ class _LazyInverseCoordinatesField(_LazyInverse, CoordinatesField):
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
-        operand = self.operand
-        if operand is None or operand.field is None:
-            return None
-        # A coordinate field has no cheap closed-form inverse. The lazy
-        # wrapper still carries `order`, `bound` and `coeff` and cancels
-        # against the original field in a sequence, but a forced
-        # materialization is left unimplemented rather than approximated.
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
         raise NotImplementedError(
-            "The inverse of a coordinate field is not materialized. Keep "
-            "the inverse lazy so that it cancels in a sequence, or compose "
-            "it away, rather than reading its field directly."
+            "The inverse of a coordinate field cannot be materialized "
+            "directly. Keep the inverse lazy so that it cancels in a "
+            "sequence, or compose it away, rather than reading, converting "
+            "or computing its field on its own."
         )
+
+
+class _LazyInverseAffine(_LazyInverse, Affine):
+    """The inverse of an [`Affine`][], materialized on demand."""
+
+    _plain_base: tx.ClassVar[tx.Type[Transformation]] = Affine
+    _param_name: tx.ClassVar[str] = "matrix"
+
+    operand: tx.Annotated[
+        tx.Optional[Affine],
+        tx.Doc("The affine transformation whose inverse is represented."),
+    ] = None
+
+    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        operand = self.operand
+        ab = get_array_backend(operand.matrix)
+        return ab.linalg.inv(operand.homogeneous_matrix)[:-1]
+
+
+class _LazyInverseLinear(_LazyInverse, Linear):
+    """The inverse of a [`Linear`][], materialized on demand."""
+
+    _plain_base: tx.ClassVar[tx.Type[Transformation]] = Linear
+    _param_name: tx.ClassVar[str] = "matrix"
+
+    operand: tx.Annotated[
+        tx.Optional[Linear],
+        tx.Doc("The linear transformation whose inverse is represented."),
+    ] = None
+
+    matrix: tx.ClassVar[tx.Optional[npmatrix[Real]]]
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        return self._cached_inverse_param()
+
+    def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
+        operand = self.operand
+        ab = get_array_backend(operand.matrix)
+        return ab.linalg.inv(operand.matrix)
 
 
 class SubspaceTransformation(Transformation):
@@ -1352,6 +1483,13 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     simplifier, which only does so for a grid that sits strictly between
     two other transformations.
     """
+    if isinstance(xform, _LazyInverse):
+        # A lazy inverse is the identity exactly when the transform it
+        # inverts is. The answer is read from the operand so that neither
+        # the check with `compute=False` nor the one with `compute=True`
+        # materializes the deferred (and possibly unmaterializable)
+        # inverse of a field.
+        return is_identity(xform.operand, compute=compute)
     parameter_names = getattr(xform, "parameter_names", ())
     if isinstance(parameter_names, str):
         parameter_names = (parameter_names,)
@@ -1520,13 +1658,37 @@ def _is_flat(self: Sequence) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
+def _normalize_inverse(t: Transformation) -> Transformation:
+    # Expand a public `Inverse` wrapper into the concrete (lazy or eager)
+    # inverse of the transform it wraps, so the sequence engine actually
+    # computes it and cancellation can recognize it like any other inverse.
+    # An endpoint override on the `Inverse` is carried onto the result.
+    # This is the one mechanism that reconciles the public `Inverse` with
+    # the internal lazy wrappers: `Inverse(transformation=X)` becomes
+    # `X.inverse()`, which for a field or an affine is a lazy wrapper whose
+    # `operand` is `X`.
+    if not isinstance(t, Inverse):
+        return t
+    if t.transformation is None:
+        return Identity(input=t.input, output=t.output)
+    inv = t.transformation.inverse()
+    kwargs = {}
+    if t.input is not None:
+        kwargs["input"] = t.input
+    if t.output is not None:
+        kwargs["output"] = t.output
+    return inv.to(**kwargs) if kwargs else inv
+
+
 def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
     # Flatten nested sequences into a single list, without touching the
     # endpoints of any transform (unlike `_flatten`, which may rebuild the
     # first and last transform to propagate coordinate systems, and in
-    # doing so would read a lazy field).
+    # doing so would read a lazy field). A public `Inverse` wrapper is
+    # expanded to its concrete inverse along the way.
     flattened = []
     for t in transformations or []:
+        t = _normalize_inverse(t)
         if isinstance(t, Sequence):
             flattened.extend(_unnest(t.transformations))
         else:
@@ -1543,6 +1705,13 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
         return True
     if isinstance(first, _LazyInverse) and first.operand is second:
         return True
+    # A public `Inverse` is normally expanded before this point, but
+    # recognize it directly too, so `Inverse(transformation=X)` cancels
+    # against `X`.
+    if isinstance(second, Inverse) and second.transformation is first:
+        return True
+    if isinstance(first, Inverse) and first.transformation is second:
+        return True
     return False
 
 
@@ -1552,9 +1721,10 @@ def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
     # annihilates it, and each removal can expose a new adjacent pair, so
     # the scan keeps a stack and cancels the top of the stack against the
     # next transform.
+    flat = _unnest(seq.transformations)
     stack = []
     cancelled = False
-    for t in _unnest(seq.transformations):
+    for t in flat:
         if stack and _cancels(stack[-1], t):
             stack.pop()
             cancelled = True
@@ -1563,7 +1733,16 @@ def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
     if not cancelled:
         return seq
     if not stack:
-        return Identity(input=seq.input, output=seq.output)
+        # A sequence that cancels entirely is the identity from the input
+        # of its first element to the output of its last element. The
+        # sequence's own endpoints are usually unset, so the element
+        # endpoints are used, falling back to the sequence's endpoints
+        # where an element leaves one unset.
+        first, last = flat[0], flat[-1]
+        return Identity(
+            input=first.input if first.input is not None else seq.input,
+            output=last.output if last.output is not None else seq.output,
+        )
     return replace(seq, transformations=stack)
 
 
@@ -1701,14 +1880,53 @@ def _compute_sequence(
     #   next to each other in the sequence it will combine the translations
     #   before combining any of the affines.
 
-    # --- Cancel adjacent transform/inverse pairs before any numeric work.
-    # > Only at the top level, and before flattening, so that a transform
-    # > annihilates its own inverse without materializing any lazy field.
+    # --- If we are called from the public method, `mode` is a `list`.
+    # > Simplify to a fixpoint, then recurse per mode with a memo.
     if memo is None:
-        cancelled = _cancel_adjacent_inverses(seq)
-        if not isinstance(cancelled, Sequence):
-            return cancelled
-        seq = cancelled
+        # Each simplification pass can expose a new adjacent
+        # transform/inverse pair. Dropping a strictly interior grid (#59)
+        # can make a pair adjacent, and so can composing a run. So the
+        # cancellation runs *after* the grids are dropped, and re-runs
+        # after each composition pass, until a pass no longer shrinks the
+        # sequence. Counts are measured on the fully unnested element list,
+        # so the loop terminates even when a composition folds into a
+        # nested sequence.
+        while True:
+            # Flatten without rebuilding any endpoint, so a transform stays
+            # the same object that its inverse names. Cancellation tests
+            # that link by identity, and `_flattened` (used below to
+            # propagate coordinate systems) would rebuild the first and
+            # last elements and break it.
+            flat = _unnest(seq.transformations)
+            before = len(flat)
+            if before < 1:
+                return replace(seq, transformations=flat)
+            seq = replace(seq, transformations=flat)
+            # Factor away any strictly interior grid before composing. An
+            # interior `CartesianField` is the identity map over its grid,
+            # and its neighbours overwrite those coordinates, so it is
+            # redundant. The first and last elements define the sampling
+            # domain and are left in place.
+            seq = _drop_interior_grids(seq)
+            cancelled = _cancel_adjacent_inverses(seq)
+            if not isinstance(cancelled, Sequence):
+                return cancelled
+            seq = cancelled
+            # Propagate the sequence's own endpoints onto its first and
+            # last elements, but only when it carries any, so the identity
+            # link is preserved in the common case of an endpoint-less
+            # composition.
+            if seq.input is not None or seq.output is not None:
+                seq = seq._flattened()
+            submemo: tx.Set[_ModePair] = set()
+            for submode in mode:
+                seq = _compute_sequence(seq, submode, memo=submemo)
+                if not isinstance(seq, Sequence):
+                    return seq
+            if len(_unnest(seq.transformations)) >= before:
+                # No pass shrank the sequence, so a further cancellation
+                # cannot either. Nothing left to simplify.
+                return seq
 
     # --- Flatten sequence
     if not _is_flat(seq):
@@ -1716,20 +1934,6 @@ def _compute_sequence(
 
     # --- Check if nothing to do
     if len(seq.transformations or []) < 1:
-        return seq
-
-    # --- If we are called from the public method, `mode`` is a `list`
-    # > Recuerse with a memo
-    if memo is None:
-        # Factor away any strictly interior grid before composing. An
-        # interior `CartesianField` is the identity map over its grid, and
-        # its neighbours overwrite those coordinates, so it is redundant
-        # and is removed. The first and last elements define the sampling
-        # domain and are left in place.
-        seq = _drop_interior_grids(seq)
-        memo = set()
-        for submode in mode:
-            seq = _compute_sequence(seq, submode, memo=memo)
         return seq
 
     # --- Otherwise, `mode` is a single mode
