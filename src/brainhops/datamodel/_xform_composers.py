@@ -151,8 +151,7 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 @_composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field + To.translation
     return CoordinatesField(
         field=field,
@@ -167,8 +166,7 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field * To.scale
     return CoordinatesField(
         field=field,
@@ -183,8 +181,7 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field[..., To.permutation]
     return CoordinatesField(
         field=field,
@@ -199,8 +196,7 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field @ To.matrix.T
     return CoordinatesField(
         field=field,
@@ -215,8 +211,7 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
     return CoordinatesField(
         field=field,
@@ -236,8 +231,7 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = Ti.field + To.translation
     return DisplacementField(
         field=field,
@@ -252,8 +246,7 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
 @_composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = To.scale * Ti.field + (To.scale - 1) * grid
     return DisplacementField(
@@ -269,8 +262,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
 @_composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field)[..., To.permutation] - grid
     return DisplacementField(
@@ -286,8 +278,7 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
 @_composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field) @ To.matrix.T - grid
     return DisplacementField(
@@ -303,8 +294,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 @_composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
-    if coeff:
-        Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
     field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
     return DisplacementField(
@@ -324,7 +314,7 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 
 @_composer
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
-    Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
@@ -348,7 +338,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
 
 @_composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
-    Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
@@ -373,7 +363,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
 @_composer
 def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
-    Ti = Ti.to(coeff=False)
+    Ti = Ti.compute().to(coeff=False)
     field = pull_field(
         To.field,
         coords=Ti.field,
