@@ -14,6 +14,7 @@ the output coordinate system of To.
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import replace
 
 # core
 from brainhops._core.bsplines import pull_field
@@ -42,12 +43,12 @@ from .transformations import (
 
 @_composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
-    return type(Ti)(Ti, output=To.output).compute()
+    return replace(Ti, output=To.output).compute()
 
 
 @_composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
-    return type(To)(To, input=Ti.input).compute()
+    return replace(To, input=Ti.input).compute()
 
 
 # ----------------------------------------------------------------------
