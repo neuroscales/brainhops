@@ -22,6 +22,7 @@ nav = [
       "api/datamodel/systems.md",
       "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
+      "api/datamodel/images.md",
       "api/datamodel/hierarchy.md",
     ]},
     {"io" = [
@@ -30,11 +31,13 @@ nav = [
         "api/io/base/index.md",
         "api/io/base/parsers.md",
         "api/io/base/nifti.md",
+        "api/io/base/zarr.md",
       ]},
       {"images" = [
         "api/io/images/index.md",
         "api/io/images/base.md",
         "api/io/images/nifti.md",
+        "api/io/images/zarr.md",
       ]},
       {"transformations" = [
         "api/io/transformations/index.md",
@@ -44,6 +47,9 @@ nav = [
         {"itk.h5" = "api/io/transformations/itk-h5.md"},
         {"freesurfer.lta" = "api/io/transformations/lta.md"},
         {"spm.y" = "api/io/transformations/spmy.md"},
+        "api/io/transformations/fsl.md",
+        {"fsl.flirt" = "api/io/transformations/fsl-flirt.md"},
+        {"fsl.fnirt" = "api/io/transformations/fsl-fnirt.md"},
         "api/io/transformations/zarr.md",
       ]},
       {"vectors" = "api/io/vectors/index.md"},
