@@ -40,6 +40,9 @@ class TFMTransformParser(
     convert=True,
     repr=HIDE_IF_NONE,
 ):
+    """Parses an ITK text (`.tfm`) transform file into a chain of
+    transform blocks."""
+
     transform_group: tx.List[ITKStruct] = Factory(list)
 
     # --- sniff --------------------------------------------------------
@@ -51,6 +54,8 @@ class TFMTransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the parser is that a line starts a `.tfm`
+        transform block."""
         # The first (non-comment) line should be
         # "Transform: {ClassName}_{Precision}_{InputDim}_{OutputDim}".
         # The version header is a comment, and `peekable_lines` has
@@ -69,6 +74,8 @@ class TFMTransformParser(
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        """Build the transform chain from an iterable over lines of a
+        `.tfm` file."""
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)

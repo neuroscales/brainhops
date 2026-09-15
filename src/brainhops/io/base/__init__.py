@@ -1,3 +1,6 @@
+"""The format-independent base shared by every file-based object, whatever
+its kind."""
+
 __all__ = [
     "FileBasedObject",
     "WritableFileBasedObject",

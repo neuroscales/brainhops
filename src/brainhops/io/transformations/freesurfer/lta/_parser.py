@@ -24,12 +24,33 @@ _FileOrContentLike = tx.Union[_FileLike, bytes, tx.Iterable[str]]
 
 
 class LTAParser(Magic):
+    """Mixin that gives a class the ability to sniff, read and write itself
+    in LTA format.
+
+    `LTAStruct` and the classes derived from it inherit their `sniff*`,
+    `from_*` and `to_*` methods from this class.
+    """
+
     _HAS_KEYS = True
 
     # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff(cls, other: _FileOrContentLike) -> bool:
+        """
+        Return whether the content, in any supported form, looks like it
+        is in LTA format.
+
+        Parameters
+        ----------
+        other : str | PathLike | IO | bytes | Iterable[str]
+            Input file, or its content.
+
+        Returns
+        -------
+        bool
+            Whether the content looks like it is in LTA format.
+        """
         if isinstance(other, str):
             if Path(other).exists():
                 return cls.sniff_file(other)
@@ -45,6 +66,20 @@ class LTAParser(Magic):
 
     @classmethod
     def sniff_file(cls, fileobj: _FileLike) -> bool:
+        """
+        Return whether a file (path or file-like object) looks like it
+        is in LTA format.
+
+        Parameters
+        ----------
+        fileobj : str | PathLike | IO
+            Input file.
+
+        Returns
+        -------
+        bool
+            Whether the file looks like it is in LTA format.
+        """
         if isinstance(fileobj, str):
             return cls.sniff_file(Path(fileobj))
         if isinstance(fileobj, PathLike):
@@ -55,10 +90,38 @@ class LTAParser(Magic):
 
     @classmethod
     def sniff_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> bool:
+        """
+        Return whether bytes look like they are in LTA format.
+
+        Parameters
+        ----------
+        bytes : bytes
+            The byte content to inspect.
+        encoding : str
+            The encoding to use for decoding the input bytes.
+
+        Returns
+        -------
+        bool
+            Whether the content looks like it is in LTA format.
+        """
         return cls.sniff_text(bytes.decode(encoding))
 
     @classmethod
     def sniff_text(cls, text: str) -> bool:
+        """
+        Return whether a string looks like it is in LTA format.
+
+        Parameters
+        ----------
+        text : str
+            The content to inspect.
+
+        Returns
+        -------
+        bool
+            Whether the content looks like it is in LTA format.
+        """
         first_line = next(peekable_lines(text.splitlines()))
         if first_line:
             return cls.sniff_line(first_line)
@@ -66,6 +129,20 @@ class LTAParser(Magic):
 
     @classmethod
     def sniff_line(cls, line: str) -> bool:
+        """
+        Return whether a single line looks like the first line of an
+        LTA file.
+
+        Parameters
+        ----------
+        line : str
+            The line to inspect.
+
+        Returns
+        -------
+        bool
+            Whether the line looks like the first line of an LTA file.
+        """
         if re.match(r"^type\s*=\s*\d+$", line.strip()):
             return True
         return False
@@ -251,8 +328,33 @@ class LTAParser(Magic):
 
 
 class VolumeInfoParser(LTAParser):
+    """Parses the volume-geometry block of an LTA file.
+
+    A volume-geometry block opens with a `"<NAME> volume info"` header
+    line, followed by the fields that describe a source or destination
+    volume.
+    """
+
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> tx.Optional[tx.Self]:
+        """
+        Build a volume-geometry block from an iterable over lines of an
+        LTA file.
+
+        Returns `None`, without consuming any line, if the next line is
+        not this block's header.
+
+        Parameters
+        ----------
+        lines : Iterable[str]
+            Iterable content of an LTA file, positioned at the start of
+            the block.
+
+        Returns
+        -------
+        obj or None
+            The parsed volume-geometry block, or `None`.
+        """
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
         line = lines.peek()
@@ -264,13 +366,38 @@ class VolumeInfoParser(LTAParser):
         return super().from_lines(lines)
 
     def to_lines(self, **kwargs) -> tx.Generator[str]:
+        """
+        Convert the volume-geometry block to an iterable over lines of
+        an LTA file, header included.
+        """
         yield f"{self.NAME} volume info"
         yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
 
 
 class MatrixParser(LTAParser):
+    """Parses the affine matrix block of an LTA file.
+
+    The block opens with a line giving the element count and the number
+    of rows and columns, followed by that many rows of matrix entries.
+    """
+
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
+        """
+        Build the matrix block from an iterable over lines of an LTA
+        file.
+
+        Parameters
+        ----------
+        lines : Iterable[str]
+            Iterable content of an LTA file, positioned at the start of
+            the block.
+
+        Returns
+        -------
+        obj
+            The parsed matrix block.
+        """
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
@@ -301,6 +428,8 @@ class MatrixParser(LTAParser):
         return cls(matrix=tuple(matrix))
 
     def to_lines(self) -> tx.Iterator[str]:
+        """Convert the matrix block to an iterable over lines of an LTA
+        file."""
         dtype = self.dtype
         fmt = "{:+.6f} {:+.6f}   " if dtype is complex else "{:+.6f}  "
         yield _write_values((int(self.matrix_type), *self.shape))
@@ -314,6 +443,13 @@ class MatrixParser(LTAParser):
 
 
 class LTAFieldParser:
+    """Reads a single field of an LTA struct from a line, or a block of
+    lines, of an LTA file.
+
+    Calling the parser consumes as many lines as the field needs, and
+    returns the parsed value.
+    """
+
     def __init__(self, key: tx.Optional[str], type: tx.Any) -> None:
         """
         Parameters
@@ -332,6 +468,8 @@ class LTAFieldParser:
         self.optional, self.type = _is_optional(type)
 
     def __call__(self, lines: tx.Iterator[str]) -> tx.Any:
+        """Consume the field's line, or block of lines, and return its
+        parsed value."""
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
         types = self.type
@@ -384,6 +522,12 @@ class LTAFieldParser:
 
 
 class LTAFieldWriter:
+    """Writes a single field of an LTA struct as a line, or a block of
+    lines, of an LTA file.
+
+    Calling the writer yields the lines that represent the field's value.
+    """
+
     def __init__(self, key: tx.Optional[str], **kwargs) -> None:
         """
         Parameters
@@ -397,6 +541,7 @@ class LTAFieldWriter:
         self.kwargs = kwargs
 
     def __call__(self, value: tx.Any, **kwargs) -> tx.Iterator[str]:
+        """Yield the line, or lines, that represent `value`."""
         if value is None:
             return
         if isinstance(value, LTAParser):

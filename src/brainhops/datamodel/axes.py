@@ -1,3 +1,5 @@
+"""Axes of a coordinate system, such as a spatial or a time axis."""
+
 __all__ = [
     "Axis",
     "SpatialAxis",
@@ -47,6 +49,12 @@ from .units import SpaceUnit, TimeUnit, Unit
 
 
 class Axis(DataModelBase):
+    """One axis of a coordinate system or of a grid.
+
+    An axis names its type, such as `"space"` or `"time"`, and may carry
+    a unit, an orientation, and whether it is discrete.
+    """
+
     name: tx.Optional[str] = None
     type: tx.Optional[str] = None
     unit: tx.Optional[Unit] = None
@@ -55,16 +63,22 @@ class Axis(DataModelBase):
 
 
 class SpatialAxis(Axis):
+    """An axis that measures a spatial dimension."""
+
     unit: tx.Optional[SpaceUnit] = SpaceUnit("millimeter")
     type: HiddenConst[str] = "space"
 
 
 class TimeAxis(Axis):
+    """An axis that measures time."""
+
     unit: tx.Optional[TimeUnit] = TimeUnit("second")
     type: HiddenConst[str] = "time"
 
 
 class ChannelAxis(Axis):
+    """An axis that enumerates channels, such as color or feature channels."""
+
     type: HiddenConst[str] = "channel"
 
 
@@ -150,31 +164,43 @@ def vector_axis(
 
 
 class LeftToRightAxis(SpatialAxis):
+    """A spatial axis oriented from left to right."""
+
     name: str = "left-to-right"
     orientation: HiddenConst[LeftToRight] = LeftToRight()
 
 
 class RightToLeftAxis(SpatialAxis):
+    """A spatial axis oriented from right to left."""
+
     name: str = "right-to-left"
     orientation: HiddenConst[RightToLeft] = RightToLeft()
 
 
 class AnteriorToPosteriorAxis(SpatialAxis):
+    """A spatial axis oriented from anterior to posterior."""
+
     name: str = "anterior-to-posterior"
     orientation: HiddenConst[AnteriorToPosterior] = AnteriorToPosterior()
 
 
 class PosteriorToAnteriorAxis(SpatialAxis):
+    """A spatial axis oriented from posterior to anterior."""
+
     name: str = "posterior-to-anterior"
     orientation: HiddenConst[PosteriorToAnterior] = PosteriorToAnterior()
 
 
 class InferiorToSuperiorAxis(SpatialAxis):
+    """A spatial axis oriented from inferior to superior."""
+
     name: str = "inferior-to-superior"
     orientation: HiddenConst[InferiorToSuperior] = InferiorToSuperior()
 
 
 class SuperiorToInferiorAxis(SpatialAxis):
+    """A spatial axis oriented from superior to inferior."""
+
     name: str = "superior-to-inferior"
     orientation: HiddenConst[SuperiorToInferior] = SuperiorToInferior()
 

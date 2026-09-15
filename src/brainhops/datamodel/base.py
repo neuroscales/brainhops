@@ -1,3 +1,5 @@
+"""The base class shared by every data model, and its converter."""
+
 __all__ = ["DataModelBase", "DataModelConverter"]
 
 # externals

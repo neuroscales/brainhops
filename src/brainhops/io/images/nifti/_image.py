@@ -70,6 +70,8 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
+        """The voxel-to-world transformations recorded by the header,
+        decoded on first access unless set explicitly."""
         if getattr(self, "_transformations", None):
             return self._transformations
         return _nifti_to_transformations(self.header)

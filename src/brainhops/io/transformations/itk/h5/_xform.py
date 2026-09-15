@@ -27,6 +27,8 @@ class H5Transform(
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
+        """The chain of transformations, decoded from `transform_group`
+        and cached after the first access."""
         if self._transformations is None:
             self._transformations = [
                 t.to_transform() for t in self.transform_group

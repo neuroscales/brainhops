@@ -20,15 +20,33 @@ nav = [
       "api/datamodel/orientation.md",
       "api/datamodel/axes.md",
       "api/datamodel/systems.md",
+      "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
       "api/datamodel/hierarchy.md",
     ]},
     {"io" = [
+      "api/io/index.md",
+      {"base" = [
+        "api/io/base/index.md",
+        "api/io/base/parsers.md",
+        "api/io/base/nifti.md",
+      ]},
+      {"images" = [
+        "api/io/images/index.md",
+        "api/io/images/base.md",
+        "api/io/images/nifti.md",
+      ]},
       {"transformations" = [
         "api/io/transformations/index.md",
+        "api/io/transformations/base.md",
+        "api/io/transformations/nifti.md",
+        "api/io/transformations/itk-tfm.md",
+        "api/io/transformations/itk-h5.md",
         "api/io/transformations/lta.md",
         "api/io/transformations/spmy.md",
+        "api/io/transformations/zarr.md",
       ]},
+      {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [
         {"invfield" = "api/_ext/invfield/index.md"},

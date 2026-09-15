@@ -404,6 +404,7 @@ class ITKSimilarity2DStruct(ITKStruct):
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
+        """Return a similarity 2D transform with the specified parameters."""
 
         scale, angle, tx, ty = self.parameters
         c = self.fixed_parameters
@@ -451,6 +452,7 @@ class ITKSimilarity3DStruct(ITKStruct):
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
+        """Return a similarity 3D transform with the specified parameters."""
         c = self.fixed_parameters
         q = self.parameters[0:3]
         t = self.parameters[3:6]
@@ -497,6 +499,8 @@ class ITKScaleVersor3DStruct(ITKStruct):
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
+        """Return a scale versor 3D transform with the specified
+        parameters."""
         c = self.fixed_parameters
         q = self.parameters[0:3]
         t = self.parameters[3:6]
@@ -558,6 +562,8 @@ class ITKScaleSkewVersor3DStruct(ITKStruct):
     """Center of rotation."""
 
     def to_transform(self) -> _xforms.Sequence:
+        """Return a scale skew versor 3D transform with the specified
+        parameters."""
         c = self.fixed_parameters
         q = self.parameters[0:3]
         t = self.parameters[3:6]
@@ -629,6 +635,9 @@ class ITKDisplacementFieldStruct(ITKStruct):
     )
 
     def to_transform(self) -> _xforms.DisplacementField:
+        """Return the dense displacement field encoded by this transform,
+        expressed as a world-space displacement between LPS and voxel
+        space."""
 
         # Get geometry of the B-spline grid
         # -> Assumig a voxel grid ordered [Nx, Ny, Nz]
@@ -675,6 +684,8 @@ class ITKBSplineStruct(ITKStruct):
     type: tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
 
     def to_transform(self) -> _xforms.DisplacementField:
+        """Return the dense displacement field interpolated from this
+        transform's B-spline control-point grid."""
 
         # Get geometry of the B-spline grid
         # -> Assumig a voxel grid ordered [Nx, Ny, Nz]

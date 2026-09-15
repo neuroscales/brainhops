@@ -1,3 +1,5 @@
+"""The format-independent base of every file-based image."""
+
 __all__ = [
     "FileBasedImage",
     "WritableFileBasedImage",

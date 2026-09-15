@@ -1,3 +1,6 @@
+"""Single-resolution and multi-resolution images, and how they are resliced
+onto a new geometry."""
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -287,6 +290,7 @@ class MultiScaleImage(Image):
 
     @property
     def data(self) -> ArrayProtocol:
+        """The data of the highest-resolution level of the pyramid."""
         return self.images[0].data
 
     def to_singlescale(self, index: int = 0) -> SingleScaleImage:

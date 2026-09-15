@@ -159,6 +159,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        `file`. On a concrete format, score how confident it is that
+        `file`, in any supported form, is its own."""
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
         return sniff(file, cls._REGISTRY, "sniff", error, f"{file}", **kwargs)
@@ -170,6 +173,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the file (path or file-like object). On a concrete format, score
+        how confident it is that the file is its own."""
         if not cls._is_dispatcher():
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
@@ -183,6 +189,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the open file object. On a concrete format, score how confident
+        it is that the file object is its own."""
         if not cls._is_dispatcher():
             return super().sniff_fileobj(file, error=error, **kwargs)
         return sniff(
@@ -201,6 +210,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the content (text or bytes). On a concrete format, score how
+        confident it is that the content is its own."""
         if not cls._is_dispatcher():
             return super().sniff_content(content, error=error, **kwargs)
         return sniff(
@@ -219,6 +231,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the bytes. On a concrete format, score how confident it is that
+        the bytes are its own."""
         if not cls._is_dispatcher():
             return super().sniff_bytes(content, error=error, **kwargs)
         return sniff(
@@ -237,6 +252,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the text. On a concrete format, score how confident it is that
+        the text is its own."""
         if not cls._is_dispatcher():
             return super().sniff_text(text, error=error, **kwargs)
         return sniff(
@@ -250,6 +268,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the lines. On a concrete format, score how confident it is that
+        the lines are its own."""
         if not cls._is_dispatcher():
             return super().sniff_lines(lines, error=error, **kwargs)
         return sniff(
@@ -263,6 +284,9 @@ class FileBasedObject(FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> tx.Optional[type]:
+        """On a dispatcher, identify which registered format would read
+        the line. On a concrete format, score how confident it is that
+        the line is its own."""
         if not cls._is_dispatcher():
             return super().sniff_line(line, error=error, **kwargs)
         return sniff(
@@ -273,12 +297,20 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from `other`. On a concrete format,
+        build an instance of this class from `other`, in any supported
+        form."""
         if not cls._is_dispatcher():
             return super().load(other, **kwargs)
         return parse(Source(other), cls._REGISTRY, "load", "sniff", **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the file (path or file-like
+        object). On a concrete format, build an instance of this class
+        from the file."""
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
         return parse(
@@ -287,6 +319,9 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the open file object. On a concrete
+        format, build an instance of this class from the file object."""
         if not cls._is_dispatcher():
             return super().from_fileobj(file, **kwargs)
         return parse(
@@ -299,6 +334,10 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_content(cls, content: path.ContentLike, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the content (text or bytes). On a
+        concrete format, build an instance of this class from the
+        content."""
         if not cls._is_dispatcher():
             return super().from_content(content, **kwargs)
         return parse(
@@ -311,6 +350,9 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the bytes. On a concrete format,
+        build an instance of this class from the bytes."""
         if not cls._is_dispatcher():
             return super().from_bytes(content, **kwargs)
         return parse(
@@ -323,6 +365,9 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_text(cls, text: str, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the text. On a concrete format,
+        build an instance of this class from the text."""
         if not cls._is_dispatcher():
             return super().from_text(text, **kwargs)
         return parse(
@@ -335,6 +380,9 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the lines. On a concrete format,
+        build an instance of this class from the lines."""
         if not cls._is_dispatcher():
             return super().from_lines(lines, **kwargs)
         return parse(
@@ -347,6 +395,9 @@ class FileBasedObject(FileParser):
 
     @classmethod
     def from_line(cls, line: str, **kwargs) -> tx.Self:
+        """On a dispatcher, pick the best-matching registered format and
+        build an instance of it from the line. On a concrete format,
+        build an instance of this class from the line."""
         if not cls._is_dispatcher():
             return super().from_line(line, **kwargs)
         return parse(

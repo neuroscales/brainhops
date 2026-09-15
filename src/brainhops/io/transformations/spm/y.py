@@ -1,3 +1,5 @@
+"""SPM deformation fields, stored as `y_`/`iy_`-prefixed NIfTI files."""
+
 # externals
 import typing_extensions as tx
 
