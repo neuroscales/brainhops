@@ -225,17 +225,72 @@ def _group_by_type(
     return groups
 
 
+def _pair_type_groups(
+    source_groups: "tx.Dict[tx.Optional[str], tx.List[int]]",
+    target_groups: "tx.Dict[tx.Optional[str], tx.List[int]]",
+) -> "tx.List[tx.Tuple[int, int]]":
+    # Pair the still-unmatched axes by order within each type group, as a
+    # list of ``(target_index, source_index)`` pairs. A group of a definite
+    # type pairs with the group of the same type on the other side, and a
+    # typeless group is a wildcard that pairs with the one remaining typed
+    # group of equal count on the other side. A group is paired only when
+    # the same number of its axes remain on each side.
+    #
+    # The mappings passed in are consumed as pairs are made, so a group that
+    # is left in either mapping afterwards had no counterpart and is
+    # reported by the caller. A typeless group that could map to two or more
+    # remaining typed groups, or whose count matches none of them, is
+    # genuinely ambiguous and is left unpaired rather than guessed.
+    pairs: tx.List[tx.Tuple[int, int]] = []
+    for key in list(target_groups):
+        sources = source_groups.get(key)
+        if sources is not None and len(sources) == len(target_groups[key]):
+            targets = target_groups.pop(key)
+            del source_groups[key]
+            for j, i in zip(targets, sources):
+                pairs.append((j, i))
+    # A leftover typeless group is a wildcard. It pairs, by order, with the
+    # single remaining typed group of equal count on the other side. The two
+    # directions cover a typeless source meeting a typed target and the
+    # reverse.
+    for wildcard, other, wildcard_is_source in (
+        (source_groups, target_groups, True),
+        (target_groups, source_groups, False),
+    ):
+        none_indices = wildcard.get(None)
+        if not none_indices:
+            continue
+        candidates = [
+            key
+            for key, indices in other.items()
+            if key is not None and len(indices) == len(none_indices)
+        ]
+        if len(candidates) != 1:
+            continue
+        other_indices = other.pop(candidates[0])
+        del wildcard[None]
+        for a, b in zip(none_indices, other_indices):
+            if wildcard_is_source:
+                pairs.append((b, a))
+            else:
+                pairs.append((a, b))
+    return pairs
+
+
 def _match_axes(
     source_axes: tx.List[Axis],
     target_axes: tx.List[Axis],
     allow_positional: bool,
     allow_type_grouped_positional: bool = False,
-) -> tx.List[int]:
+) -> "tx.Tuple[tx.List[tx.Optional[int]], tx.Optional[str]]":
     # Establish, for each target axis, the source axis that corresponds to
-    # it. The result is a list `match` where `match[j]` is the index of the
-    # source axis that feeds target axis `j`. An axis for which no unique
-    # correspondence is found is left unmatched, and the caller reports the
-    # failure.
+    # it. The result is a pair of a list `match`, where `match[j]` is the
+    # index of the source axis that feeds target axis `j`, and a warning
+    # message, or `None`. An axis for which no unique correspondence is
+    # found is left unmatched, and the caller reports the failure. The
+    # warning message names a positional pairing that was made, so the
+    # caller can emit it once the pairing is committed to, rather than
+    # before code that might still raise.
     #
     # Two axes that both name a type, and name different types, are never
     # matched. A shared name, a shared unit, or a shared position is a
@@ -244,6 +299,7 @@ def _match_axes(
     n_source, n_target = len(source_axes), len(target_axes)
     match: tx.List[tx.Optional[int]] = [None] * n_target
     used = [False] * n_source
+    warning: tx.Optional[str] = None
 
     def take(j: int, i: int) -> None:
         match[j] = i
@@ -308,7 +364,9 @@ def _match_axes(
             take(j, candidates[0])
 
     # Last tier: position. A positional pairing can mask a genuine
-    # mismatch, so it warns and is used only when the caller permits it.
+    # mismatch, so it warns and is used only when the caller permits it. The
+    # warning is not emitted here, but returned, so the caller can raise on
+    # the pairing before deciding to warn about it.
     if allow_positional and n_source == n_target:
         # The caller permitted a positional pairing outright. Any axis
         # still unmatched is paired with the source axis in its position,
@@ -321,42 +379,39 @@ def _match_axes(
                 take(j, j)
                 paired = True
         if paired:
-            warnings.warn(
+            warning = (
                 "Some axes were paired by position, because no stronger "
                 "correspondence was found. Check that the two coordinate "
-                "systems describe the same axes in the same order.",
-                stacklevel=2,
+                "systems describe the same axes in the same order."
             )
     elif allow_type_grouped_positional:
         # An implicit bridge pairs the still-unmatched axes by order within
         # each type group: spatial axes with spatial axes, time with time,
-        # and so on, with the axes of no type forming a group of their own.
-        # A group is paired only when the same number of its axes remain on
-        # each side. Two axes are never paired across a type, so a spatial
-        # axis with no spatial counterpart is left unmatched and reported.
-        # A group whose counts disagree is likewise left unmatched, rather
-        # than pairing some of its axes and inventing the rest.
+        # and so on. An axis of no type is a wildcard, so a typeless group
+        # pairs with the one remaining typed group of equal count. A group
+        # is paired only when the same number of its axes remain on each
+        # side. Two axes that both name a type are never paired across it,
+        # so a spatial axis with no spatial counterpart is left unmatched
+        # and reported. A group whose counts disagree, or a typeless group
+        # that two or more typed groups could receive, is likewise left
+        # unmatched, rather than pairing some of its axes and inventing the
+        # rest.
         unmatched_source = [i for i in range(n_source) if not used[i]]
         unmatched_target = [j for j in range(n_target) if match[j] is None]
         source_groups = _group_by_type(source_axes, unmatched_source)
         target_groups = _group_by_type(target_axes, unmatched_target)
-        paired = False
-        for key, targets in target_groups.items():
-            sources = source_groups.get(key, [])
-            if targets and len(sources) == len(targets):
-                for j, i in zip(targets, sources):
-                    take(j, i)
-                paired = True
-        if paired:
-            warnings.warn(
+        pairs = _pair_type_groups(source_groups, target_groups)
+        for j, i in pairs:
+            take(j, i)
+        if pairs:
+            warning = (
                 "Some axes were paired by position within their type group, "
                 "because no name, unit, or orientation distinguished them. "
                 "Check that the two coordinate systems describe the same "
-                "axes in the same order.",
-                stacklevel=2,
+                "axes in the same order."
             )
 
-    return match
+    return match, warning
 
 
 def _unmatched_report(
@@ -445,10 +500,13 @@ def bridge(
     allow_type_grouped_positional : bool, default False
         Whether to pair the still-unmatched axes by order within each type
         group, so spatial axes pair with spatial axes and time with time.
-        A group is paired only when the same number of its axes remain on
-        each side. A pairing made this way warns. Axes are never paired
-        across a type, and a type group whose counts disagree is left
-        unmatched and reported.
+        An axis of no type is a wildcard, so a group of typeless axes pairs
+        with the one remaining typed group of equal count. A group is paired
+        only when the same number of its axes remain on each side. A pairing
+        made this way warns. Two axes that both name a type are never paired
+        across it. A type group whose counts disagree, or a typeless group
+        that two or more typed groups could receive, is left unmatched and
+        reported.
 
     Returns
     -------
@@ -471,8 +529,11 @@ def bridge(
             "of axes. A bridge reorders, rescales, and flips matched axes "
             "and never adds or drops one. When one transform acts on a "
             "subset of the other's axes, such as a spatial transform meeting "
-            "a spatial-and-time image, compose the two so the smaller "
-            "transform is lifted onto the axes it acts on.".format(
+            "a spatial-and-time image, composition lifts the smaller "
+            "transform onto the axes it acts on. Those axes could not be "
+            "matched to a subset of the fuller system here, so the lift was "
+            "not possible. Give the shared axes matching names, units, or "
+            "orientations so they can be identified.".format(
                 source.name or "the source system",
                 target.name or "the target system",
             )
@@ -480,7 +541,7 @@ def bridge(
 
     source_axes = list(source.axes)
     target_axes = list(target.axes)
-    match = _match_axes(
+    match, positional_warning = _match_axes(
         source_axes,
         target_axes,
         allow_positional,
@@ -504,6 +565,14 @@ def bridge(
         ):
             offset = float(_extent(extents, j, target_axis) - 1)
         translations.append(offset)
+
+    # The positional pairing, if one was made, is now committed to. Every
+    # matched pair has a defined sign, ratio, and offset, and nothing below
+    # raises. The warning is emitted here, rather than at match time, so a
+    # pairing that a later step rejects does not warn. The stack level names
+    # the caller of `bridge`, not `bridge` itself.
+    if positional_warning is not None:
+        warnings.warn(positional_warning, stacklevel=2)
 
     # Build the intermediate systems so each primitive names its own
     # endpoints and the whole bridge runs from `source` to `target`. Only
@@ -648,11 +717,16 @@ def _subset_positions(
     # dimensionality mismatch, such as a spatial axis with no spatial
     # counterpart, and is left for the caller to refuse rather than
     # absorbed as a pass-through.
-    match = _match_axes(
+    #
+    # The grouped-positional fallback is enabled, so a subset of unnamed and
+    # unoriented axes of one type still lifts, the same way an implicit
+    # bridge pairs such axes. The warning belongs to the bridge built over
+    # the subset below, so the message returned here is discarded.
+    match, _ = _match_axes(
         full_axes,
         sub_axes,
         allow_positional=False,
-        allow_type_grouped_positional=False,
+        allow_type_grouped_positional=True,
     )
     if any(i is None for i in match):
         return None

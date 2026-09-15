@@ -658,6 +658,49 @@ def test_type_grouped_positional_keeps_each_type_to_its_own_group() -> None:
     np.testing.assert_allclose(_homogeneous(result), expected)
 
 
+def test_typeless_group_pairs_with_a_typed_group_of_equal_count() -> None:
+    # A wholly typeless system meeting a wholly spatial system of the same
+    # size pairs by position across the type boundary, because a typeless
+    # axis is a wildcard. The pairing warns, and the composition reduces to
+    # the identity when nothing else distinguishes the axes.
+    source = CoordinateSystem(
+        name="typeless",
+        axes=[Axis(name="a"), Axis(name="b"), Axis(name="c")],
+    )
+    target = CoordinateSystem(
+        name="voxel",
+        axes=[
+            SpatialAxis(name="dim0", unit=None),
+            SpatialAxis(name="dim1", unit=None),
+            SpatialAxis(name="dim2", unit=None),
+        ],
+    )
+    first = Affine(matrix=np.eye(3, 4), input=source, output=source)
+    second = Affine(matrix=np.eye(3, 4), input=target, output=target)
+    with pytest.warns(UserWarning):
+        result = Sequence([first, second]).compute()
+    np.testing.assert_allclose(_homogeneous(result), np.eye(4))
+
+
+def test_typeless_group_with_no_equal_count_typed_group_raises() -> None:
+    # Two typeless axes meeting a spatial axis and a time axis is genuinely
+    # ambiguous: the typeless pair could feed the spatial-then-time order or
+    # its reverse, and no typed group of equal count receives it. The
+    # mismatch is reported rather than guessed.
+    source = CoordinateSystem(
+        name="typeless",
+        axes=[Axis(name="a"), Axis(name="b")],
+    )
+    target = CoordinateSystem(
+        name="mixed",
+        axes=[SpatialAxis(name="c", unit=None), TimeAxis(name="u", unit=None)],
+    )
+    first = Affine(matrix=np.eye(2, 3), input=source, output=source)
+    second = Affine(matrix=np.eye(2, 3), input=target, output=target)
+    with pytest.raises(AdaptationError):
+        Sequence([first, second]).compute()
+
+
 def test_type_group_count_mismatch_raises() -> None:
     # The two systems carry the same number of axes, but the spatial and
     # time groups have different counts on each side. No group can be paired
@@ -918,6 +961,37 @@ def test_subset_transform_is_wrapped_in_a_subspace() -> None:
     np.testing.assert_array_equal(wrapped.output_axes, [0, 1, 2])
 
 
+def test_unnamed_unoriented_subset_transform_is_wrapped() -> None:
+    # A 3-spatial transform whose axes carry no name and no orientation
+    # meeting a 4-axis (x, y, z, t) image is still lifted onto the spatial
+    # axes. The subset match uses the grouped-positional fallback, so the
+    # three unnamed spatial axes pair with the three spatial axes of the
+    # image and the time axis is left alone. The pairing warns.
+    full = CoordinateSystem(
+        name="xyzt",
+        axes=[
+            SpatialAxis(name="x"),
+            SpatialAxis(name="y"),
+            SpatialAxis(name="z"),
+            TimeAxis(name="t"),
+        ],
+    )
+    first = Affine(matrix=np.eye(4, 5), input=full, output=full)
+    plain = CoordinateSystem(
+        name="plain",
+        axes=[SpatialAxis(), SpatialAxis(), SpatialAxis()],
+    )
+    second = Affine(matrix=np.eye(3, 4), input=plain, output=plain)
+    with pytest.warns(UserWarning):
+        result = adapt(first, second)
+    assert isinstance(result, Sequence)
+    assert result.transformations[0] is first
+    wrapped = result.transformations[-1]
+    assert isinstance(wrapped, SubspaceTransformation)
+    np.testing.assert_array_equal(wrapped.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(wrapped.output_axes, [0, 1, 2])
+
+
 def test_subspace_wrap_is_identity_on_the_extra_axis() -> None:
     # The wrapped transform acts on the spatial axes and leaves the time
     # axis untouched: its full affine is the identity on the t row and
@@ -1088,3 +1162,33 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
     # The flip is load-bearing.
     without_flip = _embed_spatial(itk_3d) @ voxel_homogeneous
     assert not np.allclose(got, without_flip)
+
+
+# ----------------------------------------------------------------------
+#   is_identity RECOGNIZES A SUBSPACE OF THE IDENTITY UNDER compute
+# ----------------------------------------------------------------------
+
+
+def test_is_identity_recognizes_a_subspace_of_the_identity() -> None:
+    # A subspace transform whose inner transform is itself the identity, and
+    # which reads the same axes it writes, is the identity under compute. It
+    # is not recognized as such without compute, because its inner transform
+    # is set.
+    subspace = SubspaceTransformation(
+        transformation=Identity(),
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+    )
+    assert is_identity(subspace) is False
+    assert is_identity(subspace, compute=True) is True
+
+
+def test_is_identity_keeps_a_non_identity_subspace_non_identity() -> None:
+    # A subspace whose inner transform is not the identity is never the
+    # identity, so the recognition stays conservative.
+    subspace = SubspaceTransformation(
+        transformation=Scaling(scale=np.asarray([2.0, 2.0, 2.0])),
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+    )
+    assert is_identity(subspace, compute=True) is False

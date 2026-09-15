@@ -1630,6 +1630,20 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
         return (xform.field == 0).all()
     if isinstance(xform, CartesianField):
         return True
+    if isinstance(xform, SubspaceTransformation):
+        # A subspace transform is the identity when the transform it wraps
+        # is itself the identity and it reads the same axes it writes. A
+        # subspace that reorders axes is not the identity even when its
+        # inner transform is, so a differing pair of axis vectors keeps it
+        # non-identity.
+        inner = xform.transformation
+        if inner is not None and not is_identity(inner, compute=True):
+            return False
+        input_axes = xform.input_axes
+        output_axes = xform.output_axes
+        if input_axes is None or output_axes is None:
+            return True
+        return list(input_axes) == list(output_axes)
     return False
 
 
@@ -2454,10 +2468,10 @@ def _insert_bridges(
                 if wrapped is not None:
                     spliced.append(wrapped)
                     continue
-                # Not a same-dimensionality subspace. Let the adaptor raise
-                # its explicit error, rather than dropping or inventing an
-                # axis.
-                _adapt(source, target, extents or None)
+                # Not a same-dimensionality subspace, so this is a genuine
+                # dimensionality mismatch. The `_adapt` call below cannot add
+                # or drop an axis, so it raises the adaptor's descriptive
+                # count-mismatch error rather than dropping or inventing one.
             reconciler = _adapt(source, target, extents or None)
             if not is_identity(reconciler):
                 if isinstance(reconciler, Sequence):
