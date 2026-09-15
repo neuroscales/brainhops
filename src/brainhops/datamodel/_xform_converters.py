@@ -10,6 +10,7 @@ from brainhops.backends import get_array_backend
 from .transformations import (
     Affine,
     CartesianField,
+    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -17,6 +18,7 @@ from .transformations import (
     LossyConversionError,
     Permutation,
     Scaling,
+    SubspaceTransformation,
     Transformation,
     Translation,
     _converter,
@@ -204,6 +206,58 @@ def _(t: Linear) -> Affine:
         output=t.output,
     )
     return u
+
+
+@_converter
+def _(t: SubspaceTransformation) -> Affine:
+    # Embed the inner transform, reduced to an affine, into a full-size
+    # affine over the whole space. The inner transform occupies the rows
+    # and columns of the acted-on axes. Every other axis passes through as
+    # the identity, mapping each input pass-through axis to the output
+    # pass-through axis in the same position in the ordering.
+    if (
+        t.input is None
+        or t.output is None
+        or t.input.axes is None
+        or t.output.axes is None
+    ):
+        raise ConversionError(
+            "A subspace transformation is embedded into a full affine only "
+            "when its input and output systems are known, because the "
+            "number of axes is read from them."
+        )
+    n_in = len(t.input.axes)
+    n_out = len(t.output.axes)
+    input_axes = [
+        int(i) for i in (t.input_axes if t.input_axes is not None else [])
+    ]
+    output_axes = [
+        int(o) for o in (t.output_axes if t.output_axes is not None else [])
+    ]
+    if t.transformation is None:
+        inner_matrix = None
+        ba = get_array_backend()
+    else:
+        inner_affine = t.transformation.compute().to(Affine)
+        inner_matrix = inner_affine.matrix
+        ba = get_array_backend(inner_matrix)
+    matrix = ba.zeros((n_out, n_in + 1))
+    acted_in = set(input_axes)
+    acted_out = set(output_axes)
+    passthrough_in = [i for i in range(n_in) if i not in acted_in]
+    passthrough_out = [o for o in range(n_out) if o not in acted_out]
+    for out_axis, in_axis in zip(passthrough_out, passthrough_in):
+        matrix[out_axis, in_axis] = 1.0
+    if inner_matrix is None:
+        for out_axis, in_axis in zip(output_axes, input_axes):
+            matrix[out_axis, in_axis] = 1.0
+    else:
+        m_in = len(input_axes)
+        for r, out_axis in enumerate(output_axes):
+            for c, in_axis in enumerate(input_axes):
+                matrix[out_axis, in_axis] = inner_matrix[r, c]
+            matrix[out_axis, n_in] = inner_matrix[r, m_in]
+    return Affine(matrix=matrix, input=t.input, output=t.output)
 
 
 @_converter

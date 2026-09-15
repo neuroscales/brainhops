@@ -8,6 +8,7 @@ demonstrations that apply an FSL and an ITK transform across an image's
 coordinate system.
 """
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,13 @@ import pytest
 
 import brainhops.datamodel  # noqa: F401  (registers the adaptor)
 from brainhops.datamodel._xform_adaptors import adapt, bridge
-from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.axes import (
+    A,
+    R,
+    S,
+    SpatialAxis,
+    TimeAxis,
+)
 from brainhops.datamodel.orientation import (
     LeftToRight,
     Orientation,
@@ -42,6 +49,7 @@ from brainhops.datamodel.transformations import (
     Permutation,
     Scaling,
     Sequence,
+    SubspaceTransformation,
     Transformation,
     Translation,
     is_identity,
@@ -154,9 +162,7 @@ def test_unit_present_on_one_side_only_raises() -> None:
     source = CoordinateSystem(
         name="mm",
         axes=[
-            SpatialAxis(
-                name="x", unit="millimeter", orientation=LeftToRight()
-            )
+            SpatialAxis(name="x", unit="millimeter", orientation=LeftToRight())
         ],
     )
     target = CoordinateSystem(
@@ -186,17 +192,13 @@ def test_world_flip_carries_no_offset() -> None:
     source = CoordinateSystem(
         name="R",
         axes=[
-            SpatialAxis(
-                name="x", unit="millimeter", orientation=LeftToRight()
-            )
+            SpatialAxis(name="x", unit="millimeter", orientation=LeftToRight())
         ],
     )
     target = CoordinateSystem(
         name="L",
         axes=[
-            SpatialAxis(
-                name="x", unit="millimeter", orientation=RightToLeft()
-            )
+            SpatialAxis(name="x", unit="millimeter", orientation=RightToLeft())
         ],
     )
     result = bridge(source, target)
@@ -409,17 +411,23 @@ def test_itk_transform_applied_to_a_nifti_image_bridges_ras_and_lps() -> None:
     result = Sequence([voxel_to_world, itk]).compute()
 
     flip = np.diag([-1.0, -1.0, 1.0, 1.0])
-    expected = _homogeneous(itk) @ flip @ np.asarray(
-        voxel_to_world.homogeneous_matrix
+    expected = (
+        _homogeneous(itk)
+        @ flip
+        @ np.asarray(voxel_to_world.homogeneous_matrix)
     )
     got = _homogeneous(result)
     np.testing.assert_allclose(got, expected)
     # The flip is load-bearing: without it the composition differs.
-    assert not np.allclose(got, _homogeneous(itk) @ np.asarray(
-        voxel_to_world.homogeneous_matrix
-    ))
+    assert not np.allclose(
+        got, _homogeneous(itk) @ np.asarray(voxel_to_world.homogeneous_matrix)
+    )
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="zarr I/O requires zarr-python 3 (Python 3.11+)",
+)
 def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     tmp_path: Path,
 ) -> None:
@@ -718,3 +726,239 @@ def test_world_ras_lps_flip_stays_a_pure_sign_flip() -> None:
     assert isinstance(result, Scaling)
     assert not isinstance(result, Translation)
     np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
+
+
+# ----------------------------------------------------------------------
+#   SUBSET-AXIS WRAPPING: A 3D TRANSFORM ACROSS A 4D (x, y, z, t) SPACE
+# ----------------------------------------------------------------------
+
+
+def _ras_time_system(name: str) -> CoordinateSystem:
+    """A 4D system with RAS spatial axes and a trailing time axis."""
+    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+
+
+def _voxel_to_ras_time(matrix: np.ndarray) -> Affine:
+    """A voxel-to-world affine over the 4D (x, y, z, t) space."""
+    return Affine(
+        matrix=matrix,
+        input=_ras_time_system("voxel"),
+        output=_ras_time_system("world"),
+    )
+
+
+def _lps_affine_3d(matrix: np.ndarray) -> Affine:
+    """A 3D affine that acts in LPS, like an ITK or ANTs transform."""
+    lps = LPSCoordinateSystem()
+    return Affine(matrix=matrix, input=lps, output=lps)
+
+
+def _embed_spatial(matrix_3x4: np.ndarray) -> np.ndarray:
+    """A 3D affine embedded into a 4D homogeneous matrix, identity on t."""
+    embedded = np.eye(5)
+    embedded[:3, :3] = matrix_3x4[:, :3]
+    embedded[:3, 4] = matrix_3x4[:, 3]
+    return embedded
+
+
+def _homogeneous_of_each(sequence: Sequence) -> np.ndarray:
+    """The full matrix a sequence applies, built element by element.
+
+    A subspace-wrapped result stays a `SubspaceTransformation` rather than
+    folding into a single affine, so the composed matrix is read by
+    reducing each element to an affine and multiplying in application
+    order.
+    """
+    matrix = None
+    for transformation in sequence:
+        element = np.asarray(
+            transformation.compute().to(Affine).homogeneous_matrix
+        )
+        matrix = element if matrix is None else element @ matrix
+    return matrix
+
+
+def test_subset_transform_is_wrapped_in_a_subspace() -> None:
+    # A 3D LPS transform meeting a 4D (x, y, z, t) boundary is lifted into
+    # the 4D space by a SubspaceTransformation over the three spatial axes.
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(np.eye(3, 4))
+    result = adapt(first, second)
+    assert isinstance(result, Sequence)
+    assert result.transformations[0] is first
+    wrapped = result.transformations[-1]
+    assert isinstance(wrapped, SubspaceTransformation)
+    np.testing.assert_array_equal(wrapped.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(wrapped.output_axes, [0, 1, 2])
+
+
+def test_subspace_wrap_is_identity_on_the_extra_axis() -> None:
+    # The wrapped transform acts on the spatial axes and leaves the time
+    # axis untouched: its full affine is the identity on the t row and
+    # column.
+    itk_matrix = np.array(
+        [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
+    )
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(itk_matrix)
+    wrapped = adapt(first, second).transformations[-1]
+    full = np.asarray(wrapped.to(Affine).homogeneous_matrix)
+    # The spatial block is the ITK affine conjugated by the RAS/LPS flip on
+    # its input side: itk @ diag(-1, -1, 1).
+    flip = np.diag([-1.0, -1.0, 1.0])
+    np.testing.assert_allclose(full[:3, :3], itk_matrix[:, :3] @ flip)
+    np.testing.assert_allclose(full[:3, 4], itk_matrix[:, 3])
+    # The time axis passes through unchanged.
+    np.testing.assert_array_equal(full[3], [0.0, 0.0, 0.0, 1.0, 0.0])
+    np.testing.assert_array_equal(full[:, 3], [0.0, 0.0, 0.0, 1.0, 0.0])
+
+
+def test_subspace_wrap_round_trips_through_inverse() -> None:
+    itk_matrix = np.array(
+        [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
+    )
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(itk_matrix)
+    wrapped = adapt(first, second).transformations[-1]
+    inverse = wrapped.inverse()
+    assert isinstance(inverse, SubspaceTransformation)
+    np.testing.assert_array_equal(inverse.input_axes, [0, 1, 2])
+    forward = np.asarray(wrapped.to(Affine).homogeneous_matrix)
+    backward = np.asarray(inverse.to(Affine).homogeneous_matrix)
+    np.testing.assert_allclose(backward @ forward, np.eye(5), atol=1e-12)
+
+
+def test_spatial_transform_across_a_4d_image_via_compute() -> None:
+    # End to end: a 3D LPS transform applied after a 4D voxel-to-RAS map.
+    # Composing the two crosses from a 4D (x, y, z, t) space into a 3D LPS
+    # transform. The adaptor lifts the transform onto the spatial axes and
+    # leaves time alone, and the composition maps the spatial coordinates
+    # by the transform while carrying the time coordinate through.
+    voxel_matrix = np.array(
+        [
+            [2.0, 0.0, 0.0, 0.0, 10.0],
+            [0.0, 3.0, 0.0, 0.0, 20.0],
+            [0.0, 0.0, 4.0, 0.0, 30.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+        ]
+    )
+    itk_matrix = np.array(
+        [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
+    )
+    first = _voxel_to_ras_time(voxel_matrix)
+    second = _lps_affine_3d(itk_matrix)
+
+    result = Sequence([first, second]).compute()
+    assert isinstance(result, Sequence)
+    wrapped = [t for t in result if isinstance(t, SubspaceTransformation)]
+    assert len(wrapped) == 1
+
+    got = _homogeneous_of_each(result)
+    flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
+    voxel_homogeneous = np.eye(5)
+    voxel_homogeneous[:4, :] = voxel_matrix
+    expected = _embed_spatial(itk_matrix) @ flip4 @ voxel_homogeneous
+    np.testing.assert_allclose(got, expected)
+
+    # Numerically: the spatial coordinates are mapped by the spatial
+    # transform, and the time coordinate is left unchanged.
+    point = np.array([1.0, 1.0, 1.0, 7.0, 1.0])
+    mapped = got @ point
+    world_time = voxel_matrix[3, :4] @ point[:4] + voxel_matrix[3, 4]
+    assert mapped[3] == pytest.approx(world_time)
+    # The flip is load-bearing: without it the spatial block differs.
+    without_flip = _embed_spatial(itk_matrix) @ voxel_homogeneous
+    assert not np.allclose(got, without_flip)
+
+
+def test_wrapped_result_round_trips_through_compute() -> None:
+    # The lifted transform composes and inverts through compute(): a
+    # sequence and its reverse cancel to the identity on the full 4D space.
+    itk_matrix = np.array(
+        [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
+    )
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(itk_matrix)
+    forward = Sequence([first, second]).compute()
+    forward_matrix = _homogeneous_of_each(forward)
+    backward_matrix = _homogeneous_of_each(forward.inverse())
+    np.testing.assert_allclose(
+        backward_matrix @ forward_matrix, np.eye(5), atol=1e-12
+    )
+
+
+def test_extra_spatial_axis_is_not_absorbed_and_raises() -> None:
+    # The extra axis on the fuller side must be a genuine pass-through. A
+    # fourth spatial axis with no counterpart is a real dimensionality
+    # mismatch, not a pass-through, so the wrapping declines and the
+    # adaptor raises rather than silently dropping the axis.
+    four_spatial = CoordinateSystem(
+        name="four-spatial",
+        axes=[R, A, S, SpatialAxis(name="extra")],
+    )
+    first = Affine(
+        matrix=np.eye(4, 5), input=four_spatial, output=four_spatial
+    )
+    second = _lps_affine_3d(np.eye(3, 4))
+    with pytest.raises(AdaptationError):
+        Sequence([first, second]).compute()
+
+
+def test_bridge_refuses_a_dimensionality_mismatch() -> None:
+    # A bridge reorders, rescales, and flips axes, and never adds or drops
+    # one, so it refuses two systems of different sizes outright.
+    with pytest.raises(AdaptationError):
+        bridge(_ras_time_system("4d"), LPSCoordinateSystem())
+
+
+def test_embedding_a_3d_transform_into_4d_is_out_of_scope() -> None:
+    # A 3D transform followed by a 4D neighbour would have to invent the
+    # extra axis, which is an embedding rather than a subspace lift. It is
+    # out of scope, and the boundary is refused.
+    first = _lps_affine_3d(np.eye(3, 4))
+    second = _voxel_to_ras_time(np.eye(4, 5))
+    with pytest.raises(AdaptationError):
+        Sequence([first, second]).compute()
+
+
+def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
+    tmp_path: Path,
+) -> None:
+    """Apply a real ITK (LPS) 3D transform after a 4D voxel-to-RAS map.
+
+    The ITK transform is read from an ITK text file, so it needs no ``itk``
+    package. It acts in LPS over three spatial axes. Composing it after a
+    4D voxel-to-RAS map lifts it onto the spatial axes of the 4D space and
+    leaves the time axis unchanged.
+    """
+    transformations = pytest.importorskip("brainhops.io.transformations")
+    itk = transformations.load(str(data_dir / "itk_affine3d.tfm"))
+
+    voxel_matrix = np.array(
+        [
+            [2.0, 0.0, 0.0, 0.0, 10.0],
+            [0.0, 2.0, 0.0, 0.0, 20.0],
+            [0.0, 0.0, 2.0, 0.0, 30.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+        ]
+    )
+    voxel_to_world = _voxel_to_ras_time(voxel_matrix)
+
+    result = Sequence([voxel_to_world, itk]).compute()
+    wrapped = [t for t in result if isinstance(t, SubspaceTransformation)]
+    assert len(wrapped) == 1
+    np.testing.assert_array_equal(wrapped[0].input_axes, [0, 1, 2])
+
+    got = _homogeneous_of_each(result)
+    itk_3d = np.asarray(itk.compute().to(Affine).homogeneous_matrix)[:3, :]
+    flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
+    voxel_homogeneous = np.eye(5)
+    voxel_homogeneous[:4, :] = voxel_matrix
+    expected = _embed_spatial(itk_3d) @ flip4 @ voxel_homogeneous
+    np.testing.assert_allclose(got, expected)
+    # Time passes through untouched: the composed t row is the voxel map's
+    # own identity on time, and the wrap adds nothing to it.
+    np.testing.assert_array_equal(got[3], [0.0, 0.0, 0.0, 1.0, 0.0])
+    # The flip is load-bearing.
+    without_flip = _embed_spatial(itk_3d) @ voxel_homogeneous
+    assert not np.allclose(got, without_flip)

@@ -40,9 +40,11 @@ from .transformations import (
     Permutation,
     Scaling,
     Sequence,
+    SubspaceTransformation,
     Transformation,
     Translation,
     _register_bridge,
+    _register_subspace_wrap,
     is_identity,
 )
 
@@ -140,9 +142,7 @@ def _unit_ratio(source: Axis, target: Axis) -> float:
     return float(source_unit.scale) / float(target_unit.scale)
 
 
-def _is_array_side(
-    system: tx.Optional[CoordinateSystem], axis: Axis
-) -> bool:
+def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     # Whether an axis indexes an array rather than measures a world
     # coordinate. Reversing an array-index axis shifts the origin by one
     # less than its extent, while reversing a world axis is a pure sign
@@ -298,12 +298,10 @@ def _match_axes(
             unmatched_target
             and len(unmatched_target) == len(unmatched_source)
             and all(
-                _fully_underspecified(target_axes[j])
-                for j in unmatched_target
+                _fully_underspecified(target_axes[j]) for j in unmatched_target
             )
             and all(
-                _fully_underspecified(source_axes[i])
-                for i in unmatched_source
+                _fully_underspecified(source_axes[i]) for i in unmatched_source
             )
         ):
             for j, i in zip(unmatched_target, unmatched_source):
@@ -329,9 +327,7 @@ def _unmatched_report(
         target.axes[j] for j, i in enumerate(match) if i is None
     ]
     unmatched_source = [
-        axis
-        for i, axis in enumerate(source.axes)
-        if i not in matched_source
+        axis for i, axis in enumerate(source.axes) if i not in matched_source
     ]
 
     def names(axes: tx.List[Axis]) -> str:
@@ -342,13 +338,9 @@ def _unmatched_report(
 
     parts = []
     if unmatched_target:
-        parts.append(
-            f"target axes with no source ({names(unmatched_target)})"
-        )
+        parts.append(f"target axes with no source ({names(unmatched_target)})")
     if unmatched_source:
-        parts.append(
-            f"source axes with no target ({names(unmatched_source)})"
-        )
+        parts.append(f"source axes with no target ({names(unmatched_source)})")
     raise AdaptationError(
         "Cannot bridge {} to {}: {}. Adaptation reorders, rescales, and "
         "flips matched axes, and does not change the number of axes.".format(
@@ -430,6 +422,18 @@ def bridge(
         return Identity(input=source, output=target)
     if source == target:
         return Identity(input=source, output=target)
+    if len(source.axes) != len(target.axes):
+        raise AdaptationError(
+            "Cannot bridge {} to {}: the two systems have different numbers "
+            "of axes. A bridge reorders, rescales, and flips matched axes "
+            "and never adds or drops one. When one transform acts on a "
+            "subset of the other's axes, such as a spatial transform meeting "
+            "a spatial-and-time image, compose the two so the smaller "
+            "transform is lifted onto the axes it acts on.".format(
+                source.name or "the source system",
+                target.name or "the target system",
+            )
+        )
 
     source_axes = list(source.axes)
     target_axes = list(target.axes)
@@ -550,6 +554,24 @@ def adapt(
     Transformation
         A sequence of `first`, the bridge, and `second`.
     """
+    source = first.output
+    target = second.input
+    if (
+        source is not None
+        and target is not None
+        and source.axes is not None
+        and target.axes is not None
+        and len(target.axes) < len(source.axes)
+    ):
+        wrapped = _subspace_wrap(
+            source, target, second, second.output, extents=extents
+        )
+        if wrapped is not None:
+            return Sequence(
+                transformations=[first, wrapped],
+                input=first.input,
+                output=wrapped.output,
+            )
     between = bridge(
         first.output,
         second.input,
@@ -568,8 +590,145 @@ def adapt(
     )
 
 
+def _subset_positions(
+    full_axes: tx.List[Axis], sub_axes: tx.List[Axis]
+) -> tx.Optional[tx.List[int]]:
+    # The position, in `full_axes`, of each axis in `sub_axes`, when
+    # `sub_axes` is a clean subset of `full_axes`. Each subset axis is
+    # matched to a fuller axis by the same kernel that builds a bridge, so
+    # a spatial axis pairs with a spatial axis and an oriented axis with
+    # its collinear counterpart. The result is `None` when a subset axis
+    # has no match, or when an unmatched fuller axis is of the same kind as
+    # an axis the subset acts on. The second case is a genuine
+    # dimensionality mismatch, such as a spatial axis with no spatial
+    # counterpart, and is left for the caller to refuse rather than
+    # absorbed as a pass-through.
+    match = _match_axes(
+        full_axes,
+        sub_axes,
+        allow_positional=False,
+        allow_underspecified_positional=False,
+    )
+    if any(i is None for i in match):
+        return None
+    positions = [int(i) for i in match]
+    acted_types = {getattr(axis, "type", None) for axis in sub_axes}
+    used = set(positions)
+    for i, axis in enumerate(full_axes):
+        if i in used:
+            continue
+        if getattr(axis, "type", None) in acted_types:
+            return None
+    return positions
+
+
+def _subspace_wrap(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+    transform: Transformation,
+    transform_output: tx.Optional[CoordinateSystem],
+    *,
+    extents: tx.Optional[Extents] = None,
+) -> tx.Optional[Transformation]:
+    """Lift a transform onto the axes it acts on inside a fuller space.
+
+    The transformation `transform` acts on the axes of `target`, which are
+    a subset of the axes of the fuller system `source`. This routine wraps
+    `transform` in a
+    [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation]
+    that acts on those axes within `source` and leaves the extra axes
+    unchanged. The dimensionality is preserved, so a spatial transform
+    meeting a spatial-and-time image acts on the spatial axes and leaves
+    time untouched.
+
+    The matched axes may still need a reordering, a rescaling, or a flip,
+    such as the sign flip between RAS and LPS. That intra-subset bridge is
+    built by [`bridge`][brainhops.datamodel._xform_adaptors.bridge] over
+    the subset and placed before `transform` inside the wrapper.
+
+    The return value is `None` when `source` and `target` are not a
+    same-dimensionality subset, so the caller can fall back to refusing a
+    genuine dimensionality mismatch.
+
+    Parameters
+    ----------
+    source : CoordinateSystem, optional
+        The fuller system that the wrapped transform reads and writes.
+    target : CoordinateSystem, optional
+        The input system of `transform`, a subset of `source`.
+    transform : Transformation
+        The transform to lift into the axis space of `source`.
+    transform_output : CoordinateSystem, optional
+        The output system of `transform`.
+    extents : sequence or mapping, optional
+        The extents needed to reverse an array-index axis within the
+        subset, passed through to
+        [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+
+    Returns
+    -------
+    Transformation or None
+        The wrapped transform, or `None` when no same-dimensionality
+        subset match exists.
+    """
+    if source is None or target is None:
+        return None
+    if source.axes is None or target.axes is None:
+        return None
+    if transform_output is None or transform_output.axes is None:
+        return None
+    full_axes = list(source.axes)
+    sub_in_axes = list(target.axes)
+    sub_out_axes = list(transform_output.axes)
+    if len(sub_in_axes) >= len(full_axes):
+        return None
+    if len(sub_out_axes) != len(sub_in_axes):
+        return None
+    positions = _subset_positions(full_axes, sub_in_axes)
+    if positions is None:
+        return None
+
+    # The wrapped transform reads the acted-on axes from the fuller space
+    # in their fuller order. The transform itself expects them in the order
+    # and frame of `target`, so a bridge over the subset carries them the
+    # rest of the way, and sits before the transform inside the wrapper.
+    sub_source = CoordinateSystem(axes=[full_axes[i] for i in positions])
+    sub_bridge = bridge(
+        sub_source,
+        target,
+        extents=extents,
+        allow_underspecified_positional=True,
+    )
+    if is_identity(sub_bridge):
+        inner: Transformation = transform
+    else:
+        inner = Sequence(
+            transformations=[sub_bridge, transform],
+            input=sub_source,
+            output=transform_output,
+        )
+
+    # The output system is the fuller system with the acted-on axes
+    # replaced by the transform's output axes, and every extra axis kept in
+    # place. The acted-on axes stay in the positions they came from.
+    out_full_axes = list(full_axes)
+    for k, position in enumerate(positions):
+        out_full_axes[position] = sub_out_axes[k]
+    axis_vector = np.asarray(positions, dtype=int)
+    return SubspaceTransformation(
+        transformation=inner,
+        input_axes=axis_vector,
+        output_axes=axis_vector,
+        input=source,
+        output=CoordinateSystem(axes=out_full_axes),
+    )
+
+
 # The sequence machinery in `transformations.py` inserts a bridge at every
 # boundary where two adjacent transforms disagree. It calls back into this
 # routine, which is registered here so the two modules need not import each
-# other at module scope.
+# other at module scope. The subspace-wrapping routine is registered the
+# same way, for the boundaries where the two systems differ in the number
+# of axes.
 _register_bridge(bridge)
+_register_subspace_wrap(_subspace_wrap)

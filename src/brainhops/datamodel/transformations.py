@@ -1057,7 +1057,17 @@ _INVERSE_WRAPPERS.update(
 class SubspaceTransformation(Transformation):
     """
     A transformation that is applied to a subset of the input and output axes.
+
+    The transformation acts on the axes named by `input_axes` and
+    `output_axes`, and leaves every other axis unchanged. The
+    dimensionality of the space is preserved. An axis that is not named
+    passes through as the identity. This lifts a transformation defined
+    over a few axes, such as a spatial transformation over `(x, y, z)`,
+    into a larger space, such as `(x, y, z, t)`, where it acts on the
+    spatial axes and leaves time untouched.
     """
+
+    parameter_names: tx.ClassVar[str] = "transformation"
 
     transformation: tx.Annotated[
         tx.Optional[Transformation], tx.Doc("The transformation to apply.")
@@ -2282,6 +2292,20 @@ def _register_bridge(func: tx.Callable[..., "Transformation"]) -> None:
     _BRIDGE = func
 
 
+# The subspace-wrapping routine also lives in `_xform_adaptors`, and
+# registers itself here. It lifts a transform that acts on a subset of a
+# boundary's axes into the full axis space, leaving the extra axes as the
+# identity, so a lower-dimensional transform meets a higher-dimensional
+# neighbour without a dimensionality change.
+_SUBSPACE_WRAP: tx.Optional[tx.Callable[..., "Transformation"]] = None
+
+
+def _register_subspace_wrap(func: tx.Callable[..., "Transformation"]) -> None:
+    """Register the routine that lifts a transform into a fuller space."""
+    global _SUBSPACE_WRAP
+    _SUBSPACE_WRAP = func
+
+
 def _adapt(
     s1: CoordinateSystem,
     s2: CoordinateSystem,
@@ -2421,6 +2445,28 @@ def _insert_bridges(
             # from.
             extents = _grid_extents(spliced[-1], at_output=True)
             extents.update(_grid_extents(nxt, at_output=False))
+            if len(source.axes) != len(target.axes):
+                # The two systems have different numbers of axes. When the
+                # next transform acts on a subset of the axes the boundary
+                # carries, it is lifted into the full axis space, leaving
+                # the extra axes as the identity. A genuine dimensionality
+                # mismatch is refused by the adaptor below.
+                wrapped = None
+                if _SUBSPACE_WRAP is not None:
+                    wrapped = _SUBSPACE_WRAP(
+                        source,
+                        target,
+                        nxt,
+                        _boundary_output(nxt),
+                        extents=extents or None,
+                    )
+                if wrapped is not None:
+                    spliced.append(wrapped)
+                    continue
+                # Not a same-dimensionality subspace. Let the adaptor raise
+                # its explicit error, rather than dropping or inventing an
+                # axis.
+                _adapt(source, target, extents or None)
             between = _adapt(source, target, extents or None)
             if not is_identity(between):
                 if isinstance(between, Sequence):
