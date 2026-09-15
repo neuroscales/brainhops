@@ -2282,18 +2282,35 @@ def _register_bridge(func: tx.Callable[..., "Transformation"]) -> None:
     _BRIDGE = func
 
 
-def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> "Transformation":
+def _adapt(
+    s1: CoordinateSystem,
+    s2: CoordinateSystem,
+    extents: tx.Optional[tx.Any] = None,
+) -> "Transformation":
     """Return the bridge that carries `s1` coordinates to `s2`.
 
     The work is done by the routine registered from `_xform_adaptors`.
     This raises [`AdaptationError`][] when no such routine is registered.
+
+    This is the implicit adaptation that composition inserts, so it enables
+    the positional fallback for axes that carry neither an orientation nor a
+    unit on either side. Those axes describe a single well-defined array
+    embedding, and pairing them by position is safe. A genuinely ambiguous
+    mismatch is still reported. When a reversed array-index axis needs the
+    number of samples along it, `extents` supplies them from a neighbouring
+    grid.
     """
     if _BRIDGE is None:
         raise AdaptationError(
             "No coordinate-system adaptor is registered. Import "
             "`brainhops.datamodel` so the adaptor is installed."
         )
-    return _BRIDGE(s1, s2)
+    return _BRIDGE(
+        s1,
+        s2,
+        extents=extents,
+        allow_underspecified_positional=True,
+    )
 
 
 def _systems_disagree(
@@ -2333,6 +2350,31 @@ def _boundary_input(t: "Transformation") -> tx.Optional[CoordinateSystem]:
     return None
 
 
+def _grid_extents(
+    t: "Transformation", at_output: bool
+) -> tx.Dict[tx.Any, int]:
+    # The number of samples along each named axis of a grid that sits at
+    # the boundary of a transform, or an empty mapping when the boundary is
+    # not a grid. A reversed array-index axis needs its extent, and a
+    # `CartesianField` next to the boundary carries it as its shape. The
+    # mapping is keyed by axis name, so it aligns whichever side of the
+    # boundary the grid describes. `at_output` reads the grid on the output
+    # side of the transform, and its clearing reads the input side.
+    if isinstance(t, CartesianField) and t.shape is not None:
+        system = t.output if at_output else t.input
+        axes = list(system.axes) if system is not None else []
+        extents: tx.Dict[tx.Any, int] = {}
+        for axis, size in zip(axes, t.shape):
+            name = getattr(axis, "name", None)
+            if name is not None:
+                extents[name] = int(size)
+        return extents
+    if isinstance(t, Sequence) and t.transformations:
+        edge = t.transformations[-1] if at_output else t.transformations[0]
+        return _grid_extents(edge, at_output)
+    return {}
+
+
 def _insert_bridges(
     transformations: tx.List["Transformation"],
 ) -> tx.List["Transformation"]:
@@ -2344,14 +2386,42 @@ def _insert_bridges(
     # Bridging runs before the sequence is flattened, because a nested
     # sequence carries its endpoint systems on the sequence and not on the
     # leaves that flattening would expose.
-    if _BRIDGE is None or len(transformations) < 2:
+    if _BRIDGE is None:
         return transformations
-    spliced: tx.List[Transformation] = [transformations[0]]
-    for nxt in transformations[1:]:
+    # A boundary can hide inside a nested sequence or behind a generic
+    # inverse, both of which the flattening later removes. So each nested
+    # sequence has its own children bridged first, keeping its endpoints,
+    # and each generic inverse is expanded to the typed inverse the
+    # flattening would produce, so the boundary is read from the system
+    # that inverse actually presents. Neither step rebuilds a leaf's
+    # endpoints, so a transform stays the same object its inverse names and
+    # the adjacent-inverse cancellation still links the two by identity.
+    prepared: tx.List[Transformation] = []
+    for t in transformations:
+        t = _normalize_inverse(t)
+        # Only a plain sequence is rebuilt with its children bridged. A
+        # specialized sequence, such as a multiscale field or a geometry,
+        # keeps its own shape and derives its elements, so its boundaries
+        # are read through it rather than rebuilt.
+        if type(t) is Sequence:
+            t = replace(
+                t, transformations=_insert_bridges(t.transformations or [])
+            )
+        prepared.append(t)
+    if len(prepared) < 2:
+        return prepared
+    spliced: tx.List[Transformation] = [prepared[0]]
+    for nxt in prepared[1:]:
         source = _boundary_output(spliced[-1])
         target = _boundary_input(nxt)
         if _systems_disagree(source, target):
-            between = _adapt(source, target)
+            # A reversed array-index axis needs the number of samples along
+            # it. A grid on either side of the boundary carries it, keyed
+            # by axis name so it aligns regardless of which side it came
+            # from.
+            extents = _grid_extents(spliced[-1], at_output=True)
+            extents.update(_grid_extents(nxt, at_output=False))
+            between = _adapt(source, target, extents or None)
             if not is_identity(between):
                 if isinstance(between, Sequence):
                     spliced.extend(between.transformations or [])

@@ -11,11 +11,15 @@ The bridge is built from the axis descriptions alone, by matching the
 axes of the two systems and reading off the reordering, the unit ratios,
 and the orientation signs the match implies. Matching compares axes in
 priority order: first their type and orientation, then their name, then
-their unit, and finally, only when explicitly permitted, their position.
+their type alone, and finally, only when explicitly permitted, their
+position. A unit is not used to match two axes. Once two axes are
+matched, the ratio between their units is read off and applied as part of
+the scaling.
 
 There are two entry points.
 [`bridge`][brainhops.datamodel._xform_adaptors.bridge] returns the bridge
-between two systems.
+between two systems. The bridge is a single primitive, a sequence of
+primitives, or the identity, and not always a sequence.
 [`adapt`][brainhops.datamodel._xform_adaptors.adapt] ingests two
 consecutive transformations and returns a sequence that contains both of
 them with the bridge inserted between them.
@@ -29,7 +33,7 @@ import typing_extensions as tx
 
 # internals
 from .axes import Axis
-from .systems import CoordinateSystem
+from .systems import ArrayCoordinateSystem, CoordinateSystem
 from .transformations import (
     AdaptationError,
     Identity,
@@ -66,15 +70,37 @@ def _orientation_line(axis: Axis) -> tx.Optional[tx.FrozenSet[str]]:
     return frozenset(poles)
 
 
+def _collinear(source: Axis, target: Axis) -> bool:
+    # Whether two axes may be matched by their orientation. Two axes that
+    # are both oriented may only be matched when they lie along the same
+    # line, because a flip aligns two axes on one line and a rotation
+    # aligns two axes on different lines. When at most one of the axes is
+    # oriented, the orientation places no constraint on the match.
+    source_line = _orientation_line(source)
+    target_line = _orientation_line(target)
+    if source_line is None or target_line is None:
+        return True
+    return source_line == target_line
+
+
 def _orientation_sign(source: Axis, target: Axis) -> int:
     # The sign that aligns two collinear axes. It is ``+1`` when the two
     # axes point the same way and ``-1`` when they point opposite ways.
-    source_orientation = getattr(source, "orientation", None)
-    target_orientation = getattr(target, "orientation", None)
-    if source_orientation is None or target_orientation is None:
+    # Two axes oriented along different lines are related by a rotation,
+    # not a flip, so no single sign aligns them and the case is refused.
+    source_line = _orientation_line(source)
+    target_line = _orientation_line(target)
+    if source_line is None or target_line is None:
         return 1
-    source_value = getattr(source_orientation, "value", None)
-    target_value = getattr(target_orientation, "value", None)
+    if source_line != target_line:
+        raise AdaptationError(
+            "Two matched axes are oriented along different anatomical "
+            "lines, so aligning them is a rotation rather than a flip. The "
+            "adaptor builds only exact flips, reorderings, and rescalings, "
+            "and cannot bridge these two systems."
+        )
+    source_value = getattr(getattr(source, "orientation", None), "value", None)
+    target_value = getattr(getattr(target, "orientation", None), "value", None)
     if source_value is None or target_value is None:
         return 1
     return 1 if source_value == target_value else -1
@@ -102,14 +128,32 @@ def _unit_ratio(source: Axis, target: Axis) -> float:
             "Two matched axes are measured in units of different kinds, "
             "so no conversion factor exists between them."
         )
+    # The ratio between two SI-prefixed units is a power of ten, so it is
+    # computed from the difference of the two base-ten scale exponents. A
+    # millimetre to a micrometre is then exactly 1000, and a ratio and its
+    # reciprocal multiply back to exactly one, which a division of the two
+    # scales does not guarantee.
+    source_log10 = getattr(source_unit, "log10_scale", None)
+    target_log10 = getattr(target_unit, "log10_scale", None)
+    if source_log10 is not None and target_log10 is not None:
+        return 10.0 ** (source_log10 - target_log10)
     return float(source_unit.scale) / float(target_unit.scale)
 
 
-def _is_array_axis(axis: Axis) -> bool:
+def _is_array_side(
+    system: tx.Optional[CoordinateSystem], axis: Axis
+) -> bool:
     # Whether an axis indexes an array rather than measures a world
-    # coordinate. An array-index axis carries no unit, so its samples are
-    # plain indices. Reversing such an axis shifts the origin, while
-    # reversing a world axis does not.
+    # coordinate. Reversing an array-index axis shifts the origin by one
+    # less than its extent, while reversing a world axis is a pure sign
+    # flip. Three signals mark an array-index axis. Its system is an array
+    # coordinate system, such as a voxel grid, even one whose axes are
+    # named and oriented and carry a length unit. Or the axis is discrete.
+    # Or the axis carries no unit, so its samples are plain indices.
+    if isinstance(system, ArrayCoordinateSystem):
+        return True
+    if getattr(axis, "discrete", None):
+        return True
     return getattr(axis, "unit", None) is None
 
 
@@ -129,16 +173,30 @@ def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
     if value is None:
         raise AdaptationError(
             "A reversed array-index axis shifts the origin by one less "
-            "than its extent, so the number of samples along it is "
-            "needed. Pass the extent of the axis to adapt these systems."
+            "than its extent, so the number of samples along it is needed "
+            "to bridge these systems. Compose these transformations next "
+            "to a grid that carries the axis sizes, or bridge the two "
+            "systems explicitly and give the sizes, with "
+            "adapt(first, second, extents=...) or "
+            "bridge(source, target, extents=...)."
         )
     return int(value)
+
+
+def _fully_underspecified(axis: Axis) -> bool:
+    # Whether an axis carries nothing that could match it to another axis
+    # beyond its type. Such an axis has no orientation and no unit, so a
+    # pairing with another axis like it rests on position alone.
+    if _orientation_line(axis) is not None:
+        return False
+    return getattr(axis, "unit", None) is None
 
 
 def _match_axes(
     source_axes: tx.List[Axis],
     target_axes: tx.List[Axis],
     allow_positional: bool,
+    allow_underspecified_positional: bool = False,
 ) -> tx.List[int]:
     # Establish, for each target axis, the source axis that corresponds to
     # it. The result is a list `match` where `match[j]` is the index of the
@@ -176,35 +234,43 @@ def _match_axes(
             if len(named) == 1:
                 take(j, named[0])
 
-    # Second tier: axes that share a name.
+    # Second tier: axes that share a name. Two axes that are oriented along
+    # different lines are never paired, because a shared name cannot align
+    # a rotation.
     for j, target in enumerate(target_axes):
         if match[j] is not None or target.name is None:
             continue
         candidates = [
             i
             for i, source in enumerate(source_axes)
-            if not used[i] and source.name == target.name
+            if not used[i]
+            and source.name == target.name
+            and _collinear(source, target)
         ]
         if len(candidates) == 1:
             take(j, candidates[0])
 
     # Third tier: axes of the same type, when only one such axis remains on
-    # each side, so the pairing is unambiguous.
+    # each side, so the pairing is unambiguous. Two axes oriented along
+    # different lines are again not paired.
     for j, target in enumerate(target_axes):
         if match[j] is not None or target.type is None:
             continue
         candidates = [
             i
             for i, source in enumerate(source_axes)
-            if not used[i] and source.type == target.type
+            if not used[i]
+            and source.type == target.type
+            and _collinear(source, target)
         ]
         if len(candidates) == 1:
             take(j, candidates[0])
 
-    # Last tier: position, used only when the two systems have the same
-    # number of axes and the caller permitted it. A positional pairing can
-    # mask a genuine mismatch, so it warns.
+    # Last tier: position. A positional pairing can mask a genuine
+    # mismatch, so it warns and is used only under one of two conditions.
     if allow_positional and n_source == n_target:
+        # The caller permitted a positional pairing outright. Any axis
+        # still unmatched is paired with the source axis in its position.
         paired = False
         for j in range(n_target):
             if match[j] is None and not used[j]:
@@ -216,6 +282,37 @@ def _match_axes(
                 "correspondence was found between them. Check that the two "
                 "coordinate systems describe the same axes in the same "
                 "order.",
+                stacklevel=2,
+            )
+    elif allow_underspecified_positional:
+        # An implicit bridge pairs by position only when every axis still
+        # unmatched, on both sides, carries neither an orientation nor a
+        # unit, and the two sides have the same number of them. This is the
+        # single well-defined embedding space of unlabelled array axes. A
+        # genuinely ambiguous mismatch, such as one oriented axis against
+        # an unoriented one, or a unit on one side only, is left unmatched
+        # and reported.
+        unmatched_target = [j for j in range(n_target) if match[j] is None]
+        unmatched_source = [i for i in range(n_source) if not used[i]]
+        if (
+            unmatched_target
+            and len(unmatched_target) == len(unmatched_source)
+            and all(
+                _fully_underspecified(target_axes[j])
+                for j in unmatched_target
+            )
+            and all(
+                _fully_underspecified(source_axes[i])
+                for i in unmatched_source
+            )
+        ):
+            for j, i in zip(unmatched_target, unmatched_source):
+                take(j, i)
+            warnings.warn(
+                "Some axes were paired by position, because they carry no "
+                "orientation and no unit and nothing else distinguishes "
+                "them. Check that the two coordinate systems describe the "
+                "same axes in the same order.",
                 stacklevel=2,
             )
 
@@ -268,6 +365,7 @@ def bridge(
     *,
     extents: tx.Optional[Extents] = None,
     allow_positional: bool = False,
+    allow_underspecified_positional: bool = False,
 ) -> Transformation:
     """Return the transformation that carries `source` coordinates to `target`.
 
@@ -279,8 +377,9 @@ def bridge(
     inverse is the bridge from `target` back to `source`.
 
     The axes of the two systems are matched by type and orientation, then
-    by name, then by unit, and finally, only when `allow_positional` is
-    true, by position. From the match the bridge derives a
+    by name, then by type alone, and finally, only when `allow_positional`
+    is true, by position. A unit is not used to match two axes. From the
+    match the bridge derives a
     [`Permutation`][brainhops.datamodel.transformations.Permutation] that
     reorders the axes, a
     [`Scaling`][brainhops.datamodel.transformations.Scaling] that applies
@@ -308,6 +407,13 @@ def bridge(
     allow_positional : bool, default False
         Whether to pair axes by position when no stronger correspondence
         is found. A positional pairing warns.
+    allow_underspecified_positional : bool, default False
+        Whether to pair axes by position when every axis that remains
+        unmatched, on both sides, carries neither an orientation nor a
+        unit, and the two sides have the same number of them. A pairing
+        made this way warns. A genuinely ambiguous mismatch, such as an
+        oriented axis against an unoriented one, is left unmatched and
+        reported.
 
     Returns
     -------
@@ -327,7 +433,12 @@ def bridge(
 
     source_axes = list(source.axes)
     target_axes = list(target.axes)
-    match = _match_axes(source_axes, target_axes, allow_positional)
+    match = _match_axes(
+        source_axes,
+        target_axes,
+        allow_positional,
+        allow_underspecified_positional,
+    )
     if any(i is None for i in match):
         _unmatched_report(source, target, match)
 
@@ -341,15 +452,21 @@ def bridge(
         scales.append(sign * ratio)
         offset = 0.0
         if sign == -1 and (
-            _is_array_axis(source_axis) or _is_array_axis(target_axis)
+            _is_array_side(source, source_axis)
+            or _is_array_side(target, target_axis)
         ):
             offset = float(_extent(extents, j, target_axis) - 1)
         translations.append(offset)
 
     # Build the intermediate systems so each primitive names its own
-    # endpoints and the whole bridge runs from `source` to `target`.
+    # endpoints and the whole bridge runs from `source` to `target`. Only
+    # the last primitive lands on `target`. A permutation lands on the
+    # source axes reordered into the target order, and a scaling that a
+    # shift follows lands on the target axes before the origin shift.
     permuted_axes = [source_axes[i] for i in permutation]
     permuted_system = CoordinateSystem(axes=permuted_axes)
+    has_scale = any(scale != 1 for scale in scales)
+    has_offset = any(offset != 0 for offset in translations)
 
     elements: tx.List[Transformation] = []
     current = source
@@ -363,16 +480,19 @@ def bridge(
             )
         )
         current = permuted_system
-    if any(scale != 1 for scale in scales):
+    if has_scale:
+        scaled_system = (
+            CoordinateSystem(axes=target_axes) if has_offset else target
+        )
         elements.append(
             Scaling(
                 scale=np.asarray(scales, dtype=float),
                 input=current,
-                output=target,
+                output=scaled_system,
             )
         )
-        current = target
-    if any(offset != 0 for offset in translations):
+        current = scaled_system
+    if has_offset:
         elements.append(
             Translation(
                 translation=np.asarray(translations, dtype=float),

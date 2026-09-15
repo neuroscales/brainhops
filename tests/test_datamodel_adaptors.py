@@ -26,19 +26,24 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     CRASCoordinateSystem,
     CVoxelCoordinateSystem,
+    FLPSCoordinateSystem,
     FRASCoordinateSystem,
     FVoxelCoordinateSystem,
     LPSCoordinateSystem,
     RASCoordinateSystem,
+    VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
     AdaptationError,
     Affine,
+    CartesianField,
     Identity,
+    Inverse,
     Permutation,
     Scaling,
     Sequence,
     Transformation,
+    Translation,
     is_identity,
 )
 
@@ -462,3 +467,254 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     np.testing.assert_allclose(got, expected)
     without_flip = _homogeneous(fsl) @ _homogeneous(voxel_to_world)
     assert not np.allclose(got, without_flip)
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: BRIDGING PAST NESTING AND BARE INVERSES (finding 1)
+# ----------------------------------------------------------------------
+
+
+def _ras_affine() -> Affine:
+    return Affine(
+        matrix=np.eye(3, 4),
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+
+
+def _lps_affine() -> Affine:
+    return Affine(
+        matrix=np.eye(3, 4),
+        input=LPSCoordinateSystem(),
+        output=LPSCoordinateSystem(),
+    )
+
+
+def test_singly_nested_sequence_inserts_the_flip_bridge() -> None:
+    # A mismatch that sits inside a nested sequence is bridged just as it
+    # would be at the top level. Without recursing into the nesting, the
+    # RAS/LPS boundary would compose with no flip.
+    a, b = _ras_affine(), _lps_affine()
+    flat = Sequence([a, b]).compute()
+    nested = Sequence([Sequence([a, b])]).compute()
+    np.testing.assert_allclose(_homogeneous(nested), _homogeneous(flat))
+    np.testing.assert_array_equal(
+        np.diag(_homogeneous(nested)), [-1, -1, 1, 1]
+    )
+
+
+def test_nested_sequence_beside_a_sibling_inserts_the_flip_bridge() -> None:
+    a, b = _ras_affine(), _lps_affine()
+    c = _lps_affine()
+    flat = Sequence([a, b]).compute()
+    nested = Sequence([Sequence([a, b]), c]).compute()
+    # The A -> B boundary inside the nested sequence still gets its flip.
+    inner_flip = _homogeneous(c) @ _homogeneous(flat)
+    np.testing.assert_allclose(_homogeneous(nested), inner_flip)
+
+
+def test_bare_inverse_boundary_inserts_the_flip_bridge() -> None:
+    # A boundary hidden behind a generic Inverse(forward=B) is bridged
+    # against the system the inverse actually presents. Inverting an
+    # LPS -> LPS affine presents LPS at the boundary, so an RAS output
+    # meeting it needs the flip.
+    a = _ras_affine()
+    b = _lps_affine()
+    result = Sequence([a, Inverse(forward=b)]).compute()
+    np.testing.assert_array_equal(
+        np.diag(_homogeneous(result)), [-1, -1, 1, 1]
+    )
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: IMPLICIT POSITIONAL FALLBACK FOR ARRAY AXES (finding 2)
+# ----------------------------------------------------------------------
+
+
+def _xyz_index_system() -> CoordinateSystem:
+    return CoordinateSystem(
+        name="xyz",
+        axes=[
+            SpatialAxis(name="x", unit=None),
+            SpatialAxis(name="y", unit=None),
+            SpatialAxis(name="z", unit=None),
+        ],
+    )
+
+
+def test_compute_pairs_underspecified_voxel_axes_by_position_and_warns() -> (
+    None
+):
+    # dim0/dim1/dim2 and x/y/z are unoriented and unitless, so compute()
+    # pairs them by position and warns, rather than raising.
+    first = Affine(
+        matrix=np.eye(3, 4),
+        input=VoxelCoordinateSystem(),
+        output=VoxelCoordinateSystem(),
+    )
+    second = Affine(
+        matrix=np.eye(3, 4),
+        input=_xyz_index_system(),
+        output=_xyz_index_system(),
+    )
+    with pytest.warns(UserWarning):
+        result = Sequence([first, second]).compute()
+    np.testing.assert_allclose(_homogeneous(result), np.eye(4))
+
+
+def test_explicit_bridge_does_not_fall_back_to_position() -> None:
+    # The explicit entry point keeps error-by-default. The implicit
+    # fallback is reached only through compute().
+    with pytest.raises(AdaptationError):
+        bridge(VoxelCoordinateSystem(), _xyz_index_system())
+
+
+def test_oriented_against_unoriented_is_not_paired_by_position() -> None:
+    # When two axes of the same type remain on each side, so the pairing is
+    # no longer unambiguous, an oriented axis and an unoriented one are a
+    # genuine mismatch. The implicit fallback declines and it is reported,
+    # rather than pairing them by position.
+    oriented = CoordinateSystem(
+        name="oriented",
+        axes=[
+            SpatialAxis(name="a", unit=None, orientation=LeftToRight()),
+            SpatialAxis(name="b", unit=None),
+        ],
+    )
+    plain = CoordinateSystem(
+        name="plain",
+        axes=[
+            SpatialAxis(name="c", unit=None),
+            SpatialAxis(name="d", unit=None),
+        ],
+    )
+    first = Affine(matrix=np.eye(2, 3), input=oriented, output=oriented)
+    second = Affine(matrix=np.eye(2, 3), input=plain, output=plain)
+    with pytest.raises(AdaptationError):
+        Sequence([first, second]).compute()
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: ARRAY FLIP INSIDE compute() VIA GRID EXTENTS (finding 3)
+# ----------------------------------------------------------------------
+
+
+def _oriented_named_index_system(
+    name: str, orientation: Orientation
+) -> CoordinateSystem:
+    return CoordinateSystem(
+        name=name,
+        axes=[SpatialAxis(name="i", unit=None, orientation=orientation)],
+    )
+
+
+def test_array_flip_in_a_sequence_uses_an_adjacent_grid_extent() -> None:
+    # A reversed array-index axis needs its extent. An interior grid
+    # carries it as its shape, and compute() threads it into the bridge.
+    lr = _oriented_named_index_system("LR", LeftToRight())
+    rl = _oriented_named_index_system("RL", RightToLeft())
+    n = 10
+    before = Affine(matrix=np.eye(1, 2), input=lr, output=lr)
+    grid = CartesianField(shape=(n,), input=lr, output=lr)
+    after = Affine(matrix=np.eye(1, 2), input=rl, output=rl)
+    result = Sequence([before, grid, after]).compute()
+    matrix = np.asarray(result.to(Affine).homogeneous_matrix)
+    np.testing.assert_array_equal(matrix, [[-1.0, n - 1], [0.0, 1.0]])
+
+
+def test_array_flip_without_an_extent_source_raises_actionably() -> None:
+    # With no grid to supply the extent, the error tells the caller to
+    # bridge explicitly with extents, from where the caller actually is.
+    lr = _oriented_named_index_system("LR", LeftToRight())
+    rl = _oriented_named_index_system("RL", RightToLeft())
+    before = Affine(matrix=np.eye(1, 2), input=lr, output=lr)
+    after = Affine(matrix=np.eye(1, 2), input=rl, output=rl)
+    with pytest.raises(AdaptationError) as excinfo:
+        Sequence([before, after]).compute()
+    message = str(excinfo.value)
+    assert "extents=" in message
+    assert "adapt(" in message or "bridge(" in message
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: NON-COLLINEAR ORIENTED AXES BY NAME (finding 4)
+# ----------------------------------------------------------------------
+
+
+def test_non_collinear_axes_matched_by_name_are_rejected() -> None:
+    # x pointing left-to-right and x pointing anterior-to-posterior lie on
+    # different anatomical lines, so aligning them is a rotation, not a
+    # flip. The shared name must not force a spurious sign flip.
+    source = CoordinateSystem(
+        name="lr",
+        axes=[SpatialAxis(name="x", orientation=LeftToRight())],
+    )
+    target = CoordinateSystem(
+        name="ap",
+        axes=[SpatialAxis(name="x", orientation=PosteriorToAnterior())],
+    )
+    with pytest.raises(AdaptationError):
+        bridge(source, target)
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: EXACT UNIT RATIOS (finding 5)
+# ----------------------------------------------------------------------
+
+
+def test_unit_ratio_round_trip_is_exact() -> None:
+    # A ratio and its reciprocal multiply back to exactly one, which a
+    # division of the two scales does not guarantee (mm / um is
+    # 1000.0000000000001).
+    def _system(unit: str) -> CoordinateSystem:
+        return CoordinateSystem(
+            name=unit, axes=[SpatialAxis(name="x", unit=unit)]
+        )
+
+    pairs = [
+        ("millimeter", "micrometer"),
+        ("millimeter", "nanometer"),
+        ("micrometer", "nanometer"),
+        ("centimeter", "millimeter"),
+        ("meter", "millimeter"),
+    ]
+    for a, b in pairs:
+        forward = bridge(_system(a), _system(b))
+        backward = bridge(_system(b), _system(a))
+        product = float(forward.scale[0]) * float(backward.scale[0])
+        assert product == 1.0
+    # mm -> um is exactly a thousand.
+    mm_to_um = bridge(_system("millimeter"), _system("micrometer"))
+    assert float(mm_to_um.scale[0]) == 1000.0
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: NAMED VOXEL SYSTEMS CLASSIFY AS ARRAY-INDEX (finding 6)
+# ----------------------------------------------------------------------
+
+
+def test_named_ras_lps_voxel_systems_are_array_index() -> None:
+    # fRAS and fLPS are voxel grids, even though their axes carry a
+    # millimetre unit and an orientation. A flip between them is an
+    # array-index flip, so it carries the origin offset and needs the
+    # extent.
+    with pytest.raises(AdaptationError):
+        bridge(FRASCoordinateSystem(), FLPSCoordinateSystem())
+    result = bridge(
+        FRASCoordinateSystem(),
+        FLPSCoordinateSystem(),
+        extents={"x": 4, "y": 5, "z": 6},
+    )
+    matrix = np.asarray(result.compute().to(Affine).homogeneous_matrix)
+    # x and y are reversed (offsets 3 and 4); z is unchanged.
+    np.testing.assert_array_equal(np.diag(matrix), [-1.0, -1.0, 1.0, 1.0])
+    np.testing.assert_array_equal(matrix[:3, 3], [3.0, 4.0, 0.0])
+
+
+def test_world_ras_lps_flip_stays_a_pure_sign_flip() -> None:
+    # Plain RAS and LPS are world systems, so a flip between them carries
+    # no offset even with an extent available.
+    result = bridge(RASCoordinateSystem(), LPSCoordinateSystem())
+    assert isinstance(result, Scaling)
+    assert not isinstance(result, Translation)
+    np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
