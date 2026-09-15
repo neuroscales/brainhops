@@ -1192,6 +1192,17 @@ class Sequence(MutableSequence, Transformation):
         2. the composition of all transformations in the sequence, starting
            from the first non-affine-like transform in the sequence.
 
+        A sequence may contain a stored field that no sampling domain
+        precedes. Computing that sequence folds the rest of the sequence
+        into the field and returns a field, rather than sampling the field
+        on a grid. The returned field is exact within the field of view of
+        the stored field. Outside that field of view the result is an
+        approximation, because the boundary condition extrapolates the
+        coordinates that fall beyond the grid. A sequence that instead
+        begins with a sampling domain evaluates the field on that domain,
+        and its result is exact everywhere. Reslicing an image and
+        [`Points.compute`][] both begin with such a domain.
+
         Parameters
         ----------
         mode : [list of] str, optional
