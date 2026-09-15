@@ -353,16 +353,17 @@ class CoordinatesField(Transformation):
         cls = type(self)
         if self.field is None:
             return cls(input=self.output, output=self.input)
-        raise NotImplementedError
-        # TODO:
-        # If the input and output systems are the same, we can use the
-        # displacement field's inverse (disp = coord - meshgrid).
-        # Otherwise, I am not sure we can easily compute an inverse,
-        # since it'll depend on the "shape" (and "orientation") of
-        # the output space. However, we could introduced a delayed
-        # `InverseCoordinatesField` class, that computes the inverse
-        # on demand during interpolation (as the output shape will then
-        # be known).
+        # A coordinate field has no cheap closed-form inverse, so the
+        # inversion is deferred to a lazy wrapper that keeps this field as
+        # its operand and carries `order`, `bound` and `coeff` across.
+        return _LazyInverseCoordinatesField(
+            operand=self,
+            order=self.order,
+            bound=self.bound,
+            coeff=self.coeff,
+            input=self.output,
+            output=self.input,
+        )
 
 
 class CartesianField(CoordinatesField):
@@ -458,8 +459,15 @@ class DisplacementField(Transformation):
         cls = type(self)
         if self.field is None:
             return cls(input=self.output, output=self.input)
-        return cls(
-            field=inverse_disp(self.field),
+        # Displacement field inversion is expensive and approximate, so
+        # the inversion is deferred to a lazy wrapper. The wrapper keeps
+        # this field as its operand and carries `order`, `bound` and
+        # `coeff` across, none of which the eager inversion preserved.
+        return _LazyInverseDisplacementField(
+            operand=self,
+            order=self.order,
+            bound=self.bound,
+            coeff=self.coeff,
             input=self.output,
             output=self.input,
         )
@@ -755,6 +763,86 @@ class Inverse(Transformation):
         if self.transformation is not None:
             return self.transformation.input
         return None
+
+
+# ----------------------------------------------------------------------
+#    LAZY INVERSE
+# ----------------------------------------------------------------------
+
+
+class _LazyInverse:
+    """
+    Mixin for a lazily inverted transformation.
+
+    A lazy inverse wraps the transformation it inverts as `operand` and
+    remains an instance of the operand's own type, so the compose engine,
+    the kind checks and attribute access all treat it transparently. The
+    concrete inverse is materialized only when the wrapped parameter is
+    read, and never while the wrapper is being cancelled in a sequence.
+    """
+
+    def inverse(self) -> Transformation:
+        # Inverting a lazy inverse hands back the original operand, so a
+        # double inverse cancels without materializing anything.
+        return self.operand
+
+
+class _LazyInverseDisplacementField(_LazyInverse, DisplacementField):
+    """The inverse of a [`DisplacementField`][], materialized on demand."""
+
+    operand: tx.Annotated[
+        tx.Optional[DisplacementField],
+        tx.Doc("The displacement field whose inverse is represented."),
+    ] = None
+
+    # `field` is computed on demand from `operand`, so it is not a stored,
+    # constructor-taken field here. Declaring it a `ClassVar` overrides the
+    # inherited init-field and keeps `field` out of `__init__`, `fields()`
+    # and `replace()`, while the property below serves reads.
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+
+    @property
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        if getattr(self, "_field", None) is None:
+            operand = self.operand
+            if operand is None or operand.field is None:
+                return None
+            if operand.coeff:
+                raise NotImplementedError(
+                    "The inverse of a coefficient displacement field is "
+                    "not materialized, because inverting the coefficients "
+                    "would approximate the field. Convert it to a value "
+                    "field (coeff=False) before inverting, or keep the "
+                    "inverse lazy so that it cancels in a sequence."
+                )
+            self._field = inverse_disp(operand.field)
+        return self._field
+
+
+class _LazyInverseCoordinatesField(_LazyInverse, CoordinatesField):
+    """The inverse of a [`CoordinatesField`][], materialized on demand."""
+
+    operand: tx.Annotated[
+        tx.Optional[CoordinatesField],
+        tx.Doc("The coordinate field whose inverse is represented."),
+    ] = None
+
+    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+
+    @property
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        operand = self.operand
+        if operand is None or operand.field is None:
+            return None
+        # A coordinate field has no cheap closed-form inverse. The lazy
+        # wrapper still carries `order`, `bound` and `coeff` and cancels
+        # against the original field in a sequence, but a forced
+        # materialization is left unimplemented rather than approximated.
+        raise NotImplementedError(
+            "The inverse of a coordinate field is not materialized. Keep "
+            "the inverse lazy so that it cancels in a sequence, or compose "
+            "it away, rather than reading its field directly."
+        )
 
 
 class SubspaceTransformation(Transformation):
@@ -1432,6 +1520,53 @@ def _is_flat(self: Sequence) -> bool:
     return all(not isinstance(t, Sequence) for t in self.transformations)
 
 
+def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
+    # Flatten nested sequences into a single list, without touching the
+    # endpoints of any transform (unlike `_flatten`, which may rebuild the
+    # first and last transform to propagate coordinate systems, and in
+    # doing so would read a lazy field).
+    flattened = []
+    for t in transformations or []:
+        if isinstance(t, Sequence):
+            flattened.extend(_unnest(t.transformations))
+        else:
+            flattened.append(t)
+    return flattened
+
+
+def _cancels(first: Transformation, second: Transformation) -> bool:
+    # `first` is applied before `second`. The two cancel when `second` is
+    # the inverse of `first`, or `first` is the inverse of `second`. A lazy
+    # inverse names the transform it undoes as its `operand`, so the test
+    # is a plain identity check that materializes neither field.
+    if isinstance(second, _LazyInverse) and second.operand is first:
+        return True
+    if isinstance(first, _LazyInverse) and first.operand is second:
+        return True
+    return False
+
+
+def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
+    # Remove adjacent transform/inverse pairs before any numeric inversion
+    # or composition. A transform placed next to its own lazy inverse
+    # annihilates it, and each removal can expose a new adjacent pair, so
+    # the scan keeps a stack and cancels the top of the stack against the
+    # next transform.
+    stack = []
+    cancelled = False
+    for t in _unnest(seq.transformations):
+        if stack and _cancels(stack[-1], t):
+            stack.pop()
+            cancelled = True
+        else:
+            stack.append(t)
+    if not cancelled:
+        return seq
+    if not stack:
+        return Identity(input=seq.input, output=seq.output)
+    return replace(seq, transformations=stack)
+
+
 _ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
 
 
@@ -1565,6 +1700,15 @@ def _compute_sequence(
     #   first search fashion. This means if there are translations that are
     #   next to each other in the sequence it will combine the translations
     #   before combining any of the affines.
+
+    # --- Cancel adjacent transform/inverse pairs before any numeric work.
+    # > Only at the top level, and before flattening, so that a transform
+    # > annihilates its own inverse without materializing any lazy field.
+    if memo is None:
+        cancelled = _cancel_adjacent_inverses(seq)
+        if not isinstance(cancelled, Sequence):
+            return cancelled
+        seq = cancelled
 
     # --- Flatten sequence
     if not _is_flat(seq):
