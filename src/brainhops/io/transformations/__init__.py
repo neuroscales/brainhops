@@ -35,3 +35,10 @@ try:
     __all__ += ["spm"]
 except ImportError:  # nibabel is optional
     pass
+
+try:
+    from . import fsl
+
+    __all__ += ["fsl"]
+except ImportError:  # nibabel is optional
+    pass

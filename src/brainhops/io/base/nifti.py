@@ -95,6 +95,14 @@ caller wants. The intent code can, and is what lets sniffers score
 themselves instead of relying on an arbitrary precedence between kinds.
 """
 
+_NIFTI_FSL_INTENTS = frozenset({2006, 2007, 2008, 2009})
+"""FSL-specific field intent codes, decoded by the FSL readers.
+
+A file with one of these codes is left to the FSL readers rather than
+claimed by the generic field reader, which does not decode FSL's storage
+conventions.
+"""
+
 _NIFTI_INTENT_NONE = 0
 """Intent code of a plain image: no specialized interpretation."""
 
