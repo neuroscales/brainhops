@@ -28,7 +28,7 @@ from brainhops._core.typing import HiddenConst
 
 # locals
 from .base import DataModelBase
-from .enums import OrientationType
+from .enums import OrientationType, AnatomicalOrientationValue
 
 
 class Orientation(DataModelBase, doc=True):
@@ -45,36 +45,62 @@ class Orientation(DataModelBase, doc=True):
 
 
 class AnatomicalOrientation(Orientation):
+    """Describes the anatomical orientation of a spatial axis."""
+    
     type: HiddenConst[OrientationType] = OrientationType.anatomical
+    value: tx.Optional[AnatomicalOrientationValue] = None
 
 
 class LeftToRight(AnatomicalOrientation):
-    value: HiddenConst[str] = "left-to-right"
+    """Left-to-right orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
-    value: HiddenConst[str] = "right-to-left"
+    """Right-to-left orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
-    value: HiddenConst[str] = "anterior-to-posterior"
+    """Anterior-to-posterior orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
-    value: HiddenConst[str] = "posterior-to-anterior"
+    """Posterior-to-anterior orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
-    value: HiddenConst[str] = "inferior-to-superior"
+    """Inferior-to-superior orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
-    value: HiddenConst[str] = "superior-to-inferior"
+    """Superior-to-inferior orientation type."""
+    
+    value: HiddenConst[AnatomicalOrientationValue] = "superior-to-inferior"
 
 
 R = leftToRight = LeftToRight()
+"""Singleton left-to-right orientation."""
+
 L = rightToLeft = RightToLeft()
+"""Singleton right-to-left orientation."""
+
 A = posteriorToAnterior = PosteriorToAnterior()
+"""Singleton posterior-to-anterior orientation."""
+
 P = anteriorToPosterior = AnteriorToPosterior()
+"""Singleton anterior-to-posterior orientation."""
+
 I = superiorToInferior = SuperiorToInferior()
+"""Singleton superior-to-inferior orientation."""
+
 S = inferiorToSuperior = InferiorToSuperior()
+"""Singleton inferior-to-superior orientation."""
