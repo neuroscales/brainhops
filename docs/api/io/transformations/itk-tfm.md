@@ -1,3 +1,1 @@
-# itk.tfm
-
-::: brainhops.io.transformations.itk.tfm
+# ::: brainhops.io.transformations.itk.tfm
