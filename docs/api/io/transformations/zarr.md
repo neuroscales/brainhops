@@ -1,3 +1,1 @@
-# zarr
-
-::: brainhops.io.transformations.zarr
+# ::: brainhops.io.transformations.zarr
