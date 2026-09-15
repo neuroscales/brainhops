@@ -17,11 +17,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import (
-    Affine,
-    Transformation,
-    _affine_matrix,
-)
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
@@ -33,10 +29,10 @@ from brainhops.io.images.zarr._ome import (
     multiscale_axes,
     read_multiscale,
     resolve_write_version,
-    scale_translation_from_affine,
     write_multiscale,
 )
 from brainhops.io.images.zarr._store import ZarrParser
+from brainhops.io.transformations.zarr import _map
 
 
 class _ZarrLevel(SingleScaleImage):
@@ -199,39 +195,34 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         per_level_chunks = _resolve_chunks(chunks, len(images))
 
         backend = get_array_backend()
-        levels = []  # type: tx.List[tx.Tuple[str, tx.List[float], tx.List[float]]]
+        levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
+        rich = False
         for index, image in enumerate(images):
             data = image.data
             if data is None:
                 raise WriterError(
                     f"Level {index} of this multiscale image has no data."
                 )
-            matrix = _affine_matrix(self._level_transform(image))
-            if matrix is None:
-                raise WriterError(
-                    f"Level {index} of this image is placed by a "
-                    "transformation that is not an affine, so it cannot be "
-                    "written as OME-Zarr metadata."
+            try:
+                entry = _map.to_ome(
+                    self._level_transform(image), sperm, len(data.shape)
                 )
-            scale, translation = scale_translation_from_affine(
-                Affine(matrix=matrix), len(data.shape)
-            )
+            except _map.OmeMappingError as error:
+                raise WriterError(
+                    f"Level {index} of this image cannot be written as "
+                    f"OME-Zarr metadata. {error}"
+                ) from error
+            rich = rich or _map.needs_rich_version(entry)
             stored = backend.transpose(data, sperm)
             options = dict(kwargs)
             level_chunks = per_level_chunks[index]
             if level_chunks is not None:
                 options["chunks"] = tuple(level_chunks[p] for p in sperm)
             node.create_array(str(index), data=stored, **options)
-            levels.append(
-                (
-                    str(index),
-                    _axisorder.permute(list(scale), sperm),
-                    _axisorder.permute(list(translation), sperm),
-                )
-            )
+            levels.append((str(index), entry))
 
         resolved = resolve_write_version(
-            version, getattr(self, "_source_version", None)
+            version, getattr(self, "_source_version", None), rich
         )
         write_multiscale(node, storage_axes, levels, None, resolved)
 

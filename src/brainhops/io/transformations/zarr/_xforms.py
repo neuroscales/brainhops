@@ -32,6 +32,7 @@ from brainhops.datamodel.transformations import (
     _affine_matrix,
     is_identity,
 )
+from brainhops.io.transformations.zarr import _node
 
 
 class OmeFieldError(ValueError):
@@ -145,6 +146,73 @@ class OmeZarrField(MultiscaleField):
         """
         return self.ome
 
+    @classmethod
+    def from_node(cls, node: tx.Any, **kwargs) -> "OmeZarrField":
+        """Read a coordinate or displacement field from an OME-Zarr node.
+
+        `node` is an opened abczarr node whose own ``ome`` metadata
+        describes the field. The field's typed axes name the axis that holds
+        the vector components, the resolution levels are read from the
+        datasets the metadata names, and the placement of each level is
+        mapped from the level's coordinate transformation. The arrays and
+        the metadata are kept exactly as read, so a field that is read and
+        written again re-emits its OME metadata unchanged.
+
+        A node that carries no OME field metadata, or metadata that names no
+        datasets, is refused with an
+        [`OmeFieldError`][brainhops.io.transformations.zarr.OmeFieldError].
+        """
+        ome = getattr(node, "ome", None)
+        if ome is None:
+            raise OmeFieldError(
+                "This node carries no OME metadata, so no field can be read "
+                "from it."
+            )
+        try:
+            normalized = ome.to_version("0.6rc0")
+        except Exception as error:
+            raise OmeFieldError(
+                "This node's OME metadata could not be read as a field. "
+                + str(error)
+            ) from error
+        multiscales = getattr(normalized, "multiscales", None) or []
+        datasets = list(multiscales[0].datasets) if multiscales else []
+        if not datasets:
+            raise OmeFieldError(
+                "This node's OME metadata names no field datasets, so it has "
+                "no resolution levels to read."
+            )
+        backend = get_array_backend()
+        raw_levels = [
+            backend.asarray(_node.follow_path(node, str(ds.path))[...])
+            for ds in datasets
+        ]
+        ndim = int(raw_levels[0].ndim)
+        axes = _node.typed_axes(node, ndim)
+        vector_count = sum(
+            1
+            for axis in (axes or [])
+            if axis.type in ("displacement", "coordinate")
+        )
+        spatial_ndim = ndim - vector_count
+        perm = list(range(spatial_ndim))
+        placements = [
+            _dataset_placement(ds, perm, spatial_ndim) for ds in datasets
+        ]
+        voxel2world = placements[0]
+        world2voxel = voxel2world.inverse()
+        level_transforms = [
+            (world2voxel @ placement).compute() for placement in placements
+        ]
+        return cls(
+            raw_levels=raw_levels,
+            voxel2world=voxel2world,
+            level_transforms=level_transforms,
+            axes=axes,
+            ome=ome,
+            **kwargs,
+        )
+
     # --- level construction ---
 
     @property
@@ -251,6 +319,22 @@ def _to_voxel_displacement(
     ab = get_array_backend(matrix)
     raw = ab.asarray(raw)
     return raw @ inverse[:, :-1].T
+
+
+def _dataset_placement(
+    dataset: tx.Any, perm: tx.Sequence[int], ndim: int
+) -> Transformation:
+    # The voxel-to-world placement of one field level, mapped from the
+    # dataset's first coordinate transformation. A dataset that names no
+    # transformation is placed by the identity.
+    from brainhops.io.transformations.zarr import _map
+
+    transforms = list(
+        getattr(dataset, "coordinateTransformations", None) or []
+    )
+    if not transforms:
+        return Identity()
+    return _map.from_ome(transforms[0], perm, ndim)
 
 
 def _as_affine(xform: Transformation, ndim: int) -> Transformation:

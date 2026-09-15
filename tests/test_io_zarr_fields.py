@@ -5,6 +5,9 @@ real OME-Zarr store. The placement is anisotropic and rotated so that the
 voxel-to-voxel normalization is visible.
 """
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -28,6 +31,138 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.transformations.zarr import OmeFieldError, OmeZarrField
 from brainhops.io.transformations.zarr._axes import _to_axis
+
+# The node reader runs through abczarr's zarr-python driver, which needs
+# zarr-python 3 and therefore Python 3.11 or newer. The in-memory reader
+# tests above have no such requirement, so only the node reader is gated,
+# and abczarr is imported inside the gated tests rather than at module load.
+_needs_driver = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="the node reader requires zarr-python 3, which needs Python 3.11",
+)
+
+
+def _write_field_store(
+    tmp_path: Path,
+    field: np.ndarray,
+    axes: list,
+    transform: dict,
+) -> str:
+    """Write a standalone OME-Zarr field node and return its path.
+
+    The node carries its own typed OME metadata, naming the field's axes
+    and the coordinate transformation that places its one level.
+    """
+    import abczarr
+    from abczarr.ome import v0_6rc0 as v6
+
+    path = str(tmp_path / "field.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=field)
+    group.ome = v6.OME.from_json(
+        {
+            "version": "0.6rc0",
+            "multiscales": [
+                {
+                    "coordinateSystems": [
+                        {
+                            "name": "field",
+                            "axes": [
+                                {"name": name, "type": type_}
+                                for name, type_ in axes
+                            ],
+                        }
+                    ],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                dict(
+                                    transform,
+                                    input={"path": "0"},
+                                    output={"name": "field"},
+                                )
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return path
+
+
+@_needs_driver
+def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
+    import abczarr
+
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    field[..., 0] = 1.0
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [("z", "space"), ("y", "space"), ("x", "space"), ("c", "coordinate")],
+        {"type": "identity"},
+    )
+    node = abczarr.open_group(path, mode="r")
+
+    reader = OmeZarrField.from_node(node)
+    assert isinstance(reader, MultiscaleField)
+    assert reader.nscales == 1
+    assert [axis.type for axis in reader.axes] == [
+        "space",
+        "space",
+        "space",
+        "coordinate",
+    ]
+    # The one level builds as a two-element coordinate sandwich.
+    parts = reader.transformations
+    assert isinstance(parts[-1], CoordinatesField)
+    # The metadata is kept exactly as read, so it re-emits the same object.
+    assert reader.to_ome() is reader.ome
+
+
+@_needs_driver
+def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
+    import abczarr
+
+    field = np.zeros((4, 5, 6, 3), dtype="float32")
+    path = _write_field_store(
+        tmp_path,
+        field,
+        [
+            ("z", "space"),
+            ("y", "space"),
+            ("x", "space"),
+            ("d", "displacement"),
+        ],
+        {"type": "scale", "scale": [2.0, 3.0, 4.0]},
+    )
+    node = abczarr.open_group(path, mode="r")
+
+    reader = OmeZarrField.from_node(node)
+    assert isinstance(reader, MultiscaleField)
+    # The scale placement reduces to an affine, so the displacement level
+    # builds as the three-element sandwich around the field.
+    parts = reader.transformations
+    assert len(parts) == 3
+    assert isinstance(parts[1], DisplacementField)
+    # The outer parts reduce to affines, which is what lets the field be
+    # inverted and its vectors rotated.
+    assert X._affine_matrix(parts[0]) is not None
+    assert X._affine_matrix(parts[2]) is not None
+
+
+@_needs_driver
+def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:
+    import abczarr
+
+    path = str(tmp_path / "plain.zarr")
+    group = abczarr.open_group(path, mode="w")
+    group.create_array("0", data=np.zeros((4, 4, 2), "float32"))
+    node = abczarr.open_group(path, mode="r")
+    with pytest.raises(OmeFieldError):
+        OmeZarrField.from_node(node)
 
 
 def _rotated_anisotropic_affine() -> tuple:

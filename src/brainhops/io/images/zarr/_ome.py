@@ -23,7 +23,6 @@ identity placement.
 from collections.abc import Mapping
 
 # dependencies
-import numpy as np
 import typing_extensions as tx
 from abczarr.abc.sync import ZarrGroup
 from abczarr.ome import v0_6rc0 as _v6
@@ -37,33 +36,24 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
-    Affine,
     CoordinatesField,
     DisplacementField,
     Identity,
-    Permutation,
-    Projection,
-    Rotation,
-    Scaling,
     Sequence,
     Transformation,
-    Translation,
 )
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.zarr import _axisorder
+from brainhops.io.transformations.zarr import _map, _node
 from brainhops.io.transformations.zarr._axes import _to_axis
 
 #: The brainhops spline order each OME interpolation name maps to.
 _INTERPOLATION_ORDER = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
 
-#: The brainhops transformations that reduce to an affine. A field must be
-#: surrounded only by these, so it can be inverted and its vectors rotated.
-_AFFINE_ISH = (Affine, Rotation, Scaling, Translation, Identity)
-
-#: A per-axis scale or translation, and the placement of one level: its
-#: array path with the per-axis scale and translation that place it.
-_Vector = tx.Sequence[float]
-_Level = tx.Tuple[str, _Vector, _Vector]
+#: The placement of one level: its array path with the OME coordinate
+#: transformation that places it, ready for the metadata.
+_Entry = tx.Dict[str, tx.Any]
+_Level = tx.Tuple[str, _Entry]
 
 #: The OME-NGFF version the reader normalizes every group to.
 NORMALIZED_VERSION = "0.6rc0"
@@ -152,175 +142,68 @@ def multiscale_axes(multiscale: Multiscale) -> tx.List[Axis]:
     return [_to_axis(axis.to_json()) for axis in system.axes]
 
 
-def _permute_vector(
-    values: tx.Sequence[float], perm: tx.Sequence[int]
-) -> tx.List[float]:
-    # Reorder a per-axis vector, such as a scale or a translation, from the
-    # stored axis order into the brainhops order.
-    return [float(values[p]) for p in perm]
+def _make_read_field(
+    node: tx.Optional[ZarrGroup], store_axes: tx.Optional[tx.Sequence[Axis]]
+) -> tx.Optional[tx.Callable]:
+    # Build the callback that reads a displacement or coordinate field from
+    # the node a field transformation names. The callback lays the field out
+    # in the brainhops order, so it fits the affine transformations around
+    # it. The node reading itself is done by the shared OME field reader in
+    # `io.transformations.zarr`.
+    if node is None:
+        return None
 
-
-def permute_affine(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
-    """Reorder the rows and linear columns of an affine matrix by `perm`.
-
-    The matrix is ``(n, n + 1)``: a linear block and a translation column.
-    Both the output axes (rows) and the input axes (linear columns) are
-    reordered by `perm`. The translation column keeps its place.
-    """
-    matrix = np.asarray(matrix, dtype=float)
-    perm = list(perm)
-    linear = matrix[:, :-1][np.ix_(perm, perm)]
-    translation = matrix[:, -1][perm]
-    return np.concatenate([linear, translation[:, None]], axis=1)
-
-
-def _permute_linear(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
-    # Reorder the rows and columns of a square linear matrix by `perm`.
-    matrix = np.asarray(matrix, dtype=float)
-    perm = list(perm)
-    return matrix[np.ix_(perm, perm)]
-
-
-def _invert_perm(perm: tx.Sequence[int]) -> tx.List[int]:
-    # The inverse permutation: `inverse[perm[i]] == i`. `perm[i]` is the
-    # stored index at brainhops position `i`, so `inverse` maps a stored
-    # index back to its brainhops position.
-    inverse = [0] * len(perm)
-    for position, stored in enumerate(perm):
-        inverse[stored] = position
-    return inverse
-
-
-def _map_axis_transform(
-    mapping: tx.Sequence[int], perm: tx.Sequence[int], ndim: int
-) -> Transformation:
-    # A bijective axis map is a permutation; one that names a subset of the
-    # input axes is a projection that drops the rest.
-    mapping = list(mapping)
-    inverse = _invert_perm(perm)
-    if sorted(mapping) == list(range(ndim)):
-        # Rewrite the axis map from the stored order into the brainhops order
-        # on both its input and output sides. The output axis at brainhops
-        # position `o` is stored axis `perm[o]`, and the input axis it names
-        # maps back through the inverse permutation.
-        return Permutation(permutation=[inverse[mapping[p]] for p in perm])
-    if mapping == sorted(mapping) and set(mapping) <= set(range(ndim)):
-        # A strictly increasing subset drops the input axes it omits, keeping
-        # the rest in order. The dropped axes are reported in the brainhops
-        # order, and no axis is created.
-        dropped_stored = [i for i in range(ndim) if i not in mapping]
-        dropped = sorted(inverse[i] for i in dropped_stored)
-        return Projection(dropped=dropped, created=[])
-    raise OmeImageError(
-        "This OME-Zarr image is placed by a mapAxis transformation that both "
-        "drops and reorders axes, which brainhops does not read as a single "
-        "transformation."
-    )
-
-
-def _follow_path(node: ZarrGroup, path: str) -> tx.Any:
-    # Open the node the field transformation points at, following a path that
-    # may descend through subgroups (``"coordinateTransformations/dfield"``).
-    current = node  # type: tx.Any
-    for segment in path.strip("/").split("/"):
-        current = current[segment]
-    return current
-
-
-def _field_coordinate_systems(field_node: tx.Any) -> tx.List[tx.Any]:
-    # The coordinate systems a field node declares in its own OME metadata.
-    # A field node is a full OME-Zarr node whose ``ome`` carries typed axes.
-    try:
-        ome = field_node.ome
-    except Exception:
-        return []
-    if ome is None:
-        return []
-    systems = list(getattr(ome, "coordinateSystems", None) or [])
-    for multiscale in getattr(ome, "multiscales", None) or []:
-        systems.extend(getattr(multiscale, "coordinateSystems", None) or [])
-    return systems
-
-
-def _field_typed_axes(
-    field_node: tx.Any, ndim: int
-) -> tx.Optional[tx.List[Axis]]:
-    # The field node's own axes, as brainhops axes with types, in the field
-    # array's stored dimension order. The coordinate system that describes
-    # the field array is the one with one axis per dimension, preferring the
-    # one that names a displacement or coordinate component axis.
-    fallback = None  # type: tx.Optional[tx.List[Axis]]
-    for system in _field_coordinate_systems(field_node):
-        axes = [_to_axis(axis.to_json()) for axis in system.axes]
-        if len(axes) != ndim:
-            continue
-        if any(axis.type in ("displacement", "coordinate") for axis in axes):
-            return axes
-        if fallback is None:
-            fallback = axes
-    return fallback
-
-
-def _read_field(
-    transform: CoordinateTransformation,
-    kind: str,
-    node: ZarrGroup,
-    store_axes: tx.Sequence[Axis],
-    ndim: int,
-) -> Transformation:
-    # Build a brainhops displacement or coordinate field from the node the
-    # transformation points at. A field node is a full OME-Zarr node, so its
-    # own ``ome`` metadata names its typed axes; those say which axis holds
-    # the vector components and how the spatial axes are ordered.
-    path = getattr(transform, "path", None)
-    if not isinstance(path, str):
-        raise OmeImageError(
-            f"This OME-Zarr {kind} field names no array, so its field cannot "
-            "be read."
+    def read_field(transform: tx.Any, kind: str) -> Transformation:
+        path = getattr(transform, "path", None)
+        if not isinstance(path, str):
+            raise OmeImageError(
+                f"This OME-Zarr {kind} field names no array, so its field "
+                "cannot be read."
+            )
+        field_node = _node.follow_path(node, path)
+        raw = _node.read_array(field_node)
+        typed = _node.typed_axes(field_node, field_node.ndim)
+        if typed is not None:
+            # The field node's own typed axes place the component axis and
+            # order the spatial axes. Sorting into the brainhops order lays
+            # the field out as (*spatial, component).
+            data = get_array_backend().transpose(
+                raw, _axisorder.to_canonical(typed)
+            )
+        else:
+            # A field node that is only a bare array carries no typed axes,
+            # just dimension names. Match those names against the image axes
+            # to find the component axis.
+            data = _field_from_names(raw, field_node, store_axes, kind, path)
+        order = _INTERPOLATION_ORDER.get(
+            getattr(transform, "interpolation", None), 1
         )
-    field_node = _follow_path(node, path)
-    backend = get_array_backend()
-    raw = backend.asarray(field_node[...])
+        field_cls = (
+            DisplacementField if kind == "displacements" else CoordinatesField
+        )
+        return field_cls(field=data, order=order)
 
-    typed_axes = _field_typed_axes(field_node, field_node.ndim)
-    if typed_axes is not None:
-        # The field node's own typed axes place the component axis (a
-        # displacement or coordinate axis, which the axis-order seam groups
-        # with the channel position) and order the spatial axes. Sorting into
-        # the brainhops order lays the field out as (*spatial, component).
-        data = backend.transpose(raw, _axisorder.to_canonical(typed_axes))
-    else:
-        # A field node that is only a bare array carries no typed axes, just
-        # dimension names. This is an edge case; match the names against the
-        # image axes to find the component axis.
-        data = _field_from_names(raw, field_node, store_axes, kind, path)
-
-    order = _INTERPOLATION_ORDER.get(
-        getattr(transform, "interpolation", None), 1
-    )
-    field_cls = (
-        DisplacementField if kind == "displacements" else CoordinatesField
-    )
-    return field_cls(field=data, order=order)
+    return read_field
 
 
 def _field_from_names(
     raw: tx.Any,
     field_node: tx.Any,
-    store_axes: tx.Sequence[Axis],
+    store_axes: tx.Optional[tx.Sequence[Axis]],
     kind: str,
     path: str,
 ) -> tx.Any:
     # Lay a bare field array out as (*spatial, component) from its axis names
     # alone. The array shares the image's spatial axes by name; the remaining
     # axis is the component axis.
-    names = getattr(field_node.metadata, "dimension_names", None)
-    if not names or None in names or len(names) != field_node.ndim:
+    names = _node.dimension_names(field_node)
+    if names is None:
         raise OmeImageError(
             f"The {kind} field at {path!r} has neither OME metadata nor "
             "dimension names, so brainhops cannot tell which axis holds the "
             "vector components."
         )
+    store_axes = list(store_axes or [])
     image_names = [axis.name for axis in store_axes]
     spatial_dims = [i for i, name in enumerate(names) if name in image_names]
     component_dims = [i for i in range(len(names)) if i not in spatial_dims]
@@ -346,88 +229,13 @@ def _map_transform(
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
 ) -> Transformation:
     # Map one 0.6rc0 coordinate transformation to the brainhops
-    # transformation of the same kind, with its parameters reordered from
-    # the stored axis order into the brainhops order.
-    kind = getattr(transform, "type", None)
-    if kind == "identity":
-        return Identity()
-    if kind == "scale" and isinstance(getattr(transform, "scale", None), list):
-        return Scaling(scale=_permute_vector(transform.scale, perm))
-    if kind == "translation" and isinstance(
-        getattr(transform, "translation", None), list
-    ):
-        return Translation(
-            translation=_permute_vector(transform.translation, perm)
-        )
-    if kind == "affine" and isinstance(
-        getattr(transform, "affine", None), list
-    ):
-        matrix = np.asarray(transform.affine, dtype=float)
-        if matrix.shape == (ndim + 1, ndim + 1):
-            matrix = matrix[:ndim]
-        return Affine(matrix=permute_affine(matrix, perm))
-    if kind == "rotation" and isinstance(
-        getattr(transform, "rotation", None), list
-    ):
-        return Rotation(matrix=_permute_linear(transform.rotation, perm))
-    if kind == "mapAxis" and isinstance(
-        getattr(transform, "mapAxis", None), list
-    ):
-        return _map_axis_transform(transform.mapAxis, perm, ndim)
-    if kind in ("displacements", "coordinates"):
-        if node is None or store_axes is None:
-            raise OmeImageError(
-                "A field transformation can only be read from a group."
-            )
-        return _read_field(transform, kind, node, store_axes, ndim)
-    if kind == "sequence":
-        children = [
-            _map_transform(inner, perm, ndim, node, store_axes)
-            for inner in transform.transformations
-        ]
-        _gate_field_surround(children)
-        return Sequence(children)
-    raise OmeImageError(
-        "This OME-Zarr image is placed by a "
-        f"{kind!r} coordinate transformation, which brainhops cannot yet "
-        "read as an image geometry."
-    )
-
-
-def _is_field(transformation: Transformation) -> bool:
-    return isinstance(transformation, (DisplacementField, CoordinatesField))
-
-
-def _is_affine_ish(transformation: Transformation) -> bool:
-    if isinstance(transformation, Sequence):
-        return all(
-            _is_affine_ish(one)
-            for one in (transformation.transformations or [])
-        )
-    return isinstance(transformation, _AFFINE_ISH)
-
-
-def _gate_field_surround(mapped: tx.Sequence[Transformation]) -> None:
-    # A field must be surrounded only by affine transformations, so that the
-    # field can be inverted and its vectors rotated. More than one field, or
-    # a field beside a non-affine transformation, is refused.
-    fields = [one for one in mapped if _is_field(one)]
-    if not fields:
-        return
-    if len(fields) > 1:
-        raise OmeImageError(
-            "This OME-Zarr image composes more than one field, which "
-            "brainhops does not read. A field must be surrounded only by "
-            "affine transformations."
-        )
-    for one in mapped:
-        if not _is_field(one) and not _is_affine_ish(one):
-            raise OmeImageError(
-                "This OME-Zarr image surrounds a field with a "
-                f"{type(one).__name__} transformation. A field must be "
-                "surrounded only by affine transformations, so that it can "
-                "be inverted and its vectors rotated."
-            )
+    # transformation of the same kind, through the shared OME mapping. A
+    # field is read from the node it names by the image-side callback.
+    read_field = _make_read_field(node, store_axes)
+    try:
+        return _map.from_ome(transform, perm, ndim, read_field)
+    except _map.OmeMappingError as error:
+        raise OmeImageError(str(error)) from error
 
 
 def level_transformation(
@@ -459,41 +267,16 @@ def level_transformation(
         mapped.extend(
             _map_transform(one, perm, ndim, node, store_axes) for one in common
         )
-    _gate_field_surround(mapped)
+    try:
+        _map.gate_field_surround(mapped)
+    except _map.OmeMappingError as error:
+        raise OmeImageError(str(error)) from error
 
     if not mapped:
         return Identity(input=input, output=output)
     if len(mapped) == 1:
         return replace(mapped[0], input=input, output=output)
     return Sequence(mapped, input=input, output=output)
-
-
-def scale_translation_from_affine(
-    affine: Affine, ndim: int
-) -> tx.Tuple[np.ndarray, np.ndarray]:
-    """Return the per-axis scale and translation of a diagonal affine.
-
-    The affine must reduce to a per-axis scale and translation, so its
-    matrix must be diagonal apart from the translation column. A placement
-    with any off-diagonal term, such as a rotation or a shear, cannot be
-    written as scale-and-translation OME metadata and is refused.
-    """
-    if affine is None or getattr(affine, "matrix", None) is None:
-        return np.ones(ndim), np.zeros(ndim)
-    matrix = np.asarray(affine.matrix, dtype=float)
-    linear = matrix[:, :-1]
-    off_diagonal = linear - np.diag(np.diag(linear))
-    if linear.shape[0] != linear.shape[1] or np.any(
-        np.abs(off_diagonal) > 1e-8
-    ):
-        raise WriterError(
-            "This image is placed by a transformation that is not a "
-            "per-axis scale and translation, so it cannot be written as "
-            "OME-Zarr multiscale metadata. Only an axis-aligned geometry, "
-            "whose matrix is diagonal apart from the translation, is "
-            "supported."
-        )
-    return np.diag(linear), matrix[:, -1]
 
 
 def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
@@ -512,8 +295,15 @@ def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
     return entry
 
 
+#: The OME-NGFF versions that carry only a per-axis scale and translation.
+#: A rotation, an affine, or a sequence of them needs a later version.
+_SCALE_ONLY_VERSIONS = frozenset({"0.1", "0.2", "0.3", "0.4", "0.5"})
+
+
 def resolve_write_version(
-    version: tx.Optional[str], source_version: tx.Optional[str]
+    version: tx.Optional[str],
+    source_version: tx.Optional[str],
+    rich: bool = False,
 ) -> str:
     """Choose the OME-NGFF version to write.
 
@@ -521,29 +311,32 @@ def resolve_write_version(
     OME-Zarr the image was read from is used, so a pyramid is written back
     in the version it came from. When neither is available, the leanest
     version that carries a per-axis scale and translation is used.
+
+    `rich` states that a level is placed by a transformation that only a
+    later version carries, such as a rotation, an affine, or a sequence of
+    them. When the chosen version cannot carry such a transformation, an
+    explicit request for that version is refused with a
+    [`WriterError`][brainhops.io.base.parsers.WriterError], and an implicit
+    choice is raised to the version that can.
     """
-    if version is not None:
-        return version
-    if source_version is not None:
-        return source_version
-    return DEFAULT_WRITE_VERSION
+    chosen = version or source_version or DEFAULT_WRITE_VERSION
+    if rich and chosen in _SCALE_ONLY_VERSIONS:
+        if version is not None:
+            raise WriterError(
+                f"This image is placed by a transformation that OME-NGFF "
+                f"{version} cannot carry, such as a rotation or an affine. "
+                f"Write it in version {NORMALIZED_VERSION} instead, which "
+                "carries the full placement."
+            )
+        return NORMALIZED_VERSION
+    return chosen
 
 
-def _level_transforms(
-    scale: _Vector, translation: _Vector, path: str
-) -> tx.List[tx.Dict[str, tx.Any]]:
+def _level_transforms(entry: _Entry, path: str) -> tx.List[_Entry]:
+    # Attach the input and output references to a level's coordinate
+    # transformation, so it names the array it places and the world system.
     refs = {"input": {"path": path}, "output": {"name": "physical"}}
-    transforms = [{"type": "scale", "scale": [float(s) for s in scale]}]  # type: tx.List[tx.Dict[str, tx.Any]]
-    if np.any(np.asarray(translation, dtype=float) != 0.0):
-        transforms.append(
-            {
-                "type": "translation",
-                "translation": [float(t) for t in translation],
-            }
-        )
-    if len(transforms) == 1:
-        return [dict(transforms[0], **refs)]
-    return [dict({"type": "sequence", "transformations": transforms}, **refs)]
+    return [dict(entry, **refs)]
 
 
 def build_ome(
@@ -555,8 +348,8 @@ def build_ome(
     """Build the typed OME metadata for an image pyramid.
 
     `axes` are the axes in the stored order. `levels` gives, for each
-    resolution level, its array path and the per-axis scale and translation
-    that place it in world space. The metadata is built in 0.6rc0 and then
+    resolution level, its array path and the OME coordinate transformation
+    that places it in world space. The metadata is built in 0.6rc0 and then
     converted to `version`, so any supported version can be written from one
     code path. The returned object is assigned to a group's ``ome``.
     """
@@ -570,11 +363,9 @@ def build_ome(
         "datasets": [
             {
                 "path": path,
-                "coordinateTransformations": _level_transforms(
-                    scale, translation, path
-                ),
+                "coordinateTransformations": _level_transforms(entry, path),
             }
-            for path, scale, translation in levels
+            for path, entry in levels
         ],
     }  # type: tx.Dict[str, tx.Any]
     if name is not None:

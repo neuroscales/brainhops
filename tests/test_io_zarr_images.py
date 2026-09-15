@@ -367,7 +367,35 @@ def test_reader_refuses_misspelled_transform_type(tmp_path: Path) -> None:
         OmeZarrImage.load(path)
 
 
-def test_writer_refuses_a_non_axis_aligned_geometry(tmp_path: Path) -> None:
+def test_writer_writes_a_non_axis_aligned_geometry_as_an_affine(
+    tmp_path: Path,
+) -> None:
+    # A sheared placement is not a per-axis scale and translation. OME-Zarr
+    # carries it as a full affine, so the writer keeps it rather than
+    # refusing it. The geometry survives the write-then-read round-trip.
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.5
+    image = SingleScaleImage(
+        data=np.zeros((3, 3, 3), "float32"),
+        transformations=[Affine(matrix=matrix)],
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "sheared.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    geometry = back.images[0].transformation
+    assert isinstance(geometry, Affine)
+    np.testing.assert_allclose(_world_matrix(geometry), matrix)
+
+
+def test_writer_refuses_a_rich_geometry_in_a_scale_only_version(
+    tmp_path: Path,
+) -> None:
+    # OME-NGFF 0.4 carries only a per-axis scale and translation. A sheared
+    # placement cannot be written in it, so an explicit request for 0.4 is
+    # refused rather than silently dropping the off-diagonal terms.
     matrix = np.eye(3, 4)
     matrix[0, 1] = 0.5
     image = SingleScaleImage(
@@ -377,7 +405,77 @@ def test_writer_refuses_a_non_axis_aligned_geometry(tmp_path: Path) -> None:
     pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
 
     with pytest.raises(WriterError):
-        pyramid.save(str(tmp_path / "rotated.zarr"))
+        pyramid.save(str(tmp_path / "rotated.zarr"), version="0.4")
+
+
+def test_writer_round_trips_a_rotation_placement(tmp_path: Path) -> None:
+    # A rotation is not a per-axis scale and translation. It is written as an
+    # OME rotation and read back as a rotation, so a rotated placement
+    # survives the round-trip rather than being collapsed or refused.
+    from brainhops.datamodel.transformations import Rotation
+
+    theta = 0.4
+    linear = np.array(
+        [
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    image = SingleScaleImage(
+        data=np.zeros((3, 4, 5), "float32"),
+        transformations=[Rotation(matrix=linear)],
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "rot.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    geometry = back.images[0].transformation
+    assert isinstance(geometry, Rotation)
+    np.testing.assert_allclose(
+        _world_matrix(geometry), _world_matrix(image.transformation)
+    )
+
+
+def test_writer_round_trips_a_sequence_placement(tmp_path: Path) -> None:
+    # A sequence of a rotation and a translation is written as an OME
+    # sequence and read back as a sequence of the same kinds, so a composed
+    # placement is kept rather than collapsed into a single affine.
+    from brainhops.datamodel.transformations import (
+        Rotation,
+        Sequence,
+        Translation,
+    )
+
+    theta = 0.3
+    linear = np.array(
+        [
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    placement = Sequence(
+        [Rotation(matrix=linear), Translation(translation=[10.0, 20.0, 30.0])]
+    )
+    image = SingleScaleImage(
+        data=np.zeros((3, 4, 5), "float32"), transformations=[placement]
+    )
+    pyramid = OmeZarrImage(images=[image], axes=_spatial_axes())
+    path = str(tmp_path / "seq.zarr")
+
+    pyramid.save(path)
+    back = images.load(path)
+
+    geometry = back.images[0].transformation
+    assert isinstance(geometry, Sequence)
+    kinds = [type(part).__name__ for part in geometry.transformations]
+    assert kinds == ["Rotation", "Translation"]
+    np.testing.assert_allclose(
+        _world_matrix(geometry), _world_matrix(image.transformation)
+    )
 
 
 def test_reader_refuses_unsupported_coordinate_transformation(
@@ -793,14 +891,15 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
     # A mapAxis that names a subset of the input axes drops the rest; it maps
     # to a Projection. This is exercised on the mapping directly, since a
     # dimensionality-changing level is not otherwise wired through the reader.
+    from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
+
     from brainhops.datamodel.transformations import Projection
     from brainhops.io.images.zarr import _ome
 
-    class _MapAxis:
-        type = "mapAxis"
-        mapAxis = [0, 2]
-
-    projection = _ome._map_transform(_MapAxis(), perm=[0, 1, 2], ndim=3)
+    transform = CoordinateTransformation.from_json(
+        {"type": "mapAxis", "mapAxis": [0, 2]}
+    )
+    projection = _ome._map_transform(transform, perm=[0, 1, 2], ndim=3)
     assert isinstance(projection, Projection)
     np.testing.assert_array_equal(np.asarray(projection.dropped), [1])
     np.testing.assert_array_equal(np.asarray(projection.created), [])

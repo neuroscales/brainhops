@@ -32,6 +32,7 @@ __all__ = [
     "is_permutation",
     "is_rotation",
     "is_linear",
+    "scale_translation_from_affine",
     "ConversionError",
     "LossyConversionError",
     "CompositionError",
@@ -1516,6 +1517,43 @@ def _affine_matrix(xform: Transformation) -> tx.Optional[npmatrix]:
     if not isinstance(affine, Affine) or affine.matrix is None:
         return None
     return affine.matrix
+
+
+def scale_translation_from_affine(
+    affine: tx.Optional[Affine], ndim: int
+) -> tx.Tuple[ArrayProtocol, ArrayProtocol]:
+    """Return the per-axis scale and translation of a diagonal affine.
+
+    The result is a pair of vectors of length `ndim`. The first vector is
+    the per-axis scale, read from the diagonal of the linear block. The
+    second vector is the per-axis translation, read from the last column.
+
+    An affine with no matrix is the identity, so it decomposes to a scale
+    of ones and a translation of zeros.
+
+    The decomposition exists only when the affine reduces to a per-axis
+    scale and translation, so its matrix must be square and diagonal apart
+    from the translation column. An affine with any off-diagonal term, such
+    as a rotation or a shear, has no such decomposition. A
+    [`LossyConversionError`][brainhops.datamodel.transformations.LossyConversionError]
+    is raised in that case, because reducing the affine to a scale and a
+    translation would discard the off-diagonal terms.
+    """
+    if affine is None or getattr(affine, "matrix", None) is None:
+        ab = get_array_backend()
+        return ab.ones(ndim), ab.zeros(ndim)
+    ab = get_array_backend(affine.matrix)
+    matrix = ab.asarray(affine.matrix)
+    linear = matrix[:, :-1]
+    rows, cols = linear.shape[0], linear.shape[1]
+    off_diagonal = linear * (1 - ab.eye(rows)) if rows == cols else linear
+    if rows != cols or bool((ab.abs(off_diagonal) > 1e-8).any()):
+        raise LossyConversionError(
+            "This affine is not a per-axis scale and translation, so it "
+            "cannot be decomposed into one. Its matrix has an off-diagonal "
+            "term, such as a rotation or a shear."
+        )
+    return ab.diagonal(linear), matrix[:, -1]
 
 
 def _at_resolution(
