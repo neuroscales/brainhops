@@ -8,11 +8,9 @@ nav = [
   ]},
   {"Command-line API" = [
     "cli/index.md",
-    {"Commands" = [
-      "cli/reslice.md",
-      "cli/compose.md",
-      "cli/convert.md",
-    ]},
+    "cli/reslice.md",
+    "cli/compose.md",
+    "cli/convert.md",
   ]},
   {"Python API" = [
     "api/index.md",
