@@ -1,3 +1,1 @@
-# parsers
-
-::: brainhops.io.base.parsers
+# ::: brainhops.io.base.parsers
