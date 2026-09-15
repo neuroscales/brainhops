@@ -12,11 +12,10 @@ __all__ = [
     "flirt",
     "fnirt",
     "FLIRTTransform",
-    "FNIRTDeformationField",
-    "FNIRTCoefficientField",
+    "FNIRTWarpField",
 ]
 
 from . import flirt, fnirt
 from ._systems import FSLCoordinateSystem
 from .flirt import FLIRTTransform
-from .fnirt import FNIRTCoefficientField, FNIRTDeformationField
+from .fnirt import FNIRTWarpField

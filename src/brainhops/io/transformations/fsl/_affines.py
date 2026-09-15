@@ -69,17 +69,26 @@ def _shape(obj: tx.Any) -> tx.Tuple[int, ...]:
 
 
 def _pixdim(obj: tx.Any) -> np.ndarray:
-    """The positive pixel sizes (magnitudes) of a nibabel image or header."""
+    """The positive pixel sizes (magnitudes) of a nibabel image or header.
+
+    A pixel size that is missing, zero, or not finite is replaced with
+    one, so a header with an incomplete pixdim still yields an invertible
+    scaled-mm affine rather than a singular one.
+    """
     header = obj
     if not hasattr(header, "get_zooms") and hasattr(obj, "header"):
         header = obj.header
     if hasattr(header, "get_zooms"):
-        zooms = header.get_zooms()
-        return np.abs(np.asarray(zooms[:3], dtype=np.float64))
-    raise ValueError("Cannot determine the pixel sizes of the image.")
+        zooms = np.asarray(header.get_zooms(), dtype=np.float64)
+    else:
+        raise ValueError("Cannot determine the pixel sizes of the image.")
+    pixdim = np.ones(3, dtype=np.float64)
+    pixdim[: min(3, zooms.size)] = np.abs(zooms[:3])
+    pixdim[~np.isfinite(pixdim) | (pixdim == 0.0)] = 1.0
+    return pixdim
 
 
-class ImageGeometry:
+class _ImageGeometry:
     """The affines that place one image in the FSL coordinate systems.
 
     Given a nibabel image or header, this holds the affines between the
@@ -93,6 +102,12 @@ class ImageGeometry:
         vox2ras = _best_affine(image)
         shape = _shape(image)
         pixdim = _pixdim(image)
+
+        # A header with a missing or degenerate sform can carry a
+        # non-finite voxel-to-world affine. Fall back to a plain pixel-size
+        # scaling so the geometry is still usable.
+        if not np.all(np.isfinite(vox2ras)):
+            vox2ras = np.diag(np.concatenate([pixdim, [1.0]]))
 
         self.vox2ras = vox2ras
         self.shape = shape

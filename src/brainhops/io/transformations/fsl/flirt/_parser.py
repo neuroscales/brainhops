@@ -34,11 +34,12 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     matrix to be turned into a world-space transformation.
     """
 
-    matrix: tx.Optional[ArrayLike] = None
+    flirt_matrix: tx.Optional[ArrayLike] = None
     """The raw `(4, 4)` FLIRT matrix, as read from the file.
 
-    An array-like of shape `(4, 4)`. It is converted to a NumPy array and
-    used to build the world-space transformation chain.
+    An array-like of shape `(4, 4)` mapping moving-image scaled-mm
+    coordinates to reference-image scaled-mm coordinates. It is converted
+    to a NumPy array and used to build the world-space affine.
     """
 
     moving: tx.Optional[_ImageLike] = None
@@ -91,7 +92,7 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
                 f"have lengths {sorted(len(row) for row in rows)}."
             )
         return cls(
-            matrix=np.array(rows, dtype=np.float64),
+            flirt_matrix=np.array(rows, dtype=np.float64),
             moving=moving,
             reference=reference,
         )
