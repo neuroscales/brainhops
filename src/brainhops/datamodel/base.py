@@ -1,8 +1,5 @@
 __all__ = ["DataModelBase", "DataModelConverter"]
 
-# stdlib
-from collections.abc import Mapping
-
 # externals
 import typing_extensions as tx
 from bagof.converters import Converter, register_converter
@@ -21,7 +18,7 @@ class DataModelBase(
     # all classes in the hierarchy.
 
     @classmethod
-    def from_dict(cls, other: Mapping, *args, **kwargs) -> "DataModelBase":
+    def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from a dictionary-like object.
 
@@ -39,8 +36,8 @@ class DataModelBase(
 
     @classmethod
     def from_instance(
-        cls, other: "DataModelBase", *args, **kwargs
-    ) -> "DataModelBase":
+        cls, other: tx.Self, *args, **kwargs
+    ) -> tx.Self:
         """
         Create an instance of the class from an instance of a similar
         class.
@@ -59,7 +56,7 @@ class DataModelBase(
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> "DataModelBase":
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from any object that can be
         interpreted as a dictionary, or an instance of a similar class,
