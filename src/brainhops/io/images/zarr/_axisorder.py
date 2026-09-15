@@ -11,7 +11,10 @@ The component axis of a field, whose values are the components of a
 displacement or a coordinate vector, is not a separate trailing role. It
 occupies the same position as the channel axis, in the brainhops order and
 in the store. This matches how nibabel and OME-Zarr both store a field:
-the displacement components share the dimension a channel would use.
+the displacement components share the dimension a channel would use. The
+component values are not reordered when the axes are permuted, since a
+field's components are expressed in its output coordinate system, which the
+seam keeps fixed while it permutes the array's own axes.
 
 [to_canonical][brainhops.io.images.zarr._axisorder.to_canonical] permutes
 a store's axes into the brainhops order, and is used when reading.
@@ -27,6 +30,11 @@ break ties between spatial axes of the same type.
 
 # dependencies
 import typing_extensions as tx
+
+# internals
+from brainhops.datamodel.axes import Axis
+
+_T = tx.TypeVar("_T")
 
 #: The brainhops canonical axis order, most significant group first. The
 #: spatial axes lead, then time, then the channel group.
@@ -51,7 +59,7 @@ _CANONICAL_SPACE = {"x": 0, "y": 1, "z": 2}
 _STORAGE_SPACE = {"z": 0, "y": 1, "x": 2}
 
 
-def _group(axis: tx.Any) -> str:
+def _group(axis: Axis) -> str:
     """The role group of an axis, one of the names in the order tuples.
 
     A displacement or coordinate component axis is grouped with the
@@ -66,12 +74,7 @@ def _group(axis: tx.Any) -> str:
     return "other"
 
 
-def is_vector(axis: tx.Any) -> bool:
-    """Whether `axis` is a displacement or coordinate component axis."""
-    return getattr(axis, "type", None) in _VECTOR_TYPES
-
-
-def _space_name_rank(axis: tx.Any, table: tx.Mapping[str, int]) -> int:
+def _space_name_rank(axis: Axis, table: tx.Mapping[str, int]) -> int:
     # The within-space position of a spatial axis, read from its name. An
     # unnamed spatial axis, or one whose name is not in the table, sorts
     # after the named ones and keeps its original order. The name only ever
@@ -83,14 +86,14 @@ def _space_name_rank(axis: tx.Any, table: tx.Mapping[str, int]) -> int:
 
 
 def _permutation(
-    axes: tx.Sequence[tx.Any],
+    axes: tx.Sequence[Axis],
     order: tx.Sequence[str],
     space: tx.Mapping[str, int],
 ) -> tx.List[int]:
     # The permutation that sorts `axes` into `order`, breaking ties by the
     # within-space name table and then by original position, so the sort is
     # stable and the two directions invert each other.
-    def key(item: tx.Tuple[int, tx.Any]) -> tx.Tuple[int, int, int]:
+    def key(item: tx.Tuple[int, Axis]) -> tx.Tuple[int, int, int]:
         position, axis = item
         group = _group(axis)
         return (order.index(group), _space_name_rank(axis, space), position)
@@ -99,7 +102,7 @@ def _permutation(
     return [position for position, _ in ranked]
 
 
-def to_canonical(axes: tx.Sequence[tx.Any]) -> tx.List[int]:
+def to_canonical(axes: tx.Sequence[Axis]) -> tx.List[int]:
     """Return the permutation that reorders store `axes` into brainhops order.
 
     The result is a list of indices. Element ``i`` is the position, in the
@@ -110,7 +113,7 @@ def to_canonical(axes: tx.Sequence[tx.Any]) -> tx.List[int]:
     return _permutation(axes, CANONICAL_ORDER, _CANONICAL_SPACE)
 
 
-def to_storage(axes: tx.Sequence[tx.Any]) -> tx.List[int]:
+def to_storage(axes: tx.Sequence[Axis]) -> tx.List[int]:
     """Return the permutation that reorders brainhops `axes` into store order.
 
     The result is a list of indices. Element ``i`` is the position, in the
@@ -122,40 +125,6 @@ def to_storage(axes: tx.Sequence[tx.Any]) -> tx.List[int]:
     return _permutation(axes, STORAGE_ORDER, _STORAGE_SPACE)
 
 
-def permute(
-    seq: tx.Sequence[tx.Any], perm: tx.Sequence[int]
-) -> tx.List[tx.Any]:
+def permute(seq: tx.Sequence[_T], perm: tx.Sequence[int]) -> tx.List[_T]:
     """Return the elements of `seq` in the order given by `perm`."""
     return [seq[p] for p in perm]
-
-
-def vector_flip(
-    axes: tx.Sequence[tx.Any], perm: tx.Sequence[int]
-) -> tx.Optional[tx.Tuple[int, tx.List[int]]]:
-    """Return how to reindex the values along a field's component axis.
-
-    When `axes` includes a displacement or coordinate component axis, the
-    values along that axis are per-spatial-axis components. Reordering the
-    spatial axes by `perm` must reorder those components in lockstep, so a
-    component keeps referring to the spatial axis it belongs to.
-
-    The result is ``(position, component_perm)`` when `axes` has one
-    component axis. `position` is the component axis's index after `perm`
-    is applied. `component_perm` reorders the values along it, so a caller
-    applies it with a backend ``take`` along `position`. The result is
-    `None` when `axes` has no component axis, and also when the number of
-    components does not match the number of spatial axes, in which case the
-    correspondence is unknown and the values are left untouched.
-    """
-    vectors = [i for i, axis in enumerate(axes) if is_vector(axis)]
-    if len(vectors) != 1:
-        return None
-    v = vectors[0]
-    position = list(perm).index(v)
-
-    spatial = [i for i, axis in enumerate(axes) if _group(axes[i]) == "space"]
-    spatial_out = [p for p in perm if _group(axes[p]) == "space"]
-    if len(spatial) != len(spatial_out):
-        return None
-    component_perm = [spatial.index(p) for p in spatial_out]
-    return position, component_perm

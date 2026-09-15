@@ -1,11 +1,14 @@
 # dependencies
 import abczarr
 import typing_extensions as tx
+from abczarr.abc.sync import ZarrNode
+from abczarr.ome.v0_6rc0.images import Multiscale
+
+# internals
+from brainhops._core.typing import ArrayProtocol
 
 # backends
 from brainhops.backends import get_array_backend
-
-# internals
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
@@ -14,7 +17,11 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import Affine, _affine_matrix
+from brainhops.datamodel.transformations import (
+    Affine,
+    Transformation,
+    _affine_matrix,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
@@ -34,24 +41,6 @@ from brainhops.io.images.zarr._ome import (
 from brainhops.io.images.zarr._store import ZarrParser
 
 
-def _apply_vector_flip(
-    backend: tx.Any,
-    array: tx.Any,
-    axes: tx.Sequence[tx.Any],
-    perm: tx.Sequence[int],
-) -> tx.Any:
-    # Reorder the values along a field's component axis so they track the
-    # spatial axes as those are permuted. A component count that does not
-    # match the number of spatial axes leaves the values untouched.
-    flip = _axisorder.vector_flip(axes, perm)
-    if flip is None:
-        return array
-    position, component_perm = flip
-    if array.shape[position] != len(component_perm):
-        return array
-    return backend.take(array, component_perm, axis=position)
-
-
 class _ZarrLevel(SingleScaleImage):
     """One resolution level, read from its array node on first access.
 
@@ -61,7 +50,7 @@ class _ZarrLevel(SingleScaleImage):
     """
 
     @property
-    def data(self) -> tx.Any:
+    def data(self) -> tx.Optional[ArrayProtocol]:
         cached = getattr(self, "_data", None)
         if cached is not None:
             return cached
@@ -73,12 +62,11 @@ class _ZarrLevel(SingleScaleImage):
         perm = getattr(self, "_perm", None)
         if perm is not None:
             raw = backend.transpose(raw, perm)
-            raw = _apply_vector_flip(backend, raw, self._store_axes, perm)
         self._data = raw
         return self._data
 
     @data.setter
-    def data(self, value: tx.Any) -> None:
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
 
 
@@ -103,16 +91,20 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
 
     axes: tx.Annotated[
         tx.Optional[tx.List[Axis]],
-        tx.Doc("The axes of the pyramid, in the brainhops order."),
+        tx.Doc(
+            "The axes to store a pyramid under, in the brainhops order, "
+            "when it is built from scratch. A pyramid read from a store "
+            "leaves this unset and takes its axes from `ome`."
+        ),
     ] = None
 
     ome: tx.Annotated[
-        tx.Optional[tx.Any],
+        tx.Optional[Multiscale],
         tx.Doc("The OME multiscale metadata, normalized to 0.6rc0."),
     ] = None
 
     @classmethod
-    def _score_store(cls, node: tx.Any) -> float:
+    def _score_store(cls, node: ZarrNode) -> float:
         # An OME-Zarr image is a group that carries multiscale metadata. A
         # plain array is left to the single-scale reader. The raw attributes
         # are inspected, so a malformed pyramid is still recognized here and
@@ -124,7 +116,7 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         return Confidence.CERTAIN
 
     @classmethod
-    def _read_node(cls, node: tx.Any, **kwargs) -> tx.Self:
+    def _read_node(cls, node: ZarrNode, **kwargs) -> tx.Self:
         if not isinstance(
             node, abczarr.ZarrGroup
         ) or not looks_like_multiscale(node):
@@ -160,7 +152,7 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         input_system = CoordinateSystem(name="voxel", axes=canonical_axes)
         output_system = CoordinateSystem(name="world", axes=canonical_axes)
 
-        images = []
+        images = []  # type: tx.List[SingleScaleImage]
         for dataset in datasets:
             array = node[str(dataset.path)]
             matrix = level_matrix(multiscale, dataset, ndim)
@@ -172,16 +164,17 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
             level = _ZarrLevel(transformations=[affine])
             level._node = array
             level._perm = perm
-            level._store_axes = store_axes
             images.append(level)
 
-        image = cls(images=images, axes=canonical_axes, ome=multiscale)
+        # `axes` is left unset: a read pyramid takes its axes from `ome`,
+        # rather than storing a second copy that could drift from it.
+        image = cls(images=images, ome=multiscale)
         image._source_version = source_version
         return image
 
     def _write_node(
         self,
-        node: tx.Any,
+        node: ZarrNode,
         chunks: tx.Any = None,
         version: tx.Optional[str] = None,
         **kwargs,
@@ -198,17 +191,13 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
                 "to write."
             )
         ndim = len(images[0].data.shape)
-        axes = (
-            self.axes
-            if self.axes and len(self.axes) == ndim
-            else _default_canonical_axes(ndim)
-        )
+        axes = self._write_axes(ndim)
         sperm = _axisorder.to_storage(axes)
         storage_axes = _axisorder.permute(axes, sperm)
         per_level_chunks = _resolve_chunks(chunks, len(images))
 
         backend = get_array_backend()
-        levels = []
+        levels = []  # type: tx.List[tx.Tuple[str, tx.List[float], tx.List[float]]]
         for index, image in enumerate(images):
             data = image.data
             if data is None:
@@ -226,7 +215,6 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
                 Affine(matrix=matrix), len(data.shape)
             )
             stored = backend.transpose(data, sperm)
-            stored = _apply_vector_flip(backend, stored, axes, sperm)
             options = dict(kwargs)
             level_chunks = per_level_chunks[index]
             if level_chunks is not None:
@@ -255,7 +243,21 @@ class OmeZarrImage(ZarrParser, WritableFileBasedImage, MultiScaleImage):
         group = abczarr.open_group(location, mode="w")
         self._write_node(group, chunks=chunks, version=version, **kwargs)
 
-    def _level_transform(self, image: SingleScaleImage) -> tx.Any:
+    def _write_axes(self, ndim: int) -> tx.List[Axis]:
+        # The axes to store the pyramid under, in the brainhops order. An
+        # explicit `axes` (a from-scratch pyramid) is used first. A pyramid
+        # read from a store has none, so its axes are derived from `ome`. A
+        # pyramid with neither falls back to a default axis list.
+        if self.axes and len(self.axes) == ndim:
+            return list(self.axes)
+        if self.ome is not None:
+            store_axes = multiscale_axes(self.ome)
+            if len(store_axes) == ndim:
+                perm = _axisorder.to_canonical(store_axes)
+                return _axisorder.permute(store_axes, perm)
+        return _default_canonical_axes(ndim)
+
+    def _level_transform(self, image: SingleScaleImage) -> Transformation:
         # The voxel-to-world transformation of one level. The pyramid's own
         # preferred transformation, when it has one, is composed onto the
         # level's transformation, so a whole-pyramid placement is written

@@ -9,15 +9,19 @@ every other reader, and it routes their file operations to a store path.
 A concrete image class supplies the store-specific behaviour through three
 hooks. `_score_store` scores an opened node, `_read_node` builds the image
 from one, and `_write_node` writes the image into one. The public entry
-points are [from_zarr][brainhops.io.images.zarr._store.ZarrParser.from_zarr],
-[from_store][brainhops.io.images.zarr._store.ZarrParser.from_store],
-[to_node][brainhops.io.images.zarr._store.ZarrParser.to_node], and
-[to_store][brainhops.io.images.zarr._store.ZarrParser.to_store].
+points pair an open-node door with a location door in each direction:
+[from_node][brainhops.io.images.zarr._store.ZarrParser.from_node] and
+[to_node][brainhops.io.images.zarr._store.ZarrParser.to_node] operate on an
+opened node, and
+[from_store][brainhops.io.images.zarr._store.ZarrParser.from_store] and
+[to_store][brainhops.io.images.zarr._store.ZarrParser.to_store] operate on a
+store location.
 """
 
 # dependencies
 import abczarr
 import typing_extensions as tx
+from abczarr.abc.sync import ZarrNode
 
 # core
 from brainhops._core import path
@@ -35,7 +39,7 @@ from brainhops.io.base.parsers import (
 StoreLike = tx.Union[str, "path.PathLike", tx.Any]
 
 
-def _wrap_native(source: tx.Any) -> tx.Optional[tx.Any]:
+def _wrap_native(source: tx.Any) -> tx.Optional[ZarrNode]:
     """Wrap a driver-native array or group in an abczarr node, or `None`.
 
     Each abczarr driver is tried only if its backend is installed, since
@@ -82,7 +86,7 @@ def _wrap_native(source: tx.Any) -> tx.Optional[tx.Any]:
     return None
 
 
-def _as_node(source: tx.Any) -> tx.Optional[tx.Any]:
+def _as_node(source: tx.Any) -> tx.Optional[ZarrNode]:
     """Return `source` as an abczarr node, or `None` when it is a location.
 
     An abczarr node is returned unchanged. A driver-native array or group
@@ -110,20 +114,21 @@ class ZarrParser(FileParserWriter):
     # ---- public API --------------------------------------------------
 
     @classmethod
-    def from_zarr(cls, source: tx.Any, **kwargs) -> tx.Self:
+    def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
         """Read the image from an opened Zarr array or group.
 
-        `source` is an abczarr node, or a driver-native array or group
-        from zarr-python, TensorStore, or zarrista, which is wrapped in an
-        abczarr node before it is read.
+        `node` is an abczarr node, or a driver-native array or group from
+        zarr-python, TensorStore, or zarrista, which is wrapped in an
+        abczarr node before it is read. This is the reading counterpart of
+        [to_node][brainhops.io.images.zarr._store.ZarrParser.to_node].
         """
-        node = _as_node(source)
-        if node is None:
+        opened = _as_node(node)
+        if opened is None:
             raise ParserTypeError(
-                "from_zarr expects an opened Zarr array or group; pass a "
+                "from_node expects an opened Zarr array or group; pass a "
                 "store path to from_store instead."
             )
-        return cls._read_node(node, **kwargs)
+        return cls._read_node(opened, **kwargs)
 
     @classmethod
     def from_store(cls, location: StoreLike, **kwargs) -> tx.Self:
@@ -137,7 +142,7 @@ class ZarrParser(FileParserWriter):
             raise ParserExistsError(f"No Zarr store at {location}")
         return cls._read_node(node, **kwargs)
 
-    def to_node(self, node: tx.Any, **kwargs) -> tx.Any:
+    def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
         """Write the image into an opened Zarr node, and return it.
 
         `node` is an abczarr node, or a driver-native array or group that
@@ -167,7 +172,7 @@ class ZarrParser(FileParserWriter):
     # ---- open --------------------------------------------------------
 
     @classmethod
-    def _open(cls, source: tx.Any, mode: str) -> tx.Optional[tx.Any]:
+    def _open(cls, source: tx.Any, mode: str) -> tx.Optional[ZarrNode]:
         """Open `source` as a node, or return `None` when it is absent."""
         node = _as_node(source)
         if node is not None:
@@ -240,16 +245,16 @@ class ZarrParser(FileParserWriter):
     # ---- hooks -------------------------------------------------------
 
     @classmethod
-    def _score_store(cls, node: tx.Any) -> float:
+    def _score_store(cls, node: ZarrNode) -> float:
         """Score how well `node` matches this image class."""
         raise NotImplementedError
 
     @classmethod
-    def _read_node(cls, node: tx.Any, **kwargs) -> tx.Self:
+    def _read_node(cls, node: ZarrNode, **kwargs) -> tx.Self:
         """Build the image from an opened Zarr `node`."""
         raise NotImplementedError
 
-    def _write_node(self, node: tx.Any, **kwargs) -> None:
+    def _write_node(self, node: ZarrNode, **kwargs) -> None:
         """Write this image into the opened Zarr `node`."""
         raise NotImplementedError
 

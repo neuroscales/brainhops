@@ -418,18 +418,18 @@ def test_from_store_accepts_a_pathlike(tmp_path: Path) -> None:
     assert np.array_equal(np.asarray(back.data), data)
 
 
-def test_from_zarr_reads_an_opened_abczarr_node(tmp_path: Path) -> None:
+def test_from_node_reads_an_opened_abczarr_node(tmp_path: Path) -> None:
     data = np.arange(6, dtype="float32").reshape(2, 3)
     path = str(tmp_path / "node.zarr")
     ZarrImage(data=data).to_store(path)
 
     node = abczarr.open(path, mode="r")
-    back = ZarrImage.from_zarr(node)
+    back = ZarrImage.from_node(node)
 
     assert np.array_equal(np.asarray(back.data), data)
 
 
-def test_from_zarr_wraps_a_driver_native_array(tmp_path: Path) -> None:
+def test_from_node_wraps_a_driver_native_array(tmp_path: Path) -> None:
     # A raw driver object, here a zarr-python array, is wrapped in an
     # abczarr node before it is read.
     zarrpy = pytest.importorskip("zarr")
@@ -439,7 +439,7 @@ def test_from_zarr_wraps_a_driver_native_array(tmp_path: Path) -> None:
 
     native = zarrpy.open(path, mode="r")
     assert isinstance(native, zarrpy.Array)
-    back = ZarrImage.from_zarr(native)
+    back = ZarrImage.from_node(native)
 
     assert np.array_equal(np.asarray(back.data), data)
 
@@ -551,21 +551,22 @@ def test_vector_axis_is_grouped_with_the_channel_position() -> None:
     assert [a.name for a in stored] == ["v", "z", "y", "x"]
 
 
-def test_vector_components_flip_in_lockstep_with_spatial_axes(
+def test_field_components_are_not_reordered_by_the_axis_permutation(
     tmp_path: Path,
 ) -> None:
     path = str(tmp_path / "field.zarr")
     _displacement_field().save(path, version="0.6rc0")
 
     stored = np.asarray(abczarr.open(path, mode="r")["0"][...])
-    # The stored order is (v, z, y, x), and the components have been
-    # reordered from (x, y, z) to (z, y, x) in lockstep, so the leading
-    # component now holds the z value.
-    np.testing.assert_allclose(stored[:, 0, 0, 0], [30.0, 20.0, 10.0])
+    # The array axes are transposed to (v, z, y, x), but the component
+    # values are not reordered: a field's components are expressed in its
+    # output coordinate system, which the seam keeps fixed. So the leading
+    # component still holds the x value.
+    np.testing.assert_allclose(stored[:, 0, 0, 0], [10.0, 20.0, 30.0])
 
     back = OmeZarrImage.from_store(path)
     read = np.asarray(back.images[0].data)
-    # Reading undoes the flip, so each component is back on its own axis.
+    # The round-trip returns the field unchanged.
     np.testing.assert_allclose(read[0, 0, 0, :], [10.0, 20.0, 30.0])
     assert np.array_equal(
         read, np.asarray(_displacement_field().images[0].data)
@@ -608,3 +609,33 @@ def test_write_version_falls_back_to_the_source_version(
     back.save(target)
 
     assert abczarr.open(target, mode="r").ome.version == "0.6rc0"
+
+
+# ---- axes are derived from the OME metadata --------------------------
+
+
+def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
+    axes = [
+        SpatialAxis(name="x"),
+        SpatialAxis(name="y"),
+        SpatialAxis(name="z"),
+        TimeAxis(name="t"),
+        ChannelAxis(name="c"),
+    ]
+    data = np.random.default_rng(3).random((4, 5, 6, 2, 3)).astype("float32")
+    image = SingleScaleImage(
+        data=data, transformations=[_diag_affine([1, 2, 3, 1, 1], [0] * 5)]
+    )
+    source = str(tmp_path / "src.zarr")
+    OmeZarrImage(images=[image], axes=axes).save(source)
+
+    back = OmeZarrImage.from_store(source)
+    # A read pyramid stores no separate axis list; its axes come from `ome`.
+    assert back.axes is None
+    assert back.ome is not None
+
+    # Re-saving derives the axes from `ome`, so their stored order is kept.
+    target = str(tmp_path / "resaved.zarr")
+    back.save(target)
+    block = dict(abczarr.open(target, mode="r").attrs)["multiscales"][0]
+    assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]

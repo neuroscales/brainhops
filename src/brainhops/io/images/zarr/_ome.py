@@ -19,13 +19,24 @@ from collections.abc import Mapping
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from abczarr.abc.sync import ZarrGroup
 from abczarr.ome import v0_6rc0 as _v6
+from abczarr.ome.v0_6rc0.images import Dataset, Multiscale
+from abczarr.ome.v0_6rc0.ome import OME
+from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
 
 # internals
+from brainhops._core import affines
 from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine
 from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.transformations.zarr._axes import _to_axis
+
+#: A per-axis scale or translation, and the placement of one level: its
+#: array path with the per-axis scale and translation that place it.
+_Vector = tx.Sequence[float]
+_Level = tx.Tuple[str, _Vector, _Vector]
 
 #: The OME-NGFF version the reader normalizes every group to.
 NORMALIZED_VERSION = "0.6rc0"
@@ -44,7 +55,7 @@ class OmeImageError(ParserContentError):
     """
 
 
-def looks_like_multiscale(node: tx.Any) -> bool:
+def looks_like_multiscale(node: ZarrGroup) -> bool:
     """Whether a group's attributes carry image multiscale metadata.
 
     This inspects the raw attributes only, so a group that names a
@@ -60,8 +71,8 @@ def looks_like_multiscale(node: tx.Any) -> bool:
 
 
 def read_multiscale(
-    node: tx.Any,
-) -> tx.Optional[tx.Tuple[tx.Any, tx.Optional[str]]]:
+    node: ZarrGroup,
+) -> tx.Optional[tx.Tuple[Multiscale, tx.Optional[str]]]:
     """Return a group's first multiscale, normalized to 0.6rc0.
 
     The result is ``(multiscale, source_version)``, where `multiscale` is
@@ -92,7 +103,7 @@ def read_multiscale(
     return multiscales[0], source_version
 
 
-def _output_system(multiscale: tx.Any) -> tx.Any:
+def _output_system(multiscale: Multiscale) -> tx.Any:
     # The coordinate system a dataset maps its array onto, read from the
     # first dataset's transformation. The first coordinate system is used
     # when no transformation names one.
@@ -108,72 +119,87 @@ def _output_system(multiscale: tx.Any) -> tx.Any:
     return systems[0]
 
 
-def multiscale_axes(multiscale: tx.Any) -> tx.List[Axis]:
+def multiscale_axes(multiscale: Multiscale) -> tx.List[Axis]:
     """Return the axes of a multiscale as brainhops axes, in stored order."""
     system = _output_system(multiscale)
     return [_to_axis(axis.to_json()) for axis in system.axes]
 
 
-def _homogeneous(matrix: np.ndarray, ndim: int) -> np.ndarray:
-    # Pad an ``(n, n)`` or ``(n, n + 1)`` matrix to a square homogeneous
-    # ``(ndim + 1, ndim + 1)`` matrix, so a chain of transforms composes by
-    # matrix multiplication.
-    out = np.eye(ndim + 1)
-    rows = matrix.shape[0]
-    out[:rows, : matrix.shape[1]] = matrix
-    return out
+def _compact(linear: np.ndarray, translation: np.ndarray) -> np.ndarray:
+    # Assemble a compact ``(n, n + 1)`` affine from its linear block and its
+    # translation column. This is the matrix shape the brainhops affine and
+    # `brainhops._core.affines` both work in, so no homogeneous row is added.
+    return np.concatenate([linear, translation[:, None]], axis=1)
 
 
-def _transform_matrix(transform: tx.Any, ndim: int) -> np.ndarray:
-    # The homogeneous matrix of one 0.6rc0 coordinate transformation, in the
-    # stored axis order. Only the transformations that describe a static,
-    # axis-placed geometry are accepted; a transformation defined by a
-    # sampled field, or one that reorders or drops axes, is refused.
+def _transform_matrix(
+    transform: CoordinateTransformation, ndim: int
+) -> np.ndarray:
+    # The compact ``(ndim, ndim + 1)`` affine of one 0.6rc0 coordinate
+    # transformation, in the stored axis order.
+    #
+    # A voxel-to-world geometry does not have to be affine in OME-Zarr; a
+    # coordinate transformation may sample a displacement or coordinate
+    # field, or reorder axes. brainhops does not yet build those geometries
+    # from a group (a displacement or coordinate field would be a
+    # `DisplacementField` or `CoordinatesField`), so a transformation that is
+    # not a scale, a translation, an affine, a rotation, or a sequence of
+    # those is refused here rather than read as a wrong affine.
     kind = getattr(transform, "type", None)
     if kind == "identity":
-        return np.eye(ndim + 1)
+        return np.eye(ndim, ndim + 1)
     if kind == "scale" and isinstance(getattr(transform, "scale", None), list):
-        matrix = np.eye(ndim + 1)
-        matrix[np.arange(ndim), np.arange(ndim)] = transform.scale
-        return matrix
+        return _compact(np.diag(transform.scale), np.zeros(ndim))
     if kind == "translation" and isinstance(
         getattr(transform, "translation", None), list
     ):
-        matrix = np.eye(ndim + 1)
-        matrix[:ndim, ndim] = transform.translation
-        return matrix
+        return _compact(np.eye(ndim), np.asarray(transform.translation, float))
     if kind in ("affine", "rotation"):
         inline = getattr(transform, kind, None)
         if isinstance(inline, list):
-            return _homogeneous(np.asarray(inline, dtype=float), ndim)
+            matrix = np.asarray(inline, dtype=float)
+            if matrix.shape == (ndim, ndim):
+                return _compact(matrix, np.zeros(ndim))
+            if matrix.shape == (ndim, ndim + 1):
+                return matrix
+            # A full (ndim + 1, ndim + 1) homogeneous matrix drops its last
+            # row to become compact.
+            if matrix.shape == (ndim + 1, ndim + 1):
+                return matrix[:ndim]
     if kind == "sequence":
-        matrix = np.eye(ndim + 1)
+        matrix = np.eye(ndim, ndim + 1)
         for inner in transform.transformations:
-            matrix = _transform_matrix(inner, ndim) @ matrix
+            matrix = affines.matmul(_transform_matrix(inner, ndim), matrix)
         return matrix
     raise OmeImageError(
         "This OME-Zarr image is placed by a "
-        f"{kind!r} coordinate transformation, which is not a static axis "
-        "placement and cannot be read as an image geometry."
+        f"{kind!r} coordinate transformation, which brainhops cannot yet "
+        "read as an image geometry. Only a scale, a translation, an affine, "
+        "a rotation, or a sequence of those is supported."
     )
 
 
-def level_matrix(multiscale: tx.Any, dataset: tx.Any, ndim: int) -> np.ndarray:
+def level_matrix(
+    multiscale: Multiscale, dataset: Dataset, ndim: int
+) -> np.ndarray:
     """Return the voxel-to-world matrix of one level, in stored axis order.
 
     The level's own transformation is composed with the multiscale
-    transformations that apply to every level. The result is an ``(ndim,
-    ndim + 1)`` matrix.
+    transformations that apply to every level. The result is a compact
+    ``(ndim, ndim + 1)`` affine.
     """
-    matrix = np.eye(ndim + 1)
+    matrix = np.eye(ndim, ndim + 1)
+    # A dataset's own (intrinsic) transformation is safe to read as an
+    # affine: the OME spec limits it to scales and translations, so it never
+    # carries a field or an axis reordering that an affine could not hold.
     transforms = list(dataset.coordinateTransformations)
     if transforms:
-        matrix = _transform_matrix(transforms[0], ndim) @ matrix
+        matrix = affines.matmul(_transform_matrix(transforms[0], ndim), matrix)
     common = getattr(multiscale, "coordinateTransformations", None)
     if isinstance(common, list):
         for transform in common:
-            matrix = _transform_matrix(transform, ndim) @ matrix
-    return matrix[:ndim]
+            matrix = affines.matmul(_transform_matrix(transform, ndim), matrix)
+    return matrix
 
 
 def permute_affine(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
@@ -192,8 +218,8 @@ def permute_affine(matrix: np.ndarray, perm: tx.Sequence[int]) -> np.ndarray:
 
 def affine_from_matrix(
     matrix: np.ndarray,
-    input: tx.Any = None,
-    output: tx.Any = None,
+    input: tx.Optional[CoordinateSystem] = None,
+    output: tx.Optional[CoordinateSystem] = None,
 ) -> Affine:
     """Build a voxel-to-world affine from an ``(n, n + 1)`` matrix."""
     return Affine(
@@ -229,7 +255,7 @@ def scale_translation_from_affine(
     return np.diag(linear), matrix[:, -1]
 
 
-def axis_to_json(axis: tx.Any) -> tx.Dict[str, tx.Any]:
+def axis_to_json(axis: Axis) -> tx.Dict[str, tx.Any]:
     """Return the OME-Zarr JSON description of one axis."""
     entry = {}  # type: tx.Dict[str, tx.Any]
     name = getattr(axis, "name", None)
@@ -263,9 +289,7 @@ def resolve_write_version(
 
 
 def _level_transforms(
-    scale: tx.Sequence[float],
-    translation: tx.Sequence[float],
-    path: str,
+    scale: _Vector, translation: _Vector, path: str
 ) -> tx.List[tx.Dict[str, tx.Any]]:
     refs = {"input": {"path": path}, "output": {"name": "physical"}}
     transforms = [{"type": "scale", "scale": [float(s) for s in scale]}]  # type: tx.List[tx.Dict[str, tx.Any]]
@@ -282,11 +306,11 @@ def _level_transforms(
 
 
 def build_ome(
-    axes: tx.Sequence[tx.Any],
-    levels: tx.Sequence[tx.Tuple[str, tx.Sequence[float], tx.Sequence[float]]],
+    axes: tx.Sequence[Axis],
+    levels: tx.Sequence[_Level],
     name: tx.Optional[str],
     version: str,
-) -> tx.Any:
+) -> OME:
     """Build the typed OME metadata for an image pyramid.
 
     `axes` are the axes in the stored order. `levels` gives, for each
@@ -323,9 +347,9 @@ def build_ome(
 
 
 def write_multiscale(
-    node: tx.Any,
-    axes: tx.Sequence[tx.Any],
-    levels: tx.Sequence[tx.Tuple[str, tx.Sequence[float], tx.Sequence[float]]],
+    node: ZarrGroup,
+    axes: tx.Sequence[Axis],
+    levels: tx.Sequence[_Level],
     name: tx.Optional[str],
     version: str,
 ) -> None:

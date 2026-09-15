@@ -1,11 +1,13 @@
 # dependencies
 import abczarr
 import typing_extensions as tx
+from abczarr.abc.sync import ZarrNode
+
+# internals
+from brainhops._core.typing import ArrayProtocol
 
 # backends
 from brainhops.backends import get_array_backend
-
-# internals
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
@@ -35,7 +37,7 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
 
     @property
-    def data(self) -> tx.Any:
+    def data(self) -> tx.Optional[ArrayProtocol]:
         cached = getattr(self, "_data", None)
         if cached is not None:
             return cached
@@ -46,11 +48,11 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
         return None
 
     @data.setter
-    def data(self, value: tx.Any) -> None:
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
 
     @classmethod
-    def _score_store(cls, node: tx.Any) -> float:
+    def _score_store(cls, node: ZarrNode) -> float:
         # A plain array is very likely wanted as an image. A group is not an
         # array, so it is left to the OME reader.
         if isinstance(node, abczarr.ZarrArray):
@@ -60,7 +62,7 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
     @classmethod
     def _read_node(
         cls,
-        node: tx.Any,
+        node: ZarrNode,
         transformation: tx.Optional[Transformation] = None,
         **kwargs,
     ) -> tx.Self:
@@ -76,7 +78,7 @@ class ZarrImage(ZarrParser, WritableFileBasedImage, SingleScaleImage):
         image._node = node
         return image
 
-    def _write_node(self, node: tx.Any, **kwargs) -> None:
+    def _write_node(self, node: ZarrNode, **kwargs) -> None:
         data = self.data
         if data is None:
             raise WriterError(
