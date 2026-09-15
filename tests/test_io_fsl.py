@@ -538,7 +538,7 @@ def test_affine_does_not_fold_into_a_coefficient_field() -> None:
     )
     _, disp, post = coef.transformations
     assert disp.coeff is True
-    with pytest.raises(CompositionError, match="coefficient"):
+    with pytest.raises(CompositionError, match="interpolated in its own"):
         _ = _compose(post, disp)
     # compute() therefore keeps the three-step chain intact.
     computed = _xforms.Sequence(
@@ -548,16 +548,25 @@ def test_affine_does_not_fold_into_a_coefficient_field() -> None:
     assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
 
 
-def test_affine_folds_into_a_dense_field_and_propagates_attributes() -> None:
-    """Folding a dense field keeps its order, bound and coeff flag."""
+def test_affine_does_not_fold_into_a_dense_field() -> None:
+    """A dense field is not folded either, because it too is interpolated.
+
+    An affine folded into the field would be baked into values that are
+    interpolated in the field's own grid frame, which changes the encoded
+    transform once a boundary or a spline order above one is involved.
+    """
     warp = io.transformations.load(
         fsl_dir / "displacementfield.nii.gz",
         reference=_real_ref(),
         moving=_real_src(),
     )
     _, disp, post = warp.transformations
-    folded = _compose(post, disp)
-    assert type(folded) is _xforms.DisplacementField
-    assert folded.order == disp.order
-    assert folded.bound == disp.bound
-    assert folded.coeff is False
+    assert disp.coeff is False
+    with pytest.raises(CompositionError, match="interpolated in its own"):
+        _ = _compose(post, disp)
+    # compute() therefore keeps the three-step chain intact.
+    computed = _xforms.Sequence(
+        transformations=list(warp.transformations)
+    ).compute()
+    names = [type(t).__name__ for t in computed.transformations]
+    assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]

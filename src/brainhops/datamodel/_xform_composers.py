@@ -213,26 +213,17 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 
 @_composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
-    if Ti.coeff:
-        # A coefficient field stores spline coefficients, not sampled
-        # displacements, so an affine cannot be folded into its values
-        # without changing what the field means. Leaving the two
-        # uncomposed keeps the coefficients intact, and the affine is
-        # applied when the field is evaluated during reslice.
-        raise CompositionError(
-            "An affine cannot be folded into a coefficient displacement "
-            "field, because the field holds spline coefficients rather "
-            "than sampled displacements."
-        )
-    grid = CartesianField(shape=Ti.field.shape[:-1]).field
-    field = (grid + Ti.field) @ To.matrix[:, :-1].T + To.matrix[:, -1] - grid
-    return DisplacementField(
-        field=field,
-        input=Ti.input,
-        output=To.output,
-        order=Ti.order,
-        bound=Ti.bound,
-        coeff=Ti.coeff,
+    # Folding the affine into the field would bake it into the stored
+    # values, but the field is interpolated in its own grid frame when it
+    # is evaluated. Interpolation and the affine do not commute once a
+    # boundary condition or a spline order above one is involved, so the
+    # folded field encodes a different transform than applying the affine
+    # after the field. The two are therefore left uncomposed: the affine
+    # is applied in order, after the field is evaluated during reslice.
+    raise CompositionError(
+        "An affine cannot be folded into a displacement field, because "
+        "the field is interpolated in its own coordinate frame. Keep the "
+        "affine as a separate step that is applied after the field."
     )
 
 
