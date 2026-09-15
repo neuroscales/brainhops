@@ -1,8 +1,4 @@
-# All brainhops commands
-
-##
-
-### reslice
+# reslice
 
 === ":octicons-terminal-24:"
     ```shell
@@ -20,13 +16,13 @@ composed map internally and pulls the reference grid from the input, so
 the arguments are written in the forward direction while the resampling
 runs in the opposite one.
 
-#### Positional arguments
+## Positional arguments
 
 | Name    | Type   | Description                     |
 | ------- | ------ | -------------------------------- |
 | `input` | `path` | Path to the image to resample. |
 
-#### Options
+## Options
 
 | Flag                 | Type   | Description                                                                            | Default    |
 | --------------------- | ------ | ---------------------------------------------------------------------------------------- | ---------- |
@@ -37,7 +33,7 @@ runs in the opposite one.
 | `--order`              | `int`  | Spline interpolation order (`0` = nearest, `1` = linear).                                | `1`        |
 | `--bound`              | `str`  | Boundary condition used outside the field of view.                                       | `reflect`  |
 
-#### Transform operators
+## Transform operators
 
 A `--transform` value is a path, optionally followed by pipe-separated
 operators applied in written order, for example `warp.nii.gz|inv`. The
@@ -55,67 +51,3 @@ operator inverts such a file before it is composed.
 | `square` | Matrix square of the transform.        | Not implemented (issue #47) |
 | `exp`    | Matrix exponential of the transform.   | Not implemented (issue #47) |
 | `log`    | Matrix logarithm of the transform.     | Not implemented (issue #47) |
-
-### compose
-
-=== ":octicons-terminal-24:"
-    ```shell
-    brainhops compose [FILE ...] [--output FILE]
-    ```
-
-Combine several transformations into one and write the result. The
-transformations are combined following the composition operator: given
-transformations `A` and `B`, the composite maps a coordinate through `B`
-first and then through `A`, matching `A @ B` in the data model. The
-files are listed in this composition order, so the last file listed is
-applied first.
-
-#### Positional arguments
-
-| Name         | Type          | Description                                                    |
-| ------------ | ------------- | ------------------------------------------------------------------ |
-| `transforms` | `list[path]`  | Transformation files to combine, in composition order.        |
-
-#### Options
-
-| Flag             | Type   | Description                                    | Default |
-| ----------------- | ------ | ------------------------------------------------ | ------- |
-| `-h`, `--help`     |        | Show the help message and exit.                  |         |
-| `-o`, `--output`   | `path` | Path to write the combined transformation to.    |         |
-
-!!! warning "Not implemented yet"
-    Running this command raises an error rather than combining anything.
-    It depends on a writable transformation format (issue #41), and on
-    the still-undecided command-line syntax for per-operand operations
-    such as inversion and the matrix square root.
-
-### convert
-
-=== ":octicons-terminal-24:"
-    ```shell
-    brainhops convert <input> --output FILE
-    ```
-
-Read an object from one file format and write it back in another, for
-example an ITK transform to a NIfTI displacement field. The kind of
-object is detected from the input, and the target format is chosen from
-the output file's extension.
-
-#### Positional arguments
-
-| Name    | Type   | Description                  |
-| ------- | ------ | ------------------------------- |
-| `input` | `path` | Path to the object to convert. |
-
-#### Options
-
-| Flag             | Type   | Description                                                          | Default    |
-| ----------------- | ------ | ----------------------------------------------------------------------- | ---------- |
-| `-h`, `--help`     |        | Show the help message and exit.                                         |            |
-| `-o`, `--output`   | `path` | Path to write the converted object to. Its extension selects the target format. | *required* |
-
-!!! warning "Not implemented yet"
-    Running this command raises an error rather than writing anything.
-    It depends on writable formats (issue #41), and on the policy for a
-    feature that the source format records but the target format cannot
-    represent.

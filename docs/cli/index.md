@@ -16,7 +16,7 @@ single program.
 
 | Name      | Type                        | Description                                                          |
 | --------- | --------------------------- | ---------------------------------------------------------------------- |
-| `command` | `{reslice,compose,convert}` | Subcommand to run. See the [command reference](commands.md) for the arguments each one accepts. |
+| `command` | `{reslice,compose,convert}` | Subcommand to run: [`reslice`](reslice.md), [`compose`](compose.md) or [`convert`](convert.md). |
 
 ### Options
 
