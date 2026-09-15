@@ -69,7 +69,7 @@ preserving).
 All classical linear group can be extended with the translation group
 (⋉ T) to define affine groups.
 
-::note
+!!! info
     * The Special Euclidean group (SE) contains transformations that are
       classicaly referred to as "rigid-body" transformations. They
       preserve angles and volumes.
