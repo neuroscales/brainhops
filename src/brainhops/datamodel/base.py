@@ -32,7 +32,7 @@ class DataModelBase(
         and will take precedence over the values in the dictionary.
         """
         for field in fields(cls):
-            key = field.alias
+            key = field.public_name
             if field.init and field.kw and key in other:
                 kwargs.setdefault(key, other[key])
         return cls(*args, **kwargs)
@@ -52,7 +52,7 @@ class DataModelBase(
         and will take precedence over the attributes in the instance.
         """
         for field in fields(cls):
-            key, _key = field.alias, field.name
+            key, _key = field.public_name, field.name
             if field.init and field.kw and hasattr(other, _key):
                 value = getattr(other, _key)
                 kwargs.setdefault(key, value)

@@ -327,6 +327,34 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     np.testing.assert_allclose(result.field, supplied)
 
 
+def test_identity_composes_with_affine_in_both_orders() -> None:
+    # Regression (#60): composing an `Identity` reconstructed the other
+    # transform positionally, which fed one instance in as the first
+    # constructor argument and failed. Composition now rebuilds through
+    # `replace`, reconciling only the endpoints.
+    a = CoordinateSystem(name="A")
+    b = CoordinateSystem(name="B")
+    affine = Affine(
+        matrix=[[1.0, 0.0, 2.0], [0.0, 1.0, 3.0]], input=a, output=a
+    )
+
+    # Identity first: `Identity @ Affine` keeps the affine's input and
+    # takes the identity's output.
+    first = Sequence([Identity(input=a, output=a), affine]).compute()
+    assert isinstance(first, Affine)
+    assert first.input is a
+    assert first.output is a
+    np.testing.assert_allclose(first.matrix, affine.matrix)
+
+    # Identity last: `Affine @ Identity` keeps the affine's output and
+    # takes the identity's input.
+    last = Sequence([affine, Identity(input=a, output=b)]).compute()
+    assert isinstance(last, Affine)
+    assert last.input is a
+    assert last.output is b
+    np.testing.assert_allclose(last.matrix, affine.matrix)
+
+
 def test_subspace_inverse_without_transform_swaps_axes() -> None:
     # With no inner transformation, `inverse` only swaps the input/output
     # spaces and their axes; it must not touch a `transformations`
