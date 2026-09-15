@@ -1,6 +1,7 @@
 zensical>=0.0.11
 mkdocstrings[python]>=1.0.0
 markdown-grid-tables
+ruff
 # not yet on PyPI; install from source until published
 griffe-bagof-magic[dynamic] @ git+https://github.com/bagofseeds/griffe-bagof-magic
 griffe-typing-extensions @ git+https://github.com/bagofseeds/griffe-typing-extensions
