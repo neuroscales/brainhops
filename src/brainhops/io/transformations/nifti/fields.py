@@ -9,6 +9,7 @@ from brainhops.backends import get_array_backend
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_FIELD_INTENTS,
+    _NIFTI_FSL_INTENTS,
     _NIFTI_INTENT_DISPVECT,
     _apply_like,
     _apply_overrides,
@@ -35,9 +36,12 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
         This is the case the intent code was made for: a file that
         declares itself a displacement or vector field is certainly one,
-        and nothing else in the registry should outrank it.
+        and nothing else in the registry should outrank it. FSL intent
+        codes are left to the FSL readers, which decode them, rather than
+        claimed here.
         """
-        if _nifti_intent(header) in _NIFTI_FIELD_INTENTS:
+        intent = _nifti_intent(header)
+        if intent in _NIFTI_FIELD_INTENTS and intent not in _NIFTI_FSL_INTENTS:
             return Confidence.CERTAIN
         # The intent code is often left unset -- SPM writes none -- so
         # fall back to the shape: a field of RAS coordinates carries a

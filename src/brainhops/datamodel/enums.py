@@ -1,4 +1,9 @@
-__all__ = ["BoundaryCondition", "InterpolationOrder", "OrientationType"]
+__all__ = [
+    "BoundaryCondition",
+    "InterpolationOrder",
+    "OrientationType",
+    "AnatomicalOrientationValue",
+]
 
 from brainhops._core.enum import IntEnum, StrEnum
 
@@ -59,6 +64,84 @@ class InterpolationOrder(IntEnum):
 
 
 class OrientationType(StrEnum):
-    """Orientation types for coordinate systems and transformations."""
+    """
+    Orientation types for coordinate systems and transformations.
+
+    Currently, only the `"anatomical"` orientation is supported.
+
+    | Name          | Value          | Description             |
+    |---------------|----------------|-------------------------|
+    | `anatomical`  | `"anatomical"` | Anatomical orientation. |
+    """
 
     anatomical = "anatomical"
+
+
+# ruff: disable[E501]
+# fmt: off
+class AnatomicalOrientationValue(StrEnum):
+    """
+    Anatomical orientation values for coordinate systems and transformations.
+
+    The following values are supported:
+
+    | Name                    | Value                     | Description             |
+    |-------------------------|---------------------------|-------------------------|
+    | `left_to_right`         | `"left-to-right"`         |
+    | `right_to_left`         | `"right-to-left"`         |
+    | `proximal_to_distal`    | `"proximal-to-distal"`    |
+    | `distal_to_proximal`    | `"distal-to-proximal"`    |
+    | `anterior_to_posterior` | `"anterior-to-posterior"` | front-to-back
+    | `posterior_to_anterior` | `"posterior-to-anterior"` | back-to-front
+    | `inferior_to_superior`  | `"inferior-to-superior"`  | feet-to-head
+    | `superior_to_inferior`  | `"superior-to-inferior"`  | head-to-feet
+    | `dorsal_to_palmar`      | `"dorsal-to-palmar"`      | back of hand to palm
+    | `palmar_to_dorsal`      | `"palmar-to-dorsal"`      | palm to back of hand
+    | `dorsal_to_plantar`     | `"dorsal-to-plantar"`     | top of foot to sole
+    | `plantar_to_dorsal`     | `"plantar-to-dorsal"`     | sole to top of foot
+    | `rostral_to_caudal`     | `"rostral-to-caudal"`     | nose/beak-to-tail, especially for nervous system
+    | `caudal_to_rostral`     | ` "caudal-to-rostral"`    | tail-to-nose/beak, especially for nervous system
+    | `cranial_to_caudal`     | `"cranial-to-caudal"`     | head-to-tail
+    | `caudal_to_cranial`     | `"caudal-to-cranial"`     | tail-to-head
+    | `dorsal_to_ventral`     | `"dorsal-to-ventral"`     | back/top-to-belly/bottom
+    | `ventral_to_dorsal`     | `"ventral-to-dorsal"`     | belly/bottom-to-back/top
+    | `superficial_to_deep`   | `"superficial-to-deep"`   | outer surface to inner depth, e.g. skin, gut, cortex
+    | `deep_to_superficial`   | `"deep-to-superficial"`   | inner depth to outer surface
+    | `apical_to_basal`       | `"apical-to-basal"`       | apical to basal surface, e.g. epithelial layers, polarized cells
+    | `basal_to_apical`       | `"basal-to-apical"`       | basal to apical surface
+    | `apex_to_base`          | `"apex-to-base"`          | tip to broad base, e.g. heart, lungs
+    | `base_to_apex`          | `"base-to-apex"`          | broad base to tip
+    """
+    # Common to both bipeds and quadrupeds
+    left_to_right = "left-to-right"
+    right_to_left = "right-to-left"
+    proximal_to_distal = "proximal-to-distal"
+    distal_to_proximal = "distal-to-proximal"
+
+    # Primarily for bipeds (humans)
+    anterior_to_posterior = "anterior-to-posterior"
+    posterior_to_anterior = "posterior-to-anterior"
+    inferior_to_superior = "inferior-to-superior"
+    superior_to_inferior = "superior-to-inferior"
+    dorsal_to_palmar = "dorsal-to-palmar"
+    palmar_to_dorsal = "palmar-to-dorsal"
+    dorsal_to_plantar = "dorsal-to-plantar"
+    plantar_to_dorsal = "plantar-to-dorsal"
+
+    # Primarily for quadrupeds:
+    rostral_to_caudal = "rostral-to-caudal"
+    caudal_to_rostral = "caudal-to-rostral"
+    cranial_to_caudal = "cranial-to-caudal"
+    caudal_to_cranial = "caudal-to-cranial"
+    dorsal_to_ventral = "dorsal-to-ventral"
+    ventral_to_dorsal = "ventral-to-dorsal"
+
+    # For layered and polarized tissues (subject-local):
+    superficial_to_deep = "superficial-to-deep"
+    deep_to_superficial = "deep-to-superficial"
+    apical_to_basal = "apical-to-basal"
+    basal_to_apical = "basal-to-apical"
+    apex_to_base = "apex-to-base"
+    base_to_apex = "base-to-apex"
+# fmt: on
+# ruff: enable[E501]

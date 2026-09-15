@@ -1,9 +1,8 @@
 __all__ = ["DataModelBase", "DataModelConverter"]
 
-# stdlib
+# externals
 from collections.abc import Mapping
 
-# externals
 import typing_extensions as tx
 from bagof.converters import Converter, register_converter
 from bagof.magic import HIDE_IF_NONE, Magic, fields
@@ -21,7 +20,7 @@ class DataModelBase(
     # all classes in the hierarchy.
 
     @classmethod
-    def from_dict(cls, other: Mapping, *args, **kwargs) -> "DataModelBase":
+    def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from a dictionary-like object.
 
@@ -32,15 +31,13 @@ class DataModelBase(
         and will take precedence over the values in the dictionary.
         """
         for field in fields(cls):
-            key = field.alias
+            key = field.public_name
             if field.init and field.kw and key in other:
                 kwargs.setdefault(key, other[key])
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_instance(
-        cls, other: "DataModelBase", *args, **kwargs
-    ) -> "DataModelBase":
+    def from_instance(cls, other: tx.Self, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from an instance of a similar
         class.
@@ -52,14 +49,14 @@ class DataModelBase(
         and will take precedence over the attributes in the instance.
         """
         for field in fields(cls):
-            key, _key = field.alias, field.name
+            key, _key = field.public_name, field.name
             if field.init and field.kw and hasattr(other, _key):
                 value = getattr(other, _key)
                 kwargs.setdefault(key, value)
         return cls(*args, **kwargs)
 
     @classmethod
-    def from_other(cls, other: tx.Any, *args, **kwargs) -> "DataModelBase":
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
         Create an instance of the class from any object that can be
         interpreted as a dictionary, or an instance of a similar class,

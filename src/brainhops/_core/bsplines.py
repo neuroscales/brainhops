@@ -9,6 +9,22 @@ from bagof.hints.array import ArrayLike, ArrayProtocol
 from brainhops.backends import get_array_backend, get_ndimage_backend
 
 
+def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
+    """Translate a boundary condition into a scipy ``(mode, cval)`` pair.
+
+    A constant boundary maps to scipy's ``"grid-constant"`` mode, whether
+    it is named (the ``"constant"`` condition) or given as a numeric fill
+    value. That mode treats every coordinate beyond the grid as the fill
+    value for a spline of any order, which is the zero-padding an FNIRT
+    coefficient field is evaluated with. Scipy's ``"constant"`` mode is not
+    equivalent for an order above one, so it is not used. Every other
+    named condition passes through unchanged.
+    """
+    if isinstance(bound, str):
+        return ("grid-constant" if bound == "constant" else bound), 0.0
+    return "grid-constant", bound
+
+
 def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
@@ -55,8 +71,7 @@ def pull(
     # Prepare for map_coordinates
     coords = ab.moveaxis(coords, -1, 0)
     output = ab.empty_like(input, shape=batch + coords.shape[1:])
-    mode = "constant" if not isinstance(bound, str) else bound
-    cval = 0 if isinstance(bound, str) else bound
+    mode, cval = _scipy_boundary(bound)
     opts = dict(order=order, mode=mode, cval=cval, prefilter=not coeff)
     # Interpolate each batch
     for index in itertools.product(*[range(s) for s in batch]):
@@ -155,17 +170,20 @@ def coeff2value(
     ab = get_array_backend(input)
     ib = get_ndimage_backend(input)
     # Get dimensions
+    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
+    # are spatial"; a genuine ndim=0 is meaningless for interpolation, so
+    # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Create coordinates field for interpolation
+    # Create coordinates field for interpolation, sampling at the center of
+    # each voxel of the *spatial* dimensions (the last `ndim` axes).
     grid = ab.meshgrid(
-        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
+        *(ab.arange(s) for s in input.shape[-ndim:]), indexing="ij"
     )
     grid = ab.stack(grid, axis=0)
     # Prepare for map_coordinates
     output = ab.empty_like(input) if not inplace else input
-    mode = "constant" if not isinstance(bound, str) else bound
-    cval = 0 if isinstance(bound, str) else bound
+    mode, cval = _scipy_boundary(bound)
     opts = dict(order=order, mode=mode, cval=cval, prefilter=False)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = ib.map_coordinates(input[index], grid, **opts)
@@ -260,18 +278,21 @@ def value2coeff(
     ab = get_array_backend(input)
     ib = get_ndimage_backend(input)
     # Get dimensions
+    # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
+    # are spatial"; a genuine ndim=0 is meaningless for a spline filter, so
+    # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Create coordinates field for interpolation
-    grid = ab.meshgrid(
-        *(ab.arange(s) for s in input.shape[:-ndim]), indexing="ij"
-    )
-    grid = ab.stack(grid, axis=0)
-    # Prepare for map_coordinates
+    # Prepare for spline_filter.
+    # `spline_filter` only accepts `order`, `output` and `mode` -- there is no
+    # `cval` argument, so a float `bound` (a constant fill value) cannot be
+    # forwarded. We prefilter a float bound with mode='constant', matching how
+    # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
+    # exact for string bounds and consistent (if not a strict inverse) for
+    # float bounds.
     output = ab.empty_like(input) if not inplace else input
-    mode = "constant" if not isinstance(bound, str) else bound
-    cval = 0 if isinstance(bound, str) else bound
-    opts = dict(order=order, mode=mode, cval=cval)
+    mode = bound if isinstance(bound, str) else "constant"
+    opts = dict(order=order, mode=mode)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = ib.spline_filter(input[index], **opts)
     return output
