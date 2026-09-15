@@ -1,3 +1,5 @@
+"""Readers and writers for ITK transformation formats."""
+
 __all__ = ["tfm"]
 
 from . import tfm

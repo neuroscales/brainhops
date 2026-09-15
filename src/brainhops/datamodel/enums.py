@@ -1,3 +1,6 @@
+"""Enumerations shared across the data model, such as interpolation orders
+and boundary conditions."""
+
 __all__ = [
     "BoundaryCondition",
     "InterpolationOrder",

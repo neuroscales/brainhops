@@ -1,3 +1,5 @@
+"""Coordinate systems, from unitless arrays to anatomical spaces."""
+
 __all__ = [
     "CoordinateSystem",
     "CoordinateSystem2D",
@@ -106,16 +108,24 @@ class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
     axes: tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
 
 
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
+    """A coordinate system for a unitless, C-ordered array with two
+    dimensions."""
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem): ...
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
+    """A coordinate system for a unitless, C-ordered array with three
+    dimensions."""
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
+    """A coordinate system for a unitless, F-ordered array with two
+    dimensions."""
 
 
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem): ...
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
+    """A coordinate system for a unitless, F-ordered array with three
+    dimensions."""
 
 
 # ----------------------------------------------------------------------

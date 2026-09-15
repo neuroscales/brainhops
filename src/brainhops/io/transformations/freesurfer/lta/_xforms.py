@@ -44,6 +44,11 @@ class LTATransformation(
 
     @property
     def input(self) -> LTACoordinateSystem:
+        """The transformation's input coordinate system.
+
+        Derived from the struct's type and its source volume geometry,
+        unless it has been set explicitly.
+        """
         if getattr(self, "_input", None) is not None:
             return self._input
         if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
@@ -58,6 +63,11 @@ class LTATransformation(
 
     @property
     def output(self) -> LTACoordinateSystem:
+        """The transformation's output coordinate system.
+
+        Derived from the struct's type and its destination volume
+        geometry, unless it has been set explicitly.
+        """
         if getattr(self, "_output", None) is not None:
             return self._output
         if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
@@ -72,6 +82,11 @@ class LTATransformation(
 
     @property
     def matrix(self) -> np.ndarray:
+        """The transformation's affine matrix.
+
+        Read from the struct's affine block, unless it has been set
+        explicitly.
+        """
         if getattr(self, "_matrix", None) is not None:
             return self._matrix
         return np.asarray(self.struct.affine.matrix, dtype=np.float64)[:-1]
@@ -90,50 +105,67 @@ class LTATransformation(
 
     @classmethod
     def from_(cls, other: _LTALike) -> tx.Self:
+        """Build the transformation from a struct, a file, or file
+        content, in any form [`LTAStruct.from_`][] accepts."""
         if isinstance(other, LTAStruct):
             return cls.from_struct(other)
         return cls.from_struct(LTAStruct.from_(other))
 
     @classmethod
     def from_struct(cls, struct: LTAStruct) -> tx.Self:
+        """Build the transformation from an already-parsed [`LTAStruct`][]."""
         return cls(struct=struct)
 
     @classmethod
     def from_file(cls, file: _FileLike) -> tx.Self:
+        """Build the transformation from an LTA file (path or file-like
+        object)."""
         return cls.from_struct(LTAStruct.from_file(file))
 
     @classmethod
     def from_text(cls, text: str) -> tx.Self:
+        """Build the transformation from a string in LTA format."""
         return cls.from_struct(LTAStruct.from_text(text))
 
     @classmethod
     def from_bytes(cls, data: bytes) -> tx.Self:
+        """Build the transformation from bytes in LTA format."""
         return cls.from_struct(LTAStruct.from_bytes(data))
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
+        """Build the transformation from an iterable over lines of an
+        LTA file."""
         return cls.from_struct(LTAStruct.from_lines(lines))
 
     @classmethod
     def sniff(cls, other: _LTALike) -> bool:
+        """Return whether the content, in any supported form, looks like
+        it is in LTA format."""
         if isinstance(other, LTAStruct):
             return True
         return LTAStruct.sniff(other)
 
     @classmethod
     def sniff_file(cls, file: _FileLike) -> bool:
+        """Return whether a file (path or file-like object) looks like
+        it is in LTA format."""
         return LTAStruct.sniff_file(file)
 
     @classmethod
     def sniff_bytes(cls, data: bytes) -> bool:
+        """Return whether bytes look like they are in LTA format."""
         return LTAStruct.sniff_bytes(data)
 
     @classmethod
     def sniff_text(cls, text: str) -> bool:
+        """Return whether a string looks like it is in LTA format."""
         return LTAStruct.sniff_text(text)
 
     @classmethod
     def sniff_line(cls, line: str) -> bool:
+        """Return whether a single line looks like the first line of an
+        LTA file."""
         return LTAStruct.sniff_line(line)
 
 
@@ -155,18 +187,24 @@ class LTATransformationVoxToVox(LTATransformation):
 
     @property
     def input(self) -> LTACoordinateSystem:
+        """The voxel system of the struct's source volume, unless it has
+        been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
         return LTAVoxelSystem.from_struct(self.struct.src)
 
     @property
     def output(self) -> LTACoordinateSystem:
+        """The voxel system of the struct's destination volume, unless it
+        has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
         return LTAVoxelSystem.from_struct(self.struct.dst)
 
     @property
     def matrix(self) -> np.ndarray:
+        """The voxel-to-voxel affine matrix derived from the struct,
+        unless it has been set explicitly."""
         if getattr(self, "_matrix", None) is not None:
             return self._matrix
         return _get_vox2vox(self.struct)[:-1]
@@ -202,18 +240,24 @@ class LTATransformationPhysToPhys(LTATransformation):
 
     @property
     def input(self) -> LTACoordinateSystem:
+        """The physical system of the struct's source volume, unless it
+        has been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
         return LTAPhysicalSystem.from_struct(self.struct.src)
 
     @property
     def output(self) -> LTACoordinateSystem:
+        """The physical system of the struct's destination volume,
+        unless it has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
         return LTAPhysicalSystem.from_struct(self.struct.dst)
 
     @property
     def matrix(self) -> np.ndarray:
+        """The physical-to-physical affine matrix derived from the
+        struct, unless it has been set explicitly."""
         if getattr(self, "_matrix", None) is not None:
             return self._matrix
         return _get_phys2phys(self.struct)[:-1]
@@ -247,18 +291,22 @@ class LTATransformationRASToRAS(LTATransformation):
 
     @property
     def input(self) -> LTACoordinateSystem:
+        """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
         return _systems.RASCoordinateSystem()
 
     @property
     def output(self) -> LTACoordinateSystem:
+        """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
         return _systems.RASCoordinateSystem()
 
     @property
     def matrix(self) -> np.ndarray:
+        """The RAS-to-RAS affine matrix derived from the struct, unless
+        it has been set explicitly."""
         if getattr(self, "_matrix", None) is not None:
             return self._matrix
         return _get_phys2phys(self.struct)[:-1]

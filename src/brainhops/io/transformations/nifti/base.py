@@ -1,3 +1,5 @@
+"""The shared base of every transformation stored in a NIfTI file."""
+
 # dependencies
 import typing_extensions as tx
 

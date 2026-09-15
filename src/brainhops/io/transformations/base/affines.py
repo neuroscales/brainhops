@@ -1,3 +1,6 @@
+"""Format-independent affine transformations between the standard voxel,
+RAS and LPS coordinate systems."""
+
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 

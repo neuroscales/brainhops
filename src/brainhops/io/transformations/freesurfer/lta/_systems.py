@@ -81,6 +81,7 @@ class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
         struct: LTAStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> tx.Self:
+        """Build the voxel system of the volume described by `struct`."""
         return cls(
             name=struct.filename or struct.NAME,
             axes=_make_axes(names, orientation=_get_orient(struct)),
@@ -101,6 +102,8 @@ class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
         struct: LTAStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
+        """Build the scaled voxel system of the volume described by
+        `struct`."""
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",
@@ -126,6 +129,7 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
         struct: LTAStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
+        """Build the physical system of the volume described by `struct`."""
         return cls(
             name=struct.filename or struct.NAME,
             units="mm",

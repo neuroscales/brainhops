@@ -1,3 +1,6 @@
+"""Affine transformations between voxel and RAS space, derived from a NIfTI
+header."""
+
 # dependencies
 import nibabel as nb
 import numpy as np

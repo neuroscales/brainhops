@@ -24,6 +24,7 @@ class ITKTransform(_xforms.Sequence, FileBasedTransformation):
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
+        """The chain of transformations, decoded from `transform_group`."""
         return [t.to_transform() for t in self.transform_group]
 
     @transformations.setter

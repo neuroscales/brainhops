@@ -1,3 +1,5 @@
+"""Format-independent fields of world coordinates."""
+
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 

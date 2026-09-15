@@ -1,3 +1,6 @@
+"""The geometry of an image: its sampling grid and voxel-to-world
+transformation."""
+
 __all__ = ["Geometry"]
 
 # dependencies
@@ -72,6 +75,11 @@ class Geometry(Sequence):
         )
 
     def __rmatmul__(self, other: Transformation) -> tx.Self:
+        """Compose `other` with this geometry's transformation.
+
+        Returns a new `Geometry` with the same grid, whose transformation
+        is the composition of `other` and this geometry's transformation.
+        """
         return Geometry(
             (self.grid, other @ self.transformation),
             input=self.grid.input,

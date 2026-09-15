@@ -1,3 +1,5 @@
+"""Readers and writers for transformations stored in NIfTI files."""
+
 __all__ = [
     "NiftiBasedTransformation",
     "NiftiRASCoordinatesField",

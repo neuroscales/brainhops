@@ -1,3 +1,6 @@
+"""The base classes that give a format the ability to sniff, read and
+write itself, and the errors they raise."""
+
 # stdlib
 from collections.abc import Iterable
 
@@ -866,6 +869,25 @@ class TextFileSniffer(FileSniffer):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """
+        Determine if the given bytes are of the type that this parser can
+        handle, by decoding them to text and delegating to `sniff_text`.
+
+        Parameters
+        ----------
+        content : BinaryContentLike
+            The content to sniff.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the content cannot be sniffed.
+        **kwargs
+            Parser-specific options, plus `encoding` (default `"utf-8"`)
+            for decoding `content`.
+
+        Returns
+        -------
+        float
+            Confidence that the content is of this type, in `[0, 1]`.
+        """
         kwargs["error"] = error
         encoding = kwargs.pop("encoding", "utf-8")
         return cls.sniff_text(content.decode(encoding), **kwargs)
@@ -876,6 +898,23 @@ class TextFileParser(TextFileSniffer, FileParser):
 
     @classmethod
     def from_bytes(cls, content: path.BinaryContentLike, **kwargs) -> tx.Self:
+        """
+        Build an object from bytes, by decoding them to text and
+        delegating to `from_text`.
+
+        Parameters
+        ----------
+        content : BinaryContentLike
+            The content to parse.
+        **kwargs
+            Parser-specific options, plus `encoding` (default `"utf-8"`)
+            for decoding `content`.
+
+        Returns
+        -------
+        obj
+            The parsed object.
+        """
         encoding = kwargs.pop("encoding", "utf-8")
         return cls.from_text(content.decode(encoding), **kwargs)
 
@@ -884,6 +923,21 @@ class TextFileParserWriter(TextFileParser, FileParserWriter):
     """A class that can read and write text files of a certain type."""
 
     def to_bytes(self, **kwargs) -> bytes:
+        """
+        Convert the object to bytes, by converting it to text and
+        encoding the result.
+
+        Parameters
+        ----------
+        **kwargs
+            Writer-specific options, plus `encoding` (default `"utf-8"`)
+            for encoding the text.
+
+        Returns
+        -------
+        bytes
+            The byte representation of the object.
+        """
         encoding = kwargs.pop("encoding", "utf-8")
         return self.to_text(**kwargs).encode(encoding)
 

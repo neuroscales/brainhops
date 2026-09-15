@@ -1,3 +1,5 @@
+"""Orientations of an axis or a space, such as left-to-right."""
+
 __all__ = [
     "Orientation",
     "AnatomicalOrientation",
@@ -45,43 +47,49 @@ class Orientation(DataModelBase, doc=True):
 
 
 class AnatomicalOrientation(Orientation):
-    """Describes the anatomical orientation of a spatial axis."""
+    """An orientation in the anatomical frame of reference."""
 
     type: HiddenConst[OrientationType] = OrientationType.anatomical
 
 
 class LeftToRight(AnatomicalOrientation):
-    """Left-to-right orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    left of the subject toward the right."""
 
     value: HiddenConst[str] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
-    """Right-to-left orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    right of the subject toward the left."""
 
     value: HiddenConst[str] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
-    """Anterior-to-posterior orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    front of the subject toward the back."""
 
     value: HiddenConst[str] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
-    """Posterior-to-anterior orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    back of the subject toward the front."""
 
     value: HiddenConst[str] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
-    """Inferior-to-superior orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    bottom of the subject toward the top."""
 
     value: HiddenConst[str] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
-    """Superior-to-inferior orientation type."""
+    """The anatomical orientation in which coordinates increase from the
+    top of the subject toward the bottom."""
 
     value: HiddenConst[str] = "superior-to-inferior"
 

@@ -107,6 +107,8 @@ class Source:
         return path.Path(other.rstrip("/")).name
 
     def __repr__(self) -> str:
+        """Describe the source by its file name, or as plain content when
+        it has none."""
         name = self.name
         return f"file {name!r}" if name else "input content"
 

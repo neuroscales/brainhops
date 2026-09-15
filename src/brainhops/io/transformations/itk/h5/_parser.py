@@ -76,6 +76,9 @@ class H5TransformParser(
     convert=True,
     repr=HIDE_IF_NONE,
 ):
+    """Parses an ITK binary (`.h5`) transform file into a chain of
+    transform blocks."""
+
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
     transform_group: tx.List[ITKStruct] = Factory(list)
@@ -88,6 +91,8 @@ class H5TransformParser(
         h5file: h5py.File,
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
+        """Score how confident the parser is that an open HDF5 file is
+        an ITK transform file."""
         # An ITK transform file records the ITK version at the root.
         if "ITKVersion" in h5file.keys():
             return Confidence.CERTAIN
@@ -104,6 +109,8 @@ class H5TransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the parser is that a file (path, open
+        HDF5 file, or file-like object) is an ITK transform file."""
         if isinstance(file, h5py.File):
             return cls.sniff_h5(file, error=error)
 
@@ -135,6 +142,8 @@ class H5TransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the parser is that an open, seekable
+        binary file object is an ITK transform file."""
         with preserve_position(file):
             try:
                 with h5py.File(file, "r") as f:
@@ -153,6 +162,8 @@ class H5TransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the parser is that bytes are an ITK
+        transform file."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
 
     # --- from ---------------------------------------------------------
@@ -209,12 +220,14 @@ class H5TransformParser(
         load: bool = True,
         **kwargs,
     ) -> tx.Self:
+        """Build an object from an open, seekable binary file object."""
         with preserve_position(file):
             f = h5py.File(file, "r")
             return cls.from_h5(f, keep_open=keep_open, load=load)
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        """Build an object from bytes in ITK binary transform format."""
         return cls.from_fileobj(BytesIO(content), **kwargs)
 
     @classmethod
@@ -331,6 +344,7 @@ class H5TransformParser(
             self.file.close()
 
     def __del__(self) -> None:
+        """Close the underlying HDF5 file, if one is still open."""
         self._close()
 
 
@@ -349,20 +363,25 @@ class DelayedH5Array:
         self._chunks: tx.Optional[tx.Tuple[int]] = None
 
     def open(self) -> h5py.File:
+        """Open (or reuse) the underlying HDF5 file and return it."""
         self.to_dataset(keep_open=True)
         return self._file
 
     def close(self) -> None:
+        """Close the underlying HDF5 file, if this array opened it."""
         if self._file is not None:
             self._file.close()
             self._file = None
 
     def __del__(self) -> None:
+        """Close the underlying HDF5 file, if this array opened it."""
         self.close()
 
     def to_dataset(
         self, file: tx.Optional[_H5Like] = None, keep_open: bool = False
     ) -> h5py.Dataset:
+        """Return the underlying `h5py.Dataset`, opening the file if
+        needed."""
 
         if file is None:
             return self.to_dataset(self.file, keep_open=keep_open)
@@ -388,6 +407,7 @@ class DelayedH5Array:
         raise ValueError("Invalid file type")
 
     def to_array(self, **kwargs) -> np.ndarray:
+        """Read the whole dataset into a `numpy` array."""
         import numpy as np
 
         is_mine = self._file is None
@@ -398,6 +418,7 @@ class DelayedH5Array:
         return array
 
     def to_dask(self, *, keep_open: bool = False, **kwargs) -> ArrayProtocol:
+        """Wrap the dataset as a `dask` array that reads chunks lazily."""
         import dask.array as da
 
         kwargs.setdefault("chunks", self.chunks or "auto")
@@ -408,6 +429,8 @@ class DelayedH5Array:
         return da.from_array(array_like, **kwargs)
 
     def __getitem__(self, index: tx.Any) -> tx.Any:
+        """Read the indexed chunk of the dataset, opening the file if
+        needed."""
         is_mine = self._file is None
         dataset = self.to_dataset(keep_open=True)
         chunk = dataset[index]
@@ -416,38 +439,46 @@ class DelayedH5Array:
         return chunk
 
     def __array__(self, dtype: np.dtype = None) -> np.ndarray:
+        """Read the whole dataset into a `numpy` array."""
         return self.to_array(dtype=dtype)
 
     @property
     def shape(self) -> tuple:
+        """The shape of the dataset."""
         if self._shape is None:
             self.to_dataset()
         return self._shape
 
     @property
     def dtype(self) -> np.dtype:
+        """The data type of the dataset."""
         if self._dtype is None:
             self.to_dataset()
         return self._dtype
 
     @property
     def chunks(self) -> tuple:
+        """The chunk shape of the dataset, or `None` if it is not
+        chunked."""
         if self._chunks is None:
             self.to_dataset()
         return self._chunks
 
     @property
     def ndim(self) -> int:
+        """The number of dimensions of the dataset."""
         return len(self.shape)
 
     @property
     def size(self) -> int:
+        """The total number of elements in the dataset."""
         from math import prod
 
         return prod(self.shape)
 
     @property
     def nbytes(self) -> int:
+        """The size of the dataset in bytes."""
         return self.size * self.dtype.itemsize
 
 

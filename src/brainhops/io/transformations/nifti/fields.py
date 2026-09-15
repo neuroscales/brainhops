@@ -1,3 +1,5 @@
+"""A field of RAS coordinates, stored as a NIfTI displacement field."""
+
 # dependencies
 import nibabel as nb
 import numpy as np

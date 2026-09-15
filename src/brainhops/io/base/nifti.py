@@ -1,3 +1,6 @@
+"""The shared NIfTI-reading and NIfTI-writing machinery behind every
+NIfTI-based image and transformation format."""
+
 __all__ = ["NiftiParser"]
 
 # stdlib
@@ -296,6 +299,12 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
+        """The image data, read lazily from `image` and cached, unless
+        it has been set explicitly.
+
+        The axes that the intent code marks as irrelevant, such as a
+        singleton axis before a vector's components, are dropped.
+        """
         if getattr(self, "_data", None) is not None:
             return self._data
 
@@ -319,6 +328,12 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @property
     def system(self) -> tx.Optional[CoordinateSystem]:
+        """The voxel coordinate system, derived from `header`, unless it
+        has been set explicitly.
+
+        The axes that the intent code marks as irrelevant are dropped.
+        `None` when there is no header to derive it from.
+        """
         if getattr(self, "_system", None) is not None:
             return self._system
 
@@ -360,6 +375,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
+        """Build the object from an open NIfTI file object, image data
+        included when the stream allows reading it."""
         # `from_file_map` wants `FileHolder`s, not raw file objects; handed
         # a bare stream it raises, and the header-only fallback below used
         # to swallow that -- so the image data was never read at all.
@@ -378,10 +395,13 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     @classmethod
     def from_bytes(cls, data: bytes, **kwargs) -> tx.Self:
+        """Build the object from bytes in NIfTI format."""
         return cls.from_fileobj(BytesIO(data), **kwargs)
 
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
+        """Build the object from an already-loaded `nibabel` header or
+        image."""
         if isinstance(nifti, nb.Nifti1Header):
             return cls(header=nifti, **kwargs)
         if isinstance(nifti, nb.Nifti1Image):
@@ -424,6 +444,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         return self.to_nibabel(**kwargs).to_bytes()
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
+        """Write the uncompressed NIfTI-1 encoding of the object to an
+        open file object."""
         file.write(self.to_bytes(**kwargs))
 
     # --- BinaryFileSniffer API ----------------------------------------
@@ -437,6 +459,9 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         version: tx.Optional[int] = None,
         **kwargs,
     ) -> float:
+        """Score how confident the class is that an open file object
+        holds a NIfTI-1 or NIfTI-2 header, or a header of the given
+        `version` when one is passed."""
 
         # --- If nifti version not provided, try both NIfTI-1 and NIfTI-2
         if version is None:
@@ -497,6 +522,13 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the class is that an already-loaded
+        `nibabel` header or image matches this format.
+
+        The header's magic number is checked first. A header that passes
+        is then scored for how well it matches this particular format,
+        as opposed to another kind of NIfTI-based format.
+        """
         if isinstance(nifti, nb.Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
         if isinstance(nifti, nb.Nifti2Header):
@@ -556,6 +588,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
+        """Score how confident the class is that bytes hold a NIfTI-1 or
+        NIfTI-2 header."""
         kwargs["error"] = error
         return cls.sniff_fileobj(BytesIO(data), **kwargs)
 
