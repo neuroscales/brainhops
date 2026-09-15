@@ -28,7 +28,7 @@ from brainhops._core.typing import HiddenConst
 
 # locals
 from .base import DataModelBase
-from .enums import OrientationType, AnatomicalOrientationValue
+from .enums import OrientationType
 
 
 class Orientation(DataModelBase, doc=True):
@@ -46,45 +46,44 @@ class Orientation(DataModelBase, doc=True):
 
 class AnatomicalOrientation(Orientation):
     """Describes the anatomical orientation of a spatial axis."""
-    
+
     type: HiddenConst[OrientationType] = OrientationType.anatomical
-    value: tx.Optional[AnatomicalOrientationValue] = None
 
 
 class LeftToRight(AnatomicalOrientation):
     """Left-to-right orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "left-to-right"
+
+    value: HiddenConst[str] = "left-to-right"
 
 
 class RightToLeft(AnatomicalOrientation):
     """Right-to-left orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "right-to-left"
+
+    value: HiddenConst[str] = "right-to-left"
 
 
 class AnteriorToPosterior(AnatomicalOrientation):
     """Anterior-to-posterior orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "anterior-to-posterior"
+
+    value: HiddenConst[str] = "anterior-to-posterior"
 
 
 class PosteriorToAnterior(AnatomicalOrientation):
     """Posterior-to-anterior orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "posterior-to-anterior"
+
+    value: HiddenConst[str] = "posterior-to-anterior"
 
 
 class InferiorToSuperior(AnatomicalOrientation):
     """Inferior-to-superior orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "inferior-to-superior"
+
+    value: HiddenConst[str] = "inferior-to-superior"
 
 
 class SuperiorToInferior(AnatomicalOrientation):
     """Superior-to-inferior orientation type."""
-    
-    value: HiddenConst[AnatomicalOrientationValue] = "superior-to-inferior"
+
+    value: HiddenConst[str] = "superior-to-inferior"
 
 
 R = leftToRight = LeftToRight()
