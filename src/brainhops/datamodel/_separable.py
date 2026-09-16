@@ -347,6 +347,8 @@ def _classify(
 
     kind = "c"
     scale = shift = None
+    unit = False
+    discrete = _discrete_axis(comp, grid_system, data_system)[0]
     if not interpolating and k == 1:
         affine = _restricted_affine(sub)
         if affine is None:
@@ -356,6 +358,7 @@ def _classify(
             scale, shift = float(matrix[0, 0]), float(matrix[0, 1])
         # A scale of exactly unit magnitude with an integer shift maps each
         # output sample onto one input sample, so no value is interpolated.
+        # Such a step is a whole-sample map.
         integer_shift = abs(shift - round(shift)) < 1e-9
         unit = abs(abs(scale) - 1.0) == 0.0 and integer_shift
         # The gather returns the input sample itself. That matches the
@@ -363,15 +366,19 @@ def _classify(
         # spline coefficients at order two or above the pull returns the
         # reconstruction of the coefficients, not the raw coefficient, and
         # scipy's `reflect` prefilter is not exactly interpolating above
-        # order one. Those cases take the weight-matrix path instead, which
-        # reproduces the reconstruction exactly.
+        # order one. For a continuous axis those cases take the weight-matrix
+        # path instead, which reproduces the reconstruction exactly.
         gather = order <= 1 or (not coeff and bound != "reflect")
-        if unit and gather:
+        # A discrete axis holds no value between its samples, so a
+        # whole-sample map along it is always an exact gather. It must never
+        # be interpolated or blended across, even at order two and above
+        # where the monolithic pull would mix its samples.
+        if unit and (gather or discrete):
             kind = "a"
         else:
             kind = "b"
 
-    _check_discrete(comp, kind, order, grid_system, data_system)
+    _check_discrete(comp, unit, grid_system, data_system)
 
     step = {
         "D": data_axes,
@@ -404,17 +411,14 @@ def _classify(
     return step
 
 
-def _check_discrete(
+def _discrete_axis(
     comp: dict,
-    kind: str,
-    order: int,
     grid_system: tx.Optional[tx.Any],
     data_system: tx.Optional[tx.Any],
-) -> None:
-    # A discrete axis, such as a channel or a labelled time axis, holds no
-    # value between its samples, so it can only be permuted, flipped, or
-    # shifted by whole samples. Such an axis must be its own group and be
-    # applied as a gather. Any other case is refused.
+) -> tx.Tuple[bool, tx.Optional[str]]:
+    # Whether this group touches a discrete axis, and that axis's name. A
+    # discrete axis, such as a channel or a labelled time axis, holds no
+    # value between its samples.
     discrete = False
     name: tx.Optional[str] = None
     for axis_index, system in (
@@ -430,20 +434,33 @@ def _check_discrete(
                 name = getattr(axes[a], "name", None) or getattr(
                     axes[a], "type", None
                 )
+    return discrete, name
+
+
+def _check_discrete(
+    comp: dict,
+    unit: bool,
+    grid_system: tx.Optional[tx.Any],
+    data_system: tx.Optional[tx.Any],
+) -> None:
+    # A discrete axis holds no value between its samples, so it can only be
+    # permuted, flipped, or shifted by whole samples. Such an axis must be
+    # its own group and its step must be a whole-sample map. Any other case
+    # is refused.
+    discrete, name = _discrete_axis(comp, grid_system, data_system)
     if not discrete:
         return
-    if kind != "a" or len(comp["D"]) != 1:
+    if not unit or len(comp["D"]) != 1:
         raise CompositionError(
             f"Cannot apply an interpolating transform along the discrete "
             f"axis {name!r}. A discrete axis holds no value between its "
             f"samples, so it can only be permuted, flipped, or shifted by "
             f"whole samples."
         )
-    # An order-0 (or class-(a) gather) step along a discrete axis is exact:
-    # it moves whole samples without reading any value between them. The
-    # maintainer chose to allow it, so no order-0 case is refused here. An
-    # interpolating step across a discrete axis is caught above by the
-    # `kind != "a"` check.
+    # A whole-sample map along a discrete axis is exact: it moves whole
+    # samples without reading any value between them, so it is always a
+    # gather and is allowed. A step that genuinely resamples the axis is
+    # refused above by the `not unit` check.
 
 
 # ----------------------------------------------------------------------
@@ -749,11 +766,21 @@ def pull_separable(
     permutation = [labels.index(("grid", g)) for g in range(n_grid)]
     arr = ab.transpose(arr, permutation)
     # The assembled array is cast back to the input dtype exactly once, at
-    # the end. The monolithic pull returns the input dtype and rounds an
-    # integer output (scipy's CASE_INTERP_OUT_INT), so an integer output is
-    # rounded before the cast to reproduce that.
+    # the end. The monolithic pull returns the input dtype and reproduces
+    # scipy's `map_coordinates`, so an integer or boolean output is finished
+    # the same way scipy's `CASE_INTERP_OUT_INT` does.
     if arr.dtype != out_dtype:
-        if not floating:
-            arr = ab.round(arr)
-        arr = arr.astype(out_dtype)
+        if out_dtype.kind == "b":
+            # scipy truncates toward zero for a boolean output, so a
+            # fractional value such as 0.6 becomes False.
+            arr = ab.trunc(arr).astype(out_dtype)
+        elif np.issubdtype(out_dtype, np.integer):
+            # scipy rounds an integer output half away from zero, then
+            # clips it to the dtype range so an overshoot saturates
+            # instead of wrapping. The order is round, clip, cast.
+            rounded = ab.trunc(ab.where(arr > 0, arr + 0.5, arr - 0.5))
+            info = np.iinfo(out_dtype)
+            arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
+        else:
+            arr = arr.astype(out_dtype)
     return arr

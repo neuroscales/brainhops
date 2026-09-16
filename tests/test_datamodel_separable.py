@@ -288,6 +288,92 @@ def test_interpolating_across_discrete_channel_still_raises() -> None:
         )
 
 
+@pytest.mark.parametrize("order", [2, 3])
+@pytest.mark.parametrize("coeff", [False, True])
+def test_discrete_channel_whole_sample_map_gathers_at_high_order(
+    order: int, coeff: bool
+) -> None:
+    # A discrete channel axis moved by a whole-sample shift is an exact
+    # gather at any order, even with reflect boundaries or spline
+    # coefficients where a continuous axis would take the weight-matrix
+    # path. The step must succeed and must not blend samples across the
+    # discrete axis. This restores the behaviour before the class-(b)
+    # routing change and is the correct no-interpolation-across-discrete
+    # semantics: the monolithic pull would wrongly mix the channels here.
+    system = CoordinateSystem(
+        axes=[_sp("x"), _sp("y"), _sp("z"), _time("c", discrete=True)]
+    )
+    shape = (4, 5, 6, 3)
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=shape)
+
+    def _seq(channel_shift: float) -> Sequence:
+        matrix = np.eye(4, 5)
+        matrix[3, -1] = channel_shift
+        grid = CartesianField(shape=shape, input=system, output=system)
+        affine = Affine(matrix=matrix, input=system, output=system)
+        return Sequence(transformations=[grid, affine])
+
+    with backend("numpy"):
+        base = sep.pull_separable(
+            data,
+            _seq(0.0),
+            order=order,
+            bound="reflect",
+            coeff=coeff,
+            shape=shape,
+            grid_system=system,
+            data_system=system,
+        )
+        shifted = sep.pull_separable(
+            data,
+            _seq(1.0),
+            order=order,
+            bound="reflect",
+            coeff=coeff,
+            shape=shape,
+            grid_system=system,
+            data_system=system,
+        )
+    # The channel shift only reindexes whole channels, so every output
+    # channel of the shifted reslice equals one channel of the unshifted
+    # reslice exactly. A blend across the discrete axis would leave no
+    # output channel equal to any single input channel.
+    assert shifted.shape == shape
+    for c in range(shape[-1]):
+        assert any(
+            np.array_equal(shifted[..., c], base[..., other])
+            for other in range(shape[-1])
+        )
+
+
+def test_discrete_channel_genuine_scale_raises_at_high_order() -> None:
+    # A genuine resampling of the discrete channel axis is refused at every
+    # order, so the whole-sample gather is not mistaken for permission to
+    # interpolate across the axis.
+    system = CoordinateSystem(
+        axes=[_sp("x"), _sp("y"), _sp("z"), _time("c", discrete=True)]
+    )
+    shape = (4, 5, 6, 3)
+    data = np.arange(int(np.prod(shape)), dtype=float).reshape(shape)
+    matrix = np.eye(4, 5)
+    matrix[3, 3] = 1.5
+    grid = CartesianField(shape=shape, input=system, output=system)
+    affine = Affine(matrix=matrix, input=system, output=system)
+    seq = Sequence(transformations=[grid, affine])
+    with pytest.raises(CompositionError):
+        sep.pull_separable(
+            data,
+            seq,
+            order=3,
+            bound="reflect",
+            coeff=False,
+            shape=shape,
+            grid_system=system,
+            data_system=system,
+        )
+
+
 # ----------------------------------------------------------------------
 #   ORDERING
 # ----------------------------------------------------------------------
@@ -421,6 +507,82 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
                 coeff=False,
             )
             assert np.allclose(got, ref)
+
+
+def _pull_pair_cast(
+    column: np.ndarray,
+    scale0: float,
+    shift0: float,
+    order: int,
+    bound: object,
+) -> tuple:
+    # The separable and monolithic reslice of a two-axis image, for
+    # comparing the integer and boolean cast. The first axis carries the
+    # column and is scaled and shifted, so it takes the interpolating
+    # separable path and the assembled result is cast at the end. The second
+    # axis is a plain gather, which keeps the image separable into two
+    # groups so the monolithic fallback is not taken.
+    system = _voxel_system(2)
+    data = np.repeat(column[:, None], 3, axis=1)
+    shape = data.shape
+    matrix = np.zeros((2, 3))
+    matrix[0, 0], matrix[1, 1] = scale0, 1.0
+    matrix[0, 2], matrix[1, 2] = shift0, 0.0
+    grid = CartesianField(shape=shape, input=system, output=system)
+    affine = Affine(matrix=matrix, input=system, output=system)
+    seq = Sequence(transformations=[grid, affine])
+    with backend("numpy"):
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=order,
+            bound=bound,
+            coeff=False,
+            shape=shape,
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=order, bound=bound, coeff=False
+        )
+    return got, ref
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.int16])
+def test_integer_output_clips_overshoot_and_rounds_half_away(
+    dtype: object,
+) -> None:
+    # A cubic reslice of a sharp step overshoots the dtype range. The
+    # monolithic pull clips the overshoot to the range and rounds half away
+    # from zero, so the separable reslice must produce the same integers
+    # rather than wrap the overshoot or round a tie to even.
+    info = np.iinfo(dtype)
+    column = (np.array([0, 0, 0, 1, 1, 1, 0, 0, 0, 0]) * info.max).astype(
+        dtype
+    )
+    got, ref = _pull_pair_cast(column, -0.8, 8.0, 3, "mirror")
+    assert got.dtype == np.dtype(dtype)
+    assert np.array_equal(got, ref)
+
+
+def test_integer_downscale_rounds_ties_half_away_from_zero() -> None:
+    # A half-integer sample position lands a linear interpolation exactly on
+    # a tie. The monolithic pull rounds the tie away from zero, so a ramp
+    # must match it rather than round to even.
+    column = np.arange(6, dtype=np.uint8)
+    got, ref = _pull_pair_cast(column, 0.5, 0.0, 1, "reflect")
+    assert got.dtype == np.uint8
+    assert np.array_equal(got, ref)
+
+
+def test_boolean_output_truncates_toward_zero() -> None:
+    # A boolean reslice truncates toward zero, so a fractional value below
+    # one becomes False. The monolithic pull does the same, and the
+    # separable reslice must not round such a value up to True.
+    column = np.array([False, True, False, True, False, True])
+    got, ref = _pull_pair_cast(column, 0.3, 0.0, 1, "reflect")
+    assert got.dtype == np.bool_
+    assert np.array_equal(got, ref)
 
 
 def _classify_single(
