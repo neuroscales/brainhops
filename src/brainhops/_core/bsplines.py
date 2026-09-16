@@ -79,6 +79,113 @@ def pull(
     return output
 
 
+def pull_axes(
+    input: ArrayProtocol,
+    coords: ArrayProtocol,
+    axes: tx.Sequence[int],
+    order: int,
+    bound: tx.Union[str, float],
+    coeff: bool,
+) -> ArrayProtocol:
+    """
+    Interpolate an array along a subset of its axes.
+
+    The named axes are the spatial axes that the coordinates field
+    addresses. They are moved to the end of the array, the interpolation
+    is applied over them, and every other axis is carried along as a
+    batch dimension. This samples a low-dimensional field over a few axes
+    of a larger array without building a full-dimensional coordinates
+    field over the whole array.
+
+    Parameters
+    ----------
+    input : array-like
+        The array to interpolate. Shape `(*d0, *d1, ...)`.
+    coords : array-like
+        The coordinates field. Shape `(*spatial_out, len(axes))`.
+    axes : sequence of int
+        The axes of `input` that the coordinates field addresses, in the
+        order the components of the field address them.
+    order : {0..5}
+        The interpolation order.
+    bound : str or float
+        The boundary condition, as accepted by [`pull`][].
+    coeff : bool
+        Whether the input already contains spline coefficients.
+
+    Returns
+    -------
+    array-like
+        The interpolated array. Its leading axes are the axes of `input`
+        that were not named, kept in their original order, followed by
+        the output spatial axes of the field. Shape
+        `(*batch, *spatial_out)`.
+    """
+    ab = get_array_backend(input)
+    axes = [int(a) % input.ndim for a in axes]
+    ndim = len(axes)
+    dest = list(range(input.ndim - ndim, input.ndim))
+    moved = ab.moveaxis(input, axes, dest)
+    return pull(moved, coords, order, bound, coeff)
+
+
+def spline_matrix(
+    n_in: int,
+    coords_1d: ArrayProtocol,
+    order: int,
+    bound: tx.Union[str, float],
+    coeff: bool,
+) -> ArrayProtocol:
+    """
+    Build the weight matrix of a one-dimensional spline resampling.
+
+    The result is a matrix `W` of shape `(n_out, n_in)`, where `n_out`
+    is the number of output samples in `coords_1d`. Applying `W` to a
+    one-dimensional array of length `n_in` reproduces the interpolation
+    that [`pull`][] performs at the same coordinates, because spline
+    interpolation is linear in the sample values. The prefilter is baked
+    into `W` when `coeff` is false, so the matrix maps values, not
+    coefficients, unless `coeff` is true.
+
+    The matrix is applied along one axis of a larger array with a single
+    contraction, which replaces a batched call to [`pull`][] over that
+    axis. This is faster than a batched pull for a one-dimensional step.
+
+    A constant boundary cannot be expressed as a linear weight, so `W`
+    carries only the in-bounds contribution when `bound` is a float. An
+    output sample that reads beyond the grid then has a row that sums to
+    less than one, and the constant fill is added separately as
+    `cval * (1 - W.sum(axis=1))`. This is the partition-of-unity
+    correction, and omitting it leaves the constant-boundary result wrong
+    by an amount proportional to the fill value.
+
+    Parameters
+    ----------
+    n_in : int
+        The length of the input axis.
+    coords_1d : array-like
+        The output coordinates along the axis. Shape `(n_out,)`.
+    order : {0..5}
+        The interpolation order.
+    bound : str or float
+        The boundary condition, as accepted by [`pull`][]. A float
+        selects a constant boundary, and the returned matrix then holds
+        only the in-bounds weights.
+    coeff : bool
+        Whether the input already contains spline coefficients.
+
+    Returns
+    -------
+    array-like
+        The weight matrix. Shape `(n_out, n_in)`.
+    """
+    ab = get_array_backend(coords_1d)
+    bound0 = bound if isinstance(bound, str) else 0.0
+    basis = ab.eye(n_in)
+    coords = ab.reshape(ab.asarray(coords_1d), (-1, 1))
+    return pull(basis, coords, order, bound0, coeff).T
+
+
 def pull_field(
     field: ArrayLike,
     coords: ArrayLike,
