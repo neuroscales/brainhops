@@ -19,7 +19,7 @@ Once two axes are matched, the ratio between their units is read off and
 applied as part of the scaling.
 
 There are two entry points.
-[`bridge`][brainhops.datamodel._xform_adaptors.bridge] returns the bridge
+[`bridge`][] returns the bridge
 from one system to another. The bridge is a single primitive, a sequence
 of primitives, or the identity, and not always a sequence.
 [`adapt`][brainhops.datamodel._xform_adaptors.adapt] ingests two
@@ -148,7 +148,7 @@ def _unit_ratio(source: Axis, target: Axis) -> float:
     source_log10 = getattr(source_unit, "log10_scale", None)
     target_log10 = getattr(target_unit, "log10_scale", None)
     if source_log10 is not None and target_log10 is not None:
-        return 10.0 ** (source_log10 - target_log10)
+        return 10 ** (source_log10 - target_log10)
     return float(source_unit.scale) / float(target_unit.scale)
 
 
@@ -222,7 +222,7 @@ def _same_unit_kind(source: Axis, target: Axis) -> bool:
 
 def _group_by_type(
     axes: tx.List[Axis], indices: tx.List[int]
-) -> "tx.Dict[tx.Optional[str], tx.List[int]]":
+) -> tx.Dict[tx.Optional[str], tx.List[int]]:
     # The given axis indices grouped by the `type` of the axis, keeping the
     # indices of each group in ascending order. An axis with no type forms
     # a group of its own, keyed by ``None``.
@@ -234,9 +234,9 @@ def _group_by_type(
 
 
 def _pair_type_groups(
-    source_groups: "tx.Dict[tx.Optional[str], tx.List[int]]",
-    target_groups: "tx.Dict[tx.Optional[str], tx.List[int]]",
-) -> "tx.List[tx.Tuple[int, int]]":
+    source_groups: tx.Dict[tx.Optional[str], tx.List[int]],
+    target_groups: tx.Dict[tx.Optional[str], tx.List[int]],
+) -> tx.List[tx.Tuple[int, int]]:
     # Pair the still-unmatched axes by order within each type group, as a
     # list of ``(target_index, source_index)`` pairs. A group of a definite
     # type pairs with the group of the same type on the other side, and a
@@ -290,7 +290,7 @@ def _match_axes(
     target_axes: tx.List[Axis],
     allow_positional: bool,
     allow_type_grouped_positional: bool = False,
-) -> "tx.Tuple[tx.List[tx.Optional[int]], tx.Optional[str]]":
+) -> tx.Tuple[tx.List[tx.Optional[int]], tx.Optional[str]]:
     # Establish, for each target axis, the source axis that corresponds to
     # it. The result is a pair of a list `match`, where `match[j]` is the
     # index of the source axis that feeds target axis `j`, and a warning
@@ -489,7 +489,7 @@ def bridge(
     When either system is unspecified, or carries no axes, the two are
     assumed compatible and the identity is returned. When an axis that
     must be matched has no correspondence, an
-    [`AdaptationError`][brainhops.datamodel.transformations.AdaptationError]
+    [`AdaptationError`][]
     names the two systems and the unmatched axes.
 
     Parameters
@@ -665,13 +665,13 @@ def adapt(
     When the two systems have different numbers of axes, one transform acts
     on a subset of the other's axes. The transform on the fewer axes is
     lifted into the fuller space by a
-    [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation]
+    [`SubspaceTransformation`][]
     that acts on those axes and leaves the extra axes unchanged. A 3D
     spatial transform meeting a 4D spatial-and-time boundary is lifted this
     way, whether the fuller space is on the input side or the output side
     of the boundary. A genuine dimensionality mismatch, where the extra
     axes are not a clean pass-through, is refused with an
-    [`AdaptationError`][brainhops.datamodel.transformations.AdaptationError].
+    [`AdaptationError`][].
 
     Parameters
     ----------
@@ -683,15 +683,15 @@ def adapt(
         of the boundary.
     extents : sequence or mapping, optional
         The extents needed to reverse an array-index axis, passed through
-        to [`bridge`][brainhops.datamodel._xform_adaptors.bridge]. When not
+        to [`bridge`][]. When not
         given, they are read from a grid on either side of the boundary.
     allow_positional : bool, default False
         Whether to pair axes by position, passed through to
-        [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+        [`bridge`][].
     allow_type_grouped_positional : bool, default False
         Whether to pair the still-unmatched axes by order within each type
         group, passed through to
-        [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+        [`bridge`][].
 
     Returns
     -------
@@ -837,7 +837,7 @@ def _lift(
 
     The transformation `transform` acts on a subset of the axes of the
     fuller system `full`. This routine wraps `transform` in a
-    [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation]
+    [`SubspaceTransformation`][]
     that acts on those axes within `full` and leaves the extra axes
     unchanged. The dimensionality is preserved, so a spatial transform
     meeting a spatial-and-time boundary acts on the spatial axes and leaves
@@ -851,7 +851,7 @@ def _lift(
 
     The matched axes may still need a reordering, a rescaling, or a flip,
     such as the sign flip between RAS and LPS. That intra-subset bridge is
-    built by [`bridge`][brainhops.datamodel._xform_adaptors.bridge] over
+    built by [`bridge`][] over
     the subset and placed on the fuller side of `transform` inside the
     wrapper.
 
@@ -873,7 +873,7 @@ def _lift(
     extents : sequence or mapping, optional
         The extents needed to reverse an array-index axis within the
         subset, passed through to
-        [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+        [`bridge`][].
 
     Returns
     -------
