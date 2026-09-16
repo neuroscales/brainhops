@@ -1496,3 +1496,73 @@ def test_backward_lift_finds_the_original_leaf_by_identity() -> None:
     inner = wrapped.transformation
     leaves = inner.transformations if isinstance(inner, Sequence) else [inner]
     assert any(leaf is first for leaf in leaves)
+
+
+# ----------------------------------------------------------------------
+#   adapt() REPORTS THE FULLER ENDPOINT AFTER A LIFT
+# ----------------------------------------------------------------------
+
+
+def _composed_homogeneous(result: Transformation) -> np.ndarray:
+    # The full matrix a computed result applies, whether it stayed a
+    # sequence of subspace wrappers or folded to a single transform.
+    if isinstance(result, Sequence):
+        return _homogeneous_of_each(result)
+    return np.asarray(result.compute().to(Affine).homogeneous_matrix)
+
+
+# A non-trivial 3D affine, so a dropped or misplaced axis shows up plainly.
+_LIFT_AFFINE_3D = np.array(
+    [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
+)
+
+
+def test_adapt_forward_lift_output_matches_its_last_piece() -> None:
+    # A forward lift wraps `second` into the fuller space, so the sequence
+    # leaves its coordinates in that fuller output system, not the smaller
+    # output system of `second`.
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(np.eye(3, 4))
+    result = adapt(first, second)
+    last = result.transformations[-1]
+    assert len(result.output.axes) == len(last.output.axes)
+    assert len(result.output.axes) == 4
+
+
+def test_adapt_backward_lift_input_matches_its_first_piece() -> None:
+    # A backward lift wraps `first` into the fuller space, so the sequence
+    # reads its coordinates from that fuller input system, not the smaller
+    # input system of `first`.
+    first = _lps_affine_3d(np.eye(3, 4))
+    second = _voxel_to_ras_time(np.eye(4, 5))
+    result = adapt(first, second)
+    head = result.transformations[0]
+    assert len(result.input.axes) == len(head.input.axes)
+    assert len(result.input.axes) == 4
+
+
+def test_adapt_forward_lift_composes_like_the_flat_sequence() -> None:
+    # A sequence built around a forward-lift adapt computes to the same
+    # transform as the flat three-element sequence. Before the endpoint fix
+    # the nested form raised, because the adapt sequence reported a stale
+    # smaller output system.
+    v2w = _voxel_to_ras_time(np.eye(4, 5))
+    aff = _lps_affine_3d(_LIFT_AFFINE_3D)
+    flat = Sequence([v2w, aff, v2w.inverse()]).compute()
+    nested = Sequence([adapt(v2w, aff), v2w.inverse()]).compute()
+    np.testing.assert_allclose(
+        _composed_homogeneous(flat), _composed_homogeneous(nested), atol=1e-12
+    )
+
+
+def test_adapt_backward_lift_composes_like_the_flat_sequence() -> None:
+    # The mirror of the forward case. A sequence built around a backward-lift
+    # adapt computes to the same transform as the flat three-element
+    # sequence.
+    v2w = _voxel_to_ras_time(np.eye(4, 5))
+    aff = _lps_affine_3d(_LIFT_AFFINE_3D)
+    flat = Sequence([v2w.inverse(), aff, v2w]).compute()
+    nested = Sequence([v2w.inverse(), adapt(aff, v2w)]).compute()
+    np.testing.assert_allclose(
+        _composed_homogeneous(flat), _composed_homogeneous(nested), atol=1e-12
+    )

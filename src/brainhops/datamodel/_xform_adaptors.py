@@ -648,8 +648,13 @@ def adapt(
     system of `first` and the input system of `second` meet at the
     boundary where the two are composed. The result always contains both
     `first` and `second`, as a
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] that runs
-    from the input of `first` to the output of `second`.
+    [`Sequence`][brainhops.datamodel.transformations.Sequence]. The
+    sequence usually runs from the input of `first` to the output of
+    `second`. A lift is the exception. A forward lift wraps `second` so
+    that it acts in the fuller space, and the sequence then ends in that
+    fuller output system rather than the output of `second`. A backward
+    lift wraps `first`, and the sequence then begins in that fuller input
+    system rather than the input of `first`.
 
     When the two systems already agree, the sequence holds `first` and
     `second` with nothing between them. When the two systems have the same
@@ -709,6 +714,12 @@ def adapt(
         extents.update(_grid_extents(second, at_output=False))
     extents = extents or None
 
+    # The sequence normally runs from the input of `first` to the output of
+    # `second`. A lift replaces one of them with a wrapper that acts in the
+    # fuller space, so the endpoint on the lifted side comes from the wrapper
+    # rather than the original transform.
+    seq_input = first.input
+    seq_output = second.output
     if len(source.axes) != len(target.axes):
         # One transform acts on a subset of the other's axes. Lift the
         # smaller one into the fuller space, trying the fuller input side of
@@ -716,17 +727,28 @@ def adapt(
         lifted = _lift(second, full=source, side="input", extents=extents)
         if lifted is not None:
             pieces: tx.List[Transformation] = [first, lifted]
+            # The lifted `second` acts in the fuller space, so the sequence
+            # leaves its coordinates in that fuller output system.
+            seq_output = lifted.output
         else:
             lifted = _lift(first, full=target, side="output", extents=extents)
             if lifted is not None:
                 pieces = [lifted, second]
+                # The lifted `first` reads the fuller space, so the sequence
+                # takes its coordinates from that fuller input system.
+                seq_input = lifted.input
             else:
                 # Not a same-dimensionality subset on either side, so this
-                # is a genuine dimensionality mismatch. The bridge below
-                # cannot add or drop an axis, so it raises the descriptive
-                # count-mismatch error rather than inventing one.
+                # is a genuine dimensionality mismatch. `bridge` cannot add
+                # or drop an axis, so it raises the descriptive count-mismatch
+                # error rather than the adaptor inventing one. The raise that
+                # follows carries a message in case `bridge` ever returns.
                 bridge(source, target, extents=extents)
-                raise AssertionError  # bridge raised; unreachable
+                raise AdaptationError(
+                    "Cannot compose two transforms whose boundary systems "
+                    "have different numbers of axes, when neither acts on a "
+                    "clean subset of the other's axes."
+                )
     else:
         reconciler = bridge(
             source,
@@ -741,9 +763,7 @@ def adapt(
             pieces = [first, *(reconciler.transformations or []), second]
         else:
             pieces = [first, reconciler, second]
-    return Sequence(
-        transformations=pieces, input=first.input, output=second.output
-    )
+    return Sequence(transformations=pieces, input=seq_input, output=seq_output)
 
 
 def _subset_positions(

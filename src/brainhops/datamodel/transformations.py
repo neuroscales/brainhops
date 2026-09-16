@@ -1887,18 +1887,64 @@ def _interpolates(xform: Transformation) -> bool:
     return False
 
 
-def _merge_adjacent_subspaces(seq: Sequence) -> Sequence:
+_ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
+
+
+def _mode_admits(t: Transformation, mode: tx.List[_ModePair]) -> bool:
+    # Whether the current mode would compose a transform of this type. The
+    # mode is the list of `(type, ndim)` pairs the simplification runs
+    # under, and a transform belongs to the mode when it matches any pair.
+    return any(_matches_mode(t, m) for m in mode)
+
+
+def _subspaces_mergeable(
+    prev: SubspaceTransformation,
+    nxt: SubspaceTransformation,
+    mode: tx.List[_ModePair],
+) -> bool:
+    # Whether two adjacent subspace transforms over the same axes may be
+    # merged under the current mode. Two kinds of merge are distinguished.
+    #
+    # A merge that cancels by identity materializes no field, so it is
+    # always allowed, whatever the mode. This is the case that lets a
+    # subspace-wrapped field meet its own subspace-wrapped inverse. A pair of
+    # inner transforms where one is the inverse of the other cancels this
+    # way, as does a pair where either inner is the identity.
+    #
+    # Any other merge composes the two inner transforms numerically, which
+    # for two fields resamples one through the other. That work is done only
+    # when the current mode would compose those inner transforms anyway, so a
+    # restrictive mode such as `compute(mode="Affine")` does not silently
+    # compose two fields.
+    inner_prev = prev.transformation
+    inner_nxt = nxt.transformation
+    if inner_prev is None or inner_nxt is None:
+        return True
+    if _cancels(inner_prev, inner_nxt):
+        return True
+    return _mode_admits(inner_prev, mode) and _mode_admits(inner_nxt, mode)
+
+
+def _merge_adjacent_subspaces(
+    seq: Sequence, mode: tx.List[_ModePair]
+) -> Transformation:
     # Compose adjacent subspace transforms that act on the same axes. Two
     # subspace transforms that meet, where the axes the first writes are the
     # axes the second reads, compose into one subspace transform over those
     # axes. A pair that composes to the identity is dropped. This lets a
     # subspace-wrapped field meet its own subspace-wrapped inverse and
     # cancel by identity, rather than the field being inverted numerically.
+    #
+    # A merge that would compose two inner transforms numerically runs only
+    # when the current mode admits those inner types, so a restrictive mode
+    # does not compose transforms it was told to leave alone. A cancellation
+    # by identity is always allowed, whatever the mode.
     xforms = seq.transformations or []
     if len(xforms) < 2:
         return seq
     merged: tx.List[Transformation] = [xforms[0]]
     changed = False
+    last_identity: tx.Optional[Identity] = None
     for nxt in xforms[1:]:
         prev = merged[-1]
         if (
@@ -1907,20 +1953,25 @@ def _merge_adjacent_subspaces(seq: Sequence) -> Sequence:
             and prev.output_axes is not None
             and nxt.input_axes is not None
             and list(prev.output_axes) == list(nxt.input_axes)
+            and _subspaces_mergeable(prev, nxt, mode)
         ):
             composed = _compose(nxt, prev)
             merged.pop()
-            if not isinstance(composed, Identity):
+            if isinstance(composed, Identity):
+                last_identity = composed
+            else:
                 merged.append(composed)
             changed = True
         else:
             merged.append(nxt)
     if not changed:
         return seq
+    if not merged and last_identity is not None:
+        # Every element cancelled, so the sequence is the identity the last
+        # cancelling pair produced, with its endpoints, rather than an empty
+        # sequence.
+        return last_identity
     return replace(seq, transformations=merged)
-
-
-_ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
 
 
 def _matches_mode(t: Transformation, mode: _ModePair) -> bool:
@@ -2099,7 +2150,11 @@ def _compute_sequence(
             # Compose adjacent subspace transforms over the same axes, so a
             # subspace-wrapped field meets its own subspace-wrapped inverse
             # and cancels by identity rather than being inverted numerically.
-            seq = _merge_adjacent_subspaces(seq)
+            # A full cancellation collapses the sequence to the identity.
+            merged_subspaces = _merge_adjacent_subspaces(seq, mode)
+            if not isinstance(merged_subspaces, Sequence):
+                return merged_subspaces
+            seq = merged_subspaces
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
