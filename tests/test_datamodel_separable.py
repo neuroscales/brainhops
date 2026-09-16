@@ -213,18 +213,76 @@ def test_discrete_axis_with_integer_shift_is_a_gather() -> None:
     assert np.array_equal(got, ref)
 
 
-def test_discrete_axis_order_zero_raises() -> None:
+def test_discrete_axis_order_zero_is_a_gather() -> None:
+    # An order-0 integer shift along a discrete axis is exact and allowed:
+    # it moves whole samples without reading any value between them. The
+    # maintainer chose to allow this case.
     system = CoordinateSystem(axes=[_sp("x"), _time(discrete=True)])
     data = np.arange(12.0).reshape(4, 3)
     seq = _diagonal_seq([1.0, 1.0], [0.0, 1.0], system, system, (4, 3))
-    with pytest.raises(CompositionError):
-        sep.pull_separable(
+    with backend("numpy"):
+        got = sep.pull_separable(
             data,
             seq,
             order=0,
             bound="reflect",
             coeff=False,
             shape=(4, 3),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=0, bound="reflect", coeff=False
+        )
+    assert np.array_equal(got, ref)
+
+
+def test_discrete_channel_untouched_at_order_zero_matches_monolithic() -> None:
+    # A label map with a discrete channel axis, resliced by a diagonal scale
+    # on the spatial axes at order 0. The channel axis is untouched, so the
+    # reslice succeeds and matches the monolithic pull.
+    system = CoordinateSystem(
+        axes=[_sp("x"), _sp("y"), _time("c", discrete=True)]
+    )
+    data = np.arange(4 * 5 * 3, dtype=float).reshape(4, 5, 3)
+    seq = _diagonal_seq(
+        [1.5, 2.0, 1.0], [0.0, 0.0, 0.0], system, system, (4, 5, 3)
+    )
+    with backend("numpy"):
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=0,
+            bound="nearest",
+            coeff=False,
+            shape=(4, 5, 3),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=0, bound="nearest", coeff=False
+        )
+    assert np.allclose(got, ref)
+
+
+def test_interpolating_across_discrete_channel_still_raises() -> None:
+    # A non-integer scale along the discrete channel axis would resample
+    # across it, which is refused.
+    system = CoordinateSystem(
+        axes=[_sp("x"), _sp("y"), _time("c", discrete=True)]
+    )
+    data = np.arange(4 * 5 * 3, dtype=float).reshape(4, 5, 3)
+    seq = _diagonal_seq(
+        [1.5, 2.0, 1.5], [0.0, 0.0, 0.0], system, system, (4, 5, 3)
+    )
+    with pytest.raises(CompositionError):
+        sep.pull_separable(
+            data,
+            seq,
+            order=1,
+            bound="nearest",
+            coeff=False,
+            shape=(4, 5, 3),
             grid_system=system,
             data_system=system,
         )
@@ -365,7 +423,13 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
             assert np.allclose(got, ref)
 
 
-def _classify_single(scale: float, shift: float) -> str:
+def _classify_single(
+    scale: float,
+    shift: float,
+    order: int = 3,
+    bound: object = "mirror",
+    coeff: bool = False,
+) -> str:
     els = [Affine(matrix=np.asarray([[scale, shift]]))]
     deps, stage_dims = sep._build_deps(els, 1)
     comps = sep._components(deps, 1, stage_dims)
@@ -374,9 +438,9 @@ def _classify_single(scale: float, shift: float) -> str:
         els,
         (10,),
         (10,),
-        order=3,
-        bound="reflect",
-        coeff=False,
+        order=order,
+        bound=bound,
+        coeff=coeff,
         grid_system=None,
         data_system=None,
     )
@@ -391,6 +455,43 @@ def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
     assert _classify_single(-1.0, 3.0) == "a"
     assert _classify_single(0.9999999, 0.0) == "b"
     assert _classify_single(1.3, 0.0) == "b"
+
+
+def test_unit_scale_with_coeff_at_high_order_is_a_matrix() -> None:
+    # With spline coefficients at order two or above, the monolithic pull
+    # returns the reconstruction of the coefficients, not the raw
+    # coefficient a gather would return. Such a step takes the weight
+    # matrix instead, at order one or below it stays a gather.
+    assert _classify_single(1.0, 2.0, order=3, coeff=True) == "b"
+    assert _classify_single(1.0, 2.0, order=1, coeff=True) == "a"
+    assert _classify_single(1.0, 2.0, order=0, coeff=True) == "a"
+
+
+def test_unit_scale_with_reflect_above_order_one_is_a_matrix() -> None:
+    # Scipy's reflect prefilter is not exactly interpolating above order
+    # one, so a reflect gather would diverge from the monolithic pull. Such
+    # a step takes the weight matrix, at order one or below it stays a
+    # gather.
+    assert _classify_single(1.0, 2.0, order=3, bound="reflect") == "b"
+    assert _classify_single(1.0, 2.0, order=5, bound="reflect") == "b"
+    assert _classify_single(1.0, 2.0, order=1, bound="reflect") == "a"
+
+
+def test_restrict_handles_matrix_less_affine() -> None:
+    # An affine with no matrix is the identity, the reading `_dependency`
+    # gives it. `_restrict` must handle it without indexing into a missing
+    # matrix.
+    matrix = np.zeros((2, 3))
+    matrix[0, 0], matrix[1, 1] = 2.0, 3.0
+    els = [Affine(matrix=matrix), Affine(matrix=None)]
+    deps, stage_dims = sep._build_deps(els, 2)
+    comps = sep._components(deps, 2, stage_dims)
+    assert comps is not None
+    for comp in comps:
+        sub = sep._restrict(comp, els, (6, 7))
+        # The grid and the diagonal affine; the matrix-less affine is
+        # dropped as the identity.
+        assert len(sub) == 2
 
 
 def test_constant_boundary_near_all_corners_of_a_warp() -> None:
@@ -453,6 +554,178 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
             coeff=False,
         )
     assert np.allclose(got, ref)
+
+
+def test_class_a_gather_with_coeff_matches_monolithic() -> None:
+    # A flip is class-(a) eligible, but with spline coefficients at order
+    # three the monolithic pull returns the reconstruction of the
+    # coefficients, not the raw coefficient a gather would return. The step
+    # must route to the weight matrix so the result still matches.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(7)
+        data = rng.normal(size=(6, 7))
+        # Axis 0 is a flip; axis 1 is a genuine rescale, so the reslice
+        # factors into two groups.
+        seq = _diagonal_seq([-1.0, 1.3], [5.0, 0.0], system, system, (6, 7))
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=3,
+            bound="mirror",
+            coeff=True,
+            shape=(6, 7),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=3, bound="mirror", coeff=True
+        )
+    assert np.allclose(got, ref)
+
+
+@pytest.mark.parametrize("order", [3, 5])
+def test_class_a_reflect_gather_matches_monolithic(order: int) -> None:
+    # A flip is class-(a) eligible, but scipy's reflect prefilter is not
+    # exactly interpolating above order one, so the gather would diverge
+    # from the monolithic pull. The step routes to the weight matrix.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(11)
+        data = rng.normal(size=(6, 7))
+        seq = _diagonal_seq([-1.0, 1.3], [5.0, 0.0], system, system, (6, 7))
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=order,
+            bound="reflect",
+            coeff=False,
+            shape=(6, 7),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data,
+            seq.compute().field,
+            order=order,
+            bound="reflect",
+            coeff=False,
+        )
+    assert np.allclose(got, ref)
+
+
+def test_output_dtype_float32_is_preserved() -> None:
+    # The separable pipeline runs in a floating working dtype, then casts
+    # back to the input dtype once at the end, matching the monolithic pull.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(3)
+        data = rng.normal(size=(6, 7)).astype(np.float32)
+        seq = _diagonal_seq([-1.0, 1.3], [5.0, 0.0], system, system, (6, 7))
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=3,
+            bound="mirror",
+            coeff=False,
+            shape=(6, 7),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=3, bound="mirror", coeff=False
+        )
+    assert got.dtype == np.float32
+    assert ref.dtype == np.float32
+    assert np.allclose(got, ref)
+
+
+def test_output_dtype_uint8_order_zero_matches_monolithic() -> None:
+    # An integer input is lifted to float for the pipeline and rounded back
+    # once at the end, the way the monolithic pull rounds an integer output.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(5)
+        data = rng.integers(0, 255, size=(6, 7)).astype(np.uint8)
+        seq = _diagonal_seq([-1.0, 1.5], [5.0, 0.0], system, system, (6, 7))
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=0,
+            bound="nearest",
+            coeff=False,
+            shape=(6, 7),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=0, bound="nearest", coeff=False
+        )
+    assert got.dtype == np.uint8
+    assert ref.dtype == np.uint8
+    assert np.array_equal(got, ref)
+
+
+def test_class_a_only_pipeline_preserves_dtype() -> None:
+    # A pipeline of only gather steps keeps the input dtype, the same dtype
+    # the monolithic pull returns.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(9)
+        data = rng.normal(size=(6, 7)).astype(np.float32)
+        # Two flips, each a class-(a) gather.
+        seq = _diagonal_seq([-1.0, -1.0], [5.0, 6.0], system, system, (6, 7))
+        got = sep.pull_separable(
+            data,
+            seq,
+            order=1,
+            bound="mirror",
+            coeff=False,
+            shape=(6, 7),
+            grid_system=system,
+            data_system=system,
+        )
+        ref = pull(
+            data, seq.compute().field, order=1, bound="mirror", coeff=False
+        )
+    assert got.dtype == np.float32
+    assert ref.dtype == np.float32
+    assert np.allclose(got, ref)
+
+
+def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
+    # An interpolating subspace transform that names no axes is malformed.
+    # It must not be read as pass-through and return the data unwarped. The
+    # separable path falls back to the monolithic pull, which raises.
+    system = _voxel_system(3)
+    with backend("numpy"):
+        rng = np.random.default_rng(6)
+        data = rng.normal(size=(5, 5, 5))
+        warp = rng.normal(size=(5, 5, 5, 3))
+        inner = DisplacementField(field=warp, order=1, bound="reflect")
+        sub = SubspaceTransformation(transformation=inner)
+        grid = CartesianField(shape=(5, 5, 5), input=system, output=system)
+        seq = Sequence(transformations=[grid, sub])
+        with pytest.raises(Exception) as sep_error:
+            sep.pull_separable(
+                data,
+                seq,
+                order=1,
+                bound="reflect",
+                coeff=False,
+                shape=(5, 5, 5),
+                grid_system=system,
+                data_system=system,
+            )
+        with pytest.raises(Exception) as mono_error:
+            pull(
+                data,
+                seq.compute().field,
+                order=1,
+                bound="reflect",
+                coeff=False,
+            )
+    assert type(sep_error.value) is type(mono_error.value)
 
 
 # ----------------------------------------------------------------------

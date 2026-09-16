@@ -88,9 +88,15 @@ def _dependency(
         # one of its acted-on axes to every other. The remaining axes pass
         # through in order, paired the same way as the subspace-to-affine
         # reduction pairs them.
-        dep = np.zeros((ndim_out, ndim_in), dtype=bool)
         in_axes = _axis_list(element.input_axes)
         out_axes = _axis_list(element.output_axes)
+        if not in_axes or not out_axes:
+            # An interpolating subspace transform that names no axes cannot
+            # be read. Treating it as pass-through would drop the warp and
+            # return the data unwarped, so the whole reslice falls back to
+            # the monolithic pull, which then reports the malformed input.
+            raise _Unknown()
+        dep = np.zeros((ndim_out, ndim_in), dtype=bool)
         for o in out_axes:
             for i in in_axes:
                 dep[o, i] = True
@@ -284,7 +290,12 @@ def _restrict(
                     )
                 )
         elif not _interpolates(element):
-            matrix = np.asarray(element.to(Affine).matrix)
+            matrix = element.to(Affine).matrix
+            if matrix is None:
+                # A matrix-less affine is the identity, the same reading
+                # `_dependency` gives it, and contributes nothing here.
+                continue
+            matrix = np.asarray(matrix)
             n_in = matrix.shape[1] - 1
             sub_matrix = matrix[np.ix_(rows, list(cols) + [n_in])]
             sub.append(Affine(matrix=sub_matrix))
@@ -345,7 +356,17 @@ def _classify(
             scale, shift = float(matrix[0, 0]), float(matrix[0, 1])
         # A scale of exactly unit magnitude with an integer shift maps each
         # output sample onto one input sample, so no value is interpolated.
-        if abs(abs(scale) - 1.0) == 0.0 and abs(shift - round(shift)) < 1e-9:
+        integer_shift = abs(shift - round(shift)) < 1e-9
+        unit = abs(abs(scale) - 1.0) == 0.0 and integer_shift
+        # The gather returns the input sample itself. That matches the
+        # monolithic pull only when the pull returns the same sample. With
+        # spline coefficients at order two or above the pull returns the
+        # reconstruction of the coefficients, not the raw coefficient, and
+        # scipy's `reflect` prefilter is not exactly interpolating above
+        # order one. Those cases take the weight-matrix path instead, which
+        # reproduces the reconstruction exactly.
+        gather = order <= 1 or (not coeff and bound != "reflect")
+        if unit and gather:
             kind = "a"
         else:
             kind = "b"
@@ -418,15 +439,11 @@ def _check_discrete(
             f"samples, so it can only be permuted, flipped, or shifted by "
             f"whole samples."
         )
-    if order == 0:
-        # A discrete axis with order 0 is refused pending a maintainer
-        # decision. An order-0 gather along a discrete axis is exact and
-        # could be allowed, but is raised here to keep the behaviour
-        # explicit for now.
-        raise CompositionError(
-            f"Cannot reslice the discrete axis {name!r} with order 0. Use a "
-            f"higher order, or reslice without touching this axis."
-        )
+    # An order-0 (or class-(a) gather) step along a discrete axis is exact:
+    # it moves whole samples without reading any value between them. The
+    # maintainer chose to allow it, so no order-0 case is refused here. An
+    # interpolating step across a discrete axis is caught above by the
+    # `kind != "a"` check.
 
 
 # ----------------------------------------------------------------------
@@ -482,6 +499,10 @@ def _make_gather(
         # Order-0 weights turn each output coordinate into the single input
         # sample it lands on. A row that sums to zero fell outside the grid
         # under a constant boundary, and takes the fill value.
+        # FOLLOW-UP: `spline_matrix` builds an `n_in x n_in` identity to
+        # read off these indices, which costs O(n_in**2) memory for a long
+        # axis. Direct index arithmetic per boundary mode would avoid it,
+        # but it must reproduce scipy's boundary indices exactly.
         weights = np.asarray(spline_matrix(n_in, coords, 0, bound0, True))
         rowsum = weights.sum(1)
         idx = weights.argmax(1)
@@ -714,10 +735,25 @@ def pull_separable(
     ]
     steps = _order_steps(steps, data.shape, shape, order, coeff)
 
-    arr = data
+    # The pipeline runs in a floating working dtype so an integer input is
+    # not rounded between steps. The weight-matrix step already produces a
+    # float64 result, and the gather and pull steps preserve the dtype they
+    # are given, so an integer input is lifted to float once here.
+    out_dtype = np.dtype(data.dtype)
+    floating = np.issubdtype(out_dtype, np.floating)
+    arr = data if floating else data.astype(float)
     labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
     for step in steps:
         arr, labels = step["run"](arr, labels)
 
     permutation = [labels.index(("grid", g)) for g in range(n_grid)]
-    return ab.transpose(arr, permutation)
+    arr = ab.transpose(arr, permutation)
+    # The assembled array is cast back to the input dtype exactly once, at
+    # the end. The monolithic pull returns the input dtype and rounds an
+    # integer output (scipy's CASE_INTERP_OUT_INT), so an integer output is
+    # rounded before the cast to reproduce that.
+    if arr.dtype != out_dtype:
+        if not floating:
+            arr = ab.round(arr)
+        arr = arr.astype(out_dtype)
+    return arr
