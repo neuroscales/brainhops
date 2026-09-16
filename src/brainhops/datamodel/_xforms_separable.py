@@ -41,9 +41,13 @@ from .transformations import (
     CompositionError,
     ConversionError,
     Identity,
+    Permutation,
+    Scaling,
     Sequence,
     SubspaceTransformation,
     Transformation,
+    Translation,
+    _boundary_output,
     _interpolates,
 )
 
@@ -70,6 +74,85 @@ def _axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
     return [int(a) for a in axes]
 
 
+def _affine_dependency(
+    element: Transformation, ndim_in: int, ndim_out: int
+) -> np.ndarray:
+    # The dependency read from an element's affine matrix. A matrix-less
+    # affine is the identity, and an element that cannot be reduced to an
+    # affine is unreadable. The translation column carries no coupling and
+    # is dropped, so an entry is kept only where the linear part is nonzero.
+    try:
+        affine = element.to(Affine)
+    except ConversionError as error:
+        raise _Unknown() from error
+    matrix = affine.matrix
+    if matrix is None:
+        if ndim_in != ndim_out:
+            raise _Unknown()
+        return np.eye(ndim_in, dtype=bool)
+    return np.asarray(matrix)[:, :-1] != 0
+
+
+def _subspace_dependency(
+    element: SubspaceTransformation, ndim_in: int, ndim_out: int
+) -> np.ndarray:
+    # The dependency of a transform that acts on a subset of the axes. Its
+    # coupling among the acted-on axes is the dependency of the wrapped
+    # transform itself, read by recursing through the same machinery. So a
+    # subspace wrapping a diagonal linear, a nested subspace, or a warp that
+    # touches only some of its axes couples only what the inner transform
+    # actually mixes, rather than every acted-on axis to every other. The
+    # remaining axes pass through in order, paired the same way as the
+    # subspace-to-affine reduction pairs them.
+    inner = element.transformation
+    interpolates = _interpolates(inner)
+    in_axes = _axis_list(element.input_axes)
+    out_axes = _axis_list(element.output_axes)
+    if not in_axes or not out_axes:
+        if interpolates:
+            # An interpolating subspace transform that names no axes cannot
+            # be read. Treating it as pass-through would drop the warp and
+            # return the data unwarped, so the whole reslice falls back to
+            # the monolithic pull, which then reports the malformed input.
+            raise _Unknown()
+        # A non-interpolating subspace that names no axes carries its full
+        # affine embedding, which names the axes it touches through its
+        # matrix.
+        return _affine_dependency(element, ndim_in, ndim_out)
+    ki, ko = len(in_axes), len(out_axes)
+    inner_dep = None
+    if ki == ko:
+        try:
+            candidate = _transform_dependency(inner, ki, ko)
+        except Exception:
+            # A wrapped transform whose dependency cannot be read is
+            # over-approximated below, never under-coupled.
+            candidate = None
+        if candidate is not None and candidate.shape == (ko, ki):
+            inner_dep = np.asarray(candidate, dtype=bool)
+    if inner_dep is None:
+        if interpolates:
+            # A raw field inner, or a warp whose dependency cannot be read,
+            # couples every acted-on axis to every other. This is a safe
+            # over-approximation, which only ever misses an optimization and
+            # never splits an axis that should stay coupled.
+            inner_dep = np.ones((ko, ki), dtype=bool)
+        else:
+            # A non-interpolating inner that could not be recursed is read
+            # from the subspace's full affine embedding instead.
+            return _affine_dependency(element, ndim_in, ndim_out)
+    dep = np.zeros((ndim_out, ndim_in), dtype=bool)
+    for a, o in enumerate(out_axes):
+        for b, i in enumerate(in_axes):
+            if inner_dep[a, b]:
+                dep[o, i] = True
+    pass_in = [i for i in range(ndim_in) if i not in set(in_axes)]
+    pass_out = [o for o in range(ndim_out) if o not in set(out_axes)]
+    for o, i in zip(pass_out, pass_in):
+        dep[o, i] = True
+    return dep
+
+
 def _dependency(
     element: Transformation, ndim_in: int, ndim_out: int
 ) -> np.ndarray:
@@ -81,30 +164,8 @@ def _dependency(
     column of an affine is dropped. A shear couples axes through its
     off-diagonal entries, which are kept.
     """
-    if isinstance(element, SubspaceTransformation) and _interpolates(
-        element.transformation
-    ):
-        # An interpolating transform over a subset of axes couples every
-        # one of its acted-on axes to every other. The remaining axes pass
-        # through in order, paired the same way as the subspace-to-affine
-        # reduction pairs them.
-        in_axes = _axis_list(element.input_axes)
-        out_axes = _axis_list(element.output_axes)
-        if not in_axes or not out_axes:
-            # An interpolating subspace transform that names no axes cannot
-            # be read. Treating it as pass-through would drop the warp and
-            # return the data unwarped, so the whole reslice falls back to
-            # the monolithic pull, which then reports the malformed input.
-            raise _Unknown()
-        dep = np.zeros((ndim_out, ndim_in), dtype=bool)
-        for o in out_axes:
-            for i in in_axes:
-                dep[o, i] = True
-        pass_in = [i for i in range(ndim_in) if i not in set(in_axes)]
-        pass_out = [o for o in range(ndim_out) if o not in set(out_axes)]
-        for o, i in zip(pass_out, pass_in):
-            dep[o, i] = True
-        return dep
+    if isinstance(element, SubspaceTransformation):
+        return _subspace_dependency(element, ndim_in, ndim_out)
     if isinstance(element, Identity):
         if ndim_in != ndim_out:
             raise _Unknown()
@@ -113,16 +174,7 @@ def _dependency(
         # A raw field, not wrapped in a subspace, couples every axis to
         # every axis. Nothing about it is separable.
         return np.ones((ndim_out, ndim_in), dtype=bool)
-    try:
-        affine = element.to(Affine)
-    except ConversionError as error:
-        raise _Unknown() from error
-    matrix = affine.matrix
-    if matrix is None:
-        if ndim_in != ndim_out:
-            raise _Unknown()
-        return np.eye(ndim_in, dtype=bool)
-    return np.asarray(matrix)[:, :-1] != 0
+    return _affine_dependency(element, ndim_in, ndim_out)
 
 
 def _element_dims(element: Transformation, ndim_in: int) -> tx.Tuple[int, int]:
@@ -150,9 +202,18 @@ def _element_dims(element: Transformation, ndim_in: int) -> tx.Tuple[int, int]:
 def _build_deps(
     els: tx.List[Transformation], n_grid: int
 ) -> tx.Tuple[tx.List[np.ndarray], tx.List[int]]:
-    # The dependency matrix of every non-grid element, and the axis count
-    # at every stage. Stage 0 is the grid, and stage s is the output of
-    # element s. A chain whose stages do not line up is unreadable.
+    # Build the per-stage dependency matrices of a transformation chain.
+    #
+    # For each element `T_s` of `els`, this returns its dependency matrix
+    # `Dep(T_s)` -- a boolean matrix whose entry `[i, j]` is true when the
+    # element's output axis `i` depends on its input axis `j`. It also
+    # returns the axis count at every stage, where stage 0 is the sampling
+    # grid of `n_grid` axes and stage `s` is the output of element `s`.
+    # Together the matrices and dimensions describe how coupling flows
+    # along the chain, which `_components` walks to partition the axes.
+    #
+    # A chain whose stages do not line up, so that one element's input
+    # dimensionality does not match the previous stage, is unreadable.
     deps: tx.List[np.ndarray] = []
     stage_dims = [n_grid]
     current = n_grid
@@ -164,6 +225,25 @@ def _build_deps(
         current = ndim_out
         stage_dims.append(current)
     return deps, stage_dims
+
+
+def _transform_dependency(
+    transform: Transformation, ndim_in: int, ndim_out: int
+) -> np.ndarray:
+    # The full boolean dependency of a possibly-composite transform, of
+    # shape `(ndim_out, ndim_in)`. A sequence composes the dependency of its
+    # elements along the chain, so coupling introduced by any stage reaches
+    # the output. Any other transform is read directly by `_dependency`.
+    # This lets the dependency of a subspace's wrapped transform be computed
+    # by the same machinery that reads the outer chain.
+    if isinstance(transform, Sequence):
+        els = transform.transformations or []
+        deps, _stage_dims = _build_deps(els, ndim_in)
+        acc = np.eye(ndim_in, dtype=bool)
+        for dep in deps:
+            acc = np.dot(dep.astype(int), acc.astype(int)) > 0
+        return acc
+    return _dependency(transform, ndim_in, ndim_out)
 
 
 class _UnionFind:
@@ -249,6 +329,49 @@ def _components(
 # ----------------------------------------------------------------------
 
 
+# Returned by `_restrict_simple` for an element that restricts to the
+# identity over the group's axes, so the caller drops it from the
+# sub-sequence.
+_DROP = object()
+
+
+def _restrict_simple(
+    element: Transformation, rows: tx.List[int], cols: tx.List[int]
+) -> tx.Any:
+    # Restrict a non-interpolating element to a group's axes, keeping its
+    # type. A `Scaling`, `Translation`, or `Permutation` carries the cheaper,
+    # truer type into the sub-sequence rather than a general affine sub-block.
+    # A restriction that is the identity returns `_DROP`. An element this
+    # function does not handle, or a permutation that maps outside the group,
+    # returns `None`, and the caller falls back to the affine sub-block.
+    if isinstance(element, Scaling):
+        if element.scale is None:
+            return _DROP
+        scale = np.asarray(element.scale)
+        return Scaling(scale=scale[cols])
+    if isinstance(element, Translation):
+        if element.translation is None:
+            return _DROP
+        translation = np.asarray(element.translation)
+        return Translation(translation=translation[rows])
+    if isinstance(element, Permutation):
+        if element.permutation is None:
+            return _DROP
+        permutation = np.asarray(element.permutation)
+        col_pos = {c: j for j, c in enumerate(cols)}
+        new_perm = []
+        for r in rows:
+            source = int(permutation[r])
+            if source not in col_pos:
+                # The permutation sends this output axis to an input axis
+                # outside the group, so the restriction is not a permutation
+                # of the group's axes and the affine sub-block is used.
+                return None
+            new_perm.append(col_pos[source])
+        return Permutation(permutation=np.asarray(new_perm, dtype=int))
+    return None
+
+
 def _restrict(
     comp: dict, els: tx.List[Transformation], shape: tx.Tuple[int, ...]
 ) -> tx.List[Transformation]:
@@ -290,6 +413,14 @@ def _restrict(
                     )
                 )
         elif not _interpolates(element):
+            simple = _restrict_simple(element, rows, cols)
+            if simple is _DROP:
+                # The restriction is the identity, the same reading
+                # `_dependency` gives it, and contributes nothing here.
+                continue
+            if simple is not None:
+                sub.append(simple)
+                continue
             matrix = element.to(Affine).matrix
             if matrix is None:
                 # A matrix-less affine is the identity, the same reading
@@ -317,6 +448,16 @@ def _restricted_affine(sub: tx.List[Transformation]) -> tx.Optional[Affine]:
         mode=hierarchy.AffineTransformation
     )
     return composed.to(Affine)
+
+
+# The largest weight matrix a one-dimensional interpolating step builds
+# before it falls back to the batched pull. The weight matrix has
+# `n_out * n_in` elements, so a long axis makes it enormous. Above this
+# many elements the batched pull is used instead, which samples the axis
+# without materializing the matrix. The two paths give the same result, so
+# the threshold trades memory for the matrix's speed and nothing else. Four
+# million elements is about 32 MiB at float64, small enough to always hold.
+_MAX_WEIGHT_MATRIX_ELEMENTS = 4_000_000
 
 
 def _classify(
@@ -393,17 +534,25 @@ def _classify(
             data_axes[0], grid_axes[0], scale, shift, bound, data_shape, shape
         )
     elif kind == "b":
-        step["run"] = _make_matrix(
-            data_axes[0],
-            grid_axes[0],
-            scale,
-            shift,
-            order,
-            bound,
-            coeff,
-            data_shape,
-            shape,
-        )
+        if n_in * n_out <= _MAX_WEIGHT_MATRIX_ELEMENTS:
+            step["run"] = _make_matrix(
+                data_axes[0],
+                grid_axes[0],
+                scale,
+                shift,
+                order,
+                bound,
+                coeff,
+                data_shape,
+                shape,
+            )
+        else:
+            # The weight matrix would be too large to hold, so the axis is
+            # sampled with the batched pull the coupled class uses. The
+            # result is the same as the weight-matrix path.
+            step["run"] = _make_pull(
+                sub, data_axes, grid_axes, order, bound, coeff
+            )
     else:
         step["run"] = _make_pull(
             sub, data_axes, grid_axes, order, bound, coeff
@@ -658,18 +807,23 @@ def pull_separable(
     order: int,
     bound: tx.Union[str, float],
     coeff: bool,
-    shape: tx.Tuple[int, ...],
-    grid_system: tx.Optional[tx.Any] = None,
-    data_system: tx.Optional[tx.Any] = None,
 ) -> tx.Any:
     """Reslice `data` through `seq`, exploiting separable axes.
 
     The transformation `seq` maps the coordinates of the output grid to
-    the coordinates of `data`. It is factored into independent steps, one
-    per group of axes that transform together, and each step is applied on
-    its own. A group that needs no interpolation is a gather or a view, a
-    one-dimensional affine group is a weight matrix, and the irreducible
-    coupled group keeps the N-dimensional pull over the fewest axes.
+    the coordinates of `data`. Its leading element is the sampling grid, a
+    [`CartesianField`][brainhops.datamodel.transformations.CartesianField]
+    whose shape is the shape of the output grid and whose output system is
+    the coordinate system of that grid. The system in which `seq` leaves
+    its coordinates is the coordinate system of the data. The output shape
+    and both coordinate systems are read from `seq`, so they are not passed
+    separately.
+
+    `seq` is factored into independent steps, one per group of axes that
+    transform together, and each step is applied on its own. A group that
+    needs no interpolation is a gather or a view, a one-dimensional affine
+    group is a weight matrix, and the irreducible coupled group keeps the
+    N-dimensional pull over the fewest axes.
 
     The result equals the monolithic reslice within the interpolation
     tolerance. When the transformation does not factor, the whole of it is
@@ -690,19 +844,11 @@ def pull_separable(
         [`pull`][brainhops._core.bsplines.pull].
     coeff : bool
         Whether the data already contains spline coefficients.
-    shape : tuple of int
-        The shape of the output grid.
-    grid_system : CoordinateSystem, optional
-        The coordinate system of the output grid. It is read only to
-        identify discrete axes.
-    data_system : CoordinateSystem, optional
-        The coordinate system of the data. It is read only to identify
-        discrete axes.
 
     Returns
     -------
     array-like
-        The resliced data, of shape `shape`.
+        The resliced data, of the shape of the output grid.
     """
     ab = get_array_backend(data)
     opt = dict(order=order, bound=bound, coeff=coeff)
@@ -720,6 +866,16 @@ def pull_separable(
     elements = part.transformations or []
     if not elements or not isinstance(elements[0], CartesianField):
         return fallback()
+    grid = elements[0]
+    # The shape and the grid coordinate system are carried by the leading
+    # grid of `seq`, and the data coordinate system is the system in which
+    # `seq` leaves its coordinates. The systems are read only to identify
+    # discrete axes.
+    shape = grid.shape
+    if shape is None:
+        return fallback()
+    grid_system = grid.output
+    data_system = _boundary_output(part)
     els = list(elements[1:])
     n_grid = len(shape)
 

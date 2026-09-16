@@ -12,7 +12,7 @@ import pytest
 import brainhops.backends as backends
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
-from brainhops.datamodel import _separable as sep
+from brainhops.datamodel import _xforms_separable as sep
 from brainhops.datamodel import hierarchy
 from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
@@ -24,8 +24,10 @@ from brainhops.datamodel.transformations import (
     CompositionError,
     DisplacementField,
     Permutation,
+    Scaling,
     Sequence,
     SubspaceTransformation,
+    Translation,
 )
 
 # ----------------------------------------------------------------------
@@ -182,9 +184,6 @@ def test_discrete_axis_with_non_integer_scale_raises() -> None:
             order=1,
             bound="reflect",
             coeff=False,
-            shape=(4, 3),
-            grid_system=system,
-            data_system=system,
         )
 
 
@@ -199,9 +198,6 @@ def test_discrete_axis_with_integer_shift_is_a_gather() -> None:
             order=1,
             bound="reflect",
             coeff=False,
-            shape=(4, 3),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data,
@@ -227,9 +223,6 @@ def test_discrete_axis_order_zero_is_a_gather() -> None:
             order=0,
             bound="reflect",
             coeff=False,
-            shape=(4, 3),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=0, bound="reflect", coeff=False
@@ -255,9 +248,6 @@ def test_discrete_channel_untouched_at_order_zero_matches_monolithic() -> None:
             order=0,
             bound="nearest",
             coeff=False,
-            shape=(4, 5, 3),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=0, bound="nearest", coeff=False
@@ -282,9 +272,6 @@ def test_interpolating_across_discrete_channel_still_raises() -> None:
             order=1,
             bound="nearest",
             coeff=False,
-            shape=(4, 5, 3),
-            grid_system=system,
-            data_system=system,
         )
 
 
@@ -321,9 +308,6 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_order(
             order=order,
             bound="reflect",
             coeff=coeff,
-            shape=shape,
-            grid_system=system,
-            data_system=system,
         )
         shifted = sep.pull_separable(
             data,
@@ -331,9 +315,6 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_order(
             order=order,
             bound="reflect",
             coeff=coeff,
-            shape=shape,
-            grid_system=system,
-            data_system=system,
         )
     # The channel shift only reindexes whole channels, so every output
     # channel of the shifted reslice equals one channel of the unshifted
@@ -368,9 +349,6 @@ def test_discrete_channel_genuine_scale_raises_at_high_order() -> None:
             order=3,
             bound="reflect",
             coeff=False,
-            shape=shape,
-            grid_system=system,
-            data_system=system,
         )
 
 
@@ -466,9 +444,6 @@ def test_separable_matches_monolithic_diagonal(
             order=order,
             bound=bound,
             coeff=coeff,
-            shape=(6, 7, 5),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=order, bound=bound, coeff=coeff
@@ -495,9 +470,6 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
                 order=3,
                 bound="reflect",
                 coeff=False,
-                shape=(10,),
-                grid_system=system,
-                data_system=system,
             )
             ref = pull(
                 data,
@@ -538,9 +510,6 @@ def _pull_pair_cast(
             order=order,
             bound=bound,
             coeff=False,
-            shape=shape,
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=order, bound=bound, coeff=False
@@ -704,9 +673,6 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
             order=3,
             bound=7.0,
             coeff=False,
-            shape=(6, 6, 6, 2),
-            grid_system=vox4,
-            data_system=vox4,
         )
         ref = pull(
             data,
@@ -736,9 +702,6 @@ def test_class_a_gather_with_coeff_matches_monolithic() -> None:
             order=3,
             bound="mirror",
             coeff=True,
-            shape=(6, 7),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=3, bound="mirror", coeff=True
@@ -762,9 +725,6 @@ def test_class_a_reflect_gather_matches_monolithic(order: int) -> None:
             order=order,
             bound="reflect",
             coeff=False,
-            shape=(6, 7),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data,
@@ -790,9 +750,6 @@ def test_output_dtype_float32_is_preserved() -> None:
             order=3,
             bound="mirror",
             coeff=False,
-            shape=(6, 7),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=3, bound="mirror", coeff=False
@@ -816,9 +773,6 @@ def test_output_dtype_uint8_order_zero_matches_monolithic() -> None:
             order=0,
             bound="nearest",
             coeff=False,
-            shape=(6, 7),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=0, bound="nearest", coeff=False
@@ -843,9 +797,6 @@ def test_class_a_only_pipeline_preserves_dtype() -> None:
             order=1,
             bound="mirror",
             coeff=False,
-            shape=(6, 7),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=1, bound="mirror", coeff=False
@@ -875,9 +826,6 @@ def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
                 order=1,
                 bound="reflect",
                 coeff=False,
-                shape=(5, 5, 5),
-                grid_system=system,
-                data_system=system,
             )
         with pytest.raises(Exception) as mono_error:
             pull(
@@ -950,9 +898,6 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
             order=1,
             bound="reflect",
             coeff=False,
-            shape=(6, 6, 6),
-            grid_system=geometry.grid.output,
-            data_system=img.transformation.input,
         )
         ref = pull(
             data,
@@ -1006,9 +951,6 @@ def test_coarser_grid_and_sub_geometry_reslice_match_monolithic() -> None:
                 order=1,
                 bound="reflect",
                 coeff=False,
-                shape=geometry.shape,
-                grid_system=geometry.grid.output,
-                data_system=img.transformation.input,
             )
             ref = pull(
                 data,
@@ -1037,9 +979,6 @@ def test_three_d_image_through_raw_warp_is_the_fallback() -> None:
             order=3,
             bound="reflect",
             coeff=False,
-            shape=(5, 5, 5),
-            grid_system=system,
-            data_system=system,
         )
         ref = pull(
             data, seq.compute().field, order=3, bound="reflect", coeff=False
@@ -1121,9 +1060,6 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
                 order=1,
                 bound="reflect",
                 coeff=False,
-                shape=(6, 6, 6, 3),
-                grid_system=vox4,
-                data_system=vox4,
             )
     finally:
         backends.npndi.map_coordinates = original
@@ -1182,9 +1118,6 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
                 order=1,
                 bound="reflect",
                 coeff=False,
-                shape=(6, 6, 6, 3),
-                grid_system=vox4,
-                data_system=vox4,
             )
     finally:
         backends.npndi.map_coordinates = original
@@ -1197,3 +1130,337 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
     # four-dimensional.
     for shape in inputs:
         assert len(shape) == 1
+
+
+# ----------------------------------------------------------------------
+#   LARGE-AXIS ROUTING (C1)
+# ----------------------------------------------------------------------
+
+
+def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
+    # A one-dimensional interpolating step builds a weight matrix of
+    # `n_out * n_in` elements, which is enormous for a long axis. Above the
+    # threshold the step falls back to the batched pull the coupled class
+    # uses, and below it the weight matrix is used. Both paths match the
+    # monolithic pull.
+    system = _voxel_system(2)
+    threshold = sep._MAX_WEIGHT_MATRIX_ELEMENTS
+
+    def _build(n: int) -> tuple:
+        data = np.arange(n * 3, dtype=float).reshape(n, 3)
+        matrix = np.zeros((2, 3))
+        # Axis 0 is a genuine rescale, so it takes the interpolating class-(b)
+        # path. Axis 1 is a flip, a class-(a) gather, which never pulls.
+        matrix[0, 0], matrix[1, 1] = 1.3, -1.0
+        matrix[1, 2] = 2.0
+        grid = CartesianField(shape=(n, 3), input=system, output=system)
+        affine = Affine(matrix=matrix, input=system, output=system)
+        return data, Sequence(transformations=[grid, affine])
+
+    calls = {"pull_axes": 0}
+    original = sep.pull_axes
+
+    def spy(*args: object, **kwargs: object) -> object:
+        calls["pull_axes"] += 1
+        return original(*args, **kwargs)
+
+    small_n = 100
+    assert small_n * small_n <= threshold
+    sep.pull_axes = spy
+    try:
+        with backend("numpy"):
+            data, seq = _build(small_n)
+            small = sep.pull_separable(
+                data, seq, order=3, bound="mirror", coeff=False
+            )
+            small_ref = pull(
+                data, seq.compute().field, order=3, bound="mirror", coeff=False
+            )
+    finally:
+        sep.pull_axes = original
+    # The small axis uses the weight matrix, so no batched pull runs.
+    assert calls["pull_axes"] == 0
+    assert np.allclose(small, small_ref)
+
+    large_n = int(threshold**0.5) + 200
+    assert large_n * large_n > threshold
+    calls["pull_axes"] = 0
+    sep.pull_axes = spy
+    try:
+        with backend("numpy"):
+            data, seq = _build(large_n)
+            large = sep.pull_separable(
+                data, seq, order=3, bound="mirror", coeff=False
+            )
+            large_ref = pull(
+                data, seq.compute().field, order=3, bound="mirror", coeff=False
+            )
+    finally:
+        sep.pull_axes = original
+    # The large axis exceeds the threshold, so the class-(b) step routes to
+    # the batched pull.
+    assert calls["pull_axes"] >= 1
+    assert np.allclose(large, large_ref)
+
+
+# ----------------------------------------------------------------------
+#   SUBSPACE INNER DEPENDENCY (C3 + C4)
+# ----------------------------------------------------------------------
+
+
+_SUB_SYSTEM = CoordinateSystem(axes=[_sp("x"), _sp("y"), _sp("z"), _time()])
+
+
+def _subspace(inner: object, axes: list) -> SubspaceTransformation:
+    return SubspaceTransformation(
+        transformation=inner,
+        input_axes=np.asarray(axes),
+        output_axes=np.asarray(axes),
+        input=_SUB_SYSTEM,
+    )
+
+
+def test_subspace_wrapping_diagonal_scaling_splits_into_singletons() -> None:
+    # A subspace wrapping a diagonal scaling mixes no axes. Its dependency is
+    # read from the inner scaling, so each axis is its own group rather than
+    # one coupled block.
+    inner = Scaling(scale=np.asarray([2.0, 3.0, 0.5]))
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [
+        ((0,), (0,)),
+        ((1,), (1,)),
+        ((2,), (2,)),
+        ((3,), (3,)),
+    ]
+
+
+def test_subspace_wrapping_diagonal_affine_splits_into_singletons() -> None:
+    inner = Affine(matrix=np.diag([2.0, 3.0, 0.5, 1.0])[:-1])
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [
+        ((0,), (0,)),
+        ((1,), (1,)),
+        ((2,), (2,)),
+        ((3,), (3,)),
+    ]
+
+
+def test_nested_subspace_couples_only_the_truly_warped_axis() -> None:
+    # A subspace whose inner is itself a subspace over a sub-subset, nested
+    # twice, down to a one-axis warp. Only the truly warped axis couples; the
+    # rest pass through as singletons.
+    warp = DisplacementField(field=np.zeros((5, 1)), order=1, bound="reflect")
+    level1 = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0]),
+        output_axes=np.asarray([0]),
+    )
+    level0 = SubspaceTransformation(
+        transformation=level1,
+        input_axes=np.asarray([0, 1]),
+        output_axes=np.asarray([0, 1]),
+    )
+    sub = _subspace(level0, [0, 1, 2])
+    assert _components([sub], 4) == [
+        ((0,), (0,)),
+        ((1,), (1,)),
+        ((2,), (2,)),
+        ((3,), (3,)),
+    ]
+
+
+def test_subspace_inner_warp_on_a_subset_couples_only_that_subset() -> None:
+    # A warp that touches only axes 0 and 1, inside a subspace over axes
+    # 0, 1, 2. Axes 0 and 1 couple, axis 2 passes through.
+    warp = DisplacementField(
+        field=np.zeros((5, 5, 2)), order=1, bound="reflect"
+    )
+    inner = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0, 1]),
+        output_axes=np.asarray([0, 1]),
+    )
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [
+        ((0, 1), (0, 1)),
+        ((2,), (2,)),
+        ((3,), (3,)),
+    ]
+
+
+def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
+    # A raw field inner mixes every axis it names, so the acted-on axes stay
+    # one coupled block. This is the safe over-approximation.
+    warp = DisplacementField(
+        field=np.zeros((5, 5, 5, 3)), order=1, bound="reflect"
+    )
+    sub = _subspace(warp, [0, 1, 2])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        Scaling(scale=np.asarray([2.0, 3.0, 0.5])),
+        SubspaceTransformation(
+            transformation=DisplacementField(
+                field=np.zeros((5, 5, 2)), order=1, bound="reflect"
+            ),
+            input_axes=np.asarray([0, 1]),
+            output_axes=np.asarray([0, 1]),
+        ),
+    ],
+)
+def test_reverting_subspace_recursion_to_all_ones_over_couples(
+    inner: object, monkeypatch: object
+) -> None:
+    # Without the recursion the subspace couples every acted-on axis. This
+    # confirms the recursion is what produces the finer partition, and that
+    # the fallback it replaces is an over-approximation, never a false split.
+    sub = _subspace(inner, [0, 1, 2])
+    fine = _components([sub], 4)
+    monkeypatch.setattr(
+        sep,
+        "_transform_dependency",
+        lambda transform, i, o: np.ones((o, i), dtype=bool),
+    )
+    coarse = _components([sub], 4)
+    assert coarse == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    assert fine != coarse
+
+
+def test_subspace_wrapping_diagonal_reslice_matches_monolithic() -> None:
+    # The finer partition from a subspace wrapping a diagonal must still equal
+    # the monolithic reslice, so the split is never a false one.
+    xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
+    vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
+    vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
+    with backend("numpy"):
+        rng = np.random.default_rng(21)
+        data = rng.normal(size=(6, 7, 5, 4))
+        inner = Affine(
+            matrix=np.diag([1.3, 0.7, 1.5, 1.0])[:-1],
+            input=vox3,
+            output=vox3,
+        )
+        sub = SubspaceTransformation(
+            transformation=inner,
+            input_axes=np.asarray([0, 1, 2]),
+            output_axes=np.asarray([0, 1, 2]),
+            input=vox4,
+            output=vox4,
+        )
+        grid = CartesianField(shape=(6, 7, 5, 4), input=vox4, output=vox4)
+        seq = Sequence(transformations=[grid, sub])
+        got = sep.pull_separable(
+            data, seq, order=3, bound="reflect", coeff=False
+        )
+        ref = pull(
+            data, seq.compute().field, order=3, bound="reflect", coeff=False
+        )
+    assert np.allclose(got, ref)
+
+
+# ----------------------------------------------------------------------
+#   RESTRICTION KEEPS THE CHEAPER TYPE (C5)
+# ----------------------------------------------------------------------
+
+
+def test_restrict_keeps_scaling_and_translation_types() -> None:
+    # A restricted scaling stays a scaling and a restricted translation stays
+    # a translation, rather than being widened to a general affine sub-block.
+    els = [
+        Scaling(scale=np.asarray([2.0, 3.0])),
+        Translation(translation=np.asarray([1.0, -2.0])),
+    ]
+    deps, stage_dims = sep._build_deps(els, 2)
+    comps = sep._components(deps, 2, stage_dims)
+    assert comps is not None
+    for comp in comps:
+        sub = sep._restrict(comp, els, (6, 7))
+        types = [type(t).__name__ for t in sub[1:]]
+        assert "Affine" not in types
+        assert set(types) == {"Scaling", "Translation"}
+
+
+def test_restrict_keeps_permutation_type() -> None:
+    els = [Permutation(permutation=np.asarray([1, 0, 2]))]
+    deps, stage_dims = sep._build_deps(els, 3)
+    comps = sep._components(deps, 3, stage_dims)
+    assert comps is not None
+    for comp in comps:
+        sub = sep._restrict(comp, els, (5, 5, 5))
+        assert [type(t).__name__ for t in sub[1:]] == ["Permutation"]
+
+
+def test_scaling_translation_restricted_steps_match_monolithic() -> None:
+    # A scale-and-translation pipeline whose restricted steps keep their
+    # cheaper types still reproduces the monolithic reslice.
+    system = _voxel_system(2)
+    with backend("numpy"):
+        rng = np.random.default_rng(33)
+        data = rng.normal(size=(6, 7))
+        els = [
+            Scaling(scale=np.asarray([1.3, 0.7])),
+            Translation(translation=np.asarray([0.4, -0.6])),
+        ]
+        deps, stage_dims = sep._build_deps(els, 2)
+        comps = sep._components(deps, 2, stage_dims)
+        grid = CartesianField(shape=(6, 7))
+        ref = pull(
+            data,
+            Sequence(transformations=[grid, *els]).compute().field,
+            order=3,
+            bound="mirror",
+            coeff=False,
+        )
+        for comp in comps:
+            sub = sep._restrict(comp, els, (6, 7))
+            assert set(type(t).__name__ for t in sub[1:]) == {
+                "Scaling",
+                "Translation",
+            }
+        steps = [
+            sep._classify(
+                comp,
+                els,
+                (6, 7),
+                data.shape,
+                3,
+                "mirror",
+                False,
+                system,
+                system,
+            )
+            for comp in comps
+        ]
+        labels = [("data", i) for i in range(data.ndim)]
+        arr = data
+        for step in steps:
+            arr, labels = step["run"](arr, labels)
+        perm = [labels.index(("grid", g)) for g in range(2)]
+        got = np.transpose(arr, perm)
+    assert np.allclose(got, ref)
+
+
+def test_permutation_reslice_matches_monolithic() -> None:
+    # A permutation survives the affine reduction as its own element, so the
+    # type-preserving restriction runs end to end and matches the monolithic
+    # reslice.
+    xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
+    system = CoordinateSystem(name="vox", axes=[xax, yax, zax])
+    with backend("numpy"):
+        rng = np.random.default_rng(35)
+        data = rng.normal(size=(4, 5, 6))
+        perm = Permutation(
+            permutation=np.asarray([2, 0, 1]), input=system, output=system
+        )
+        grid = CartesianField(shape=(6, 4, 5), input=system, output=system)
+        seq = Sequence(transformations=[grid, perm])
+        got = sep.pull_separable(
+            data, seq, order=1, bound="reflect", coeff=False
+        )
+        ref = pull(
+            data, seq.compute().field, order=1, bound="reflect", coeff=False
+        )
+    assert np.allclose(got, ref)

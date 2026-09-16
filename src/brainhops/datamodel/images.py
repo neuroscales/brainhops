@@ -217,19 +217,12 @@ class SingleScaleImage(Image):
         # so an axis that is only rescaled, flipped, or permuted is handled
         # cheaply and only the coupled group keeps the N-dimensional pull.
         # The factoring is imported lazily to avoid an import cycle.
-        from ._separable import pull_separable
+        from ._xforms_separable import pull_separable
 
         transformation = (
             preferred.inverse() @ geometry.transformation @ geometry.grid
         )
-        new_data = pull_separable(
-            self.data,
-            transformation,
-            shape=geometry.shape,
-            grid_system=geometry.grid.output,
-            data_system=preferred.input,
-            **opt,
-        )
+        new_data = pull_separable(self.data, transformation, **opt)
         return SingleScaleImage(
             data=new_data, transformations=[geometry.transformation]
         )
