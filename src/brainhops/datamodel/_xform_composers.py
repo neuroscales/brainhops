@@ -24,6 +24,7 @@ from brainhops.backends import get_array_backend
 from .transformations import (
     Affine,
     CartesianField,
+    CompositionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -31,9 +32,12 @@ from .transformations import (
     Permutation,
     Scaling,
     Sequence,
+    SubspaceTransformation,
     Transformation,
     Translation,
+    _compose,
     _composer,
+    _interpolates,
 )
 
 # ----------------------------------------------------------------------
@@ -379,3 +383,136 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
         bound=Ti.bound,
         coeff=False,
     ).to(coeff=coeff)
+
+
+# ----------------------------------------------------------------------
+#     SUBSPACE
+# ----------------------------------------------------------------------
+
+
+@_composer
+def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
+    # Apply a transform that acts on a subset of the axes to a field of
+    # coordinates. The acted-on components of the field are carried through
+    # the inner transform, and the remaining components pass through
+    # unchanged. The inner transform is evaluated lazily, by pulling it at
+    # the acted-on sub-coordinates, so the extra axes are never tiled to
+    # full size.
+    coeff = Ti.coeff
+    Ti = Ti.compute().to(coeff=False)
+    x = Ti.field
+    ba = get_array_backend(x)
+    if To.input_axes is None or To.output_axes is None:
+        raise CompositionError(
+            "A subspace transform composes with a field only when it names "
+            "the axes it acts on, but its input or output axes are unset."
+        )
+    in_axes = [int(i) for i in To.input_axes]
+    out_axes = [int(i) for i in To.output_axes]
+    if To.transformation is None:
+        return replace(Ti, output=To.output)
+    if _interpolates(To.transformation) and (
+        To.input is not None and To.input.axes is not None
+    ):
+        for i in in_axes:
+            axis = To.input.axes[i]
+            if getattr(axis, "discrete", None):
+                raise CompositionError(
+                    "Cannot apply an interpolating transform along the "
+                    "discrete axis {!r}. A field is sampled between grid "
+                    "points, which a discrete axis does not allow.".format(
+                        getattr(axis, "name", None)
+                        or getattr(axis, "type", None)
+                    )
+                )
+    domain = CoordinatesField(
+        field=x[..., in_axes], order=Ti.order, bound=Ti.bound, coeff=False
+    )
+    result = Sequence(transformations=[domain, To.transformation]).compute()
+    if isinstance(result, DisplacementField):
+        result = result.to(CoordinatesField)
+    if not isinstance(result, CoordinatesField):
+        raise CompositionError(
+            "The inner transform of a subspace transform did not reduce to "
+            "a field of coordinates, so it cannot be applied to a field."
+        )
+    result = result.to(coeff=False)
+
+    # Reassemble the full field. The acted-on components take their new
+    # values from the inner result, and each pass-through component is
+    # copied straight from the input, matched to its output position in
+    # order, exactly as the subspace-to-affine reduction matches them.
+    n = x.shape[-1]
+    acted_in = set(in_axes)
+    acted_out = set(out_axes)
+    passthrough_in = [i for i in range(n) if i not in acted_in]
+    passthrough_out = [o for o in range(n) if o not in acted_out]
+    columns: tx.List[tx.Any] = [None] * n
+    for k, o in enumerate(out_axes):
+        columns[o] = result.field[..., k]
+    for o, i in zip(passthrough_out, passthrough_in):
+        columns[o] = x[..., i]
+    y = ba.stack(columns, axis=-1)
+    return CoordinatesField(
+        field=y,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=coeff)
+
+
+@_composer
+def _(
+    To: SubspaceTransformation, Ti: SubspaceTransformation
+) -> Transformation:
+    # Compose two transforms that act on subsets of the axes. The two
+    # compose into one subspace transform only when the axes the first
+    # writes are the axes the second reads. The inner transforms compose in
+    # order, and a pair that reduces to the identity collapses the whole
+    # composition to the identity.
+    if (
+        To.input_axes is None
+        or Ti.output_axes is None
+        or list(To.input_axes) != list(Ti.output_axes)
+    ):
+        raise CompositionError(
+            "Two subspace transforms compose only when they act on the same "
+            "axes, but the axes the first writes differ from the axes the "
+            "second reads."
+        )
+    inner = Sequence(
+        transformations=[
+            Ti.transformation or Identity(),
+            To.transformation or Identity(),
+        ]
+    ).compute()
+    if isinstance(inner, Identity):
+        return Identity(input=Ti.input, output=To.output)
+    return SubspaceTransformation(
+        transformation=inner,
+        input_axes=Ti.input_axes,
+        output_axes=To.output_axes,
+        input=Ti.input,
+        output=To.output,
+    )
+
+
+@_composer
+def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
+    # Apply a transform that acts on a subset of the axes to a field of
+    # displacements. The displacement field is read as a field of
+    # coordinates, the subspace transform is applied, and the grid is
+    # subtracted back off to return to displacements.
+    Ti = Ti.compute().to(coeff=False)
+    y = _compose(To, Ti.to(CoordinatesField))
+    field = y.field - CartesianField(shape=Ti.field.shape[:-1]).field
+    return DisplacementField(
+        field=field,
+        input=Ti.input,
+        output=To.output,
+        order=Ti.order,
+        bound=Ti.bound,
+        coeff=False,
+    ).to(coeff=Ti.coeff)
