@@ -57,9 +57,10 @@ nav = [
       {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [
-        {"_ext.invfield" = "api/_ext/invfield/index.md"},
-        {"_core.typing" = "api/_core/typing.md"},
-        {"_core.path" = "api/_core/path.md"},
+        "api/_core/typing.md",
+        {"typing" = "api/_core/typing.md"},
+        {"path" = "api/_core/path.md"},
+        {"invfield" = "api/_ext/invfield/index.md"},
     ]}
   ]}
 ]
