@@ -1865,6 +1865,61 @@ def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
     return replace(seq, transformations=stack)
 
 
+def _interpolates(xform: Transformation) -> bool:
+    # Whether applying a transform resamples data through a spline. A
+    # transform interpolates when, looking past a sequence, a subspace
+    # wrapper, and an inverse, it reaches a displacement field or a
+    # coordinate field that is not a plain grid. A `CartesianField` is the
+    # identity map over its grid and reads no value off it, so it does not
+    # interpolate. An affine, a permutation, and the like never interpolate.
+    if xform is None:
+        return False
+    if isinstance(xform, Inverse):
+        return _interpolates(xform.forward)
+    if isinstance(xform, Sequence):
+        return any(_interpolates(t) for t in (xform.transformations or []))
+    if isinstance(xform, SubspaceTransformation):
+        return _interpolates(xform.transformation)
+    if isinstance(xform, CartesianField):
+        return False
+    if isinstance(xform, (DisplacementField, CoordinatesField)):
+        return True
+    return False
+
+
+def _merge_adjacent_subspaces(seq: Sequence) -> Sequence:
+    # Compose adjacent subspace transforms that act on the same axes. Two
+    # subspace transforms that meet, where the axes the first writes are the
+    # axes the second reads, compose into one subspace transform over those
+    # axes. A pair that composes to the identity is dropped. This lets a
+    # subspace-wrapped field meet its own subspace-wrapped inverse and
+    # cancel by identity, rather than the field being inverted numerically.
+    xforms = seq.transformations or []
+    if len(xforms) < 2:
+        return seq
+    merged: tx.List[Transformation] = [xforms[0]]
+    changed = False
+    for nxt in xforms[1:]:
+        prev = merged[-1]
+        if (
+            isinstance(prev, SubspaceTransformation)
+            and isinstance(nxt, SubspaceTransformation)
+            and prev.output_axes is not None
+            and nxt.input_axes is not None
+            and list(prev.output_axes) == list(nxt.input_axes)
+        ):
+            composed = _compose(nxt, prev)
+            merged.pop()
+            if not isinstance(composed, Identity):
+                merged.append(composed)
+            changed = True
+        else:
+            merged.append(nxt)
+    if not changed:
+        return seq
+    return replace(seq, transformations=merged)
+
+
 _ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
 
 
@@ -2041,6 +2096,10 @@ def _compute_sequence(
             if not isinstance(cancelled, Sequence):
                 return cancelled
             seq = cancelled
+            # Compose adjacent subspace transforms over the same axes, so a
+            # subspace-wrapped field meets its own subspace-wrapped inverse
+            # and cancels by identity rather than being inverted numerically.
+            seq = _merge_adjacent_subspaces(seq)
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
@@ -2294,55 +2353,22 @@ class AdaptationError(TypeError):
     """
 
 
-# The bridge builder lives in `_xform_adaptors`, which imports this module.
-# It registers itself here at import time, so the sequence machinery can
-# call it without importing that module at load time and forming a cycle.
-_BRIDGE: tx.Optional[tx.Callable[..., Transformation]] = None
+# The adaptor lives in `_xform_adaptors`, which imports this module. It
+# registers itself here at import time, so the sequence machinery can call
+# it without importing that module at load time and forming a cycle. The
+# adaptor reconciles two consecutive transforms: it bridges a boundary
+# where the two systems merely reorder, rescale or flip their shared axes,
+# and it lifts a transform that acts on a subset of a boundary's axes into
+# the fuller axis space, leaving the extra axes as the identity, so a
+# lower-dimensional transform meets a higher-dimensional neighbour without
+# a dimensionality change.
+_ADAPT: tx.Optional[tx.Callable[..., "Sequence"]] = None
 
 
-def _register_bridge(func: tx.Callable[..., Transformation]) -> None:
-    """Register the routine that builds a bridge between two systems."""
-    global _BRIDGE
-    _BRIDGE = func
-
-
-# The subspace-wrapping routine also lives in `_xform_adaptors`, and
-# registers itself here. It lifts a transform that acts on a subset of a
-# boundary's axes into the full axis space, leaving the extra axes as the
-# identity, so a lower-dimensional transform meets a higher-dimensional
-# neighbour without a dimensionality change.
-_SUBSPACE_WRAP: tx.Optional[tx.Callable[..., Transformation]] = None
-
-
-def _register_subspace_wrap(func: tx.Callable[..., Transformation]) -> None:
-    """Register the routine that lifts a transform into a fuller space."""
-    global _SUBSPACE_WRAP
-    _SUBSPACE_WRAP = func
-
-
-def _adapt(
-    s1: CoordinateSystem,
-    s2: CoordinateSystem,
-    extents: tx.Optional[tx.Any] = None,
-) -> Transformation:
-    """Return the bridge that carries `s1` coordinates to `s2`.
-
-    The work is done by the routine registered from `_xform_adaptors`.
-
-    This is the implicit adaptation that composition inserts, so it pairs
-    any still-unmatched axes by order within each type group. Axes of the
-    same type describe the same well-defined ordering, so pairing them by
-    position is safe, while a pairing across two types is refused. A type
-    group whose counts disagree is reported rather than guessed. When a
-    reversed array-index axis needs the number of samples along it,
-    `extents` supplies them from a neighbouring grid.
-    """
-    return _BRIDGE(
-        s1,
-        s2,
-        extents=extents,
-        allow_type_grouped_positional=True,
-    )
+def _register_adapt(func: tx.Callable[..., "Sequence"]) -> None:
+    """Register the routine that reconciles two consecutive transforms."""
+    global _ADAPT
+    _ADAPT = func
 
 
 def _systems_disagree(
@@ -2382,43 +2408,41 @@ def _boundary_input(t: Transformation) -> tx.Optional[CoordinateSystem]:
     return None
 
 
-def _grid_extents(
-    t: "Transformation", at_output: bool
-) -> tx.Dict[tx.Any, int]:
-    # The number of samples along each named axis of a grid that sits at
-    # the boundary of a transform, or an empty mapping when the boundary is
-    # not a grid. A reversed array-index axis needs its extent, and a
-    # `CartesianField` next to the boundary carries it as its shape. The
-    # mapping is keyed by axis name, so it aligns whichever side of the
-    # boundary the grid describes. `at_output` reads the grid on the output
-    # side of the transform, and its clearing reads the input side.
-    if isinstance(t, CartesianField) and t.shape is not None:
-        system = t.output if at_output else t.input
-        axes = list(system.axes) if system is not None else []
-        extents: tx.Dict[tx.Any, int] = {}
-        for axis, size in zip(axes, t.shape):
-            name = getattr(axis, "name", None)
-            if name is not None:
-                extents[name] = int(size)
-        return extents
-    if isinstance(t, Sequence) and t.transformations:
-        edge = t.transformations[-1] if at_output else t.transformations[0]
-        return _grid_extents(edge, at_output)
-    return {}
+def _splice(spliced: tx.List["Transformation"], nxt: "Transformation") -> None:
+    # Add `nxt` to the running list `spliced`, reconciling the boundary it
+    # shares with the transform already at the end of the list. The adaptor
+    # returns the pair with whatever bridge or subspace lift the boundary
+    # needs already placed between them. The two transforms it contains are
+    # never rebuilt, so a leaf stays the same object its inverse names and
+    # the adjacent-inverse cancellation still links the two by identity.
+    if not spliced:
+        spliced.append(nxt)
+        return
+    prev = spliced[-1]
+    pieces = list(_ADAPT(prev, nxt, allow_type_grouped_positional=True))
+    if pieces[0] is not prev:
+        # `prev` was lifted into the fuller space of `nxt`, so the piece
+        # that replaces it now presents a different left boundary. The old
+        # `prev` is dropped and the lifted piece is re-spliced against
+        # `prev`'s own left neighbour, which may in turn need reconciling.
+        spliced.pop()
+        _splice(spliced, pieces[0])
+        spliced.extend(pieces[1:])
+    else:
+        spliced.extend(pieces[1:])
 
 
 def _insert_bridges(
     transformations: tx.List["Transformation"],
 ) -> tx.List["Transformation"]:
-    # Splice a bridge into every boundary where two adjacent transforms
-    # disagree on the system they share. The output system of one and the
-    # input system of the next are reconciled by the adaptor, whose pieces
-    # are spliced in at that boundary so the result still contains both
-    # transforms. A boundary whose systems already agree, or where either
-    # system is unspecified, is left alone. Bridging runs before the
-    # sequence is flattened, because a nested sequence carries its endpoint
-    # systems on the sequence and not on the leaves that flattening would
-    # expose.
+    # Reconcile every boundary where two adjacent transforms disagree on
+    # the system they share. The output system of one and the input system
+    # of the next are reconciled by the adaptor, whose pieces are spliced in
+    # at that boundary so the result still contains both transforms. A
+    # boundary whose systems already agree, or where either system is
+    # unspecified, is left alone. Reconciling runs before the sequence is
+    # flattened, because a nested sequence carries its endpoint systems on
+    # the sequence and not on the leaves that flattening would expose.
     # A boundary can hide inside a nested sequence or behind a generic
     # inverse, both of which the flattening later removes. So each nested
     # sequence has its own children bridged first, keeping its endpoints,
@@ -2441,42 +2465,7 @@ def _insert_bridges(
         prepared.append(t)
     if len(prepared) < 2:
         return prepared
-    spliced: tx.List[Transformation] = [prepared[0]]
-    for nxt in prepared[1:]:
-        source = _boundary_output(spliced[-1])
-        target = _boundary_input(nxt)
-        if _systems_disagree(source, target):
-            # A reversed array-index axis needs the number of samples along
-            # it. A grid on either side of the boundary carries it, keyed
-            # by axis name so it aligns regardless of which side it came
-            # from.
-            extents = _grid_extents(spliced[-1], at_output=True)
-            extents.update(_grid_extents(nxt, at_output=False))
-            if len(source.axes) != len(target.axes):
-                # The two systems have different numbers of axes. When the
-                # next transform acts on a subset of the axes the boundary
-                # carries, it is lifted into the full axis space, leaving
-                # the extra axes as the identity. A genuine dimensionality
-                # mismatch is refused by the adaptor below.
-                wrapped = _SUBSPACE_WRAP(
-                    source,
-                    target,
-                    nxt,
-                    _boundary_output(nxt),
-                    extents=extents or None,
-                )
-                if wrapped is not None:
-                    spliced.append(wrapped)
-                    continue
-                # Not a same-dimensionality subspace, so this is a genuine
-                # dimensionality mismatch. The `_adapt` call below cannot add
-                # or drop an axis, so it raises the adaptor's descriptive
-                # count-mismatch error rather than dropping or inventing one.
-            reconciler = _adapt(source, target, extents or None)
-            if not is_identity(reconciler):
-                if isinstance(reconciler, Sequence):
-                    spliced.extend(reconciler.transformations or [])
-                else:
-                    spliced.append(reconciler)
-        spliced.append(nxt)
+    spliced: tx.List[Transformation] = []
+    for nxt in prepared:
+        _splice(spliced, nxt)
     return spliced

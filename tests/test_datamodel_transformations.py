@@ -391,3 +391,54 @@ def test_subspace_inverse_wraps_inner_transform() -> None:
     )
     np.testing.assert_array_equal(inverse.input_axes, [2, 3])
     np.testing.assert_array_equal(inverse.output_axes, [0, 1])
+
+
+def test_interpolates_truth_table() -> None:
+    # `_interpolates` reports whether applying a transform samples data
+    # through a spline. It looks past a sequence, a subspace wrapper and an
+    # inverse to find a displacement field or a non-grid coordinate field.
+    from brainhops.datamodel.transformations import _interpolates
+
+    affine = Affine(matrix=np.eye(3, 4))
+    translation = Translation(translation=[1.0, 2.0, 3.0])
+    grid = CartesianField(shape=(4, 5, 6))
+    disp = DisplacementField(field=np.zeros((4, 5, 6, 3)))
+    coords = CoordinatesField(field=np.zeros((4, 5, 6, 3)))
+
+    # A plain non-field transform, and a grid, do not interpolate.
+    assert _interpolates(None) is False
+    assert _interpolates(Identity()) is False
+    assert _interpolates(affine) is False
+    assert _interpolates(translation) is False
+    assert _interpolates(grid) is False
+
+    # A displacement field and a non-grid coordinate field do.
+    assert _interpolates(disp) is True
+    assert _interpolates(coords) is True
+
+    # A sequence interpolates when any element does.
+    assert _interpolates(Sequence([affine, translation])) is False
+    assert _interpolates(Sequence([affine, disp])) is True
+
+    # A subspace wrapper is transparent to its inner transform.
+    axes = np.asarray([0, 1, 2])
+    assert (
+        _interpolates(
+            SubspaceTransformation(
+                transformation=affine, input_axes=axes, output_axes=axes
+            )
+        )
+        is False
+    )
+    assert (
+        _interpolates(
+            SubspaceTransformation(
+                transformation=disp, input_axes=axes, output_axes=axes
+            )
+        )
+        is True
+    )
+
+    # An inverse interpolates exactly when the transform it inverts does.
+    assert _interpolates(affine.inverse()) is False
+    assert _interpolates(disp.inverse()) is True

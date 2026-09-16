@@ -24,7 +24,11 @@ from one system to another. The bridge is a single primitive, a sequence
 of primitives, or the identity, and not always a sequence.
 [`adapt`][brainhops.datamodel._xform_adaptors.adapt] ingests two
 consecutive transformations and returns a sequence that contains both of
-them, with the reconciling bridge placed where the two systems meet.
+them, with the reconciling bridge placed where the two systems meet. When
+the two systems have different numbers of axes, and one transform acts on a
+subset of the other's axes, `adapt` lifts the smaller transform into the
+fuller space instead, so it acts on those axes and leaves the extra axes
+unchanged.
 """
 
 # externals
@@ -38,6 +42,7 @@ from .axes import Axis
 from .systems import ArrayCoordinateSystem, CoordinateSystem
 from .transformations import (
     AdaptationError,
+    CartesianField,
     Identity,
     Permutation,
     Scaling,
@@ -45,8 +50,11 @@ from .transformations import (
     SubspaceTransformation,
     Transformation,
     Translation,
-    _register_bridge,
-    _register_subspace_wrap,
+    _boundary_input,
+    _boundary_output,
+    _interpolates,
+    _register_adapt,
+    _systems_disagree,
     is_identity,
 )
 
@@ -632,75 +640,109 @@ def adapt(
     *,
     extents: tx.Optional[Extents] = None,
     allow_positional: bool = False,
-) -> Transformation:
-    """Bridge two consecutive transformations and return them together.
+    allow_type_grouped_positional: bool = False,
+) -> Sequence:
+    """Reconcile two consecutive transformations and return them together.
 
     The transformation `first` is applied before `second`. The output
     system of `first` and the input system of `second` meet at the
     boundary where the two are composed. The result always contains both
-    `first` and `second`. When their systems disagree, the bridge that
-    reconciles them is placed at that boundary, so the result is a
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] of `first`,
-    the bridge, and `second`, and applying it is applying `first`, adapting
-    the coordinates, and applying `second`.
+    `first` and `second`, as a
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] that runs
+    from the input of `first` to the output of `second`.
 
-    When the two systems already agree, the result is a sequence of
-    `first` and `second` with nothing added.
+    When the two systems already agree, the sequence holds `first` and
+    `second` with nothing between them. When the two systems have the same
+    number of axes but merely reorder, rescale, or flip them, the bridge
+    that reconciles them is placed between the two, so applying the result
+    is applying `first`, adapting the coordinates, and applying `second`.
+
+    When the two systems have different numbers of axes, one transform acts
+    on a subset of the other's axes. The transform on the fewer axes is
+    lifted into the fuller space by a
+    [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation]
+    that acts on those axes and leaves the extra axes unchanged. A 3D
+    spatial transform meeting a 4D spatial-and-time boundary is lifted this
+    way, whether the fuller space is on the input side or the output side
+    of the boundary. A genuine dimensionality mismatch, where the extra
+    axes are not a clean pass-through, is refused with an
+    [`AdaptationError`][brainhops.datamodel.transformations.AdaptationError].
 
     Parameters
     ----------
     first : Transformation
         The transformation applied first. Its output system is the source
-        of the bridge.
+        of the boundary.
     second : Transformation
         The transformation applied second. Its input system is the target
-        of the bridge.
+        of the boundary.
     extents : sequence or mapping, optional
         The extents needed to reverse an array-index axis, passed through
-        to [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+        to [`bridge`][brainhops.datamodel._xform_adaptors.bridge]. When not
+        given, they are read from a grid on either side of the boundary.
     allow_positional : bool, default False
         Whether to pair axes by position, passed through to
+        [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
+    allow_type_grouped_positional : bool, default False
+        Whether to pair the still-unmatched axes by order within each type
+        group, passed through to
         [`bridge`][brainhops.datamodel._xform_adaptors.bridge].
 
     Returns
     -------
-    Transformation
-        A sequence that contains both `first` and `second`, with the
-        reconciling bridge placed where their systems meet.
+    Sequence
+        A sequence that contains both `first` and `second`, with any
+        reconciling bridge or subspace lift placed where their systems
+        meet. `first` and `second` are never rebuilt, so each is the same
+        object it was passed as, unless it was lifted into a fuller space.
     """
-    source = first.output
-    target = second.input
-    if (
-        source is not None
-        and target is not None
-        and source.axes is not None
-        and target.axes is not None
-        and len(target.axes) < len(source.axes)
-    ):
-        wrapped = _subspace_wrap(
-            source, target, second, second.output, extents=extents
+    source = _boundary_output(first)
+    target = _boundary_input(second)
+    if not _systems_disagree(source, target):
+        return Sequence(
+            transformations=[first, second],
+            input=first.input,
+            output=second.output,
         )
-        if wrapped is not None:
-            return Sequence(
-                transformations=[first, wrapped],
-                input=first.input,
-                output=wrapped.output,
-            )
-    reconciler = bridge(
-        first.output,
-        second.input,
-        extents=extents,
-        allow_positional=allow_positional,
-    )
-    elements: tx.List[Transformation] = [first]
-    if not is_identity(reconciler):
-        if isinstance(reconciler, Sequence):
-            elements.extend(reconciler.transformations or [])
+    if extents is None:
+        extents = _grid_extents(first, at_output=True)
+        extents.update(_grid_extents(second, at_output=False))
+    extents = extents or None
+
+    if len(source.axes) != len(target.axes):
+        # One transform acts on a subset of the other's axes. Lift the
+        # smaller one into the fuller space, trying the fuller input side of
+        # `second` first and then the fuller output side of `first`.
+        lifted = _lift(second, full=source, side="input", extents=extents)
+        if lifted is not None:
+            pieces: tx.List[Transformation] = [first, lifted]
         else:
-            elements.append(reconciler)
-    elements.append(second)
+            lifted = _lift(first, full=target, side="output", extents=extents)
+            if lifted is not None:
+                pieces = [lifted, second]
+            else:
+                # Not a same-dimensionality subset on either side, so this
+                # is a genuine dimensionality mismatch. The bridge below
+                # cannot add or drop an axis, so it raises the descriptive
+                # count-mismatch error rather than inventing one.
+                bridge(source, target, extents=extents)
+                raise AssertionError  # bridge raised; unreachable
+    else:
+        reconciler = bridge(
+            source,
+            target,
+            extents=extents,
+            allow_positional=allow_positional,
+            allow_type_grouped_positional=allow_type_grouped_positional,
+        )
+        if is_identity(reconciler):
+            pieces = [first, second]
+        elif isinstance(reconciler, Sequence):
+            pieces = [first, *(reconciler.transformations or []), second]
+        else:
+            pieces = [first, reconciler, second]
     return Sequence(
-        transformations=elements, input=first.input, output=second.output
+        transformations=pieces, input=first.input, output=second.output
     )
 
 
@@ -741,44 +783,73 @@ def _subset_positions(
     return positions
 
 
-def _subspace_wrap(
-    source: tx.Optional[CoordinateSystem],
-    target: tx.Optional[CoordinateSystem],
+def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
+    # The number of samples along each named axis of a grid that sits at
+    # the boundary of a transform, or an empty mapping when the boundary is
+    # not a grid. A reversed array-index axis needs its extent, and a
+    # `CartesianField` next to the boundary carries it as its shape. The
+    # mapping is keyed by axis name, so it aligns whichever side of the
+    # boundary the grid describes. `at_output` reads the grid on the output
+    # side of the transform, and its clearing reads the input side.
+    if isinstance(t, CartesianField) and t.shape is not None:
+        system = t.output if at_output else t.input
+        axes = list(system.axes) if system is not None else []
+        extents: tx.Dict[tx.Any, int] = {}
+        for axis, size in zip(axes, t.shape):
+            name = getattr(axis, "name", None)
+            if name is not None:
+                extents[name] = int(size)
+        return extents
+    if isinstance(t, Sequence) and t.transformations:
+        edge = t.transformations[-1] if at_output else t.transformations[0]
+        return _grid_extents(edge, at_output)
+    return {}
+
+
+def _lift(
     transform: Transformation,
-    transform_output: tx.Optional[CoordinateSystem],
     *,
+    full: tx.Optional[CoordinateSystem],
+    side: str,
     extents: tx.Optional[Extents] = None,
-) -> tx.Optional[Transformation]:
+) -> tx.Optional[SubspaceTransformation]:
     """Lift a transform onto the axes it acts on inside a fuller space.
 
-    The transformation `transform` acts on the axes of `target`, which are
-    a subset of the axes of the fuller system `source`. This routine wraps
-    `transform` in a
+    The transformation `transform` acts on a subset of the axes of the
+    fuller system `full`. This routine wraps `transform` in a
     [`SubspaceTransformation`][brainhops.datamodel.transformations.SubspaceTransformation]
-    that acts on those axes within `source` and leaves the extra axes
+    that acts on those axes within `full` and leaves the extra axes
     unchanged. The dimensionality is preserved, so a spatial transform
-    meeting a spatial-and-time image acts on the spatial axes and leaves
+    meeting a spatial-and-time boundary acts on the spatial axes and leaves
     time untouched.
+
+    The fuller space may lie on either side of the boundary. When `side` is
+    `"input"`, `full` is the system a preceding transform hands in, and the
+    subset is the input axes of `transform`. When `side` is `"output"`,
+    `full` is the system a following transform expects, and the subset is
+    the output axes of `transform`.
 
     The matched axes may still need a reordering, a rescaling, or a flip,
     such as the sign flip between RAS and LPS. That intra-subset bridge is
     built by [`bridge`][brainhops.datamodel._xform_adaptors.bridge] over
-    the subset and placed before `transform` inside the wrapper.
+    the subset and placed on the fuller side of `transform` inside the
+    wrapper.
 
-    The return value is `None` when `source` and `target` are not a
-    same-dimensionality subset, so the caller can fall back to refusing a
-    genuine dimensionality mismatch.
+    The return value is `None` when the subset is not a clean
+    same-dimensionality subset of `full`, so the caller can fall back to
+    refusing a genuine dimensionality mismatch. A
+    [`CartesianField`][brainhops.datamodel.transformations.CartesianField]
+    is never lifted, because it defines a sampling domain rather than a
+    transform to place inside a subspace.
 
     Parameters
     ----------
-    source : CoordinateSystem, optional
-        The fuller system that the wrapped transform reads and writes.
-    target : CoordinateSystem, optional
-        The input system of `transform`, a subset of `source`.
     transform : Transformation
-        The transform to lift into the axis space of `source`.
-    transform_output : CoordinateSystem, optional
-        The output system of `transform`.
+        The transform to lift into the axis space of `full`.
+    full : CoordinateSystem, optional
+        The fuller system that the wrapped transform reads and writes.
+    side : {"input", "output"}
+        Which side of `transform` meets the fuller space.
     extents : sequence or mapping, optional
         The extents needed to reverse an array-index axis within the
         subset, passed through to
@@ -786,68 +857,118 @@ def _subspace_wrap(
 
     Returns
     -------
-    Transformation or None
+    SubspaceTransformation or None
         The wrapped transform, or `None` when no same-dimensionality
         subset match exists.
     """
-    if source is None or target is None:
+    if isinstance(transform, CartesianField):
         return None
-    if source.axes is None or target.axes is None:
+    if full is None or full.axes is None:
         return None
-    if transform_output is None or transform_output.axes is None:
+    sub_input = _boundary_input(transform)
+    sub_output = _boundary_output(transform)
+    if sub_input is None or sub_input.axes is None:
         return None
-    full_axes = list(source.axes)
-    sub_in_axes = list(target.axes)
-    sub_out_axes = list(transform_output.axes)
-    if len(sub_in_axes) >= len(full_axes):
+    if sub_output is None or sub_output.axes is None:
         return None
-    if len(sub_out_axes) != len(sub_in_axes):
+    full_axes = list(full.axes)
+    in_axes = list(sub_input.axes)
+    out_axes = list(sub_output.axes)
+    if len(in_axes) != len(out_axes):
         return None
-    positions = _subset_positions(full_axes, sub_in_axes)
+    if len(out_axes if side == "output" else in_axes) >= len(full_axes):
+        return None
+
+    if side == "input":
+        # The fuller space is on the input side. The wrapper reads the
+        # acted-on axes from `full` and a bridge carries them into the
+        # frame `transform` expects, sitting before `transform` inside.
+        sub_axes = in_axes
+    elif side == "output":
+        # The fuller space is on the output side. The wrapper writes the
+        # acted-on axes into `full`, and a bridge carries the transform's
+        # output into the frame `full` uses, sitting after `transform`.
+        sub_axes = out_axes
+    else:
+        raise ValueError("side must be 'input' or 'output'")
+    positions = _subset_positions(full_axes, sub_axes)
     if positions is None:
         return None
 
-    # The wrapped transform reads the acted-on axes from the fuller space
-    # in their fuller order. The transform itself expects them in the order
-    # and frame of `target`, so a bridge over the subset carries them the
-    # rest of the way, and sits before the transform inside the wrapper.
-    sub_source = CoordinateSystem(axes=[full_axes[i] for i in positions])
-    sub_bridge = bridge(
-        sub_source,
-        target,
-        extents=extents,
-        allow_type_grouped_positional=True,
-    )
-    if is_identity(sub_bridge):
-        inner: Transformation = transform
-    else:
-        inner = Sequence(
-            transformations=[sub_bridge, transform],
-            input=sub_source,
-            output=transform_output,
-        )
+    # An interpolating transform reads a value off its field at the acted-on
+    # coordinates, so it cannot act along a discrete axis, where no value
+    # lies between the samples.
+    if _interpolates(transform):
+        for position in positions:
+            axis = full_axes[position]
+            if getattr(axis, "discrete", None):
+                raise AdaptationError(
+                    "Cannot lift an interpolating transform onto the "
+                    "discrete axis {!r}. A field is sampled between grid "
+                    "points, which a discrete axis does not allow.".format(
+                        getattr(axis, "name", None)
+                        or getattr(axis, "type", None)
+                    )
+                )
 
-    # The output system is the fuller system with the acted-on axes
-    # replaced by the transform's output axes, and every extra axis kept in
-    # place. The acted-on axes stay in the positions they came from.
-    out_full_axes = list(full_axes)
-    for k, position in enumerate(positions):
-        out_full_axes[position] = sub_out_axes[k]
+    sub_full = CoordinateSystem(axes=[full_axes[i] for i in positions])
+    if side == "input":
+        sub_bridge = bridge(
+            sub_full,
+            sub_input,
+            extents=extents,
+            allow_type_grouped_positional=True,
+        )
+        if is_identity(sub_bridge):
+            inner: Transformation = transform
+        else:
+            inner = Sequence(
+                transformations=[sub_bridge, transform],
+                input=sub_full,
+                output=sub_output,
+            )
+        # The output system is the fuller system with the acted-on axes
+        # replaced by the transform's output axes, kept in place.
+        out_full_axes = list(full_axes)
+        for k, position in enumerate(positions):
+            out_full_axes[position] = out_axes[k]
+        wrapper_input = full
+        wrapper_output = CoordinateSystem(axes=out_full_axes)
+    else:
+        sub_bridge = bridge(
+            sub_output,
+            sub_full,
+            extents=extents,
+            allow_type_grouped_positional=True,
+        )
+        if is_identity(sub_bridge):
+            inner = transform
+        else:
+            inner = Sequence(
+                transformations=[transform, sub_bridge],
+                input=sub_input,
+                output=sub_full,
+            )
+        # The input system is the fuller system with the acted-on axes
+        # replaced by the transform's input axes, kept in place.
+        in_full_axes = list(full_axes)
+        for k, position in enumerate(positions):
+            in_full_axes[position] = in_axes[k]
+        wrapper_input = CoordinateSystem(axes=in_full_axes)
+        wrapper_output = full
+
     axis_vector = np.asarray(positions, dtype=int)
     return SubspaceTransformation(
         transformation=inner,
         input_axes=axis_vector,
         output_axes=axis_vector,
-        input=source,
-        output=CoordinateSystem(axes=out_full_axes),
+        input=wrapper_input,
+        output=wrapper_output,
     )
 
 
-# The sequence machinery in `transformations.py` inserts a bridge at every
-# boundary where two adjacent transforms disagree. It calls back into this
-# routine, which is registered here so the two modules need not import each
-# other at module scope. The subspace-wrapping routine is registered the
-# same way, for the boundaries where the two systems differ in the number
-# of axes.
-_register_bridge(bridge)
-_register_subspace_wrap(_subspace_wrap)
+# The sequence machinery in `transformations.py` reconciles every boundary
+# where two adjacent transforms disagree. It calls back into `adapt`, which
+# is registered here so the two modules need not import each other at module
+# scope.
+_register_adapt(adapt)

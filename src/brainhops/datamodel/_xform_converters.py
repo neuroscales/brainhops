@@ -239,6 +239,12 @@ def _(t: SubspaceTransformation) -> Affine:
         ba = get_array_backend()
     else:
         inner_affine = t.transformation.compute().to(Affine)
+        if not isinstance(inner_affine, Affine):
+            raise ConversionError(
+                "a subspace transformation that wraps a field is applied by "
+                "composing it with a sampling domain, not by reduction to an "
+                "affine"
+            )
         inner_matrix = inner_affine.matrix
         ba = get_array_backend(inner_matrix)
     matrix = ba.zeros((n_out, n_in + 1))

@@ -108,3 +108,233 @@ def test_fold_affine_into_field_matches_inorder_reference(
     interior_term = field_type is DisplacementField and order > 1
     atol = 1e-3 if interior_term else 1e-10
     np.testing.assert_allclose(result, reference, atol=atol, rtol=0)
+
+
+# ----------------------------------------------------------------------
+#   SUBSPACE COMPOSERS: A 3D TRANSFORM ACROSS A 4D FIELD
+# ----------------------------------------------------------------------
+
+
+from brainhops.backends import get_array_backend  # noqa: E402
+from brainhops.datamodel.axes import (  # noqa: E402
+    A,
+    R,
+    S,
+    TimeAxis,
+)
+from brainhops.datamodel.systems import CoordinateSystem  # noqa: E402
+from brainhops.datamodel.transformations import (  # noqa: E402
+    CompositionError,
+    ConversionError,
+    Identity,
+    SubspaceTransformation,
+    _compose,
+    _merge_adjacent_subspaces,
+)
+
+
+def _full4(name: str) -> CoordinateSystem:
+    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+
+
+def _sub3(name: str) -> CoordinateSystem:
+    return CoordinateSystem(name=name, axes=[R, A, S])
+
+
+# A non-trivial 3D affine with shear and a shift, so a dropped or misplaced
+# component shows up plainly.
+SUB_AFFINE = np.array(
+    [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
+)
+
+
+def _subspace_affine(positions) -> SubspaceTransformation:  # noqa: ANN001
+    positions = np.asarray(positions, dtype=int)
+    inner = Affine(matrix=SUB_AFFINE, input=_sub3("lps"), output=_sub3("lps"))
+    return SubspaceTransformation(
+        transformation=inner,
+        input_axes=positions,
+        output_axes=positions,
+        input=_full4("in"),
+        output=_full4("out"),
+    )
+
+
+def _coords_4d(seed: int = 0) -> CoordinatesField:
+    rng = np.random.default_rng(seed)
+    field = rng.standard_normal((5, 6, 4))
+    return CoordinatesField(
+        field=field,
+        output=_full4("in"),
+        order=3,
+        bound=BoundaryCondition.mirror,
+    )
+
+
+def test_subspace_coords_matches_affine_reduction() -> None:
+    # C1. Applying a subspace transform whose inner is an affine equals
+    # reducing the whole thing to an affine and folding that into the field.
+    To = _subspace_affine([0, 1, 2])
+    Ti = _coords_4d()
+    got = _compose(To, Ti)
+    ref = _compose(To.to(Affine), Ti)
+    np.testing.assert_allclose(
+        np.asarray(got.field), np.asarray(ref.field), atol=1e-12
+    )
+
+
+def test_subspace_coords_passthrough_is_bit_exact() -> None:
+    # C1/I1. The time component is copied straight through, not recomputed,
+    # so it is bit-for-bit identical.
+    To = _subspace_affine([0, 1, 2])
+    Ti = _coords_4d()
+    got = np.asarray(_compose(To, Ti).field)
+    np.testing.assert_array_equal(got[..., 3], np.asarray(Ti.field)[..., 3])
+
+
+def test_subspace_coords_permuted_positions_align() -> None:
+    # C1/I2. Non-monotonic positions place each component where the axis
+    # vector says, matching the affine reduction, and the pass-through
+    # component stays bit-exact.
+    To = _subspace_affine([2, 0, 1])
+    Ti = _coords_4d()
+    got = _compose(To, Ti)
+    ref = _compose(To.to(Affine), Ti)
+    np.testing.assert_allclose(
+        np.asarray(got.field), np.asarray(ref.field), atol=1e-12
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.field)[..., 3], np.asarray(Ti.field)[..., 3]
+    )
+
+
+def test_subspace_coords_preserves_interpolation_settings() -> None:
+    # C1. The order, bound and coeff of the input field are preserved.
+    To = _subspace_affine([0, 1, 2])
+    Ti = _coords_4d()
+    got = _compose(To, Ti)
+    assert got.order == Ti.order
+    assert got.bound == Ti.bound
+    assert got.coeff == Ti.coeff
+
+
+def test_subspace_coords_promotes_an_integer_domain() -> None:
+    # C1. An integer coordinate field promotes to floating point when an
+    # affine inner is folded in.
+    ab = get_array_backend()
+    field = ab.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
+    Ti = CoordinatesField(field=field, output=_full4("in"))
+    To = _subspace_affine([0, 1, 2])
+    got = _compose(To, Ti)
+    assert np.asarray(got.field).dtype.kind == "f"
+
+
+def test_subspace_disp_matches_affine_reduction() -> None:
+    # C2. A subspace transform applied to a displacement field equals the
+    # affine reduction folded into the same displacement field.
+    rng = np.random.default_rng(2)
+    disp = rng.standard_normal((3, 4, 5, 2, 4)) * 0.1
+    Ti = DisplacementField(field=disp, output=_full4("in"))
+    To = _subspace_affine([0, 1, 2])
+    got = _compose(To, Ti)
+    ref = _compose(To.to(Affine), Ti)
+    assert isinstance(got, DisplacementField)
+    np.testing.assert_allclose(
+        np.asarray(got.field), np.asarray(ref.field), atol=1e-12
+    )
+
+
+def test_subspace_compose_subspace_matches_into_one_wrapper() -> None:
+    # C3. Two subspace transforms over the same axes compose into a single
+    # subspace transform.
+    first = _subspace_affine([0, 1, 2])
+    second = _subspace_affine([0, 1, 2])
+    composed = _compose(second, first)
+    assert isinstance(composed, SubspaceTransformation)
+    np.testing.assert_array_equal(composed.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(composed.output_axes, [0, 1, 2])
+
+
+def test_subspace_compose_its_inverse_is_identity_without_inverting(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # C3. A subspace-wrapped field composed with its own inverse cancels to
+    # the identity, and the numeric field inversion is never reached.
+    import brainhops._ext.invfield as invfield
+
+    def _boom(*args, **kwargs) -> None:
+        raise AssertionError("the field was inverted numerically")
+
+    monkeypatch.setattr(invfield, "inverse", _boom)
+    voxel = _sub3("voxel")
+    warp = DisplacementField(
+        field=np.random.default_rng(3).standard_normal((4, 4, 4, 3)) * 0.1,
+        input=voxel,
+        output=voxel,
+    )
+    wrapper = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+        input=_full4("s"),
+        output=_full4("s"),
+    )
+    composed = _compose(wrapper, wrapper.inverse())
+    assert isinstance(composed, Identity)
+
+
+def test_subspace_compose_subspace_mismatch_raises() -> None:
+    # C3. Two subspace transforms whose axes do not line up cannot compose.
+    first = _subspace_affine([0, 1, 2])
+    second = _subspace_affine([1, 2, 3])
+    with pytest.raises(CompositionError):
+        _compose(second, first)
+
+
+def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
+    # C4. The pre-pass folds two adjacent subspace transforms over the same
+    # axes into one.
+    first = _subspace_affine([0, 1, 2])
+    second = _subspace_affine([0, 1, 2])
+    seq = Sequence([first, second])
+    merged = _merge_adjacent_subspaces(seq)
+    assert len(merged.transformations) == 1
+    assert isinstance(merged.transformations[0], SubspaceTransformation)
+
+
+def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
+    # C4. A subspace transform next to its own inverse is dropped entirely.
+    voxel = _sub3("voxel")
+    warp = DisplacementField(
+        field=np.random.default_rng(4).standard_normal((4, 4, 4, 3)) * 0.1,
+        input=voxel,
+        output=voxel,
+    )
+    wrapper = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+        input=_full4("s"),
+        output=_full4("s"),
+    )
+    seq = Sequence([wrapper.inverse(), wrapper])
+    merged = _merge_adjacent_subspaces(seq)
+    assert len(merged.transformations) == 0
+
+
+def test_subspace_to_affine_on_a_field_inner_raises() -> None:
+    # C5. A subspace transform whose inner is a field cannot be reduced to
+    # an affine, because a field is applied by composing it with a domain.
+    voxel = _sub3("voxel")
+    warp = DisplacementField(
+        field=np.zeros((4, 4, 4, 3)), input=voxel, output=voxel
+    )
+    wrapper = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+        input=_full4("s"),
+        output=_full4("s"),
+    )
+    with pytest.raises(ConversionError):
+        wrapper.to(Affine)

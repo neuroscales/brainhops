@@ -13,9 +13,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 import brainhops.datamodel  # noqa: F401  (registers the adaptor)
-from brainhops.datamodel._xform_adaptors import adapt, bridge
+from brainhops.datamodel._xform_adaptors import _lift, adapt, bridge
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -26,6 +27,7 @@ from brainhops.datamodel.axes import (
     SpatialAxis,
     TimeAxis,
 )
+from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import (
     LeftToRight,
     Orientation,
@@ -47,6 +49,9 @@ from brainhops.datamodel.transformations import (
     AdaptationError,
     Affine,
     CartesianField,
+    CompositionError,
+    CoordinatesField,
+    DisplacementField,
     Identity,
     Inverse,
     Permutation,
@@ -55,6 +60,7 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
     Translation,
+    _compose,
     is_identity,
 )
 
@@ -1111,12 +1117,58 @@ def test_bridge_refuses_a_dimensionality_mismatch() -> None:
         bridge(_ras_time_system("4d"), LPSCoordinateSystem())
 
 
-def test_embedding_a_3d_transform_into_4d_is_out_of_scope() -> None:
-    # A 3D transform followed by a 4D neighbour would have to invent the
-    # extra axis, which is an embedding rather than a subspace lift. It is
-    # out of scope, and the boundary is refused.
+def test_backward_lift_wraps_a_3d_transform_before_a_4d_one() -> None:
+    # A 3D LPS transform followed by a 4D voxel-to-world map is lifted the
+    # other way: the fuller space is on the output side of the boundary, so
+    # the 3D transform is wrapped into a SubspaceTransformation over the
+    # spatial axes and placed before the 4D map. The wrapper writes into the
+    # 4D input space of the 4D map, and the LPS/RAS flip sits on its output.
+    itk_matrix = np.array(
+        [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
+    )
+    voxel_matrix = np.array(
+        [
+            [2.0, 0.0, 0.0, 0.0, 10.0],
+            [0.0, 3.0, 0.0, 0.0, 20.0],
+            [0.0, 0.0, 4.0, 0.0, 30.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+        ]
+    )
+    first = _lps_affine_3d(itk_matrix)
+    second = _voxel_to_ras_time(voxel_matrix)
+
+    result = Sequence([first, second]).compute()
+    assert isinstance(result, Sequence)
+    wrapped = result.transformations[0]
+    assert isinstance(wrapped, SubspaceTransformation)
+    np.testing.assert_array_equal(wrapped.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(wrapped.output_axes, [0, 1, 2])
+    assert wrapped.output == second.input
+
+    got = _homogeneous_of_each(result)
+    flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
+    voxel_homogeneous = np.eye(5)
+    voxel_homogeneous[:4, :] = voxel_matrix
+    expected = voxel_homogeneous @ flip4 @ _embed_spatial(itk_matrix)
+    np.testing.assert_allclose(got, expected)
+    # The flip is load-bearing: without it the spatial block differs.
+    without_flip = voxel_homogeneous @ _embed_spatial(itk_matrix)
+    assert not np.allclose(got, without_flip)
+
+
+def test_extra_spatial_axis_is_not_absorbed_backward_and_raises() -> None:
+    # The mirror of the forward refusal. A 3D transform followed by a
+    # four-spatial-axis system on the output side is a genuine
+    # dimensionality mismatch, not a pass-through, so the lift declines and
+    # the adaptor raises rather than inventing an axis.
+    four_spatial = CoordinateSystem(
+        name="four-spatial",
+        axes=[R, A, S, SpatialAxis(name="extra")],
+    )
     first = _lps_affine_3d(np.eye(3, 4))
-    second = _voxel_to_ras_time(np.eye(4, 5))
+    second = Affine(
+        matrix=np.eye(4, 5), input=four_spatial, output=four_spatial
+    )
     with pytest.raises(AdaptationError):
         Sequence([first, second]).compute()
 
@@ -1192,3 +1244,255 @@ def test_is_identity_keeps_a_non_identity_subspace_non_identity() -> None:
         output_axes=np.asarray([0, 1, 2]),
     )
     assert is_identity(subspace, compute=True) is False
+
+
+# ----------------------------------------------------------------------
+#   END TO END: A 3D TRANSFORM APPLIED TO A 4D (x, y, z, t) IMAGE
+# ----------------------------------------------------------------------
+
+
+def _ras_time(name: str) -> CoordinateSystem:
+    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+
+
+def _spatial3(name: str) -> CoordinateSystem:
+    return CoordinateSystem(name=name, axes=[R, A, S])
+
+
+def _spatial_warp() -> Sequence:
+    # A 3D world-space warp: world -> voxel, a displacement in voxel units,
+    # voxel -> world. The endpoints are RAS on both sides.
+    rng = np.random.default_rng(1)
+    voxel = _spatial3("warp-voxel")
+    world = RASCoordinateSystem()
+    w2v = Affine(matrix=np.eye(3, 4), input=world, output=voxel)
+    w2v.matrix[:, 3] = [-1.0, -2.0, -3.0]
+    disp = rng.normal(size=(6, 7, 5, 3)) * 0.3
+    field = DisplacementField(field=disp, input=voxel, output=voxel)
+    return Sequence([w2v, field, w2v.inverse()], input=world, output=world)
+
+
+def _image_4d() -> SingleScaleImage:
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(6, 7, 5, 3))
+    v2w = np.eye(4, 5)
+    v2w[:3, 4] = [1.0, 2.0, 3.0]
+    return SingleScaleImage(
+        data=data,
+        transformations=[
+            Affine(
+                matrix=v2w, input=_ras_time("voxel"), output=_ras_time("world")
+            )
+        ],
+    )
+
+
+def _reference_4d(
+    image: SingleScaleImage, warp: Sequence, order: int
+) -> np.ndarray:
+    # The per-time-point 3D reference: reslice each spatial volume through
+    # the 3D warp on the image's own grid.
+    from brainhops._core.bsplines import pull
+
+    data = np.asarray(image.data)
+    shape = data.shape
+    v2w = np.asarray(image.transformation.matrix)
+    voxel = _spatial3("ref-voxel")
+    world = RASCoordinateSystem()
+    v2w3 = Affine(matrix=v2w[:3][:, [0, 1, 2, 4]], input=voxel, output=world)
+    seq3 = Sequence(
+        [CartesianField(shape=shape[:3]), v2w3, warp, v2w3.inverse()]
+    )
+    coords3 = np.asarray(seq3.compute().field)
+    ref = np.empty(shape)
+    for t in range(shape[3]):
+        ref[..., t] = pull(
+            data[..., t], coords3, order=order, bound="reflect", coeff=False
+        )
+    return ref
+
+
+def test_4d_reslice_through_a_3d_warp_field_matches_reference() -> None:
+    # T1. A 3D warp field applied to a 4D (x, y, z, t) image and resliced
+    # onto its own grid resamples each time point by the same 3D warp. The
+    # result matches the per-time-point 3D reference, and the time
+    # coordinate is carried through untouched.
+    image = _image_4d()
+    warp = _spatial_warp()
+    got = np.asarray(image(warp).reslice(image, order=1).data)
+    ref = _reference_4d(image, warp, order=1)
+    np.testing.assert_allclose(got, ref, atol=1e-12)
+
+
+def test_4d_reslice_through_a_3d_warp_field_order3() -> None:
+    # T1, at a higher spline order. The tolerance is looser, because the
+    # boundary prefilter runs over the whole 4D array once here and per
+    # volume in the reference.
+    image = _image_4d()
+    warp = _spatial_warp()
+    got = np.asarray(image(warp).reslice(image, order=3).data)
+    ref = _reference_4d(image, warp, order=3)
+    # The tolerance is loose because the order-3 prefilter runs over the
+    # whole 4D array once here and per volume in the reference, which couples
+    # the boundary time points. The interior agrees far more closely.
+    np.testing.assert_allclose(got, ref, rtol=5e-3, atol=5e-3)
+
+
+def test_time_component_is_carried_through_a_3d_warp() -> None:
+    # The subspace lift leaves the time axis alone: the coordinate field
+    # the reslice computes holds an exact time coordinate.
+    image = _image_4d()
+    warp = _spatial_warp()
+    grid = image.geometry.grid
+    coords = (
+        image(warp).transformation.inverse()
+        @ image.geometry.transformation
+        @ grid
+    ).compute()
+    shape = np.asarray(image.data).shape
+    time = np.asarray(coords.field)[..., 3]
+    expected = np.broadcast_to(np.arange(shape[3]), shape)
+    np.testing.assert_array_equal(time, expected)
+
+
+def test_3d_affine_applied_to_a_4d_image_via_reslice() -> None:
+    # T2. A 3D affine warp applied to a 4D image reslices end to end. This
+    # raised before the backward lift and the subspace composers existed.
+    image = _image_4d()
+    warp_aff = Affine(
+        matrix=np.eye(3, 4),
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    warp_aff.matrix[:, 3] = [0.5, 0.0, 0.0]
+    out = image(warp_aff).reslice(image, order=1)
+    assert np.asarray(out.data).shape == np.asarray(image.data).shape
+
+
+def test_own_geometry_reslice_is_exact_and_never_inverts_a_field(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # T3. Reslicing a warped 4D image onto its own geometry returns the
+    # data unchanged, because the warp and its inverse cancel by identity.
+    # The numeric field inversion is never reached, which is asserted by
+    # making it raise.
+    import brainhops._ext.invfield as invfield
+
+    def _boom(*args, **kwargs) -> None:
+        raise AssertionError("the field was inverted numerically")
+
+    monkeypatch.setattr(invfield, "inverse", _boom)
+    image = _image_4d()
+    warp = _spatial_warp()
+    warped = image(warp)
+    got = np.asarray(warped.reslice(warped, order=1).data)
+    np.testing.assert_array_equal(got, np.asarray(image.data))
+
+
+# ----------------------------------------------------------------------
+#   _lift AND THE DISCRETE GUARD
+# ----------------------------------------------------------------------
+
+
+def test_lift_refuses_a_cartesian_field() -> None:
+    # T5. A grid defines a sampling domain, not a transform to place inside
+    # a subspace, so it is never lifted.
+    grid = CartesianField(
+        shape=(6, 7, 5),
+        input=_spatial3("grid"),
+        output=_spatial3("grid"),
+    )
+    full = _ras_time("full")
+    assert _lift(grid, full=full, side="input", extents=None) is None
+    assert _lift(grid, full=full, side="output", extents=None) is None
+
+
+def _discrete_ras_time(name: str) -> CoordinateSystem:
+    # A 4D system whose third spatial axis is discrete.
+    discrete_s = replace(S, discrete=True)
+    return CoordinateSystem(
+        name=name, axes=[R, A, discrete_s, TimeAxis(name="t")]
+    )
+
+
+def test_lift_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
+    # T6, lift side. An interpolating transform lifted onto a discrete axis
+    # is refused, because a field is sampled between grid points.
+    voxel = _spatial3("warp-voxel")
+    field = DisplacementField(
+        field=np.zeros((6, 7, 5, 3)), input=voxel, output=voxel
+    )
+    full = _discrete_ras_time("full")
+    with pytest.raises(AdaptationError):
+        _lift(field, full=full, side="input", extents=None)
+
+
+def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:
+    # T6, compose side. A subspace transform whose inner is a field, and
+    # which acts on a discrete axis, cannot be applied to a coordinate
+    # field.
+    voxel = _spatial3("warp-voxel")
+    field = DisplacementField(
+        field=np.zeros((6, 7, 5, 3)), input=voxel, output=voxel
+    )
+    full = _discrete_ras_time("full")
+    subspace = SubspaceTransformation(
+        transformation=field,
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([0, 1, 2]),
+        input=full,
+        output=full,
+    )
+    coords = CoordinatesField(
+        field=np.zeros((6, 7, 5, 3, 4)), input=full, output=full
+    )
+    with pytest.raises(CompositionError):
+        _compose(subspace, coords)
+
+
+# ----------------------------------------------------------------------
+#   SPLICE INVARIANTS
+# ----------------------------------------------------------------------
+
+
+def test_adapt_keeps_first_by_identity_for_a_bridge() -> None:
+    # T7. A same-count bridge never rebuilds either endpoint, so the first
+    # element of the result is the exact object passed in.
+    first = Affine(
+        matrix=np.eye(3, 4),
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    second = Affine(
+        matrix=np.eye(3, 4),
+        input=LPSCoordinateSystem(),
+        output=LPSCoordinateSystem(),
+    )
+    result = adapt(first, second, allow_type_grouped_positional=True)
+    assert result.transformations[0] is first
+    assert result.transformations[-1] is second
+
+
+def test_adapt_keeps_first_by_identity_for_a_forward_lift() -> None:
+    # T7. A forward lift wraps the second transform and leaves the first
+    # untouched, so the first element is the exact object passed in.
+    first = _voxel_to_ras_time(np.eye(4, 5))
+    second = _lps_affine_3d(np.eye(3, 4))
+    result = adapt(first, second)
+    assert result.transformations[0] is first
+    wrapped = result.transformations[-1]
+    assert isinstance(wrapped, SubspaceTransformation)
+
+
+def test_backward_lift_finds_the_original_leaf_by_identity() -> None:
+    # T7. A backward lift wraps the first transform. The original leaf is
+    # still reachable inside the wrapper, found by identity, so no leaf is
+    # rebuilt.
+    first = _lps_affine_3d(np.eye(3, 4))
+    second = _voxel_to_ras_time(np.eye(4, 5))
+    result = adapt(first, second)
+    wrapped = result.transformations[0]
+    assert isinstance(wrapped, SubspaceTransformation)
+    inner = wrapped.transformation
+    leaves = inner.transformations if isinstance(inner, Sequence) else [inner]
+    assert any(leaf is first for leaf in leaves)
