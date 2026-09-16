@@ -1057,7 +1057,17 @@ _INVERSE_WRAPPERS.update(
 class SubspaceTransformation(Transformation):
     """
     A transformation that is applied to a subset of the input and output axes.
+
+    The transformation acts on the axes named by `input_axes` and
+    `output_axes`, and leaves every other axis unchanged. The
+    dimensionality of the space is preserved. An axis that is not named
+    passes through as the identity. This lifts a transformation defined
+    over a few axes, such as a spatial transformation over `(x, y, z)`,
+    into a larger space, such as `(x, y, z, t)`, where it acts on the
+    spatial axes and leaves time untouched.
     """
+
+    parameter_names: tx.ClassVar[str] = "transformation"
 
     transformation: tx.Annotated[
         tx.Optional[Transformation], tx.Doc("The transformation to apply.")
@@ -1599,17 +1609,41 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
         ndim = len(xform.permutation)
         return (xform.permutation == list(range(ndim))).all()
     if isinstance(xform, Linear):
-        ndim = xform.matrix.shape[0]
+        rows, cols = xform.matrix.shape
+        if rows != cols:
+            # A transform between spaces of different dimension is never
+            # the identity, and its matrix cannot be compared to a square
+            # identity matrix.
+            return False
         ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(ndim)).all()
+        return (xform.matrix == ab.eye(rows)).all()
     if isinstance(xform, Affine):
-        ndim = xform.matrix.shape[0] - 1
+        rows, cols = xform.matrix.shape
+        if cols != rows + 1:
+            # An affine whose input and output have different dimensions is
+            # never the identity. Its matrix is `(No, Ni + 1)`, so the
+            # identity requires `No == Ni`.
+            return False
         ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(ndim + 1)[:-1]).all()
+        return (xform.matrix == ab.eye(rows + 1)[:-1]).all()
     if isinstance(xform, DisplacementField):
         return (xform.field == 0).all()
     if isinstance(xform, CartesianField):
         return True
+    if isinstance(xform, SubspaceTransformation):
+        # A subspace transform is the identity when the transform it wraps
+        # is itself the identity and it reads the same axes it writes. A
+        # subspace that reorders axes is not the identity even when its
+        # inner transform is, so a differing pair of axis vectors keeps it
+        # non-identity.
+        inner = xform.transformation
+        if inner is not None and not is_identity(inner, compute=True):
+            return False
+        input_axes = xform.input_axes
+        output_axes = xform.output_axes
+        if input_axes is None or output_axes is None:
+            return True
+        return list(input_axes) == list(output_axes)
     return False
 
 
@@ -1831,7 +1865,113 @@ def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
     return replace(seq, transformations=stack)
 
 
+def _interpolates(xform: Transformation) -> bool:
+    # Whether applying a transform resamples data through a spline. A
+    # transform interpolates when, looking past a sequence, a subspace
+    # wrapper, and an inverse, it reaches a displacement field or a
+    # coordinate field that is not a plain grid. A `CartesianField` is the
+    # identity map over its grid and reads no value off it, so it does not
+    # interpolate. An affine, a permutation, and the like never interpolate.
+    if xform is None:
+        return False
+    if isinstance(xform, Inverse):
+        return _interpolates(xform.forward)
+    if isinstance(xform, Sequence):
+        return any(_interpolates(t) for t in (xform.transformations or []))
+    if isinstance(xform, SubspaceTransformation):
+        return _interpolates(xform.transformation)
+    if isinstance(xform, CartesianField):
+        return False
+    if isinstance(xform, (DisplacementField, CoordinatesField)):
+        return True
+    return False
+
+
 _ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
+
+
+def _mode_admits(t: Transformation, mode: tx.List[_ModePair]) -> bool:
+    # Whether the current mode would compose a transform of this type. The
+    # mode is the list of `(type, ndim)` pairs the simplification runs
+    # under, and a transform belongs to the mode when it matches any pair.
+    return any(_matches_mode(t, m) for m in mode)
+
+
+def _subspaces_mergeable(
+    prev: SubspaceTransformation,
+    nxt: SubspaceTransformation,
+    mode: tx.List[_ModePair],
+) -> bool:
+    # Whether two adjacent subspace transforms over the same axes may be
+    # merged under the current mode. Two kinds of merge are distinguished.
+    #
+    # A merge that cancels by identity materializes no field, so it is
+    # always allowed, whatever the mode. This is the case that lets a
+    # subspace-wrapped field meet its own subspace-wrapped inverse. A pair of
+    # inner transforms where one is the inverse of the other cancels this
+    # way, as does a pair where either inner is the identity.
+    #
+    # Any other merge composes the two inner transforms numerically, which
+    # for two fields resamples one through the other. That work is done only
+    # when the current mode would compose those inner transforms anyway, so a
+    # restrictive mode such as `compute(mode="Affine")` does not silently
+    # compose two fields.
+    inner_prev = prev.transformation
+    inner_nxt = nxt.transformation
+    if inner_prev is None or inner_nxt is None:
+        return True
+    if _cancels(inner_prev, inner_nxt):
+        return True
+    return _mode_admits(inner_prev, mode) and _mode_admits(inner_nxt, mode)
+
+
+def _merge_adjacent_subspaces(
+    seq: Sequence, mode: tx.List[_ModePair]
+) -> Transformation:
+    # Compose adjacent subspace transforms that act on the same axes. Two
+    # subspace transforms that meet, where the axes the first writes are the
+    # axes the second reads, compose into one subspace transform over those
+    # axes. A pair that composes to the identity is dropped. This lets a
+    # subspace-wrapped field meet its own subspace-wrapped inverse and
+    # cancel by identity, rather than the field being inverted numerically.
+    #
+    # A merge that would compose two inner transforms numerically runs only
+    # when the current mode admits those inner types, so a restrictive mode
+    # does not compose transforms it was told to leave alone. A cancellation
+    # by identity is always allowed, whatever the mode.
+    xforms = seq.transformations or []
+    if len(xforms) < 2:
+        return seq
+    merged: tx.List[Transformation] = [xforms[0]]
+    changed = False
+    last_identity: tx.Optional[Identity] = None
+    for nxt in xforms[1:]:
+        prev = merged[-1]
+        if (
+            isinstance(prev, SubspaceTransformation)
+            and isinstance(nxt, SubspaceTransformation)
+            and prev.output_axes is not None
+            and nxt.input_axes is not None
+            and list(prev.output_axes) == list(nxt.input_axes)
+            and _subspaces_mergeable(prev, nxt, mode)
+        ):
+            composed = _compose(nxt, prev)
+            merged.pop()
+            if isinstance(composed, Identity):
+                last_identity = composed
+            else:
+                merged.append(composed)
+            changed = True
+        else:
+            merged.append(nxt)
+    if not changed:
+        return seq
+    if not merged and last_identity is not None:
+        # Every element cancelled, so the sequence is the identity the last
+        # cancelling pair produced, with its endpoints, rather than an empty
+        # sequence.
+        return last_identity
+    return replace(seq, transformations=merged)
 
 
 def _matches_mode(t: Transformation, mode: _ModePair) -> bool:
@@ -1982,7 +2122,17 @@ def _compute_sequence(
             # that link by identity, and `_flattened` (used below to
             # propagate coordinate systems) would rebuild the first and
             # last elements and break it.
-            flat = _unnest(seq.transformations)
+            # Reconcile any boundary where two adjacent transforms disagree
+            # on the system they share, before those transforms are
+            # flattened and composed. The composers assume compatible
+            # systems, so the bridge that reorders, rescales, or flips the
+            # mismatched axes is inserted here. Bridging runs on the direct
+            # children, because a nested sequence carries its endpoint
+            # systems on itself and flattening would drop them. A bridge is
+            # built from exactly invertible pieces, so two opposite bridges
+            # cancel and simplify away.
+            bridged = _insert_bridges(seq.transformations or [])
+            flat = _unnest(bridged)
             before = len(flat)
             if before < 1:
                 return replace(seq, transformations=flat)
@@ -1997,6 +2147,14 @@ def _compute_sequence(
             if not isinstance(cancelled, Sequence):
                 return cancelled
             seq = cancelled
+            # Compose adjacent subspace transforms over the same axes, so a
+            # subspace-wrapped field meets its own subspace-wrapped inverse
+            # and cancels by identity rather than being inverted numerically.
+            # A full cancellation collapses the sequence to the identity.
+            merged_subspaces = _merge_adjacent_subspaces(seq, mode)
+            if not isinstance(merged_subspaces, Sequence):
+                return merged_subspaces
+            seq = merged_subspaces
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
@@ -2236,40 +2394,133 @@ def _compose(x1: Transformation, x2: Transformation) -> Transformation:
 # ----------------------------------------------------------------------
 #   ADAPTORS
 # ----------------------------------------------------------------------
-_ADAPTORS = {}
-_ADAPTORS_FASTMAP = {}
 
 
 class AdaptationError(TypeError):
-    """Raised when no transformation adapts one coordinate system to
-    another."""
+    """Raised when one coordinate system cannot be adapted to another.
+
+    Adaptation reorders, rescales, and flips the axes that two coordinate
+    systems share, so it succeeds only when every axis of one system
+    corresponds to an axis of the other. This error is raised when an axis
+    that must be matched has no correspondence, or when two matched axes
+    carry incompatible units. Its message names the two systems and the
+    axes that could not be reconciled.
+    """
 
 
-def _adaptor(func: tx.Callable) -> tx.Callable:
-    """
-    Decorator to register a function as an adaptor between two
-    coordinate systems.
-    """
-    types = tuple(tx.get_type_hints(func).values())[:2]
-    _ADAPTORS[types] = func
-    _ADAPTORS_FASTMAP.clear()
-    return func
+# The adaptor lives in `_xform_adaptors`, which imports this module. It
+# registers itself here at import time, so the sequence machinery can call
+# it without importing that module at load time and forming a cycle. The
+# adaptor reconciles two consecutive transforms: it bridges a boundary
+# where the two systems merely reorder, rescale or flip their shared axes,
+# and it lifts a transform that acts on a subset of a boundary's axes into
+# the fuller axis space, leaving the extra axes as the identity, so a
+# lower-dimensional transform meets a higher-dimensional neighbour without
+# a dimensionality change.
+_ADAPT: tx.Optional[tx.Callable[..., "Sequence"]] = None
 
 
-def _adapt(s1: CoordinateSystem, s2: CoordinateSystem) -> Transformation:
-    """
-    Dispatch the adaptation between two coordinate systems to the appropriate
-    adaptor function.
-    """
-    if (s1, s2) in _ADAPTORS_FASTMAP:
-        func = _ADAPTORS_FASTMAP[(s1, s2)]
-        return func(s1, s2)
-    best_distance, best_func = float("inf"), None
-    for (S1, S2), FUNC in _ADAPTORS.items():
-        distance = _distance(s1, S1) + _distance(s2, S2)
-        if distance < best_distance:
-            best_distance, best_func = distance, FUNC
-    if best_distance < float("inf"):
-        _ADAPTORS_FASTMAP[(s1, s2)] = best_func
-        return best_func(s1, s2)
-    raise AdaptationError(f"No adaptor found for types: {s1}, {s2}")
+def _register_adapt(func: tx.Callable[..., "Sequence"]) -> None:
+    """Register the routine that reconciles two consecutive transforms."""
+    global _ADAPT
+    _ADAPT = func
+
+
+def _systems_disagree(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+) -> bool:
+    # Whether a bridge is needed between two adjacent systems. A system
+    # that is unspecified, or that carries no axes, is treated as
+    # compatible with its neighbour, so only two fully described and
+    # unequal systems disagree.
+    if source is None or target is None:
+        return False
+    if source.axes is None or target.axes is None:
+        return False
+    return source != target
+
+
+def _boundary_output(t: Transformation) -> tx.Optional[CoordinateSystem]:
+    # The system in which a transform leaves its coordinates, looking past
+    # a sequence that carries the system on its last element rather than on
+    # itself. This is the system a following transform meets.
+    if t.output is not None:
+        return t.output
+    if isinstance(t, Sequence) and t.transformations:
+        return _boundary_output(t.transformations[-1])
+    return None
+
+
+def _boundary_input(t: Transformation) -> tx.Optional[CoordinateSystem]:
+    # The system in which a transform expects its coordinates, looking past
+    # a sequence that carries the system on its first element rather than
+    # on itself. This is the system a preceding transform must reach.
+    if t.input is not None:
+        return t.input
+    if isinstance(t, Sequence) and t.transformations:
+        return _boundary_input(t.transformations[0])
+    return None
+
+
+def _splice(spliced: tx.List["Transformation"], nxt: "Transformation") -> None:
+    # Add `nxt` to the running list `spliced`, reconciling the boundary it
+    # shares with the transform already at the end of the list. The adaptor
+    # returns the pair with whatever bridge or subspace lift the boundary
+    # needs already placed between them. The two transforms it contains are
+    # never rebuilt, so a leaf stays the same object its inverse names and
+    # the adjacent-inverse cancellation still links the two by identity.
+    if not spliced:
+        spliced.append(nxt)
+        return
+    prev = spliced[-1]
+    pieces = list(_ADAPT(prev, nxt, allow_type_grouped_positional=True))
+    if pieces[0] is not prev:
+        # `prev` was lifted into the fuller space of `nxt`, so the piece
+        # that replaces it now presents a different left boundary. The old
+        # `prev` is dropped and the lifted piece is re-spliced against
+        # `prev`'s own left neighbour, which may in turn need reconciling.
+        spliced.pop()
+        _splice(spliced, pieces[0])
+        spliced.extend(pieces[1:])
+    else:
+        spliced.extend(pieces[1:])
+
+
+def _insert_bridges(
+    transformations: tx.List["Transformation"],
+) -> tx.List["Transformation"]:
+    # Reconcile every boundary where two adjacent transforms disagree on
+    # the system they share. The output system of one and the input system
+    # of the next are reconciled by the adaptor, whose pieces are spliced in
+    # at that boundary so the result still contains both transforms. A
+    # boundary whose systems already agree, or where either system is
+    # unspecified, is left alone. Reconciling runs before the sequence is
+    # flattened, because a nested sequence carries its endpoint systems on
+    # the sequence and not on the leaves that flattening would expose.
+    # A boundary can hide inside a nested sequence or behind a generic
+    # inverse, both of which the flattening later removes. So each nested
+    # sequence has its own children bridged first, keeping its endpoints,
+    # and each generic inverse is expanded to the typed inverse the
+    # flattening would produce, so the boundary is read from the system
+    # that inverse actually presents. Neither step rebuilds a leaf's
+    # endpoints, so a transform stays the same object its inverse names and
+    # the adjacent-inverse cancellation still links the two by identity.
+    prepared: tx.List[Transformation] = []
+    for t in transformations:
+        t = _normalize_inverse(t)
+        # Only a plain sequence is rebuilt with its children bridged. A
+        # specialized sequence, such as a multiscale field or a geometry,
+        # keeps its own shape and derives its elements, so its boundaries
+        # are read through it rather than rebuilt.
+        if type(t) is Sequence:
+            t = replace(
+                t, transformations=_insert_bridges(t.transformations or [])
+            )
+        prepared.append(t)
+    if len(prepared) < 2:
+        return prepared
+    spliced: tx.List[Transformation] = []
+    for nxt in prepared:
+        _splice(spliced, nxt)
+    return spliced
