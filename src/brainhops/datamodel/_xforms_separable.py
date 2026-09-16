@@ -96,14 +96,27 @@ def _affine_dependency(
 def _subspace_dependency(
     element: SubspaceTransformation, ndim_in: int, ndim_out: int
 ) -> np.ndarray:
-    # The dependency of a transform that acts on a subset of the axes. Its
-    # coupling among the acted-on axes is the dependency of the wrapped
-    # transform itself, read by recursing through the same machinery. So a
-    # subspace wrapping a diagonal linear, a nested subspace, or a warp that
-    # touches only some of its axes couples only what the inner transform
-    # actually mixes, rather than every acted-on axis to every other. The
-    # remaining axes pass through in order, paired the same way as the
-    # subspace-to-affine reduction pairs them.
+    # The dependency of a transform that acts on a subset of the axes. The
+    # behaviour depends on whether the wrapped transform interpolates.
+    #
+    # A non-interpolating inner is read by recursing through the same
+    # machinery, so its coupling among the acted-on axes is the dependency of
+    # the inner transform itself. A subspace wrapping a diagonal linear, a
+    # nested non-interpolating subspace, or a shear on a sub-block then
+    # couples only what the inner transform actually mixes, rather than every
+    # acted-on axis to every other. `_restrict` reproduces such a group
+    # exactly through the affine sub-block embedding.
+    #
+    # An interpolating inner instead couples every acted-on output axis to
+    # every acted-on input axis. Its finer partition is not recovered here:
+    # `_restrict` would re-wrap the whole inner over the group's fewer axes,
+    # and the inner's own axis indices would then point at the wrong axes.
+    # The all-ones over-approximation keeps every acted-on axis in one group,
+    # which reslices correctly and matches what a full-axis spatial warp
+    # emits.
+    #
+    # In either case the remaining axes pass through in order, paired the same
+    # way as the subspace-to-affine reduction pairs them.
     inner = element.transformation
     interpolates = _interpolates(inner)
     in_axes = _axis_list(element.input_axes)
@@ -120,24 +133,24 @@ def _subspace_dependency(
         # matrix.
         return _affine_dependency(element, ndim_in, ndim_out)
     ki, ko = len(in_axes), len(out_axes)
-    inner_dep = None
-    if ki == ko:
-        try:
-            candidate = _transform_dependency(inner, ki, ko)
-        except Exception:
-            # A wrapped transform whose dependency cannot be read is
-            # over-approximated below, never under-coupled.
-            candidate = None
-        if candidate is not None and candidate.shape == (ko, ki):
-            inner_dep = np.asarray(candidate, dtype=bool)
-    if inner_dep is None:
-        if interpolates:
-            # A raw field inner, or a warp whose dependency cannot be read,
-            # couples every acted-on axis to every other. This is a safe
-            # over-approximation, which only ever misses an optimization and
-            # never splits an axis that should stay coupled.
-            inner_dep = np.ones((ko, ki), dtype=bool)
-        else:
+    if interpolates:
+        # An interpolating inner, whether a raw field or a warp on a subset
+        # of the axes, couples every acted-on axis to every other. This is a
+        # safe over-approximation, which only ever misses an optimization and
+        # never splits an axis that should stay coupled.
+        inner_dep = np.ones((ko, ki), dtype=bool)
+    else:
+        inner_dep = None
+        if ki == ko:
+            try:
+                candidate = _transform_dependency(inner, ki, ko)
+            except Exception:
+                # A wrapped transform whose dependency cannot be read is
+                # read from the affine embedding below, never under-coupled.
+                candidate = None
+            if candidate is not None and candidate.shape == (ko, ki):
+                inner_dep = np.asarray(candidate, dtype=bool)
+        if inner_dep is None:
             # A non-interpolating inner that could not be recursed is read
             # from the subspace's full affine embedding instead.
             return _affine_dependency(element, ndim_in, ndim_out)

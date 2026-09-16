@@ -1209,116 +1209,178 @@ def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
 
 
 _SUB_SYSTEM = CoordinateSystem(axes=[_sp("x"), _sp("y"), _sp("z"), _time()])
+_SUB_SYSTEM3 = CoordinateSystem(axes=[_sp("x"), _sp("y"), _sp("z")])
+_SUB_SYSTEM2 = CoordinateSystem(axes=[_sp("x"), _sp("y")])
 
 
-def _subspace(inner: object, axes: list) -> SubspaceTransformation:
+def _subspace(
+    inner: object,
+    axes: list,
+    out_axes: object = None,
+    sysin: object = _SUB_SYSTEM,
+    sysout: object = None,
+) -> SubspaceTransformation:
+    out_axes = axes if out_axes is None else out_axes
     return SubspaceTransformation(
         transformation=inner,
         input_axes=np.asarray(axes),
-        output_axes=np.asarray(axes),
-        input=_SUB_SYSTEM,
+        output_axes=np.asarray(out_axes),
+        input=sysin,
+        output=sysout,
     )
+
+
+def _warp(
+    shape_axes: tuple, seed: int, scale: float = 0.5
+) -> DisplacementField:
+    # A displacement field with a nonzero, random displacement on each axis it
+    # names. A reslice through a nonzero field moves the data, so the reslice
+    # tests detect a wrong axis mapping rather than passing on a zero field.
+    k = len(shape_axes)
+    rng = np.random.default_rng(seed)
+    field = rng.normal(size=(*shape_axes, k)) * scale
+    return DisplacementField(field=field, order=1, bound="reflect")
+
+
+def _reslice_equal(
+    sub: object,
+    shape: tuple,
+    seed: int,
+    grid_system: object = None,
+    order: int = 3,
+    bound: object = "reflect",
+) -> None:
+    # Reslice random data of the given shape through a grid-and-subspace
+    # sequence with the separable path, and assert the result equals the
+    # monolithic pull of the same transform. A wrong axis mapping in the
+    # separable path corrupts the result, so this equality is what the
+    # component assertions on their own do not check.
+    with backend("numpy"):
+        rng = np.random.default_rng(seed + 1000)
+        data = rng.normal(size=shape)
+        if grid_system is not None:
+            grid = CartesianField(
+                shape=shape, input=grid_system, output=grid_system
+            )
+        else:
+            grid = CartesianField(shape=shape)
+        seq = Sequence(transformations=[grid, sub])
+        got = sep.pull_separable(
+            data, seq, order=order, bound=bound, coeff=False
+        )
+        ref = pull(
+            data, seq.compute().field, order=order, bound=bound, coeff=False
+        )
+    assert np.allclose(got, ref)
+
+
+# --- Non-interpolating inner: the finer partition is kept and reslices. ---
 
 
 def test_subspace_wrapping_diagonal_scaling_splits_into_singletons() -> None:
     # A subspace wrapping a diagonal scaling mixes no axes. Its dependency is
     # read from the inner scaling, so each axis is its own group rather than
-    # one coupled block.
-    inner = Scaling(scale=np.asarray([2.0, 3.0, 0.5]))
-    sub = _subspace(inner, [0, 1, 2])
+    # one coupled block. The finer partition must reslice to the monolithic
+    # result.
+    inner = Scaling(
+        scale=np.asarray([1.3, 0.7, 0.5]),
+        input=_SUB_SYSTEM3,
+        output=_SUB_SYSTEM3,
+    )
+    sub = _subspace(inner, [0, 1, 2], sysout=_SUB_SYSTEM)
     assert _components([sub], 4) == [
         ((0,), (0,)),
         ((1,), (1,)),
         ((2,), (2,)),
         ((3,), (3,)),
     ]
+    _reslice_equal(sub, (5, 6, 7, 4), 1, grid_system=_SUB_SYSTEM)
 
 
 def test_subspace_wrapping_diagonal_affine_splits_into_singletons() -> None:
-    inner = Affine(matrix=np.diag([2.0, 3.0, 0.5, 1.0])[:-1])
-    sub = _subspace(inner, [0, 1, 2])
+    inner = Affine(
+        matrix=np.diag([1.3, 0.7, 1.5, 1.0])[:-1],
+        input=_SUB_SYSTEM3,
+        output=_SUB_SYSTEM3,
+    )
+    sub = _subspace(inner, [0, 1, 2], sysout=_SUB_SYSTEM)
     assert _components([sub], 4) == [
         ((0,), (0,)),
         ((1,), (1,)),
         ((2,), (2,)),
         ((3,), (3,)),
     ]
+    _reslice_equal(sub, (5, 6, 7, 4), 2, grid_system=_SUB_SYSTEM)
 
 
-def test_nested_subspace_couples_only_the_truly_warped_axis() -> None:
-    # A subspace whose inner is itself a subspace over a sub-subset, nested
-    # twice, down to a one-axis warp. Only the truly warped axis couples; the
-    # rest pass through as singletons.
-    warp = DisplacementField(field=np.zeros((5, 1)), order=1, bound="reflect")
-    level1 = SubspaceTransformation(
-        transformation=warp,
-        input_axes=np.asarray([0]),
-        output_axes=np.asarray([0]),
+def test_nested_non_interpolating_subspace_splits_into_singletons() -> None:
+    # A subspace whose inner is itself a non-interpolating subspace, over a
+    # sub-subset. A diagonal affine mixes nothing, so each axis is its own
+    # group. The nested finer partition must reslice to the monolithic result.
+    innermost = Affine(
+        matrix=np.diag([1.4, 0.6, 1.0])[:-1],
+        input=_SUB_SYSTEM2,
+        output=_SUB_SYSTEM2,
     )
-    level0 = SubspaceTransformation(
-        transformation=level1,
-        input_axes=np.asarray([0, 1]),
-        output_axes=np.asarray([0, 1]),
+    level1 = _subspace(
+        innermost, [0, 1], sysin=_SUB_SYSTEM3, sysout=_SUB_SYSTEM3
     )
-    sub = _subspace(level0, [0, 1, 2])
+    sub = _subspace(level1, [0, 1, 2], sysout=_SUB_SYSTEM)
     assert _components([sub], 4) == [
         ((0,), (0,)),
         ((1,), (1,)),
         ((2,), (2,)),
         ((3,), (3,)),
     ]
+    _reslice_equal(sub, (5, 6, 7, 4), 3, grid_system=_SUB_SYSTEM)
 
 
-def test_subspace_inner_warp_on_a_subset_couples_only_that_subset() -> None:
-    # A warp that touches only axes 0 and 1, inside a subspace over axes
-    # 0, 1, 2. Axes 0 and 1 couple, axis 2 passes through.
-    warp = DisplacementField(
-        field=np.zeros((5, 5, 2)), order=1, bound="reflect"
-    )
-    inner = SubspaceTransformation(
-        transformation=warp,
-        input_axes=np.asarray([0, 1]),
-        output_axes=np.asarray([0, 1]),
-    )
-    sub = _subspace(inner, [0, 1, 2])
+def test_subspace_shear_on_a_subblock_couples_only_the_sheared_axes() -> None:
+    # A shear inside a subspace over axes 0, 1, 2. The shear couples axes 0
+    # and 1 through its off-diagonal entry, and axis 2 passes through. The
+    # sub-block partition must reslice to the monolithic result.
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.5
+    inner = Affine(matrix=matrix, input=_SUB_SYSTEM3, output=_SUB_SYSTEM3)
+    sub = _subspace(inner, [0, 1, 2], sysout=_SUB_SYSTEM)
     assert _components([sub], 4) == [
         ((0, 1), (0, 1)),
         ((2,), (2,)),
         ((3,), (3,)),
     ]
+    _reslice_equal(sub, (5, 6, 7, 4), 4, grid_system=_SUB_SYSTEM)
 
 
-def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
-    # A raw field inner mixes every axis it names, so the acted-on axes stay
-    # one coupled block. This is the safe over-approximation.
-    warp = DisplacementField(
-        field=np.zeros((5, 5, 5, 3)), order=1, bound="reflect"
-    )
-    sub = _subspace(warp, [0, 1, 2])
-    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+def test_subspace_rotation_on_a_subblock_couples_only_the_rotated_axes() -> (
+    None
+):
+    # A rotation about the z axis inside a subspace over axes 0, 1, 2. The
+    # rotation couples axes 0 and 1, axis 2 passes through, and the sub-block
+    # partition must reslice to the monolithic result.
+    c, s = np.cos(0.4), np.sin(0.4)
+    matrix = np.zeros((3, 4))
+    matrix[:3, :3] = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+    inner = Affine(matrix=matrix, input=_SUB_SYSTEM3, output=_SUB_SYSTEM3)
+    sub = _subspace(inner, [0, 1, 2], sysout=_SUB_SYSTEM)
+    assert _components([sub], 4) == [
+        ((0, 1), (0, 1)),
+        ((2,), (2,)),
+        ((3,), (3,)),
+    ]
+    _reslice_equal(sub, (5, 6, 7, 4), 5, grid_system=_SUB_SYSTEM)
 
 
-@pytest.mark.parametrize(
-    "inner",
-    [
-        Scaling(scale=np.asarray([2.0, 3.0, 0.5])),
-        SubspaceTransformation(
-            transformation=DisplacementField(
-                field=np.zeros((5, 5, 2)), order=1, bound="reflect"
-            ),
-            input_axes=np.asarray([0, 1]),
-            output_axes=np.asarray([0, 1]),
-        ),
-    ],
-)
 def test_reverting_subspace_recursion_to_all_ones_over_couples(
-    inner: object, monkeypatch: object
+    monkeypatch: object,
 ) -> None:
-    # Without the recursion the subspace couples every acted-on axis. This
-    # confirms the recursion is what produces the finer partition, and that
-    # the fallback it replaces is an over-approximation, never a false split.
+    # A non-interpolating inner is read by recursing, which produces the finer
+    # partition. This confirms the recursion is what produces the split, and
+    # that the fallback it replaces is an over-approximation, never a false
+    # split.
+    inner = Scaling(scale=np.asarray([2.0, 3.0, 0.5]))
     sub = _subspace(inner, [0, 1, 2])
     fine = _components([sub], 4)
+    assert fine == [((0,), (0,)), ((1,), (1,)), ((2,), (2,)), ((3,), (3,))]
     monkeypatch.setattr(
         sep,
         "_transform_dependency",
@@ -1327,6 +1389,94 @@ def test_reverting_subspace_recursion_to_all_ones_over_couples(
     coarse = _components([sub], 4)
     assert coarse == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
     assert fine != coarse
+
+
+# --- Interpolating inner: the acted-on axes stay one coupled block. ---
+
+
+def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:
+    # A raw field inner mixes every axis it names, so the acted-on axes stay
+    # one coupled block. This is the safe over-approximation, and it must
+    # reslice to the monolithic result.
+    warp = _warp((5, 6, 7), 6)
+    sub = _subspace(warp, [0, 1, 2])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    _reslice_equal(sub, (5, 6, 7, 4), 6)
+
+
+def test_nested_subspace_over_interpolating_inner_couples_all_its_axes() -> (
+    None
+):
+    # The reviewer's primary reproducer. A subspace over axes 0, 1, 2 whose
+    # inner is itself an interpolating subspace, a one-axis warp on axis 0.
+    # Recursing into the interpolating inner to split the group would make the
+    # inner's axis indices point at the wrong axes and silently corrupt the
+    # data, so the acted-on axes stay one coupled block instead. This reslice
+    # equality is the mutation guard: recursing into an interpolating inner
+    # again makes it fail.
+    warp = _warp((5,), 7)
+    inner = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0]),
+        output_axes=np.asarray([0]),
+    )
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    _reslice_equal(sub, (5, 6, 7, 4), 7)
+
+
+@pytest.mark.parametrize(
+    "warp_axes, seed",
+    [((1, 2), 11), ((0, 1), 12), ((0, 2), 13)],
+)
+def test_subspace_over_interpolating_subset_warp_reslices(
+    warp_axes: tuple, seed: int
+) -> None:
+    # An interpolating warp on a two-axis subset, inside a subspace over axes
+    # 0, 1, 2. The acted-on axes stay one coupled block, and the reslice must
+    # equal the monolithic result whichever subset the warp touches.
+    shape = (5, 6, 7, 4)
+    field_shape = tuple(shape[a] for a in warp_axes)
+    warp = _warp(field_shape, seed)
+    inner = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray(warp_axes),
+        output_axes=np.asarray(warp_axes),
+    )
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    _reslice_equal(sub, shape, seed)
+
+
+def test_permuting_subspace_over_interpolating_inner_reslices() -> None:
+    # A subspace that permutes its acted-on axes, input 0, 1, 2 mapping to
+    # output 2, 0, 1, over an interpolating warp on all three. The acted-on
+    # axes stay one coupled block, and the reslice must equal the monolithic
+    # result.
+    warp = _warp((5, 6, 7), 14)
+    sub = _subspace(warp, [0, 1, 2], out_axes=[2, 0, 1])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    _reslice_equal(sub, (5, 6, 7, 4), 14)
+
+
+def test_subspace_over_sequence_with_interpolating_member_reslices() -> None:
+    # A subspace over axes 0, 1, 2 whose inner is a sequence of a shear on
+    # axes 0, 1 and an interpolating warp on axis 2. The sequence interpolates
+    # because one of its members does, so the acted-on axes stay one coupled
+    # block, and the reslice must equal the monolithic result.
+    matrix = np.eye(3, 4)
+    matrix[0, 1] = 0.4
+    shear = Affine(matrix=matrix)
+    warpz = _warp((7,), 15)
+    subwarp = SubspaceTransformation(
+        transformation=warpz,
+        input_axes=np.asarray([2]),
+        output_axes=np.asarray([2]),
+    )
+    inner = Sequence(transformations=[shear, subwarp])
+    sub = _subspace(inner, [0, 1, 2])
+    assert _components([sub], 4) == [((0, 1, 2), (0, 1, 2)), ((3,), (3,))]
+    _reslice_equal(sub, (5, 6, 7, 4), 15)
 
 
 def test_subspace_wrapping_diagonal_reslice_matches_monolithic() -> None:
