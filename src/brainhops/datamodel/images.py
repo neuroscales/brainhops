@@ -7,7 +7,6 @@ import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
 # core
-from brainhops._core.bsplines import pull
 from brainhops._core.typing import ArrayProtocol
 
 # internals
@@ -213,12 +212,24 @@ class SingleScaleImage(Image):
             self.transformation, geometry.transformation
         )
 
-        # Compute voxel-to-voxel transformation and apply it to the data
+        # Compute voxel-to-voxel transformation and apply it to the data.
+        # The transformation is factored into independent per-axis groups,
+        # so an axis that is only rescaled, flipped, or permuted is handled
+        # cheaply and only the coupled group keeps the N-dimensional pull.
+        # The factoring is imported lazily to avoid an import cycle.
+        from ._separable import pull_separable
+
         transformation = (
             preferred.inverse() @ geometry.transformation @ geometry.grid
         )
-        transformation = transformation.compute()
-        new_data = pull(self.data, transformation.field, **opt)
+        new_data = pull_separable(
+            self.data,
+            transformation,
+            shape=geometry.shape,
+            grid_system=geometry.grid.output,
+            data_system=preferred.input,
+            **opt,
+        )
         return SingleScaleImage(
             data=new_data, transformations=[geometry.transformation]
         )
