@@ -29,7 +29,7 @@ a rotation or a shear is kept rather than refused.
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from abczarr.ome.v0_6rc0 import transformations as _ot
+from abczarr.ome.v0_6 import transformations as _ot
 
 # internals
 from brainhops.datamodel.transformations import (
@@ -374,7 +374,7 @@ def needs_rich_version(entry: tx.Dict[str, tx.Any]) -> bool:
 
     A per-axis scale and translation, and a sequence of them, are
     expressible in every OME-NGFF version. A rotation, an affine, or an axis
-    map requires OME-NGFF 0.6rc0 or later. This inspects the transformation
+    map requires OME-NGFF 0.6 or later. This inspects the transformation
     and its children and reports whether the richer version is required.
     """
     if entry.get("type") in _RICH_TYPES:

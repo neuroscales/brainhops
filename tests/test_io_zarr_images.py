@@ -210,6 +210,22 @@ def test_multiscale_round_trip_preserves_data_and_geometry(
         )
 
 
+def _stored_axis_names(path: str) -> tx.List[str]:
+    """The axis names a written pyramid stores, in the stored order.
+
+    Where the axes live depends on the OME-NGFF version: 0.5 and earlier put
+    them on the multiscale as `axes`, while 0.6 puts them on each named
+    coordinate system. Both layouts are read here, so a test asserting the
+    stored *order* does not also pin the version that was written.
+    """
+    attrs = dict(abczarr.open(path, mode="r").attrs)
+    block = attrs.get("ome", attrs)["multiscales"][0]
+    axes = block["axes"] if "axes" in block else (
+        block["coordinateSystems"][0]["axes"]
+    )
+    return [a["name"] for a in axes]
+
+
 def test_multiscale_stores_axes_in_ome_order(tmp_path: Path) -> None:
     axes = [
         SpatialAxis(name="x"),
@@ -225,12 +241,10 @@ def test_multiscale_stores_axes_in_ome_order(tmp_path: Path) -> None:
 
     OmeZarrImage(images=[image], axes=axes).save(path)
 
-    stored = abczarr.open(path, mode="r")
-    attrs = dict(stored.attrs)
-    block = attrs.get("ome", attrs)["multiscales"][0]
-    assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]
+    assert _stored_axis_names(path) == ["t", "c", "z", "y", "x"]
     # The stored array is transposed to the OME order, so the shape is the
     # F-order shape read back to front.
+    stored = abczarr.open(path, mode="r")
     assert tuple(stored["0"].shape) == (2, 3, 6, 5, 4)
 
     back = images.load(path)
@@ -609,13 +623,14 @@ def test_opening_a_pyramid_does_not_read_its_levels(tmp_path: Path) -> None:
     back = OmeZarrImage.from_store(path)
 
     # No level's data has been materialized yet: each level holds its array
-    # handle and reads it only on access.
+    # handle and reads it only on access. A read is cached under the name
+    # `smartproperty` derives, `_cache_data`.
     for level in back.images:
-        assert getattr(level, "_data", None) is None
+        assert getattr(level, "_cache_data", None) is None
     # Accessing one level reads that level, and leaves the others untouched.
     _ = np.asarray(back.images[0].data)
-    assert getattr(back.images[0], "_data", None) is not None
-    assert getattr(back.images[1], "_data", None) is None
+    assert getattr(back.images[0], "_cache_data", None) is not None
+    assert getattr(back.images[1], "_cache_data", None) is None
 
 
 # ---- chunking --------------------------------------------------------
@@ -675,7 +690,7 @@ def test_field_components_are_not_reordered_by_the_axis_permutation(
     tmp_path: Path,
 ) -> None:
     path = str(tmp_path / "field.zarr")
-    _displacement_field().save(path, version="0.6rc0")
+    _displacement_field().save(path, version="0.6")
 
     stored = np.asarray(abczarr.open(path, mode="r")["0"][...])
     # The array axes are transposed to (v, z, y, x), but the component
@@ -696,37 +711,44 @@ def test_field_components_are_not_reordered_by_the_axis_permutation(
 # ---- the OME version option ------------------------------------------
 
 
-def test_write_version_defaults_to_zarr_v3(tmp_path: Path) -> None:
+def test_write_version_defaults_to_the_newest_stable(tmp_path: Path) -> None:
     path = str(tmp_path / "default.zarr")
     _small_pyramid().save(path)
 
-    # With no source version and scale-and-translation content, the default
-    # is OME-NGFF 0.5, the Zarr v3 encoding.
+    # With no source version to fall back to, the newest released version is
+    # written, whatever the placement is: it is the only one that carries
+    # every placement brainhops can hold, so the writer never has to raise
+    # the version to express one.
     node = abczarr.open(path, mode="r")
-    assert node.ome.version == "0.5"
+    assert node.ome.version == "0.6"
 
 
 def test_write_version_can_be_requested(tmp_path: Path) -> None:
     path = str(tmp_path / "explicit.zarr")
-    _small_pyramid().save(path, version="0.6rc0")
+    _small_pyramid().save(path, version="0.6")
 
     node = abczarr.open(path, mode="r")
-    assert node.ome.version == "0.6rc0"
+    assert node.ome.version == "0.6"
 
 
 def test_write_version_falls_back_to_the_source_version(
     tmp_path: Path,
 ) -> None:
     source = str(tmp_path / "source.zarr")
-    _small_pyramid().save(source, version="0.6rc0")
+    # Deliberately not the default version, so that writing it back proves
+    # the source version was carried over rather than the default reapplied.
+    from brainhops.io.images.zarr._ome import DEFAULT_WRITE_VERSION
 
-    # A pyramid read from a 0.6rc0 store is written back in 0.6rc0 without
-    # the version being restated.
+    assert DEFAULT_WRITE_VERSION != "0.5"
+    _small_pyramid().save(source, version="0.5")
+
+    # A pyramid read from a 0.5 store is written back in 0.5 without the
+    # version being restated.
     back = OmeZarrImage.from_store(source)
     target = str(tmp_path / "target.zarr")
     back.save(target)
 
-    assert abczarr.open(target, mode="r").ome.version == "0.6rc0"
+    assert abczarr.open(target, mode="r").ome.version == "0.5"
 
 
 # ---- axes are derived from the OME metadata --------------------------
@@ -755,9 +777,7 @@ def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     # Re-saving derives the axes from `ome`, so their stored order is kept.
     target = str(tmp_path / "resaved.zarr")
     back.save(target)
-    attrs = dict(abczarr.open(target, mode="r").attrs)
-    block = attrs.get("ome", attrs)["multiscales"][0]
-    assert [a["name"] for a in block["axes"]] == ["t", "c", "z", "y", "x"]
+    assert _stored_axis_names(target) == ["t", "c", "z", "y", "x"]
 
 
 # ---- native transformation mapping -----------------------------------
@@ -770,12 +790,12 @@ def _authored_pyramid(
     shape: tuple,
     arrays: tx.Optional[dict] = None,
 ) -> str:
-    """Write a 0.6rc0 group whose one level carries `transform`.
+    """Write a 0.6 group whose one level carries `transform`.
 
     `arrays` names extra arrays to write into the group, such as the field
     array a displacement transformation references.
     """
-    from abczarr.ome import v0_6rc0 as v6
+    from abczarr.ome import v0_6 as v6
 
     path = str(tmp_path / "authored.zarr")
     group = abczarr.open_group(path, mode="w")
@@ -790,7 +810,7 @@ def _authored_pyramid(
             group.create_array(name, data=array)
     group.ome = v6.OME.from_json(
         {
-            "version": "0.6rc0",
+            "version": "0.6",
             "multiscales": [
                 {
                     "coordinateSystems": [{"name": "phys", "axes": axes}],
@@ -892,7 +912,7 @@ def test_reader_maps_a_projecting_map_axis_to_a_projection() -> None:
     # A mapAxis that names a subset of the input axes drops the rest; it maps
     # to a Projection. This is exercised on the mapping directly, since a
     # dimensionality-changing level is not otherwise wired through the reader.
-    from abczarr.ome.v0_6rc0.transformations import CoordinateTransformation
+    from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
     from brainhops.datamodel.transformations import Projection
     from brainhops.io.images.zarr import _ome
@@ -931,10 +951,10 @@ def _authored_field_pyramid(
     """Write a pyramid whose level is placed by a displacement field node.
 
     The field node is a full OME-Zarr node carrying its own typed axes, the
-    way a real 0.6rc0 field is stored. It names no dimension_names, so the
+    way a real 0.6 field is stored. It names no dimension_names, so the
     reader must find the component axis from the field node's own `ome`.
     """
-    from abczarr.ome import v0_6rc0 as v6
+    from abczarr.ome import v0_6 as v6
 
     path = str(tmp_path / "field_ome.zarr")
     group = abczarr.open_group(path, mode="w")
@@ -942,7 +962,7 @@ def _authored_field_pyramid(
     node = group.create_array("disp", data=field)
     node.ome = v6.OME.from_json(
         {
-            "version": "0.6rc0",
+            "version": "0.6",
             "multiscales": [
                 {
                     "coordinateSystems": [
@@ -966,7 +986,7 @@ def _authored_field_pyramid(
     )
     group.ome = v6.OME.from_json(
         {
-            "version": "0.6rc0",
+            "version": "0.6",
             "multiscales": [
                 {
                     "coordinateSystems": [{"name": "phys", "axes": _SPACE3}],
@@ -993,7 +1013,7 @@ def _authored_field_pyramid(
 def test_reader_reads_a_field_from_its_own_typed_ome(tmp_path: Path) -> None:
     from brainhops.datamodel.transformations import DisplacementField
 
-    # A real 0.6rc0 field node carries its own typed axes. Here the component
+    # A real 0.6 field node carries its own typed axes. Here the component
     # axis is stored LAST and the node has no dimension_names, so the reader
     # must find the component axis by its type through the node's `ome`.
     field = np.moveaxis(_field_array(), 0, -1)  # (z, y, x, d)

@@ -55,14 +55,14 @@ def _write_field_store(
     The node carries its own typed OME metadata, naming the field's axes
     and the coordinate transformation that places its one level.
     """
-    from abczarr.ome import v0_6rc0 as v6
+    from abczarr.ome import v0_6 as v6
 
     path = str(tmp_path / name)
     group = abczarr.open_group(path, mode="w")
     group.create_array("0", data=field)
     group.ome = v6.OME.from_json(
         {
-            "version": "0.6rc0",
+            "version": "0.6",
             "multiscales": [
                 {
                     "coordinateSystems": [
