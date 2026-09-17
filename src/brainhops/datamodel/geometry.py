@@ -182,7 +182,7 @@ def _index2transform(
     nb_indexed_dims = sum(1 for idx in index if idx not in (None, ...))
     nb_implicit_dims = len(shape) - nb_indexed_dims
     fill = (slice(None),) * nb_implicit_dims
-    index = index[:index_ellipsis] + fill + index[index_ellipsis + 1:]
+    index = index[:index_ellipsis] + fill + index[index_ellipsis + 1 :]
 
     # Compute number of output dimensions after indexing
     # (some may be dropped, some may be added)

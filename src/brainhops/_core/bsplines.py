@@ -32,8 +32,7 @@ def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
 def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
 
     def _map_coordinates(
-        input: ArrayProtocol,
-        coords: ArrayProtocol, **kwargs
+        input: ArrayProtocol, coords: ArrayProtocol, **kwargs
     ) -> ArrayProtocol:
         ndim, *oshape = coords.shape
         coords = coords.reshape((ndim, -1))

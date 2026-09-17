@@ -109,6 +109,23 @@ def get_array_backend(
     return get_array_backend()
 
 
+def _ndimage_for(module: tx.Optional[ModuleType]) -> tx.Optional[ModuleType]:
+    """The ndimage package of an array backend, or `None` if it has none.
+
+    `dask-image` is an optional dependency, and scipy operates on a dask
+    array by materializing it, so a dask backend falls back to scipy rather
+    than reporting no ndimage package at all. cupy has no such fallback:
+    scipy cannot read device memory, and `cupyx` ships with cupy anyway.
+    """
+    if module is cp:
+        return cpndi
+    if module is da:
+        return dkndi or npndi
+    if module is np:
+        return npndi
+    return None
+
+
 def get_ndimage_backend(
     x: tx.Optional[tx.Union[ArrayProtocol, ModuleType, str]] = None,
 ) -> ModuleType:
@@ -121,7 +138,7 @@ def get_ndimage_backend(
 
     # Guess from backend name
     if isinstance(x, str):
-        return {"numpy": npndi, "cupy": cpndi, "dask": dkndi}[x]
+        return _ndimage_for(get_array_backend(x))
 
     # Guess from module type
     if isinstance(x, ModuleType):
@@ -134,24 +151,17 @@ def get_ndimage_backend(
             return dkndi
 
         # Guess from array module
-        if x is np:
-            return npndi
-        if x is cp:
-            return cpndi
-        if x is da:
-            return dkndi
+        if x in (np, cp, da):
+            return _ndimage_for(x)
 
         raise TypeError(f"Unknown module: {x}")
 
     # Guess from array type
-    if cp and cpndi and isinstance(x, cp.ndarray):
-        return cpndi
-    if np and npndi and isinstance(x, np.ndarray):
-        return npndi
-    if da and isinstance(x, da.Array):
-        if dkndi:
-            return dkndi
-        if npndi:
-            return npndi
+    if cp and isinstance(x, cp.ndarray) and _ndimage_for(cp):
+        return _ndimage_for(cp)
+    if np and isinstance(x, np.ndarray) and _ndimage_for(np):
+        return _ndimage_for(np)
+    if da and isinstance(x, da.Array) and _ndimage_for(da):
+        return _ndimage_for(da)
 
     return get_ndimage_backend()
