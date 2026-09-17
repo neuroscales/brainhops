@@ -67,6 +67,7 @@ def smartproperty(
     fget.__name__ = name
 
     if fset is None:
+
         def fset(self: tx.Self, value: tx.Any) -> None:
             if empty_as_unset and _is_unset(value):
                 value = None

@@ -297,7 +297,7 @@ class FileSniffer:
         cls,
         filename: path.FilenameLike,
         error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> float:
         """
         Determine if the given filename is of the type that this parser

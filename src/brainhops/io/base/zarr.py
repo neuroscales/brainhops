@@ -95,7 +95,7 @@ class ZarrParser(DataModelBase, FileParser):
         cls,
         file: tx.IO,
         error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> float:
         # A Zarr store is a directory, not a stream, so an open file object
         # is never one.
@@ -110,7 +110,7 @@ class ZarrParser(DataModelBase, FileParser):
         cls,
         content: tx.Any,
         error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs
+        **kwargs,
     ) -> float:
         if error is not False:
             if error is True:
@@ -192,7 +192,6 @@ class ZarrParser(DataModelBase, FileParser):
 
 
 class ZarrParserWriter(ZarrParser, FileParserWriter):
-
     # ---- write -------------------------------------------------------
 
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:

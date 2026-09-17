@@ -67,9 +67,7 @@ class OmeZarrLevel(ZarrImage):
 
 
 @register_format
-class OmeZarrImage(
-    ZarrParserWriter, WritableFileBasedImage, MultiScaleImage
-):
+class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     """A multiscale image that is encoded by an OME-Zarr pyramid.
 
     Each resolution level of the pyramid is read as a single-scale image
@@ -387,10 +385,12 @@ class OmeZarrImage(
         # Only 0.6 and later name their coordinate systems, so only they
         # can carry a pyramid placed in more than one world space.
         rich = rich or len(entries) > 1
-        worlds = resolve_world_names([
-            getattr(getattr(placement, "output", None), "name", None)
-            for placement in placements
-        ])
+        worlds = resolve_world_names(
+            [
+                getattr(getattr(placement, "output", None), "name", None)
+                for placement in placements
+            ]
+        )
         commons = list(zip(worlds, entries))
 
         resolved = resolve_write_version(version, self._ome_version, rich)

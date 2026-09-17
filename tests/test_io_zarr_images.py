@@ -220,8 +220,10 @@ def _stored_axis_names(path: str) -> tx.List[str]:
     """
     attrs = dict(abczarr.open(path, mode="r").attrs)
     block = attrs.get("ome", attrs)["multiscales"][0]
-    axes = block["axes"] if "axes" in block else (
-        block["coordinateSystems"][0]["axes"]
+    axes = (
+        block["axes"]
+        if "axes" in block
+        else (block["coordinateSystems"][0]["axes"])
     )
     return [a["name"] for a in axes]
 

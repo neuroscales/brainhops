@@ -36,11 +36,13 @@ fsl = ["brainhops[nifti]"]
 # newer, so the zarr-python dependency is pinned to that on capable
 # interpreters and the I/O is unavailable on older ones.
 zarr = [
-    "abczarr[zarr-py] >= 0.2",  # 0.2 for OME 0.6 support
+    # 0.2 for OME 0.6 support; 0.2.1 opens and creates a store from any
+    # os.PathLike, not only str and pathlib.Path.
+    "abczarr[zarr-py] >= 0.2.1",
     "zarr >= 3; python_version >= '3.11'",
 ]
-zarr-tensorstore = ["abczarr[tensorstore] >= 0.2"]
-zarr-zarrista = ["abczarr[zarrista] >= 0.2"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1"]
+zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
 io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
 
 # test
@@ -50,7 +52,7 @@ test = [
     "h5py",
     "nibabel",
     "dask",
-    "abczarr[zarr-py] >= 0.2",
+    "abczarr[zarr-py] >= 0.2.1",
     "zarr >= 3; python_version >= '3.11'",
 ]
 

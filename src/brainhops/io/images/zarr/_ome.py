@@ -435,9 +435,7 @@ def common_transformations(
                 replace(parts[0], input=input, output=output)
             )
         else:
-            transformations.append(
-                Sequence(parts, input=input, output=output)
-            )
+            transformations.append(Sequence(parts, input=input, output=output))
     return transformations
 
 
@@ -570,9 +568,7 @@ def build_ome(
     level_output = INTRINSIC_SYSTEM if commons else WORLD_SYSTEM
     if commons:
         systems = [{"name": INTRINSIC_SYSTEM, "axes": json_axes}]
-        systems += [
-            {"name": world, "axes": json_axes} for world, _ in commons
-        ]
+        systems += [{"name": world, "axes": json_axes} for world, _ in commons]
     else:
         systems = [{"name": WORLD_SYSTEM, "axes": json_axes}]
     block = {
