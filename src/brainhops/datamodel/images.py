@@ -7,6 +7,7 @@ import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
 
 # core
+from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
 
 # internals
@@ -16,7 +17,9 @@ from .transformations import (
     CartesianField,
     Identity,
     Transformation,
+    _as_affine_ignoring_fields,
     _at_resolution,
+    _nearest_resolution_index,
 )
 
 
@@ -433,16 +436,11 @@ class MultiScaleImage(Image):
             The resliced image.
         """
         opt = dict(order=order, bound=bound, coeff=coeff)
-        return self.to_singlescale().reslice(geometry, **opt)
-
-        # TODO:
-        #   * find level closest to the output geometry (in terms of
-        #     resolution) for computational efficiency.
-        #   * decide on an API that triggers the whole pyramid to be
-        #     resliced, not just the highest-resolution level.
-        #     It requires a way to specify the intrinsic geometry of the
-        #     output pyramid. Simplest (intermediate) step is to accept
-        #     a MultiScaleImage as the geometry argument.
+        level = _nearest_resolution_index(
+            _level_voxel_sizes(self),
+            _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),
+        )
+        return self.to_singlescale(level).reslice(geometry, **opt)
 
     def __call__(self, transform: Transformation) -> tx.Self:
         """
@@ -473,3 +471,47 @@ class MultiScaleImage(Image):
         return MultiScaleImage(
             images=self.images, transformations=transformations
         )
+
+
+def _reslice_voxel2world(
+    image: "MultiScaleImage",
+    geometry: tx.Optional[tx.Union[Image, Geometry, Transformation]] = None,
+) -> Transformation:
+    """The voxel-to-world transformation of the grid `image` is resliced onto.
+
+    `geometry` is accepted in each of the forms
+    [reslice][brainhops.datamodel.images.MultiScaleImage.reslice] takes, and
+    read the same way
+    [SingleScaleImage.reslice][brainhops.datamodel.images.SingleScaleImage.reslice]
+    reads its own.
+    """
+    if geometry is None:
+        return image.geometry.transformation
+    if isinstance(geometry, Image):
+        return geometry.geometry.transformation
+    if isinstance(geometry, Geometry):
+        return geometry.transformation
+    return geometry
+
+
+def _level_voxel_sizes(
+    image: "MultiScaleImage",
+) -> tx.List[tx.Optional[ArrayProtocol]]:
+    """The voxel size of every level of `image`, finest first.
+
+    Each is a per-axis vector in world units, so it can be compared with
+    the grid an image is resliced onto. A level whose placement does not
+    reduce to an affine, even with its fields discarded, has an unknown
+    voxel size and is reported as `None`.
+
+    The pyramid's own transformation is included, so a pyramid whose
+    placement rescales its levels -- a unit conversion, say -- is measured
+    in the same units as the target grid.
+    """
+    sizes = []  # type: tx.List[tx.Optional[ArrayProtocol]]
+    for level in image.images or ():
+        affine = _as_affine_ignoring_fields(
+            image.transformation @ level.transformation
+        )
+        sizes.append(None if affine is None else axis_scales(affine.matrix))
+    return sizes

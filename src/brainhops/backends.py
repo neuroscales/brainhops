@@ -6,39 +6,21 @@ from types import ModuleType
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
-# optionals
-try:
-    import numpy as np
-except ImportError:  # pragma: no cover
-    np = None
-
-try:
-    import cupy as cp
-except ImportError:  # pragma: no cover
-    cp = None
-
-try:
-    import dask.array as da
-except ImportError:  # pragma: no cover
-    da = None
-
-try:
-    import scipy.ndimage as npndi
-except ImportError:
-    npndi = None
-
-try:
-    import cupyx.scipy.ndimage as cpndi
-except ImportError:
-    cpndi = None
-
-try:
-    import dask_image.ndinterp as dkndi
-except ImportError:
-    dkndi = None
-
+# internals
+from brainhops._core.dependencies import cp, cpndi, da, dkndi, np, npndi
 
 _BACKEND = "dask"
+_PRIORITY = ("dask", "cupy", "numpy")
+
+
+def best_backend(*backends) -> ModuleType:
+    """Return the array backend with highest priority from a list."""
+    references = map(get_array_backend, _PRIORITY)
+    backends = tuple(map(get_array_backend, backends))
+    for ref in references:
+        if ref in backends:
+            return ref
+    raise ValueError(f"No supported backends found in {backends}")
 
 
 @contextmanager

@@ -3,6 +3,7 @@ import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
 
 # internals
+from brainhops._core.dependencies import da
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -45,7 +46,10 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     def data(self) -> tx.Optional[ArrayProtocol]:
         node = self.node
         if node is not None:
-            return get_array_backend().asarray(node[...])
+            backend = get_array_backend()
+            if backend is da:
+                return node.to_dask(chunks="chunks")
+            return backend.asarray(node[...])
         return None
 
     # --- sniff --------------------------------------------------------
