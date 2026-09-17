@@ -144,8 +144,8 @@ def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
     assert isinstance(parts[1], DisplacementField)
     # The outer parts reduce to affines, which is what lets the field be
     # inverted and its vectors rotated.
-    assert X._affine_matrix(parts[0]) is not None
-    assert X._affine_matrix(parts[2]) is not None
+    assert X._as_affine(parts[0]) is not None
+    assert X._as_affine(parts[2]) is not None
 
 
 def test_from_node_refuses_a_node_without_ome(tmp_path: Path) -> None:

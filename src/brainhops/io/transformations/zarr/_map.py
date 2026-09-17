@@ -43,7 +43,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
     Translation,
-    _affine_matrix,
+    _as_affine,
     _distance,
 )
 
@@ -418,13 +418,13 @@ def _affine_to_ome(
     # The default writer for a transformation that reduces to an affine. A
     # diagonal affine is written as a scale and a translation; any other
     # affine is written in full.
-    matrix = _affine_matrix(transform)
-    if matrix is None:
+    affine = _as_affine(transform)
+    if affine is None:
         raise OmeMappingError(
             "This image is placed by a transformation that is not an affine, "
             "so it cannot be written as OME-Zarr multiscale metadata."
         )
-    matrix = permute_affine(matrix, storage_perm)
+    matrix = permute_affine(affine.matrix, storage_perm)
     decomposed = scale_translation_from_affine(matrix, ndim)
     if decomposed is None:
         return {"type": "affine", "affine": _matrix_to_list(matrix)}
@@ -470,14 +470,14 @@ def _(
 def _(
     transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    matrix = _affine_matrix(transform)
-    if matrix is None:
+    affine = _as_affine(transform)
+    if affine is None:
         raise OmeMappingError(
             "This rotation has no matrix, so it cannot be written as OME-Zarr "
             "metadata."
         )
     linear = permute_linear(
-        np.asarray(matrix, dtype=float)[:, :-1], storage_perm
+        np.asarray(affine.matrix, dtype=float)[:, :-1], storage_perm
     )
     return {"type": "rotation", "rotation": _matrix_to_list(linear)}
 

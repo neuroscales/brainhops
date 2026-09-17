@@ -3,6 +3,7 @@ yael
 balbastre
 Nd
 ND
+nd
 brainhops
 zensical
 numpy

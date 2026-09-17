@@ -55,11 +55,8 @@ class OmeZarrLevel(ZarrImage):
 
     @smartproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
-        node = self.node
-        if node is None:
-            return None
-        backend = get_array_backend()
-        raw = backend.asarray(node[...])
+        raw = super().data
+        backend = get_array_backend(raw)
         perm = getattr(self, "_perm", None)
         if perm is not None:
             raw = backend.transpose(raw, perm)
@@ -336,7 +333,6 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             None if chunks is None else tuple(chunks[p] for p in storage_perm)
         )
 
-        backend = get_array_backend()
         levels = []  # type: tx.List[tx.Tuple[str, tx.Dict[str, tx.Any]]]
         rich = False
         for index, image in enumerate(images):
@@ -357,6 +353,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
                     f"OME-Zarr metadata. {error}"
                 ) from error
             rich = rich or _map.needs_rich_version(entry)
+            backend = get_array_backend(data)
             stored = backend.transpose(data, storage_perm)
             options = dict(kwargs)
             if stored_chunks is not None:

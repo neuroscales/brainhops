@@ -33,7 +33,7 @@ from brainhops.datamodel.transformations import (
     MultiscaleField,
     Sequence,
     Transformation,
-    _affine_matrix,
+    _as_affine,
     is_identity,
 )
 from brainhops.io.base._base import register_format
@@ -339,7 +339,7 @@ class OmeZarrField(
         # The voxel-to-world transformation of one level, always a defined
         # affine. The finest level's placement is composed with the
         # transformation that maps this level's grid to the finest grid.
-        base = _as_affine(
+        base = _affine_or_identity(
             self.voxel2world if self.voxel2world is not None else Identity(),
             ndim,
         )
@@ -385,7 +385,7 @@ class OmeZarrField(
             return
         if isinstance(placement, CartesianField):
             return
-        if _affine_matrix(placement) is None:
+        if _as_affine(placement) is None:
             raise OmeFieldError(
                 "This OME displacement field is placed by a transformation "
                 "that cannot be reduced to an affine, so the displacements "
@@ -417,7 +417,7 @@ def _to_voxel_displacement(
     # vector is mapped through the inverse of the linear part of the
     # level's placement. With `L` the linear part, the voxel-space field
     # is `raw @ inverse(L).T`.
-    matrix = _affine_matrix(voxel2world)
+    matrix = _as_affine(voxel2world).matrix
     inverse = _affine_inv(matrix)
     ab = get_array_backend(matrix)
     raw = ab.asarray(raw)
@@ -438,14 +438,14 @@ def _dataset_placement(
     return _map.from_ome(transforms[0], perm, ndim)
 
 
-def _as_affine(xform: Transformation, ndim: int) -> Transformation:
+def _affine_or_identity(xform: Transformation, ndim: int) -> Transformation:
     # A defined affine for a level's placement. A transformation that
     # already reduces to an affine with a matrix is returned unchanged, so
     # an incoming affine keeps its identity. Otherwise an identity affine
     # of the given number of dimensions stands in, which keeps the leading
     # world-to-voxel element a defined affine and avoids composing with a
     # bare identity.
-    if _affine_matrix(xform) is not None:
+    if _as_affine(xform) is not None:
         return xform
     return Affine(
         matrix=[

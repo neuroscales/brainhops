@@ -1370,31 +1370,13 @@ class Multiscale(DataModelBase):
 
     def _nearest_level(self, voxel2world: "Transformation") -> int:
         # The index of the level whose resolution is closest to the grid
-        # described by `voxel2world`. The comparison is made in
-        # logarithmic scale, so the level above and the level below the
-        # target are weighed evenly, and the finer level wins a tie. When
-        # the resolution of any level, or of the target, is unknown, the
-        # finest scale is returned.
+        # described by `voxel2world`. See `nearest_resolution`, which a
+        # multiscale image shares, for how the comparison is made.
         scales = self.scales or []
-        if len(scales) <= 1:
-            return 0
         resolutions = [self._level_resolution(i) for i in range(len(scales))]
-        if any(resolution is None for resolution in resolutions):
-            return 0
-        target = axis_scales(_affine_matrix(voxel2world))
-        if target is None:
-            return 0
-        ab = get_array_backend()
-        log_target = float(ab.log(ab.abs(ab.asarray(target))).mean())
-        best_index, best_distance = 0, None
-        for index, resolution in enumerate(resolutions):
-            log_resolution = float(
-                ab.log(ab.abs(ab.asarray(resolution))).mean()
-            )
-            distance = abs(log_resolution - log_target)
-            if best_distance is None or distance < best_distance:
-                best_index, best_distance = index, distance
-        return best_index
+        return _nearest_resolution_index(
+            resolutions, _as_affine_ignoring_fields(voxel2world)
+        )
 
 
 class MultiscaleField(Multiscale, ImmutableSequenceMixin, Sequence):
@@ -1509,23 +1491,104 @@ class MultiscaleField(Multiscale, ImmutableSequenceMixin, Sequence):
         scale = scales[index]
         if not len(scale):
             return None
-        matrix = _affine_matrix(scale[0])
-        if matrix is None:
+        affine = _as_affine(scale[0])
+        if affine is None:
             return None
-        return axis_scales(_affine_inv(matrix))
+        return axis_scales(_affine_inv(affine.matrix))
 
 
-def _affine_matrix(xform: Transformation) -> tx.Optional[npmatrix]:
-    # The compact affine matrix of a transformation, or `None`. A
-    # transformation that does not reduce to an affine with a defined
-    # matrix has no matrix, and is reported as `None` rather than refused.
+def _as_affine(xform: Transformation) -> tx.Optional[Affine]:
+    # The transformation as an [`Affine`][], or `None`. A transformation
+    # that does not reduce to an affine with a defined matrix has no affine
+    # form, and is reported as `None` rather than refused. Callers that
+    # must know whether a transformation really is an affine -- a writer
+    # that can only emit one, say -- use this rather than
+    # `_as_affine_ignoring_fields`, which answers a weaker question.
     try:
         affine = xform.compute().to(Affine)
     except ConversionError:
         return None
     if not isinstance(affine, Affine) or affine.matrix is None:
         return None
-    return affine.matrix
+    return affine
+
+
+def _fields_as_identity(xform: Transformation) -> Transformation:
+    # Every field inside a transformation replaced by the identity, so that
+    # what is left is the affine part of the chain. A field is recognized by
+    # its family, which a typed inverse belongs to as well, so the inverse
+    # of a field is replaced too.
+    if isinstance(xform, (CoordinatesField, DisplacementField)):
+        return Identity(input=xform.input, output=xform.output)
+    if isinstance(xform, Inverse):
+        forward = xform.forward
+        if forward is None:
+            return xform
+        resolved = _fields_as_identity(forward)
+        return xform if resolved is forward else resolved.inverse()
+    if isinstance(xform, Sequence):
+        parts = xform.transformations or []
+        resolved = [_fields_as_identity(part) for part in parts]
+        if any(new is not old for new, old in zip(resolved, parts)):
+            return replace(xform, transformations=resolved)
+        return xform
+    return xform
+
+
+def _as_affine_ignoring_fields(
+    xform: Transformation,
+) -> tx.Optional[Affine]:
+    # The affine part of a transformation, with every field it carries
+    # treated as the identity, or `None` when what is left still does not
+    # reduce to an affine.
+    #
+    # This measures a chain that a field would otherwise make unmeasurable:
+    # a warp has no affine form, but it is close enough to an isometry that
+    # the *scale* of the chain around it is the scale of the whole. Only
+    # use it for a question about scale. A caller asking whether a
+    # transformation really is an affine wants `_as_affine`.
+    return _as_affine(_fields_as_identity(xform))
+
+
+def _nearest_resolution_index(
+    resolutions: tx.Sequence[tx.Optional[ArrayProtocol]],
+    voxel2world: tx.Optional[Affine],
+) -> int:
+    """The index of the resolution closest to a target grid.
+
+    `resolutions` gives the physical grid size of each level, finest first,
+    as a per-axis vector; `None` marks a level whose resolution is unknown.
+    `voxel2world` is the affine of the grid being matched, already reduced
+    by the caller, so that both sides of the comparison arrive in the same
+    form; `None` marks a grid whose resolution is unknown.
+
+    The comparison is made in logarithmic scale, so the level above and the
+    level below the target are weighed evenly, and the finer level wins a
+    tie. When any level's resolution, or the target's, is unknown, the
+    finest level is chosen.
+
+    This is shared by a multiscale field, whose levels are transformations,
+    and a multiscale image, whose levels are images, so the two cannot
+    disagree about which level matches a grid.
+    """
+    if len(resolutions) <= 1:
+        return 0
+    if any(resolution is None for resolution in resolutions):
+        return 0
+    if voxel2world is None or voxel2world.matrix is None:
+        return 0
+    target = axis_scales(voxel2world.matrix)
+    if target is None:
+        return 0
+    ab = get_array_backend()
+    log_target = float(ab.log(ab.abs(ab.asarray(target))).mean())
+    best_index, best_distance = 0, None
+    for index, resolution in enumerate(resolutions):
+        log_resolution = float(ab.log(ab.abs(ab.asarray(resolution))).mean())
+        distance = abs(log_resolution - log_target)
+        if best_distance is None or distance < best_distance:
+            best_index, best_distance = index, distance
+    return best_index
 
 
 def _at_resolution(

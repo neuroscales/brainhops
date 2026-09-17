@@ -6,7 +6,11 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
-from brainhops.backends import get_array_backend, get_ndimage_backend
+from brainhops.backends import (
+    best_backend,
+    get_array_backend,
+    get_ndimage_backend,
+)
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
@@ -21,8 +25,21 @@ def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
     named condition passes through unchanged.
     """
     if isinstance(bound, str):
-        return ("grid-constant" if bound == "constant" else bound), 0.0
+        return ("grid-constant" if bound == "constant" else str(bound)), 0.0
     return "grid-constant", bound
+
+
+def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
+
+    def _map_coordinates(
+        input: ArrayProtocol, coords: ArrayProtocol, **kwargs
+    ) -> ArrayProtocol:
+        ndim, *oshape = coords.shape
+        coords = coords.reshape((ndim, -1))
+        output = map_coordinates(input, coords, **kwargs)
+        return output.reshape(oshape)
+
+    return _map_coordinates
 
 
 def pull(
@@ -62,20 +79,22 @@ def pull(
         The interpolated array. Shape (*batch, *spatial_out)
 
     """
-    # Get packages
-    ab = get_array_backend(input)
-    ib = get_ndimage_backend(input)
+    # Get backends
+    nx = best_backend(input, coords)
+    nd = get_ndimage_backend(nx)
     # Get dimensions
     ndim = coords.shape[-1]
     batch = input.shape[:-ndim]
     # Prepare for map_coordinates
-    coords = ab.moveaxis(coords, -1, 0)
-    output = ab.empty_like(input, shape=batch + coords.shape[1:])
+    coords = nx.moveaxis(coords, -1, 0)
+    output = nx.empty_like(input, shape=batch + coords.shape[1:])
     mode, cval = _scipy_boundary(bound)
-    opts = dict(order=order, mode=mode, cval=cval, prefilter=not coeff)
+    order = int(order)
+    opts = {"order": order, "mode": mode, "cval": cval, "prefilter": not coeff}
     # Interpolate each batch
+    map_coordinates = _autoreshape(nd.map_coordinates)
     for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = ib.map_coordinates(input[index], coords, **opts)
+        output[index] = map_coordinates(input[index], coords, **opts)
     return output
 
 
@@ -121,11 +140,12 @@ def pull_axes(
         the output spatial axes of the field. Shape
         `(*batch, *spatial_out)`.
     """
-    ab = get_array_backend(input)
+    # Get backends
+    nx = best_backend(input, coords)
     axes = [int(a) % input.ndim for a in axes]
     ndim = len(axes)
     dest = list(range(input.ndim - ndim, input.ndim))
-    moved = ab.moveaxis(input, axes, dest)
+    moved = nx.moveaxis(input, axes, dest)
     return pull(moved, coords, order, bound, coeff)
 
 
@@ -179,10 +199,10 @@ def spline_matrix(
     array-like
         The weight matrix. Shape `(n_out, n_in)`.
     """
-    ab = get_array_backend(coords_1d)
+    nx = get_array_backend(coords_1d)
     bound0 = bound if isinstance(bound, str) else 0.0
-    basis = ab.eye(n_in)
-    coords = ab.reshape(ab.asarray(coords_1d), (-1, 1))
+    basis = nx.eye(n_in)
+    coords = nx.reshape(nx.asarray(coords_1d), (-1, 1))
     return pull(basis, coords, order, bound0, coeff).T
 
 
@@ -224,10 +244,10 @@ def pull_field(
         The interpolated field. Shape (*batch, *spatial_out, ndim)
 
     """
-    ab = get_array_backend(field)
-    field = ab.moveaxis(field, -1, 0)
+    nx = best_backend(field, coords)
+    field = nx.moveaxis(field, -1, 0)
     field = pull(field, coords, order, bound, coeff)
-    field = ab.moveaxis(field, 0, -1)
+    field = nx.moveaxis(field, 0, -1)
     return field
 
 
@@ -274,8 +294,8 @@ def coeff2value(
         The array of values. Shape (*batch, *spatial)
     """
     # Get packages
-    ab = get_array_backend(input)
-    ib = get_ndimage_backend(input)
+    nx = get_array_backend(input)
+    nd = get_ndimage_backend(nx)
     # Get dimensions
     # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
     # are spatial"; a genuine ndim=0 is meaningless for interpolation, so
@@ -284,16 +304,18 @@ def coeff2value(
     batch = input.shape[:-ndim]
     # Create coordinates field for interpolation, sampling at the center of
     # each voxel of the *spatial* dimensions (the last `ndim` axes).
-    grid = ab.meshgrid(
-        *(ab.arange(s) for s in input.shape[-ndim:]), indexing="ij"
+    grid = nx.meshgrid(
+        *(nx.arange(s) for s in input.shape[-ndim:]), indexing="ij"
     )
-    grid = ab.stack(grid, axis=0)
+    grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
-    output = ab.empty_like(input) if not inplace else input
+    output = nx.empty_like(input) if not inplace else input
     mode, cval = _scipy_boundary(bound)
-    opts = dict(order=order, mode=mode, cval=cval, prefilter=False)
+    order = int(order)
+    opts = {"order": order, "mode": mode, "cval": cval, "prefilter": False}
+    map_coordinates = _autoreshape(nd.map_coordinates)
     for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = ib.map_coordinates(input[index], grid, **opts)
+        output[index] = map_coordinates(input[index], grid, **opts)
     return output
 
 
@@ -334,11 +356,11 @@ def coeff2value_field(
     array-like
         The field of values. Shape (*batch, *spatial, ndim)
     """
-    ab = get_array_backend(field)
+    nx = get_array_backend(field)
     ndim = field.shape[-1]
-    field = ab.moveaxis(field, -1, 0)
+    field = nx.moveaxis(field, -1, 0)
     field = coeff2value(field, order, bound, inplace=inplace, ndim=ndim)
-    field = ab.moveaxis(field, 0, -1)
+    field = nx.moveaxis(field, 0, -1)
     return field
 
 
@@ -382,8 +404,8 @@ def value2coeff(
         The array of spline coefficients. Shape (*batch, *spatial)
     """
     # Get packages
-    ab = get_array_backend(input)
-    ib = get_ndimage_backend(input)
+    nx = get_array_backend(input)
+    nd = get_ndimage_backend(input)
     # Get dimensions
     # NOTE: `ndim or input.ndim` treats ndim=0 (or None) as "all dimensions
     # are spatial"; a genuine ndim=0 is meaningless for a spline filter, so
@@ -397,11 +419,11 @@ def value2coeff(
     # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
     # exact for string bounds and consistent (if not a strict inverse) for
     # float bounds.
-    output = ab.empty_like(input) if not inplace else input
+    output = nx.empty_like(input) if not inplace else input
     mode = bound if isinstance(bound, str) else "constant"
     opts = dict(order=order, mode=mode)
     for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = ib.spline_filter(input[index], **opts)
+        output[index] = nd.spline_filter(input[index], **opts)
     return output
 
 
@@ -439,9 +461,9 @@ def value2coeff_field(
     array-like
         The field of spline coefficients. Shape (*batch, *spatial, ndim)
     """
-    ab = get_array_backend(field)
+    nx = get_array_backend(field)
     ndim = field.shape[-1]
-    field = ab.moveaxis(field, -1, 0)
+    field = nx.moveaxis(field, -1, 0)
     field = value2coeff(field, order, bound, inplace=inplace, ndim=ndim)
-    field = ab.moveaxis(field, 0, -1)
+    field = nx.moveaxis(field, 0, -1)
     return field
