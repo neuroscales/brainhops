@@ -37,8 +37,16 @@ from brainhops.datamodel.transformations import (
     is_identity,
 )
 from brainhops.io.base._base import register_format
-from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.base.zarr import ZarrParser
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserTypeError,
+    WriterError,
+)
+from brainhops.io.base.zarr import (
+    StoreLike,
+    ZarrParserWriter,
+    _as_node,
+)
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.zarr import _map, _node
 
@@ -56,7 +64,7 @@ class OmeFieldError(ValueError):
 
 @register_format
 class OmeZarrField(
-    ZarrParser, WritableFileBasedTransformation, MultiscaleField
+    ZarrParserWriter, WritableFileBasedTransformation, MultiscaleField
 ):
     """A coordinate or displacement field stored as OME-Zarr.
 
@@ -184,7 +192,14 @@ class OmeZarrField(
         return Confidence.NO
 
     @classmethod
-    def _read_node(cls, node: tx.Any, **kwargs) -> "OmeZarrField":
+    def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
+        """
+        Read the field from an opened Zarr group.
+
+        The node's own OME metadata describes the field, so it is read here
+        rather than on first access: the arrays of every level are held, and
+        the metadata is kept exactly as read.
+        """
         # Build the field from an opened node whose own OME metadata
         # describes it. The typed axes name the axis that holds the vector
         # components, the resolution levels are read from the datasets the
@@ -192,6 +207,12 @@ class OmeZarrField(
         # level's coordinate transformation. The arrays and the metadata are
         # kept exactly as read, so a field that is read and written again
         # re-emits its OME metadata unchanged.
+        node = _as_node(node)
+        if node is None:
+            raise ParserTypeError(
+                "from_node expects an opened Zarr array or group; pass a "
+                "store path to from_store instead."
+            )
         ome = getattr(node, "ome", None)
         if ome is None:
             raise OmeFieldError(
@@ -199,7 +220,7 @@ class OmeZarrField(
                 "from it."
             )
         try:
-            normalized = ome.to_version("0.6rc0")
+            normalized = ome.to_version("0.6")
         except Exception as error:
             raise OmeFieldError(
                 "This node's OME metadata could not be read as a field. "
@@ -240,14 +261,16 @@ class OmeZarrField(
             level_transforms=level_transforms,
             axes=axes,
             ome=ome,
+            node=node,
             **kwargs,
         )
 
-    def _write_node(self, node: tx.Any, **kwargs) -> None:
-        # Write the field's arrays and its OME metadata into an opened group.
+    def to_node(self, node: tx.Any, **kwargs) -> tx.Any:
+        """Write the field into an opened Zarr group, and return it."""
         # Each level array is written to the dataset path the metadata names,
         # and the metadata is re-emitted unchanged, so a read followed by a
         # write round-trips the store.
+        node = _as_node(node)
         if not isinstance(node, abczarr.ZarrGroup):
             raise WriterError(
                 "An OME-Zarr field is written into a group, not a plain array."
@@ -264,7 +287,7 @@ class OmeZarrField(
                 "This OME-Zarr field has no resolution levels to write."
             )
         try:
-            normalized = ome.to_version("0.6rc0")
+            normalized = ome.to_version("0.6")
         except Exception:
             normalized = ome
         multiscales = getattr(normalized, "multiscales", None) or []
@@ -280,11 +303,18 @@ class OmeZarrField(
                 dataset_path, data=backend.asarray(array), **kwargs
             )
         node.ome = ome
+        return node
 
-    def _create_store(self, location: str, **kwargs) -> None:
-        # Create a store at `location` and write the field into it.
-        group = abczarr.open_group(location, mode="w")
-        self._write_node(group, **kwargs)
+    def to_store(self, location: StoreLike, **kwargs) -> None:
+        """Write the field to a store location, or into an opened store.
+
+        An opened group is written into as it stands. A location names a
+        store that does not exist yet, so the group is created there first.
+        """
+        node = _as_node(location)
+        if node is None:
+            node = abczarr.open_group(location, mode="w")
+        self.to_node(node, **kwargs)
 
     # --- level construction ---
 

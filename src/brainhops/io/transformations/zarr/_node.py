@@ -1,7 +1,7 @@
 """Read an OME-Zarr field node into arrays and axes.
 
 An OME-Zarr coordinate or displacement field is stored in its own node. A
-0.6rc0 field node is a full OME-Zarr node whose ``ome`` metadata names the
+0.6 field node is a full OME-Zarr node whose ``ome`` metadata names the
 field's typed axes, including the axis that holds the vector components. An
 older field node is a bare array that names its axes only with
 ``dimension_names``.

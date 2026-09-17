@@ -15,6 +15,12 @@ dist/
 wheels/
 *.egg-info
 
+# Test and coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
+
 # Virtual environments
 .venv
 .python-version

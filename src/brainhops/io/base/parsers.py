@@ -236,14 +236,11 @@ class FileSniffer:
         """
         kwargs["error"] = error
 
-        if isinstance(file, str) and path.Path(file).exists():
-            file = path.Path(file)
-
-        if isinstance(file, path.PathLike):
-            return cls.sniff_file(file, **kwargs)
+        if isinstance(file, (str, path.PathLike)):
+            return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
-            return cls.sniff_file(file, **kwargs)
+            return cls.sniff_fileobj(file, **kwargs)
 
         if isinstance(file, (bytes, bytearray)):
             return cls.sniff_bytes(file, **kwargs)
@@ -282,18 +279,8 @@ class FileSniffer:
         """
         kwargs["error"] = error
 
-        if isinstance(file, str):
-            file = path.Path(file)
-
-        if isinstance(file, path.PathLike):
-            if not file.exists():
-                if error:
-                    if error is True:
-                        error = SnifferExistsError
-                    raise error(f"No such file: {file}")
-                return Confidence.NO
-            with file.open(cls._READ_MODE) as f:
-                return cls.sniff_fileobj(f, **kwargs)
+        if isinstance(file, (str, path.PathLike)):
+            return cls.sniff_filename(file, **kwargs)
 
         if hasattr(file, "read"):
             return cls.sniff_fileobj(file, **kwargs)
@@ -303,6 +290,53 @@ class FileSniffer:
             if error is True:
                 error = SnifferTypeError
             raise error(f"Cannot sniff file of type {type(file)}")
+        return False
+
+    @classmethod
+    def sniff_filename(
+        cls,
+        filename: path.FilenameLike,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """
+        Determine if the given filename is of the type that this parser
+        can handle.
+
+        Parameters
+        ----------
+        filename : FilenameLike
+            The filename to sniff.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the filename cannot be sniffed.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        float
+            Confidence that the filename is of this type, in `[0, 1]`.
+        """
+        kwargs["error"] = error
+
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+
+        if isinstance(filename, path.PathLike):
+            if not filename.exists():
+                if error:
+                    if error is True:
+                        error = SnifferExistsError
+                    raise error(f"No such file: {filename}")
+                return Confidence.NO
+            with filename.open(cls._READ_MODE) as f:
+                return cls.sniff_fileobj(f, **kwargs)
+
+        # Cannot parse this content -> return False or error
+        if error:
+            if error is True:
+                error = SnifferTypeError
+            raise error(f"Cannot sniff filename of type {type(filename)}")
         return False
 
     @classmethod
@@ -550,20 +584,39 @@ class FileParser(FileSniffer):
         obj
             The parsed object.
         """
-        if isinstance(file, str):
-            file = path.Path(file)
-
-        if isinstance(file, path.PathLike):
-            if not file.exists():
-                raise ParserExistsError(f"No such file: {file}")
-            with file.open(cls._READ_MODE) as f:
-                return cls.from_fileobj(f, **kwargs)
+        if isinstance(file, (str, path.PathLike)):
+            return cls.from_filename(file, **kwargs)
 
         if hasattr(file, "read"):
             return cls.from_fileobj(file, **kwargs)
 
         # Cannot parse this content -> return False or error
         raise ParserTypeError(f"Cannot parse file of type {type(file)}")
+
+    @classmethod
+    def from_filename(cls, filename: path.FilenameLike, **kwargs) -> tx.Self:
+        """
+        Build an object from a filename.
+
+        Parameters
+        ----------
+        filename : FilenameLike
+            The filename to parse.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        obj
+            The parsed object.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+
+        if not filename.exists():
+            raise ParserExistsError(f"No such file: {filename}")
+        with filename.open(cls._READ_MODE) as f:
+            return cls.from_fileobj(f, **kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -723,18 +776,7 @@ class FileParserWriter(FileParser):
         **kwargs
             Parser-specific options.
         """
-        # NOTE: unlike `load`, we must not require the path to exist --
-        # writing to a new file is the common case.
-        if isinstance(file, str):
-            file = path.Path(file)
-
-        if isinstance(file, path.PathLike):
-            return self.to_file(file, **kwargs)
-
-        if hasattr(file, "write") or hasattr(file, "writelines"):
-            return self.to_fileobj(file, **kwargs)
-
-        raise ParserTypeError(f"Cannot write file of type {type(file)}")
+        return self.to_file(file, **kwargs)
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         """
@@ -747,17 +789,30 @@ class FileParserWriter(FileParser):
         **kwargs
             Parser-specific options.
         """
-        if isinstance(file, str):
-            file = path.Path(file)
-
-        if isinstance(file, path.PathLike):
-            with file.open(self._WRITE_MODE) as f:
-                return self.to_fileobj(f, **kwargs)
+        if isinstance(file, (str, path.PathLike)):
+            return self.to_filename(file, **kwargs)
 
         if hasattr(file, "write") or hasattr(file, "writelines"):
             return self.to_fileobj(file, **kwargs)
 
         raise ParserTypeError(f"Cannot write file of type {type(file)}")
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """
+        Write the object to a filename.
+
+        Parameters
+        ----------
+        filename : FilenameLike
+            The filename to write to.
+        **kwargs
+            Parser-specific options.
+        """
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+
+        with filename.open(self._WRITE_MODE) as f:
+            return self.to_fileobj(f, **kwargs)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """
