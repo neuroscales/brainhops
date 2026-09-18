@@ -41,9 +41,9 @@ def _random_field(rng, ndim):  # noqa: ANN001, ANN202
 @pytest.mark.parametrize("order", ORDERS)
 @pytest.mark.parametrize("bound", BOUNDS)
 def test_value_coeff_round_trip(
-    field_type,
-    ndim,
-    order,
+    field_type,  # noqa: ANN001
+    ndim,  # noqa: ANN001
+    order,  # noqa: ANN001
     bound,  # noqa: ANN001
 ) -> None:
     # value -> coeff -> value must recover the original samples exactly (up

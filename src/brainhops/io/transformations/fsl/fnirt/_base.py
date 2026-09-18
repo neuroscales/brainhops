@@ -3,7 +3,6 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-
 # core
 from brainhops.backends import get_array_backend
 

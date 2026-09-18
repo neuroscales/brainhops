@@ -168,7 +168,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         handle and reads it when its data is asked for.
         """
         image = super().from_node(node, **kwargs)
-        image._layout
+        _ = image._layout
         return image
 
     # ---- workers  ----------------------------------------------------

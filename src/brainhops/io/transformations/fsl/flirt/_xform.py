@@ -3,7 +3,6 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms

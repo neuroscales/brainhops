@@ -2,7 +2,6 @@
 import typing_extensions as tx
 
 # externals
-
 # datamodel
 from brainhops.datamodel import transformations as _xforms
 
