@@ -3,7 +3,6 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE
 
 # core
 from brainhops.backends import get_array_backend
@@ -61,9 +60,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 
 @register_format
-class FNIRTWarpField(
-    NiftiBasedTransformation, _xforms.Sequence, mapping=HIDE_IF_NONE
-):
+class FNIRTWarpField(NiftiBasedTransformation, _xforms.Sequence):
     """A FNIRT non-linear transformation stored in a NIfTI file.
 
     FNIRT writes its non-linear registration as one of two things, which a

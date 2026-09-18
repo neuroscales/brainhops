@@ -7,5 +7,5 @@ from brainhops.datamodel import transformations as _xforms
 class RASCoordinatesField(_xforms.CoordinatesField):
     """Field of RAS coordinates."""
 
-    input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()

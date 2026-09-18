@@ -13,7 +13,7 @@ from bagof.magic import HIDE_IF_NONE, Magic, fields
 class DataModelBase(
     Magic,
     convert=True,
-    mapping=HIDE_IF_NONE,
+    mapping=False,
     repr=HIDE_IF_NONE,
 ):
     """Base class for all data models."""

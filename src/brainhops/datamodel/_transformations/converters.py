@@ -7,31 +7,29 @@ from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
 
 # locals
-from .transformations import (
+from .base import Transformation
+from .concrete import (
     Affine,
     CartesianField,
-    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
     Linear,
-    LossyConversionError,
     Permutation,
     Scaling,
-    SubspaceTransformation,
-    Transformation,
     Translation,
-    _converter,
-    _get_ndim,
-    _to,
 )
+from .convert import convert, converter
+from .errors import ConversionError, LossyConversionError
+from .meta import SubspaceTransformation
+from .utils import get_ndim
 
 # ----------------------------------------------------------------------
 #   SAME TYPE
 # ----------------------------------------------------------------------
 
 
-@_converter
+@converter
 def _(t: Transformation, **kwargs) -> Transformation:
     # A same-type conversion with no overrides is a pass-through; with
     # overrides it rebuilds the transform of the same type, applying the
@@ -41,7 +39,7 @@ def _(t: Transformation, **kwargs) -> Transformation:
     return replace(t, **kwargs)
 
 
-@_converter
+@converter
 def _(t: DisplacementField, **kwargs) -> DisplacementField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get("coeff", t.coeff):
@@ -55,7 +53,7 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
     return replace(t, **kwargs)
 
 
-@_converter
+@converter
 def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get("coeff", t.coeff):
@@ -69,7 +67,7 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     return replace(t, **kwargs)
 
 
-@_converter
+@converter
 def _(t: CartesianField, **kwargs) -> CartesianField:
     # A CartesianField generates its `field` on demand from `shape`, so
     # `field` is not a constructor argument here. A rebuild carries
@@ -84,9 +82,9 @@ def _(t: CartesianField, **kwargs) -> CartesianField:
 # ----------------------------------------------------------------------
 
 
-@_converter
+@converter
 def _(t: Identity, **kwargs) -> Translation:
-    ndim = _get_ndim(t)
+    ndim = get_ndim(t)
     return Translation(
         translation=[0.0] * ndim if ndim is not None else None,
         input=t.input,
@@ -94,9 +92,9 @@ def _(t: Identity, **kwargs) -> Translation:
     )
 
 
-@_converter
+@converter
 def _(t: Identity, **kwargs) -> Scaling:
-    ndim = _get_ndim(t)
+    ndim = get_ndim(t)
     return Scaling(
         scale=[1.0] * ndim if ndim is not None else None,
         input=t.input,
@@ -104,9 +102,9 @@ def _(t: Identity, **kwargs) -> Scaling:
     )
 
 
-@_converter
+@converter
 def _(t: Identity, **kwargs) -> Permutation:
-    ndim = _get_ndim(t)
+    ndim = get_ndim(t)
     return Permutation(
         permutation=range(ndim) if ndim is not None else None,
         input=t.input,
@@ -114,9 +112,9 @@ def _(t: Identity, **kwargs) -> Permutation:
     )
 
 
-@_converter
+@converter
 def _(t: Identity, **kwargs) -> Linear:
-    ndim = _get_ndim(t)
+    ndim = get_ndim(t)
     return Linear(
         matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim)] for i in range(ndim)
@@ -128,9 +126,9 @@ def _(t: Identity, **kwargs) -> Linear:
     )
 
 
-@_converter
+@converter
 def _(t: Identity, **kwargs) -> Affine:
-    ndim = _get_ndim(t)
+    ndim = get_ndim(t)
     return Affine(
         matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim + 1)]
@@ -143,11 +141,11 @@ def _(t: Identity, **kwargs) -> Affine:
     )
 
 
-@_converter
+@converter
 def _(t: Translation) -> Affine:
     if t.translation is None:
-        return _to(Identity(input=t.input, output=t.output), Affine)
-    ndim = max(_get_ndim(t, 0), len(t.translation))
+        return convert(Identity(input=t.input, output=t.output), Affine)
+    ndim = max(get_ndim(t, 0), len(t.translation))
     u = Affine(
         matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim + 1)]
@@ -160,11 +158,11 @@ def _(t: Translation) -> Affine:
     return u
 
 
-@_converter
+@converter
 def _(t: Scaling) -> Linear:
     if t.scale is None:
-        return _to(Identity(input=t.input, output=t.output), Linear)
-    ndim = max(_get_ndim(t, 0), len(t.scale))
+        return convert(Identity(input=t.input, output=t.output), Linear)
+    ndim = max(get_ndim(t, 0), len(t.scale))
     u = Linear(
         matrix=[
             [1.0 if i == j else 0.0 for j in range(ndim)] for i in range(ndim)
@@ -176,11 +174,11 @@ def _(t: Scaling) -> Linear:
     return u
 
 
-@_converter
+@converter
 def _(t: Permutation) -> Linear:
     if t.permutation is None:
-        return _to(Identity(input=t.input, output=t.output), Linear)
-    ndim = max(_get_ndim(t, 0), len(t.permutation))
+        return convert(Identity(input=t.input, output=t.output), Linear)
+    ndim = max(get_ndim(t, 0), len(t.permutation))
     u = Linear(
         matrix=[
             [1.0 if j == t.permutation[i] else 0.0 for j in range(ndim)]
@@ -192,10 +190,10 @@ def _(t: Permutation) -> Linear:
     return u
 
 
-@_converter
+@converter
 def _(t: Linear) -> Affine:
     if t.matrix is None:
-        return _to(Identity(input=t.input, output=t.output), Affine)
+        return convert(Identity(input=t.input, output=t.output), Affine)
     ndim = len(t.matrix)
     u = Affine(
         matrix=[
@@ -208,7 +206,7 @@ def _(t: Linear) -> Affine:
     return u
 
 
-@_converter
+@converter
 def _(t: SubspaceTransformation) -> Affine:
     # Embed the inner transform, reduced to an affine, into a full-size
     # affine over the whole space. The inner transform occupies the rows
@@ -266,7 +264,7 @@ def _(t: SubspaceTransformation) -> Affine:
     return Affine(matrix=matrix, input=t.input, output=t.output)
 
 
-@_converter
+@converter
 def _(t: DisplacementField) -> CoordinatesField:
     if t.field is None:
         return CoordinatesField(
@@ -283,7 +281,7 @@ def _(t: DisplacementField) -> CoordinatesField:
 # ----------------------------------------------------------------------
 
 
-@_converter
+@converter
 def _(t: Translation) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.translation is not None and any(x != 0.0 for x in t.translation):
@@ -291,7 +289,7 @@ def _(t: Translation) -> Identity:
     return u
 
 
-@_converter
+@converter
 def _(t: Scaling) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.scale is not None and any(s != 1.0 for s in t.scale):
@@ -299,7 +297,7 @@ def _(t: Scaling) -> Identity:
     return u
 
 
-@_converter
+@converter
 def _(t: Permutation) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.permutation is not None and any(
@@ -309,7 +307,7 @@ def _(t: Permutation) -> Identity:
     return u
 
 
-@_converter
+@converter
 def _(t: Linear) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.matrix is not None:
@@ -322,10 +320,10 @@ def _(t: Linear) -> Identity:
     return u
 
 
-@_converter
+@converter
 def _(t: Linear) -> Permutation:
     if t.matrix is None:
-        return _to(_to(t, Identity), Permutation)
+        return convert(convert(t, Identity), Permutation)
     ba = get_array_backend(t.matrix)
     matrix = ba.round(ba.abs(t.matrix))
     permutation = ba.argmax(matrix, axis=1)
@@ -340,10 +338,10 @@ def _(t: Linear) -> Permutation:
     return u
 
 
-@_converter
+@converter
 def _(t: Linear) -> Scaling:
     if t.matrix is None:
-        return _to(_to(t, Identity), Scaling)
+        return convert(convert(t, Identity), Scaling)
     ba = get_array_backend(t.matrix)
     scale = ba.diagonal(t.matrix)  # TODO: use svd instead?
     u = Scaling(input=t.input, output=t.output, scale=scale)
@@ -355,7 +353,7 @@ def _(t: Linear) -> Scaling:
     return u
 
 
-@_converter
+@converter
 def _(t: Affine) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.matrix is not None:
@@ -368,10 +366,10 @@ def _(t: Affine) -> Identity:
     return u
 
 
-@_converter
+@converter
 def _(t: Affine) -> Linear:
     if t.matrix is None:
-        return _to(_to(t, Identity), Linear)
+        return convert(convert(t, Identity), Linear)
     matrix = t.matrix[:, :-1]
     u = Linear(input=t.input, output=t.output, matrix=matrix)
     if t.matrix[:, -1].any():
@@ -379,7 +377,7 @@ def _(t: Affine) -> Linear:
     return u
 
 
-@_converter
+@converter
 def _(t: DisplacementField) -> Identity:
     u = Identity(input=t.input, output=t.output)
     if t.field is not None:
@@ -396,10 +394,10 @@ def _(t: DisplacementField) -> Identity:
 def _make_converter_chain(*types: tx.List[type]) -> None:
     T0, TN = types[0], types[-1]
 
-    @_converter(T0, TN)
+    @converter(T0, TN)
     def _(t: Transformation) -> Transformation:
         for T1 in types[1:]:
-            t = _to(t, T1)
+            t = convert(t, T1)
         return t
 
 

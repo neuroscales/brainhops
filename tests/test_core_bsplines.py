@@ -18,10 +18,10 @@ therefore made composing any ``coeff=True`` field fail (the composers call
 import numpy as np
 import pytest
 
+from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
-    _compose,
 )
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap"]
@@ -40,7 +40,12 @@ def _random_field(rng, ndim):  # noqa: ANN001, ANN202
 @pytest.mark.parametrize("ndim", NDIMS)
 @pytest.mark.parametrize("order", ORDERS)
 @pytest.mark.parametrize("bound", BOUNDS)
-def test_value_coeff_round_trip(field_type, ndim, order, bound) -> None:  # noqa: ANN001
+def test_value_coeff_round_trip(
+    field_type,
+    ndim,
+    order,
+    bound,  # noqa: ANN001
+) -> None:
     # value -> coeff -> value must recover the original samples exactly (up
     # to spline-filter numerical error) for every string boundary condition.
     rng = np.random.default_rng(0)
@@ -76,5 +81,5 @@ def test_compose_coeff_fields_does_not_raise(order) -> None:  # noqa: ANN001
         coeff=True
     )
 
-    out = _compose(d1, d2)
+    out = compose(d1, d2)
     assert isinstance(out, DisplacementField)

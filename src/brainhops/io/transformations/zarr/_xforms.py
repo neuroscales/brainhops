@@ -23,6 +23,7 @@ from brainhops._core.affines import inv as _affine_inv
 from brainhops.backends import get_array_backend
 
 # internals
+from brainhops.datamodel._transformations.multiscale import _as_affine
 from brainhops.datamodel.axes import Axis, vector_axis
 from brainhops.datamodel.transformations import (
     Affine,
@@ -33,7 +34,6 @@ from brainhops.datamodel.transformations import (
     MultiscaleField,
     Sequence,
     Transformation,
-    _as_affine,
     is_identity,
 )
 from brainhops.io.base._base import register_format

@@ -2,7 +2,6 @@
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
@@ -19,7 +18,6 @@ from ._parser import H5TransformParser
 class H5Transform(
     H5TransformParser,
     ITKTransform,
-    mapping=HIDE_IF_NONE,
 ):
     """A transformation stored in an ITK binary (`.h5`) file."""
 

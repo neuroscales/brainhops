@@ -11,15 +11,17 @@ from brainhops._core.affines import axis_scales
 from brainhops._core.typing import ArrayProtocol
 
 # internals
+from ._transformations.multiscale import (
+    _as_affine_ignoring_fields,
+    _at_resolution,
+    _nearest_resolution_index,
+)
 from .base import DataModelBase
 from .geometry import Geometry
 from .transformations import (
     CartesianField,
     Identity,
     Transformation,
-    _as_affine_ignoring_fields,
-    _at_resolution,
-    _nearest_resolution_index,
 )
 
 
@@ -220,7 +222,7 @@ class SingleScaleImage(Image):
         # so an axis that is only rescaled, flipped, or permuted is handled
         # cheaply and only the coupled group keeps the N-dimensional pull.
         # The factoring is imported lazily to avoid an import cycle.
-        from ._xforms_separable import pull_separable
+        from ._transformations.separable import pull_separable
 
         transformation = (
             preferred.inverse() @ geometry.transformation @ geometry.grid

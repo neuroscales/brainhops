@@ -12,8 +12,8 @@ import pytest
 import brainhops.backends as backends
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
-from brainhops.datamodel import _xforms_separable as sep
 from brainhops.datamodel import hierarchy
+from brainhops.datamodel._transformations import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage

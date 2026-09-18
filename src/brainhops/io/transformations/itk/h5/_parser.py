@@ -40,7 +40,6 @@ _H5Like = tx.Union[
 class H5Header(
     Magic,
     convert=True,
-    mapping=HIDE_IF_NONE,
     repr=HIDE_IF_NONE,
 ):
     """Header of a ITK H5 file."""

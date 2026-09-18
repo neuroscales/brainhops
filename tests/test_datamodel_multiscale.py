@@ -16,6 +16,7 @@ anisotropic and rotated placement makes the rescaling visible.
 import numpy as np
 import pytest
 
+from brainhops.datamodel._transformations.multiscale import _at_resolution
 from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
@@ -24,7 +25,6 @@ from brainhops.datamodel.transformations import (
     MultiscaleField,
     Scaling,
     Sequence,
-    _at_resolution,
 )
 
 

@@ -18,7 +18,12 @@ reference ``A(interp(f))``.
 import numpy as np
 import pytest
 
-from brainhops.backends import get_array_backend
+from brainhops.backends import backend, get_array_backend
+from brainhops.datamodel._transformations.compose import compose
+from brainhops.datamodel._transformations.sequence import (
+    _ensure_proper_modes,
+    _merge_adjacent_subspaces,
+)
 from brainhops.datamodel.axes import (
     A,
     R,
@@ -36,9 +41,6 @@ from brainhops.datamodel.transformations import (
     Identity,
     Sequence,
     SubspaceTransformation,
-    _compose,
-    _ensure_proper_modes,
-    _merge_adjacent_subspaces,
 )
 
 # An anisotropic affine with shear and a shift, so a dropped setting or
@@ -103,16 +105,27 @@ def test_fold_affine_into_field_matches_inorder_reference(
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
-    field = field_type(
-        field=values, order=order, bound=BoundaryCondition.mirror
-    ).to(coeff=coeff)
 
-    matrix = AFFINE_MATRIX
-    sampled = _evaluate(field, QUERY_POINTS)
-    reference = sampled @ matrix[:, :-1].T + matrix[:, -1]
+    # Pinned to the exact backend. Folding builds its node grid with
+    # `CartesianField`, so under the dask backend the folded field is a
+    # dask array and its spline prefilter is `dask_image`'s, which is
+    # applied patch-wise rather than along the whole axis. That is a
+    # deliberate trade -- a real IIR filter over a large volume is what
+    # dask exists to avoid -- and it costs about 3e-2 here, far above the
+    # tolerance this test is about. The arithmetic under test is the
+    # composer's, not the interpolator's, so it is checked where the
+    # interpolation is exact.
+    with backend("numpy"):
+        field = field_type(
+            field=values, order=order, bound=BoundaryCondition.mirror
+        ).to(coeff=coeff)
 
-    folded = (Affine(matrix=matrix) @ field).compute()
-    result = _evaluate(folded, QUERY_POINTS)
+        matrix = AFFINE_MATRIX
+        sampled = _evaluate(field, QUERY_POINTS)
+        reference = sampled @ matrix[:, :-1].T + matrix[:, -1]
+
+        folded = (Affine(matrix=matrix) @ field).compute()
+        result = _evaluate(folded, QUERY_POINTS)
 
     # Folding a coordinate field is exact within the field of view, because
     # interpolation is linear and the affine is affine. Folding a
@@ -173,8 +186,8 @@ def test_subspace_coords_matches_affine_reduction() -> None:
     # reducing the whole thing to an affine and folding that into the field.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
-    got = _compose(To, Ti)
-    ref = _compose(To.to(Affine), Ti)
+    got = compose(To, Ti)
+    ref = compose(To.to(Affine), Ti)
     np.testing.assert_allclose(
         np.asarray(got.field), np.asarray(ref.field), atol=1e-12
     )
@@ -185,7 +198,7 @@ def test_subspace_coords_passthrough_is_bit_exact() -> None:
     # so it is bit-for-bit identical.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
-    got = np.asarray(_compose(To, Ti).field)
+    got = np.asarray(compose(To, Ti).field)
     np.testing.assert_array_equal(got[..., 3], np.asarray(Ti.field)[..., 3])
 
 
@@ -195,8 +208,8 @@ def test_subspace_coords_permuted_positions_align() -> None:
     # component stays bit-exact.
     To = _subspace_affine([2, 0, 1])
     Ti = _coords_4d()
-    got = _compose(To, Ti)
-    ref = _compose(To.to(Affine), Ti)
+    got = compose(To, Ti)
+    ref = compose(To.to(Affine), Ti)
     np.testing.assert_allclose(
         np.asarray(got.field), np.asarray(ref.field), atol=1e-12
     )
@@ -209,7 +222,7 @@ def test_subspace_coords_preserves_interpolation_settings() -> None:
     # C1. The order, bound and coeff of the input field are preserved.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
-    got = _compose(To, Ti)
+    got = compose(To, Ti)
     assert got.order == Ti.order
     assert got.bound == Ti.bound
     assert got.coeff == Ti.coeff
@@ -222,7 +235,7 @@ def test_subspace_coords_promotes_an_integer_domain() -> None:
     field = ab.asarray(np.arange(5 * 6 * 4).reshape(5, 6, 4), dtype="int64")
     Ti = CoordinatesField(field=field, output=_full4("in"))
     To = _subspace_affine([0, 1, 2])
-    got = _compose(To, Ti)
+    got = compose(To, Ti)
     assert np.asarray(got.field).dtype.kind == "f"
 
 
@@ -233,8 +246,8 @@ def test_subspace_disp_matches_affine_reduction() -> None:
     disp = rng.standard_normal((3, 4, 5, 2, 4)) * 0.1
     Ti = DisplacementField(field=disp, output=_full4("in"))
     To = _subspace_affine([0, 1, 2])
-    got = _compose(To, Ti)
-    ref = _compose(To.to(Affine), Ti)
+    got = compose(To, Ti)
+    ref = compose(To.to(Affine), Ti)
     assert isinstance(got, DisplacementField)
     np.testing.assert_allclose(
         np.asarray(got.field), np.asarray(ref.field), atol=1e-12
@@ -246,7 +259,7 @@ def test_subspace_compose_subspace_matches_into_one_wrapper() -> None:
     # subspace transform.
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([0, 1, 2])
-    composed = _compose(second, first)
+    composed = compose(second, first)
     assert isinstance(composed, SubspaceTransformation)
     np.testing.assert_array_equal(composed.input_axes, [0, 1, 2])
     np.testing.assert_array_equal(composed.output_axes, [0, 1, 2])
@@ -276,7 +289,7 @@ def test_subspace_compose_its_inverse_is_identity_without_inverting(
         input=_full4("s"),
         output=_full4("s"),
     )
-    composed = _compose(wrapper, wrapper.inverse())
+    composed = compose(wrapper, wrapper.inverse())
     assert isinstance(composed, Identity)
 
 
@@ -285,7 +298,7 @@ def test_subspace_compose_subspace_mismatch_raises() -> None:
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([1, 2, 3])
     with pytest.raises(CompositionError):
-        _compose(second, first)
+        compose(second, first)
 
 
 _DEFAULT_MODE = _ensure_proper_modes(None)
@@ -356,12 +369,12 @@ def test_field_subspaces_are_not_composed_under_affine_mode(
     # C4. Two subspace-wrapped fields kept separate by an affine-only mode
     # are never resampled, so the numeric field composition is never reached.
     # The same pair merges under the default mode.
-    from brainhops.datamodel import _xform_composers
+    from brainhops.datamodel._transformations import composers
 
     def _boom(*args, **kwargs) -> None:
         raise AssertionError("a field was composed numerically")
 
-    monkeypatch.setattr(_xform_composers, "pull_field", _boom)
+    monkeypatch.setattr(composers, "pull_field", _boom)
     first = _field_wrapper(4)
     second = _field_wrapper(5)
     result = Sequence([first, second]).compute(mode="Affine")

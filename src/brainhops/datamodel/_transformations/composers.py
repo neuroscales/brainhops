@@ -1,7 +1,7 @@
 """
 This module implements function that compute the composition of two
 transformations. It assumes that their input and output coordinate
-systems are compatible (see _xform_adaptors for composing transformations
+systems are compatible (see `adaptors` for composing transformations
 that do not have compatible coordinate systems). It also assumes that
 transfmations are fully defined (i.e., their parameters are not `None`).
 
@@ -21,36 +21,34 @@ from brainhops._core.bsplines import pull_field
 from brainhops.backends import get_array_backend
 
 # internals
-from .transformations import (
+from .base import Transformation
+from .compose import compose, composer
+from .concrete import (
     Affine,
     CartesianField,
-    CompositionError,
     CoordinatesField,
     DisplacementField,
     Identity,
     Linear,
     Permutation,
     Scaling,
-    Sequence,
-    SubspaceTransformation,
-    Transformation,
     Translation,
-    _compose,
-    _composer,
-    _interpolates,
 )
+from .errors import CompositionError
+from .meta import SubspaceTransformation
+from .sequence import Sequence, _interpolates
 
 # ----------------------------------------------------------------------
 #     IDENTITY
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
     return replace(Ti, output=To.output).compute()
 
 
-@_composer
+@composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
     return replace(To, input=Ti.input).compute()
 
@@ -60,7 +58,7 @@ def _(To: Transformation, Ti: Identity) -> Transformation:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: Sequence, Ti: Transformation) -> Transformation:
     return Sequence(
         transformations=[Ti] + list(To.transformations),
@@ -69,7 +67,7 @@ def _(To: Sequence, Ti: Transformation) -> Transformation:
     ).compute()
 
 
-@_composer
+@composer
 def _(To: Transformation, Ti: Sequence) -> Transformation:
     return Sequence(
         transformations=list(Ti.transformations) + [To],
@@ -78,7 +76,7 @@ def _(To: Transformation, Ti: Sequence) -> Transformation:
     ).compute()
 
 
-@_composer
+@composer
 def _(To: Sequence, Ti: Sequence) -> Transformation:
     return Sequence(
         transformations=list(Ti.transformations) + list(To.transformations),
@@ -92,7 +90,7 @@ def _(To: Sequence, Ti: Sequence) -> Transformation:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: Affine, Ti: Affine) -> Affine:
     ba = get_array_backend(To.matrix)
     No = To.matrix.shape[0]
@@ -103,14 +101,14 @@ def _(To: Affine, Ti: Affine) -> Affine:
     return Affine(matrix=A, input=Ti.input, output=To.output)
 
 
-@_composer
+@composer
 def _(To: Linear, Ti: Linear) -> Linear:
     return Linear(
         matrix=To.matrix @ Ti.matrix, input=Ti.input, output=To.output
     )
 
 
-@_composer
+@composer
 def _(To: Permutation, Ti: Permutation) -> Permutation:
     return Permutation(
         permutation=To.permutation[Ti.permutation],
@@ -119,12 +117,12 @@ def _(To: Permutation, Ti: Permutation) -> Permutation:
     )
 
 
-@_composer
+@composer
 def _(To: Scaling, Ti: Scaling) -> Scaling:
     return Scaling(scale=To.scale * Ti.scale, input=Ti.input, output=To.output)
 
 
-@_composer
+@composer
 def _(To: Translation, Ti: Translation) -> Translation:
     return Translation(
         translation=To.translation + Ti.translation,
@@ -137,12 +135,12 @@ _LinearIsh = tx.Union[Linear, Scaling, Permutation]
 _AffineIsh = tx.Union[_LinearIsh, Affine, Translation]
 
 
-@_composer
+@composer
 def _(To: _LinearIsh, Ti: _LinearIsh) -> Linear:
     return (To.to(Linear) @ Ti.to(Linear)).compute()
 
 
-@_composer
+@composer
 def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
     return (To.to(Affine) @ Ti.to(Affine)).compute()
 
@@ -152,7 +150,7 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -167,7 +165,7 @@ def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -182,7 +180,7 @@ def _(To: Scaling, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -197,7 +195,7 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -212,7 +210,7 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -232,7 +230,7 @@ def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -247,7 +245,7 @@ def _(To: Translation, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -263,7 +261,7 @@ def _(To: Scaling, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -279,7 +277,7 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -295,7 +293,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -316,7 +314,7 @@ def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     Ti = Ti.compute().to(coeff=False)
     x2 = Ti.to(CoordinatesField)
@@ -340,7 +338,7 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=To.coeff)
 
 
-@_composer
+@composer
 def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     Ti = Ti.compute().to(coeff=False)
     x2 = Ti.to(CoordinatesField)
@@ -364,7 +362,7 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=Ti.coeff)
 
 
-@_composer
+@composer
 def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
@@ -390,7 +388,7 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
 # ----------------------------------------------------------------------
 
 
-@_composer
+@composer
 def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     # Apply a transform that acts on a subset of the axes to a field of
     # coordinates. The acted-on components of the field are carried through
@@ -463,7 +461,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     ).to(coeff=coeff)
 
 
-@_composer
+@composer
 def _(
     To: SubspaceTransformation, Ti: SubspaceTransformation
 ) -> Transformation:
@@ -499,14 +497,14 @@ def _(
     )
 
 
-@_composer
+@composer
 def _(To: SubspaceTransformation, Ti: DisplacementField) -> DisplacementField:
     # Apply a transform that acts on a subset of the axes to a field of
     # displacements. The displacement field is read as a field of
     # coordinates, the subspace transform is applied, and the grid is
     # subtracted back off to return to displacements.
     Ti = Ti.compute().to(coeff=False)
-    y = _compose(To, Ti.to(CoordinatesField))
+    y = compose(To, Ti.to(CoordinatesField))
     field = y.field - CartesianField(shape=Ti.field.shape[:-1]).field
     return DisplacementField(
         field=field,

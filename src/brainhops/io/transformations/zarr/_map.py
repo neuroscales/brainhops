@@ -9,8 +9,7 @@ OME kind with a brainhops kind is written once.
 Each direction is dispatch-driven rather than a chain of type tests. A
 converter is registered for one type, and the mapping selects the converter
 whose registered type is closest to the value's type in the class
-hierarchy. The closeness is measured by
-[`_distance`][brainhops.datamodel.transformations], the same measure the
+hierarchy. The closeness is measured by [`distance`][], the same measure the
 brainhops transformation converters use, so a new kind is added by
 registering a converter rather than by extending a conditional.
 
@@ -32,6 +31,7 @@ import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
 
 # internals
+from brainhops.datamodel._transformations.registries import distance
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -43,8 +43,6 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
     Translation,
-    _as_affine,
-    _distance,
 )
 
 
@@ -165,9 +163,9 @@ def from_ome(
     kind = type(transform)
     best_distance, best = float("inf"), None
     for registered, func in _FROM_OME.items():
-        distance = _distance(kind, registered)
-        if distance < best_distance:
-            best_distance, best = distance, func
+        dist = distance(kind, registered)
+        if dist < best_distance:
+            best_distance, best = dist, func
     if best is None or best_distance == float("inf"):
         name = getattr(transform, "type", kind.__name__)
         raise OmeMappingError(
@@ -333,9 +331,9 @@ def to_ome(
     kind = type(transform)
     best_distance, best = float("inf"), None
     for registered, func in _TO_OME.items():
-        distance = _distance(kind, registered)
-        if distance < best_distance:
-            best_distance, best = distance, func
+        dist = distance(kind, registered)
+        if dist < best_distance:
+            best_distance, best = dist, func
     if best is not None and best_distance < float("inf"):
         return best(transform, storage_perm, ndim)
     return _affine_to_ome(transform, storage_perm, ndim)
@@ -418,7 +416,7 @@ def _affine_to_ome(
     # The default writer for a transformation that reduces to an affine. A
     # diagonal affine is written as a scale and a translation; any other
     # affine is written in full.
-    affine = _as_affine(transform)
+    affine = transform.to(Affine, error=None)
     if affine is None:
         raise OmeMappingError(
             "This image is placed by a transformation that is not an affine, "
@@ -470,7 +468,7 @@ def _(
 def _(
     transform: tx.Any, storage_perm: tx.Sequence[int], ndim: int
 ) -> tx.Dict[str, tx.Any]:
-    affine = _as_affine(transform)
+    affine = transform.to(Affine, error=None)
     if affine is None:
         raise OmeMappingError(
             "This rotation has no matrix, so it cannot be written as OME-Zarr "
