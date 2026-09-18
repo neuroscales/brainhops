@@ -22,7 +22,7 @@ There are two entry points.
 [`bridge`][] returns the bridge
 from one system to another. The bridge is a single primitive, a sequence
 of primitives, or the identity, and not always a sequence.
-[`adapt`][brainhops.datamodel._xform_adaptors.adapt] ingests two
+[`adapt`][brainhops.datamodel._transformations.adaptors.adapt] ingests two
 consecutive transformations and returns a sequence that contains both of
 them, with the reconciling bridge placed where the two systems meet. When
 the two systems have different numbers of axes, and one transform acts on a
@@ -34,29 +34,28 @@ unchanged.
 # externals
 import warnings
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 
+# api
+from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
+
 # internals
-from .axes import Axis
-from .systems import ArrayCoordinateSystem, CoordinateSystem
-from .transformations import (
-    AdaptationError,
+from .base import Transformation
+from .concrete import (
     CartesianField,
     Identity,
     Permutation,
     Scaling,
-    Sequence,
-    SubspaceTransformation,
-    Transformation,
     Translation,
-    _boundary_input,
-    _boundary_output,
-    _interpolates,
-    _register_adapt,
-    _systems_disagree,
     is_identity,
 )
+from .errors import AdaptationError
+from .meta import SubspaceTransformation
+from .registries import register_adapt
+from .sequence import Sequence, _interpolates
 
 # An extent table maps an axis, by its position in the target system or by
 # its name, to the number of samples along that axis. It is needed only to
@@ -634,6 +633,21 @@ def bridge(
     return Sequence(transformations=elements, input=source, output=target)
 
 
+def _systems_disagree(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+) -> bool:
+    # Whether a bridge is needed between two adjacent systems. A system
+    # that is unspecified, or that carries no axes, is treated as
+    # compatible with its neighbour, so only two fully described and
+    # unequal systems disagree.
+    if source is None or target is None:
+        return False
+    if source.axes is None or target.axes is None:
+        return False
+    return source != target
+
+
 def adapt(
     first: Transformation,
     second: Transformation,
@@ -701,8 +715,8 @@ def adapt(
         meet. `first` and `second` are never rebuilt, so each is the same
         object it was passed as, unless it was lifted into a fuller space.
     """
-    source = _boundary_output(first)
-    target = _boundary_input(second)
+    source = first.output
+    target = second.input
     if not _systems_disagree(source, target):
         return Sequence(
             transformations=[first, second],
@@ -885,8 +899,8 @@ def _lift(
         return None
     if full is None or full.axes is None:
         return None
-    sub_input = _boundary_input(transform)
-    sub_output = _boundary_output(transform)
+    sub_input = transform.input
+    sub_output = transform.output
     if sub_input is None or sub_input.axes is None:
         return None
     if sub_output is None or sub_output.axes is None:
@@ -991,4 +1005,4 @@ def _lift(
 # where two adjacent transforms disagree. It calls back into `adapt`, which
 # is registered here so the two modules need not import each other at module
 # scope.
-_register_adapt(adapt)
+register_adapt(adapt)

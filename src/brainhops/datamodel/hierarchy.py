@@ -78,8 +78,6 @@ All classical linear group can be extended with the translation group
       transformations that are classicaly referred to as "similitude"
       (or conformal) transformations. They only preserve angles.
 """
-# fmt: off
-# ruff: disable[E501]
 
 # stdlib
 import re
@@ -87,6 +85,8 @@ import re
 # dependencies
 import typing_extensions as tx
 
+# fmt: off
+# ruff: disable[E501]
 __all__ = [
     "is_group",
     "is_lie_group",
@@ -609,7 +609,7 @@ class SpecialEuclideanTransformation(SpecialConformalEuclideanTransformation):
     alias: RigidTransformation
 
     wiki: https://en.wikipedia.org/wiki/Euclidean_group#Direct_and_indirect_isometries
-    """
+    """  # noqa: E501
 
     SYMBOL = "SE"
     FSYMBOL = "SE({n})"
@@ -833,7 +833,7 @@ class SpecialOrthogonalTransformation(
     alias: Rotation
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Special_orthogonal_group
-    """
+    """  # noqa: E501
 
     SYMBOL = "SO"
     FSYMBOL = "SO({n})"
@@ -877,7 +877,7 @@ class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
     symbol: S ⋉ SΔ
 
     wiki: https://en.wikipedia.org/wiki/Generalized_permutation_matrix#Signed_permutation_group
-    """
+    """  # noqa: E501
 
     SYMBOL = "S ⋉ SΔ"
     FSYMBOL = "S_{n} ⋉ SΔ({n})"

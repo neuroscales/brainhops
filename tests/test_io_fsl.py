@@ -22,8 +22,8 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
+from brainhops.backends import backend  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
-from brainhops.datamodel.transformations import _compose  # noqa: E402
 from brainhops.io.transformations.fsl import FLIRTTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
     VoxelToScaledMM,
@@ -541,33 +541,47 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
     steps, and the coefficient state of the field is carried through. When
     the warp instead leads with a sampling grid, it is evaluated exactly and
     reproduces the fslpy reference across the field of view.
+
+    Pinned to the exact backend, from the load onwards: the interpolation
+    backend is chosen from the array, not from the ambient setting, so the
+    field has to be read as a numpy array to begin with. Folding converts
+    the field back to spline coefficients, and `dask_image` runs that
+    filter with `map_overlap`, which refuses an axis shorter than its
+    overlap depth -- "the overlapping depth 14 is larger than your array
+    6", and this coefficient grid has such an axis. Filtering whole axes
+    instead is precisely what dask exists to avoid on a real volume, so
+    the limitation is accepted and the fold is checked where the filter is
+    exact.
     """
-    coef = io.transformations.load(
-        fsl_dir / "coefficientfield.nii.gz",
-        reference=_real_ref(),
-        moving=_real_src(),
-    )
-    _, disp, post = coef.transformations
-    assert disp.coeff is True
+    with backend("numpy"):
+        coef = io.transformations.load(
+            fsl_dir / "coefficientfield.nii.gz",
+            reference=_real_ref(),
+            moving=_real_src(),
+        )
+        _, disp, post = coef.transformations
+        assert disp.coeff is True
 
-    # The affine folds into the field rather than raising. The result is a
-    # displacement field again, and its coefficient state is preserved.
-    folded = _compose(post, disp)
-    assert type(folded) is _xforms.DisplacementField
-    assert folded.coeff is True
+        # The affine folds into the field rather than raising. The result
+        # is a displacement field again, and its coefficient state is
+        # preserved.
+        folded = post(disp).compute()
+        assert type(folded) is _xforms.DisplacementField
+        assert folded.coeff is True
 
-    # compute() therefore folds the trailing affine into the field, leaving
-    # two steps in place of three.
-    computed = _xforms.Sequence(
-        transformations=list(coef.transformations)
-    ).compute()
-    names = [type(t).__name__ for t in computed.transformations]
-    assert names == ["RASToWarpField", "DisplacementField"]
+        # compute() therefore folds the trailing affine into the field,
+        # leaving two steps in place of three.
+        computed = _xforms.Sequence(
+            transformations=list(coef.transformations)
+        ).compute()
+        names = [type(t).__name__ for t in computed.transformations]
+        assert names == ["RASToWarpField", "DisplacementField"]
 
-    # Led by a sampling grid, the full warp reproduces the fslpy reference.
-    out = _world_field(coef, _real_ref())
-    oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
-    assert np.allclose(out, oracle, atol=1e-4)
+        # Led by a sampling grid, the full warp reproduces the fslpy
+        # reference.
+        out = _world_field(coef, _real_ref())
+        oracle = _fnirt_world_oracle("coefficientfield.nii.gz", out.shape)
+        assert np.allclose(out, oracle, atol=1e-4)
 
 
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
@@ -587,7 +601,7 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     _, disp, post = warp.transformations
     assert disp.coeff is False
 
-    folded = _compose(post, disp)
+    folded = post(disp).compute()
     assert type(folded) is _xforms.DisplacementField
     assert folded.coeff is False
 

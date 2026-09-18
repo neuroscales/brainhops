@@ -9,7 +9,7 @@ run twice.
 import numpy as np
 from bagof.magic import fields_dict, replace
 
-from brainhops.datamodel import _xform_converters as xc
+from brainhops.datamodel._transformations import converters as xc
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -397,7 +397,7 @@ def test_interpolates_truth_table() -> None:
     # `_interpolates` reports whether applying a transform samples data
     # through a spline. It looks past a sequence, a subspace wrapper and an
     # inverse to find a displacement field or a non-grid coordinate field.
-    from brainhops.datamodel.transformations import _interpolates
+    from brainhops.datamodel._transformations.sequence import _interpolates
 
     affine = Affine(matrix=np.eye(3, 4))
     translation = Translation(translation=[1.0, 2.0, 3.0])

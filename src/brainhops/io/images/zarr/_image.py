@@ -42,7 +42,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
 
-    @smartproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         node = self.node
         if node is not None:

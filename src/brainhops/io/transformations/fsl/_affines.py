@@ -16,15 +16,15 @@ from ._systems import FSLCoordinateSystem
 class VoxelToScaledMM(_xforms.Affine):
     """Affine transformation from voxel space to FSL scaled-mm space."""
 
-    input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    output: _systems.CoordinateSystem = FSLCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _output: _systems.CoordinateSystem = FSLCoordinateSystem()
 
 
 class ScaledMMToVoxel(_xforms.Affine):
     """Affine transformation from FSL scaled-mm space to voxel space."""
 
-    input: _systems.CoordinateSystem = FSLCoordinateSystem()
-    output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _input: _systems.CoordinateSystem = FSLCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
 
 
 class ScaledMMToScaledMM(_xforms.Affine):
@@ -34,8 +34,8 @@ class ScaledMMToScaledMM(_xforms.Affine):
     reference image and the scaled-mm coordinates of the moving image.
     """
 
-    input: _systems.CoordinateSystem = FSLCoordinateSystem()
-    output: _systems.CoordinateSystem = FSLCoordinateSystem()
+    _input: _systems.CoordinateSystem = FSLCoordinateSystem()
+    _output: _systems.CoordinateSystem = FSLCoordinateSystem()
 
 
 # ----------------------------------------------------------------------

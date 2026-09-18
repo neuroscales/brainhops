@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 from bagof.magic import replace
 
-import brainhops.datamodel  # noqa: F401  (registers the adaptor)
-from brainhops.datamodel._xform_adaptors import _lift, adapt, bridge
+from brainhops.datamodel._transformations.adaptors import _lift, adapt, bridge
+from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -60,7 +60,6 @@ from brainhops.datamodel.transformations import (
     SubspaceTransformation,
     Transformation,
     Translation,
-    _compose,
     is_identity,
 )
 
@@ -1447,7 +1446,7 @@ def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:
         field=np.zeros((6, 7, 5, 3, 4)), input=full, output=full
     )
     with pytest.raises(CompositionError):
-        _compose(subspace, coords)
+        compose(subspace, coords)
 
 
 # ----------------------------------------------------------------------

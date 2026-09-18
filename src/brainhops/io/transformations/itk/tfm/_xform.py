@@ -2,8 +2,6 @@
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE
-
 # datamodel
 from brainhops.datamodel import transformations as _xforms
 
@@ -19,7 +17,6 @@ from ._parser import TFMTransformParser
 class TFMTransform(
     TFMTransformParser,
     ITKTransform,
-    mapping=HIDE_IF_NONE,
 ):
     """A transformation stored in an ITK text (`.tfm`) file."""
 

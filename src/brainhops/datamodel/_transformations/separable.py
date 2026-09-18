@@ -21,8 +21,6 @@ which case the whole transformation is one group and the monolithic pull
 is used unchanged.
 """
 
-from __future__ import annotations
-
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -30,26 +28,23 @@ import typing_extensions as tx
 # core
 from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 
-# backends
+# api
 from brainhops.backends import get_array_backend
+from brainhops.datamodel import hierarchy
 
 # locals
-from . import hierarchy
-from .transformations import (
+from .base import Transformation
+from .concrete import (
     Affine,
     CartesianField,
-    CompositionError,
-    ConversionError,
     Identity,
     Permutation,
     Scaling,
-    Sequence,
-    SubspaceTransformation,
-    Transformation,
     Translation,
-    _boundary_output,
-    _interpolates,
 )
+from .errors import CompositionError, ConversionError
+from .meta import SubspaceTransformation
+from .sequence import Sequence, _interpolates
 
 
 class _Unknown(Exception):
@@ -888,7 +883,7 @@ def pull_separable(
     if shape is None:
         return fallback()
     grid_system = grid.output
-    data_system = _boundary_output(part)
+    data_system = part.output
     els = list(elements[1:])
     n_grid = len(shape)
 

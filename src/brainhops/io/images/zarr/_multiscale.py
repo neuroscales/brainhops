@@ -53,7 +53,7 @@ class OmeZarrLevel(ZarrImage):
     any level.
     """
 
-    @smartproperty
+    @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
         raw = super().data
         backend = get_array_backend(raw)
@@ -111,7 +111,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # afresh. `smartproperty` caches under `_cache_<name>`.
         for name in (
             "_cache_ome",
-            "_cache_layout",
+            "_cache__layout",
             "_cache_images",
             "_cache_transformations",
         ):
@@ -131,7 +131,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     def ome(self) -> tx.Optional[Multiscale]:
         # The multiscale itself, not the OME block that holds it: this is
         # what `multiscale_axes` and the rest of `_ome` take.
-        return self._layout()["multiscale"]
+        return self._layout["multiscale"]
 
     @property
     def _ome_version(self) -> tx.Optional[str]:
@@ -140,11 +140,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         This is the version the group was read from, which the writer falls
         back to so that a pyramid is written back in the version it came in.
         """
-        return self._layout()["version"]
+        return self._layout["version"]
 
     @smartproperty(empty_as_unset=True)
     def images(self) -> tx.List[SingleScaleImage]:
-        return self._layout()["images"]
+        return self._layout["images"]
 
     @smartproperty(empty_as_unset=True)
     def transformations(self) -> tx.List[Transformation]:
@@ -153,7 +153,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # multiscale that declares no common transformations places its
         # levels directly in world space, so the list is empty and
         # `transformation` is the identity.
-        return list(self._layout()["commons"])
+        return list(self._layout["commons"])
 
     # ---- load --------------------------------------------------------
 
@@ -168,11 +168,12 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         handle and reads it when its data is asked for.
         """
         image = super().from_node(node, **kwargs)
-        image._layout()
+        _ = image._layout
         return image
 
     # ---- workers  ----------------------------------------------------
 
+    @smartproperty(cache=True, fset=False)
     def _layout(self) -> tx.Dict[str, tx.Any]:
         # The levels and the shared placement, read from the node together.
         # Both come from one parse of the metadata, so `images` and
@@ -183,18 +184,14 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # nothing to derive and the empty layout stands. Only a pyramid that
         # is backed by a node, but whose metadata cannot be read as one, is
         # refused -- by `_read_layout`.
-        cached = getattr(self, "_cache_layout", None)
-        if cached is None:
-            if self.node is None:
-                return {
-                    "images": [],
-                    "commons": [],
-                    "multiscale": None,
-                    "version": None,
-                }
-            cached = self._read_layout()
-            self._cache_layout = cached
-        return cached
+        if self.node is None:
+            return {
+                "images": [],
+                "commons": [],
+                "multiscale": None,
+                "version": None,
+            }
+        return self._read_layout()
 
     def _read_layout(self) -> tx.Dict[str, tx.Any]:
         node = self.node

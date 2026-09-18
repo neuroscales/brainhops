@@ -14,6 +14,7 @@ import pytest
 
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel import transformations as _xf
+from brainhops.datamodel._transformations import inverse as _inv
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
@@ -377,13 +378,13 @@ def test_level_inv_at_level_cancels_zero_field_inversions() -> None:
     # lazy inverse symbolically, before any numeric inversion runs.
     level, _ = _displacement_level()
     calls = {"n": 0}
-    real = _xf.inverse_disp
+    real = _inv.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_xf, "inverse_disp", counting):
+    with mock.patch.object(_inv, "inverse_disp", counting):
         result = (level.inverse() @ level).compute()
 
     assert isinstance(result, Identity)
@@ -394,13 +395,13 @@ def test_level_at_level_inv_cancels_zero_field_inversions() -> None:
     # The other order, level @ level^-1, cancels the same way.
     level, _ = _displacement_level()
     calls = {"n": 0}
-    real = _xf.inverse_disp
+    real = _inv.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_xf, "inverse_disp", counting):
+    with mock.patch.object(_inv, "inverse_disp", counting):
         result = (level @ level.inverse()).compute()
 
     assert isinstance(result, Identity)
@@ -534,13 +535,13 @@ def test_materialization_cached_across_replace_and_to() -> None:
     inv = df.inverse()
     first = np.asarray(inv.field)
     calls = {"n": 0}
-    real = _xf.inverse_disp
+    real = _inv.inverse_disp
 
     def counting(field: np.ndarray) -> np.ndarray:
         calls["n"] += 1
         return real(field)
 
-    with mock.patch.object(_xf, "inverse_disp", counting):
+    with mock.patch.object(_inv, "inverse_disp", counting):
         rebuilt = inv.to(input=None)  # a plain endpoint edit
         again = np.asarray(rebuilt.field)
     # The rebuilt wrapper reused the cached materialization on the operand.

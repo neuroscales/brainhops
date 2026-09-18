@@ -3,8 +3,6 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE
-
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -23,7 +21,6 @@ class FLIRTTransform(
     FLIRTMatrixParser,
     _xforms.Affine,
     FileBasedTransformation,
-    mapping=HIDE_IF_NONE,
 ):
     """A linear transformation stored in a FLIRT `.mat` file.
 
@@ -42,8 +39,8 @@ class FLIRTTransform(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     parameter_names: tx.ClassVar[str] = "flirt_matrix"
 
-    input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
-    output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
 
     # `matrix` is computed on demand from the raw FLIRT matrix and the two
     # image geometries, so it is not a stored, constructor-taken field
