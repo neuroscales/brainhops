@@ -5,9 +5,11 @@ __all__ = ["Geometry"]
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import Factory, NoRepr
 
 # core
 from brainhops.backends import get_array_backend
+from brainhops.datamodel.base import DataModelBase
 
 # internals
 from .axes import Axis
@@ -15,13 +17,46 @@ from .systems import CoordinateSystem
 from .transformations import (
     Affine,
     CartesianField,
+    Identity,
+    ImmutableSequence,
     ModeLike,
     Sequence,
     Transformation,
 )
 
 
-class Geometry(Sequence):
+def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
+    return (CartesianField(), Identity())
+
+
+class _GeometryFields(DataModelBase):
+    # --- attributes ---------------------------------------------------
+
+    transformations: tx.Annotated[
+        tx.Tuple[CartesianField, Transformation],
+        tx.Doc("A cartesian field and a voxel-to-world transformation."),
+        Factory(_geometry_factory),
+        NoRepr(),
+    ]
+
+    shape: tx.Annotated[
+        tx.Optional[tx.Tuple[int, ...]],
+        tx.Doc("The shape of the image data."),
+        NoRepr(),
+    ] = None
+
+    grid: tx.Annotated[
+        tx.Optional[CartesianField],
+        tx.Doc("The Cartesian field that defines the grid of the image."),
+    ] = None
+
+    transformation: tx.Annotated[
+        tx.Optional[Transformation],
+        tx.Doc("The voxel-to-world transformation."),
+    ] = None
+
+
+class Geometry(_GeometryFields, ImmutableSequence):
     """
     A Cartesian field and a voxel-to-world transformation that, together,
     define the geometry of an image.
@@ -30,16 +65,7 @@ class Geometry(Sequence):
     The transformation maps the voxel coordinates to world coordinates.
     """
 
-    transformations: tx.Tuple[CartesianField, Transformation]
-
-    _shape: tx.Optional[tx.Tuple[int, ...]] = None
-    """The shape of the image data."""
-
-    _grid: tx.Optional[CartesianField] = None
-    """The Cartesian field that defines the grid of the image."""
-
-    _transformation: tx.Optional[Transformation] = None
-    """The voxel-to-world transformation that defines the image geometry."""
+    # --- properties ---------------------------------------------------
 
     @property
     def transformation(self) -> Transformation:
@@ -50,7 +76,8 @@ class Geometry(Sequence):
 
     @transformation.setter
     def transformation(self, value: Transformation) -> None:
-        self.transformations = (self.grid, value)
+        if value is not None:
+            self.transformations = (self.grid, value)
 
     @property
     def grid(self) -> CartesianField:
@@ -59,7 +86,8 @@ class Geometry(Sequence):
 
     @grid.setter
     def grid(self, value: CartesianField) -> None:
-        self.transformations = (value, self.transformation)
+        if value is not None:
+            self.transformations = (value, self.transformation)
 
     @property
     def shape(self) -> tx.Tuple[int, ...]:
@@ -68,11 +96,14 @@ class Geometry(Sequence):
 
     @shape.setter
     def shape(self, value: tx.Tuple[int, ...]) -> None:
-        self.grid = CartesianField(
-            shape=value,
-            input=self.grid.input,
-            output=self.grid.output,
-        )
+        if value is not None:
+            self.grid = CartesianField(
+                shape=value,
+                input=self.grid.input,
+                output=self.grid.output,
+            )
+
+    # --- operators ----------------------------------------------------
 
     def __rmatmul__(self, other: Transformation) -> tx.Self:
         """Compose `other` with this geometry's transformation.
@@ -85,6 +116,27 @@ class Geometry(Sequence):
             input=self.grid.input,
             output=other.output,
         )
+
+    def __getitem__(
+        self, index: tx.Tuple[tx.Union[int, slice, None], ...]
+    ) -> tx.Self:
+        """
+        This mimics indexing into the data array of an image and returns
+        the geometry of the resulting sub-image.
+        """
+        sub2full, shape = _index2transform(index, self.shape, self.grid.input)
+        return Geometry(
+            (
+                CartesianField(
+                    shape=shape,
+                    input=sub2full.input,
+                    output=sub2full.input,
+                ),
+                self.transformation @ sub2full,
+            )
+        )
+
+    # --- methods ------------------------------------------------------
 
     def compute(self, mode: tx.Optional[ModeLike] = None) -> tx.Self:
         """
@@ -106,6 +158,8 @@ class Geometry(Sequence):
             output=self.output,
         )
 
+    # --- helpers ------------------------------------------------------
+
     def _flattened(self) -> tx.Self:
         # A `Geometry` keeps its (grid, transformation) pair. Only the
         # transformation part is flattened, so the grid that restricts the
@@ -125,25 +179,6 @@ class Geometry(Sequence):
             (grid, transformation),
             input=self.input,
             output=self.output,
-        )
-
-    def __getitem__(
-        self, index: tx.Tuple[tx.Union[int, slice, None], ...]
-    ) -> tx.Self:
-        """
-        This mimics indexing into the data array of an image and returns
-        the geometry of the resulting sub-image.
-        """
-        sub2full, shape = _index2transform(index, self.shape, self.grid.input)
-        return Geometry(
-            (
-                CartesianField(
-                    shape=shape,
-                    input=sub2full.input,
-                    output=sub2full.input,
-                ),
-                self.transformation @ sub2full,
-            )
         )
 
 
@@ -182,7 +217,7 @@ def _index2transform(
     nb_indexed_dims = sum(1 for idx in index if idx not in (None, ...))
     nb_implicit_dims = len(shape) - nb_indexed_dims
     fill = (slice(None),) * nb_implicit_dims
-    index = index[:index_ellipsis] + fill + index[index_ellipsis + 1 :]
+    index = index[:index_ellipsis] + fill + index[(index_ellipsis + 1) :]
 
     # Compute number of output dimensions after indexing
     # (some may be dropped, some may be added)

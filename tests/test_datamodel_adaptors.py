@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from bagof.magic import replace
 
-from brainhops.datamodel._transformations.adaptors import _lift, adapt, bridge
+from brainhops.datamodel._transformations.adaptors import adapt, bridge, lift
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel.axes import (
     A,
@@ -1389,7 +1389,7 @@ def test_own_geometry_reslice_is_exact_and_never_inverts_a_field(
 
 
 # ----------------------------------------------------------------------
-#   _lift AND THE DISCRETE GUARD
+#   lift AND THE DISCRETE GUARD
 # ----------------------------------------------------------------------
 
 
@@ -1402,8 +1402,8 @@ def test_lift_refuses_a_cartesian_field() -> None:
         output=_spatial3("grid"),
     )
     full = _ras_time("full")
-    assert _lift(grid, full=full, side="input", extents=None) is None
-    assert _lift(grid, full=full, side="output", extents=None) is None
+    assert lift(grid, full=full, side="input", extents=None) is None
+    assert lift(grid, full=full, side="output", extents=None) is None
 
 
 def _discrete_ras_time(name: str) -> CoordinateSystem:
@@ -1423,7 +1423,7 @@ def test_lift_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
     )
     full = _discrete_ras_time("full")
     with pytest.raises(AdaptationError):
-        _lift(field, full=full, side="input", extents=None)
+        lift(field, full=full, side="input", extents=None)
 
 
 def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:

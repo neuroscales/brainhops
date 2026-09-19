@@ -104,7 +104,7 @@ select = ["ANN", "B", "E", "F", "I", "UP", "W"]
 ignore = [
     "ANN002",   # *args
     "ANN003",   # **kwargs
-    "ANN401",   # _tx.Any
+    "ANN401",   # Any
     "UP006",    # list[...] annotations need 3.9 at runtime
     "UP007",    # X | Y unions need 3.10
     "UP035",    # deprecated typing import (typing_extensions is intentional)
