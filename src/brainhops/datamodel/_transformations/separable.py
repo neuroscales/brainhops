@@ -4,9 +4,8 @@ A reslice applies a voxel-to-voxel transformation to image data by
 sampling the data at transformed coordinates. When the transformation
 couples every output axis to every input axis, the whole coordinates
 field must be built and the data sampled with an N-dimensional pull.
-Many transformations do not couple every axis. A time axis that is only
-rescaled, an axis that is flipped or permuted, and a spatial warp that
-leaves time alone each act on a group of axes independently of the rest.
+Many transformations do not couple every axis (for example: translations,
+scalings, permutations, or transformations that act on a subset of the axes).
 
 This module factors such a transformation into independent steps, one per
 group of axes that transform together, and applies each step on its own.
@@ -91,27 +90,29 @@ def _affine_dependency(
 def _subspace_dependency(
     element: SubspaceTransformation, ndim_in: int, ndim_out: int
 ) -> np.ndarray:
-    # The dependency of a transform that acts on a subset of the axes. The
-    # behaviour depends on whether the wrapped transform interpolates.
-    #
-    # A non-interpolating inner is read by recursing through the same
-    # machinery, so its coupling among the acted-on axes is the dependency of
-    # the inner transform itself. A subspace wrapping a diagonal linear, a
-    # nested non-interpolating subspace, or a shear on a sub-block then
-    # couples only what the inner transform actually mixes, rather than every
-    # acted-on axis to every other. `_restrict` reproduces such a group
-    # exactly through the affine sub-block embedding.
-    #
-    # An interpolating inner instead couples every acted-on output axis to
-    # every acted-on input axis. Its finer partition is not recovered here:
-    # `_restrict` would re-wrap the whole inner over the group's fewer axes,
-    # and the inner's own axis indices would then point at the wrong axes.
-    # The all-ones over-approximation keeps every acted-on axis in one group,
-    # which reslices correctly and matches what a full-axis spatial warp
-    # emits.
-    #
-    # In either case the remaining axes pass through in order, paired the same
-    # way as the subspace-to-affine reduction pairs them.
+    """
+    The dependency of a transform that acts on a subset of the axes.
+    The behaviour depends on whether the wrapped transform interpolates.
+
+    A non-interpolating inner is read by recursing through the same
+    machinery, so its coupling among the acted-on axes is the dependency
+    of the inner transform itself. A subspace wrapping a diagonal linear,
+    a nested non-interpolating subspace, or a shear on a sub-block then
+    couples only what the inner transform actually mixes, rather than
+    every acted-on axis to every other. `_restrict` reproduces such a
+    group exactly through the affine sub-block embedding.
+
+    An interpolating inner instead couples every acted-on output axis to
+    every acted-on input axis. Its finer partition is not recovered here:
+    `_restrict` would re-wrap the whole inner over the group's fewer axes,
+    and the inner's own axis indices would then point at the wrong axes.
+    The all-ones over-approximation keeps every acted-on axis in one group,
+    which reslices correctly and matches what a full-axis spatial warp
+    emits.
+
+    In either case the remaining axes pass through in order, paired the same
+    way as the subspace-to-affine reduction pairs them.
+    """
     inner = element.transformation
     interpolates = _interpolates(inner)
     in_axes = _axis_list(element.input_axes)
