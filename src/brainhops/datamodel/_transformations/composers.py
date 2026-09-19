@@ -486,7 +486,19 @@ def _(
             To.transformation or Identity(),
         ]
     ).compute()
-    if isinstance(inner, Identity):
+    # The inner transforms cancel to the identity only tells half the story:
+    # the composition still reindexes the axes unless the axes the first
+    # reads are the axes the second writes. It collapses to a bare identity
+    # only when the inner is the identity AND those axes match. Otherwise it
+    # stays a subspace transform: an identity inner over a differing pair of
+    # axis vectors is a pure axis reindex, which embeds to the affine that
+    # maps each input axis to its output axis, and which `is_identity`
+    # (unlike a `transformation=None` subspace) correctly reports as
+    # non-identity.
+    same_axes = (Ti.input_axes is None) == (To.output_axes is None) and (
+        Ti.input_axes is None or list(Ti.input_axes) == list(To.output_axes)
+    )
+    if isinstance(inner, Identity) and same_axes:
         return Identity(input=Ti.input, output=To.output)
     return SubspaceTransformation(
         transformation=inner,

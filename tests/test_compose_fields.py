@@ -41,6 +41,7 @@ from brainhops.datamodel.transformations import (
     Identity,
     Sequence,
     SubspaceTransformation,
+    is_identity,
 )
 
 # An anisotropic affine with shear and a shift, so a dropped setting or
@@ -390,6 +391,63 @@ def test_full_subspace_cancellation_computes_to_the_identity() -> None:
     assert isinstance(result, Identity)
     assert result.input == _full4("s")
     assert result.output == _full4("s")
+
+
+def _subspace_reindex(input_axes, output_axes) -> SubspaceTransformation:  # noqa: ANN001
+    # A subspace transform whose inner is the identity but whose axis vectors
+    # move components from `input_axes` positions to `output_axes` positions.
+    return SubspaceTransformation(
+        transformation=None,
+        input_axes=np.asarray(input_axes, dtype=int),
+        output_axes=np.asarray(output_axes, dtype=int),
+        input=_full4("in"),
+        output=_full4("out"),
+    )
+
+
+def test_subspace_compose_identity_inner_keeps_axis_reindex() -> None:
+    # C3. Two subspace transforms whose inners cancel to the identity but
+    # whose axis vectors describe a genuine permutation must NOT collapse to
+    # a bare Identity: the composition is a pure axis reindex and has to be
+    # preserved. Ti sends input axes [0, 1, 2] to [1, 2, 0]; To reads those
+    # same [1, 2, 0] (so the pair composes) and writes them back to [1, 2, 0].
+    # The net map is input [0, 1, 2] -> output [1, 2, 0], a real reindex.
+    Ti = _subspace_reindex([0, 1, 2], [1, 2, 0])
+    To = _subspace_reindex([1, 2, 0], [1, 2, 0])
+
+    composed = compose(To, Ti)  # same path _merge_adjacent_subspaces uses
+
+    # Not a bare Identity -- the reindex survives.
+    assert not isinstance(composed, Identity)
+    assert isinstance(composed, SubspaceTransformation)
+    assert not is_identity(composed, compute=True)
+    np.testing.assert_array_equal(composed.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(composed.output_axes, [1, 2, 0])
+
+    # The embedded affine maps input axis i -> output axis o for each
+    # (o, i) in zip(output_axes, input_axes) == (1,0), (2,1), (0,2), with the
+    # unnamed time axis (3) passing through. So y = [x2, x0, x1, x3].
+    matrix = np.asarray(composed.to(Affine).matrix)
+    expected = np.zeros((4, 5))
+    expected[1, 0] = 1.0
+    expected[2, 1] = 1.0
+    expected[0, 2] = 1.0
+    expected[3, 3] = 1.0
+    np.testing.assert_array_equal(matrix, expected)
+
+
+def test_subspace_compose_identity_inner_matching_axes_is_identity() -> None:
+    # C3. When the axis vectors also match (input [0, 1, 2] -> output
+    # [0, 1, 2]), the same identity-inner composition really is the identity
+    # and collapses to a bare Identity, carrying the composed endpoints.
+    Ti = _subspace_reindex([0, 1, 2], [0, 1, 2])
+    To = _subspace_reindex([0, 1, 2], [0, 1, 2])
+
+    composed = compose(To, Ti)
+
+    assert isinstance(composed, Identity)
+    assert composed.input == _full4("in")
+    assert composed.output == _full4("out")
 
 
 def test_subspace_to_affine_on_a_field_inner_raises() -> None:
