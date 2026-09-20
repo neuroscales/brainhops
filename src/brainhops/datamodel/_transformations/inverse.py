@@ -27,11 +27,8 @@ from .concrete import (
     Scaling,
     Translation,
 )
+from .modes import ModeLike, _ensure_proper_modes, _mode_admits
 from .registries import INVERSE_CACHE, INVERSE_WRAPPERS, register_inverse
-
-# typing
-if tx.TYPE_CHECKING:
-    from .sequence import ModeLike
 
 
 class Inverse(Transformation):
@@ -86,7 +83,7 @@ class Inverse(Transformation):
 
     def compute(
         self,
-        mode: "tx.Optional[ModeLike]" = None,
+        mode: tx.Optional[ModeLike] = None,
         *,
         simplify: bool = False,
     ) -> Transformation:
@@ -102,8 +99,6 @@ class Inverse(Transformation):
         # the expensive field inversion. This matches how the sequence
         # simplifier gates the merge of adjacent subspace transforms.
         if mode is not None and self.forward is not None:
-            from .sequence import _ensure_proper_modes, _mode_admits
-
             if not _mode_admits(self.forward, _ensure_proper_modes(mode)):
                 return self
         return self._materialize().compute(mode, simplify=simplify)

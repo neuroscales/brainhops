@@ -11,15 +11,15 @@ from brainhops._core.typing import npvector
 
 # datamodel
 from brainhops.datamodel import hierarchy
+from brainhops.datamodel.axes import Axis
 
 # internals
 from .base import Transformation
+from .modes import ModeLike
 
 # typing
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
-
-    from .sequence import ModeLike
 
 
 class MetaTransformation(Transformation):
@@ -66,12 +66,12 @@ class SubspaceTransformation(MetaTransformation):
     @smartproperty
     def input(self) -> tx.Optional["CoordinateSystem"]:
         system = getattr(self.transformation, "input", None)
-        return _subsystem(system, self.input_axes)
+        return _subsystem(system, self.input_axes, full=self._input)
 
     @smartproperty
     def output(self) -> tx.Optional["CoordinateSystem"]:
         system = getattr(self.transformation, "output", None)
-        return _subsystem(system, self.output_axes)
+        return _subsystem(system, self.output_axes, full=self._output)
 
     # --- methods ------------------------------------------------------
 
@@ -122,7 +122,7 @@ class Projection(MetaTransformation):
 
     def compute(
         self,
-        mode: "tx.Optional[ModeLike]" = None,
+        mode: tx.Optional[ModeLike] = None,
         *,
         simplify: bool = False,
     ) -> tx.Self:
@@ -179,7 +179,7 @@ class Bijection(Transformation):
 
     def compute(
         self,
-        mode: "tx.Optional[ModeLike]" = None,
+        mode: tx.Optional[ModeLike] = None,
         *,
         simplify: bool = False,
     ) -> tx.Self:
@@ -196,16 +196,36 @@ class Bijection(Transformation):
 def _subsystem(
     system: tx.Optional["CoordinateSystem"] = None,
     index: tx.Optional[tx.Sequence[Integral]] = None,
+    full: tx.Optional["CoordinateSystem"] = None,
 ) -> tx.Optional["CoordinateSystem"]:
-    """Build a subsystem from a coordinate system."""
+    """Build the full-space system a subspace transform presents.
+
+    `system` is the inner transform's own (subspace) coordinate system,
+    which names one axis per acted-on dimension. `index` gives the
+    positions those axes occupy in the full space.
+
+    When a declared endpoint (`full`) is available, it is returned as is.
+    Otherwise a full-space system is reconstructed: the inner system's
+    axis `j` is placed at position `index[j]`, and any position no inner
+    axis lands on is filled with a placeholder [`Axis`][]. This spans
+    `max(index) + 1` axes, so an endpoint-less subspace whose axes exceed
+    the inner system's length no longer indexes past its end.
+    """
+    if full is not None:
+        return full
     if index is None:
         return system
     axes = getattr(system, "axes", None)
     if axes is None:
         return system
-    subaxes = [axes[i] for i in index]
+    index = list(index)
+    n = max(index) + 1 if index else 0
+    new_axes = [Axis() for _ in range(n)]
+    for j, i in enumerate(index):
+        if j < len(axes):
+            new_axes[i] = axes[j]
     return replace(
         system,
-        axes=subaxes,
+        axes=new_axes,
         name=f"subspace({system.name})" if system.name else None,
     )

@@ -153,12 +153,12 @@ class Geometry(_GeometryFields, ImmutableSequence):
         The grid is preserved, so the geometry keeps its grid-and-
         transformation pair and the domain it defines is never lost.
         """
+        # Every transformation exposes the same
+        # `compute(mode, *, simplify=...)`, so the voxel-to-world part is
+        # computed uniformly whether it is a sequence or a single leaf. The
+        # grid is kept as is, so the sampling domain is never lost.
         flat = self._flattened()
-        transformation = flat.transformation
-        if isinstance(transformation, Sequence):
-            transformation = transformation.compute(mode, simplify=simplify)
-        elif simplify:
-            transformation = transformation.compute(simplify=True)
+        transformation = flat.transformation.compute(mode, simplify=simplify)
         return Geometry(
             (flat.grid, transformation),
             input=self.input,

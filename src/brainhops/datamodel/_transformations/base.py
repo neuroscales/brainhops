@@ -11,11 +11,12 @@ from brainhops.datamodel.systems import CoordinateSystem
 from . import registries
 from .convert import convert
 from .errors import ConversionError, LossyConversionError
+from .modes import ModeLike
 
 # typing
 if tx.TYPE_CHECKING:
     from .concrete import CoordinatesField
-    from .sequence import ModeLike, Sequence
+    from .sequence import Sequence
 
 
 @hierarchy.Transformation.register
@@ -91,7 +92,7 @@ class Transformation(DataModelBase, reverse=True):
 
     def compute(
         self,
-        mode: "tx.Optional[ModeLike]" = None,
+        mode: tx.Optional[ModeLike] = None,
         *,
         simplify: bool = False,
     ) -> tx.Self:
@@ -109,54 +110,15 @@ class Transformation(DataModelBase, reverse=True):
             Run the numeric kind-checks that downcast the transformation
             to the cheapest compatible type.
         """
-        # `Sequence`, `Inverse`, `Bijection`, `Projection` and the
-        # multiscale containers overload `compute()`, so here we can assume
-        # that `self` is none of those. Every other transformation -- a
-        # concrete one that holds a parameter, or a meta one that wraps
-        # another transformation -- simplifies to the simplest compatible
-        # kind, whose compatibility can be detected with (almost) no
-        # overhead. For example, if the parameter of a transformation is
-        # set to `None`, the transformation is treated as an identity
-        # transformation.
-        #
-        # A leaf that the requested mode does not admit is left untouched.
-        # This mirrors how the sequence simplifier only composes
-        # transformations that match the mode. The mode helpers live in
-        # `sequence`, which imports this module, so they are imported
-        # lazily to avoid an import cycle.
-        if mode is not None:
-            from .sequence import _ensure_proper_modes, _mode_admits
-
-            if not _mode_admits(self, _ensure_proper_modes(mode)):
-                return self
-        # The checks live in `concrete`, which imports this module, so they
-        # are imported lazily to avoid an import cycle.
-        from .concrete import (
-            Identity,
-            Linear,
-            Permutation,
-            Rotation,
-            Scaling,
-            Translation,
-            is_identity,
-            is_linear,
-            is_permutation,
-            is_rotation,
-            is_scale,
-            is_translation,
-        )
-
-        CHECKS = [
-            (is_identity, Identity),
-            (is_translation, Translation),
-            (is_scale, Scaling),
-            (is_permutation, Permutation),
-            (is_rotation, Rotation),
-            (is_linear, Linear),
-        ]
-        for check, cls in CHECKS:
-            if check(self, compute=simplify):
-                return self.to(cls)
+        # A bare `Transformation` holds no parameter to compose or
+        # downcast, so it computes to itself. Each family overrides this
+        # with the behaviour that fits its type: `ConcreteTransformation`
+        # runs the numeric kind-checks, and `Sequence`, `Inverse`,
+        # `Bijection`, `Projection` and the multiscale containers compose
+        # or materialize their contents. Keeping those per-type
+        # implementations where they belong is also what lets each module
+        # import the checks (or the mode helpers) it needs at the top
+        # level, rather than inside the method body.
         return self
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
@@ -275,6 +237,39 @@ class Transformation(DataModelBase, reverse=True):
         Compose this transform with another transform, without computing
         the resulting transform, but instead returning a sequence of the
         two transformations that can be computed later when needed.
+        """
+        ...
+
+    @tx.overload
+    def __call__(
+        self, x: "CoordinatesField", compute: ModeLike
+    ) -> "CoordinatesField":
+        """
+        Transform coordinates, computing the result under the given mode.
+
+        Besides `True` and `False`, `compute` accepts a mode -- a
+        transformation-type name, a type, or a list of either -- which is
+        forwarded to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] as its `mode` and selects which kinds of
+        transformations are composed.
+        """
+        ...
+
+    @tx.overload
+    def __call__(
+        self, x: "Transformation", compute: ModeLike
+    ) -> "Transformation":
+        """
+        Compose this transform with another transform, computing the
+        result under the given mode.
+
+        `compute` mirrors the `mode` argument of
+        [`compute`][brainhops.datamodel.transformations.Transformation.\
+compute]:
+
+        * `compute=True` computes with `mode=None` (every kind),
+        * `compute=<mode>` computes with that mode, and
+        * `compute=False` returns the uncomputed sequence.
         """
         ...
 
