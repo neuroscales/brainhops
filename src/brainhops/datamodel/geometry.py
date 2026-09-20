@@ -243,9 +243,13 @@ def _index2transform(
             else:
                 raise ValueError(f"Invalid index: {idx}")
 
-    # Create an affine matrix
+    # Create an affine matrix.
+    # Seed it with zeros and set every entry explicitly in the loop below.
+    # An identity seed would leave a spurious diagonal 1 in the row of a
+    # dropped (integer) axis and in the column of an inserted (`None`) axis,
+    # corrupting the coordinate mapping.
     backend = get_array_backend()
-    affine = backend.eye(nb_input_dims + 1, nb_output_dims + 1)[:-1]
+    affine = backend.zeros((nb_input_dims, nb_output_dims + 1))
 
     # Iterate over each dimension and apply the index
     input_dim_walker = 0
@@ -275,12 +279,15 @@ def _index2transform(
             else:
                 stop = (shp + idx.stop) if idx.stop < 0 else idx.stop
 
-            # Compute output shape
+            # Compute output shape. The ceiling bias depends on the sign of
+            # the step: `step - 1` for a forward slice, `step + 1` for a
+            # reversed one, matching `len(range(start, stop, step))`.
             if step > 0:
                 stop = min(stop, shp)
+                oshp = max(0, (stop - start + (step - 1)) // step)
             else:
                 stop = max(stop, -1)
-            oshp = max(0, (stop - start + (step - 1)) // step)
+                oshp = max(0, (stop - start + (step + 1)) // step)
             output_shape.append(oshp)
 
             # Fill affine matrix
