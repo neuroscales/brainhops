@@ -15,9 +15,17 @@ from brainhops.datamodel.axes import Axis
 
 # internals
 from .base import Transformation
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    _lower_simplify,
+    _resolve_simplify,
+)
 
 # typing
+TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
+
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
 
@@ -35,27 +43,15 @@ class MetaTransformation(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        # A meta transformation has no numeric downcast of its own, so --
-        # once mode-gated -- it is returned unchanged. Both branches return
-        # `self`: the mode-gate is kept to mirror the leaf contract (a
-        # transform the mode does not admit is left untouched), while an
-        # admitted meta transform still has nothing to simplify on its own.
-        # Composing or re-wrapping the inner transform is deferred to a
-        # later change. This is the behaviour it used to inherit from the
-        # base default, relocated here now that the base `compute()` raises
-        # so a family that forgets to implement it is caught. `concrete` is
-        # deliberately not imported here, to avoid the `meta` <-> `concrete`
-        # import cycle.
-        if mode is not None and not _mode_admits(
-            self, _ensure_proper_modes(mode)
-        ):
-            return self
+        # A bare meta transformation has nothing to simplify on its own.
+        # Subclasses (`SubspaceTransformation`, `Projection`, `Bijection`)
+        # override this.
         return self
 
 
-class SubspaceTransformation(MetaTransformation):
+class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     """
     A transformation that is applied to a subset of the input and output axes.
 
@@ -66,6 +62,11 @@ class SubspaceTransformation(MetaTransformation):
     over a few axes, such as a spatial transformation over `(x, y, z)`,
     into a larger space, such as `(x, y, z, t)`, where it acts on the
     spatial axes and leaves time untouched.
+
+    Generic in the wrapped transformation type:
+    `SubspaceTransformation[TRANSFORMATION]` lifts a `TRANSFORMATION`. Its
+    membership is decided by a checker registered in `checkers` that recurses
+    into the wrapped transform.
     """
 
     parameter_names: tx.ClassVar[str] = "transformation"
@@ -73,7 +74,7 @@ class SubspaceTransformation(MetaTransformation):
     # --- attributes ---------------------------------------------------
 
     transformation: tx.Annotated[
-        tx.Optional[Transformation], tx.Doc("The transformation to apply.")
+        tx.Optional[TRANSFORMATION], tx.Doc("The transformation to apply.")
     ] = None
 
     input_axes: tx.Annotated[
@@ -117,6 +118,46 @@ class SubspaceTransformation(MetaTransformation):
             output_axes=self.input_axes,
         )
 
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: SimplifyLike = "analytic",
+    ) -> tx.Self:
+        from .concrete import Identity
+
+        # `mode` is deliberately not consulted: a subspace only downcasts its
+        # inner (leaf-only, never materializes), so the downcast is gated by
+        # `simplify` alone, decoupled from the compose `mode` (see issue #92).
+        table = _lower_simplify(simplify)
+        policy = _resolve_simplify(self, table)
+        if policy is SimplifyPolicy.none:
+            # Untouched; the inner is not visited.
+            return self
+        same = (self.input_axes is None and self.output_axes is None) or (
+            self.input_axes is not None
+            and self.output_axes is not None
+            and list(self.input_axes) == list(self.output_axes)
+        )
+        inner = self.transformation
+        if inner is None:
+            # A subspace of nothing: the identity on the same axes, a pure
+            # reindex otherwise (kept as is).
+            if same:
+                return Identity(input=self.input, output=self.output)
+            return self
+        # A simplify pass may only downcast leaves -- never compose, never
+        # materialize -- and it does not carry the outer `mode` into the
+        # inner (the mode gate is the run loop's job). `_simplify_inner`
+        # enforces this (a lazy inverse stays lazy under analytic; an inner
+        # sequence is downcast element-wise, never composed).
+        inner2 = _simplify_inner(inner, table)
+        if inner2 is inner:
+            return self
+        if same and isinstance(inner2, hierarchy.IdentityTransformation):
+            return Identity(input=self.input, output=self.output)
+        return replace(self, transformation=inner2)
+
 
 class Projection(MetaTransformation):
     """
@@ -147,27 +188,38 @@ class Projection(MetaTransformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        # A projection is fully defined by its axis lists; there is nothing
-        # to compose or downcast, so it is returned unchanged.
+        from .concrete import Identity
+
+        # `mode` is not consulted: simplification is decoupled from the
+        # compose mode (see issue #92).
+        policy = _resolve_simplify(self, _lower_simplify(simplify))
+        dropped = 0 if self.dropped is None else len(self.dropped)
+        created = 0 if self.created is None else len(self.created)
+        if policy is not SimplifyPolicy.none and not dropped and not created:
+            return Identity(input=self.input, output=self.output)
         return self
 
 
 @hierarchy.BijectiveTransformation.register
-class Bijection(Transformation):
+class Bijection(Transformation, tx.Generic[TRANSFORMATION]):
     """
     A transformation whose inverse is explicitly defined.
+
+    Generic in the forward transformation type: `Bijection[TRANSFORMATION]`
+    wraps a `TRANSFORMATION`. Declared bijective; a checker registered in
+    `checkers` refines its membership from the forward map.
     """
 
     # --- attributes ---------------------------------------------------
 
     forward: tx.Annotated[
-        tx.Optional[Transformation], tx.Doc("The forward transformation.")
+        tx.Optional[TRANSFORMATION], tx.Doc("The forward transformation.")
     ] = None
 
     backward: tx.Annotated[
-        tx.Optional[Transformation], tx.Doc("The backward transformation.")
+        tx.Optional[TRANSFORMATION], tx.Doc("The backward transformation.")
     ] = None
 
     @smartproperty
@@ -204,16 +256,44 @@ class Bijection(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        forward, backward = self.forward, self.backward
-        if forward is not None:
-            forward = forward.compute(mode, simplify=simplify)
-        if backward is not None:
-            backward = backward.compute(mode, simplify=simplify)
-        if forward is None and backward is None:
+        # `mode` is not consulted: the forward/backward downcast is
+        # leaf-only (never materializes) and gated by `simplify` alone,
+        # decoupled from the compose mode (see issue #92).
+        table = _lower_simplify(simplify)
+        if _resolve_simplify(self, table) is SimplifyPolicy.none:
+            return self
+        # Downcast the forward/backward leaves only -- never compose or
+        # materialize (a lazy inverse forward/backward stays lazy under
+        # analytic). `_simplify_inner` enforces this.
+        forward = _simplify_inner(self.forward, table)
+        backward = _simplify_inner(self.backward, table)
+        if forward is self.forward and backward is self.backward:
+            # Unchanged: keep object identity so an adjacent `Inverse` of
+            # this bijection still cancels.
             return self
         return replace(self, forward=forward, backward=backward)
+
+
+def _simplify_inner(
+    inner: tx.Optional[Transformation], table: tx.Any
+) -> tx.Optional[Transformation]:
+    """Apply a simplify table to a wrapper's inner, downcasting leaves only.
+
+    A simplify pass may never compose or materialize. This routes the inner
+    through the sequence leaf-pass, which leaves a lazy `Inverse` lazy under
+    an analytic policy (materializing only under numeric, and only when it
+    can), downcasts each element of an inner `Sequence` without composing it,
+    and downcasts any other inner in place. The outer `mode` is deliberately
+    not forwarded -- gating which kinds compose is the run loop's job, not a
+    leaf downcast's.
+    """
+    if inner is None:
+        return inner
+    from .sequence import _simplify_result
+
+    return _simplify_result(inner, table)
 
 
 def _subsystem(

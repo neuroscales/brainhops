@@ -33,7 +33,12 @@ __all__ = [
     "Sequence",
     "MutableSequence",
     "ImmutableSequence",
+    # modes / simplify
     "ModeLike",
+    "SimplifyLike",
+    "SimplifyTable",
+    "SimplifyPolicy",
+    "is_kind",
     # checks
     "is_identity",
     "is_translation",
@@ -50,6 +55,7 @@ __all__ = [
 
 # Registration into registries
 from . import adaptors as _adaptors  # noqa: F401, F403
+from . import checkers as _checkers  # noqa: F401, F403
 from . import composers as _composers  # noqa: F401, F403
 from . import converters as _converters  # noqa: F401, F403
 
@@ -91,5 +97,12 @@ from .inverse import (
     InverseTranslation,
 )
 from .meta import Bijection, Projection, SubspaceTransformation
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    SimplifyTable,
+    is_kind,
+)
 from .multiscale import Multiscale, MultiscaleField
-from .sequence import ImmutableSequence, ModeLike, MutableSequence, Sequence
+from .sequence import ImmutableSequence, MutableSequence, Sequence

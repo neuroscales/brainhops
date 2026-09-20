@@ -21,7 +21,7 @@ import pytest
 from brainhops.backends import backend, get_array_backend
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel._transformations.sequence import (
-    _ensure_proper_modes,
+    _lower_modes,
 )
 from brainhops.datamodel.axes import (
     A,
@@ -303,7 +303,7 @@ def test_subspace_compose_subspace_mismatch_raises() -> None:
         compose(second, first)
 
 
-_DEFAULT_MODE = _ensure_proper_modes(None)
+_DEFAULT_MODE = _lower_modes(None)
 
 
 def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
