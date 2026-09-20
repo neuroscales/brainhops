@@ -15,7 +15,7 @@ from .errors import ConversionError, LossyConversionError
 # typing
 if tx.TYPE_CHECKING:
     from .concrete import CoordinatesField
-    from .sequence import Sequence
+    from .sequence import ModeLike, Sequence
 
 
 @hierarchy.Transformation.register
@@ -89,9 +89,25 @@ class Transformation(DataModelBase, reverse=True):
 
     # --- methods ------------------------------------------------------
 
-    def compute(self, simplify: bool = False) -> tx.Self:
+    def compute(
+        self,
+        mode: "tx.Optional[ModeLike]" = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
+
+        Parameters
+        ----------
+        mode : [list of] str or type, optional
+            Which kinds of transformations to materialize. `None` (the
+            default) admits every kind. On a leaf transformation, if a
+            `mode` is given and this leaf is not admitted by it, the leaf
+            is returned unchanged.
+        simplify : bool, default=False
+            Run the numeric kind-checks that downcast the transformation
+            to the cheapest compatible type.
         """
         # `Sequence`, `Inverse`, `Bijection`, `Projection` and the
         # multiscale containers overload `compute()`, so here we can assume
@@ -103,6 +119,16 @@ class Transformation(DataModelBase, reverse=True):
         # set to `None`, the transformation is treated as an identity
         # transformation.
         #
+        # A leaf that the requested mode does not admit is left untouched.
+        # This mirrors how the sequence simplifier only composes
+        # transformations that match the mode. The mode helpers live in
+        # `sequence`, which imports this module, so they are imported
+        # lazily to avoid an import cycle.
+        if mode is not None:
+            from .sequence import _ensure_proper_modes, _mode_admits
+
+            if not _mode_admits(self, _ensure_proper_modes(mode)):
+                return self
         # The checks live in `concrete`, which imports this module, so they
         # are imported lazily to avoid an import cycle.
         from .concrete import (
@@ -253,6 +279,9 @@ class Transformation(DataModelBase, reverse=True):
         ...
 
     def __call__(self, x, compute: bool = False) -> "Transformation":
+        # `compute=True` computes with `mode=None` (every kind);
+        # `compute=<mode>` computes with that mode; `compute=False` returns
+        # the uncomputed sequence.
         if isinstance(x, Transformation):
             x = registries.SEQUENCE([x, self])
         else:
