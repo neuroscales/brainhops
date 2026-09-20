@@ -68,9 +68,20 @@ CONVERTERS: CONVERTER_REGISTRY = {}
 CONVERTERS_FASTMAP: CONVERTER_REGISTRY = {}
 
 COMPOSER = tx.Callable[["Transformation", "Transformation"], "Transformation"]
-COMPOSER_REGISTRY = tx.Dict[XFORM_PAIR, COMPOSER]
+# Each registered composer is stored with its dispatch priority, so a
+# higher-priority tier (such as the analytic cancel composers) is tried
+# ahead of the numeric composers regardless of hierarchy distance.
+COMPOSER_REGISTRY = tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, int]]
 COMPOSERS: COMPOSER_REGISTRY = {}
-COMPOSERS_FASTMAP: COMPOSER_REGISTRY = {}
+# The fastmap caches, per concrete pair, the ordered tuple of candidate
+# composers `compose` should try, already sorted by dispatch order.
+COMPOSERS_FASTMAP: tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, ...]] = {}
+
+# Dispatch priority for a composer that decides purely from the types and
+# object identity of its operands, without reading any parameter (today,
+# the inverse-cancel pair `X @ X^-1 -> Identity`). It is tried ahead of the
+# numeric composers, which register at the default priority 0.
+ANALYTIC = 1
 
 
 def distance(t1: type, t2: type, oriented: bool = True) -> int:

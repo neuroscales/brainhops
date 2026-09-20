@@ -1,7 +1,48 @@
+"""Dispatch the composition of two transformations to a composer.
+
+`compose(x1, x2)` returns the transform that maps ``x -> x1(x2(x))``: `x2`
+is applied first, then `x1`. It picks the composer to run by walking the
+registry of composers and ordering the ones that apply.
+
+Dispatch order
+--------------
+For a concrete pair of operand types, every registered composer whose
+declared types are ancestors of that pair (with a finite summed hierarchy
+`distance`) is a candidate. The candidates are tried in order of:
+
+1. **priority** -- higher first;
+2. **hierarchy distance** -- nearer declared types first;
+3. **registration order** -- the first-registered composer breaks a tie.
+
+The first candidate whose result ``is not NotImplemented`` wins. A composer
+returns ``NotImplemented`` to decline and hand off to the next candidate; it
+raises [`CompositionError`][] to stop dispatch entirely -- that means "the
+types are right but these two cannot be combined" (for example, two subspace
+transforms whose axes do not line up). If no candidate applies, or every
+candidate declines, `compose` raises [`CompositionError`][].
+
+Priority tiers
+--------------
+* `ANALYTIC` (see [`registries`][]) is reserved for a composer that decides
+  purely from the operand types and object identity, reading no parameter.
+  Today that is the inverse-cancel pair, ``X @ X^-1 -> Identity``.
+* priority ``0`` is the default, used by the numeric composers that read and
+  combine parameters (matrices, fields, ...).
+
+Ordering the analytic tier ahead of the numeric one enforces the invariant
+that a **cost-free rewrite is tried before any parameter-reading one**: a
+transform placed next to its own lazy inverse cancels to the identity before
+the numeric composer that would materialize the inverse ever runs, so a lazy
+inverse is never materialized when it could have cancelled.
+
+`compose` itself knows nothing about modes. Gating which adjacent transforms
+are handed to `compose` is the sequence engine's job, not the composers'.
+"""
+
 # stdlib
-import inspect
 import itertools
 import types as _types
+from functools import partial
 
 # dependencies
 import typing_extensions as tx
@@ -10,7 +51,6 @@ import typing_extensions as tx
 from brainhops._core.typing import safe_get_origin
 
 # internals
-from . import registries
 from .errors import CompositionError
 from .registries import COMPOSERS, COMPOSERS_FASTMAP, distance
 
@@ -24,108 +64,74 @@ _UnionTypes = (tx.Union,)
 if hasattr(_types, "UnionType"):
     _UnionTypes += (_types.UnionType,)
 
-# Which composer functions accept a `mode` keyword. A composer opts into
-# mode-awareness simply by declaring a `mode` parameter; every other
-# composer stays a plain two-argument function and is called without one.
-# The map is filled lazily and cleared whenever a composer is
-# (re)registered, alongside the dispatch fastmap.
-_ACCEPTS_MODE: tx.Dict[tx.Callable, bool] = {}
 
+def composer(
+    func: tx.Optional[tx.Callable] = None,
+    *,
+    priority: int = 0,
+) -> tx.Callable:
+    """Register a function as a composer of two transformations.
 
-def composer(func: tx.Callable) -> tx.Callable:
+    Usable bare (``@composer``) or with a priority
+    (``@composer(priority=ANALYTIC)``). The composer's declared parameter
+    types key it in the registry, alongside its dispatch `priority`.
     """
-    Decorator to register a function as a composer of two transformations.
-    """
+    if func is None:
+        return partial(composer, priority=priority)
     types = tuple(tx.get_type_hints(func).values())[:2]
-    COMPOSERS[types] = func
+    COMPOSERS[types] = (func, priority)
     COMPOSERS_FASTMAP.clear()
-    _ACCEPTS_MODE.clear()
     return func
 
 
-def _accepts_mode(func: tx.Callable) -> bool:
-    # Whether a composer declares a `mode` parameter, cached per function.
-    cached = _ACCEPTS_MODE.get(func)
-    if cached is None:
-        try:
-            cached = "mode" in inspect.signature(func).parameters
-        except (TypeError, ValueError):
-            cached = False
-        _ACCEPTS_MODE[func] = cached
-    return cached
+def _expand(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
+    # Expand a `X | Y` union hint into its members; a plain type is a
+    # one-tuple of itself.
+    if safe_get_origin(hint) in _UnionTypes:
+        return tx.get_args(hint)
+    return (hint,)
 
 
-def _call(func: tx.Callable, x1, x2, mode):  # noqa: ANN001, ANN202
-    # Call a composer, passing `mode` only when it accepts one.
-    if _accepts_mode(func):
-        return func(x1, x2, mode=mode)
-    return func(x1, x2)
-
-
-def _cancels(first: "Transformation", second: "Transformation") -> bool:
-    # `first` is applied before `second`. The two cancel when `second` is
-    # the inverse of `first`, or `first` is the inverse of `second`. An
-    # inverse names the transform it undoes as its `forward`, so the test
-    # is a plain identity check that materializes neither field. This
-    # covers both a typed inverse and a generic `Inverse(forward=X)`.
-    inverse_cls = registries.INVERSE
-    if inverse_cls is None:
-        return False
-    if isinstance(second, inverse_cls) and second.forward is first:
-        return True
-    if isinstance(first, inverse_cls) and first.forward is second:
-        return True
-    return False
+def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
+    # Every registered composer whose declared types are ancestors of
+    # `(t1, t2)` with a finite summed hierarchy distance, stably ordered by
+    # `(-priority, distance)` with registration order breaking ties (so the
+    # order reproduces the historical first-registered-wins on a tie). The
+    # result is cached per concrete pair in `COMPOSERS_FASTMAP`.
+    cached = COMPOSERS_FASTMAP.get((t1, t2))
+    if cached is not None:
+        return cached
+    scored = []
+    for order, ((T1, T2), (func, priority)) in enumerate(COMPOSERS.items()):
+        best = float("inf")
+        for A, B in itertools.product(_expand(T1), _expand(T2)):
+            dist = distance(t1, A) + distance(t2, B)
+            if dist < best:
+                best = dist
+        if best < float("inf"):
+            scored.append((func, priority, best, order))
+    scored.sort(key=lambda s: (-s[1], s[2], s[3]))
+    funcs = tuple(s[0] for s in scored)
+    COMPOSERS_FASTMAP[(t1, t2)] = funcs
+    return funcs
 
 
 def compose(
     x1: "Transformation",
     x2: "Transformation",
-    *,
-    mode: tx.Optional[tx.Any] = None,
 ) -> "Transformation":
-    """
-    Dispatch the composition of two transformations to the appropriate
-    composer function.
+    """Compose two transformations.
 
     `x2` is applied first, then `x1`, so the result maps ``x -> x1(x2(x))``.
-    A `mode` (a list of ``(type, ndim)`` pairs, or any mode-like value) is
-    threaded to any composer that declares one, so a composer can decline a
-    composition the mode was told to leave alone.
+    The composer to run is chosen by dispatch order (see the module
+    docstring): the candidates are tried in turn and the first result that
+    ``is not NotImplemented`` is returned. A composer that raises
+    [`CompositionError`][] stops dispatch; if none applies or all decline,
+    `compose` raises [`CompositionError`][].
     """
-    # Identity-cancel rule, applied *before* type dispatch. When `x2` is
-    # applied first and `x1` undoes it (or vice versa), the composition is
-    # the identity and neither field is materialized. This must run before
-    # dispatch, because the distance-based dispatch would otherwise prefer a
-    # numeric composer such as ``(Affine, Affine)`` and invert numerically.
-    if _cancels(first=x2, second=x1):
-        # local import to avoid a load-time cycle: `concrete` is imported by
-        # the composer modules, which import this one.
-        from .concrete import Identity
-
-        return Identity(input=x2.input, output=x1.output)
-
     t1, t2 = type(x1), type(x2)
-    if (t1, t2) in COMPOSERS_FASTMAP:
-        func = COMPOSERS_FASTMAP[(t1, t2)]
-        return _call(func, x1, x2, mode)
-    best_distance, best_func = float("inf"), None
-    for (T1, T2), FUNC in COMPOSERS.items():
-        origin1 = safe_get_origin(T1)
-        if origin1 in _UnionTypes:
-            T1s = tx.get_args(T1)
-        else:
-            T1s = (T1,)
-        origin2 = safe_get_origin(T2)
-        if origin2 in _UnionTypes:
-            T2s = tx.get_args(T2)
-        else:
-            T2s = (T2,)
-        for T1, T2 in itertools.product(T1s, T2s):
-            dist = distance(t1, T1) + distance(t2, T2)
-            if dist < best_distance:
-                best_distance, best_func = dist, FUNC
-    if best_distance < float("inf"):
-        COMPOSERS_FASTMAP[(t1, t2)] = best_func
-        return _call(best_func, x1, x2, mode)
+    for func in _candidates(t1, t2):
+        result = func(x1, x2)
+        if result is not NotImplemented:
+            return result
     raise CompositionError(f"No composer found for types: {t1}, {t2}")

@@ -13,11 +13,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 # internals
 from . import registries
 from .base import Transformation
-
-# `_cancels` moved into `compose` (it is the identity-cancel test the
-# composer applies before type dispatch). It is re-exported here because it
-# used to live in this module and other code may import it from here.
-from .compose import _cancels, compose  # noqa: F401
+from .compose import compose
 from .concrete import (
     CartesianField,
     CoordinatesField,
@@ -26,7 +22,10 @@ from .concrete import (
     is_identity,
 )
 from .errors import CompositionError
-from .inverse import Inverse
+
+# `_cancels` is the O(1), identity-only cancel test. It lives in `inverse`,
+# next to the `Inverse` class it reads, and is used here by `_annihilates`.
+from .inverse import Inverse, _cancels
 from .meta import SubspaceTransformation
 
 # The mode types and helpers live in their own module so that `base`,
@@ -346,11 +345,30 @@ def _simplify_leaf(t: Transformation) -> Transformation:
     return t.compute(simplify=True)
 
 
+def _composes_under(t: Transformation, mode: _ModePair) -> bool:
+    # Whether the run loop should hand `t` to `compose` under this mode.
+    # A transform that plainly matches the mode composes. A non-interpolating
+    # subspace wrapper (one that merely lifts an affine, or the like, into a
+    # larger space) also composes when its inner transform is admitted by the
+    # mode: the ndim test is then re-run on the wrapper's own (full-space)
+    # endpoints. An interpolating subspace wraps a field and is never seen
+    # through here, so a restrictive mode leaves two field-wrappers separate
+    # rather than resampling one through the other.
+    if _matches_mode(t, mode):
+        return True
+    if isinstance(t, SubspaceTransformation) and not _interpolates(t):
+        cls, ndim = mode
+        inner = t.transformation
+        if inner is None or isinstance(inner, cls):
+            # rerun only the ndim test on the wrapper's endpoints
+            return _matches_mode(t, (type(t), ndim))
+    return False
+
+
 def _compute_sequence(
     seq: Sequence,
     mode: tx.List[_ModePair],
     memo: tx.Optional[tx.Set[_ModePair]] = None,
-    usermode: tx.Optional[tx.List[_ModePair]] = None,
 ) -> Transformation:
     # We optimize by recursively finding the subclasses of all the modes
     # specified. This allows us to combine similar transformations first
@@ -364,11 +382,6 @@ def _compute_sequence(
     # --- If we are called from the public method, `mode` is a `list`.
     # > Simplify to a fixpoint, then recurse per mode with a memo.
     if memo is None:
-        # `mode` is the caller's whole list of modes here, and it is the one
-        # threaded to `compose` throughout this simplification, so a
-        # composer can decline a composition the mode was told to leave
-        # alone.
-        usermode = mode
         # Each simplification pass can expose a new adjacent
         # transform/inverse pair. Dropping a strictly interior grid
         # can make a pair adjacent, and so can composing a run. So the
@@ -438,14 +451,12 @@ def _compute_sequence(
                     # the input of its first element to the output of its
                     # last. The element endpoints are used, falling back to
                     # the sequence's own where an element leaves one unset.
+                    # A `CoordinateSystem` is never falsy, so `or` selects the
+                    # element endpoint when set and the sequence's otherwise.
                     first, last = flat[0], flat[-1]
                     return Identity(
-                        input=first.input
-                        if first.input is not None
-                        else seq.input,
-                        output=last.output
-                        if last.output is not None
-                        else seq.output,
+                        input=first.input or seq.input,
+                        output=last.output or seq.output,
                     )
                 seq = replace(seq, transformations=stack)
 
@@ -457,9 +468,7 @@ def _compute_sequence(
                 seq = seq._flattened()
             submemo: tx.Set[_ModePair] = set()
             for submode in mode:
-                seq = _compute_sequence(
-                    seq, submode, memo=submemo, usermode=usermode
-                )
+                seq = _compute_sequence(seq, submode, memo=submemo)
                 if not isinstance(seq, Sequence):
                     return seq
             if len(_unnest(seq.transformations)) >= before:
@@ -483,7 +492,7 @@ def _compute_sequence(
     # --- Else compute all children of the mode
     children = _mode_children(mode)
     for child in children:
-        seq = _compute_sequence(seq, child, memo=memo, usermode=usermode)
+        seq = _compute_sequence(seq, child, memo=memo)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -497,18 +506,18 @@ def _compute_sequence(
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
 
-    # Compose any consecutive sequence that matches the mode
+    # Compose any consecutive sequence that composes under the mode
     while inputs:
         item = inputs.pop(0)
-        if _matches_mode(item, mode):
-            while inputs and _matches_mode(inputs[0], mode):
+        if _composes_under(item, mode):
+            while inputs and _composes_under(inputs[0], mode):
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
-                    # The caller's whole mode is threaded through, so a
-                    # mode-aware composer can decline a composition the mode
-                    # was told to leave alone.
-                    item = compose(next_input, item, mode=usermode)
+                    # `compose` is mode-free: the gate that decides which
+                    # adjacent transforms are handed to it is `_composes_under`
+                    # above, not the composer.
+                    item = compose(next_input, item)
                 except CompositionError:
                     # NOTE(YB):
                     # When does this happen? When we don't know how to adapt?

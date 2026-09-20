@@ -38,8 +38,10 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
     Identity,
+    InverseDisplacementField,
     Sequence,
     SubspaceTransformation,
+    Transformation,
     is_identity,
 )
 
@@ -311,7 +313,7 @@ def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
     # reached by `compose`/`Sequence.compute`.)
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([0, 1, 2])
-    folded = compose(second, first, mode=_DEFAULT_MODE)
+    folded = compose(second, first)
     assert isinstance(folded, SubspaceTransformation)
     np.testing.assert_array_equal(folded.input_axes, [0, 1, 2])
     np.testing.assert_array_equal(folded.output_axes, [0, 1, 2])
@@ -345,22 +347,6 @@ def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
     assert isinstance(computed, Identity)
     assert computed.input == _full4("s")
     assert computed.output == _full4("s")
-
-
-def test_merge_adjacent_subspaces_gated_by_mode() -> None:
-    # C4. A restrictive mode composes only the inner types it admits. Two
-    # subspace-wrapped fields are left separate under an affine-only mode,
-    # because composing them would resample one field through the other, and
-    # the affine mode does not compose fields: the subspace/subspace composer
-    # declines with a `CompositionError`. The default mode composes
-    # everything, so the same pair merges into one wrapper.
-    first = _field_wrapper(4)
-    second = _field_wrapper(5)
-    affine_mode = _ensure_proper_modes("Affine")
-    with pytest.raises(CompositionError):
-        compose(second, first, mode=affine_mode)
-    merged = compose(second, first, mode=_DEFAULT_MODE)
-    assert isinstance(merged, SubspaceTransformation)
 
 
 def test_field_subspaces_are_not_composed_under_affine_mode(
@@ -515,10 +501,11 @@ def test_interpolating_subspace_does_not_embed_into_an_affine() -> None:
 def test_compose_cancels_inverse_by_identity_without_materializing(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # `compose` applies the identity-cancel rule before type dispatch, so a
-    # transform composed with its own inverse collapses to the identity
-    # without the numeric inversion the (Affine, Affine) composer would
-    # otherwise run (the distance dispatch prefers it).
+    # Cancellation is an ANALYTIC-priority composer, so `compose` tries it
+    # ahead of any numeric composer (higher priority beats hierarchy
+    # distance). A transform composed with its own inverse collapses to the
+    # identity without the numeric inversion the (Affine, Affine) composer
+    # would otherwise run had it been reached by distance dispatch.
     real_inv = np.linalg.inv
     calls = {"n": 0}
 
@@ -557,3 +544,102 @@ def test_restrictive_mode_prevents_field_through_field_composition() -> None:
     assert len(unmerged.transformations) == 2
     merged = Sequence([first, second]).compute()
     assert isinstance(merged, SubspaceTransformation)
+
+
+# ----------------------------------------------------------------------
+#   DISPATCH ORDER AND THE ANALYTIC CANCEL TIER
+# ----------------------------------------------------------------------
+
+
+def test_compose_distinct_inverse_falls_through_to_affine() -> None:
+    # For distinct A, B the pair `A @ B^-1` does not cancel: the analytic
+    # cancel composer declines (its `_cancels` sees no identity link), so
+    # dispatch falls through past the cancel tier to the numeric affine
+    # composer, which returns a plain Affine.
+    A = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
+    B = Affine(matrix=np.array([[1.5, 0.0, -1.0], [0.0, 0.5, 4.0]]))
+    result = compose(A, B.inverse())
+    assert type(result) is Affine
+    assert not isinstance(result, Identity)
+
+
+def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # `compose(Identity(), df.inverse())` returns the lazy inverse itself,
+    # unmaterialized. The cancel composer declines (the inverse's forward is
+    # `df`, not the identity), and the identity composer returns the operand
+    # untouched -- without the `.compute()` that would materialize the field.
+    import brainhops._ext.invfield as invfield
+
+    def _boom(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        raise AssertionError("the field was inverted numerically")
+
+    monkeypatch.setattr(invfield, "inverse", _boom)
+    df = DisplacementField(field=np.zeros((5, 6, 2)))
+    lazy = df.inverse()
+    result = compose(Identity(), lazy)
+    assert result is lazy
+    assert isinstance(result, InverseDisplacementField)
+
+
+def test_dispatch_priority_tier_and_terminal_composition_error(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # The dispatch order (see the `compose` module docstring): a composer in
+    # the ANALYTIC priority tier is tried ahead of a priority-0 family
+    # composer, and a `CompositionError` raised by a composer is terminal --
+    # dispatch stops, so later candidates are never reached.
+    from brainhops.datamodel._transformations import compose as compose_mod
+    from brainhops.datamodel._transformations.registries import ANALYTIC
+
+    a = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
+    b = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
+    calls: list = []
+
+    # An analytic-priority composer that declines, plus a broader family
+    # composer at the default priority. The analytic one must be tried first
+    # and, on declining with NotImplemented, hand off to the family.
+    def declining_analytic(x1, x2):  # noqa: ANN001, ANN202
+        calls.append("analytic")
+        return NotImplemented
+
+    def family(x1, x2):  # noqa: ANN001, ANN202
+        calls.append("family")
+        return Identity()
+
+    monkeypatch.setattr(
+        compose_mod,
+        "COMPOSERS",
+        {
+            (Affine, Affine): (declining_analytic, ANALYTIC),
+            (Transformation, Transformation): (family, 0),
+        },
+    )
+    monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
+
+    result = compose(a, b)
+    assert isinstance(result, Identity)
+    assert calls == ["analytic", "family"]
+
+    # A composer that raises `CompositionError` stops dispatch: the family
+    # composer, a later (lower-priority) candidate, is never reached.
+    calls.clear()
+
+    def raising_analytic(x1, x2):  # noqa: ANN001, ANN202
+        calls.append("analytic")
+        raise CompositionError("right types, cannot combine")
+
+    monkeypatch.setattr(
+        compose_mod,
+        "COMPOSERS",
+        {
+            (Affine, Affine): (raising_analytic, ANALYTIC),
+            (Transformation, Transformation): (family, 0),
+        },
+    )
+    monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
+
+    with pytest.raises(CompositionError):
+        compose(a, b)
+    assert calls == ["analytic"]
