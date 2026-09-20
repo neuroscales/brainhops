@@ -22,7 +22,6 @@ from brainhops.backends import backend, get_array_backend
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel._transformations.sequence import (
     _ensure_proper_modes,
-    _merge_adjacent_subspaces,
 )
 from brainhops.datamodel.axes import (
     A,
@@ -306,14 +305,16 @@ _DEFAULT_MODE = _ensure_proper_modes(None)
 
 
 def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
-    # C4. The pre-pass folds two adjacent subspace transforms over the same
-    # axes into one.
+    # C4. Composing two adjacent subspace transforms over the same axes
+    # folds them into one. (This used to be a dedicated pre-pass,
+    # `_merge_adjacent_subspaces`; it is now the subspace/subspace composer,
+    # reached by `compose`/`Sequence.compute`.)
     first = _subspace_affine([0, 1, 2])
     second = _subspace_affine([0, 1, 2])
-    seq = Sequence([first, second])
-    merged = _merge_adjacent_subspaces(seq, _DEFAULT_MODE)
-    assert len(merged.transformations) == 1
-    assert isinstance(merged.transformations[0], SubspaceTransformation)
+    folded = compose(second, first, mode=_DEFAULT_MODE)
+    assert isinstance(folded, SubspaceTransformation)
+    np.testing.assert_array_equal(folded.input_axes, [0, 1, 2])
+    np.testing.assert_array_equal(folded.output_axes, [0, 1, 2])
 
 
 def _field_wrapper(seed: int) -> SubspaceTransformation:
@@ -334,34 +335,32 @@ def _field_wrapper(seed: int) -> SubspaceTransformation:
 
 def test_merge_adjacent_subspaces_drops_an_inverse_pair() -> None:
     # C4. A subspace transform next to its own inverse cancels to the
-    # identity, so the pair leaves the identity behind rather than an empty
-    # sequence.
+    # identity, so computing the sequence leaves the identity behind rather
+    # than an empty sequence. The single stack sweep in `_compute_sequence`
+    # annihilates the pair symbolically, before any field is materialized.
     wrapper = _field_wrapper(4)
-    seq = Sequence([wrapper.inverse(), wrapper])
-    merged = _merge_adjacent_subspaces(seq, _DEFAULT_MODE)
-    assert isinstance(merged, Identity)
-    assert merged.input == _full4("s")
-    assert merged.output == _full4("s")
+    computed = Sequence([wrapper.inverse(), wrapper]).compute(
+        mode=_DEFAULT_MODE
+    )
+    assert isinstance(computed, Identity)
+    assert computed.input == _full4("s")
+    assert computed.output == _full4("s")
 
 
 def test_merge_adjacent_subspaces_gated_by_mode() -> None:
     # C4. A restrictive mode composes only the inner types it admits. Two
     # subspace-wrapped fields are left separate under an affine-only mode,
     # because composing them would resample one field through the other, and
-    # the affine mode does not compose fields. The default mode composes
+    # the affine mode does not compose fields: the subspace/subspace composer
+    # declines with a `CompositionError`. The default mode composes
     # everything, so the same pair merges into one wrapper.
     first = _field_wrapper(4)
     second = _field_wrapper(5)
     affine_mode = _ensure_proper_modes("Affine")
-    unmerged = _merge_adjacent_subspaces(
-        Sequence([first, second]), affine_mode
-    )
-    assert len(unmerged.transformations) == 2
-    merged = _merge_adjacent_subspaces(
-        Sequence([first, second]), _DEFAULT_MODE
-    )
-    assert len(merged.transformations) == 1
-    assert isinstance(merged.transformations[0], SubspaceTransformation)
+    with pytest.raises(CompositionError):
+        compose(second, first, mode=affine_mode)
+    merged = compose(second, first, mode=_DEFAULT_MODE)
+    assert isinstance(merged, SubspaceTransformation)
 
 
 def test_field_subspaces_are_not_composed_under_affine_mode(
@@ -466,3 +465,95 @@ def test_subspace_to_affine_on_a_field_inner_raises() -> None:
     )
     with pytest.raises(ConversionError):
         wrapper.to(Affine)
+
+
+# ----------------------------------------------------------------------
+#   EMBED COMPOSERS AND THE mode-THREADED IDENTITY CANCEL
+# ----------------------------------------------------------------------
+
+
+def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
+    # A subspace transform that merely lifts an affine into a larger space is
+    # non-interpolating, so composing it with an affine folds the two into a
+    # single affine rather than keeping the wrapper. The folded matrix equals
+    # reducing the subspace to an affine and composing.
+    # ``sub`` has input=_full4("in") and output=_full4("out").
+    sub = _subspace_affine([0, 1, 2])
+    aff = Affine(
+        matrix=np.eye(4, 5), input=_full4("out"), output=_full4("world")
+    )
+    folded = compose(aff, sub)
+    assert isinstance(folded, Affine)
+    assert not isinstance(folded, SubspaceTransformation)
+    ref = compose(aff, sub.to(Affine))
+    np.testing.assert_allclose(
+        np.asarray(folded.matrix), np.asarray(ref.matrix)
+    )
+
+    # The mirror direction (subspace applied after the affine) folds too.
+    aff2 = Affine(
+        matrix=np.eye(4, 5), input=_full4("world"), output=_full4("in")
+    )
+    folded2 = compose(sub, aff2)
+    assert isinstance(folded2, Affine)
+    assert not isinstance(folded2, SubspaceTransformation)
+
+
+def test_interpolating_subspace_does_not_embed_into_an_affine() -> None:
+    # A subspace transform that wraps a field is interpolating, so it is NOT
+    # reduced to an affine: composing it with an affine declines, and in a
+    # sequence the wrapper survives rather than folding away.
+    wrapper = _field_wrapper(7)  # input=output=_full4("s")
+    aff = Affine(matrix=np.eye(4, 5), input=_full4("s"), output=_full4("s"))
+    with pytest.raises(CompositionError):
+        compose(aff, wrapper)
+    result = Sequence([wrapper, aff]).compute()
+    leaves = list(result) if isinstance(result, Sequence) else [result]
+    assert any(isinstance(t, SubspaceTransformation) for t in leaves)
+
+
+def test_compose_cancels_inverse_by_identity_without_materializing(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    # `compose` applies the identity-cancel rule before type dispatch, so a
+    # transform composed with its own inverse collapses to the identity
+    # without the numeric inversion the (Affine, Affine) composer would
+    # otherwise run (the distance dispatch prefers it).
+    real_inv = np.linalg.inv
+    calls = {"n": 0}
+
+    def counting(matrix):  # noqa: ANN001, ANN202
+        calls["n"] += 1
+        return real_inv(matrix)
+
+    monkeypatch.setattr(np.linalg, "inv", counting)
+    affine = Affine(matrix=np.array([[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]]))
+    result = compose(affine, affine.inverse())
+    assert isinstance(result, Identity)
+    assert calls["n"] == 0
+
+    # The same holds for a field, whose inverse would be materialized by a
+    # numeric mesh inversion if the pair did not cancel symbolically first.
+    import brainhops._ext.invfield as invfield
+
+    def _boom(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        raise AssertionError("the field was inverted numerically")
+
+    monkeypatch.setattr(invfield, "inverse", _boom)
+    field = DisplacementField(field=np.zeros((5, 6, 2)))
+    cancelled = compose(field, field.inverse())
+    assert isinstance(cancelled, Identity)
+
+
+def test_restrictive_mode_prevents_field_through_field_composition() -> None:
+    # A restrictive mode composes only the inner types it admits. Two
+    # subspace-wrapped fields are left separate under an affine-only mode,
+    # so neither field is resampled through the other; under the default mode
+    # the same pair folds into a single wrapper.
+    first = _field_wrapper(4)
+    second = _field_wrapper(5)
+    unmerged = Sequence([first, second]).compute(mode="Affine")
+    assert isinstance(unmerged, Sequence)
+    assert len(unmerged.transformations) == 2
+    merged = Sequence([first, second]).compute()
+    assert isinstance(merged, SubspaceTransformation)
