@@ -451,8 +451,12 @@ def _compute_sequence(
                     # the input of its first element to the output of its
                     # last. The element endpoints are used, falling back to
                     # the sequence's own where an element leaves one unset.
-                    # A `CoordinateSystem` is never falsy, so `or` selects the
-                    # element endpoint when set and the sequence's otherwise.
+                    # `or` relies on a `CoordinateSystem` never being falsy: it
+                    # defines no `__bool__`/`__len__`, so it is always truthy
+                    # and `or` selects the element endpoint when set, the
+                    # sequence's otherwise. A future `__len__` on
+                    # `CoordinateSystem` would make an empty system falsy and
+                    # would need this revisited.
                     first, last = flat[0], flat[-1]
                     return Identity(
                         input=first.input or seq.input,
@@ -616,6 +620,12 @@ def _annihilates(first: Transformation, second: Transformation) -> bool:
         or list(first.output_axes) != list(second.input_axes)
     ):
         return False
+    # A *reindexing* inverse pair -- whose axes chain (checked above) but
+    # whose net map still permutes axes (`first.input_axes` !=
+    # `second.output_axes`) -- is deliberately NOT annihilated here. It does
+    # not reduce to the bare identity (it is a pure axis reindex), so it is
+    # left to the run loop to fold into a single reindexing subspace
+    # transform; do not "fix" it into this sweep.
     same_axes = (first.input_axes is None) == (
         second.output_axes is None
     ) and (
@@ -628,11 +638,18 @@ def _annihilates(first: Transformation, second: Transformation) -> bool:
     inner_second = second.transformation
     if _cancels(inner_first, inner_second):
         return True
+    # `compute=False` only: this sweep is the always-on analytic pass, run for
+    # every adjacent subspace pair on every fixpoint iteration. A numeric
+    # `compute=True` check would scan a whole displacement field
+    # (`(field == 0).all()`) each time; that belongs to the later per-type
+    # policy, not here. Nothing depends on the numeric branch -- the
+    # `transformation=None` case is `inner is None`, and the lazy-inverse case
+    # is `_cancels` above.
     first_identity = inner_first is None or is_identity(
-        inner_first, compute=True
+        inner_first, compute=False
     )
     second_identity = inner_second is None or is_identity(
-        inner_second, compute=True
+        inner_second, compute=False
     )
     return first_identity and second_identity
 

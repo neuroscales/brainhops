@@ -454,7 +454,7 @@ def test_subspace_to_affine_on_a_field_inner_raises() -> None:
 
 
 # ----------------------------------------------------------------------
-#   EMBED COMPOSERS AND THE mode-THREADED IDENTITY CANCEL
+#   EMBED COMPOSERS AND THE ANALYTIC IDENTITY CANCEL
 # ----------------------------------------------------------------------
 
 

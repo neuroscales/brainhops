@@ -23,9 +23,9 @@ candidate declines, `compose` raises [`CompositionError`][].
 
 Priority tiers
 --------------
-* `ANALYTIC` (see [`registries`][]) is reserved for a composer that decides
-  purely from the operand types and object identity, reading no parameter.
-  Today that is the inverse-cancel pair, ``X @ X^-1 -> Identity``.
+* `ANALYTIC` (see ``registries.ANALYTIC``) is reserved for a composer that
+  decides purely from the operand types and object identity, reading no
+  parameter. Today that is the inverse-cancel pair, ``X @ X^-1 -> Identity``.
 * priority ``0`` is the default, used by the numeric composers that read and
   combine parameters (matrices, fields, ...).
 
