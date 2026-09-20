@@ -30,7 +30,16 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from . import registries
 from .base import Transformation
 from .meta import SubspaceTransformation
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    _lower_modes,
+    _lower_simplify,
+    _mode_admits,
+    _resolve_simplify,
+    register_kind,
+)
 from .registries import INVERSE_WRAPPERS
 
 
@@ -61,7 +70,7 @@ class ConcreteTransformation(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, downcasting it to the cheapest
@@ -74,23 +83,28 @@ class ConcreteTransformation(Transformation):
 
         Parameters
         ----------
-        mode : [list of] str or type, optional
+        mode : [list of] name or type, optional
             Which kinds of transformations to materialize. `None` (the
             default) admits every kind. If a `mode` is given and this leaf
             is not admitted by it, the leaf is returned unchanged.
-        simplify : bool, default=False
-            Run the numeric kind-checks that downcast the transformation
-            to the cheapest compatible type.
+        simplify : simplify policy, default="analytic"
+            How hard this leaf may be looked at. The resolved
+            [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
+            decides whether the kind-checks run structure-only (`analytic`)
+            or read values (`numeric`), or are skipped entirely (`none`).
         """
-        # A leaf that the requested mode does not admit is left untouched.
-        # This mirrors how the sequence simplifier only composes
-        # transformations that match the mode. The checks and the concrete
-        # types both live in this module, so nothing is imported in the
-        # body.
-        if mode is not None and not _mode_admits(
-            self, _ensure_proper_modes(mode)
-        ):
+        # A leaf the requested mode does not admit is left untouched, the
+        # same way the sequence simplifier only composes admitted leaves.
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
+        policy = _resolve_simplify(self, _lower_simplify(simplify))
+        if policy is SimplifyPolicy.none:
+            return self
+        # `analytic` runs the kind-checks from structure only
+        # (`compute=False`): a `None`-valued parameter or a matching type is
+        # recognized, but no value is read. `numeric` runs them with
+        # `compute=True`, inspecting the values as well.
+        numeric = policy is SimplifyPolicy.numeric
         checks = [
             (is_identity, Identity),
             (is_translation, Translation),
@@ -100,9 +114,170 @@ class ConcreteTransformation(Transformation):
             (is_linear, Linear),
         ]
         for check, cls in checks:
-            if check(self, compute=simplify):
+            if check(self, compute=numeric):
+                # A no-op downcast keeps object identity, so inverse-cancel
+                # identity links and `subspace.compute() is subspace` hold,
+                # and pointless `to()` copies are avoided.
+                if isinstance(self, cls):
+                    return self
                 return self.to(cls)
         return self
+
+    # --- membership ---------------------------------------------------
+
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        return any(
+            issubclass(established, node)
+            for established in self._established(policy)
+        )
+
+    def _established(self, policy: SimplifyPolicy) -> tx.FrozenSet[type]:
+        # The hierarchy nodes this leaf's membership is *established* in at
+        # `policy`, beyond its declared type. See the `SimplifyPolicy`
+        # docstring and the spec for the level-aware rules.
+        if policy is SimplifyPolicy.none:
+            return frozenset()
+        params = self.parameter_names
+        if isinstance(params, str):
+            params = (params,)
+        if all(getattr(self, p, None) is None for p in params):
+            # No stored parameter -> the identity (bottom of the lattice).
+            return frozenset({hierarchy.IdentityTransformation})
+        if policy is SimplifyPolicy.analytic:
+            return self._established_analytic()
+        return self._established_numeric()
+
+    def _established_analytic(self) -> tx.FrozenSet[type]:
+        # Structure only: shapes, never values. Optimistic by shape (a
+        # square matrix is assumed invertible, wide surjective, tall
+        # injective; a scaling assumed non-zero).
+        if isinstance(self, Affine) or (
+            isinstance(self, Linear) and not isinstance(self, Rotation)
+        ):
+            dims = _matrix_dims(self)
+            if dims is None:
+                return frozenset()
+            ni, no = dims
+            linear = isinstance(self, Linear)
+            set_node = (
+                hierarchy.LinearTransformation
+                if linear
+                else hierarchy.AffineTransformation
+            )
+            if no == ni:
+                return frozenset(
+                    {
+                        hierarchy.InvertibleLinearTransformation
+                        if linear
+                        else hierarchy.InvertibleAffineTransformation
+                    }
+                )
+            if no < ni:  # wide -> assumed full row rank (surjective)
+                return frozenset(
+                    {set_node, hierarchy.SurjectiveTransformation}
+                )
+            return frozenset(  # tall -> assumed full column rank (injective)
+                {set_node, hierarchy.InjectiveTransformation}
+            )
+        if isinstance(self, Scaling):
+            return frozenset({hierarchy.InvertibleDiagonalTransformation})
+        # Rotation, Permutation, Translation, Identity are answered by their
+        # declared node; fields establish nothing analytically.
+        return frozenset()
+
+    def _established_numeric(self) -> tx.FrozenSet[type]:
+        # Values: the kind-check ladder, then a rank refinement of the
+        # optimistic shape assumption.
+        checks = [
+            (is_identity, hierarchy.IdentityTransformation),
+            (is_translation, hierarchy.Translation),
+            (is_scale, hierarchy.DiagonalTransformation),
+            (is_permutation, hierarchy.Permutation),
+            (is_rotation, hierarchy.SpecialOrthogonalTransformation),
+            (is_linear, hierarchy.LinearTransformation),
+            (is_affine, hierarchy.AffineTransformation),
+        ]
+        node = None
+        for check, kind in checks:
+            if check(self, compute=True):
+                node = kind
+                break
+        if node is None:
+            # A field: identity when zero, else nothing.
+            if is_identity(self, compute=True):
+                return frozenset({hierarchy.IdentityTransformation})
+            return frozenset()
+        established = {node}
+        linear_part = _linear_part(self)
+        if linear_part is not None:
+            no, ni = linear_part.shape
+            r = _rank(linear_part)
+            if r == ni:
+                established.add(hierarchy.InjectiveTransformation)
+            if r == no:
+                established.add(hierarchy.SurjectiveTransformation)
+            if r == ni == no and node in _INVERTIBLE_NODES:
+                established = {_INVERTIBLE_NODES[node], node}
+        return frozenset(established)
+
+
+# The numeric ladder nodes that have a strictly-invertible refinement, used
+# when a full-rank square parameter is confirmed at `numeric`.
+_INVERTIBLE_NODES = {
+    hierarchy.AffineTransformation: hierarchy.InvertibleAffineTransformation,
+    hierarchy.LinearTransformation: hierarchy.InvertibleLinearTransformation,
+    hierarchy.DiagonalTransformation: (
+        hierarchy.InvertibleDiagonalTransformation
+    ),
+}
+
+
+def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
+    """`(Ni, No)` of a matrix leaf from the stored `matrix.shape`, or `None`.
+
+    `Affine`: the matrix is `(No, Ni + 1)`; `Linear`/`Rotation`: `(No, Ni)`.
+    Reads only the shape, never a value; never called on an `Inverse`.
+    Shared with `separable._element_dims` so the two readings cannot drift.
+    """
+    matrix = getattr(t, "matrix", None)
+    if matrix is None:
+        return None
+    no, cols = matrix.shape
+    ni = cols - 1 if isinstance(t, Affine) else cols
+    return ni, no
+
+
+def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
+    # The linear block whose rank decides injectivity/surjectivity at
+    # `numeric`. `None` for a parameter that is invertible by declaration
+    # (`Permutation`, `Translation`, `Identity`) or has no matrix.
+    if isinstance(t, Affine):
+        return None if t.matrix is None else t.matrix[:, :-1]
+    if isinstance(t, Linear):  # includes Rotation
+        return t.matrix
+    if isinstance(t, Scaling):
+        if t.scale is None:
+            return None
+        ab = get_array_backend(t.scale)
+        return ab.diag(t.scale)
+    return None
+
+
+def _rank(linear: ArrayProtocol) -> int:
+    # The rank of a linear block. `matrix_rank` is the single rank test,
+    # with a `det`-based fallback for a square matrix when a backend lacks
+    # it (a non-zero determinant means full rank).
+    ab = get_array_backend(linear)
+    matrix_rank = getattr(getattr(ab, "linalg", None), "matrix_rank", None)
+    if matrix_rank is not None:
+        return int(matrix_rank(linear))
+    no, ni = linear.shape
+    if no == ni:
+        return ni if bool(ab.linalg.det(linear) != 0) else ni - 1
+    raise NotImplementedError(
+        "the array backend provides neither matrix_rank nor a square "
+        "determinant fallback for rank computation"
+    )
 
 
 class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
@@ -155,6 +330,14 @@ class CartesianField(CoordinatesField):
     Its `field` attribute is fully defined by the shape of the grid,
     and is generated on demand when accessed.
     """
+
+    # The grid is parameterized by its `shape`, not by the derived `field`.
+    # This is what marks a grid the identity (an unset `shape`), and -- as
+    # importantly -- it keeps the structural checks (`is_identity`,
+    # membership) from ever reading the `field` property, which would build
+    # the meshgrid. Reading `.field` is a value-level operation reserved for
+    # `compute=True`/`numeric`.
+    parameter_names: tx.ClassVar[str] = "shape"
 
     shape: tx.Annotated[
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
@@ -393,10 +576,11 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     identity map over its grid by construction. When `compute` is true, a
     [`CartesianField`][] is therefore recognized as the identity. When
     `compute` is false, a [`CartesianField`][] that carries a grid is not
-    recognized as the identity, because its `field` parameter is set. A
-    [`CartesianField`][] with no grid has an unset `field` parameter and
+    recognized as the identity, because its `shape` parameter is set. A
+    [`CartesianField`][] with no grid has an unset `shape` parameter and
     is recognized as the identity by the parameter check under either
-    value of `compute`.
+    value of `compute`. The `shape` is read, never the derived `field`, so
+    the meshgrid is not built by a structural check.
 
     Recognizing a grid as the identity does not mean a grid may be dropped
     on sight. A grid also defines the sampling domain onto which data is
@@ -497,7 +681,15 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, hierarchy.Translation):
         return True
     if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        return (xform.matrix[:, :-1] == 0).all()
+        # A pure translation has an *identity* linear part (not a zero one:
+        # a zero linear part is a constant map, which is neither a
+        # translation nor invertible).
+        lin = xform.matrix[:, :-1]
+        rows, cols = lin.shape
+        if rows != cols:
+            return False
+        ab = get_array_backend(lin)
+        return bool((lin == ab.eye(rows)).all())
     return is_identity(xform, compute=compute)
 
 
@@ -626,3 +818,16 @@ def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     if isinstance(xform, hierarchy.AffineTransformation):
         return True
     return is_identity(xform, compute=compute)
+
+
+# ----------------------------------------------------------------------
+#    KIND REGISTRATION (mode / simplify keys)
+# ----------------------------------------------------------------------
+
+# Fields have no hierarchy node (a field is a general `Transformation`), so
+# they are addressed as class kinds (matched by `isinstance`). `"scaling"`
+# names the Diagonal *set* (a node), matching every established scaling.
+register_kind("field", (DisplacementField, CoordinatesField))
+register_kind("displacementfield", DisplacementField)
+register_kind("coordinatesfield", CoordinatesField)
+register_kind("scaling", hierarchy.DiagonalTransformation)

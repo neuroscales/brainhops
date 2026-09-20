@@ -11,7 +11,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from . import registries
 from .convert import convert
 from .errors import ConversionError, LossyConversionError
-from .modes import ModeLike
+from .modes import ModeLike, SimplifyLike, SimplifyPolicy, is_member
 
 # typing
 if tx.TYPE_CHECKING:
@@ -94,33 +94,90 @@ class Transformation(DataModelBase, reverse=True):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
 
         Parameters
         ----------
-        mode : [list of] str or type, optional
+        mode : [list of] name or type, optional
             Which kinds of transformations to materialize. `None` (the
             default) admits every kind. On a leaf transformation, if a
             `mode` is given and this leaf is not admitted by it, the leaf
-            is returned unchanged.
-        simplify : bool, default=False
-            Run the numeric kind-checks that downcast the transformation
-            to the cheapest compatible type.
+            is returned unchanged. Keys are transformation-set NAMES such as
+            `"affine"`, `"Aff"`, `"rigid"`, `"SO(3)"`, or wrapper/field keys
+            such as `"subspace"`, `"inverse"`, `"projection"`, `"field"`; a
+            hierarchy type is also accepted.
+        simplify : simplify policy, default="analytic"
+            How hard each leaf may be looked at, per its kind. Accepts a
+            single [`SimplifyPolicy`][brainhops.datamodel.enums.\
+SimplifyPolicy] (`False`/`"none"`/`None`, `"analytic"`, `True`/`"numeric"`),
+            a key (or list of keys) to restrict analytic simplification to
+            those kinds, or a `{key: policy}` mapping. The default,
+            `"analytic"`, simplifies every leaf from structure only.
         """
         # `compute()` has no meaningful default: every family implements it
         # with the behaviour that fits its type -- `ConcreteTransformation`
-        # runs the numeric kind-checks, `MetaTransformation` returns itself
-        # once mode-gated, and `Sequence`, `Inverse`, `Bijection`,
-        # `Projection` and the multiscale containers compose or materialize
-        # their contents. Raising here (rather than returning `self`) makes
-        # a subclass that forgets to implement `compute()` fail loudly,
+        # runs the kind-checks, `MetaTransformation` returns itself once
+        # mode-gated, and `Sequence`, `Inverse`, `Bijection`, `Projection`
+        # and the multiscale containers compose or materialize their
+        # contents. Raising here (rather than returning `self`) makes a
+        # subclass that forgets to implement `compute()` fail loudly,
         # mirroring `inverse()`.
         raise NotImplementedError(
             f"{type(self).__name__} must implement compute()"
         )
+
+    def simplify(
+        self,
+        policy: SimplifyLike = "analytic",
+        *,
+        compute: tx.Union[ModeLike, bool, None] = False,
+    ) -> tx.Self:
+        """Simplify this transformation under a per-kind policy.
+
+        Convenience sugar for
+        [`compute`][brainhops.datamodel.transformations.Transformation.\
+compute]: `t.simplify(policy, compute=mode)` is
+        `t.compute(mode, simplify=policy)`.
+
+        Parameters
+        ----------
+        policy : simplify policy, default="analytic"
+            The simplify policy, in the grammar `compute` accepts.
+        compute : [list of] name or type, optional
+            The compose mode to gate on. The default, `False`, means no mode
+            gating (every kind composed), i.e. `mode=None` in `compute`.
+        """
+        # `compute=False` is the sugar's "no mode gating" default; it maps to
+        # `compute`'s `mode=None` (admit every kind). A real mode passes
+        # straight through.
+        return self.compute(
+            None if compute is False else compute, simplify=policy
+        )
+
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        """Whether membership in the hierarchy set `node` is *established*
+        from what may be inspected at `policy`, beyond the declared type.
+
+        The base default establishes nothing; leaf and wrapper families
+        override this. Declared membership (via `.register`) is answered by
+        `is_member` before this hook is reached.
+        """
+        return False
+
+    def is_member(
+        self,
+        kind: tx.Any,
+        policy: tx.Union[SimplifyPolicy, bool, str, None] = "analytic",
+    ) -> bool:
+        """Whether this transformation is a member of `kind` at `policy`.
+
+        Convenience wrapper over the module-level
+        [`is_member`][brainhops.datamodel.transformations.is_member].
+        """
+        return is_member(self, kind, policy)
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         """
@@ -309,3 +366,8 @@ compute]:
 
     def __invert__(self) -> "Transformation":
         return self.inverse()
+
+
+# Make the concrete root reachable from `modes._lower_key` without a
+# top-level `base` import there (which would cycle).
+registries.register_transformation(Transformation)

@@ -33,7 +33,13 @@ __all__ = [
     "Sequence",
     "MutableSequence",
     "ImmutableSequence",
+    # modes / simplify
     "ModeLike",
+    "SimplifyLike",
+    "SimplifyTable",
+    "SimplifyPolicy",
+    "is_member",
+    "register_kind",
     # checks
     "is_identity",
     "is_translation",
@@ -91,5 +97,13 @@ from .inverse import (
     InverseTranslation,
 )
 from .meta import Bijection, Projection, SubspaceTransformation
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    SimplifyTable,
+    is_member,
+    register_kind,
+)
 from .multiscale import Multiscale, MultiscaleField
-from .sequence import ImmutableSequence, ModeLike, MutableSequence, Sequence
+from .sequence import ImmutableSequence, MutableSequence, Sequence

@@ -15,7 +15,21 @@ from brainhops.datamodel.axes import Axis
 
 # internals
 from .base import Transformation
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
+from .modes import (
+    _NONINVERTIBLE_OF,
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    _lift_targets,
+    _lower_modes,
+    _lower_simplify,
+    _mode_admits,
+    _permute_targets,
+    _reindex_is_even,
+    _resolve_simplify,
+    is_member,
+    register_kind,
+)
 
 # typing
 if tx.TYPE_CHECKING:
@@ -35,22 +49,12 @@ class MetaTransformation(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        # A meta transformation has no numeric downcast of its own, so --
-        # once mode-gated -- it is returned unchanged. Both branches return
-        # `self`: the mode-gate is kept to mirror the leaf contract (a
-        # transform the mode does not admit is left untouched), while an
-        # admitted meta transform still has nothing to simplify on its own.
-        # Composing or re-wrapping the inner transform is deferred to a
-        # later change. This is the behaviour it used to inherit from the
-        # base default, relocated here now that the base `compute()` raises
-        # so a family that forgets to implement it is caught. `concrete` is
-        # deliberately not imported here, to avoid the `meta` <-> `concrete`
-        # import cycle.
-        if mode is not None and not _mode_admits(
-            self, _ensure_proper_modes(mode)
-        ):
+        # A bare meta transformation has nothing to simplify on its own, so
+        # -- once mode-gated -- it is returned unchanged. Subclasses
+        # (`SubspaceTransformation`, `Projection`, `Bijection`) override this.
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
         return self
 
@@ -117,6 +121,67 @@ class SubspaceTransformation(MetaTransformation):
             output_axes=self.input_axes,
         )
 
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        # A subspace is `P ∘ blockdiag(inner, I)`: a lift of `inner` into the
+        # full space, optionally composed with a coordinate permutation `P`
+        # when it reindexes axes. Its membership in `node` follows from the
+        # inner's membership in the lift (and permutation) targets of `node`.
+        inner = self.transformation
+        same = (self.input_axes is None and self.output_axes is None) or (
+            self.input_axes is not None
+            and self.output_axes is not None
+            and list(self.input_axes) == list(self.output_axes)
+        )
+        if same:
+            return any(
+                _inner_member(inner, m, policy) for m in _lift_targets(node)
+            )
+        even = _reindex_is_even(self.input_axes, self.output_axes)
+        return any(
+            _inner_member(inner, m, policy)
+            for target in _permute_targets(node, even)
+            for m in _lift_targets(target)
+        )
+
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: SimplifyLike = "analytic",
+    ) -> tx.Self:
+        from .concrete import Identity
+
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
+            return self
+        table = _lower_simplify(simplify)
+        policy = _resolve_simplify(self, table)
+        if policy is SimplifyPolicy.none:
+            # Untouched; the inner is not visited.
+            return self
+        same = (self.input_axes is None and self.output_axes is None) or (
+            self.input_axes is not None
+            and self.output_axes is not None
+            and list(self.input_axes) == list(self.output_axes)
+        )
+        inner = self.transformation
+        if inner is None:
+            # A subspace of nothing: the identity on the same axes, a pure
+            # reindex otherwise (kept as is).
+            if same:
+                return Identity(input=self.input, output=self.output)
+            return self
+        # A simplify pass may only downcast leaves -- never compose, never
+        # materialize -- and it does not carry the outer `mode` into the
+        # inner (the mode gate is the run loop's job). `_simplify_inner`
+        # enforces this (a lazy inverse stays lazy under analytic; an inner
+        # sequence is downcast element-wise, never composed).
+        inner2 = _simplify_inner(inner, table)
+        if inner2 is inner:
+            return self
+        if same and isinstance(inner2, hierarchy.IdentityTransformation):
+            return Identity(input=self.input, output=self.output)
+        return replace(self, transformation=inner2)
+
 
 class Projection(MetaTransformation):
     """
@@ -143,14 +208,37 @@ class Projection(MetaTransformation):
             output=self.input,
         )
 
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        # Establish injectivity/surjectivity/identity from the axis lists.
+        # A projection that only drops axes is surjective; one that only
+        # creates axes is injective; one that does both establishes nothing
+        # beyond `Transformation`. (Establishing `Linear`/`Affine` is left to
+        # a follow-up converter.)
+        dropped = 0 if self.dropped is None else len(self.dropped)
+        created = 0 if self.created is None else len(self.created)
+        if not dropped and not created:
+            return issubclass(hierarchy.IdentityTransformation, node)
+        if dropped and not created:
+            return issubclass(hierarchy.SurjectiveTransformation, node)
+        if created and not dropped:
+            return issubclass(hierarchy.InjectiveTransformation, node)
+        return False
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        # A projection is fully defined by its axis lists; there is nothing
-        # to compose or downcast, so it is returned unchanged.
+        from .concrete import Identity
+
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
+            return self
+        policy = _resolve_simplify(self, _lower_simplify(simplify))
+        dropped = 0 if self.dropped is None else len(self.dropped)
+        created = 0 if self.created is None else len(self.created)
+        if policy is not SimplifyPolicy.none and not dropped and not created:
+            return Identity(input=self.input, output=self.output)
         return self
 
 
@@ -200,20 +288,77 @@ class Bijection(Transformation):
             obj = obj.compute(**kwargs)
         return obj
 
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        # Delegate to the forward map (or the inverse of the backward when no
+        # forward is given). A `Bijection` is declared bijective, so a node
+        # that only its invertible variant establishes (e.g. `Affine` when
+        # the forward is a bare affine) is relaxed to the non-invertible set.
+        from .inverse import Inverse
+
+        f = self.forward
+        if f is None and self.backward is not None:
+            f = Inverse(forward=self.backward)
+        if f is None:
+            return False
+        if is_member(f, node, policy):
+            return True
+        relaxed = _NONINVERTIBLE_OF.get(node)
+        return relaxed is not None and is_member(f, relaxed, policy)
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
-        forward, backward = self.forward, self.backward
-        if forward is not None:
-            forward = forward.compute(mode, simplify=simplify)
-        if backward is not None:
-            backward = backward.compute(mode, simplify=simplify)
-        if forward is None and backward is None:
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
+            return self
+        table = _lower_simplify(simplify)
+        if _resolve_simplify(self, table) is SimplifyPolicy.none:
+            return self
+        # Downcast the forward/backward leaves only -- never compose or
+        # materialize (a lazy inverse forward/backward stays lazy under
+        # analytic). `_simplify_inner` enforces this.
+        forward = _simplify_inner(self.forward, table)
+        backward = _simplify_inner(self.backward, table)
+        if forward is self.forward and backward is self.backward:
+            # Unchanged: keep object identity so an adjacent `Inverse` of
+            # this bijection still cancels.
             return self
         return replace(self, forward=forward, backward=backward)
+
+
+def _simplify_inner(
+    inner: tx.Optional[Transformation], table: tx.Any
+) -> tx.Optional[Transformation]:
+    """Apply a simplify table to a wrapper's inner, downcasting leaves only.
+
+    A simplify pass may never compose or materialize. This routes the inner
+    through the sequence leaf-pass, which leaves a lazy `Inverse` lazy under
+    an analytic policy (materializing only under numeric, and only when it
+    can), downcasts each element of an inner `Sequence` without composing it,
+    and downcasts any other inner in place. The outer `mode` is deliberately
+    not forwarded -- gating which kinds compose is the run loop's job, not a
+    leaf downcast's.
+    """
+    if inner is None:
+        return inner
+    from .sequence import _simplify_result
+
+    return _simplify_result(inner, table)
+
+
+def _inner_member(
+    inner: tx.Optional[Transformation], m: type, policy: SimplifyPolicy
+) -> bool:
+    # Membership of a subspace's inner in node `m`. A `None` inner is the
+    # identity (`blockdiag(I, I) = I`), which is a member of `m` exactly when
+    # `m` contains the identity node.
+    from brainhops.datamodel import hierarchy as _h
+
+    if inner is None:
+        return issubclass(_h.IdentityTransformation, m)
+    return is_member(inner, m, policy)
 
 
 def _subsystem(
@@ -252,3 +397,10 @@ def _subsystem(
         axes=new_axes,
         name=f"subspace({system.name})" if system.name else None,
     )
+
+
+# The wrappers are addressed as class kinds (matched by `isinstance`): they
+# have no hierarchy node, since their membership depends on their contents.
+register_kind("meta", MetaTransformation)
+register_kind("subspace", SubspaceTransformation)
+register_kind("projection", Projection)

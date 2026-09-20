@@ -35,12 +35,20 @@ from .meta import SubspaceTransformation
 # `sequence`.
 from .modes import (  # noqa: F401
     ModeLike,
-    _ensure_proper_modes,
+    ModePair,
+    SimplifyLike,
+    SimplifyPolicy,
+    SimplifyTable,
     _is_proper_mode,
+    _lower_modes,
+    _lower_simplify,
     _matches_mode,
     _mode_admits,
     _mode_children,
     _ModePair,
+    _resolve_simplify,
+    _table_is_noop,
+    _table_needs_numeric,
 )
 from .registries import register_sequence
 
@@ -177,7 +185,7 @@ class Sequence(SequenceMixin, Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
@@ -210,18 +218,37 @@ class Sequence(SequenceMixin, Transformation):
 
         Parameters
         ----------
-        mode : [list of] str, optional
-            Types of transformations to compute.
-            * If `None` (default): compute all transformations in the sequence.
-            * If the name of a transformation type: compute only consecutive
-              sequences of transformations that match the specified type.
+        mode : [list of] name or type, optional
+            Kinds of transformations to compose.
+            * If `None` (default): compose every kind in the sequence.
+            * If a kind key (a set NAME, a hierarchy type, or a wrapper/field
+              key): compose only consecutive runs of that kind.
+        simplify : simplify policy, default="analytic"
+            How hard each leaf may be looked at, per its kind (see the
+            [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
+            grammar). `"analytic"` (the default) downcasts each leaf from
+            structure only; `False`/`"none"`/`None` disables it.
         """
-        modes = _ensure_proper_modes(mode)
+        modes = _lower_modes(mode)
         if not modes:
             return self  # No-op
-        result = _compute_sequence(self, mode=modes)
-        if simplify:
-            result = _simplify_result(result)
+        # The simplify table is resolved per leaf and applied inside the
+        # fixpoint loop of `_compute_sequence`, every iteration, AFTER the
+        # identity-cancel sweep (so a lazy transform/inverse pair cancels by
+        # object identity rather than being materialized) and BEFORE per-mode
+        # composition (so a numeric downcast such as field->affine feeds it).
+        table = _lower_simplify(simplify)
+        result = _compute_sequence(self, mode=modes, table=table)
+        # A final pass downcasts a composed result that escaped the loop as a
+        # single transform. It is needed only when the table has a numeric
+        # entry: the in-loop pass runs before composition each iteration and
+        # the loop exits when nothing shrinks, so the only leaves left
+        # unsimplified are the last composition's products, which have no
+        # structural downcast left -- only value facts can appear, which is
+        # `numeric`. It runs after all cancellation, so a lazy pair has
+        # already cancelled by identity rather than being materialized.
+        if _table_needs_numeric(table):
+            result = _simplify_result(result, table)
         return result
 
     def _flattened(self) -> tx.Self:
@@ -313,62 +340,87 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 
 
-def _simplify_result(result: Transformation) -> Transformation:
-    # Apply the numeric downcast (`simplify`) to a computed result. The
-    # kind-checks are run on each leaf so the cheapest compatible type is
-    # picked, without recomposing (which would ignore the requested mode).
-    # This is why the general path cannot express it: routing the result
-    # back through `compute()` with a no-op mode would either return early
-    # (an empty mode is a no-op) or, under `mode=None`, recompose across the
-    # boundaries the requested mode was told to keep.
-    #
-    # A surviving `CartesianField` is left untouched. A grid is the
-    # identity map over its coordinates, so the numeric checks would
-    # downcast it to `Identity` and drop the sampling domain it defines.
-    # `_compute_sequence` only ever leaves a grid in a leading, trailing or
-    # standalone position -- all sampling domains -- so no grid that
-    # reaches here may be simplified away.
+def _simplify_result(
+    result: Transformation, table: SimplifyTable
+) -> Transformation:
+    # Apply the simplify table to a computed result. A `Sequence` result has
+    # each of its leaves simplified; any other result is simplified as a
+    # single leaf. This runs after `_compute_sequence` has finished all
+    # composition and cancellation, so it only downcasts what survives.
     if isinstance(result, Sequence):
-        return replace(
-            result,
-            transformations=[
-                _simplify_leaf(t) for t in (result.transformations or [])
-            ],
-        )
-    return _simplify_leaf(result)
+        leaves = result.transformations or []
+        simplified = [_simplify_leaf(t, table) for t in leaves]
+        if any(a is not b for a, b in zip(simplified, leaves)):
+            return replace(result, transformations=simplified)
+        return result
+    return _simplify_leaf(result, table)
 
 
-def _simplify_leaf(t: Transformation) -> Transformation:
-    # Downcast a single computed leaf, preserving a grid (see above).
+def _simplify_leaf(t: Transformation, table: SimplifyTable) -> Transformation:
+    # Apply a leaf's resolved simplify policy. Called each fixpoint iteration
+    # by `_simplify_pass` (after the identity-cancel sweep, before per-mode
+    # composition) and once by `_simplify_result` on the final result. The
+    # whole `table` is threaded to `compute`, never a scalar, so a wrapper's
+    # inner resolves against the user's own keys.
+    #
+    # A `CartesianField` is never downcast. A grid is the identity map over
+    # its coordinates, so the checks would collapse it to `Identity` and
+    # drop the sampling domain it defines; grids only ever reach a leading,
+    # trailing or standalone position, all of which are sampling domains.
     if isinstance(t, CartesianField):
         return t
-    return t.compute(simplify=True)
+    policy = _resolve_simplify(t, table)
+    if policy is SimplifyPolicy.none:
+        return t
+    if policy is SimplifyPolicy.analytic and isinstance(t, Inverse):
+        # Structure-only: a lazy inverse is left untouched (so an analytic
+        # policy never materializes, e.g., an `InverseCoordinatesField`); the
+        # always-on cancel sweep still collapses it in place.
+        return t
+    if isinstance(t, Inverse):
+        # `numeric`: materializing may not be available (a coordinate-field
+        # inverse cannot be materialized directly) -- leave it lazy so it can
+        # still cancel, rather than raising.
+        try:
+            return t.compute(simplify=table)
+        except NotImplementedError:
+            return t
+    return t.compute(simplify=table)
 
 
-def _composes_under(t: Transformation, mode: _ModePair) -> bool:
-    # Whether the run loop should hand `t` to `compose` under this mode.
-    # A transform that plainly matches the mode composes. A non-interpolating
-    # subspace wrapper (one that merely lifts an affine, or the like, into a
-    # larger space) also composes when its inner transform is admitted by the
-    # mode: the ndim test is then re-run on the wrapper's own (full-space)
-    # endpoints. An interpolating subspace wraps a field and is never seen
-    # through here, so a restrictive mode leaves two field-wrappers separate
-    # rather than resampling one through the other.
-    if _matches_mode(t, mode):
-        return True
-    if isinstance(t, SubspaceTransformation) and not _interpolates(t):
-        cls, ndim = mode
-        inner = t.transformation
-        if inner is None or isinstance(inner, cls):
-            # rerun only the ndim test on the wrapper's endpoints
-            return _matches_mode(t, (type(t), ndim))
-    return False
+def _simplify_pass(
+    seq: "Sequence",
+    table: SimplifyTable,
+    cache: tx.Dict[int, Transformation],
+    keepalive: tx.List[Transformation],
+) -> "Sequence":
+    # One per-iteration simplify pass over a sequence's leaves. A leaf seen
+    # before (same object across iterations) reuses its cached result rather
+    # than being re-scanned; the keepalive list pins those leaves so an `id`
+    # is never reused while the cache holds it.
+    leaves = _unnest(seq.transformations)
+    simplified = []
+    changed = False
+    for t in leaves:
+        key = id(t)
+        if key in cache:
+            result = cache[key]
+        else:
+            result = _simplify_leaf(t, table)
+            cache[key] = result
+            keepalive.append(t)
+        simplified.append(result)
+        changed = changed or result is not t
+    if changed:
+        return replace(seq, transformations=simplified)
+    return seq
 
 
 def _compute_sequence(
     seq: Sequence,
     mode: tx.List[_ModePair],
     memo: tx.Optional[tx.Set[_ModePair]] = None,
+    table: tx.Optional[SimplifyTable] = None,
 ) -> Transformation:
     # We optimize by recursively finding the subclasses of all the modes
     # specified. This allows us to combine similar transformations first
@@ -390,6 +442,19 @@ def _compute_sequence(
         # sequence. Counts are measured on the fully unnested element list,
         # so the loop terminates even when a composition folds into a
         # nested sequence.
+        #
+        # The per-type simplify policy is applied every iteration, AFTER the
+        # identity-cancel sweep (so a lazy transform/inverse pair cancels by
+        # object identity before a numeric method could materialize either
+        # side) and BEFORE composition (so a downcast such as field->affine
+        # still feeds separability/merging). Running it each iteration also
+        # downcasts a *composed* result to its cheapest type, matching the
+        # former final pass. An `id`-keyed cache keeps a surviving leaf from
+        # being re-scanned on every iteration; the keepalive list pins those
+        # leaves so an `id` is never reused while the cache holds it.
+        skip_simplify = table is None or _table_is_noop(table)
+        simplify_cache: tx.Dict[int, Transformation] = {}
+        simplify_keepalive: tx.List[Transformation] = []
         while True:
             # Flatten without rebuilding any endpoint, so a transform stays
             # the same object that its inverse names. Cancellation tests
@@ -464,6 +529,14 @@ def _compute_sequence(
                     )
                 seq = replace(seq, transformations=stack)
 
+            # Per-type simplify, now that adjacent lazy-inverse pairs have
+            # cancelled. Each leaf's resolved policy is applied before the
+            # composition below, so a numeric downcast feeds it.
+            if not skip_simplify:
+                seq = _simplify_pass(
+                    seq, table, simplify_cache, simplify_keepalive
+                )
+
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
@@ -472,6 +545,9 @@ def _compute_sequence(
                 seq = seq._flattened()
             submemo: tx.Set[_ModePair] = set()
             for submode in mode:
+                # `table` is deliberately not threaded here: the memo'd
+                # recursion only composes, and the simplify pass above (in
+                # the memo-less driver) has already run this iteration.
                 seq = _compute_sequence(seq, submode, memo=submemo)
                 if not isinstance(seq, Sequence):
                     return seq
@@ -510,16 +586,19 @@ def _compute_sequence(
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
 
-    # Compose any consecutive sequence that composes under the mode
+    # Compose any consecutive run that matches the mode. `_matches_mode`
+    # sees through wrappers via `is_member` (analytic), so a subspace that
+    # lifts an affine matches `mode="affine"` and composes with its
+    # neighbours -- replacing the old `_composes_under` special case.
     while inputs:
         item = inputs.pop(0)
-        if _composes_under(item, mode):
-            while inputs and _composes_under(inputs[0], mode):
+        if _matches_mode(item, mode):
+            while inputs and _matches_mode(inputs[0], mode):
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
                     # `compose` is mode-free: the gate that decides which
-                    # adjacent transforms are handed to it is `_composes_under`
+                    # adjacent transforms are handed to it is `_matches_mode`
                     # above, not the composer.
                     item = compose(next_input, item)
                 except CompositionError:

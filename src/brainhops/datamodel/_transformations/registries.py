@@ -60,6 +60,18 @@ def register_inverse(cls: tx.Type["Inverse"]) -> None:
     INVERSE = cls
 
 
+# The concrete `base.Transformation` root, registered at its import time so
+# that `modes._lower_key` can recognize a concrete transformation class as a
+# key without importing `base` at the top level (which would cycle).
+TRANSFORMATION: tx.Optional[tx.Type["Transformation"]] = None
+
+
+def register_transformation(cls: tx.Type["Transformation"]) -> None:
+    """Register the concrete `Transformation` root class."""
+    global TRANSFORMATION
+    TRANSFORMATION = cls
+
+
 XFORM_PAIR = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
 
 CONVERTER = tx.Callable[["Transformation"], "Transformation"]

@@ -100,6 +100,8 @@ __all__ = [
     "TransformationBaseClass",
     "Transformation",
     "Morphism",                                     # ^ alias
+    "InjectiveTransformation",
+    "SurjectiveTransformation",
     "BijectiveTransformation",
     "Bijection",                                    # ^ alias
     "Isomorphism",
@@ -269,12 +271,16 @@ def parseType(
     hierarchy, and extract a dimension if the string encodes one.
 
     Checks, in order if s is string:
-      1. NAMETOCLASS    -- exact match on `NAME`    (e.g. "Rotation")
+      1. NAMETOCLASS    -- case-insensitive match on `NAME` (e.g. "rotation")
       2. SYMBOLTOCLASS  -- exact match on `SYMBOL`  (e.g. "SO")
       3. FSYMBOLTOCLASS -- pattern match on `FSYMBOL`, which may contain
          one or more `{n}` placeholders for the dimension (e.g. "SO(3)"
          matches template "SO({n})", extracting n=3; all occurrences of
          `{n}` in a template must agree on the same value)
+
+    NAMEs are matched case-insensitively; SYMBOLs and FSYMBOLs stay
+    case-sensitive (`"SO"`, `"SO(3)"`, `"O"`, `"E"` are mathematical
+    symbols).
 
     Returns
     -------
@@ -282,8 +288,8 @@ def parseType(
     dim : int or None
     """
     if isinstance(s, str):
-        if s in NAMETOCLASS:
-            return NAMETOCLASS[s], None
+        if s.lower() in NAMETOCLASS:
+            return NAMETOCLASS[s.lower()], None
         if s in SYMBOLTOCLASS:
             return SYMBOLTOCLASS[s], None
         if s in FSYMBOLTOCLASS:
@@ -295,7 +301,7 @@ def parseType(
             m = re.match(pattern, s)
             if m:
                 return cls, int(m.group("n"))
-        ValueError(f"invalid string for type lookup: {s}")
+        raise ValueError(f"invalid string for type lookup: {s}")
     if isinstance(s, int):
         return Transformation, s
     return s, None
@@ -319,7 +325,7 @@ class TransformationBaseClass(ABC):
         super().__init_subclass__(**kwargs)
         if getattr(cls, "NAME", None):
             for name in cls.NAME:
-                NAMETOCLASS[name] = cls
+                NAMETOCLASS[name.lower()] = cls
         if getattr(cls, "FSYMBOL", None):
             FSYMBOLTOCLASS[cls.FSYMBOL] = cls
         if getattr(cls, "SYMBOL", None):
@@ -340,8 +346,38 @@ class Transformation(TransformationBaseClass):
 Morphism = Transformation
 
 
-class BijectiveTransformation(Transformation):
+class InjectiveTransformation(Transformation):
+    """A one-to-one transformation (distinct inputs map to distinct outputs).
+
+    wiki: https://en.wikipedia.org/wiki/Injective_function
+    """
+
+    NAME = (
+        "InjectiveTransformation",
+        "Injective",
+        "Injection",
+    )
+
+
+class SurjectiveTransformation(Transformation):
+    """An onto transformation (every output is reached).
+
+    wiki: https://en.wikipedia.org/wiki/Surjective_function
+    """
+
+    NAME = (
+        "SurjectiveTransformation",
+        "Surjective",
+        "Surjection",
+    )
+
+
+class BijectiveTransformation(
+    InjectiveTransformation, SurjectiveTransformation
+):
     """An invertible transformation.
+
+    A bijection is both injective and surjective.
 
     alias: Bijection
 

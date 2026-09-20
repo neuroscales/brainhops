@@ -12,6 +12,7 @@ from brainhops._ext.invfield import inverse as inverse_disp
 
 # api
 from brainhops.backends import get_array_backend
+from brainhops.datamodel import hierarchy
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 
 # internals
@@ -27,7 +28,16 @@ from .concrete import (
     Scaling,
     Translation,
 )
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    SimplifyPolicy,
+    _bijective_targets,
+    _lower_modes,
+    _mode_admits,
+    is_member,
+    register_kind,
+)
 from .registries import INVERSE_CACHE, INVERSE_WRAPPERS, register_inverse
 
 
@@ -85,23 +95,35 @@ class Inverse(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         # Computing an inverse materializes it to a concrete instance, then
-        # simplifies that. This is the eager path for a standalone inverse
-        # that is not going to cancel in a sequence.
+        # simplifies that. A *direct* `inv.compute()` materializes regardless
+        # of policy: materializing is "compute", downcasting is "simplify".
+        # (In a sequence, the analytic guard in `_simplify_leaf` keeps a lazy
+        # inverse lazy so it can cancel; that guard lives in `sequence.py`.)
         #
-        # Materializing resolves the inverse to a concrete instance, which
-        # for a field inverts it numerically. Only do that when the
-        # requested mode admits the forward transformation; otherwise leave
-        # the inverse unresolved, so a restrictive mode such as
-        # `Inverse(forward=<field>).compute(mode="Affine")` does not trigger
-        # the expensive field inversion. This matches how the sequence
-        # simplifier gates the merge of adjacent subspace transforms.
-        if mode is not None and self.forward is not None:
-            if not _mode_admits(self.forward, _ensure_proper_modes(mode)):
-                return self
+        # The mode gate now sees through to the forward (membership resolves
+        # the wrapper), so a restrictive mode such as
+        # `Inverse(forward=<field>).compute(mode="affine")` leaves the inverse
+        # unresolved and does not trigger the expensive field inversion.
+        if mode is not None and not _mode_admits(self, _lower_modes(mode)):
+            return self
         return self._materialize().compute(mode, simplify=simplify)
+
+    def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
+        # An inverse never reads its own parameter, at any level. Every node
+        # under `Bijective` is closed under inversion, so `Inverse(T) ∈ N`
+        # for such an `N` exactly when `T ∈ N`; for a general node it holds
+        # when `T` is in the bijective sub-set of `N`. For `Injective` /
+        # `Surjective`, `_bijective_targets` is `(Bijective,)`: the inverse of
+        # a non-bijection is not a function.
+        if self.forward is None:
+            return issubclass(hierarchy.IdentityTransformation, node)
+        return any(
+            is_member(self.forward, m, policy)
+            for m in _bijective_targets(node)
+        )
 
     def to(
         self,
@@ -439,3 +461,9 @@ INVERSE_WRAPPERS.update(
         )
     }
 )
+
+
+# The `Inverse` family is addressed as a class kind (matched by
+# `isinstance`): `"inverse"` / `Inverse` cover the generic front door and
+# every typed inverse.
+register_kind("inverse", Inverse)
