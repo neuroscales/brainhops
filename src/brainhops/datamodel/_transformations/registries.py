@@ -60,6 +60,18 @@ def register_inverse(cls: tx.Type["Inverse"]) -> None:
     INVERSE = cls
 
 
+# The concrete `base.Transformation` root, registered at its import time so
+# that `modes._lower_key` can recognize a concrete transformation class as a
+# key without importing `base` at the top level (which would cycle).
+TRANSFORMATION: tx.Optional[tx.Type["Transformation"]] = None
+
+
+def register_transformation(cls: tx.Type["Transformation"]) -> None:
+    """Register the concrete `Transformation` root class."""
+    global TRANSFORMATION
+    TRANSFORMATION = cls
+
+
 XFORM_PAIR = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
 
 CONVERTER = tx.Callable[["Transformation"], "Transformation"]
@@ -82,6 +94,17 @@ COMPOSERS_FASTMAP: tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, ...]] = {}
 # the inverse-cancel pair `X @ X^-1 -> Identity`). It is tried ahead of the
 # numeric composers, which register at the default priority 0.
 ANALYTIC = 1
+
+# A checker decides whether a transform is *established* in a hierarchy set:
+# `checker(t, compute) -> bool` (`compute=False` analytic, `True` numeric).
+# It is keyed by `(source transform type, hierarchy kind node)`, dispatched
+# like the composers/converters (nearest source in the class hierarchy wins).
+CHECKER = tx.Callable[["Transformation", bool], bool]
+CHECKER_REGISTRY = tx.Dict[tx.Tuple[type, type], CHECKER]
+CHECKERS: CHECKER_REGISTRY = {}
+# The fastmap caches, per concrete source type, the (kind node, checker)
+# pairs that apply to it, already reduced to the nearest source per kind.
+CHECKERS_FASTMAP: tx.Dict[type, tx.Tuple[tx.Tuple[type, CHECKER], ...]] = {}
 
 
 def distance(t1: type, t2: type, oriented: bool = True) -> int:

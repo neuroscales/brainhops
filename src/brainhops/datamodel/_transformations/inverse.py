@@ -27,11 +27,21 @@ from .concrete import (
     Scaling,
     Translation,
 )
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
+from .meta import _simplify_inner
+from .modes import (
+    ModeLike,
+    SimplifyLike,
+    _lower_modes,
+    _lower_simplify,
+    _mode_admits,
+)
 from .registries import INVERSE_CACHE, INVERSE_WRAPPERS, register_inverse
 
+# typing
+TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
-class Inverse(Transformation):
+
+class Inverse(Transformation, tx.Generic[TRANSFORMATION]):
     """The inverse of a transformation, resolved on demand.
 
     An `Inverse` holds a forward transformation and represents its
@@ -53,7 +63,7 @@ class Inverse(Transformation):
     # --- attributes ---------------------------------------------------
 
     forward: tx.Annotated[
-        tx.Optional[Transformation],
+        tx.Optional[TRANSFORMATION],
         tx.Doc("The forward transformation whose inverse this represents."),
     ] = None
 
@@ -85,23 +95,24 @@ class Inverse(Transformation):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
-        # Computing an inverse materializes it to a concrete instance, then
-        # simplifies that. This is the eager path for a standalone inverse
-        # that is not going to cancel in a sequence.
-        #
-        # Materializing resolves the inverse to a concrete instance, which
-        # for a field inverts it numerically. Only do that when the
-        # requested mode admits the forward transformation; otherwise leave
-        # the inverse unresolved, so a restrictive mode such as
-        # `Inverse(forward=<field>).compute(mode="Affine")` does not trigger
-        # the expensive field inversion. This matches how the sequence
-        # simplifier gates the merge of adjacent subspace transforms.
-        if mode is not None and self.forward is not None:
-            if not _mode_admits(self.forward, _ensure_proper_modes(mode)):
-                return self
-        return self._materialize().compute(mode, simplify=simplify)
+        # Materializing an inverse to a concrete instance is the *compose*
+        # path, gated by `mode`: it only runs when the mode admits the
+        # inverse (which membership resolves through to the forward, so a
+        # restrictive mode such as `Inverse(<field>).compute(mode="affine")`
+        # does not trigger the expensive field inversion).
+        modes = _lower_modes(mode)
+        if modes and _mode_admits(self, modes):
+            return self._materialize().compute(mode, simplify=simplify)
+        # Not admitted (including `mode=False`): stay lazy -- never
+        # materialize, so an adjacent pair can still cancel in a sequence.
+        # Simplification is decoupled from the compose mode (see issue #92),
+        # so still run the leaf-only analytic downcast of the forward.
+        forward = _simplify_inner(self.forward, _lower_simplify(simplify))
+        if forward is self.forward:
+            return self
+        return replace(self, forward=forward)
 
     def to(
         self,
@@ -168,6 +179,12 @@ class Inverse(Transformation):
 
 register_inverse(Inverse)
 
+# NOTE (issue #93): the typed inverses below parameterize the generic
+# (`Inverse[Translation]`, ...) for introspectable hints only. Making
+# `Inverse(forward=x)` construct the matching typed inverse polymorphically
+# (via the bagof.magic constructor) is a separate follow-up, not done here;
+# `Inverse(forward=x)` stays generic-until-materialize.
+
 
 def _cancels(first: Transformation, second: Transformation) -> bool:
     """Whether ``[first, second]`` cancels to the identity for free.
@@ -186,7 +203,7 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     return False
 
 
-class InverseTranslation(Inverse, Translation):
+class InverseTranslation(Inverse[Translation], Translation):
     """The inverse of a [`Translation`][], resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
@@ -210,7 +227,7 @@ class InverseTranslation(Inverse, Translation):
         return -self.forward.translation
 
 
-class InverseScaling(Inverse, Scaling):
+class InverseScaling(Inverse[Scaling], Scaling):
     """The inverse of a [`Scaling`][], resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
@@ -230,7 +247,7 @@ class InverseScaling(Inverse, Scaling):
         return 1.0 / self.forward.scale
 
 
-class InverseRotation(Inverse, Rotation):
+class InverseRotation(Inverse[Rotation], Rotation):
     """The inverse of a [`Rotation`][], resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
@@ -251,7 +268,7 @@ class InverseRotation(Inverse, Rotation):
         return self.forward.matrix.T
 
 
-class InversePermutation(Inverse, Permutation):
+class InversePermutation(Inverse[Permutation], Permutation):
     """The inverse of a [`Permutation`][], resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
@@ -275,7 +292,7 @@ class InversePermutation(Inverse, Permutation):
         return inverse_permutation
 
 
-class InverseLinear(Inverse, Linear):
+class InverseLinear(Inverse[Linear], Linear):
     """The inverse of a [`Linear`][] transformation, resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
@@ -296,7 +313,7 @@ class InverseLinear(Inverse, Linear):
         return ab.linalg.inv(self.forward.matrix)
 
 
-class InverseAffine(Inverse, Affine):
+class InverseAffine(Inverse[Affine], Affine):
     """The inverse of an [`Affine`][] transformation, resolved on demand."""
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
@@ -317,7 +334,7 @@ class InverseAffine(Inverse, Affine):
         return ab.linalg.inv(self.forward.homogeneous_matrix)[:-1]
 
 
-class InverseDisplacementField(Inverse, DisplacementField):
+class InverseDisplacementField(Inverse[DisplacementField], DisplacementField):
     """The inverse of a [`DisplacementField`][], resolved on demand.
 
     The wrapper reports the `order`, `bound` and `coeff` of the forward
@@ -375,7 +392,7 @@ class InverseDisplacementField(Inverse, DisplacementField):
         )
 
 
-class InverseCoordinatesField(Inverse, CoordinatesField):
+class InverseCoordinatesField(Inverse[CoordinatesField], CoordinatesField):
     """The inverse of a [`CoordinatesField`][], resolved on demand.
 
     A coordinate field has no cheap closed-form inverse, so it cannot be
