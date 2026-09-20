@@ -8,7 +8,6 @@ from bagof.magic import replace
 
 # api
 from brainhops._core.properties import smartproperty
-from brainhops.datamodel import hierarchy
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
@@ -25,13 +24,22 @@ from .concrete import (
 from .errors import CompositionError
 from .inverse import Inverse
 from .meta import SubspaceTransformation
-from .registries import register_sequence
 
-# typing
-_ModePair = tx.Tuple[tx.Type[hierarchy.Transformation], tx.Optional[int]]
-_ModeCls = tx.Union[str, tx.Type[hierarchy.Transformation]]
-_ModeLike = tx.Union[tx.Tuple[_ModeCls, tx.Optional[int]], _ModeCls, int]
-ModeLike = tx.Union[_ModeLike, tx.Iterable[_ModeLike]]
+# The mode types and helpers live in their own module so that `base`,
+# `inverse` and `meta` can import them at the top level without the
+# `sequence` <-> `base` import cycle. They are re-exported here because
+# other modules (and the package `__init__`) import `ModeLike` from
+# `sequence`.
+from .modes import (  # noqa: F401
+    ModeLike,
+    _ensure_proper_modes,
+    _is_proper_mode,
+    _matches_mode,
+    _mode_admits,
+    _mode_children,
+    _ModePair,
+)
+from .registries import register_sequence
 
 
 class SequenceMixin(AbcSequence):
@@ -162,7 +170,12 @@ class Sequence(SequenceMixin, Transformation):
             output=getattr(self, "_input", None),
         )
 
-    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
 
@@ -200,10 +213,13 @@ class Sequence(SequenceMixin, Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
-        mode = _ensure_proper_modes(mode)
-        if not mode:
+        modes = _ensure_proper_modes(mode)
+        if not modes:
             return self  # No-op
-        return _compute_sequence(self, mode=mode)
+        result = _compute_sequence(self, mode=modes)
+        if simplify:
+            result = _simplify_result(result)
+        return result
 
     def _flattened(self) -> tx.Self:
         # Flatten nested sequences into a single sequence, and propagate
@@ -292,6 +308,38 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 #    SEQUENCE COMPUTATION
 # ----------------------------------------------------------------------
+
+
+def _simplify_result(result: Transformation) -> Transformation:
+    # Apply the numeric downcast (`simplify`) to a computed result. The
+    # kind-checks are run on each leaf so the cheapest compatible type is
+    # picked, without recomposing (which would ignore the requested mode).
+    # This is why the general path cannot express it: routing the result
+    # back through `compute()` with a no-op mode would either return early
+    # (an empty mode is a no-op) or, under `mode=None`, recompose across the
+    # boundaries the requested mode was told to keep.
+    #
+    # A surviving `CartesianField` is left untouched. A grid is the
+    # identity map over its coordinates, so the numeric checks would
+    # downcast it to `Identity` and drop the sampling domain it defines.
+    # `_compute_sequence` only ever leaves a grid in a leading, trailing or
+    # standalone position -- all sampling domains -- so no grid that
+    # reaches here may be simplified away.
+    if isinstance(result, Sequence):
+        return replace(
+            result,
+            transformations=[
+                _simplify_leaf(t) for t in (result.transformations or [])
+            ],
+        )
+    return _simplify_leaf(result)
+
+
+def _simplify_leaf(t: Transformation) -> Transformation:
+    # Downcast a single computed leaf, preserving a grid (see above).
+    if isinstance(t, CartesianField):
+        return t
+    return t.compute(simplify=True)
 
 
 def _compute_sequence(
@@ -428,88 +476,6 @@ def _compute_sequence(
     if len(outputs) == 1:
         return outputs[0]
     return Sequence(transformations=outputs)
-
-
-# ----------------------------------------------------------------------
-#    MODE
-# ----------------------------------------------------------------------
-
-
-def _ensure_proper_modes(mode: ModeLike) -> tx.List[_ModePair]:
-    """
-    Convert any (list of) mode-like input into a list of (type, ndim) pairs.
-
-    !!! note "An empty list of modes yields a no-op"
-    """
-
-    if mode is None:
-        # Default case
-        mode = [hierarchy.Transformation]
-    elif isinstance(mode, (str, int, type)):
-        # We know that these are single modes -> wrap them already
-        mode = [mode]
-    elif _is_proper_mode(mode):
-        # Already a proper mode -> wrap it
-        mode = [mode]
-
-    # Convert each element to a proper mode = a (type, ndim) pair
-    return [
-        hierarchy.parseType(m) if not _is_proper_mode(m) else m for m in mode
-    ]
-
-
-def _is_proper_mode(mode: ModeLike) -> bool:
-    """
-    A proper mode is a tuple (type, ndim),
-    where type is a subclass of `hierarchy.Transformation`
-    and ndim is an int or None.
-    """
-    if not isinstance(mode, tuple):
-        return False
-    if len(mode) != 2:
-        return False
-    if not isinstance(mode[0], type):
-        return False
-    if not isinstance(mode[1], (int, type(None))):
-        return False
-    return True
-
-
-def _mode_admits(t: Transformation, mode: tx.List[_ModePair]) -> bool:
-    # Whether the current mode would compose a transform of this type. The
-    # mode is the list of `(type, ndim)` pairs the simplification runs
-    # under, and a transform belongs to the mode when it matches any pair.
-    return any(_matches_mode(t, m) for m in mode)
-
-
-def _mode_children(mode: _ModePair) -> list:
-    children = []
-    seen = set()
-    cls, ndim = mode
-    for child in cls.__subclasses__():
-        if (child, ndim) not in seen:
-            seen.add((child, ndim))
-            children.append((child, ndim))
-    return children
-
-
-def _matches_mode(t: Transformation, mode: _ModePair) -> bool:
-    # FIXME
-    #   In many transforms, the ndim can be guessed from the content
-    #   of the xform, even if the input/output spaces are not set
-    #   (eg. the shape of the matri or the field).
-    #
-    #   The current implementation is a stricter bound.
-    cls, ndim = mode
-    if not isinstance(t, cls):
-        return False
-    if ndim is None:
-        return True
-    if t.input is None or t.output is None:
-        return False
-    if t.input.axes is None or t.output.axes is None:
-        return False
-    return len(t.input.axes) == ndim and len(t.output.axes) == ndim
 
 
 def _drop_interior_grids(seq: Sequence) -> Sequence:

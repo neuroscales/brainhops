@@ -10,6 +10,7 @@ import numpy as np
 from bagof.magic import fields_dict, replace
 
 from brainhops.datamodel._transformations import converters as xc
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -18,8 +19,13 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
     Identity,
+    Inverse,
+    Linear,
+    Permutation,
+    Scaling,
     Sequence,
     SubspaceTransformation,
+    Transformation,
     Translation,
     is_identity,
 )
@@ -442,3 +448,246 @@ def test_interpolates_truth_table() -> None:
     # An inverse interpolates exactly when the transform it inverts does.
     assert _interpolates(affine.inverse()) is False
     assert _interpolates(disp.inverse()) is True
+
+
+# ----------------------------------------------------------------------
+#   UNIFIED compute() SIGNATURE: mode-gating and simplify
+# ----------------------------------------------------------------------
+#
+# Every transformation now exposes the same
+# ``compute(mode=None, *, simplify=False)`` signature. ``mode`` gates
+# which kinds get materialized (a leaf not admitted by the mode is
+# returned untouched, and a delayed ``Inverse`` is not materialized), and
+# ``simplify`` runs the numeric kind-checks that downcast to the cheapest
+# compatible type.
+
+
+def test_inverse_of_field_is_not_materialized_under_restrictive_mode() -> None:
+    # An ``Inverse`` wrapping a displacement field must NOT compute the
+    # (expensive) field inverse when the mode does not admit the field.
+    # The delayed inverse is returned unchanged instead.
+    field = DisplacementField(field=np.random.default_rng(0).random((4, 4, 2)))
+    inv = Inverse(forward=field)
+    result = inv.compute(mode="Affine")
+    assert result is inv
+
+
+def test_inverse_of_field_is_materialized_when_mode_admits_it() -> None:
+    # With the default (``mode=None``) mode, every kind is admitted, so
+    # the inverse is materialized into a concrete field.
+    field = DisplacementField(field=np.random.default_rng(1).random((4, 4, 2)))
+    inv = Inverse(forward=field)
+    result = inv.compute(mode=None)
+    assert isinstance(result, DisplacementField)
+    assert result is not inv
+
+
+def test_inverse_materializes_when_mode_admits_the_wrapped_kind() -> None:
+    # A restrictive mode that DOES admit the wrapped transformation lets
+    # the inverse be materialized.
+    lin = Linear(matrix=np.diag([2.0, 3.0]))
+    inv = Inverse(forward=lin)
+    result = inv.compute(mode="Linear")
+    assert isinstance(result, Linear)
+    np.testing.assert_allclose(result.matrix, np.diag([0.5, 1.0 / 3.0]))
+
+
+def test_leaf_not_admitted_by_mode_is_returned_unchanged() -> None:
+    # A leaf transformation that the mode does not admit is returned
+    # untouched (same object), with no downcast attempted.
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    result = affine.compute(mode="Translation")
+    assert result is affine
+
+
+def test_leaf_admitted_by_mode_is_computed() -> None:
+    # A leaf that the mode admits goes through ``compute`` normally.
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    result = affine.compute(mode="Affine")
+    assert isinstance(result, Affine)
+
+
+def test_simplify_downcasts_a_leaf_to_the_cheapest_type() -> None:
+    # ``simplify=True`` runs the numeric kind-checks and downcasts the
+    # transformation to the cheapest compatible type.
+    identity_like = Linear(matrix=np.eye(2))
+    assert isinstance(identity_like.compute(simplify=True), Identity)
+
+    scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
+    assert isinstance(scaling_like.compute(simplify=True), Scaling)
+    # Without ``simplify`` the numeric downcast is not performed.
+    assert isinstance(scaling_like.compute(), Linear)
+
+
+def test_sequence_compute_applies_simplify_to_the_result() -> None:
+    # ``Sequence.compute(simplify=True)`` applies the numeric downcast to
+    # its final composed result.
+    scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
+    seq = Sequence(transformations=[scaling_like])
+    assert isinstance(seq.compute(simplify=True), Scaling)
+    # Without ``simplify`` the result keeps its original (linear) type.
+    assert isinstance(seq.compute(), Linear)
+
+
+def test_simplify_is_keyword_only() -> None:
+    # ``simplify`` must be keyword-only; ``mode`` stays positional.
+    import pytest
+
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    with pytest.raises(TypeError):
+        affine.compute("Affine", True)  # simplify passed positionally
+
+
+# ----------------------------------------------------------------------
+#   simplify=True HARDENING: kind-checks must never raise
+# ----------------------------------------------------------------------
+
+
+def test_simplify_downcasts_a_swap_to_a_permutation() -> None:
+    # A pure axis swap is a permutation. ``is_permutation`` used to compare
+    # whole row/column sum arrays with ``and``, which raises on an array's
+    # ambiguous truth value; the reduced check now downcasts it cleanly.
+    swap = Linear(matrix=[[0.0, 1.0], [1.0, 0.0]])
+    result = swap.compute(simplify=True)
+    assert isinstance(result, Permutation)
+
+
+def test_simplify_does_not_raise_on_a_shear() -> None:
+    # A shear is not a permutation/scale/rotation. The kind-checks must
+    # detect that without raising (the array-truth-value bug), and leave a
+    # linear transform.
+    shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
+    result = shear.compute(simplify=True)
+    assert isinstance(result, Linear)
+    assert not isinstance(result, Permutation)
+
+
+def test_simplify_does_not_raise_on_a_non_square_matrix() -> None:
+    # A non-square matrix maps between spaces of different dimension. The
+    # square-only kind-checks (scale/permutation/rotation) must return
+    # False rather than broadcast-erroring or taking a determinant.
+    rectangular = Linear(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    result = rectangular.compute(simplify=True)
+    assert isinstance(result, Linear)
+
+
+def test_simplify_does_not_raise_on_a_rotation() -> None:
+    # A 90-degree rotation is orthogonal with determinant 1. Running the
+    # numeric checks over it must not raise (whatever the converter chooses
+    # to downcast it to).
+    rotation = Linear(matrix=[[0.0, -1.0], [1.0, 0.0]])
+    result = rotation.compute(simplify=True)
+    assert result is not None
+
+
+# ----------------------------------------------------------------------
+#   simplify=True must not drop a sampling grid
+# ----------------------------------------------------------------------
+
+
+def test_simplify_keeps_a_leading_grid() -> None:
+    # ``is_identity(grid, compute=True)`` is True, but a leading grid is the
+    # sampling domain, not an identity to drop. Computing with
+    # ``simplify=True`` must keep the domain: the result carries the grid's
+    # spatial shape and is not collapsed to an ``Identity``.
+    grid = CartesianField(shape=(4, 5))
+    shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
+    result = Sequence([grid, shear]).compute(simplify=True)
+    assert not isinstance(result, Identity)
+    assert result.field is not None
+    assert result.field.shape == (4, 5, 2)
+
+
+def test_simplify_keeps_a_trailing_grid_as_a_cartesian_field() -> None:
+    # A trailing grid survives computation as a ``CartesianField`` leaf.
+    # ``simplify`` runs the numeric downcast over each leaf, which would
+    # turn that grid into an ``Identity`` and drop the sampling domain --
+    # the guard must leave the grid untouched.
+    affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    grid = CartesianField(shape=(4, 5))
+    result = Sequence([affine, grid]).compute(simplify=True)
+    assert _contains_cartesian_field(result)
+
+
+# ----------------------------------------------------------------------
+#   SubspaceTransformation endpoint reconstruction
+# ----------------------------------------------------------------------
+
+
+def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
+    # An endpoint-less subspace whose axes exceed the inner system's length
+    # used to index the inner (k-axis) system with full-space positions and
+    # raise IndexError. It must instead reconstruct a full-space system,
+    # placing each inner axis at its declared position and filling the gaps
+    # with placeholder axes.
+    inner = Identity(
+        input=CoordinateSystem(
+            axes=[Axis(name="x"), Axis(name="y"), Axis(name="z")]
+        )
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[1, 2, 3], output_axes=[1, 2, 3]
+    )
+    system = subspace.input  # previously raised IndexError
+    assert system is not None
+    assert len(system.axes) == 4
+    assert [getattr(a, "name", None) for a in system.axes] == [
+        None,
+        "x",
+        "y",
+        "z",
+    ]
+
+
+def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
+    # For axes that start at 0 the reconstruction reproduces the inner
+    # system's own axes in order, as before.
+    inner = Identity(
+        input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
+    )
+    system = subspace.input
+    assert [getattr(a, "name", None) for a in system.axes] == ["x", "y"]
+
+
+def test_subspace_declared_endpoint_is_returned_as_is() -> None:
+    # When the subspace carries a declared endpoint, it is returned
+    # verbatim rather than reconstructed from the inner system.
+    declared = CoordinateSystem(name="full", axes=[Axis(), Axis(), Axis()])
+    inner = Identity(
+        input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input=declared, input_axes=[0, 1]
+    )
+    assert subspace.input is declared
+
+
+# ----------------------------------------------------------------------
+#   compute() has no silent default: the base raises
+# ----------------------------------------------------------------------
+
+
+def test_base_transformation_compute_raises() -> None:
+    # A bare ``Transformation`` has no meaningful ``compute``. Rather than
+    # returning itself, the base raises, so a subclass that forgets to
+    # implement ``compute`` fails loudly (mirroring ``inverse``).
+    import pytest
+
+    with pytest.raises(NotImplementedError):
+        Transformation().compute()
+
+
+def test_subspace_compute_returns_self_unchanged() -> None:
+    # ``MetaTransformation`` (here ``SubspaceTransformation``) keeps the
+    # old base-default behaviour: it has no numeric downcast of its own, so
+    # ``compute`` returns the same object, both with the default mode and
+    # under a mode that does not admit it.
+    inner = Translation(translation=np.array([1.0, 2.0]))
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
+    )
+    assert subspace.compute() is subspace
+    assert subspace.compute(mode="Affine") is subspace

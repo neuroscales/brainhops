@@ -147,14 +147,19 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # --- methods ------------------------------------------------------
 
-    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> Transformation:
         """Compute the field as a plain transformation.
 
         The finest scale is composed and returned. The result is an
         ordinary transformation, with no pyramid, so it computes exactly
         as the finest scale would on its own.
         """
-        return self._finest.compute(mode)
+        return self._finest.compute(mode, simplify=simplify)
 
     def inverse(self, compute: bool = False) -> tx.Self:
         scales = self.scales or []

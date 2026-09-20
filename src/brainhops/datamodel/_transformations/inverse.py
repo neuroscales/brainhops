@@ -27,6 +27,7 @@ from .concrete import (
     Scaling,
     Translation,
 )
+from .modes import ModeLike, _ensure_proper_modes, _mode_admits
 from .registries import INVERSE_CACHE, INVERSE_WRAPPERS, register_inverse
 
 
@@ -80,11 +81,27 @@ class Inverse(Transformation):
             forward = forward.compute()
         return forward
 
-    def compute(self, simplify: bool = False) -> Transformation:
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> Transformation:
         # Computing an inverse materializes it to a concrete instance, then
         # simplifies that. This is the eager path for a standalone inverse
         # that is not going to cancel in a sequence.
-        return self._materialize().compute(simplify=simplify)
+        #
+        # Materializing resolves the inverse to a concrete instance, which
+        # for a field inverts it numerically. Only do that when the
+        # requested mode admits the forward transformation; otherwise leave
+        # the inverse unresolved, so a restrictive mode such as
+        # `Inverse(forward=<field>).compute(mode="Affine")` does not trigger
+        # the expensive field inversion. This matches how the sequence
+        # simplifier gates the merge of adjacent subspace transforms.
+        if mode is not None and self.forward is not None:
+            if not _mode_admits(self.forward, _ensure_proper_modes(mode)):
+                return self
+        return self._materialize().compute(mode, simplify=simplify)
 
     def to(
         self,

@@ -30,6 +30,7 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from . import registries
 from .base import Transformation
 from .meta import SubspaceTransformation
+from .modes import ModeLike, _ensure_proper_modes, _mode_admits
 from .registries import INVERSE_WRAPPERS
 
 
@@ -56,9 +57,52 @@ class _LazyInverseMixin:
 class ConcreteTransformation(Transformation):
     """Base class for concrete transformations that hold a parameter."""
 
-    # The simplifying `compute()` is inherited from `Transformation`: a
-    # meta transformation simplifies by the same checks, so the
-    # implementation sits on the shared base rather than here.
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
+        """
+        Compute the transformation, downcasting it to the cheapest
+        compatible kind.
+
+        A concrete transformation holds a parameter, so it simplifies to
+        the simplest compatible kind, whose compatibility can be detected
+        with (almost) no overhead. For example, a transformation whose
+        parameter is set to `None` is treated as an identity.
+
+        Parameters
+        ----------
+        mode : [list of] str or type, optional
+            Which kinds of transformations to materialize. `None` (the
+            default) admits every kind. If a `mode` is given and this leaf
+            is not admitted by it, the leaf is returned unchanged.
+        simplify : bool, default=False
+            Run the numeric kind-checks that downcast the transformation
+            to the cheapest compatible type.
+        """
+        # A leaf that the requested mode does not admit is left untouched.
+        # This mirrors how the sequence simplifier only composes
+        # transformations that match the mode. The checks and the concrete
+        # types both live in this module, so nothing is imported in the
+        # body.
+        if mode is not None and not _mode_admits(
+            self, _ensure_proper_modes(mode)
+        ):
+            return self
+        checks = [
+            (is_identity, Identity),
+            (is_translation, Translation),
+            (is_scale, Scaling),
+            (is_permutation, Permutation),
+            (is_rotation, Rotation),
+            (is_linear, Linear),
+        ]
+        for check, cls in checks:
+            if check(self, compute=simplify):
+                return self.to(cls)
+        return self
 
 
 class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
@@ -471,9 +515,13 @@ def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
-        ndim = matrix.shape[0]
+        rows, cols = matrix.shape
+        if rows != cols:
+            # A scaling maps a space onto itself, so a non-square matrix
+            # (different input and output dimension) is never a scaling.
+            return False
         ab = get_array_backend(matrix)
-        return not (matrix * (1 - ab.eye(ndim))).any()
+        return not (matrix * (1 - ab.eye(rows))).any()
     if isinstance(xform, Affine) and xform.matrix is not None:
         return is_linear(xform, compute=compute) and is_scale(
             xform.to(Linear), compute=compute
@@ -496,9 +544,19 @@ def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
+        rows, cols = matrix.shape
+        if rows != cols:
+            # A permutation reorders the axes of one space, so a non-square
+            # matrix is never a permutation.
+            return False
         ab = get_array_backend(matrix)
-        is_binary = ab.isin(matrix, [0, 1]).all()
-        is_perm = matrix.sum(axis=0) == 1 and matrix.sum(axis=1) == 1
+        is_binary = bool(ab.isin(matrix, [0, 1]).all())
+        # Reduce the row/column sums to a single truth value before the
+        # `and`: comparing whole arrays with `and` raises on their
+        # ambiguous truth value.
+        is_perm = bool(
+            (matrix.sum(0) == 1).all() and (matrix.sum(1) == 1).all()
+        )
         return is_binary and is_perm
     if isinstance(xform, Affine) and xform.matrix is not None:
         return is_linear(xform, compute=compute) and is_permutation(
@@ -523,10 +581,14 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
         return True
     if compute and isinstance(xform, Linear) and xform.matrix is not None:
         matrix = xform.matrix
-        ndim = matrix.shape[0]
+        rows, cols = matrix.shape
+        if rows != cols:
+            # A rotation is orthogonal, hence square; a non-square matrix
+            # is never a rotation, and its determinant is undefined.
+            return False
         ab = get_array_backend(matrix)
-        is_orthogonal = (matrix @ matrix.T == ab.eye(ndim)).all()
-        is_posdef = ab.linalg.det(matrix) > 0
+        is_orthogonal = bool((matrix @ matrix.T == ab.eye(rows)).all())
+        is_posdef = bool(ab.linalg.det(matrix) > 0)
         return is_orthogonal and is_posdef
     if isinstance(xform, Affine) and xform.matrix is not None:
         return is_linear(xform, compute=compute) and is_rotation(
