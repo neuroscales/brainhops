@@ -186,6 +186,7 @@ class Sequence(SequenceMixin, Transformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
@@ -228,6 +229,15 @@ class Sequence(SequenceMixin, Transformation):
             [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
             grammar). `"analytic"` (the default) downcasts each leaf from
             structure only; `False`/`"none"`/`None` disables it.
+        factor : bool, default=False
+            Whether to rewrite the sequence into its axis-group normal
+            form: a leading grid (if any), an optional embedding of created
+            axes, one axis-preserving factor per group of axes that
+            transform together, and trailing reindex/drop projections. Off
+            by default, so the result is byte-for-byte the plain
+            `compute()` result. Nothing is ever composed across groups;
+            `mode` still decides whether the restricted pieces inside a
+            group compose.
         """
         modes = _lower_modes(mode)
         if not modes:
@@ -238,7 +248,19 @@ class Sequence(SequenceMixin, Transformation):
         # object identity rather than being materialized) and BEFORE per-mode
         # composition (so a numeric downcast such as field->affine feeds it).
         table = _lower_simplify(simplify)
-        result = _compute_sequence(self, mode=modes, table=table)
+        # The driver owns the per-leaf simplify cache (and its keepalive), so
+        # the final pass below reuses the very same memo the fixpoint loop
+        # built rather than re-scanning a leaf it already downcast (R1).
+        simplify_cache: tx.Dict[int, Transformation] = {}
+        simplify_keepalive: tx.List[Transformation] = []
+        result = _compute_sequence(
+            self,
+            mode=modes,
+            table=table,
+            factor=factor,
+            simplify_cache=simplify_cache,
+            simplify_keepalive=simplify_keepalive,
+        )
         # A final pass downcasts a composed result that escaped the loop as a
         # single transform. It is needed only when the table has a numeric
         # entry: the in-loop pass runs before composition each iteration and
@@ -246,9 +268,13 @@ class Sequence(SequenceMixin, Transformation):
         # unsimplified are the last composition's products, which have no
         # structural downcast left -- only value facts can appear, which is
         # `numeric`. It runs after all cancellation, so a lazy pair has
-        # already cancelled by identity rather than being materialized.
+        # already cancelled by identity rather than being materialized. It
+        # consults the driver-owned cache, so a leaf already downcast in the
+        # loop is not scanned again.
         if _table_needs_numeric(table):
-            result = _simplify_result(result, table)
+            result = _simplify_leaves(
+                result, table, simplify_cache, simplify_keepalive
+            )
         return result
 
     def _flattened(self) -> tx.Self:
@@ -340,26 +366,52 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 
 
-def _simplify_result(
-    result: Transformation, table: SimplifyTable
+def _simplify_leaves(
+    result: Transformation,
+    table: SimplifyTable,
+    cache: tx.Dict[int, Transformation],
+    keepalive: tx.List[Transformation],
 ) -> Transformation:
-    # Apply the simplify table to a computed result. A `Sequence` result has
-    # each of its leaves simplified; any other result is simplified as a
-    # single leaf. This runs after `_compute_sequence` has finished all
-    # composition and cancellation, so it only downcasts what survives.
+    # Apply the simplify table to a computed result, consulting the
+    # driver-owned cache. A `Sequence` result has each of its leaves
+    # simplified; any other result is simplified as a single leaf. This runs
+    # after `_compute_sequence` has finished all composition and
+    # cancellation, so it only downcasts what survives; a leaf already in the
+    # cache (unchanged through the loop) is not scanned again (R1).
     if isinstance(result, Sequence):
         leaves = result.transformations or []
-        simplified = [_simplify_leaf(t, table) for t in leaves]
+        simplified = [
+            _cached_simplify_leaf(t, table, cache, keepalive) for t in leaves
+        ]
         if any(a is not b for a, b in zip(simplified, leaves)):
             return replace(result, transformations=simplified)
         return result
-    return _simplify_leaf(result, table)
+    return _cached_simplify_leaf(result, table, cache, keepalive)
+
+
+def _cached_simplify_leaf(
+    t: Transformation,
+    table: SimplifyTable,
+    cache: tx.Dict[int, Transformation],
+    keepalive: tx.List[Transformation],
+) -> Transformation:
+    # A leaf's simplify result, memoized by `id`. A leaf seen before (same
+    # object) reuses its cached result rather than being re-scanned; the
+    # keepalive list pins those leaves so an `id` is never reused while the
+    # cache holds it.
+    key = id(t)
+    if key in cache:
+        return cache[key]
+    result = _simplify_leaf(t, table)
+    cache[key] = result
+    keepalive.append(t)
+    return result
 
 
 def _simplify_leaf(t: Transformation, table: SimplifyTable) -> Transformation:
     # Apply a leaf's resolved simplify policy. Called each fixpoint iteration
     # by `_simplify_pass` (after the identity-cancel sweep, before per-mode
-    # composition) and once by `_simplify_result` on the final result. The
+    # composition) and once by `_simplify_leaves` on the final result. The
     # whole `table` is threaded to `compute`, never a scalar, so a wrapper's
     # inner resolves against the user's own keys.
     #
@@ -402,13 +454,7 @@ def _simplify_pass(
     simplified = []
     changed = False
     for t in leaves:
-        key = id(t)
-        if key in cache:
-            result = cache[key]
-        else:
-            result = _simplify_leaf(t, table)
-            cache[key] = result
-            keepalive.append(t)
+        result = _cached_simplify_leaf(t, table, cache, keepalive)
         simplified.append(result)
         changed = changed or result is not t
     if changed:
@@ -421,6 +467,9 @@ def _compute_sequence(
     mode: tx.List[_ModePair],
     memo: tx.Optional[tx.Set[_ModePair]] = None,
     table: tx.Optional[SimplifyTable] = None,
+    factor: bool = False,
+    simplify_cache: tx.Optional[tx.Dict[int, Transformation]] = None,
+    simplify_keepalive: tx.Optional[tx.List[Transformation]] = None,
 ) -> Transformation:
     # We optimize by recursively finding the subclasses of all the modes
     # specified. This allows us to combine similar transformations first
@@ -453,8 +502,9 @@ def _compute_sequence(
         # being re-scanned on every iteration; the keepalive list pins those
         # leaves so an `id` is never reused while the cache holds it.
         skip_simplify = table is None or _table_is_noop(table)
-        simplify_cache: tx.Dict[int, Transformation] = {}
-        simplify_keepalive: tx.List[Transformation] = []
+        if simplify_cache is None:
+            simplify_cache = {}
+            simplify_keepalive = []
         while True:
             # Flatten without rebuilding any endpoint, so a transform stays
             # the same object that its inverse names. Cancellation tests

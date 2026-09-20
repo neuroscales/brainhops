@@ -14,6 +14,7 @@ from brainhops.datamodel import hierarchy
 from brainhops.datamodel.axes import Axis
 
 # internals
+from . import registries
 from .base import Transformation
 from .modes import (
     _NONINVERTIBLE_OF,
@@ -50,10 +51,15 @@ class MetaTransformation(Transformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         # A bare meta transformation has nothing to simplify on its own, so
         # -- once mode-gated -- it is returned unchanged. Subclasses
         # (`SubspaceTransformation`, `Projection`, `Bijection`) override this.
+        if factor:
+            return registries.SEQUENCE([self]).compute(
+                mode, simplify=simplify, factor=True
+            )
         if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
         return self
@@ -148,9 +154,14 @@ class SubspaceTransformation(MetaTransformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         from .concrete import Identity
 
+        if factor:
+            return registries.SEQUENCE([self]).compute(
+                mode, simplify=simplify, factor=True
+            )
         if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
         table = _lower_simplify(simplify)
@@ -229,9 +240,14 @@ class Projection(MetaTransformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         from .concrete import Identity
 
+        if factor:
+            return registries.SEQUENCE([self]).compute(
+                mode, simplify=simplify, factor=True
+            )
         if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
         policy = _resolve_simplify(self, _lower_simplify(simplify))
@@ -310,17 +326,28 @@ class Bijection(Transformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
         table = _lower_simplify(simplify)
-        if _resolve_simplify(self, table) is SimplifyPolicy.none:
+        none = _resolve_simplify(self, table) is SimplifyPolicy.none
+        if not factor and none:
             return self
-        # Downcast the forward/backward leaves only -- never compose or
-        # materialize (a lazy inverse forward/backward stays lazy under
-        # analytic). `_simplify_inner` enforces this.
-        forward = _simplify_inner(self.forward, table)
-        backward = _simplify_inner(self.backward, table)
+        if factor:
+            # A `Bijection` is a container over its two sides; it forwards
+            # `factor` to both, each of which factors independently.
+            forward, backward = self.forward, self.backward
+            if forward is not None:
+                forward = forward.compute(mode, simplify=table, factor=True)
+            if backward is not None:
+                backward = backward.compute(mode, simplify=table, factor=True)
+        else:
+            # Downcast the forward/backward leaves only -- never compose or
+            # materialize (a lazy inverse forward/backward stays lazy under
+            # analytic). `_simplify_inner` enforces this.
+            forward = _simplify_inner(self.forward, table)
+            backward = _simplify_inner(self.backward, table)
         if forward is self.forward and backward is self.backward:
             # Unchanged: keep object identity so an adjacent `Inverse` of
             # this bijection still cancels.

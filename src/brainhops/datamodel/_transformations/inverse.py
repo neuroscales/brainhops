@@ -96,6 +96,7 @@ class Inverse(Transformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         # Computing an inverse materializes it to a concrete instance, then
         # simplifies that. A *direct* `inv.compute()` materializes regardless
@@ -109,7 +110,9 @@ class Inverse(Transformation):
         # unresolved and does not trigger the expensive field inversion.
         if mode is not None and not _mode_admits(self, _lower_modes(mode)):
             return self
-        return self._materialize().compute(mode, simplify=simplify)
+        return self._materialize().compute(
+            mode, simplify=simplify, factor=factor
+        )
 
     def _is_member(self, node: type, policy: SimplifyPolicy) -> bool:
         # An inverse never reads its own parameter, at any level. Every node

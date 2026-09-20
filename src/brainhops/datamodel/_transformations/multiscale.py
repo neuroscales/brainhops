@@ -153,6 +153,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         """Compute the field as a plain transformation.
 
@@ -160,7 +161,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         ordinary transformation, with no pyramid, so it computes exactly
         as the finest scale would on its own.
         """
-        return self._finest.compute(mode, simplify=simplify)
+        return self._finest.compute(mode, simplify=simplify, factor=factor)
 
     def inverse(self, compute: bool = False) -> tx.Self:
         scales = self.scales or []
