@@ -138,7 +138,12 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     # --- methods ------------------------------------------------------
 
-    def compute(self, mode: tx.Optional[ModeLike] = None) -> tx.Self:
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
         """
         Compute the geometry by simplifying its transformation.
 
@@ -151,7 +156,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
         flat = self._flattened()
         transformation = flat.transformation
         if isinstance(transformation, Sequence):
-            transformation = transformation.compute(mode)
+            transformation = transformation.compute(mode, simplify=simplify)
+        elif simplify:
+            transformation = transformation.compute(simplify=True)
         return Geometry(
             (flat.grid, transformation),
             input=self.input,

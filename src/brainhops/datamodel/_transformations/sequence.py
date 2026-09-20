@@ -162,7 +162,12 @@ class Sequence(SequenceMixin, Transformation):
             output=getattr(self, "_input", None),
         )
 
-    def compute(self, mode: tx.Optional[ModeLike] = None) -> Transformation:
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
 
@@ -200,10 +205,13 @@ class Sequence(SequenceMixin, Transformation):
             * If the name of a transformation type: compute only consecutive
               sequences of transformations that match the specified type.
         """
-        mode = _ensure_proper_modes(mode)
-        if not mode:
+        modes = _ensure_proper_modes(mode)
+        if not modes:
             return self  # No-op
-        return _compute_sequence(self, mode=mode)
+        result = _compute_sequence(self, mode=modes)
+        if simplify:
+            result = _simplify_result(result)
+        return result
 
     def _flattened(self) -> tx.Self:
         # Flatten nested sequences into a single sequence, and propagate
@@ -292,6 +300,21 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 #    SEQUENCE COMPUTATION
 # ----------------------------------------------------------------------
+
+
+def _simplify_result(result: Transformation) -> Transformation:
+    # Apply the numeric downcast (`simplify`) to a computed result. The
+    # kind-checks are run on each leaf so the cheapest compatible type is
+    # picked, without recomposing (which would ignore the requested mode).
+    if isinstance(result, Sequence):
+        return replace(
+            result,
+            transformations=[
+                t.compute(simplify=True)
+                for t in (result.transformations or [])
+            ],
+        )
+    return result.compute(simplify=True)
 
 
 def _compute_sequence(

@@ -18,6 +18,9 @@ from brainhops.datamodel.transformations import (
     CoordinatesField,
     DisplacementField,
     Identity,
+    Inverse,
+    Linear,
+    Scaling,
     Sequence,
     SubspaceTransformation,
     Translation,
@@ -442,3 +445,91 @@ def test_interpolates_truth_table() -> None:
     # An inverse interpolates exactly when the transform it inverts does.
     assert _interpolates(affine.inverse()) is False
     assert _interpolates(disp.inverse()) is True
+
+
+# ----------------------------------------------------------------------
+#   UNIFIED compute() SIGNATURE: mode-gating and simplify
+# ----------------------------------------------------------------------
+#
+# Every transformation now exposes the same
+# ``compute(mode=None, *, simplify=False)`` signature. ``mode`` gates
+# which kinds get materialized (a leaf not admitted by the mode is
+# returned untouched, and a delayed ``Inverse`` is not materialized), and
+# ``simplify`` runs the numeric kind-checks that downcast to the cheapest
+# compatible type.
+
+
+def test_inverse_of_field_is_not_materialized_under_restrictive_mode() -> None:
+    # An ``Inverse`` wrapping a displacement field must NOT compute the
+    # (expensive) field inverse when the mode does not admit the field.
+    # The delayed inverse is returned unchanged instead.
+    field = DisplacementField(field=np.random.default_rng(0).random((4, 4, 2)))
+    inv = Inverse(forward=field)
+    result = inv.compute(mode="Affine")
+    assert result is inv
+
+
+def test_inverse_of_field_is_materialized_when_mode_admits_it() -> None:
+    # With the default (``mode=None``) mode, every kind is admitted, so
+    # the inverse is materialized into a concrete field.
+    field = DisplacementField(field=np.random.default_rng(1).random((4, 4, 2)))
+    inv = Inverse(forward=field)
+    result = inv.compute(mode=None)
+    assert isinstance(result, DisplacementField)
+    assert result is not inv
+
+
+def test_inverse_materializes_when_mode_admits_the_wrapped_kind() -> None:
+    # A restrictive mode that DOES admit the wrapped transformation lets
+    # the inverse be materialized.
+    lin = Linear(matrix=np.diag([2.0, 3.0]))
+    inv = Inverse(forward=lin)
+    result = inv.compute(mode="Linear")
+    assert isinstance(result, Linear)
+    np.testing.assert_allclose(result.matrix, np.diag([0.5, 1.0 / 3.0]))
+
+
+def test_leaf_not_admitted_by_mode_is_returned_unchanged() -> None:
+    # A leaf transformation that the mode does not admit is returned
+    # untouched (same object), with no downcast attempted.
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    result = affine.compute(mode="Translation")
+    assert result is affine
+
+
+def test_leaf_admitted_by_mode_is_computed() -> None:
+    # A leaf that the mode admits goes through ``compute`` normally.
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    result = affine.compute(mode="Affine")
+    assert isinstance(result, Affine)
+
+
+def test_simplify_downcasts_a_leaf_to_the_cheapest_type() -> None:
+    # ``simplify=True`` runs the numeric kind-checks and downcasts the
+    # transformation to the cheapest compatible type.
+    identity_like = Linear(matrix=np.eye(2))
+    assert isinstance(identity_like.compute(simplify=True), Identity)
+
+    scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
+    assert isinstance(scaling_like.compute(simplify=True), Scaling)
+    # Without ``simplify`` the numeric downcast is not performed.
+    assert isinstance(scaling_like.compute(), Linear)
+
+
+def test_sequence_compute_applies_simplify_to_the_result() -> None:
+    # ``Sequence.compute(simplify=True)`` applies the numeric downcast to
+    # its final composed result.
+    scaling_like = Linear(matrix=np.diag([2.0, 3.0]))
+    seq = Sequence(transformations=[scaling_like])
+    assert isinstance(seq.compute(simplify=True), Scaling)
+    # Without ``simplify`` the result keeps its original (linear) type.
+    assert isinstance(seq.compute(), Linear)
+
+
+def test_simplify_is_keyword_only() -> None:
+    # ``simplify`` must be keyword-only; ``mode`` stays positional.
+    import pytest
+
+    affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
+    with pytest.raises(TypeError):
+        affine.compute("Affine", True)  # simplify passed positionally
