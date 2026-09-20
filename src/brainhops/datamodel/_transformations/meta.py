@@ -19,6 +19,8 @@ from .base import Transformation
 if tx.TYPE_CHECKING:
     from brainhops.datamodel.systems import CoordinateSystem
 
+    from .sequence import ModeLike
+
 
 class MetaTransformation(Transformation):
     """
@@ -118,7 +120,14 @@ class Projection(MetaTransformation):
             output=self.input,
         )
 
-    def compute(self, *args, **kwargs) -> tx.Self:
+    def compute(
+        self,
+        mode: "tx.Optional[ModeLike]" = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
+        # A projection is fully defined by its axis lists; there is nothing
+        # to compose or downcast, so it is returned unchanged.
         return self
 
 
@@ -168,12 +177,17 @@ class Bijection(Transformation):
             obj = obj.compute(**kwargs)
         return obj
 
-    def compute(self, *args, **kwargs) -> tx.Self:
+    def compute(
+        self,
+        mode: "tx.Optional[ModeLike]" = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
         forward, backward = self.forward, self.backward
         if forward is not None:
-            forward = forward.compute(*args, **kwargs)
+            forward = forward.compute(mode, simplify=simplify)
         if backward is not None:
-            backward = backward.compute(*args, **kwargs)
+            backward = backward.compute(mode, simplify=simplify)
         if forward is None and backward is None:
             return self
         return replace(self, forward=forward, backward=backward)
