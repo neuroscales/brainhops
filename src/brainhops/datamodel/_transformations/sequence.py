@@ -23,10 +23,7 @@ from .concrete import (
 )
 from .errors import CompositionError
 from .factor import _factor
-
-# `_cancels` is the O(1), identity-only cancel test. It lives in `inverse`,
-# next to the `Inverse` class it reads, and is used here by `_annihilates`.
-from .inverse import Inverse, _cancels
+from .inverse import Inverse
 from .meta import SubspaceTransformation
 
 # The mode types and helpers live in their own module so that `base`,
@@ -573,7 +570,7 @@ def _compute_sequence(
             stack: tx.List[Transformation] = []
             cancelled = False
             for t in flat:
-                if stack and _annihilates(stack[-1], t):
+                if stack and _cancels_to_identity(stack[-1], t):
                     stack.pop()
                     cancelled = True
                 else:
@@ -748,7 +745,11 @@ def _same_subspace_axes(
     a: SubspaceTransformation, b: SubspaceTransformation
 ) -> bool:
     def axes(t: SubspaceTransformation) -> tx.Tuple[tuple, tuple]:
-        ia = None if t.input_axes is None else tuple(int(x) for x in t.input_axes)
+        ia = (
+            None
+            if t.input_axes is None
+            else tuple(int(x) for x in t.input_axes)
+        )
         oa = (
             None
             if t.output_axes is None
@@ -840,65 +841,30 @@ def _normalize_inverse(t: Transformation) -> Transformation:
     return inv.to(**kwargs) if kwargs else inv
 
 
-def _annihilates(first: Transformation, second: Transformation) -> bool:
+def _cancels_to_identity(
+    first: Transformation, second: Transformation
+) -> bool:
     # Whether `[first, second]` (with `first` applied first) reduces to the
     # identity without materializing any field. This is the predicate the
     # single stack sweep in `_compute_sequence` cancels pairs by.
     #
-    # A transform placed next to its own lazy inverse annihilates it, named
-    # by identity through `forward` (see `_cancels`). And two subspace
-    # transforms over the same axes annihilate when the axes chain, the net
-    # map introduces no reindex (the axes the first reads are the axes the
-    # second writes), and their inner transforms compose to the identity:
-    # either because one inner is the lazy inverse of the other, or because
-    # both inners are already the identity. This is exactly the case that
-    # lets a subspace-wrapped field meet its own subspace-wrapped inverse and
-    # cancel, rather than the field being resampled through a neighbour first.
-    if _cancels(first, second):
-        return True
-    if not (
-        isinstance(first, SubspaceTransformation)
-        and isinstance(second, SubspaceTransformation)
-    ):
+    # It asks the composer, restricted to the ANALYTIC tier, whether the pair
+    # collapses to the identity for free: the inverse-cancel composers handle
+    # a transform placed next to its own lazy inverse (named by identity
+    # through `forward`, see `_cancels`), and the subspace-cancel composer
+    # handles two subspace transforms over the same axes whose inners cancel
+    # or are both the identity (which is what lets a subspace-wrapped field
+    # meet its own subspace-wrapped inverse and cancel, rather than the field
+    # being resampled through a neighbour first). This retires the old
+    # `_annihilates` predicate in favour of the composer [JC-9].
+    #
+    # `compose(x1, x2)` composes `x1 @ x2` (x2 first), so the pair applied as
+    # `[first, second]` (first first) is `compose(second, first)`.
+    try:
+        result = compose(second, first, analytic_only=True)
+    except CompositionError:
         return False
-    if (
-        first.output_axes is None
-        or second.input_axes is None
-        or list(first.output_axes) != list(second.input_axes)
-    ):
-        return False
-    # A *reindexing* inverse pair -- whose axes chain (checked above) but
-    # whose net map still permutes axes (`first.input_axes` !=
-    # `second.output_axes`) -- is deliberately NOT annihilated here. It does
-    # not reduce to the bare identity (it is a pure axis reindex), so it is
-    # left to the run loop to fold into a single reindexing subspace
-    # transform; do not "fix" it into this sweep.
-    same_axes = (first.input_axes is None) == (
-        second.output_axes is None
-    ) and (
-        first.input_axes is None
-        or list(first.input_axes) == list(second.output_axes)
-    )
-    if not same_axes:
-        return False
-    inner_first = first.transformation
-    inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
-        return True
-    # `compute=False` only: this sweep is the always-on analytic pass, run for
-    # every adjacent subspace pair on every fixpoint iteration. A numeric
-    # `compute=True` check would scan a whole displacement field
-    # (`(field == 0).all()`) each time; that belongs to the later per-type
-    # policy, not here. Nothing depends on the numeric branch -- the
-    # `transformation=None` case is `inner is None`, and the lazy-inverse case
-    # is `_cancels` above.
-    first_identity = inner_first is None or is_identity(
-        inner_first, compute=False
-    )
-    second_identity = inner_second is None or is_identity(
-        inner_second, compute=False
-    )
-    return first_identity and second_identity
+    return isinstance(result, Identity)
 
 
 # ----------------------------------------------------------------------

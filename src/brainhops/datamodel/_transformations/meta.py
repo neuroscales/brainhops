@@ -370,9 +370,13 @@ def _simplify_inner(
     """
     if inner is None:
         return inner
-    from .sequence import _simplify_result
+    from .sequence import _simplify_leaves
 
-    return _simplify_result(inner, table)
+    # A throwaway cache: this is a one-off downcast of a single wrapper's
+    # inner, not the driver's fixpoint loop, so it does not share the
+    # driver-owned simplify memo (R1). `_simplify_leaves` with an empty cache
+    # behaves exactly as the retired `_simplify_result` did.
+    return _simplify_leaves(inner, table, {}, [])
 
 
 def _inner_member(

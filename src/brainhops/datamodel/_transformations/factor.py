@@ -56,7 +56,6 @@ from .concrete import (
 from .errors import ConversionError
 from .meta import Projection, SubspaceTransformation
 
-
 # ----------------------------------------------------------------------
 #   DATA STRUCTURES
 # ----------------------------------------------------------------------
