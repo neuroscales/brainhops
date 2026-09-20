@@ -80,14 +80,20 @@ CONVERTERS: CONVERTER_REGISTRY = {}
 CONVERTERS_FASTMAP: CONVERTER_REGISTRY = {}
 
 COMPOSER = tx.Callable[["Transformation", "Transformation"], "Transformation"]
-# Each registered composer is stored with its dispatch priority, so a
-# higher-priority tier (such as the analytic cancel composers) is tried
-# ahead of the numeric composers regardless of hierarchy distance.
-COMPOSER_REGISTRY = tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, int]]
+# Each declared type-pair maps to a LIST of `(composer, priority)` entries,
+# so several composers may share a signature at different priorities -- for
+# example the numeric `(Subspace, Subspace)` composer and the ANALYTIC
+# `(Subspace, Subspace)` cancel composer. A higher-priority tier (the
+# analytic cancel composers) is tried ahead of the numeric composers
+# regardless of hierarchy distance.
+COMPOSER_REGISTRY = tx.Dict[XFORM_PAIR, tx.List[tx.Tuple[COMPOSER, int]]]
 COMPOSERS: COMPOSER_REGISTRY = {}
 # The fastmap caches, per concrete pair, the ordered tuple of candidate
-# composers `compose` should try, already sorted by dispatch order.
-COMPOSERS_FASTMAP: tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, ...]] = {}
+# `(composer, priority)` entries `compose` should try, already sorted by
+# dispatch order.
+COMPOSERS_FASTMAP: tx.Dict[
+    XFORM_PAIR, tx.Tuple[tx.Tuple[COMPOSER, int], ...]
+] = {}
 
 # Dispatch priority for a composer that decides purely from the types and
 # object identity of its operands, without reading any parameter (today,

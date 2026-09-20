@@ -79,7 +79,10 @@ def composer(
     if func is None:
         return partial(composer, priority=priority)
     types = tuple(tx.get_type_hints(func).values())[:2]
-    COMPOSERS[types] = (func, priority)
+    # Several composers may share a signature at different priorities, so
+    # each type-pair holds a list of `(func, priority)` entries in
+    # registration order rather than a single entry.
+    COMPOSERS.setdefault(types, []).append((func, priority))
     COMPOSERS_FASTMAP.clear()
     return func
 
@@ -105,14 +108,20 @@ def _candidates(
     if cached is not None:
         return cached
     scored = []
-    for order, ((T1, T2), (func, priority)) in enumerate(COMPOSERS.items()):
+    order = 0
+    for (T1, T2), entries in COMPOSERS.items():
         best = float("inf")
         for A, B in itertools.product(_expand(T1), _expand(T2)):
             dist = distance(t1, A) + distance(t2, B)
             if dist < best:
                 best = dist
-        if best < float("inf"):
-            scored.append((func, priority, best, order))
+        for func, priority in entries:
+            # `order` is a global registration index (key-insertion major,
+            # within-key append minor) breaking ties, reproducing the
+            # historical first-registered-wins on equal priority and distance.
+            if best < float("inf"):
+                scored.append((func, priority, best, order))
+            order += 1
     scored.sort(key=lambda s: (-s[1], s[2], s[3]))
     funcs = tuple((s[0], s[1]) for s in scored)
     COMPOSERS_FASTMAP[(t1, t2)] = funcs
