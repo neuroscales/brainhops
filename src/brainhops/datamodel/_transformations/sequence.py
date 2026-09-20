@@ -607,12 +607,11 @@ def _annihilates(first: Transformation, second: Transformation) -> bool:
         or list(first.output_axes) != list(second.input_axes)
     ):
         return False
-    same_axes = (
-        (first.input_axes is None) == (second.output_axes is None)
-        and (
-            first.input_axes is None
-            or list(first.input_axes) == list(second.output_axes)
-        )
+    same_axes = (first.input_axes is None) == (
+        second.output_axes is None
+    ) and (
+        first.input_axes is None
+        or list(first.input_axes) == list(second.output_axes)
     )
     if not same_axes:
         return False
