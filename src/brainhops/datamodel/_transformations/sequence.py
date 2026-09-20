@@ -22,10 +22,8 @@ from .concrete import (
     is_identity,
 )
 from .errors import CompositionError
-
-# `_cancels` is the O(1), identity-only cancel test. It lives in `inverse`,
-# next to the `Inverse` class it reads, and is used here by `_annihilates`.
-from .inverse import Inverse, _cancels
+from .factor import _factor
+from .inverse import Inverse
 from .meta import SubspaceTransformation
 
 # The mode types and helpers live in their own module so that `base`,
@@ -186,6 +184,7 @@ class Sequence(SequenceMixin, Transformation):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         """
         Compute the resulting transform of the sequence of transformations.
@@ -228,6 +227,15 @@ class Sequence(SequenceMixin, Transformation):
             [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
             grammar). `"analytic"` (the default) downcasts each leaf from
             structure only; `False`/`"none"`/`None` disables it.
+        factor : bool, default=False
+            Whether to rewrite the sequence into its axis-group normal
+            form: a leading grid (if any), an optional embedding of created
+            axes, one axis-preserving factor per group of axes that
+            transform together, and trailing reindex/drop projections. Off
+            by default, so the result is byte-for-byte the plain
+            `compute()` result. Nothing is ever composed across groups;
+            `mode` still decides whether the restricted pieces inside a
+            group compose.
         """
         modes = _lower_modes(mode)
         if not modes:
@@ -238,7 +246,19 @@ class Sequence(SequenceMixin, Transformation):
         # object identity rather than being materialized) and BEFORE per-mode
         # composition (so a numeric downcast such as field->affine feeds it).
         table = _lower_simplify(simplify)
-        result = _compute_sequence(self, mode=modes, table=table)
+        # The driver owns the per-leaf simplify cache (and its keepalive), so
+        # the final pass below reuses the very same memo the fixpoint loop
+        # built rather than re-scanning a leaf it already downcast (R1).
+        simplify_cache: tx.Dict[int, Transformation] = {}
+        simplify_keepalive: tx.List[Transformation] = []
+        result = _compute_sequence(
+            self,
+            mode=modes,
+            table=table,
+            factor=factor,
+            simplify_cache=simplify_cache,
+            simplify_keepalive=simplify_keepalive,
+        )
         # A final pass downcasts a composed result that escaped the loop as a
         # single transform. It is needed only when the table has a numeric
         # entry: the in-loop pass runs before composition each iteration and
@@ -246,9 +266,13 @@ class Sequence(SequenceMixin, Transformation):
         # unsimplified are the last composition's products, which have no
         # structural downcast left -- only value facts can appear, which is
         # `numeric`. It runs after all cancellation, so a lazy pair has
-        # already cancelled by identity rather than being materialized.
+        # already cancelled by identity rather than being materialized. It
+        # consults the driver-owned cache, so a leaf already downcast in the
+        # loop is not scanned again.
         if _table_needs_numeric(table):
-            result = _simplify_result(result, table)
+            result = _simplify_leaves(
+                result, table, simplify_cache, simplify_keepalive
+            )
         return result
 
     def _flattened(self) -> tx.Self:
@@ -340,26 +364,52 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 
 
-def _simplify_result(
-    result: Transformation, table: SimplifyTable
+def _simplify_leaves(
+    result: Transformation,
+    table: SimplifyTable,
+    cache: tx.Dict[int, Transformation],
+    keepalive: tx.List[Transformation],
 ) -> Transformation:
-    # Apply the simplify table to a computed result. A `Sequence` result has
-    # each of its leaves simplified; any other result is simplified as a
-    # single leaf. This runs after `_compute_sequence` has finished all
-    # composition and cancellation, so it only downcasts what survives.
+    # Apply the simplify table to a computed result, consulting the
+    # driver-owned cache. A `Sequence` result has each of its leaves
+    # simplified; any other result is simplified as a single leaf. This runs
+    # after `_compute_sequence` has finished all composition and
+    # cancellation, so it only downcasts what survives; a leaf already in the
+    # cache (unchanged through the loop) is not scanned again (R1).
     if isinstance(result, Sequence):
         leaves = result.transformations or []
-        simplified = [_simplify_leaf(t, table) for t in leaves]
+        simplified = [
+            _cached_simplify_leaf(t, table, cache, keepalive) for t in leaves
+        ]
         if any(a is not b for a, b in zip(simplified, leaves)):
             return replace(result, transformations=simplified)
         return result
-    return _simplify_leaf(result, table)
+    return _cached_simplify_leaf(result, table, cache, keepalive)
+
+
+def _cached_simplify_leaf(
+    t: Transformation,
+    table: SimplifyTable,
+    cache: tx.Dict[int, Transformation],
+    keepalive: tx.List[Transformation],
+) -> Transformation:
+    # A leaf's simplify result, memoized by `id`. A leaf seen before (same
+    # object) reuses its cached result rather than being re-scanned; the
+    # keepalive list pins those leaves so an `id` is never reused while the
+    # cache holds it.
+    key = id(t)
+    if key in cache:
+        return cache[key]
+    result = _simplify_leaf(t, table)
+    cache[key] = result
+    keepalive.append(t)
+    return result
 
 
 def _simplify_leaf(t: Transformation, table: SimplifyTable) -> Transformation:
     # Apply a leaf's resolved simplify policy. Called each fixpoint iteration
     # by `_simplify_pass` (after the identity-cancel sweep, before per-mode
-    # composition) and once by `_simplify_result` on the final result. The
+    # composition) and once by `_simplify_leaves` on the final result. The
     # whole `table` is threaded to `compute`, never a scalar, so a wrapper's
     # inner resolves against the user's own keys.
     #
@@ -402,13 +452,7 @@ def _simplify_pass(
     simplified = []
     changed = False
     for t in leaves:
-        key = id(t)
-        if key in cache:
-            result = cache[key]
-        else:
-            result = _simplify_leaf(t, table)
-            cache[key] = result
-            keepalive.append(t)
+        result = _cached_simplify_leaf(t, table, cache, keepalive)
         simplified.append(result)
         changed = changed or result is not t
     if changed:
@@ -421,6 +465,9 @@ def _compute_sequence(
     mode: tx.List[_ModePair],
     memo: tx.Optional[tx.Set[_ModePair]] = None,
     table: tx.Optional[SimplifyTable] = None,
+    factor: bool = False,
+    simplify_cache: tx.Optional[tx.Dict[int, Transformation]] = None,
+    simplify_keepalive: tx.Optional[tx.List[Transformation]] = None,
 ) -> Transformation:
     # We optimize by recursively finding the subclasses of all the modes
     # specified. This allows us to combine similar transformations first
@@ -453,8 +500,16 @@ def _compute_sequence(
         # being re-scanned on every iteration; the keepalive list pins those
         # leaves so an `id` is never reused while the cache holds it.
         skip_simplify = table is None or _table_is_noop(table)
-        simplify_cache: tx.Dict[int, Transformation] = {}
-        simplify_keepalive: tx.List[Transformation] = []
+        if simplify_cache is None:
+            simplify_cache = {}
+            simplify_keepalive = []
+        # The factor pass owns an `id`-keyed dependency-pattern cache (and a
+        # keepalive list pinning the leaves it read), so an unchanged leaf is
+        # not re-read on every iteration.
+        dep_cache: tx.Dict[int, tx.Any] = {}
+        dep_keepalive: tx.List[Transformation] = []
+        iteration = 0
+        max_iter = 0
         while True:
             # Flatten without rebuilding any endpoint, so a transform stays
             # the same object that its inverse names. Cancellation tests
@@ -474,11 +529,21 @@ def _compute_sequence(
             bridged = _insert_bridges(seq.transformations or [])
             flat = _unnest(bridged)
             before = len(flat)
+            # Snapshot the leaf identities at the start of the iteration. Under
+            # `factor=True` the fixpoint is detected by these identities being
+            # unchanged at the end of the iteration, because the length metric
+            # cannot serve once the factor pass may grow the list.
+            before_leaves = flat
             seq = replace(seq, transformations=flat)
             if not flat:
                 # Empty sequence -> return
                 # TODO/FIXME: return an Identity instead?
                 return seq
+            if factor and max_iter == 0:
+                # A hard cap on iterations, so a pass that is not
+                # identity-preserving on the normal form fails loudly rather
+                # than looping forever.
+                max_iter = _factor_cap(flat)
 
             # Factor away any strictly interior grid before composing. An
             # interior `CartesianField` is the identity map over its grid,
@@ -505,7 +570,7 @@ def _compute_sequence(
             stack: tx.List[Transformation] = []
             cancelled = False
             for t in flat:
-                if stack and _annihilates(stack[-1], t):
+                if stack and _cancels_to_identity(stack[-1], t):
                     stack.pop()
                     cancelled = True
                 else:
@@ -537,6 +602,18 @@ def _compute_sequence(
                     seq, table, simplify_cache, simplify_keepalive
                 )
 
+            # Factor pass: rewrite the sequence into its axis-group normal
+            # form. It runs AFTER the cancel sweep and per-leaf simplify (so
+            # cancelled pairs are gone and leaves are downcast) and BEFORE
+            # per-mode composition. It preserves the identity of every leaf it
+            # does not split, and returns the same object once the sequence is
+            # already in normal form, so the identity-based exit test below
+            # converges.
+            if factor:
+                seq = _factor(seq, mode, table, dep_cache, dep_keepalive)
+                if not isinstance(seq, Sequence):
+                    return seq
+
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
@@ -548,10 +625,31 @@ def _compute_sequence(
                 # `table` is deliberately not threaded here: the memo'd
                 # recursion only composes, and the simplify pass above (in
                 # the memo-less driver) has already run this iteration.
-                seq = _compute_sequence(seq, submode, memo=submemo)
+                # `factor` IS threaded, so the compose loop applies the two
+                # factor-only gates that keep composition from undoing the
+                # factor pass.
+                seq = _compute_sequence(
+                    seq, submode, memo=submemo, factor=factor
+                )
                 if not isinstance(seq, Sequence):
                     return seq
-            if len(_unnest(seq.transformations)) >= before:
+
+            if factor:
+                # Fixpoint under `factor=True`: nothing changed this iteration,
+                # by object identity of the unnested leaf list.
+                after_leaves = _unnest(seq.transformations)
+                if len(after_leaves) == len(before_leaves) and all(
+                    a is b for a, b in zip(after_leaves, before_leaves)
+                ):
+                    return seq
+                iteration += 1
+                if iteration > max_iter:
+                    raise RuntimeError(
+                        "compute did not converge under factor=True after "
+                        f"{iteration} iterations; a pass is not "
+                        "identity-preserving on the normal form"
+                    )
+            elif len(_unnest(seq.transformations)) >= before:
                 # No pass shrank the sequence, so a further cancellation
                 # cannot either. Nothing left to simplify.
                 return seq
@@ -572,7 +670,7 @@ def _compute_sequence(
     # --- Else compute all children of the mode
     children = _mode_children(mode)
     for child in children:
-        seq = _compute_sequence(seq, child, memo=memo)
+        seq = _compute_sequence(seq, child, memo=memo, factor=factor)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -594,6 +692,14 @@ def _compute_sequence(
         item = inputs.pop(0)
         if _matches_mode(item, mode):
             while inputs and _matches_mode(inputs[0], mode):
+                if factor and not _factor_pair_ok(item, inputs[0]):
+                    # Under `factor=True`, two extra gates keep the compose
+                    # pass from undoing the factor pass: a `CartesianField`
+                    # (the sampling domain) composes with nothing, and a
+                    # subspace factor composes only next to a same-axes
+                    # subspace or an identity, never with a bare permutation
+                    # (which would fold the factor away and destroy the NF).
+                    break
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
@@ -612,6 +718,69 @@ def _compute_sequence(
     if len(outputs) == 1:
         return outputs[0]
     return Sequence(transformations=outputs)
+
+
+def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
+    # Whether the compose pass may combine the adjacent pair `(a, b)` under
+    # `factor=True`. Two extra gates keep composition from undoing the factor
+    # pass:
+    #   1. a `CartesianField` (the sampling domain) is composed with nothing;
+    #   2. a subspace factor composes only next to another subspace with the
+    #      same axes, or an `Identity` -- never with a bare permutation (the
+    #      `(_AffineIsh, Sub)` embed composer would fold the factor away).
+    if isinstance(a, CartesianField) or isinstance(b, CartesianField):
+        return False
+    a_sub = isinstance(a, SubspaceTransformation)
+    b_sub = isinstance(b, SubspaceTransformation)
+    if not a_sub and not b_sub:
+        return True
+    if isinstance(a, Identity) or isinstance(b, Identity):
+        return True
+    if a_sub and b_sub:
+        return _same_subspace_axes(a, b)
+    return False
+
+
+def _same_subspace_axes(
+    a: SubspaceTransformation, b: SubspaceTransformation
+) -> bool:
+    def axes(t: SubspaceTransformation) -> tx.Tuple[tuple, tuple]:
+        ia = (
+            None
+            if t.input_axes is None
+            else tuple(int(x) for x in t.input_axes)
+        )
+        oa = (
+            None
+            if t.output_axes is None
+            else tuple(int(x) for x in t.output_axes)
+        )
+        return ia, oa
+
+    return axes(a) == axes(b)
+
+
+def _factor_cap(flat: tx.List[Transformation]) -> int:
+    # A generous upper bound on productive fixpoint iterations under
+    # `factor=True`, following the blueprint's `2 * (N + L) + 4` with `N` an
+    # over-estimate of the work dimension (floored so legitimate multi-pass
+    # convergence is never cut short). It is only a safety net: a pass that is
+    # identity-preserving on the normal form converges in a couple of passes.
+    n = 0
+    for t in flat:
+        shape = getattr(t, "shape", None)
+        if shape is not None:
+            n = max(n, len(shape))
+        if not isinstance(t, Inverse):
+            matrix = getattr(t, "matrix", None)
+            if matrix is not None:
+                rows, cols = matrix.shape
+                n = max(n, int(rows), int(cols))
+        for name in ("input_axes", "output_axes"):
+            axes = getattr(t, name, None)
+            if axes is not None and len(axes):
+                n = max(n, max(int(x) for x in axes) + 1)
+    return max(2 * (n + len(flat)) + 4, 16)
 
 
 def _drop_interior_grids(seq: Sequence) -> Sequence:
@@ -672,65 +841,30 @@ def _normalize_inverse(t: Transformation) -> Transformation:
     return inv.to(**kwargs) if kwargs else inv
 
 
-def _annihilates(first: Transformation, second: Transformation) -> bool:
+def _cancels_to_identity(
+    first: Transformation, second: Transformation
+) -> bool:
     # Whether `[first, second]` (with `first` applied first) reduces to the
     # identity without materializing any field. This is the predicate the
     # single stack sweep in `_compute_sequence` cancels pairs by.
     #
-    # A transform placed next to its own lazy inverse annihilates it, named
-    # by identity through `forward` (see `_cancels`). And two subspace
-    # transforms over the same axes annihilate when the axes chain, the net
-    # map introduces no reindex (the axes the first reads are the axes the
-    # second writes), and their inner transforms compose to the identity:
-    # either because one inner is the lazy inverse of the other, or because
-    # both inners are already the identity. This is exactly the case that
-    # lets a subspace-wrapped field meet its own subspace-wrapped inverse and
-    # cancel, rather than the field being resampled through a neighbour first.
-    if _cancels(first, second):
-        return True
-    if not (
-        isinstance(first, SubspaceTransformation)
-        and isinstance(second, SubspaceTransformation)
-    ):
+    # It asks the composer, restricted to the ANALYTIC tier, whether the pair
+    # collapses to the identity for free: the inverse-cancel composers handle
+    # a transform placed next to its own lazy inverse (named by identity
+    # through `forward`, see `_cancels`), and the subspace-cancel composer
+    # handles two subspace transforms over the same axes whose inners cancel
+    # or are both the identity (which is what lets a subspace-wrapped field
+    # meet its own subspace-wrapped inverse and cancel, rather than the field
+    # being resampled through a neighbour first). This retires the old
+    # `_annihilates` predicate in favour of the composer [JC-9].
+    #
+    # `compose(x1, x2)` composes `x1 @ x2` (x2 first), so the pair applied as
+    # `[first, second]` (first first) is `compose(second, first)`.
+    try:
+        result = compose(second, first, analytic_only=True)
+    except CompositionError:
         return False
-    if (
-        first.output_axes is None
-        or second.input_axes is None
-        or list(first.output_axes) != list(second.input_axes)
-    ):
-        return False
-    # A *reindexing* inverse pair -- whose axes chain (checked above) but
-    # whose net map still permutes axes (`first.input_axes` !=
-    # `second.output_axes`) -- is deliberately NOT annihilated here. It does
-    # not reduce to the bare identity (it is a pure axis reindex), so it is
-    # left to the run loop to fold into a single reindexing subspace
-    # transform; do not "fix" it into this sweep.
-    same_axes = (first.input_axes is None) == (
-        second.output_axes is None
-    ) and (
-        first.input_axes is None
-        or list(first.input_axes) == list(second.output_axes)
-    )
-    if not same_axes:
-        return False
-    inner_first = first.transformation
-    inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
-        return True
-    # `compute=False` only: this sweep is the always-on analytic pass, run for
-    # every adjacent subspace pair on every fixpoint iteration. A numeric
-    # `compute=True` check would scan a whole displacement field
-    # (`(field == 0).all()`) each time; that belongs to the later per-type
-    # policy, not here. Nothing depends on the numeric branch -- the
-    # `transformation=None` case is `inner is None`, and the lazy-inverse case
-    # is `_cancels` above.
-    first_identity = inner_first is None or is_identity(
-        inner_first, compute=False
-    )
-    second_identity = inner_second is None or is_identity(
-        inner_second, compute=False
-    )
-    return first_identity and second_identity
+    return isinstance(result, Identity)
 
 
 # ----------------------------------------------------------------------

@@ -144,6 +144,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         """
         Compute the geometry by simplifying its transformation.
@@ -155,11 +156,13 @@ class Geometry(_GeometryFields, ImmutableSequence):
         transformation pair and the domain it defines is never lost.
         """
         # Every transformation exposes the same
-        # `compute(mode, *, simplify=...)`, so the voxel-to-world part is
-        # computed uniformly whether it is a sequence or a single leaf. The
-        # grid is kept as is, so the sampling domain is never lost.
+        # `compute(mode, *, simplify=..., factor=...)`, so the voxel-to-world
+        # part is computed uniformly whether it is a sequence or a single
+        # leaf. The grid is kept as is, so the sampling domain is never lost.
         flat = self._flattened()
-        transformation = flat.transformation.compute(mode, simplify=simplify)
+        transformation = flat.transformation.compute(
+            mode, simplify=simplify, factor=factor
+        )
         return Geometry(
             (flat.grid, transformation),
             input=self.input,

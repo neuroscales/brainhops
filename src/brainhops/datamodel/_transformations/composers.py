@@ -33,6 +33,7 @@ from .concrete import (
     Permutation,
     Scaling,
     Translation,
+    is_identity,
 )
 from .errors import CompositionError
 from .inverse import Inverse, _cancels
@@ -70,6 +71,47 @@ def _(To: Transformation, Ti: Inverse) -> Transformation:
         if _cancels(Ti, To)
         else NotImplemented
     )
+
+
+@composer(priority=ANALYTIC)
+def _(
+    To: SubspaceTransformation, Ti: SubspaceTransformation
+) -> Transformation:
+    # ANALYTIC cancel of two subspace transforms: `To ∘ Ti` (Ti applied
+    # first) collapses to the identity when the axes chain (the axes Ti
+    # writes are the axes To reads), the net map introduces no reindex (the
+    # axes Ti reads are the axes To writes), and the inner transforms compose
+    # to the identity -- either because one inner is the lazy inverse of the
+    # other (cancelling by object identity, materializing no field) or because
+    # both inners are already the identity. This is the analytic composer that
+    # replaces the old `sequence._annihilates` subspace branch: it reads no
+    # value (`compute=False`), so the always-on cancel sweep can call it every
+    # iteration without scanning a field. It declines (`NotImplemented`)
+    # otherwise, so a reindexing pair is left for the run loop to fold.
+    if (
+        To.input_axes is None
+        or Ti.output_axes is None
+        or list(To.input_axes) != list(Ti.output_axes)
+    ):
+        return NotImplemented
+    same_axes = (Ti.input_axes is None) == (To.output_axes is None) and (
+        Ti.input_axes is None or list(Ti.input_axes) == list(To.output_axes)
+    )
+    if not same_axes:
+        return NotImplemented
+    inner_first = Ti.transformation
+    inner_second = To.transformation
+    if _cancels(inner_first, inner_second):
+        return Identity(input=Ti.input, output=To.output)
+    first_identity = inner_first is None or is_identity(
+        inner_first, compute=False
+    )
+    second_identity = inner_second is None or is_identity(
+        inner_second, compute=False
+    )
+    if first_identity and second_identity:
+        return Identity(input=Ti.input, output=To.output)
+    return NotImplemented
 
 
 # ----------------------------------------------------------------------

@@ -612,8 +612,10 @@ def test_dispatch_priority_tier_and_terminal_composition_error(
         compose_mod,
         "COMPOSERS",
         {
-            (Affine, Affine): (declining_analytic, ANALYTIC),
-            (Transformation, Transformation): (family, 0),
+            # Each type-pair maps to a LIST of `(func, priority)` entries, so
+            # a signature may carry several composers at different priorities.
+            (Affine, Affine): [(declining_analytic, ANALYTIC)],
+            (Transformation, Transformation): [(family, 0)],
         },
     )
     monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
@@ -634,8 +636,8 @@ def test_dispatch_priority_tier_and_terminal_composition_error(
         compose_mod,
         "COMPOSERS",
         {
-            (Affine, Affine): (raising_analytic, ANALYTIC),
-            (Transformation, Transformation): (family, 0),
+            (Affine, Affine): [(raising_analytic, ANALYTIC)],
+            (Transformation, Transformation): [(family, 0)],
         },
     )
     monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})

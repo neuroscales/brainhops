@@ -95,6 +95,7 @@ class Transformation(DataModelBase, reverse=True):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
@@ -116,6 +117,13 @@ SimplifyPolicy] (`False`/`"none"`/`None`, `"analytic"`, `True`/`"numeric"`),
             a key (or list of keys) to restrict analytic simplification to
             those kinds, or a `{key: policy}` mapping. The default,
             `"analytic"`, simplifies every leaf from structure only.
+        factor : bool, default=False
+            Whether to rewrite the transformation into its axis-group
+            normal form, splitting it into independent factors that each
+            act on a group of axes that transform together. Off by default,
+            so a plain `compute()` result is unchanged. Nothing is ever
+            composed across axis groups; `mode` still decides whether the
+            restricted pieces inside a group compose.
         """
         # `compute()` has no meaningful default: every family implements it
         # with the behaviour that fits its type -- `ConcreteTransformation`

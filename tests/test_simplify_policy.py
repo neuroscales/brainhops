@@ -359,18 +359,20 @@ def test_final_pass_only_runs_for_numeric_tables() -> None:
     seq = Sequence(
         transformations=[Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))]
     )
-    real = _seq._simplify_result
+    # The final downcast pass is now the driver-owned, cache-consulting
+    # `_simplify_leaves` (R1 folded `_simplify_result` into it).
+    real = _seq._simplify_leaves
     calls = {"n": 0}
 
-    def counting(result: object, table: object) -> object:
+    def counting(*args: object) -> object:
         calls["n"] += 1
-        return real(result, table)
+        return real(*args)
 
-    with mock.patch.object(_seq, "_simplify_result", counting):
+    with mock.patch.object(_seq, "_simplify_leaves", counting):
         seq.compute(simplify="analytic")
     assert calls["n"] == 0
 
     calls["n"] = 0
-    with mock.patch.object(_seq, "_simplify_result", counting):
+    with mock.patch.object(_seq, "_simplify_leaves", counting):
         seq.compute(simplify="numeric")
     assert calls["n"] == 1

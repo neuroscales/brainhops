@@ -52,7 +52,7 @@ from brainhops._core.typing import safe_get_origin
 
 # internals
 from .errors import CompositionError
-from .registries import COMPOSERS, COMPOSERS_FASTMAP, distance
+from .registries import ANALYTIC, COMPOSERS, COMPOSERS_FASTMAP, distance
 
 # typing
 if tx.TYPE_CHECKING:
@@ -79,7 +79,10 @@ def composer(
     if func is None:
         return partial(composer, priority=priority)
     types = tuple(tx.get_type_hints(func).values())[:2]
-    COMPOSERS[types] = (func, priority)
+    # Several composers may share a signature at different priorities, so
+    # each type-pair holds a list of `(func, priority)` entries in
+    # registration order rather than a single entry.
+    COMPOSERS.setdefault(types, []).append((func, priority))
     COMPOSERS_FASTMAP.clear()
     return func
 
@@ -92,26 +95,35 @@ def _expand(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
     return (hint,)
 
 
-def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
+def _candidates(
+    t1: type, t2: type
+) -> tx.Tuple[tx.Tuple[tx.Callable, int], ...]:
     # Every registered composer whose declared types are ancestors of
-    # `(t1, t2)` with a finite summed hierarchy distance, stably ordered by
-    # `(-priority, distance)` with registration order breaking ties (so the
-    # order reproduces the historical first-registered-wins on a tie). The
-    # result is cached per concrete pair in `COMPOSERS_FASTMAP`.
+    # `(t1, t2)` with a finite summed hierarchy distance, as `(func,
+    # priority)` pairs stably ordered by `(-priority, distance)` with
+    # registration order breaking ties (so the order reproduces the historical
+    # first-registered-wins on a tie). The result is cached per concrete pair
+    # in `COMPOSERS_FASTMAP`.
     cached = COMPOSERS_FASTMAP.get((t1, t2))
     if cached is not None:
         return cached
     scored = []
-    for order, ((T1, T2), (func, priority)) in enumerate(COMPOSERS.items()):
+    order = 0
+    for (T1, T2), entries in COMPOSERS.items():
         best = float("inf")
         for A, B in itertools.product(_expand(T1), _expand(T2)):
             dist = distance(t1, A) + distance(t2, B)
             if dist < best:
                 best = dist
-        if best < float("inf"):
-            scored.append((func, priority, best, order))
+        for func, priority in entries:
+            # `order` is a global registration index (key-insertion major,
+            # within-key append minor) breaking ties, reproducing the
+            # historical first-registered-wins on equal priority and distance.
+            if best < float("inf"):
+                scored.append((func, priority, best, order))
+            order += 1
     scored.sort(key=lambda s: (-s[1], s[2], s[3]))
-    funcs = tuple(s[0] for s in scored)
+    funcs = tuple((s[0], s[1]) for s in scored)
     COMPOSERS_FASTMAP[(t1, t2)] = funcs
     return funcs
 
@@ -119,6 +131,8 @@ def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
 def compose(
     x1: "Transformation",
     x2: "Transformation",
+    *,
+    analytic_only: bool = False,
 ) -> "Transformation":
     """Compose two transformations.
 
@@ -128,9 +142,20 @@ def compose(
     ``is not NotImplemented`` is returned. A composer that raises
     [`CompositionError`][] stops dispatch; if none applies or all decline,
     `compose` raises [`CompositionError`][].
+
+    When `analytic_only` is true, only composers in the ``ANALYTIC`` priority
+    tier are tried -- those that decide purely from the operand types and
+    object identity, reading no parameter (the inverse-cancel pair and the
+    subspace-cancel composer). This is how the always-on identity-cancel
+    sweep asks "do these two collapse to the identity for free?" without
+    risking any numeric composer materializing a neighbour.
     """
     t1, t2 = type(x1), type(x2)
-    for func in _candidates(t1, t2):
+    for func, priority in _candidates(t1, t2):
+        if analytic_only and priority < ANALYTIC:
+            # Candidates are sorted by descending priority, so once the tier
+            # drops below ANALYTIC no later candidate qualifies either.
+            break
         result = func(x1, x2)
         if result is not NotImplemented:
             return result
