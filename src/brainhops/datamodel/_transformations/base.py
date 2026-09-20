@@ -110,16 +110,17 @@ class Transformation(DataModelBase, reverse=True):
             Run the numeric kind-checks that downcast the transformation
             to the cheapest compatible type.
         """
-        # A bare `Transformation` holds no parameter to compose or
-        # downcast, so it computes to itself. Each family overrides this
-        # with the behaviour that fits its type: `ConcreteTransformation`
-        # runs the numeric kind-checks, and `Sequence`, `Inverse`,
-        # `Bijection`, `Projection` and the multiscale containers compose
-        # or materialize their contents. Keeping those per-type
-        # implementations where they belong is also what lets each module
-        # import the checks (or the mode helpers) it needs at the top
-        # level, rather than inside the method body.
-        return self
+        # `compute()` has no meaningful default: every family implements it
+        # with the behaviour that fits its type -- `ConcreteTransformation`
+        # runs the numeric kind-checks, `MetaTransformation` returns itself
+        # once mode-gated, and `Sequence`, `Inverse`, `Bijection`,
+        # `Projection` and the multiscale containers compose or materialize
+        # their contents. Raising here (rather than returning `self`) makes
+        # a subclass that forgets to implement `compute()` fail loudly,
+        # mirroring `inverse()`.
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement compute()"
+        )
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         """

@@ -15,7 +15,7 @@ from brainhops.datamodel.axes import Axis
 
 # internals
 from .base import Transformation
-from .modes import ModeLike
+from .modes import ModeLike, _ensure_proper_modes, _mode_admits
 
 # typing
 if tx.TYPE_CHECKING:
@@ -30,6 +30,29 @@ class MetaTransformation(Transformation):
     other transformations, such as `SubspaceTransformation` and
     `Bijection`. It is not meant to be instantiated directly.
     """
+
+    def compute(
+        self,
+        mode: tx.Optional[ModeLike] = None,
+        *,
+        simplify: bool = False,
+    ) -> tx.Self:
+        # A meta transformation has no numeric downcast of its own, so --
+        # once mode-gated -- it is returned unchanged. Both branches return
+        # `self`: the mode-gate is kept to mirror the leaf contract (a
+        # transform the mode does not admit is left untouched), while an
+        # admitted meta transform still has nothing to simplify on its own.
+        # Composing or re-wrapping the inner transform is deferred to a
+        # later change. This is the behaviour it used to inherit from the
+        # base default, relocated here now that the base `compute()` raises
+        # so a family that forgets to implement it is caught. `concrete` is
+        # deliberately not imported here, to avoid the `meta` <-> `concrete`
+        # import cycle.
+        if mode is not None and not _mode_admits(
+            self, _ensure_proper_modes(mode)
+        ):
+            return self
+        return self
 
 
 class SubspaceTransformation(MetaTransformation):

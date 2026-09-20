@@ -25,6 +25,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Sequence,
     SubspaceTransformation,
+    Transformation,
     Translation,
     is_identity,
 )
@@ -662,3 +663,31 @@ def test_subspace_declared_endpoint_is_returned_as_is() -> None:
         transformation=inner, input=declared, input_axes=[0, 1]
     )
     assert subspace.input is declared
+
+
+# ----------------------------------------------------------------------
+#   compute() has no silent default: the base raises
+# ----------------------------------------------------------------------
+
+
+def test_base_transformation_compute_raises() -> None:
+    # A bare ``Transformation`` has no meaningful ``compute``. Rather than
+    # returning itself, the base raises, so a subclass that forgets to
+    # implement ``compute`` fails loudly (mirroring ``inverse``).
+    import pytest
+
+    with pytest.raises(NotImplementedError):
+        Transformation().compute()
+
+
+def test_subspace_compute_returns_self_unchanged() -> None:
+    # ``MetaTransformation`` (here ``SubspaceTransformation``) keeps the
+    # old base-default behaviour: it has no numeric downcast of its own, so
+    # ``compute`` returns the same object, both with the default mode and
+    # under a mode that does not admit it.
+    inner = Translation(translation=np.array([1.0, 2.0]))
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
+    )
+    assert subspace.compute() is subspace
+    assert subspace.compute(mode="Affine") is subspace
