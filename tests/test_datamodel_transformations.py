@@ -10,6 +10,7 @@ import numpy as np
 from bagof.magic import fields_dict, replace
 
 from brainhops.datamodel._transformations import converters as xc
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
@@ -20,6 +21,7 @@ from brainhops.datamodel.transformations import (
     Identity,
     Inverse,
     Linear,
+    Permutation,
     Scaling,
     Sequence,
     SubspaceTransformation,
@@ -533,3 +535,130 @@ def test_simplify_is_keyword_only() -> None:
     affine = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 2.0, 3.0]]))
     with pytest.raises(TypeError):
         affine.compute("Affine", True)  # simplify passed positionally
+
+
+# ----------------------------------------------------------------------
+#   simplify=True HARDENING: kind-checks must never raise
+# ----------------------------------------------------------------------
+
+
+def test_simplify_downcasts_a_swap_to_a_permutation() -> None:
+    # A pure axis swap is a permutation. ``is_permutation`` used to compare
+    # whole row/column sum arrays with ``and``, which raises on an array's
+    # ambiguous truth value; the reduced check now downcasts it cleanly.
+    swap = Linear(matrix=[[0.0, 1.0], [1.0, 0.0]])
+    result = swap.compute(simplify=True)
+    assert isinstance(result, Permutation)
+
+
+def test_simplify_does_not_raise_on_a_shear() -> None:
+    # A shear is not a permutation/scale/rotation. The kind-checks must
+    # detect that without raising (the array-truth-value bug), and leave a
+    # linear transform.
+    shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
+    result = shear.compute(simplify=True)
+    assert isinstance(result, Linear)
+    assert not isinstance(result, Permutation)
+
+
+def test_simplify_does_not_raise_on_a_non_square_matrix() -> None:
+    # A non-square matrix maps between spaces of different dimension. The
+    # square-only kind-checks (scale/permutation/rotation) must return
+    # False rather than broadcast-erroring or taking a determinant.
+    rectangular = Linear(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    result = rectangular.compute(simplify=True)
+    assert isinstance(result, Linear)
+
+
+def test_simplify_does_not_raise_on_a_rotation() -> None:
+    # A 90-degree rotation is orthogonal with determinant 1. Running the
+    # numeric checks over it must not raise (whatever the converter chooses
+    # to downcast it to).
+    rotation = Linear(matrix=[[0.0, -1.0], [1.0, 0.0]])
+    result = rotation.compute(simplify=True)
+    assert result is not None
+
+
+# ----------------------------------------------------------------------
+#   simplify=True must not drop a sampling grid
+# ----------------------------------------------------------------------
+
+
+def test_simplify_keeps_a_leading_grid() -> None:
+    # ``is_identity(grid, compute=True)`` is True, but a leading grid is the
+    # sampling domain, not an identity to drop. Computing with
+    # ``simplify=True`` must keep the domain: the result carries the grid's
+    # spatial shape and is not collapsed to an ``Identity``.
+    grid = CartesianField(shape=(4, 5))
+    shear = Affine(matrix=[[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]])
+    result = Sequence([grid, shear]).compute(simplify=True)
+    assert not isinstance(result, Identity)
+    assert result.field is not None
+    assert result.field.shape == (4, 5, 2)
+
+
+def test_simplify_keeps_a_trailing_grid_as_a_cartesian_field() -> None:
+    # A trailing grid survives computation as a ``CartesianField`` leaf.
+    # ``simplify`` runs the numeric downcast over each leaf, which would
+    # turn that grid into an ``Identity`` and drop the sampling domain --
+    # the guard must leave the grid untouched.
+    affine = Affine(matrix=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    grid = CartesianField(shape=(4, 5))
+    result = Sequence([affine, grid]).compute(simplify=True)
+    assert _contains_cartesian_field(result)
+
+
+# ----------------------------------------------------------------------
+#   SubspaceTransformation endpoint reconstruction
+# ----------------------------------------------------------------------
+
+
+def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
+    # An endpoint-less subspace whose axes exceed the inner system's length
+    # used to index the inner (k-axis) system with full-space positions and
+    # raise IndexError. It must instead reconstruct a full-space system,
+    # placing each inner axis at its declared position and filling the gaps
+    # with placeholder axes.
+    inner = Identity(
+        input=CoordinateSystem(
+            axes=[Axis(name="x"), Axis(name="y"), Axis(name="z")]
+        )
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[1, 2, 3], output_axes=[1, 2, 3]
+    )
+    system = subspace.input  # previously raised IndexError
+    assert system is not None
+    assert len(system.axes) == 4
+    assert [getattr(a, "name", None) for a in system.axes] == [
+        None,
+        "x",
+        "y",
+        "z",
+    ]
+
+
+def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
+    # For axes that start at 0 the reconstruction reproduces the inner
+    # system's own axes in order, as before.
+    inner = Identity(
+        input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
+    )
+    system = subspace.input
+    assert [getattr(a, "name", None) for a in system.axes] == ["x", "y"]
+
+
+def test_subspace_declared_endpoint_is_returned_as_is() -> None:
+    # When the subspace carries a declared endpoint, it is returned
+    # verbatim rather than reconstructed from the inner system.
+    declared = CoordinateSystem(name="full", axes=[Axis(), Axis(), Axis()])
+    inner = Identity(
+        input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
+    )
+    subspace = SubspaceTransformation(
+        transformation=inner, input=declared, input_axes=[0, 1]
+    )
+    assert subspace.input is declared
