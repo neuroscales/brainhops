@@ -22,6 +22,7 @@ from .concrete import (
     is_identity,
 )
 from .errors import CompositionError
+from .factor import _factor
 
 # `_cancels` is the O(1), identity-only cancel test. It lives in `inverse`,
 # next to the `Inverse` class it reads, and is used here by `_annihilates`.
@@ -505,6 +506,13 @@ def _compute_sequence(
         if simplify_cache is None:
             simplify_cache = {}
             simplify_keepalive = []
+        # The factor pass owns an `id`-keyed dependency-pattern cache (and a
+        # keepalive list pinning the leaves it read), so an unchanged leaf is
+        # not re-read on every iteration.
+        dep_cache: tx.Dict[int, tx.Any] = {}
+        dep_keepalive: tx.List[Transformation] = []
+        iteration = 0
+        max_iter = 0
         while True:
             # Flatten without rebuilding any endpoint, so a transform stays
             # the same object that its inverse names. Cancellation tests
@@ -524,11 +532,21 @@ def _compute_sequence(
             bridged = _insert_bridges(seq.transformations or [])
             flat = _unnest(bridged)
             before = len(flat)
+            # Snapshot the leaf identities at the start of the iteration. Under
+            # `factor=True` the fixpoint is detected by these identities being
+            # unchanged at the end of the iteration, because the length metric
+            # cannot serve once the factor pass may grow the list.
+            before_leaves = flat
             seq = replace(seq, transformations=flat)
             if not flat:
                 # Empty sequence -> return
                 # TODO/FIXME: return an Identity instead?
                 return seq
+            if factor and max_iter == 0:
+                # A hard cap on iterations, so a pass that is not
+                # identity-preserving on the normal form fails loudly rather
+                # than looping forever.
+                max_iter = _factor_cap(flat)
 
             # Factor away any strictly interior grid before composing. An
             # interior `CartesianField` is the identity map over its grid,
@@ -587,6 +605,18 @@ def _compute_sequence(
                     seq, table, simplify_cache, simplify_keepalive
                 )
 
+            # Factor pass: rewrite the sequence into its axis-group normal
+            # form. It runs AFTER the cancel sweep and per-leaf simplify (so
+            # cancelled pairs are gone and leaves are downcast) and BEFORE
+            # per-mode composition. It preserves the identity of every leaf it
+            # does not split, and returns the same object once the sequence is
+            # already in normal form, so the identity-based exit test below
+            # converges.
+            if factor:
+                seq = _factor(seq, mode, table, dep_cache, dep_keepalive)
+                if not isinstance(seq, Sequence):
+                    return seq
+
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
             # link is preserved in the common case of an endpoint-less
@@ -598,10 +628,31 @@ def _compute_sequence(
                 # `table` is deliberately not threaded here: the memo'd
                 # recursion only composes, and the simplify pass above (in
                 # the memo-less driver) has already run this iteration.
-                seq = _compute_sequence(seq, submode, memo=submemo)
+                # `factor` IS threaded, so the compose loop applies the two
+                # factor-only gates that keep composition from undoing the
+                # factor pass.
+                seq = _compute_sequence(
+                    seq, submode, memo=submemo, factor=factor
+                )
                 if not isinstance(seq, Sequence):
                     return seq
-            if len(_unnest(seq.transformations)) >= before:
+
+            if factor:
+                # Fixpoint under `factor=True`: nothing changed this iteration,
+                # by object identity of the unnested leaf list.
+                after_leaves = _unnest(seq.transformations)
+                if len(after_leaves) == len(before_leaves) and all(
+                    a is b for a, b in zip(after_leaves, before_leaves)
+                ):
+                    return seq
+                iteration += 1
+                if iteration > max_iter:
+                    raise RuntimeError(
+                        "compute did not converge under factor=True after "
+                        f"{iteration} iterations; a pass is not "
+                        "identity-preserving on the normal form"
+                    )
+            elif len(_unnest(seq.transformations)) >= before:
                 # No pass shrank the sequence, so a further cancellation
                 # cannot either. Nothing left to simplify.
                 return seq
@@ -622,7 +673,7 @@ def _compute_sequence(
     # --- Else compute all children of the mode
     children = _mode_children(mode)
     for child in children:
-        seq = _compute_sequence(seq, child, memo=memo)
+        seq = _compute_sequence(seq, child, memo=memo, factor=factor)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -644,6 +695,14 @@ def _compute_sequence(
         item = inputs.pop(0)
         if _matches_mode(item, mode):
             while inputs and _matches_mode(inputs[0], mode):
+                if factor and not _factor_pair_ok(item, inputs[0]):
+                    # Under `factor=True`, two extra gates keep the compose
+                    # pass from undoing the factor pass: a `CartesianField`
+                    # (the sampling domain) composes with nothing, and a
+                    # subspace factor composes only next to a same-axes
+                    # subspace or an identity, never with a bare permutation
+                    # (which would fold the factor away and destroy the NF).
+                    break
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
@@ -662,6 +721,65 @@ def _compute_sequence(
     if len(outputs) == 1:
         return outputs[0]
     return Sequence(transformations=outputs)
+
+
+def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
+    # Whether the compose pass may combine the adjacent pair `(a, b)` under
+    # `factor=True`. Two extra gates keep composition from undoing the factor
+    # pass:
+    #   1. a `CartesianField` (the sampling domain) is composed with nothing;
+    #   2. a subspace factor composes only next to another subspace with the
+    #      same axes, or an `Identity` -- never with a bare permutation (the
+    #      `(_AffineIsh, Sub)` embed composer would fold the factor away).
+    if isinstance(a, CartesianField) or isinstance(b, CartesianField):
+        return False
+    a_sub = isinstance(a, SubspaceTransformation)
+    b_sub = isinstance(b, SubspaceTransformation)
+    if not a_sub and not b_sub:
+        return True
+    if isinstance(a, Identity) or isinstance(b, Identity):
+        return True
+    if a_sub and b_sub:
+        return _same_subspace_axes(a, b)
+    return False
+
+
+def _same_subspace_axes(
+    a: SubspaceTransformation, b: SubspaceTransformation
+) -> bool:
+    def axes(t: SubspaceTransformation) -> tx.Tuple[tuple, tuple]:
+        ia = None if t.input_axes is None else tuple(int(x) for x in t.input_axes)
+        oa = (
+            None
+            if t.output_axes is None
+            else tuple(int(x) for x in t.output_axes)
+        )
+        return ia, oa
+
+    return axes(a) == axes(b)
+
+
+def _factor_cap(flat: tx.List[Transformation]) -> int:
+    # A generous upper bound on productive fixpoint iterations under
+    # `factor=True`, following the blueprint's `2 * (N + L) + 4` with `N` an
+    # over-estimate of the work dimension (floored so legitimate multi-pass
+    # convergence is never cut short). It is only a safety net: a pass that is
+    # identity-preserving on the normal form converges in a couple of passes.
+    n = 0
+    for t in flat:
+        shape = getattr(t, "shape", None)
+        if shape is not None:
+            n = max(n, len(shape))
+        if not isinstance(t, Inverse):
+            matrix = getattr(t, "matrix", None)
+            if matrix is not None:
+                rows, cols = matrix.shape
+                n = max(n, int(rows), int(cols))
+        for name in ("input_axes", "output_axes"):
+            axes = getattr(t, name, None)
+            if axes is not None and len(axes):
+                n = max(n, max(int(x) for x in axes) + 1)
+    return max(2 * (n + len(flat)) + 4, 16)
 
 
 def _drop_interior_grids(seq: Sequence) -> Sequence:
