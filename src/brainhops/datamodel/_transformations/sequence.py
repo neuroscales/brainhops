@@ -13,7 +13,11 @@ from brainhops.datamodel.systems import CoordinateSystem
 # internals
 from . import registries
 from .base import Transformation
-from .compose import compose
+
+# `_cancels` moved into `compose` (it is the identity-cancel test the
+# composer applies before type dispatch). It is re-exported here because it
+# used to live in this module and other code may import it from here.
+from .compose import _cancels, compose  # noqa: F401
 from .concrete import (
     CartesianField,
     CoordinatesField,
@@ -346,6 +350,7 @@ def _compute_sequence(
     seq: Sequence,
     mode: tx.List[_ModePair],
     memo: tx.Optional[tx.Set[_ModePair]] = None,
+    usermode: tx.Optional[tx.List[_ModePair]] = None,
 ) -> Transformation:
     # We optimize by recursively finding the subclasses of all the modes
     # specified. This allows us to combine similar transformations first
@@ -359,6 +364,11 @@ def _compute_sequence(
     # --- If we are called from the public method, `mode` is a `list`.
     # > Simplify to a fixpoint, then recurse per mode with a memo.
     if memo is None:
+        # `mode` is the caller's whole list of modes here, and it is the one
+        # threaded to `compose` throughout this simplification, so a
+        # composer can decline a composition the mode was told to leave
+        # alone.
+        usermode = mode
         # Each simplification pass can expose a new adjacent
         # transform/inverse pair. Dropping a strictly interior grid
         # can make a pair adjacent, and so can composing a run. So the
@@ -398,17 +408,46 @@ def _compute_sequence(
             # redundant. The first and last elements define the sampling
             # domain and are left in place.
             seq = _drop_interior_grids(seq)
-            seq = _cancel_adjacent_inverses(seq)
-            if not isinstance(seq, Sequence):
-                return seq
 
-            # Compose adjacent subspace transforms over the same axes, so a
-            # subspace-wrapped field meets its own subspace-wrapped inverse
-            # and cancels by identity rather than being inverted numerically.
-            # A full cancellation collapses the sequence to the identity.
-            seq = _merge_adjacent_subspaces(seq, mode)
-            if not isinstance(seq, Sequence):
-                return seq
+            # Identity-based cancellation, run as a single stack sweep before
+            # any typed composition. A transform placed next to its own lazy
+            # inverse annihilates it, and so does a subspace-wrapped
+            # transform placed next to its own subspace-wrapped inverse; both
+            # cancel by identity, materializing no field. Each removal can
+            # expose a new adjacent pair, so the sweep keeps a stack and
+            # cancels the top of the stack against the next transform.
+            #
+            # This runs *before* composition, and not after it, because
+            # composition must not materialize a neighbour before an
+            # adjacent pair has cancelled: otherwise `grid @ affine` folds
+            # into a field before an adjacent `Sub(warp) @ Sub(warp^-1)` pair
+            # can cancel, and the warp is resampled needlessly (or, for a
+            # field that cannot be inverted, at all).
+            flat = _unnest(seq.transformations)
+            stack: tx.List[Transformation] = []
+            cancelled = False
+            for t in flat:
+                if stack and _annihilates(stack[-1], t):
+                    stack.pop()
+                    cancelled = True
+                else:
+                    stack.append(t)
+            if cancelled:
+                if not stack:
+                    # A sequence that cancels entirely is the identity from
+                    # the input of its first element to the output of its
+                    # last. The element endpoints are used, falling back to
+                    # the sequence's own where an element leaves one unset.
+                    first, last = flat[0], flat[-1]
+                    return Identity(
+                        input=first.input
+                        if first.input is not None
+                        else seq.input,
+                        output=last.output
+                        if last.output is not None
+                        else seq.output,
+                    )
+                seq = replace(seq, transformations=stack)
 
             # Propagate the sequence's own endpoints onto its first and
             # last elements, but only when it carries any, so the identity
@@ -418,7 +457,9 @@ def _compute_sequence(
                 seq = seq._flattened()
             submemo: tx.Set[_ModePair] = set()
             for submode in mode:
-                seq = _compute_sequence(seq, submode, memo=submemo)
+                seq = _compute_sequence(
+                    seq, submode, memo=submemo, usermode=usermode
+                )
                 if not isinstance(seq, Sequence):
                     return seq
             if len(_unnest(seq.transformations)) >= before:
@@ -442,7 +483,7 @@ def _compute_sequence(
     # --- Else compute all children of the mode
     children = _mode_children(mode)
     for child in children:
-        seq = _compute_sequence(seq, child, memo=memo)
+        seq = _compute_sequence(seq, child, memo=memo, usermode=usermode)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -464,7 +505,10 @@ def _compute_sequence(
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
-                    item = compose(next_input, item)
+                    # The caller's whole mode is threaded through, so a
+                    # mode-aware composer can decline a composition the mode
+                    # was told to leave alone.
+                    item = compose(next_input, item, mode=usermode)
                 except CompositionError:
                     # NOTE(YB):
                     # When does this happen? When we don't know how to adapt?
@@ -515,83 +559,6 @@ def _drop_interior_grids(seq: Sequence) -> Sequence:
     return replace(seq, transformations=kept)
 
 
-def _subspaces_mergeable(
-    prev: SubspaceTransformation,
-    nxt: SubspaceTransformation,
-    mode: tx.List[_ModePair],
-) -> bool:
-    # Whether two adjacent subspace transforms over the same axes may be
-    # merged under the current mode. Two kinds of merge are distinguished.
-    #
-    # A merge that cancels by identity materializes no field, so it is
-    # always allowed, whatever the mode. This is the case that lets a
-    # subspace-wrapped field meet its own subspace-wrapped inverse. A pair of
-    # inner transforms where one is the inverse of the other cancels this
-    # way, as does a pair where either inner is the identity.
-    #
-    # Any other merge composes the two inner transforms numerically, which
-    # for two fields resamples one through the other. That work is done only
-    # when the current mode would compose those inner transforms anyway, so a
-    # restrictive mode such as `compute(mode="Affine")` does not silently
-    # compose two fields.
-    inner_prev = prev.transformation
-    inner_nxt = nxt.transformation
-    if inner_prev is None or inner_nxt is None:
-        return True
-    if _cancels(inner_prev, inner_nxt):
-        return True
-    return _mode_admits(inner_prev, mode) and _mode_admits(inner_nxt, mode)
-
-
-def _merge_adjacent_subspaces(
-    seq: Sequence, mode: tx.List[_ModePair]
-) -> Transformation:
-    # Compose adjacent subspace transforms that act on the same axes. Two
-    # subspace transforms that meet, where the axes the first writes are the
-    # axes the second reads, compose into one subspace transform over those
-    # axes. A pair that composes to the identity is dropped. This lets a
-    # subspace-wrapped field meet its own subspace-wrapped inverse and
-    # cancel by identity, rather than the field being inverted numerically.
-    #
-    # A merge that would compose two inner transforms numerically runs only
-    # when the current mode admits those inner types, so a restrictive mode
-    # does not compose transforms it was told to leave alone. A cancellation
-    # by identity is always allowed, whatever the mode.
-    xforms = seq.transformations or []
-    if len(xforms) < 2:
-        return seq
-    merged: tx.List[Transformation] = [xforms[0]]
-    changed = False
-    last_identity: tx.Optional[Identity] = None
-    for nxt in xforms[1:]:
-        prev = merged[-1]
-        if (
-            isinstance(prev, SubspaceTransformation)
-            and isinstance(nxt, SubspaceTransformation)
-            and prev.output_axes is not None
-            and nxt.input_axes is not None
-            and list(prev.output_axes) == list(nxt.input_axes)
-            and _subspaces_mergeable(prev, nxt, mode)
-        ):
-            composed = compose(nxt, prev)
-            merged.pop()
-            if isinstance(composed, Identity):
-                last_identity = composed
-            else:
-                merged.append(composed)
-            changed = True
-        else:
-            merged.append(nxt)
-    if not changed:
-        return seq
-    if not merged and last_identity is not None:
-        # Every element cancelled, so the sequence is the identity the last
-        # cancelling pair produced, with its endpoints, rather than an empty
-        # sequence.
-        return last_identity
-    return replace(seq, transformations=merged)
-
-
 def _normalize_inverse(t: Transformation) -> Transformation:
     # Expand a generic `Inverse` front-door into the typed inverse of the
     # transform it holds, so the sequence engine computes it and
@@ -613,48 +580,53 @@ def _normalize_inverse(t: Transformation) -> Transformation:
     return inv.to(**kwargs) if kwargs else inv
 
 
-def _cancels(first: Transformation, second: Transformation) -> bool:
-    # `first` is applied before `second`. The two cancel when `second` is
-    # the inverse of `first`, or `first` is the inverse of `second`. An
-    # inverse names the transform it undoes as its `forward`, so the test
-    # is a plain identity check that materializes neither field. This
-    # covers both a typed inverse and a generic `Inverse(forward=X)`.
-    if isinstance(second, Inverse) and second.forward is first:
+def _annihilates(first: Transformation, second: Transformation) -> bool:
+    # Whether `[first, second]` (with `first` applied first) reduces to the
+    # identity without materializing any field. This is the predicate the
+    # single stack sweep in `_compute_sequence` cancels pairs by.
+    #
+    # A transform placed next to its own lazy inverse annihilates it, named
+    # by identity through `forward` (see `_cancels`). And two subspace
+    # transforms over the same axes annihilate when the axes chain, the net
+    # map introduces no reindex (the axes the first reads are the axes the
+    # second writes), and their inner transforms compose to the identity:
+    # either because one inner is the lazy inverse of the other, or because
+    # both inners are already the identity. This is exactly the case that
+    # lets a subspace-wrapped field meet its own subspace-wrapped inverse and
+    # cancel, rather than the field being resampled through a neighbour first.
+    if _cancels(first, second):
         return True
-    if isinstance(first, Inverse) and first.forward is second:
-        return True
-    return False
-
-
-def _cancel_adjacent_inverses(seq: Sequence) -> Transformation:
-    # Remove adjacent transform/inverse pairs before any numeric inversion
-    # or composition. A transform placed next to its own lazy inverse
-    # annihilates it, and each removal can expose a new adjacent pair, so
-    # the scan keeps a stack and cancels the top of the stack against the
-    # next transform.
-    flat = _unnest(seq.transformations)
-    stack = []
-    cancelled = False
-    for t in flat:
-        if stack and _cancels(stack[-1], t):
-            stack.pop()
-            cancelled = True
-        else:
-            stack.append(t)
-    if not cancelled:
-        return seq
-    if not stack:
-        # A sequence that cancels entirely is the identity from the input
-        # of its first element to the output of its last element. The
-        # sequence's own endpoints are usually unset, so the element
-        # endpoints are used, falling back to the sequence's endpoints
-        # where an element leaves one unset.
-        first, last = flat[0], flat[-1]
-        return Identity(
-            input=first.input if first.input is not None else seq.input,
-            output=last.output if last.output is not None else seq.output,
+    if not (
+        isinstance(first, SubspaceTransformation)
+        and isinstance(second, SubspaceTransformation)
+    ):
+        return False
+    if (
+        first.output_axes is None
+        or second.input_axes is None
+        or list(first.output_axes) != list(second.input_axes)
+    ):
+        return False
+    same_axes = (
+        (first.input_axes is None) == (second.output_axes is None)
+        and (
+            first.input_axes is None
+            or list(first.input_axes) == list(second.output_axes)
         )
-    return replace(seq, transformations=stack)
+    )
+    if not same_axes:
+        return False
+    inner_first = first.transformation
+    inner_second = second.transformation
+    if _cancels(inner_first, inner_second):
+        return True
+    first_identity = inner_first is None or is_identity(
+        inner_first, compute=True
+    )
+    second_identity = inner_second is None or is_identity(
+        inner_second, compute=True
+    )
+    return first_identity and second_identity
 
 
 # ----------------------------------------------------------------------
