@@ -22,7 +22,7 @@ from brainhops.backends import get_array_backend
 
 # internals
 from .base import Transformation
-from .compose import compose, composer
+from .compose import _cancels, compose, composer
 from .concrete import (
     Affine,
     CartesianField,
@@ -33,9 +33,11 @@ from .concrete import (
     Permutation,
     Scaling,
     Translation,
+    is_identity,
 )
 from .errors import CompositionError
 from .meta import SubspaceTransformation
+from .modes import _ensure_proper_modes, _mode_admits
 from .sequence import Sequence, _interpolates
 
 # ----------------------------------------------------------------------
@@ -45,11 +47,24 @@ from .sequence import Sequence, _interpolates
 
 @composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
+    # Composing an identity on the left leaves the right transform, taking
+    # only the identity's output endpoint. When that endpoint is unset, or
+    # already matches, the transform is returned untouched: rebuilding it
+    # with `replace` would hand back a new object and break the `forward is`
+    # link that adjacent-inverse cancellation relies on (pinned by
+    # `test_lazy_inverse.py`).
+    if To.output is None or To.output == Ti.output:
+        return Ti
     return replace(Ti, output=To.output).compute()
 
 
 @composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
+    # The mirror: composing an identity on the right leaves the left
+    # transform, taking only the identity's input endpoint, and rebuilds it
+    # only when that endpoint is set and differs.
+    if Ti.input is None or Ti.input == To.input:
+        return To
     return replace(To, input=Ti.input).compute()
 
 
@@ -463,7 +478,42 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
 
 @composer
 def _(
-    To: SubspaceTransformation, Ti: SubspaceTransformation
+    To: _AffineIsh, Ti: SubspaceTransformation, *, mode: tx.Any = None
+) -> Affine:
+    # Embed a subspace transform that merely lifts an affine into a larger
+    # space, then compose the two as plain affines. A subspace that wraps a
+    # field cannot be reduced this way -- a field is applied by composing it
+    # with a sampling domain, not by reduction to an affine -- so it stays a
+    # wrapper and this composition is declined.
+    if _interpolates(Ti):
+        raise CompositionError(
+            "A subspace transform that wraps a field is not embedded into an "
+            "affine; it stays a wrapper and is applied by composing it with a "
+            "sampling domain."
+        )
+    return compose(To, Ti.to(Affine), mode=mode)
+
+
+@composer
+def _(
+    To: SubspaceTransformation, Ti: _AffineIsh, *, mode: tx.Any = None
+) -> Affine:
+    # The mirror of the embed above, with the subspace transform on the left.
+    if _interpolates(To):
+        raise CompositionError(
+            "A subspace transform that wraps a field is not embedded into an "
+            "affine; it stays a wrapper and is applied by composing it with a "
+            "sampling domain."
+        )
+    return compose(To.to(Affine), Ti, mode=mode)
+
+
+@composer
+def _(
+    To: SubspaceTransformation,
+    Ti: SubspaceTransformation,
+    *,
+    mode: tx.Any = None,
 ) -> Transformation:
     # Compose two transforms that act on subsets of the axes. The two
     # compose into one subspace transform only when the axes the first
@@ -480,21 +530,47 @@ def _(
             "axes, but the axes the first writes differ from the axes the "
             "second reads."
         )
+    inner_prev = Ti.transformation
+    inner_next = To.transformation
+    # A merge that cancels by identity, or where either inner is already the
+    # identity, materializes no field and is always allowed, whatever the
+    # mode: this is the case that lets a subspace-wrapped field meet its own
+    # subspace-wrapped inverse and cancel. Any other merge composes the two
+    # inner transforms numerically -- for two fields, resampling one through
+    # the other -- so it runs only when the current mode admits both inner
+    # types, and a restrictive mode declines it.
+    always = (
+        inner_prev is None
+        or inner_next is None
+        or _cancels(inner_prev, inner_next)
+        or is_identity(inner_prev, compute=True)
+        or is_identity(inner_next, compute=True)
+    )
+    if not always:
+        modes = _ensure_proper_modes(mode)
+        if not (
+            _mode_admits(inner_prev, modes) and _mode_admits(inner_next, modes)
+        ):
+            raise CompositionError(
+                "The two inner transforms of these subspace transforms are "
+                "not admitted by the current mode, so composing them (which "
+                "would resample one field through the other) is declined."
+            )
     inner = Sequence(
         transformations=[
-            Ti.transformation or Identity(),
-            To.transformation or Identity(),
+            inner_prev or Identity(),
+            inner_next or Identity(),
         ]
-    ).compute()
-    # The inner transforms cancel to the identity only tells half the story:
-    # the composition still reindexes the axes unless the axes the first
-    # reads are the axes the second writes. It collapses to a bare identity
-    # only when the inner is the identity AND those axes match. Otherwise it
-    # stays a subspace transform: an identity inner over a differing pair of
-    # axis vectors is a pure axis reindex, which embeds to the affine that
-    # maps each input axis to its output axis, and which `is_identity`
-    # (unlike a `transformation=None` subspace) correctly reports as
-    # non-identity.
+    ).compute(mode=mode)
+    # The inner transforms cancelling to the identity only tells half the
+    # story: the composition still reindexes the axes unless the axes the
+    # first reads are the axes the second writes. It collapses to a bare
+    # identity only when the inner is the identity AND those axes match.
+    # Otherwise it stays a subspace transform: an identity inner over a
+    # differing pair of axis vectors is a pure axis reindex, which embeds to
+    # the affine that maps each input axis to its output axis, and which
+    # `is_identity` (unlike a `transformation=None` subspace) correctly
+    # reports as non-identity.
     same_axes = (Ti.input_axes is None) == (To.output_axes is None) and (
         Ti.input_axes is None or list(Ti.input_axes) == list(To.output_axes)
     )
