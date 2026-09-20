@@ -1,6 +1,48 @@
+"""Dispatch the composition of two transformations to a composer.
+
+`compose(x1, x2)` returns the transform that maps ``x -> x1(x2(x))``: `x2`
+is applied first, then `x1`. It picks the composer to run by walking the
+registry of composers and ordering the ones that apply.
+
+Dispatch order
+--------------
+For a concrete pair of operand types, every registered composer whose
+declared types are ancestors of that pair (with a finite summed hierarchy
+`distance`) is a candidate. The candidates are tried in order of:
+
+1. **priority** -- higher first;
+2. **hierarchy distance** -- nearer declared types first;
+3. **registration order** -- the first-registered composer breaks a tie.
+
+The first candidate whose result ``is not NotImplemented`` wins. A composer
+returns ``NotImplemented`` to decline and hand off to the next candidate; it
+raises [`CompositionError`][] to stop dispatch entirely -- that means "the
+types are right but these two cannot be combined" (for example, two subspace
+transforms whose axes do not line up). If no candidate applies, or every
+candidate declines, `compose` raises [`CompositionError`][].
+
+Priority tiers
+--------------
+* `ANALYTIC` (see ``registries.ANALYTIC``) is reserved for a composer that
+  decides purely from the operand types and object identity, reading no
+  parameter. Today that is the inverse-cancel pair, ``X @ X^-1 -> Identity``.
+* priority ``0`` is the default, used by the numeric composers that read and
+  combine parameters (matrices, fields, ...).
+
+Ordering the analytic tier ahead of the numeric one enforces the invariant
+that a **cost-free rewrite is tried before any parameter-reading one**: a
+transform placed next to its own lazy inverse cancels to the identity before
+the numeric composer that would materialize the inverse ever runs, so a lazy
+inverse is never materialized when it could have cancelled.
+
+`compose` itself knows nothing about modes. Gating which adjacent transforms
+are handed to `compose` is the sequence engine's job, not the composers'.
+"""
+
 # stdlib
 import itertools
 import types as _types
+from functools import partial
 
 # dependencies
 import typing_extensions as tx
@@ -23,42 +65,73 @@ if hasattr(_types, "UnionType"):
     _UnionTypes += (_types.UnionType,)
 
 
-def composer(func: tx.Callable) -> tx.Callable:
+def composer(
+    func: tx.Optional[tx.Callable] = None,
+    *,
+    priority: int = 0,
+) -> tx.Callable:
+    """Register a function as a composer of two transformations.
+
+    Usable bare (``@composer``) or with a priority
+    (``@composer(priority=ANALYTIC)``). The composer's declared parameter
+    types key it in the registry, alongside its dispatch `priority`.
     """
-    Decorator to register a function as a composer of two transformations.
-    """
+    if func is None:
+        return partial(composer, priority=priority)
     types = tuple(tx.get_type_hints(func).values())[:2]
-    COMPOSERS[types] = func
+    COMPOSERS[types] = (func, priority)
     COMPOSERS_FASTMAP.clear()
     return func
 
 
-def compose(x1: "Transformation", x2: "Transformation") -> "Transformation":
-    """
-    Dispatch the composition of two transformations to the appropriate
-    composer function.
+def _expand(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
+    # Expand a `X | Y` union hint into its members; a plain type is a
+    # one-tuple of itself.
+    if safe_get_origin(hint) in _UnionTypes:
+        return tx.get_args(hint)
+    return (hint,)
+
+
+def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
+    # Every registered composer whose declared types are ancestors of
+    # `(t1, t2)` with a finite summed hierarchy distance, stably ordered by
+    # `(-priority, distance)` with registration order breaking ties (so the
+    # order reproduces the historical first-registered-wins on a tie). The
+    # result is cached per concrete pair in `COMPOSERS_FASTMAP`.
+    cached = COMPOSERS_FASTMAP.get((t1, t2))
+    if cached is not None:
+        return cached
+    scored = []
+    for order, ((T1, T2), (func, priority)) in enumerate(COMPOSERS.items()):
+        best = float("inf")
+        for A, B in itertools.product(_expand(T1), _expand(T2)):
+            dist = distance(t1, A) + distance(t2, B)
+            if dist < best:
+                best = dist
+        if best < float("inf"):
+            scored.append((func, priority, best, order))
+    scored.sort(key=lambda s: (-s[1], s[2], s[3]))
+    funcs = tuple(s[0] for s in scored)
+    COMPOSERS_FASTMAP[(t1, t2)] = funcs
+    return funcs
+
+
+def compose(
+    x1: "Transformation",
+    x2: "Transformation",
+) -> "Transformation":
+    """Compose two transformations.
+
+    `x2` is applied first, then `x1`, so the result maps ``x -> x1(x2(x))``.
+    The composer to run is chosen by dispatch order (see the module
+    docstring): the candidates are tried in turn and the first result that
+    ``is not NotImplemented`` is returned. A composer that raises
+    [`CompositionError`][] stops dispatch; if none applies or all decline,
+    `compose` raises [`CompositionError`][].
     """
     t1, t2 = type(x1), type(x2)
-    if (t1, t2) in COMPOSERS_FASTMAP:
-        func = COMPOSERS_FASTMAP[(t1, t2)]
-        return func(x1, x2)
-    best_distance, best_func = float("inf"), None
-    for (T1, T2), FUNC in COMPOSERS.items():
-        origin1 = safe_get_origin(T1)
-        if origin1 in _UnionTypes:
-            T1s = tx.get_args(T1)
-        else:
-            T1s = (T1,)
-        origin2 = safe_get_origin(T2)
-        if origin2 in _UnionTypes:
-            T2s = tx.get_args(T2)
-        else:
-            T2s = (T2,)
-        for T1, T2 in itertools.product(T1s, T2s):
-            dist = distance(t1, T1) + distance(t2, T2)
-            if dist < best_distance:
-                best_distance, best_func = dist, FUNC
-    if best_distance < float("inf"):
-        COMPOSERS_FASTMAP[(t1, t2)] = best_func
-        return best_func(x1, x2)
+    for func in _candidates(t1, t2):
+        result = func(x1, x2)
+        if result is not NotImplemented:
+            return result
     raise CompositionError(f"No composer found for types: {t1}, {t2}")

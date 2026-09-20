@@ -35,8 +35,42 @@ from .concrete import (
     Translation,
 )
 from .errors import CompositionError
+from .inverse import Inverse, _cancels
 from .meta import SubspaceTransformation
+from .registries import ANALYTIC
 from .sequence import Sequence, _interpolates
+
+# ----------------------------------------------------------------------
+#     CANCELLATION (analytic priority)
+# ----------------------------------------------------------------------
+
+# A transform placed next to its own lazy inverse cancels to the identity.
+# These composers sit in the `ANALYTIC` priority tier, so `compose` tries
+# them ahead of any numeric composer (see the `compose` module docstring):
+# a cost-free rewrite runs before any parameter-reading one, so a lazy
+# inverse is never materialized when it could have cancelled. They decide
+# from the operand types and object identity alone -- `_cancels` reads no
+# field -- and decline with `NotImplemented` when the pair does not cancel,
+# handing off to the next candidate.
+
+
+@composer(priority=ANALYTIC)
+def _(To: Inverse, Ti: Transformation) -> Transformation:
+    return (
+        Identity(input=Ti.input, output=To.output)
+        if _cancels(Ti, To)
+        else NotImplemented
+    )
+
+
+@composer(priority=ANALYTIC)
+def _(To: Transformation, Ti: Inverse) -> Transformation:
+    return (
+        Identity(input=Ti.input, output=To.output)
+        if _cancels(Ti, To)
+        else NotImplemented
+    )
+
 
 # ----------------------------------------------------------------------
 #     IDENTITY
@@ -45,12 +79,28 @@ from .sequence import Sequence, _interpolates
 
 @composer
 def _(To: Identity, Ti: Transformation) -> Transformation:
-    return replace(Ti, output=To.output).compute()
+    # Composing an identity on the left leaves the right transform, taking
+    # only the identity's output endpoint. When that endpoint is unset, or
+    # already matches, the transform is returned untouched: rebuilding it
+    # with `replace` would hand back a new object and break the `forward is`
+    # link that adjacent-inverse cancellation relies on (pinned by
+    # `test_lazy_inverse.py`). Otherwise the endpoint is set with `replace`
+    # only -- not `.compute()`, which would materialize a lazy `Inverse`
+    # leaf (a latent leak).
+    if To.output is None or To.output == Ti.output:
+        return Ti
+    return replace(Ti, output=To.output)
 
 
 @composer
 def _(To: Transformation, Ti: Identity) -> Transformation:
-    return replace(To, input=Ti.input).compute()
+    # The mirror: composing an identity on the right leaves the left
+    # transform, taking only the identity's input endpoint, and rebuilds it
+    # (with `replace`, never `.compute()`) only when that endpoint is set
+    # and differs.
+    if Ti.input is None or Ti.input == To.input:
+        return To
+    return replace(To, input=Ti.input)
 
 
 # ----------------------------------------------------------------------
@@ -462,14 +512,51 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
 
 
 @composer
+def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
+    # Embed a subspace transform that merely lifts an affine into a larger
+    # space, then compose the two as plain affines. A subspace that wraps a
+    # field cannot be reduced this way -- a field is applied by composing it
+    # with a sampling domain, not by reduction to an affine -- so it stays a
+    # wrapper and this composition is declined.
+    if _interpolates(Ti):
+        raise CompositionError(
+            "A subspace transform that wraps a field is not embedded into an "
+            "affine; it stays a wrapper and is applied by composing it with a "
+            "sampling domain."
+        )
+    return compose(To, Ti.to(Affine))
+
+
+@composer
+def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
+    # The mirror of the embed above, with the subspace transform on the left.
+    if _interpolates(To):
+        raise CompositionError(
+            "A subspace transform that wraps a field is not embedded into an "
+            "affine; it stays a wrapper and is applied by composing it with a "
+            "sampling domain."
+        )
+    return compose(To.to(Affine), Ti)
+
+
+@composer
 def _(
-    To: SubspaceTransformation, Ti: SubspaceTransformation
+    To: SubspaceTransformation,
+    Ti: SubspaceTransformation,
 ) -> Transformation:
     # Compose two transforms that act on subsets of the axes. The two
     # compose into one subspace transform only when the axes the first
     # writes are the axes the second reads. The inner transforms compose in
-    # order, and a pair that reduces to the identity collapses the whole
-    # composition to the identity.
+    # order (through a `Sequence`, which cancels an inner/inner inverse pair
+    # symbolically before any field is materialized), and a pair that
+    # reduces to the identity collapses the whole composition to the
+    # identity.
+    #
+    # This composer is mode-free: it always composes the inners it is
+    # handed. Whether a pair of adjacent subspace transforms is handed here
+    # at all (for instance, whether two subspace-wrapped fields are composed
+    # under a restrictive mode, which would resample one field through the
+    # other) is decided by the sequence engine's gate, not here.
     if (
         To.input_axes is None
         or Ti.output_axes is None
@@ -480,21 +567,23 @@ def _(
             "axes, but the axes the first writes differ from the axes the "
             "second reads."
         )
+    inner_prev = Ti.transformation
+    inner_next = To.transformation
     inner = Sequence(
         transformations=[
-            Ti.transformation or Identity(),
-            To.transformation or Identity(),
+            inner_prev or Identity(),
+            inner_next or Identity(),
         ]
     ).compute()
-    # The inner transforms cancel to the identity only tells half the story:
-    # the composition still reindexes the axes unless the axes the first
-    # reads are the axes the second writes. It collapses to a bare identity
-    # only when the inner is the identity AND those axes match. Otherwise it
-    # stays a subspace transform: an identity inner over a differing pair of
-    # axis vectors is a pure axis reindex, which embeds to the affine that
-    # maps each input axis to its output axis, and which `is_identity`
-    # (unlike a `transformation=None` subspace) correctly reports as
-    # non-identity.
+    # The inner transforms cancelling to the identity only tells half the
+    # story: the composition still reindexes the axes unless the axes the
+    # first reads are the axes the second writes. It collapses to a bare
+    # identity only when the inner is the identity AND those axes match.
+    # Otherwise it stays a subspace transform: an identity inner over a
+    # differing pair of axis vectors is a pure axis reindex, which embeds to
+    # the affine that maps each input axis to its output axis, and which
+    # `is_identity` (unlike a `transformation=None` subspace) correctly
+    # reports as non-identity.
     same_axes = (Ti.input_axes is None) == (To.output_axes is None) and (
         Ti.input_axes is None or list(Ti.input_axes) == list(To.output_axes)
     )

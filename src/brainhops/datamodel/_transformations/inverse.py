@@ -169,6 +169,23 @@ class Inverse(Transformation):
 register_inverse(Inverse)
 
 
+def _cancels(first: Transformation, second: Transformation) -> bool:
+    """Whether ``[first, second]`` cancels to the identity for free.
+
+    `first` is applied before `second`. The two cancel when `second` is the
+    lazy inverse of `first`, or `first` is the lazy inverse of `second`. An
+    `Inverse` names the transform it undoes as its `forward`, so the test is
+    a plain identity check that materializes neither field: it is O(1) and
+    decides from object identity alone. This covers both a typed inverse
+    and a generic `Inverse(forward=X)`.
+    """
+    if isinstance(second, Inverse) and second.forward is first:
+        return True
+    if isinstance(first, Inverse) and first.forward is second:
+        return True
+    return False
+
+
 class InverseTranslation(Inverse, Translation):
     """The inverse of a [`Translation`][], resolved on demand."""
 

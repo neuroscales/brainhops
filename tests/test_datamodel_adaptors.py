@@ -1054,11 +1054,12 @@ def test_spatial_transform_across_a_4d_image_via_compute() -> None:
     second = _lps_affine_3d(itk_matrix)
 
     result = Sequence([first, second]).compute()
-    assert isinstance(result, Sequence)
-    wrapped = [t for t in result if isinstance(t, SubspaceTransformation)]
-    assert len(wrapped) == 1
-
-    got = _homogeneous_of_each(result)
+    # The lifted 3D transform is a non-interpolating subspace wrapper (it
+    # merely embeds an affine into the spatial axes), so it now folds into a
+    # single 4D affine under the default mode rather than staying an opaque
+    # wrapper. Nothing is lost: the composed matrix is exactly the embedded
+    # transform, the RAS/LPS flip and the voxel map multiplied together.
+    got = _composed_homogeneous(result)
     flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
     voxel_homogeneous = np.eye(5)
     voxel_homogeneous[:4, :] = voxel_matrix
@@ -1085,8 +1086,11 @@ def test_wrapped_result_round_trips_through_compute() -> None:
     first = _voxel_to_ras_time(np.eye(4, 5))
     second = _lps_affine_3d(itk_matrix)
     forward = Sequence([first, second]).compute()
-    forward_matrix = _homogeneous_of_each(forward)
-    backward_matrix = _homogeneous_of_each(forward.inverse())
+    # The lifted transform now folds into a single 4D affine, so the round
+    # trip is read from the folded result (and its inverse) rather than from
+    # a surviving sequence of wrappers.
+    forward_matrix = _composed_homogeneous(forward)
+    backward_matrix = _composed_homogeneous(forward.inverse())
     np.testing.assert_allclose(
         backward_matrix @ forward_matrix, np.eye(5), atol=1e-12
     )
@@ -1137,14 +1141,12 @@ def test_backward_lift_wraps_a_3d_transform_before_a_4d_one() -> None:
     second = _voxel_to_ras_time(voxel_matrix)
 
     result = Sequence([first, second]).compute()
-    assert isinstance(result, Sequence)
-    wrapped = result.transformations[0]
-    assert isinstance(wrapped, SubspaceTransformation)
-    np.testing.assert_array_equal(wrapped.input_axes, [0, 1, 2])
-    np.testing.assert_array_equal(wrapped.output_axes, [0, 1, 2])
-    assert wrapped.output == second.input
-
-    got = _homogeneous_of_each(result)
+    # The backward-lifted 3D transform is likewise a non-interpolating
+    # subspace wrapper, so it folds into a single 4D affine under the default
+    # mode instead of staying an opaque wrapper. The composed matrix is the
+    # voxel map, the RAS/LPS flip and the embedded transform multiplied
+    # together, in this (backward) order.
+    got = _composed_homogeneous(result)
     flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
     voxel_homogeneous = np.eye(5)
     voxel_homogeneous[:4, :] = voxel_matrix
@@ -1196,11 +1198,11 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
     voxel_to_world = _voxel_to_ras_time(voxel_matrix)
 
     result = Sequence([voxel_to_world, itk]).compute()
-    wrapped = [t for t in result if isinstance(t, SubspaceTransformation)]
-    assert len(wrapped) == 1
-    np.testing.assert_array_equal(wrapped[0].input_axes, [0, 1, 2])
-
-    got = _homogeneous_of_each(result)
+    # The ITK 3D transform lifts onto the spatial axes as a non-interpolating
+    # subspace wrapper, which now folds into a single 4D affine under the
+    # default mode. The composed matrix still embeds the ITK transform on the
+    # spatial axes and leaves time untouched.
+    got = _composed_homogeneous(result)
     itk_3d = np.asarray(itk.compute().to(Affine).homogeneous_matrix)[:3, :]
     flip4 = np.diag([-1.0, -1.0, 1.0, 1.0, 1.0])
     voxel_homogeneous = np.eye(5)
