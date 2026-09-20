@@ -86,7 +86,33 @@ def _matches_mode(t: "Transformation", mode: _ModePair) -> bool:
     #
     #   The current implementation is a stricter bound.
     cls, ndim = mode
-    if not isinstance(t, cls):
+    matches_cls = isinstance(t, cls)
+    if not matches_cls:
+        # See through a non-interpolating subspace wrapper: a subspace
+        # transform that merely lifts an affine (or the like) into a larger
+        # space matches a mode when its inner transform does, so a lifted
+        # affine composes under an affine mode just as a bare affine would.
+        # The ndim test still reads the wrapper's own (full-space) endpoints
+        # below. An interpolating subspace wraps a field and must never
+        # match a restrictive mode, so it is never seen through; it still
+        # matches its own structural type (subspace/meta/transformation)
+        # through the plain `isinstance` above.
+        #
+        # The imports are local because `modes` is depended on by `meta` and
+        # `sequence`, which would form an import cycle at load time.
+        from .meta import SubspaceTransformation
+
+        if isinstance(t, SubspaceTransformation):
+            from .sequence import _interpolates
+
+            inner = t.transformation
+            if (
+                inner is not None
+                and not _interpolates(t)
+                and isinstance(inner, cls)
+            ):
+                matches_cls = True
+    if not matches_cls:
         return False
     if ndim is None:
         return True
