@@ -15,6 +15,21 @@ from brainhops.datamodel.images import Image
 
 from ._errors import CliError, WritingUnavailable
 
+# Short, user-facing names for transformation readers.  Class names are
+# stored rather than classes so that optional formats simply disappear from
+# the available set when their dependency is not installed.
+_TRANSFORM_HINT_CLASSES = {
+    "flirt": "FLIRTTransform",
+    "fnirt": "FNIRTWarpField",
+    "itk-h5": "H5Transform",
+    "itk-tfm": "TFMTransform",
+    "nifti-affine": "NiftiVoxelToRAS",
+    "nifti-coordinates": "NiftiRASCoordinatesField",
+    "ome-zarr": "OmeZarrField",
+    "spm": "SPMCoordinatesField",
+    "spmy": "SPMCoordinatesField",
+}
+
 
 def load_image(source: str) -> Image:
     """Read an image from a file, or raise a `CliError`.
@@ -31,16 +46,49 @@ def load_image(source: str) -> Image:
         raise CliError(f"Could not read image {source!r}: {exc}") from exc
 
 
-def load_transform(source: str) -> tx.Any:
+def _transform_formats_by_hint() -> tx.Dict[str, type]:
+    """The transformation readers available under each CLI hint."""
+    from brainhops.io.transformations.base import FileBasedTransformation
+
+    by_name = {
+        fmt.__name__: fmt
+        for fmt in getattr(FileBasedTransformation, "_REGISTRY", set())
+    }
+    return {
+        hint: by_name[class_name]
+        for hint, class_name in _TRANSFORM_HINT_CLASSES.items()
+        if class_name in by_name
+    }
+
+
+def transform_format_hints() -> tx.Set[str]:
+    """The format hints recognized after a transform path in the CLI."""
+    return set(_TRANSFORM_HINT_CLASSES)
+
+
+def load_transform(source: str, hint: tx.Optional[str] = None) -> tx.Any:
     """Read a transformation from a file, or raise a `CliError`.
 
-    The format is detected from the file. A path that does not exist or
-    that no transformation format recognises is reported as a `CliError`.
+    The format is detected from the file unless `hint` names a specific
+    reader. A path that does not exist, an unknown hint, or content that
+    the selected reader cannot parse is reported as a `CliError`.
     """
     try:
-        return io.transformations.load(source)
+        if hint is None:
+            return io.transformations.load(source)
+        hint = hint.lower()
+        formats = _transform_formats_by_hint()
+        if hint not in formats:
+            available = ", ".join(sorted(formats)) or "none"
+            raise CliError(
+                f"Unknown or unavailable transformation format hint "
+                f"{hint!r}. Available hints: {available}."
+            )
+        return formats[hint].load(source)
     except FileNotFoundError as exc:
         raise CliError(f"Transformation not found: {source}") from exc
+    except CliError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise CliError(
             f"Could not read transformation {source!r}: {exc}"

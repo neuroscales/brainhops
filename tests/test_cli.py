@@ -5,10 +5,11 @@ import pytest
 
 from brainhops.cli import main
 from brainhops.cli._errors import CliError, WritingUnavailable
-from brainhops.cli._io import _writable_image_formats
+from brainhops.cli._io import _writable_image_formats, load_transform
 from brainhops.cli._reslice import (
     _load_push_transform,
     _split_operators,
+    _split_transform_spec,
     reslice_image,
 )
 from brainhops.datamodel.images import Image
@@ -111,6 +112,49 @@ def test_split_operators_keeps_a_pipe_inside_a_source_path() -> None:
     assert _split_operators("inv") == ("inv", [])
 
 
+def test_split_transform_spec_extracts_format_hint_and_operators(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    monkeypatch.setattr(
+        "brainhops.cli._reslice.transform_format_hints", lambda: {"flirt"}
+    )
+    assert _split_transform_spec("affine.mat|flirt|inv") == (
+        "affine.mat",
+        "flirt",
+        ["inv"],
+    )
+    # The hint is a loader directive, so its position does not reorder ops.
+    assert _split_transform_spec("affine.mat|inv|flirt|inv") == (
+        "affine.mat",
+        "flirt",
+        ["inv", "inv"],
+    )
+
+
+def test_split_transform_spec_keeps_unknown_pipe_segment_in_source(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    monkeypatch.setattr(
+        "brainhops.cli._reslice.transform_format_hints", lambda: {"flirt"}
+    )
+    assert _split_transform_spec("s3://bucket/a|b/file.mat|flirt") == (
+        "s3://bucket/a|b/file.mat",
+        "flirt",
+        [],
+    )
+
+
+def test_split_transform_spec_refuses_two_format_hints(
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    monkeypatch.setattr(
+        "brainhops.cli._reslice.transform_format_hints",
+        lambda: {"flirt", "itk-tfm"},
+    )
+    with pytest.raises(CliError, match="only one format hint"):
+        _split_transform_spec("affine.mat|flirt|itk-tfm")
+
+
 def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa: ANN001
     seen = {}
 
@@ -141,6 +185,45 @@ def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa
     assert seen["path"] == "warp.nii.gz"
     # The loaded transform is inverted before it is composed.
     assert transform.inverted is True
+
+
+def test_format_hint_is_passed_to_the_transform_loader(monkeypatch) -> None:  # noqa: ANN001
+    seen = {}
+
+    def fake_load(path, hint=None):  # noqa: ANN001, ANN202
+        seen["path"] = path
+        seen["hint"] = hint
+        return _FakeTransform()
+
+    monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
+    monkeypatch.setattr(
+        "brainhops.cli._reslice.transform_format_hints", lambda: {"flirt"}
+    )
+
+    transform = _load_push_transform("affine.mat|flirt|inv")
+
+    assert seen == {"path": "affine.mat", "hint": "flirt"}
+    assert transform.inverted is True
+
+
+def test_format_hint_selects_reader_without_a_matching_extension(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = tmp_path / "affine.unknown"
+    path.write_text(
+        "1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    transform = load_transform(str(path), hint="flirt")
+
+    assert type(transform).__name__ == "FLIRTTransform"
+    np.testing.assert_array_equal(transform.flirt_matrix, np.eye(4))
+
+
+def test_unknown_format_hint_reports_available_hints() -> None:
+    with pytest.raises(CliError, match="Available hints"):
+        load_transform("affine.mat", hint="not-a-format")
 
 
 def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noqa: ANN001

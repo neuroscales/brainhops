@@ -35,7 +35,12 @@ import typing_extensions as tx
 from brainhops.datamodel.images import Image
 
 from ._errors import CliError
-from ._io import load_image, load_transform, save_image
+from ._io import (
+    load_image,
+    load_transform,
+    save_image,
+    transform_format_hints,
+)
 
 # Operators that a transform value may carry after a `|`, and that are
 # applied to the loaded transform in written order. `inv` inverts the
@@ -89,8 +94,9 @@ def add_parser(
             "A forward (push) transformation to apply to the input image. "
             "Repeat the option to apply several, in the order given. The "
             "value is a path, optionally followed by pipe-separated "
-            "operators applied in written order, for example "
-            "'warp.nii.gz|inv'. The '|inv' operator inverts the "
+            "format hints and operators, for example "
+            "'affine.mat|flirt|inv'. A format hint selects the reader "
+            "without sniffing. The '|inv' operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
             "'|' usually needs shell quoting. The operators 'sqrt', "
             "'square', 'exp' and 'log' are recognised but not implemented "
@@ -142,6 +148,37 @@ def _split_operators(spec: str) -> tx.Tuple[str, tx.List[str]]:
     return "|".join(segments), operators
 
 
+def _split_transform_spec(
+    spec: str,
+) -> tx.Tuple[str, tx.Optional[str], tx.List[str]]:
+    """Split a transform value into source, format hint and operations.
+
+    Known modifiers are peeled from the right, which preserves `|` inside
+    a path or cloud URI. A format hint may appear anywhere in the trailing
+    modifier chain, but at most one may be supplied. Operators retain their
+    written order.
+    """
+    hints = transform_format_hints()
+    known = _RECOGNIZED_OPS | hints
+    segments = spec.split("|")
+    modifiers: tx.List[str] = []
+    while len(segments) > 1 and segments[-1].lower() in known:
+        modifiers.insert(0, segments.pop().lower())
+
+    selected_hints = [modifier for modifier in modifiers if modifier in hints]
+    if len(selected_hints) > 1:
+        raise CliError(
+            "A transform may have only one format hint; got "
+            + ", ".join(repr(hint) for hint in selected_hints)
+            + "."
+        )
+    hint = selected_hints[0] if selected_hints else None
+    operators = [
+        modifier for modifier in modifiers if modifier in _RECOGNIZED_OPS
+    ]
+    return "|".join(segments), hint, operators
+
+
 def _apply_operator(transform: Image, operator: str) -> Image:
     """Apply one operator to a loaded transform.
 
@@ -164,8 +201,11 @@ def _load_push_transform(spec: str) -> Image:
     composition over the loaded transform, so `warp|a|b` is `b(a(load))`.
     The returned transform is a forward (push) map, ready to compose.
     """
-    source, operators = _split_operators(spec)
-    transform = load_transform(source)
+    source, hint, operators = _split_transform_spec(spec)
+    if hint is None:
+        transform = load_transform(source)
+    else:
+        transform = load_transform(source, hint=hint)
     for operator in operators:
         transform = _apply_operator(transform, operator)
     return transform
