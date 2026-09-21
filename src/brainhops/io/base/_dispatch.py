@@ -16,6 +16,7 @@ from os import PathLike, fspath
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import fields
 
 # internals
 from brainhops._core import path
@@ -24,6 +25,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
+from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 
 _T = tx.TypeVar("_T")
 
@@ -238,6 +240,7 @@ def _candidates(
     registry: tx.Set[type],
     fn_sniff: str,
     errors: tx.Optional[tx.List[tx.Tuple[type, str, Exception]]] = None,
+    allowed: tx.Optional[tx.Set[type]] = None,
     **kwargs,
 ) -> tx.List[tx.List[type]]:
     """
@@ -256,6 +259,8 @@ def _candidates(
     scores: tx.Dict[type, float] = {}
     candidates: tx.List[tx.Tuple[type, tx.Optional[tx.Tuple[int, int]]]] = []
     for subclass in registry:
+        if allowed is not None and subclass not in allowed:
+            continue
         match = _match_name(name, subclass) if name else None
         try:
             score = float(
@@ -283,6 +288,9 @@ def parse(
     fn_parse: str,
     fn_sniff: str,
     brute: bool = False,
+    hints: tx.Iterable[str] = (),
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]] = (),
     **kwargs,
 ) -> _T:
     """
@@ -328,11 +336,45 @@ def parse(
     """
     errors: tx.List[tx.Tuple[type, str, Exception]] = []
     tried: tx.List[type] = []
+    if not registry:
+        raise _failure(source, [], errors)
+    requested_hints = _normalize_hints(hints, hint)
+    source_options = tuple(options)
+    duplicate = set(kwargs).intersection(name for name, _ in source_options)
+    if duplicate:
+        names = ", ".join(sorted(duplicate))
+        raise ParserContentError(
+            f"Source options were supplied more than once: {names}."
+        )
+
+    allowed = {
+        subclass
+        for subclass in registry
+        if (not requested_hints or format_hints(subclass) & requested_hints)
+        and _accepts_options(subclass, source_options)
+    }
+    if not allowed:
+        details = []
+        if requested_hints:
+            details.append(
+                "hints " + ", ".join(sorted(repr(h) for h in requested_hints))
+            )
+        if source_options:
+            details.append(
+                "options "
+                + ", ".join(sorted(repr(name) for name, _ in source_options))
+            )
+        suffix = " for " + " and ".join(details) if details else ""
+        raise ParserContentError(
+            f"No registered parser accepts {source}{suffix}."
+        )
 
     def attempt(subclass: type) -> tx.Tuple[bool, tx.Any]:
         tried.append(subclass)
         try:
-            return True, getattr(subclass, fn_parse)(source.get(), **kwargs)
+            bound = _bind_options(subclass, source_options)
+            bound.update(kwargs)
+            return True, getattr(subclass, fn_parse)(source.get(), **bound)
         except Exception as e:
             errors.append((subclass, fn_parse, e))
             return False, None
@@ -365,15 +407,21 @@ def parse(
                 )
         return False, None
 
-    ok, result = walk(
-        _candidates(source, registry, fn_sniff, errors, **kwargs)
+    tiers = _candidates(
+        source, registry, fn_sniff, errors, allowed=allowed, **kwargs
     )
+    # Hints are an explicit allowlist. If nothing in that allowlist sniffs
+    # the source (an unknown extension is a common reason), try the allowed
+    # formats instead of silently widening back to the full registry.
+    if requested_hints and not tiers:
+        tiers = _tiers([(subclass, None) for subclass in allowed])
+    ok, result = walk(tiers)
     if ok:
         return result
 
     # --- Brute force ---------------------------------------------------
     if brute:
-        for subclass in sorted(registry, key=lambda c: c.__qualname__):
+        for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
                 continue
             ok, result = attempt(subclass)
@@ -381,7 +429,98 @@ def parse(
                 return result
 
     # --- Failure) Raise -----------------------------------------------
-    raise _failure(source, registry, errors)
+    raise _failure(source, list(allowed), errors)
+
+
+def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
+    """Resolved field annotations, including custom ``Annotated`` data."""
+    try:
+        annotations = tx.get_type_hints(cls, include_extras=True)
+    except Exception:
+        annotations = {}
+        for base in reversed(cls.__mro__):
+            annotations.update(base.__dict__.get("__annotations__", {}))
+    return annotations
+
+
+def _option_fields(cls: type) -> tx.Dict[str, tx.Tuple[str, tx.Any]]:
+    """Source option names mapped to concrete Magic fields and types."""
+    try:
+        magic_fields = {field.name: field for field in fields(cls)}
+    except (TypeError, AttributeError):
+        magic_fields = {}
+    annotations = _field_annotations(cls)
+    result = {
+        name: (name, annotations.get(name, field.type))
+        for name, field in magic_fields.items()
+        if field.init and field.kw and not name.startswith("_")
+    }
+    # Formats may expose a load/from_* spelling only by explicitly mapping
+    # it to a real field. This is intentionally not an alias mechanism.
+    mappings = {}
+    for base in reversed(cls.__mro__):
+        mappings.update(base.__dict__.get("SOURCE_OPTIONS", {}))
+    for option, field_name in mappings.items():
+        if field_name not in magic_fields:
+            raise TypeError(
+                f"{cls.__name__}.SOURCE_OPTIONS maps {option!r} to unknown "
+                f"field {field_name!r}."
+            )
+        field = magic_fields[field_name]
+        result[option] = (
+            field_name,
+            annotations.get(field_name, field.type),
+        )
+    return result
+
+
+def _accepts_options(
+    cls: type,
+    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]],
+) -> bool:
+    accepted = _option_fields(cls)
+    return all(name in accepted for name, _ in options)
+
+
+def _bind_options(
+    cls: type,
+    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]],
+) -> tx.Dict[str, tx.Any]:
+    accepted = _option_fields(cls)
+    bound = {}
+    for option, value in options:
+        field_name, annotation = accepted[option]
+        bound[field_name] = _parse_field_value(
+            cls, field_name, annotation, value
+        )
+    return bound
+
+
+def _parse_field_value(
+    owner: type,
+    field_name: str,
+    annotation: tx.Any,
+    value: tx.Union[str, SourceSpec],
+) -> tx.Any:
+    parser = parser_for(annotation)
+    spec = value if isinstance(value, SourceSpec) else SourceSpec(value=value)
+    if parser is None:
+        if isinstance(value, SourceSpec):
+            raise TypeError(
+                f"Nested source for {owner.__name__}.{field_name} has no "
+                "registered field parser."
+            )
+        return value
+    if isinstance(parser, type) and hasattr(parser, "load_spec"):
+        return parser.load_spec(spec)
+    if hasattr(parser, "load_spec"):
+        return parser.load_spec(spec)
+    if callable(parser):
+        return parser(spec)
+    raise TypeError(
+        f"Parser for {owner.__name__}.{field_name} is not callable: "
+        f"{parser!r}."
+    )
 
 
 def _failure(
@@ -425,6 +564,8 @@ def sniff(
     fn_sniff: str,
     error: tx.Union[bool, tx.Type[Exception]] = False,
     what: str = "input content",
+    hints: tx.Iterable[str] = (),
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
     **kwargs,
 ) -> tx.Optional[type]:
     """
@@ -465,7 +606,15 @@ def sniff(
     format : type | None
         The best-matching format, or `None` if no single one stands out.
     """
-    tiers = _candidates(Source(content), registry, fn_sniff, **kwargs)
+    requested_hints = _normalize_hints(hints, hint)
+    allowed = {
+        subclass
+        for subclass in registry
+        if not requested_hints or format_hints(subclass) & requested_hints
+    }
+    tiers = _candidates(
+        Source(content), registry, fn_sniff, allowed=allowed, **kwargs
+    )
 
     if tiers and len(tiers[0]) == 1:
         return tiers[0][0]
@@ -483,3 +632,14 @@ def sniff(
         raise error(f"Nothing to sniff in {what}")
 
     return None
+
+
+def _normalize_hints(
+    hints: tx.Iterable[str],
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]],
+) -> tx.FrozenSet[str]:
+    """Normalize the singular convenience spelling and union spelling."""
+    result = [hints] if isinstance(hints, str) else list(hints)
+    if hint is not None:
+        result.extend([hint] if isinstance(hint, str) else hint)
+    return frozenset(str(item).lower() for item in result)

@@ -23,6 +23,8 @@ from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 class _NiftiAffine(NiftiBasedTransformation):
     """Shared scoring and writing for affines derived from a NIfTI header."""
 
+    FORMAT_HINTS = ("affine",)
+
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """
@@ -123,6 +125,8 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.
     """
+
+    FORMAT_HINTS = ("nifti-affine",)
 
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:

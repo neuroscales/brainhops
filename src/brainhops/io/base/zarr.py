@@ -48,6 +48,8 @@ class ZarrParser(DataModelBase, FileParser):
     whether it reads an image or a transformation.
     """
 
+    FORMAT_HINTS = ("zarr",)
+
     # ---- attributes --------------------------------------------------
 
     node: tx.Optional[ZarrNode] = None

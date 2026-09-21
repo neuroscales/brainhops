@@ -13,6 +13,11 @@ __all__ = [
     "sniff",
     "parsers",
     "register_format",
+    "Parser",
+    "SourceSpec",
+    "format_hints",
+    "parser_for",
+    "register_parser",
 ]
 
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
@@ -29,6 +34,13 @@ from ._base import (
     register_format,
 )
 from ._load import load, sniff
+from .specs import (
+    Parser,
+    SourceSpec,
+    format_hints,
+    parser_for,
+    register_parser,
+)
 
 if HAS_NIBABEL:
     from . import nifti

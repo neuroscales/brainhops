@@ -31,6 +31,8 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     Field of RAS coordinates, stored in a NIfTI file.
     """
 
+    FORMAT_HINTS = ("coordinates", "nifti-coordinates")
+
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
         """

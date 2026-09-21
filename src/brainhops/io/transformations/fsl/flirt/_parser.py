@@ -19,10 +19,11 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
+from brainhops.io.base.specs import Parser
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image. This is the type FLIRT accepts for either of them.
-_ImageLike = tx.Union[_NiftiObject, Image]
+_ImageLike = tx.Annotated[tx.Union[_NiftiObject, Image], Parser(Image)]
 
 
 class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):

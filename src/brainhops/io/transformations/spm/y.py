@@ -24,6 +24,8 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     their filenames are often prefixed with `y_` or `iy_`.
     """
 
+    FORMAT_HINTS = ("spm",)
+
     PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ("y_", "iy_")
     """
     SPM deformation fields are a plain NIfTI field plus a naming

@@ -12,23 +12,9 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel.images import Image
+from brainhops.io.base import SourceSpec, format_hints
 
 from ._errors import CliError, WritingUnavailable
-
-# Short, user-facing names for transformation readers.  Class names are
-# stored rather than classes so that optional formats simply disappear from
-# the available set when their dependency is not installed.
-_TRANSFORM_HINT_CLASSES = {
-    "flirt": "FLIRTTransform",
-    "fnirt": "FNIRTWarpField",
-    "itk-h5": "H5Transform",
-    "itk-tfm": "TFMTransform",
-    "nifti-affine": "NiftiVoxelToRAS",
-    "nifti-coordinates": "NiftiRASCoordinatesField",
-    "ome-zarr": "OmeZarrField",
-    "spm": "SPMCoordinatesField",
-    "spmy": "SPMCoordinatesField",
-}
 
 
 def load_image(source: str) -> Image:
@@ -46,52 +32,64 @@ def load_image(source: str) -> Image:
         raise CliError(f"Could not read image {source!r}: {exc}") from exc
 
 
-def _transform_formats_by_hint() -> tx.Dict[str, type]:
-    """The transformation readers available under each CLI hint."""
+def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
+    """The transformation readers available under each registered hint."""
     from brainhops.io.transformations.base import FileBasedTransformation
 
-    by_name = {
-        fmt.__name__: fmt
-        for fmt in getattr(FileBasedTransformation, "_REGISTRY", set())
-    }
-    return {
-        hint: by_name[class_name]
-        for hint, class_name in _TRANSFORM_HINT_CLASSES.items()
-        if class_name in by_name
-    }
+    result: tx.Dict[str, tx.Set[type]] = {}
+    for fmt in getattr(FileBasedTransformation, "_REGISTRY", set()):
+        for hint in format_hints(fmt):
+            result.setdefault(hint, set()).add(fmt)
+    return result
 
 
 def transform_format_hints() -> tx.Set[str]:
     """The format hints recognized after a transform path in the CLI."""
-    return set(_TRANSFORM_HINT_CLASSES)
+    return set(_transform_formats_by_hint())
 
 
-def load_transform(source: str, hint: tx.Optional[str] = None) -> tx.Any:
+def load_transform(
+    source: tx.Union[str, SourceSpec],
+    hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+) -> tx.Any:
     """Read a transformation from a file, or raise a `CliError`.
 
     The format is detected from the file unless `hint` names a specific
     reader. A path that does not exist, an unknown hint, or content that
     the selected reader cannot parse is reported as a `CliError`.
     """
+    spec = (
+        source if isinstance(source, SourceSpec) else SourceSpec(value=source)
+    )
+    if hint is not None:
+        if spec.hints:
+            raise CliError(
+                "Format hints were supplied both in the spec and API."
+            )
+        requested = (hint,) if isinstance(hint, str) else tuple(hint)
+        spec = SourceSpec(
+            value=spec.value,
+            hints=tuple(str(item).lower() for item in requested),
+            options=spec.options,
+            operations=spec.operations,
+        )
     try:
-        if hint is None:
-            return io.transformations.load(source)
-        hint = hint.lower()
-        formats = _transform_formats_by_hint()
-        if hint not in formats:
+        formats = transform_format_hints()
+        unknown = set(spec.hints) - formats
+        if unknown:
             available = ", ".join(sorted(formats)) or "none"
             raise CliError(
                 f"Unknown or unavailable transformation format hint "
-                f"{hint!r}. Available hints: {available}."
+                f"{sorted(unknown)!r}. Available hints: {available}."
             )
-        return formats[hint].load(source)
+        return io.transformations.load(spec)
     except FileNotFoundError as exc:
-        raise CliError(f"Transformation not found: {source}") from exc
+        raise CliError(f"Transformation not found: {spec.value}") from exc
     except CliError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise CliError(
-            f"Could not read transformation {source!r}: {exc}"
+            f"Could not read transformation {spec.value!r}: {exc}"
         ) from exc
 
 

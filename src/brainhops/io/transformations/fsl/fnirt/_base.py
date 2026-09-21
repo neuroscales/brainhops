@@ -14,10 +14,12 @@ from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
 from brainhops.io.base.parsers import Confidence
+from brainhops.io.base.specs import Parser
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
+from .._formats import FSLTransformationFormat
 from .._repr import stored_repr
 
 # FNIRT NIfTI intent codes. These constants are defined in `nifti1.h`.
@@ -55,11 +57,13 @@ _SPLINE_ORDER = {
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image.
-_ImageLike = tx.Union[_NiftiObject, Image]
+_ImageLike = tx.Annotated[tx.Union[_NiftiObject, Image], Parser(Image)]
 
 
 @register_format
-class FNIRTWarpField(NiftiBasedTransformation, _xforms.Sequence):
+class FNIRTWarpField(
+    FSLTransformationFormat, NiftiBasedTransformation, _xforms.Sequence
+):
     """A FNIRT non-linear transformation stored in a NIfTI file.
 
     FNIRT writes its non-linear registration as one of two things, which a
@@ -89,6 +93,8 @@ class FNIRTWarpField(NiftiBasedTransformation, _xforms.Sequence):
     discrete-cosine-transform coefficient field (intent 2008) is
     recognized but not supported.
     """
+
+    FORMAT_HINTS = ("fnirt",)
 
     moving: tx.Optional[_ImageLike] = None
     """The moving (source) image, a nibabel image or header, or a

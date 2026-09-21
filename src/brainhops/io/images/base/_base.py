@@ -10,6 +10,7 @@ from brainhops.io.base._base import (
     WritableFileBasedObject,
     format_registry,
 )
+from brainhops.io.base.specs import register_parser
 
 
 @format_registry
@@ -35,3 +36,8 @@ class FileBasedImage(Image, FileBasedObject):
 @format_registry
 class WritableFileBasedImage(FileBasedImage, WritableFileBasedObject):
     """An image that is stored in a file and can be written to disk."""
+
+
+# A field typed as the data-model Image automatically uses the image
+# dispatcher. Concrete Image subclasses inherit this registration.
+register_parser(Image, FileBasedImage)

@@ -30,16 +30,14 @@ from __future__ import annotations
 
 import argparse
 
-import typing_extensions as tx
-
 from brainhops.datamodel.images import Image
+from brainhops.io.base import SourceSpec
 
 from ._errors import CliError
 from ._io import (
     load_image,
     load_transform,
     save_image,
-    transform_format_hints,
 )
 
 # Operators that a transform value may carry after a `|`, and that are
@@ -93,12 +91,15 @@ def add_parser(
         help=(
             "A forward (push) transformation to apply to the input image. "
             "Repeat the option to apply several, in the order given. The "
-            "value is a path, optionally followed by pipe-separated "
-            "format hints and operators, for example "
-            "'affine.mat|flirt|inv'. A format hint selects the reader "
-            "without sniffing. The '|inv' operator inverts the "
+            "value is a source specification: a path followed by optional "
+            "pipe-separated format hints, named options, and operators. "
+            "For example, 'affine.mat|flirt|reference:[ref.nii.gz]|inv'. "
+            "Bracketed option values are nested source specifications, so "
+            "they may carry their own hints and options. The '|inv' "
+            "operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
-            "'|' usually needs shell quoting. The operators 'sqrt', "
+            "'|' usually needs shell quoting; encode a literal pipe in a "
+            "path as '%7C'. The operators 'sqrt', "
             "'square', 'exp' and 'log' are recognised but not implemented "
             "yet (tracked in issue #47)."
         ),
@@ -126,57 +127,14 @@ def add_parser(
     return parser
 
 
-def _split_operators(spec: str) -> tx.Tuple[str, tx.List[str]]:
-    """Split a transform value into its source and its operator chain.
-
-    Operators are recognised by peeling matching tokens off the *right*
-    end of the value. The value is split on `|`, and each trailing
-    segment that names a recognised operator is taken as an operator, in
-    written order. Peeling stops at the first segment that is not a
-    recognised operator, and the remaining leading segments are rejoined
-    with `|` as the source.
-
-    Peeling from the right, and only for known operators, keeps a source
-    that itself contains `|` -- a path or a cloud URI -- from being
-    misread. At least one segment is always kept as the source, so a file
-    literally named after an operator is never mistaken for one.
-    """
-    segments = spec.split("|")
-    operators: tx.List[str] = []
-    while len(segments) > 1 and segments[-1] in _RECOGNIZED_OPS:
-        operators.insert(0, segments.pop())
-    return "|".join(segments), operators
-
-
-def _split_transform_spec(
-    spec: str,
-) -> tx.Tuple[str, tx.Optional[str], tx.List[str]]:
-    """Split a transform value into source, format hint and operations.
-
-    Known modifiers are peeled from the right, which preserves `|` inside
-    a path or cloud URI. A format hint may appear anywhere in the trailing
-    modifier chain, but at most one may be supplied. Operators retain their
-    written order.
-    """
-    hints = transform_format_hints()
-    known = _RECOGNIZED_OPS | hints
-    segments = spec.split("|")
-    modifiers: tx.List[str] = []
-    while len(segments) > 1 and segments[-1].lower() in known:
-        modifiers.insert(0, segments.pop().lower())
-
-    selected_hints = [modifier for modifier in modifiers if modifier in hints]
-    if len(selected_hints) > 1:
+def _split_transform_spec(spec: str) -> SourceSpec:
+    """Parse a transform source, including nested options and operations."""
+    try:
+        return SourceSpec.parse(spec, operations=_RECOGNIZED_OPS)
+    except ValueError as exc:
         raise CliError(
-            "A transform may have only one format hint; got "
-            + ", ".join(repr(hint) for hint in selected_hints)
-            + "."
-        )
-    hint = selected_hints[0] if selected_hints else None
-    operators = [
-        modifier for modifier in modifiers if modifier in _RECOGNIZED_OPS
-    ]
-    return "|".join(segments), hint, operators
+            f"Invalid transformation source {spec!r}: {exc}"
+        ) from exc
 
 
 def _apply_operator(transform: Image, operator: str) -> Image:
@@ -201,12 +159,9 @@ def _load_push_transform(spec: str) -> Image:
     composition over the loaded transform, so `warp|a|b` is `b(a(load))`.
     The returned transform is a forward (push) map, ready to compose.
     """
-    source, hint, operators = _split_transform_spec(spec)
-    if hint is None:
-        transform = load_transform(source)
-    else:
-        transform = load_transform(source, hint=hint)
-    for operator in operators:
+    source = _split_transform_spec(spec)
+    transform = load_transform(source)
+    for operator in source.operations:
         transform = _apply_operator(transform, operator)
     return transform
 

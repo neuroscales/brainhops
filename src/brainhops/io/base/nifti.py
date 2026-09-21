@@ -229,6 +229,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     This class is a base for `NiftiBasedImage` and `NiftiBasedTransformation`.
     """
 
+    FORMAT_HINTS = ("nifti",)
+
     # --- NIfTI API ----------------------------------------------------
 
     image: tx.Annotated[
