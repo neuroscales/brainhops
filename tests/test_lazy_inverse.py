@@ -15,6 +15,12 @@ import pytest
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel import transformations as _xf
 from brainhops.datamodel._transformations import inverse as _inv
+from brainhops.datamodel.systems import (
+    CoordinateSystem,
+    LPSCoordinateSystem,
+    RASCoordinateSystem,
+    VoxelCoordinateSystem,
+)
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
@@ -38,6 +44,12 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
     is_identity,
+)
+from brainhops.io.transformations.base.affines import (
+    LPSToVoxel,
+    RASToVoxel,
+    VoxelToLPS,
+    VoxelToRAS,
 )
 
 
@@ -669,3 +681,246 @@ def test_inverse_classes_are_public() -> None:
     ):
         assert name in _xf.__all__, name
         assert isinstance(getattr(_xf, name), type), name
+
+
+def test_subclass_inherits_the_inverse_of_its_base() -> None:
+    # Only the base transformation types are paired with a typed inverse,
+    # so a subclass -- a format-specific affine, for instance -- is served
+    # by the pairing it inherits rather than raising.
+    class MyAffine(Affine):
+        pass
+
+    class MyRefinedAffine(MyAffine):
+        pass
+
+    t = MyRefinedAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2])
+    inv = t.inverse()
+    assert isinstance(inv, InverseAffine)
+    np.testing.assert_allclose(
+        np.asarray(inv.compute().matrix), [[0.5, 0.0, 0.0], [0.0, 0.25, 0.0]]
+    )
+
+
+def test_inverse_comes_from_the_most_derived_paired_base() -> None:
+    # `Rotation` is a `Linear` is an `Affine`, and all three are paired
+    # with a typed inverse. A subclass of `Rotation` must get
+    # `InverseRotation`: attribute lookup finds the nearest base that
+    # carries a pairing, so the most derived one wins.
+    class MyRotation(Rotation):
+        pass
+
+    theta = np.pi / 3
+    matrix = [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    inv = MyRotation(matrix=matrix).inverse()
+    assert isinstance(inv, InverseRotation)
+    np.testing.assert_allclose(
+        np.asarray(inv.compute().matrix), np.transpose(matrix), atol=1e-12
+    )
+
+
+def test_subclass_can_opt_out_of_the_inverse_of_its_base() -> None:
+    # A forward type whose inverse its base's typed inverse would get
+    # wrong drops the inherited pairing by setting it back to `None` in
+    # its own body, and says so rather than silently building the base's
+    # wrapper. The base keeps its own pairing.
+    class OpaqueAffine(Affine):
+        _inverse_type = None
+
+    t = OpaqueAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2])
+    with pytest.raises(TypeError, match="OpaqueAffine"):
+        t.inverse()
+    assert Affine._inverse_type is InverseAffine
+
+
+def test_refining_a_typed_inverse_leaves_its_forward_type_alone() -> None:
+    # A typed inverse claims a forward type only by declaring `_inverseof`
+    # in its own body. A refinement that does not redeclare it inherits
+    # the forward type it inverts but must not rewire `Affine` to itself,
+    # and redeclaring it is the way to pair a new forward type.
+    class MyInverseAffine(InverseAffine):
+        pass
+
+    assert MyInverseAffine._inverseof is Affine
+    assert Affine._inverse_type is InverseAffine
+
+    class NiftiAffine(Affine):
+        pass
+
+    class InverseNiftiAffine(InverseAffine):
+        _inverseof = NiftiAffine
+
+    assert NiftiAffine._inverse_type is InverseNiftiAffine
+    assert Affine._inverse_type is InverseAffine
+    assert isinstance(
+        NiftiAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2]).inverse(),
+        InverseNiftiAffine,
+    )
+
+
+# ----------------------------------------------------------------------
+#   PAIRED TRANSFORMATION TYPES
+# ----------------------------------------------------------------------
+#
+# `VoxelToLPS` and `LPSToVoxel` map the same two spaces in opposite
+# directions, and each one's name states which. Inverting one must
+# therefore land on the other, on every path, or the result carries the
+# right endpoints under a name that says the opposite.
+
+
+PAIRS = [
+    (VoxelToRAS, RASToVoxel, VoxelCoordinateSystem, RASCoordinateSystem),
+    (RASToVoxel, VoxelToRAS, RASCoordinateSystem, VoxelCoordinateSystem),
+    (VoxelToLPS, LPSToVoxel, VoxelCoordinateSystem, LPSCoordinateSystem),
+    (LPSToVoxel, VoxelToLPS, LPSCoordinateSystem, VoxelCoordinateSystem),
+]
+
+
+@pytest.mark.parametrize("cls, reverse, source, target", PAIRS)
+def test_materialized_inverse_is_the_paired_type(
+    cls: type, reverse: type, source: type, target: type
+) -> None:
+    # The path that matters. The lazy wrapper names no direction, but
+    # what it materializes into does, and rebuilding the forward type
+    # around the inverted matrix would state it backwards.
+    matrix = np.diag([2.0, 4.0, 8.0, 1.0])[:3]
+    inv = cls(matrix=matrix).inverse().compute()
+
+    assert type(inv) is reverse
+    assert isinstance(inv.input, target)
+    assert isinstance(inv.output, source)
+    np.testing.assert_allclose(
+        np.asarray(inv.matrix), np.diag([0.5, 0.25, 0.125, 1.0])[:3]
+    )
+
+
+@pytest.mark.parametrize("cls, reverse, source, target", PAIRS)
+def test_unset_parameter_inverse_is_the_paired_type(
+    cls: type, reverse: type, source: type, target: type
+) -> None:
+    # With no matrix there is nothing to invert, so the inverse is the
+    # eager endpoint-swapped transform. It names the swapped direction
+    # for the same reason the materialized one does.
+    t = cls()
+    assert isinstance(t.input, source)
+    assert isinstance(t.output, target)
+
+    inv = t.inverse()
+    assert type(inv) is reverse
+    assert isinstance(inv.input, target)
+    assert isinstance(inv.output, source)
+
+
+@pytest.mark.parametrize("cls, reverse, source, target", PAIRS)
+def test_lazy_inverse_of_a_paired_type_keeps_its_endpoints(
+    cls: type, reverse: type, source: type, target: type
+) -> None:
+    # The lazy wrapper is unaffected: it wears no direction of its own,
+    # so it only has to carry the swapped endpoints, and it still holds
+    # the forward transform rather than inverting anything.
+    matrix = np.diag([2.0, 4.0, 8.0, 1.0])[:3]
+    t = cls(matrix=matrix)
+    inv = t.inverse()
+
+    assert isinstance(inv, InverseAffine)
+    assert inv.forward is t
+    assert inv.forward.matrix is matrix
+    assert isinstance(inv.input, target)
+    assert isinstance(inv.output, source)
+
+
+@pytest.mark.parametrize("cls, reverse, source, target", PAIRS)
+def test_paired_type_round_trips(
+    cls: type, reverse: type, source: type, target: type
+) -> None:
+    # Inverting twice comes back to where it started, in type as well as
+    # in value: the pairing is declared once and resolved both ways.
+    matrix = np.diag([2.0, 4.0, 8.0, 1.0])[:3]
+    there = cls(matrix=matrix).inverse().compute()
+    back = there.inverse().compute()
+
+    assert type(back) is cls
+    assert isinstance(back.input, source)
+    assert isinstance(back.output, target)
+    np.testing.assert_allclose(np.asarray(back.matrix), matrix)
+
+
+def test_a_pair_is_declared_once_and_resolved_both_ways() -> None:
+    # Only the half defined second can name the other -- the first
+    # cannot name a class that does not exist yet -- so the declaration
+    # sits there alone and the hook points both halves at each other.
+    assert VoxelToLPS._reverseof is None
+    assert LPSToVoxel._reverseof is VoxelToLPS
+    assert VoxelToLPS._reverse_type is LPSToVoxel
+    assert LPSToVoxel._reverse_type is VoxelToLPS
+
+
+def test_a_refinement_inherits_the_pairing_of_its_base() -> None:
+    # A reader's refinement of a paired type reverses to that type's
+    # opposite half, and does not steal the pairing from its base: the
+    # hook only reads a `_reverseof` declared in the class's own body.
+    class MyVoxelToLPS(VoxelToLPS):
+        pass
+
+    assert MyVoxelToLPS._reverse_type is LPSToVoxel
+    assert LPSToVoxel._reverse_type is VoxelToLPS
+
+    inv = MyVoxelToLPS(matrix=np.diag([2.0, 4.0, 8.0, 1.0])[:3])
+    assert type(inv.inverse().compute()) is LPSToVoxel
+
+
+def test_an_unpaired_pinned_type_keeps_its_own_class() -> None:
+    # The mechanism is opt-in, so a class that pins its endpoints and
+    # declares no pair is left exactly as it was: it inverts to itself
+    # with the endpoints swapped, on both paths. That is the honest
+    # answer available without a pair -- there is no other type to name
+    # -- and, above all, nothing crashes for want of a declaration.
+    class PinnedRotation(Rotation):
+        _input: CoordinateSystem = VoxelCoordinateSystem()
+        _output: CoordinateSystem = RASCoordinateSystem()
+
+    assert PinnedRotation._reverse_type is None
+
+    empty = PinnedRotation().inverse()
+    assert type(empty) is PinnedRotation
+    assert isinstance(empty.input, RASCoordinateSystem)
+    assert isinstance(empty.output, VoxelCoordinateSystem)
+
+    matrix = np.diag([0.0, -1.0, 1.0])[[1, 0, 2]]
+    filled = PinnedRotation(matrix=matrix).inverse().compute()
+    assert type(filled) is PinnedRotation
+    assert isinstance(filled.input, RASCoordinateSystem)
+    assert isinstance(filled.output, VoxelCoordinateSystem)
+    np.testing.assert_allclose(np.asarray(filled.matrix), np.transpose(matrix))
+
+
+@pytest.mark.parametrize("cls", [Affine, Rotation, Linear, Translation])
+def test_an_unpaired_type_is_unchanged_on_every_path(cls: type) -> None:
+    # The overwhelmingly common case: a type that declares no pair
+    # inverts to its own class on the lazy, the materialized and the
+    # unset-parameter path alike.
+    lps, ras = LPSCoordinateSystem(), RASCoordinateSystem()
+    assert cls._reverse_type is None
+
+    empty = cls(input=lps, output=ras).inverse()
+    assert type(empty) is cls
+    assert empty.input == ras
+    assert empty.output == lps
+
+    values = {
+        Affine: np.diag([2.0, 4.0, 8.0, 1.0])[:3],
+        Rotation: np.diag([1.0, -1.0, -1.0]),
+        Linear: np.diag([2.0, 4.0, 8.0]),
+        Translation: np.asarray([1.0, 2.0, 3.0]),
+    }
+    t = cls(input=lps, output=ras, **{cls.parameter_names: values[cls]})
+
+    lazy = t.inverse()
+    assert isinstance(lazy, Inverse)
+    assert lazy.forward is t
+    assert lazy.input == ras
+    assert lazy.output == lps
+
+    materialized = lazy.compute()
+    assert type(materialized) is cls
+    assert materialized.input == ras
+    assert materialized.output == lps

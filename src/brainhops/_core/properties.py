@@ -24,7 +24,7 @@ def lazyproperty(fget: _Getter) -> property:
 
 
 @tx.overload
-def smartproperty(
+def lazyproperty(
     *,
     empty_as_unset: bool = False,
 ) -> tx.Callable[[_Getter], property]:

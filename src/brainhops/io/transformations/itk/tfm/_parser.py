@@ -7,7 +7,7 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Factory, Magic
+from bagof.magic import HIDE_IF_NONE, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
@@ -41,9 +41,12 @@ class TFMTransformParser(
     repr=HIDE_IF_NONE,
 ):
     """Parses an ITK text (`.tfm`) transform file into a chain of
-    transform blocks."""
+    transform blocks.
 
-    transform_group: tx.List[ITKStruct] = Factory(list)
+    Each block is itself a brainhops transformation, so the parsed blocks
+    are stored straight into the `transformations` of the sequence that
+    this parser is mixed into.
+    """
 
     # --- sniff --------------------------------------------------------
 
@@ -81,6 +84,7 @@ class TFMTransformParser(
             lines = peekable_lines(lines)
 
         obj = cls()
+        blocks = []
 
         while True:
             if not lines.peek():
@@ -125,7 +129,7 @@ class TFMTransformParser(
 
             transform_type = ITKTransformClass(transform_type)
 
-            obj.transform_group.append(
+            blocks.append(
                 ITKStruct(
                     type=transform_type,
                     precision=precision,
@@ -136,6 +140,7 @@ class TFMTransformParser(
                 )
             )
 
+        obj.transformations = blocks
         return obj
 
 

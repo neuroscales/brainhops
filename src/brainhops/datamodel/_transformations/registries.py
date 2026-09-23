@@ -19,11 +19,6 @@ if tx.TYPE_CHECKING:
 # same object would keep serving the stale inverse.
 INVERSE_CACHE = "_inverse_param_cache"
 
-# Each forward transformation type is paired with the `Inverse` subclass
-# that represents its inverse. `_lazy_inverse` looks the wrapper up here,
-# and the table is filled in once the wrapper classes are defined below.
-INVERSE_WRAPPERS: tx.Dict[tx.Type["Transformation"], tx.Type["Inverse"]] = {}
-
 # The adaptor lives in `adaptors`, which imports this module. It
 # registers itself here at import time, so the sequence machinery can call
 # it without importing that module at load time and forming a cycle. The

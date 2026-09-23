@@ -117,10 +117,11 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
 
     # `transformations` is served on demand from the finest scale rather
     # than stored, so it is not a constructor-taken field here. Declaring
-    # it a `ClassVar` overrides the inherited init-field from `Sequence`
-    # and keeps it out of `__init__`, `fields()` and `replace()`, while
-    # the property keeps the container reading as the finest scale.
-    transformations: tx.ClassVar[tx.Tuple[Transformation, ...]]
+    # `Sequence`'s storage slot a `ClassVar` overrides the inherited
+    # init-field and keeps it out of `__init__`, `fields()` and
+    # `replace()`, while the property keeps the container reading as the
+    # finest scale.
+    _transformations: tx.ClassVar[tx.Tuple[Transformation, ...]]
 
     @property
     def transformations(self) -> tx.Tuple[Transformation, ...]:

@@ -48,6 +48,11 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
         """
         return NiftiRASCoordinatesField._score_nibabel(header)
 
+    # NOTE: this makes the stored chain a tuple instead of any sequence,
+    # so the derived and the assigned chain are both immutable and
+    # `del field[0]` cannot edit one in place.
+    _transformations: tx.Optional[tx.Tuple[_xforms.Transformation, ...]] = None
+
     @property
     def transformations(
         self,

@@ -124,7 +124,16 @@ class Sequence(SequenceMixin, Transformation):
 
     # --- attributes ---------------------------------------------------
 
-    transformations: tx.Annotated[
+    # The chain is stored under a private name, for the same reason the
+    # endpoints are (see `Transformation`): the constructor argument stays
+    # `transformations=` while `replace()` carries over what the sequence
+    # was *given* rather than what its `transformations` property reports.
+    # A subclass whose chain is derived -- a structured reader block
+    # assembles it from the file it parsed -- would otherwise have every
+    # `replace()` freeze the derived chain into a declared one, so a copy
+    # made with a new parameter would keep serving the chain built from
+    # the old one, and would share that very list with the original.
+    _transformations: tx.Annotated[
         tx.Optional[tx.Sequence[Transformation]],
         tx.Doc(
             """
@@ -133,6 +142,8 @@ class Sequence(SequenceMixin, Transformation):
             """
         ),
     ] = None
+
+    transformations = smartproperty("transformations")
 
     @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
@@ -265,7 +276,7 @@ class MutableSequence(MutableSequenceMixin, Sequence):
     """
 
     # NOTE: this makes `transformations` a list instead of any sequence
-    transformations: tx.Annotated[
+    _transformations: tx.Annotated[
         tx.Optional[tx.List[Transformation]],
         tx.Doc(
             """
@@ -291,7 +302,7 @@ class ImmutableSequence(Sequence):
     insert = _refuse_in_place_edit
 
     # NOTE: this makes `transformations` a tuple instead of any sequence
-    transformations: tx.Annotated[
+    _transformations: tx.Annotated[
         tx.Optional[tx.Tuple[Transformation, ...]],
         tx.Doc(
             """

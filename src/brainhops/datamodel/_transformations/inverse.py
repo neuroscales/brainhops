@@ -28,7 +28,7 @@ from .concrete import (
     Translation,
 )
 from .modes import ModeLike, _ensure_proper_modes, _mode_admits
-from .registries import INVERSE_CACHE, INVERSE_WRAPPERS, register_inverse
+from .registries import INVERSE_CACHE, register_inverse
 
 
 class Inverse(Transformation):
@@ -59,8 +59,32 @@ class Inverse(Transformation):
 
     # The forward transformation type a typed inverse inverts. It is unset
     # on the generic `Inverse` front-door and set on each typed subclass,
-    # which drives both the materialization below and the wrapper registry.
+    # which drives both the materialization below and the back-pointer
+    # handed to the forward type by `__init_subclass__`.
     _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+
+    # --- construction -------------------------------------------------
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        # A typed inverse declares the type it inverts in `_inverseof`,
+        # and that single declaration also pairs the two the other way
+        # round: the forward type is handed a back-pointer to this class,
+        # which its `inverse()` reads straight off the class. Nothing is
+        # registered, so nothing can be left unregistered, and every
+        # subclass of the forward type inherits the pairing.
+        super().__init_subclass__(**kwargs)
+        # Read from `cls.__dict__`, never `getattr`: only a class that
+        # declares `_inverseof` in its own body claims a forward type.
+        # An inherited one would mean a refinement such as
+        # `class MyInverseAffine(InverseAffine)` silently rewiring
+        # `Affine` to itself, and would also let the throwaway stand-in
+        # classes `Magic` builds while reading the MRO -- which reach
+        # this hook too -- claim the forward type of the class being
+        # built. Redeclaring `_inverseof` is the deliberate way to pair a
+        # new forward type, and stays supported.
+        forward = cls.__dict__.get("_inverseof")
+        if forward is not None:
+            forward._inverse_type = cls
 
     # --- methods ------------------------------------------------------
 
@@ -123,9 +147,11 @@ class Inverse(Transformation):
     def _materialize(self) -> Transformation:
         # The concrete inverse. A typed inverse builds a plain instance of
         # the forward type holding the inverted parameter, with the
-        # wrapper's (swapped) endpoints. The generic front-door defers to
-        # the forward transform's own inverse, which resolves to the typed
-        # inverse of that family.
+        # wrapper's (swapped) endpoints -- or, when the forward type is
+        # half of a pair that names the direction it maps, an instance of
+        # the other half. The generic front-door defers to the forward
+        # transform's own inverse, which resolves to the typed inverse of
+        # that family.
         forward = self.forward
         inverseof = type(self)._inverseof
         if inverseof is None:
@@ -140,12 +166,20 @@ class Inverse(Transformation):
             return resolved.to(**edits) if edits else resolved
         if forward is None:
             return inverseof(input=self.input, output=self.output)
-        return replace(
-            forward,
-            input=self.input,
-            output=self.output,
-            **{inverseof.parameter_names: self._cached_inverse_param()},
-        )
+        changes = {
+            "input": self.input,
+            "output": self.output,
+            inverseof.parameter_names: self._cached_inverse_param(),
+        }
+        # This is the path that matters for a type that names a
+        # direction: the wrapper wears no direction of its own, but what
+        # it materializes into does, and rebuilding the forward type
+        # around an inverted parameter would state the direction
+        # backwards. The other half of the pair states it right.
+        reverse = getattr(type(forward), "_reverse_type", None)
+        if reverse is None:
+            return replace(forward, **changes)
+        return reverse.from_instance(forward, **changes)
 
     def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
         # The inverted parameter, worked out from the forward transform.
@@ -420,22 +454,3 @@ class InverseCoordinatesField(Inverse, CoordinatesField):
             "sequence, or compose it away, rather than reading, converting "
             "or computing its field on its own."
         )
-
-
-# Pair each forward transformation type with the typed inverse that
-# represents it, keyed by the type each inverse names in `_inverseof`.
-INVERSE_WRAPPERS.update(
-    {
-        cls._inverseof: cls
-        for cls in (
-            InverseTranslation,
-            InverseScaling,
-            InverseRotation,
-            InversePermutation,
-            InverseLinear,
-            InverseAffine,
-            InverseDisplacementField,
-            InverseCoordinatesField,
-        )
-    }
-)
