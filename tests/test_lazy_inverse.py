@@ -669,3 +669,37 @@ def test_inverse_classes_are_public() -> None:
     ):
         assert name in _xf.__all__, name
         assert isinstance(getattr(_xf, name), type), name
+
+
+def test_subclass_of_a_registered_type_has_an_inverse() -> None:
+    # The wrapper table only lists the base transformation types, so a
+    # subclass -- a format-specific affine, for instance -- is served by
+    # the entry of its nearest registered ancestor rather than raising.
+    class MyAffine(Affine):
+        pass
+
+    class MyRefinedAffine(MyAffine):
+        pass
+
+    t = MyRefinedAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2])
+    inv = t.inverse()
+    assert isinstance(inv, InverseAffine)
+    np.testing.assert_allclose(
+        np.asarray(inv.compute().matrix), [[0.5, 0.0, 0.0], [0.0, 0.25, 0.0]]
+    )
+
+
+def test_inverse_wrapper_picks_the_most_derived_registered_base() -> None:
+    # `Rotation` is a `Linear` is an `Affine`, and all three are
+    # registered. A subclass of `Rotation` must get `InverseRotation`,
+    # not whichever of its registered ancestors comes first in the table.
+    class MyRotation(Rotation):
+        pass
+
+    theta = np.pi / 3
+    matrix = [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    inv = MyRotation(matrix=matrix).inverse()
+    assert isinstance(inv, InverseRotation)
+    np.testing.assert_allclose(
+        np.asarray(inv.compute().matrix), np.transpose(matrix), atol=1e-12
+    )

@@ -31,7 +31,7 @@ from . import registries
 from .base import Transformation
 from .meta import SubspaceTransformation
 from .modes import ModeLike, _ensure_proper_modes, _mode_admits
-from .registries import INVERSE_WRAPPERS
+from .registries import inverse_wrapper
 
 
 class _LazyInverseMixin:
@@ -46,7 +46,7 @@ class _LazyInverseMixin:
         param = cls.parameter_names
         if getattr(self, param) is None:
             return cls(input=self.output, output=self.input)
-        obj = INVERSE_WRAPPERS[cls](
+        obj = inverse_wrapper(cls)(
             forward=self, input=self.output, output=self.input
         )
         if compute:
