@@ -584,3 +584,135 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
     # And asking for the chain does decode it.
     assert len(block) == 3
     assert hasattr(block, "_cache_field")
+
+
+# ----------------------------------------------------------------------
+#   SIMILARITY BLOCKS
+# ----------------------------------------------------------------------
+#
+# ITK parameterizes a similarity by a single scale factor, which the
+# block exposes as a `Scaling`. A scaling is parameterized by a vector,
+# so the ITK scalar is exposed as a vector of length one -- not repeated
+# per axis -- and the slot carries the block's endpoints so that the one
+# element broadcasts over the right number of axes.
+
+
+def _similarity_2d(
+    scale: float, angle: float, translation: tuple, center: tuple
+) -> itk.ITKStruct:
+    return itk.ITKStruct(
+        type=itk.ITKTransformClass.Similarity2DTransform,
+        precision="double",
+        ndim_input=2,
+        ndim_output=2,
+        parameters=(scale, angle) + tuple(translation),
+        fixed_parameters=tuple(center),
+    )
+
+
+def _similarity_3d(
+    scale: float, versor: tuple, translation: tuple, center: tuple
+) -> itk.ITKStruct:
+    return itk.ITKStruct(
+        type=itk.ITKTransformClass.Similarity3DTransform,
+        precision="double",
+        ndim_input=3,
+        ndim_output=3,
+        parameters=tuple(versor) + tuple(translation) + (scale,),
+        fixed_parameters=tuple(center),
+    )
+
+
+def _versor_matrix(versor: tuple) -> np.ndarray:
+    """A rotation matrix from the vector part of a unit quaternion."""
+    x, y, z = versor
+    w = np.sqrt(1.0 - (x * x + y * y + z * z))
+    return np.array(
+        [
+            [
+                1 - 2 * (y * y + z * z),
+                2 * (x * y - z * w),
+                2 * (x * z + y * w),
+            ],
+            [
+                2 * (x * y + z * w),
+                1 - 2 * (x * x + z * z),
+                2 * (y * z - x * w),
+            ],
+            [
+                2 * (x * z - y * w),
+                2 * (y * z + x * w),
+                1 - 2 * (x * x + y * y),
+            ],
+        ]
+    )
+
+
+@pytest.mark.parametrize("ndim", [2, 3])
+def test_similarity_scale_is_a_one_element_vector(ndim: int) -> None:
+    """The ITK scalar is exposed as a vector of length one.
+
+    A `Scaling` is parameterized by a vector of factors, and ITK stores
+    the isotropic case as one number. Writing that number out once per
+    axis would state a dimensionality the ITK parameter does not carry,
+    so it is exposed as it is: a single factor that broadcasts.
+    """
+    if ndim == 2:
+        block = _similarity_2d(1.5, 0.3, (4.0, -2.0), (10.0, 20.0))
+    else:
+        block = _similarity_3d(
+            1.5, (0.1, 0.2, 0.3), (4.0, -2.0, 7.0), (10.0, 20.0, 30.0)
+        )
+
+    scaling = block.scaling
+    assert isinstance(scaling, xforms.Scaling)
+    np.testing.assert_allclose(np.asarray(scaling.scale), [1.5])
+
+    # One element only broadcasts to the right number of axes when
+    # something says how many there are, so the slot is given the
+    # block's own space at both ends.
+    assert scaling.input == block.input
+    assert scaling.output == block.output
+
+
+def test_similarity_2d_composes_the_expected_affine() -> None:
+    """The block collapses to `[sR | c + t - sR.c]`.
+
+    This is the composition the one-element scale has to survive: the
+    factor multiplies every axis of the rotation, and the center of
+    rotation is folded in with the scaled linear part.
+    """
+    scale, angle = 1.5, 0.3
+    translation = np.array([4.0, -2.0])
+    center = np.array([10.0, 20.0])
+    linear = scale * np.array(
+        [
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)],
+        ]
+    )
+
+    block = _similarity_2d(scale, angle, translation, center)
+    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    assert matrix.shape == (2, 3)
+    np.testing.assert_allclose(matrix[:, :2], linear)
+    np.testing.assert_allclose(
+        matrix[:, 2], center + translation - linear @ center
+    )
+
+
+def test_similarity_3d_composes_the_expected_affine() -> None:
+    """The 3-D block collapses to `[sR | c + t - sR.c]` as well."""
+    scale = 1.5
+    versor = (0.1, 0.2, 0.3)
+    translation = np.array([4.0, -2.0, 7.0])
+    center = np.array([10.0, 20.0, 30.0])
+    linear = scale * _versor_matrix(versor)
+
+    block = _similarity_3d(scale, versor, translation, center)
+    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    assert matrix.shape == (3, 4)
+    np.testing.assert_allclose(matrix[:, :3], linear)
+    np.testing.assert_allclose(
+        matrix[:, 3], center + translation - linear @ center
+    )

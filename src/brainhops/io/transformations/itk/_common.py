@@ -924,13 +924,28 @@ def _inverse_chain(
 
 
 def _isotropic_scaling(scale: float, ndim: int) -> _xforms.Scaling:
-    """An isotropic scaling, written out as one factor per axis.
+    """An isotropic scaling, as a one-element factor vector.
 
-    A scaling is parameterized by a vector, one factor per axis. ITK
-    stores the isotropic case as a single number, so the factor is
-    repeated to the transform's dimensionality on the way in.
+    A [`Scaling`][brainhops.datamodel.transformations.Scaling] is
+    parameterized by a vector of factors, and ITK stores the isotropic
+    case as a single number. That number is exposed as it is -- a vector
+    of length one -- rather than written out per axis: one factor for
+    every axis is what the scaling *means*, not what it is parameterized
+    by, and repeating it would state a dimensionality that the ITK
+    parameter does not carry.
+
+    A one-element vector broadcasts over however many axes the transform
+    turns out to have, so the endpoints have to say how many that is: on
+    its own, `Scaling([1.5])` is a one-dimensional scaling. The other
+    slots of a block carry no endpoints, because their own parameters
+    size them -- a rotation matrix, a translation vector -- but this one
+    does not, so it is given the block's own anatomical space at both
+    ends.
     """
-    return _xforms.Scaling(np.full(ndim, float(scale), dtype=np.float64))
+    system = _make_system(ndim)
+    return _xforms.Scaling(
+        np.asarray([scale], dtype=np.float64), input=system, output=system
+    )
 
 
 def _nonempty(values: tx.Optional[ArrayProtocol]) -> tx.Optional[tx.Any]:
