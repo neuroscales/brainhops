@@ -80,9 +80,10 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     It holds what an ITK file stores about one block -- its transform
     class, its precision, its dimensions, and its parameter vectors --
     and nothing else. Concrete blocks inherit from [`ITKAffineBase`][]
-    or [`ITKDisplacementBase`][], which combine this provenance with
-    [`Sequence`][brainhops.datamodel.transformations.Sequence], so a
-    parsed block is already a brainhops transformation.
+    or [`ITKDisplacementBase`][], which both combine this provenance with
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] through
+    [`ITKBlockBase`][], so a parsed block is already a brainhops
+    transformation.
     """
 
     _REGISTRY: tx.ClassVar[tx.Mapping[str, type]] = {}
@@ -161,7 +162,34 @@ def _register_type(*names: str) -> tx.Callable:
 # ----------------------------------------------------------------------
 
 
-class ITKAffineBase(ITKStruct, _xforms.Sequence):
+class ITKBlockBase(ITKStruct, _xforms.Sequence):
+    """What every ITK block shares: its endpoints and its inverse.
+
+    Whatever a block encodes, it maps LPS world coordinates to LPS world
+    coordinates in the number of dimensions its file declares. Both
+    endpoints are therefore *declared* from `ndim_input` / `ndim_output`
+    rather than read back off the chain the way a plain
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] reads
+    them: reading them off the chain would build the chain, and building
+    a warp block's chain decodes its warp data.
+    """
+
+    @smartproperty(cache=True)
+    def input(self) -> tx.Optional[_systems.CoordinateSystem]:
+        """The anatomical space the block maps from."""
+        return _make_system(self.ndim_input)
+
+    @smartproperty(cache=True)
+    def output(self) -> tx.Optional[_systems.CoordinateSystem]:
+        """The anatomical space the block maps to."""
+        return _make_system(self.ndim_output)
+
+    def inverse(self, compute: bool = False, **kwargs) -> _xforms.Sequence:
+        """The inverse of the block, as a plain sequence."""
+        return _inverse_chain(self, compute=compute, **kwargs)
+
+
+class ITKAffineBase(ITKBlockBase):
     """An ITK block that encodes an affine-like transformation.
 
     ITK does not store an affine-like block as a single matrix. It stores
@@ -232,33 +260,24 @@ class ITKAffineBase(ITKStruct, _xforms.Sequence):
 
     # --- sequence -----------------------------------------------------
 
-    @smartproperty(cache=True, empty_as_unset=True)
-    def transformations(self) -> tx.List[_xforms.Transformation]:
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations that the block encodes.
 
         It is assembled from the named slots listed in `_SLOTS`, skipping
         the ones the block does not use, and cached. Assigning to it
         overrides the derived chain.
+
+        It is a tuple rather than a list because the derived chain is
+        cached and handed out as is, and a list would let `del block[0]`
+        edit the cache in place -- leaving the block reporting a chain
+        that its own slots no longer describe.
         """
         chain = (getattr(self, name) for name in self._SLOTS)
-        return [child for child in chain if child is not None]
-
-    @smartproperty(cache=True)
-    def input(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the block maps from."""
-        return _make_system(self.ndim_input)
-
-    @smartproperty(cache=True)
-    def output(self) -> tx.Optional[_systems.CoordinateSystem]:
-        """The anatomical space the block maps to."""
-        return _make_system(self.ndim_output)
-
-    def inverse(self, compute: bool = False, **kwargs) -> _xforms.Sequence:
-        """The inverse of the block, as a plain sequence."""
-        return _inverse_chain(self, compute=compute, **kwargs)
+        return tuple(child for child in chain if child is not None)
 
 
-class ITKDisplacementBase(ITKStruct, _xforms.Sequence):
+class ITKDisplacementBase(ITKBlockBase):
     """An ITK block that encodes a dense or spline-based warp.
 
     The warp lives on its own voxel grid, whose geometry the fixed
@@ -361,18 +380,18 @@ class ITKDisplacementBase(ITKStruct, _xforms.Sequence):
 
     # --- sequence -----------------------------------------------------
 
-    @smartproperty(cache=True, empty_as_unset=True)
-    def transformations(self) -> tx.List[_xforms.Transformation]:
+    @smartproperty(cache=True)
+    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations that the block encodes.
 
         It is assembled from the named slots and cached. Assigning to it
         overrides the derived chain.
-        """
-        return [self.lps2voxel, self.displacement, self.voxel2lps]
 
-    def inverse(self, compute: bool = False, **kwargs) -> _xforms.Sequence:
-        """The inverse of the block, as a plain sequence."""
-        return _inverse_chain(self, compute=compute, **kwargs)
+        It is a tuple rather than a list for the same reason as on
+        [`ITKAffineBase`][]: the cached chain is handed out as is, and a
+        list would let `del block[0]` edit the cache in place.
+        """
+        return (self.lps2voxel, self.displacement, self.voxel2lps)
 
 
 # ----------------------------------------------------------------------
@@ -911,12 +930,32 @@ def _angle_to_matrix(angle: float) -> np.ndarray:
     )
 
 
+#: How far past the unit sphere a versor's vector part may reach and
+#: still be read as a unit versor written imprecisely. A half-turn is
+#: exactly on the sphere, and a file that stores it in single precision
+#: -- or rounds it to a fixed number of decimals -- hands it back a few
+#: ulps outside. ITK renormalizes such a vector rather than refusing it,
+#: so a file that opens there must open here.
+_VERSOR_TOLERANCE = 1e-6
+
+
 def _versor_to_matrix(q: tx.Sequence[float]) -> np.ndarray:
     """Convert a versor (unit quaternion) to a rotation matrix."""
     qx, qy, qz = q
     norm_sq = qx**2 + qy**2 + qz**2
     if norm_sq > 1.0:
-        raise ValueError("Versor quaternion vector part has magnitude > 1")
+        # The scalar part of a versor is implied by its vector part, so a
+        # vector part longer than the unit sphere has no scalar part to
+        # complete it. Within the tolerance that is a rounding artifact
+        # and the vector is scaled back onto the sphere; beyond it, the
+        # value is not a versor and is refused.
+        norm = math.sqrt(norm_sq)
+        if norm > 1.0 + _VERSOR_TOLERANCE:
+            raise ValueError(
+                f"Versor quaternion vector part has magnitude > 1 ({norm})"
+            )
+        qx, qy, qz = qx / norm, qy / norm, qz / norm
+        norm_sq = 1.0
     qw = math.sqrt(max(0.0, 1.0 - norm_sq))
     return np.array(
         [

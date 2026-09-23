@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 # internals
+from bagof.magic import replace
+
 from brainhops import io
 from brainhops._core import affines
 from brainhops.datamodel import transformations as xforms
@@ -130,19 +132,72 @@ def test_affine_block_exposes_named_cached_slots() -> None:
     assert len(block) == 4
 
 
-def test_versor_rigid_3d_applies_its_translation() -> None:
-    """The rotation acts about the center, then the translation applies."""
-    block = itk.ITKStruct(
+def _versor_rigid_3d(
+    versor: tuple, translation: tuple, center: tuple
+) -> itk.ITKStruct:
+    return itk.ITKStruct(
         type=itk.ITKTransformClass.VersorRigid3DTransform,
         precision="double",
         ndim_input=3,
         ndim_output=3,
-        parameters=(0.0, 0.0, 0.0, 1.0, 2.0, 3.0),
-        fixed_parameters=(4.0, 5.0, 6.0),
+        parameters=tuple(versor) + tuple(translation),
+        fixed_parameters=tuple(center),
     )
+
+
+def test_versor_rigid_3d_applies_its_translation() -> None:
+    """The rotation acts about the center, then the translation applies."""
+    block = _versor_rigid_3d((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
     matrix = block.compute().to(xforms.Affine, lossy=True).matrix
     assert np.allclose(np.asarray(matrix)[:, :3], np.eye(3))
     assert np.allclose(np.asarray(matrix)[:, 3], [1.0, 2.0, 3.0])
+
+
+def test_versor_rigid_3d_folds_a_real_rotation_about_its_center() -> None:
+    """The block collapses to `[R | c + t - R.c]`.
+
+    The zero versor only exercises `R = I`, which hides every mistake in
+    how the center of rotation is folded in. This uses a quarter turn
+    about z -- versor `(0, 0, sin(pi/4))` -- and a center away from the
+    origin, so the linear part and the offset are both non-trivial.
+    """
+    angle = np.pi / 2
+    versor = (0.0, 0.0, np.sin(angle / 2))
+    translation = np.array([1.0, 2.0, 3.0])
+    center = np.array([4.0, 5.0, 6.0])
+    rotation = np.array(
+        [
+            [np.cos(angle), -np.sin(angle), 0.0],
+            [np.sin(angle), np.cos(angle), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+    block = _versor_rigid_3d(versor, translation, center)
+    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    assert np.allclose(matrix[:, :3], rotation)
+    assert np.allclose(matrix[:, 3], center + translation - rotation @ center)
+
+
+def test_versor_tolerates_a_rounded_unit_versor() -> None:
+    """A versor rounded just past the unit sphere still loads.
+
+    ITK renormalizes a versor whose vector part overshoots by a rounding
+    error, so a file that writes a half-turn as `1.0000000002` opens
+    there. It must open here too, and give the same half-turn. A versor
+    that is genuinely too long is still refused.
+    """
+    block = _versor_rigid_3d(
+        (1.0000000002, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+    )
+    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    assert np.allclose(matrix[:, :3], np.diag([1.0, -1.0, -1.0]))
+
+    too_long = _versor_rigid_3d(
+        (1.1, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+    )
+    with pytest.raises(ValueError, match="magnitude > 1"):
+        too_long.compute()
 
 
 def test_displacement_blocks_are_lps_to_lps_chains() -> None:
@@ -249,6 +304,22 @@ def test_composite_warp_computes() -> None:
     assert isinstance(result[-1], xforms.DisplacementField)
 
 
+@pytest.mark.parametrize("name", ["itk_displacement3d.h5", "itk_bspline3d.h5"])
+def test_warp_block_inverts(name: str) -> None:
+    """Every child of a warp block has an inverse, so the block does."""
+    pytest.importorskip("h5py")
+    block = io.transformations.load(data_dir / name)[-1]
+    inverse = block.inverse()
+    assert isinstance(inverse, xforms.Sequence)
+    assert len(inverse) == len(block)
+    assert inverse.input == block.output
+    assert inverse.output == block.input
+    # The chain reads back the other way round.
+    assert isinstance(inverse[0], xforms.Inverse)
+    assert inverse[0].forward is block.voxel2lps
+    assert inverse[-1].forward is block.lps2voxel
+
+
 def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
     """The grid geometry is read off `ndim_input`, not off a 3-D layout."""
     # A 2-D grid writes 2 + 2 + 2 + 4 fixed parameters: shape, origin,
@@ -268,3 +339,76 @@ def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
     np.testing.assert_allclose(vox2lps, [[0.0, -5.0, 10.0], [2.0, 0.0, 20.0]])
     assert np.asarray(block.voxel2lps.matrix).shape == (2, 3)
     assert np.asarray(block.field).shape == (3, 4, 2)
+    assert block.input == block.output
+    assert len(block.input.axes) == 2
+
+
+# ----------------------------------------------------------------------
+#   THE DERIVED CHAIN
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["itk_affine3d.tfm", "itk_displacement3d.h5"])
+def test_block_chain_is_an_immutable_tuple(name: str) -> None:
+    """The cached chain is handed out as is, so it cannot be a list."""
+    if name.endswith(".h5"):
+        pytest.importorskip("h5py")
+    block = io.transformations.load(data_dir / name)[-1]
+    assert isinstance(block.transformations, tuple)
+    length = len(block)
+    with pytest.raises(TypeError):
+        del block[0]
+    assert len(block) == length
+
+
+def test_assigning_an_empty_chain_takes_effect() -> None:
+    """An empty chain is a chain, not 'no chain given'."""
+    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    assert len(block) == 4
+    block.transformations = []
+    assert len(block) == 0
+    block.transformations = None
+    assert len(block) == 4
+
+
+def test_replace_rebuilds_the_chain_from_the_new_parameters() -> None:
+    """`replace` must not freeze the chain derived from the old ones."""
+    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    assert len(block) == 4  # build and cache the derived chain
+
+    parameters = np.asarray(block.parameters).copy()
+    parameters[-3:] = [100.0, 200.0, 300.0]
+    copy = replace(block, parameters=parameters)
+
+    np.testing.assert_allclose(
+        np.asarray(copy.translation.translation), [100.0, 200.0, 300.0]
+    )
+    np.testing.assert_allclose(
+        np.asarray(copy.transformations[-1].translation),
+        [100.0, 200.0, 300.0],
+    )
+    # The original is untouched, and the two do not share a chain object.
+    np.testing.assert_allclose(
+        np.asarray(block.transformations[-1].translation), [10.0, 5.0, 2.0]
+    )
+    assert copy.transformations is not block.transformations
+
+
+def test_warp_block_endpoints_do_not_decode_the_field() -> None:
+    """Reading a block's endpoints must not touch the warp data.
+
+    A warp block declares its endpoints from the dimensions its file
+    states. Deriving them the way a plain `Sequence` does would build the
+    chain, and building the chain decodes the field -- a full read of a
+    delayed array for a question the header already answers.
+    """
+    pytest.importorskip("h5py")
+    block = io.transformations.load(data_dir / "itk_displacement3d.h5")[-1]
+    assert isinstance(block, itk.ITKDisplacementBase)
+
+    assert block.input == block.output
+    assert not hasattr(block, "_cache_field")
+
+    # And asking for the chain does decode it.
+    assert len(block) == 3
+    assert hasattr(block, "_cache_field")

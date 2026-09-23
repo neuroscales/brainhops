@@ -2,6 +2,7 @@
 
 __all__ = [
     "ITKAffineBase",
+    "ITKBlockBase",
     "ITKDisplacementBase",
     "ITKPrecision",
     "ITKStruct",
@@ -13,6 +14,7 @@ __all__ = [
 from . import tfm
 from ._common import (
     ITKAffineBase,
+    ITKBlockBase,
     ITKDisplacementBase,
     ITKPrecision,
     ITKStruct,
