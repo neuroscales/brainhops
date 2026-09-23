@@ -501,10 +501,10 @@ def _parse_field_value(
                 "registered field parser."
             )
         return value
-    if isinstance(parser, type) and hasattr(parser, "load_spec"):
-        return parser.load_spec(spec)
-    if hasattr(parser, "load_spec"):
-        return parser.load_spec(spec)
+    if isinstance(parser, type) and hasattr(parser, "from_spec"):
+        return parser.from_spec(spec)
+    if hasattr(parser, "from_spec"):
+        return parser.from_spec(spec)
     if callable(parser):
         return parser(spec)
     raise TypeError(

@@ -11,7 +11,6 @@ __all__ = [
 ]
 
 import re
-from dataclasses import dataclass
 
 import typing_extensions as tx
 from bagof.core.magic import get_from_registry
@@ -20,8 +19,7 @@ from bagof.magic import ConvertTo, Factory, Magic
 from brainhops._core.path import Path
 
 
-@dataclass(frozen=True)
-class Parser:
+class Parser(Magic, frozen=True):
     """``Annotated`` metadata selecting the parser for a field.
 
     The value may be a registered target type or a parser callable/class.
@@ -37,11 +35,6 @@ class SourceSpec(Magic, frozen=True):
     path: ConvertTo[Path]
     hints: tx.Tuple[str, ...] = ()
     options: Factory[tx.Dict[str, tx.Union[str, "SourceSpec"]]]
-
-    @property
-    def value(self) -> Path:
-        """The source path (compatibility spelling for the initial API)."""
-        return self.path
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
