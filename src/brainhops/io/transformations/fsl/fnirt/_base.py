@@ -1,7 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Field
+from bagof.magic import Alias
 
 # externals
 # core
@@ -15,7 +15,6 @@ from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.base.specs import Parser
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
@@ -58,7 +57,7 @@ _SPLINE_ORDER = {
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image.
-_ImageLike = tx.Annotated[tx.Union[_NiftiObject, Image], Parser(Image)]
+_ImageLike = tx.Union[_NiftiObject, Image]
 
 
 @register_format
@@ -98,13 +97,13 @@ class FNIRTWarpField(
     HINTS = ("fnirt",)
 
     moving: tx.Annotated[
-        tx.Optional[_ImageLike], Field(alias=("moving", "mov", "src"))
+        tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))
     ] = None
     """The moving (source) image, a nibabel image or header, or a
     brainhops image."""
 
     reference: tx.Annotated[
-        tx.Optional[_ImageLike], Field(alias=("reference", "ref"))
+        tx.Optional[_ImageLike], Alias(("reference", "ref"))
     ] = None
     """The reference image. For a deformation field this defaults to the
     warp file's own geometry."""

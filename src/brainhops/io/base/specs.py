@@ -218,11 +218,13 @@ def parser_for(annotation: tx.Any) -> tx.Optional[tx.Any]:
             for member in tx.get_args(annotation)
             if member not in (None, type(None))
         ]
-        parsers = [parser_for(member) for member in members]
-        if parsers and all(parser is not None for parser in parsers):
-            first = parsers[0]
-            if all(parser is first for parser in parsers):
-                return first
+        parsers = {
+            parser
+            for member in members
+            if (parser := parser_for(member)) is not None
+        }
+        if len(parsers) == 1:
+            return parsers.pop()
     return None
 
 

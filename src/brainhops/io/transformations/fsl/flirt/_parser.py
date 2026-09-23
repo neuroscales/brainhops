@@ -3,7 +3,7 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Field, Magic
+from bagof.magic import HIDE_IF_NONE, Alias, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
@@ -19,11 +19,10 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
-from brainhops.io.base.specs import Parser
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image. This is the type FLIRT accepts for either of them.
-_ImageLike = tx.Annotated[tx.Union[_NiftiObject, Image], Parser(Image)]
+_ImageLike = tx.Union[_NiftiObject, Image]
 
 
 class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
@@ -44,13 +43,13 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     """
 
     moving: tx.Annotated[
-        tx.Optional[_ImageLike], Field(alias=("moving", "mov", "src"))
+        tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))
     ] = None
     """The moving (source) image, a nibabel image or header, or a
     brainhops image."""
 
     reference: tx.Annotated[
-        tx.Optional[_ImageLike], Field(alias=("reference", "ref"))
+        tx.Optional[_ImageLike], Alias(("reference", "ref"))
     ] = None
     """The reference image, a nibabel image or header, or a brainhops
     image."""

@@ -63,6 +63,31 @@ def test_literal_pipe_is_percent_encoded() -> None:
     assert str(spec.path) == "s3://bucket/a|b%20c.nii"
 
 
+def test_nested_sources_may_be_nested_recursively() -> None:
+    spec = SourceSpec.from_arg("outer|child:[middle|child:[inner|nifti]]")
+
+    middle = spec.options["child"]
+    assert isinstance(middle, SourceSpec)
+    inner = middle.options["child"]
+    assert isinstance(inner, SourceSpec)
+    assert str(inner.path) == "inner"
+    assert inner.hints == ("nifti",)
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("outer|child:[inner", "Unclosed bracket"),
+        ("outer|child:inner]", "Unmatched closing bracket"),
+    ],
+)
+def test_unbalanced_nested_source_brackets_are_rejected(
+    text: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SourceSpec.from_arg(text)
+
+
 def test_duplicate_options_are_rejected_before_construction() -> None:
     with pytest.raises(ValueError, match="Duplicate source option 'moving'"):
         SourceSpec.from_arg("warp|moving:a.nii|moving:b.nii")
@@ -96,6 +121,11 @@ def test_registered_parser_is_inherited_by_subclasses() -> None:
 
 def test_explicit_parser_wins_for_a_union() -> None:
     annotation = tx.Annotated[tx.Union[Image, str], Parser(Image)]
+    assert parser_for(annotation) is FileBasedImage
+
+
+def test_unique_registered_union_parser_is_found_automatically() -> None:
+    annotation = tx.Union[object, Image]
     assert parser_for(annotation) is FileBasedImage
 
 
