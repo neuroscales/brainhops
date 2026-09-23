@@ -32,7 +32,10 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 class _GeometryFields(DataModelBase):
     # --- attributes ---------------------------------------------------
 
-    transformations: tx.Annotated[
+    # Named `_transformations`, the storage slot that `Sequence` declares
+    # and serves through its `transformations` property. The constructor
+    # argument is still `transformations=`.
+    _transformations: tx.Annotated[
         tx.Tuple[CartesianField, Transformation],
         tx.Doc("A cartesian field and a voxel-to-world transformation."),
         Factory(_geometry_factory),

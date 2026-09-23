@@ -9,6 +9,7 @@ run twice.
 import numpy as np
 from bagof.magic import fields_dict, replace
 
+from brainhops._core.properties import smartproperty
 from brainhops.datamodel._transformations import converters as xc
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
@@ -691,3 +692,62 @@ def test_subspace_compute_returns_self_unchanged() -> None:
     )
     assert subspace.compute() is subspace
     assert subspace.compute(mode="Affine") is subspace
+
+
+# ----------------------------------------------------------------------
+#   DERIVED CHAINS SURVIVE REPLACE
+# ----------------------------------------------------------------------
+
+
+class _DerivedSequence(Sequence):
+    """A sequence whose chain is derived from a parameter it declares."""
+
+    shift: float = 0.0
+
+    @smartproperty(cache=True)
+    def transformations(self) -> list:
+        return [Translation(translation=[self.shift, self.shift])]
+
+
+def test_sequence_stores_its_chain_under_a_private_name() -> None:
+    # `transformations` is the constructor argument and the property; the
+    # value a sequence was *given* is stored under `_transformations`, so
+    # a subclass can derive the chain without `replace` freezing it.
+    field = fields_dict(Sequence)["transformations"]
+    assert field.name == "_transformations"
+    assert field.public_name == "transformations"
+    seq = Sequence(transformations=[Identity()])
+    assert seq._transformations == seq.transformations
+
+
+def test_replace_does_not_freeze_a_derived_chain() -> None:
+    # `replace` reads the stored chain, not the derived one, so the copy
+    # rebuilds its chain from the new parameter instead of carrying over
+    # the chain the original had already worked out.
+    seq = _DerivedSequence(shift=1.0)
+    np.testing.assert_allclose(
+        np.asarray(seq.transformations[0].translation), [1.0, 1.0]
+    )
+    copy = replace(seq, shift=5.0)
+    np.testing.assert_allclose(
+        np.asarray(copy.transformations[0].translation), [5.0, 5.0]
+    )
+    # ... and the two do not share the cached list object.
+    assert copy.transformations is not seq.transformations
+
+
+def test_replace_with_no_changes_leaves_a_derived_chain_derived() -> None:
+    seq = _DerivedSequence(shift=2.0)
+    _ = seq.transformations  # build and cache the derived chain
+    copy = replace(seq)
+    assert copy._transformations is None
+    assert copy.transformations is not seq.transformations
+
+
+def test_replace_carries_over_an_assigned_chain() -> None:
+    # An explicitly assigned chain is a declared value and is carried over.
+    seq = _DerivedSequence(shift=1.0)
+    seq.transformations = [Identity()]
+    copy = replace(seq, shift=5.0)
+    assert len(copy) == 1
+    assert isinstance(copy.transformations[0], Identity)
