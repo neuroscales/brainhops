@@ -297,20 +297,21 @@ class ITKDisplacementBase(ITKStruct, _xforms.Sequence):
 
     @lazyproperty
     def _grid(self) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
-        # The voxel-to-LPS affine of the warp grid, and its shape.
-        return _vox2lps(self.fixed_parameters)
+        # The compact voxel-to-LPS affine of the warp grid, and its shape.
+        return _vox2lps(self.fixed_parameters, self.ndim_input)
 
     @smartproperty(cache=True)
     def field(self) -> ArrayProtocol:
         """The warp values on their own grid, in voxel units.
 
-        ITK stores them as a flat, C-ordered `(3, Nz, Ny, Nx)` block of
-        world-space displacements. They are reordered to `(Nx, Ny, Nz, 3)`
+        ITK stores them as a flat, C-ordered `(D, Nz, Ny, Nx)` block of
+        world-space displacements. They are reordered to `(Nx, Ny, Nz, D)`
         and rotated into voxel units, because a
         [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
         adds its values in the units of its own grid.
         """  # noqa: E501
         vox2lps, shape = self._grid
+        ndim = self.ndim_input
 
         # Ensure array-like
         parameters = self.parameters
@@ -318,15 +319,17 @@ class ITKDisplacementBase(ITKStruct, _xforms.Sequence):
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
-        # Reorder from (3, Nz, Ny, Nx) to (Nx, Ny, Nz, 3)
-        disp = parameters.reshape(3, *reversed(shape))
-        disp = disp.transpose(3, 2, 1, 0)
+        # Reorder from (D, Nz, Ny, Nx) to (Nx, Ny, Nz, D)
+        disp = parameters.reshape(ndim, *reversed(shape))
+        disp = disp.transpose(*range(ndim, 0, -1), 0)
 
         # Multiply by the world-to-voxel affine to convert from world
-        # displacements to voxel displacements
+        # displacements to voxel displacements. Only the linear part
+        # rotates a displacement, and it is the first `ndim` columns of
+        # the compact affine.
         lps2vox = _affines.inv(vox2lps)
         backend = get_array_backend(disp)
-        rotate = backend.asarray(lps2vox[:3, :3], dtype=disp.dtype)
+        rotate = backend.asarray(lps2vox[:, :ndim], dtype=disp.dtype)
         return backend.matmul(rotate, disp[..., None])[..., 0]
 
     # --- slots --------------------------------------------------------
@@ -863,20 +866,37 @@ def _nonempty(values: tx.Optional[ArrayProtocol]) -> tx.Optional[tx.Any]:
     return values
 
 
-def _vox2lps(fixed_parameters: tx.Sequence[float]) -> np.ndarray:
-    """Compute the node-to-world affine of a B-splines transform."""
+def _vox2lps(
+    fixed_parameters: tx.Sequence[float], ndim: int = 3
+) -> tx.Tuple[np.ndarray, tx.Tuple[int, ...]]:
+    """The voxel-to-LPS affine of a warp grid, and the shape of that grid.
+
+    ITK writes the grid geometry into the fixed parameters as four
+    consecutive blocks -- the shape, the origin, the voxel spacing and
+    the direction matrix -- sized by the dimensionality of the block, so
+    they are read off `ndim` rather than off a 3-D layout.
+
+    The affine is returned in the *compact* `(ndim, ndim + 1)` form, with
+    no homogeneous row, which is what
+    [`brainhops._core.affines`][] and
+    [`Affine`][brainhops.datamodel.transformations.Affine] both take. A
+    homogeneous matrix handed to either is read as one dimension too
+    many: `affines.inv` would answer with an `(ndim, ndim + 2)` matrix,
+    and an `Affine` would claim to map `ndim + 1` coordinates.
+    """
 
     fixed_parameters = np.asarray(fixed_parameters, dtype=np.float64)
-    shape = fixed_parameters[0:3]
-    origin = fixed_parameters[3:6]
-    spacing = fixed_parameters[6:9]
-    direction = fixed_parameters[9:18].reshape(3, 3)
+    shape = fixed_parameters[0:ndim]
+    origin = fixed_parameters[ndim : 2 * ndim]
+    spacing = fixed_parameters[2 * ndim : 3 * ndim]
+    direction = fixed_parameters[3 * ndim : 3 * ndim + ndim * ndim]
+    direction = direction.reshape(ndim, ndim)
 
     shape = tuple(map(int, map(round, shape)))
 
-    vox2lps = np.eye(4, dtype=np.float64)
-    vox2lps[:3, :3] = direction @ np.diag(spacing)
-    vox2lps[:3, 3] = origin
+    vox2lps = np.zeros((ndim, ndim + 1), dtype=np.float64)
+    vox2lps[:, :ndim] = direction @ np.diag(spacing)
+    vox2lps[:, ndim] = origin
     return vox2lps, shape
 
 
