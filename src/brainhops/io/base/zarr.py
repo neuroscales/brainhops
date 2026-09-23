@@ -48,7 +48,7 @@ class ZarrParser(DataModelBase, FileParser):
     whether it reads an image or a transformation.
     """
 
-    FORMAT_HINTS = ("zarr",)
+    HINTS = ("zarr",)
 
     # ---- attributes --------------------------------------------------
 

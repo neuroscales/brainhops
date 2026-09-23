@@ -22,7 +22,7 @@ class ITKTransform(_xforms.Sequence, FileBasedTransformation):
     and register themselves.
     """
 
-    FORMAT_HINTS = ("itk",)
+    HINTS = ("itk",)
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:

@@ -290,7 +290,7 @@ def parse(
     brute: bool = False,
     hints: tx.Iterable[str] = (),
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
-    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]] = (),
+    options: tx.Optional[tx.Mapping[str, tx.Union[str, SourceSpec]]] = None,
     **kwargs,
 ) -> _T:
     """
@@ -339,8 +339,8 @@ def parse(
     if not registry:
         raise _failure(source, [], errors)
     requested_hints = _normalize_hints(hints, hint)
-    source_options = tuple(options)
-    duplicate = set(kwargs).intersection(name for name, _ in source_options)
+    source_options = dict(options or {})
+    duplicate = set(kwargs).intersection(source_options)
     if duplicate:
         names = ", ".join(sorted(duplicate))
         raise ParserContentError(
@@ -362,7 +362,7 @@ def parse(
         if source_options:
             details.append(
                 "options "
-                + ", ".join(sorted(repr(name) for name, _ in source_options))
+                + ", ".join(sorted(repr(name) for name in source_options))
             )
         suffix = " for " + " and ".join(details) if details else ""
         raise ParserContentError(
@@ -446,49 +446,39 @@ def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
 def _option_fields(cls: type) -> tx.Dict[str, tx.Tuple[str, tx.Any]]:
     """Source option names mapped to concrete Magic fields and types."""
     try:
-        magic_fields = {field.name: field for field in fields(cls)}
+        magic_fields = fields(cls)
     except (TypeError, AttributeError):
-        magic_fields = {}
+        magic_fields = ()
     annotations = _field_annotations(cls)
-    result = {
-        name: (name, annotations.get(name, field.type))
-        for name, field in magic_fields.items()
-        if field.init and field.kw and not name.startswith("_")
-    }
-    # Formats may expose a load/from_* spelling only by explicitly mapping
-    # it to a real field. This is intentionally not an alias mechanism.
-    mappings = {}
-    for base in reversed(cls.__mro__):
-        mappings.update(base.__dict__.get("SOURCE_OPTIONS", {}))
-    for option, field_name in mappings.items():
-        if field_name not in magic_fields:
-            raise TypeError(
-                f"{cls.__name__}.SOURCE_OPTIONS maps {option!r} to unknown "
-                f"field {field_name!r}."
-            )
-        field = magic_fields[field_name]
-        result[option] = (
-            field_name,
-            annotations.get(field_name, field.type),
-        )
+    result = {}
+    for field in magic_fields:
+        if not field.init or not field.kw:
+            continue
+        aliases = getattr(field, "aliases", (field.public_name,))
+        for alias in aliases:
+            if not alias.startswith("_"):
+                result[alias] = (
+                    field.public_name,
+                    annotations.get(field.name, field.type),
+                )
     return result
 
 
 def _accepts_options(
     cls: type,
-    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]],
+    options: tx.Mapping[str, tx.Union[str, SourceSpec]],
 ) -> bool:
     accepted = _option_fields(cls)
-    return all(name in accepted for name, _ in options)
+    return all(name in accepted for name in options)
 
 
 def _bind_options(
     cls: type,
-    options: tx.Iterable[tx.Tuple[str, tx.Union[str, SourceSpec]]],
+    options: tx.Mapping[str, tx.Union[str, SourceSpec]],
 ) -> tx.Dict[str, tx.Any]:
     accepted = _option_fields(cls)
     bound = {}
-    for option, value in options:
+    for option, value in options.items():
         field_name, annotation = accepted[option]
         bound[field_name] = _parse_field_value(
             cls, field_name, annotation, value
@@ -503,7 +493,7 @@ def _parse_field_value(
     value: tx.Union[str, SourceSpec],
 ) -> tx.Any:
     parser = parser_for(annotation)
-    spec = value if isinstance(value, SourceSpec) else SourceSpec(value=value)
+    spec = value if isinstance(value, SourceSpec) else SourceSpec(path=value)
     if parser is None:
         if isinstance(value, SourceSpec):
             raise TypeError(

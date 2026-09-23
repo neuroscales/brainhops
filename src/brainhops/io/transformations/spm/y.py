@@ -24,7 +24,7 @@ class SPMCoordinatesField(_xforms.Sequence, NiftiBasedTransformation):
     their filenames are often prefixed with `y_` or `iy_`.
     """
 
-    FORMAT_HINTS = ("spm",)
+    HINTS = ("spm",)
 
     PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ("y_", "iy_")
     """

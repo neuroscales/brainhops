@@ -14,7 +14,9 @@ __all__ = [
     "parsers",
     "register_format",
     "Parser",
+    "OperationSpec",
     "SourceSpec",
+    "TransformationSpec",
     "format_hints",
     "parser_for",
     "register_parser",
@@ -35,8 +37,10 @@ from ._base import (
 )
 from ._load import load, sniff
 from .specs import (
+    OperationSpec,
     Parser,
     SourceSpec,
+    TransformationSpec,
     format_hints,
     parser_for,
     register_parser,

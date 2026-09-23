@@ -12,7 +12,7 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel.images import Image
-from brainhops.io.base import SourceSpec, format_hints
+from brainhops.io.base import TransformationSpec, format_hints
 
 from ._errors import CliError, WritingUnavailable
 
@@ -49,7 +49,7 @@ def transform_format_hints() -> tx.Set[str]:
 
 
 def load_transform(
-    source: tx.Union[str, SourceSpec],
+    source: tx.Union[str, TransformationSpec],
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
 ) -> tx.Any:
     """Read a transformation from a file, or raise a `CliError`.
@@ -59,7 +59,9 @@ def load_transform(
     the selected reader cannot parse is reported as a `CliError`.
     """
     spec = (
-        source if isinstance(source, SourceSpec) else SourceSpec(value=source)
+        source
+        if isinstance(source, TransformationSpec)
+        else TransformationSpec(path=source)
     )
     if hint is not None:
         if spec.hints:
@@ -67,8 +69,8 @@ def load_transform(
                 "Format hints were supplied both in the spec and API."
             )
         requested = (hint,) if isinstance(hint, str) else tuple(hint)
-        spec = SourceSpec(
-            value=spec.value,
+        spec = TransformationSpec(
+            path=spec.path,
             hints=tuple(str(item).lower() for item in requested),
             options=spec.options,
             operations=spec.operations,
@@ -84,12 +86,12 @@ def load_transform(
             )
         return io.transformations.load(spec)
     except FileNotFoundError as exc:
-        raise CliError(f"Transformation not found: {spec.value}") from exc
+        raise CliError(f"Transformation not found: {spec.path}") from exc
     except CliError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise CliError(
-            f"Could not read transformation {spec.value!r}: {exc}"
+            f"Could not read transformation {spec.path!r}: {exc}"
         ) from exc
 
 

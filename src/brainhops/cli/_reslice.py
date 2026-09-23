@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import argparse
 
+import typing_extensions as tx
+
 from brainhops.datamodel.images import Image
-from brainhops.io.base import SourceSpec
+from brainhops.io.base import OperationSpec, TransformationSpec
 
 from ._errors import CliError
 from ._io import (
@@ -40,13 +42,21 @@ from ._io import (
     save_image,
 )
 
-# Operators that a transform value may carry after a `|`, and that are
-# applied to the loaded transform in written order. `inv` inverts the
-# transform. The rest are recognised so they parse and report cleanly,
-# but are not implemented yet (tracked in issue #47).
-_IMPLEMENTED_OPS = frozenset({"inv"})
-_UNIMPLEMENTED_OPS = frozenset({"sqrt", "square", "exp", "log"})
-_RECOGNIZED_OPS = _IMPLEMENTED_OPS | _UNIMPLEMENTED_OPS
+
+class _UnimplementedOperation(OperationSpec, frozen=True):
+    """A reserved transformation operation tracked in issue #47."""
+
+    def apply(self, value: tx.Any) -> tx.NoReturn:  # noqa: ARG002
+        raise CliError(
+            f"Transform operator '{self.name}' is not implemented yet; "
+            "tracked in issue #47."
+        )
+
+
+for _operation_name in ("sqrt", "square", "exp", "log"):
+    TransformationSpec.register_operation(_operation_name)(
+        _UnimplementedOperation
+    )
 
 
 def add_parser(
@@ -99,7 +109,7 @@ def add_parser(
             "operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
             "'|' usually needs shell quoting; encode a literal pipe in a "
-            "path as '%7C'. The operators 'sqrt', "
+            "path as '%%7C'. The operators 'sqrt', "
             "'square', 'exp' and 'log' are recognised but not implemented "
             "yet (tracked in issue #47)."
         ),
@@ -127,28 +137,14 @@ def add_parser(
     return parser
 
 
-def _split_transform_spec(spec: str) -> SourceSpec:
+def _split_transform_spec(spec: str) -> TransformationSpec:
     """Parse a transform source, including nested options and operations."""
     try:
-        return SourceSpec.parse(spec, operations=_RECOGNIZED_OPS)
+        return TransformationSpec.from_arg(spec)
     except ValueError as exc:
         raise CliError(
             f"Invalid transformation source {spec!r}: {exc}"
         ) from exc
-
-
-def _apply_operator(transform: Image, operator: str) -> Image:
-    """Apply one operator to a loaded transform.
-
-    `inv` returns the inverse of the transform. A recognised but
-    unimplemented operator raises a `CliError` pointing at issue #47.
-    """
-    if operator == "inv":
-        return transform.inverse()
-    raise CliError(
-        f"Transform operator '{operator}' is not implemented yet; "
-        f"tracked in issue #47."
-    )
 
 
 def _load_push_transform(spec: str) -> Image:
@@ -161,9 +157,7 @@ def _load_push_transform(spec: str) -> Image:
     """
     source = _split_transform_spec(spec)
     transform = load_transform(source)
-    for operator in source.operations:
-        transform = _apply_operator(transform, operator)
-    return transform
+    return source.apply_operations(transform)
 
 
 def reslice_image(

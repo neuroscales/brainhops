@@ -12,7 +12,7 @@ from brainhops.cli._reslice import (
     reslice_image,
 )
 from brainhops.datamodel.images import Image
-from brainhops.io.base import SourceSpec
+from brainhops.io.base import TransformationSpec
 
 nb = pytest.importorskip("nibabel")
 
@@ -90,22 +90,21 @@ class _FakeTransform:
 
 
 def test_split_transform_spec_extracts_format_hint_and_operators() -> None:
-    assert _split_transform_spec("affine.mat|flirt|inv") == SourceSpec(
-        value="affine.mat", hints=("flirt",), operations=("inv",)
-    )
-    assert _split_transform_spec(
-        "affine.mat|inv|hint:flirt,fnirt|inv"
-    ) == SourceSpec(
-        value="affine.mat",
-        hints=("flirt", "fnirt"),
-        operations=("inv", "inv"),
-    )
+    spec = _split_transform_spec("affine.mat|flirt|inv")
+    assert str(spec.path) == "affine.mat"
+    assert spec.hints == ("flirt",)
+    assert [operation.name for operation in spec.operations] == ["inv"]
+
+    spec = _split_transform_spec("affine.mat|inv|hint:flirt,fnirt|inv")
+    assert str(spec.path) == "affine.mat"
+    assert spec.hints == ("flirt", "fnirt")
+    assert [operation.name for operation in spec.operations] == ["inv", "inv"]
 
 
 def test_split_transform_spec_decodes_a_literal_pipe_in_source() -> None:
-    assert _split_transform_spec(
-        "s3://bucket/a%7Cb/file.mat|flirt"
-    ) == SourceSpec(value="s3://bucket/a|b/file.mat", hints=("flirt",))
+    spec = _split_transform_spec("s3://bucket/a%7Cb/file.mat|flirt")
+    assert str(spec.path) == "s3://bucket/a|b/file.mat"
+    assert spec.hints == ("flirt",)
 
 
 def test_split_transform_spec_refuses_duplicate_options() -> None:
@@ -124,7 +123,7 @@ def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa:
 
     transform = _load_push_transform("warp.nii.gz")
 
-    assert seen["path"] == SourceSpec(value="warp.nii.gz")
+    assert seen["path"] == TransformationSpec(path="warp.nii.gz")
     assert transform.inverted is False
 
 
@@ -140,7 +139,8 @@ def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa
     transform = _load_push_transform("warp.nii.gz|inv")
 
     # The operator is stripped before the path reaches the loader.
-    assert seen["path"] == SourceSpec(value="warp.nii.gz", operations=("inv",))
+    assert str(seen["path"].path) == "warp.nii.gz"
+    assert [operation.name for operation in seen["path"].operations] == ["inv"]
     # The loaded transform is inverted before it is composed.
     assert transform.inverted is True
 
@@ -155,11 +155,9 @@ def test_format_hint_is_passed_to_the_transform_loader(monkeypatch) -> None:  # 
     monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
     transform = _load_push_transform("affine.mat|flirt|inv")
 
-    assert seen == {
-        "path": SourceSpec(
-            value="affine.mat", hints=("flirt",), operations=("inv",)
-        )
-    }
+    assert str(seen["path"].path) == "affine.mat"
+    assert seen["path"].hints == ("flirt",)
+    assert [operation.name for operation in seen["path"].operations] == ["inv"]
     assert transform.inverted is True
 
 
@@ -208,7 +206,7 @@ def test_flirt_options_load_nested_images_without_a_top_level_hint(
     moving = _write_nifti(tmp_path / "moving.nii.gz")
 
     transform = _load_push_transform(
-        f"{matrix}|reference:[{reference}|nifti]|moving:[{moving}]"
+        f"{matrix}|ref:[{reference}|nifti]|mov:[{moving}]"
     )
 
     assert type(transform).__name__ == "FLIRTTransform"

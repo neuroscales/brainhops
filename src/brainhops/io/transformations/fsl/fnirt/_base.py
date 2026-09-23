@@ -1,6 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Field
 
 # externals
 # core
@@ -94,13 +95,17 @@ class FNIRTWarpField(
     recognized but not supported.
     """
 
-    FORMAT_HINTS = ("fnirt",)
+    HINTS = ("fnirt",)
 
-    moving: tx.Optional[_ImageLike] = None
+    moving: tx.Annotated[
+        tx.Optional[_ImageLike], Field(alias=("moving", "mov", "src"))
+    ] = None
     """The moving (source) image, a nibabel image or header, or a
     brainhops image."""
 
-    reference: tx.Optional[_ImageLike] = None
+    reference: tx.Annotated[
+        tx.Optional[_ImageLike], Field(alias=("reference", "ref"))
+    ] = None
     """The reference image. For a deformation field this defaults to the
     warp file's own geometry."""
 

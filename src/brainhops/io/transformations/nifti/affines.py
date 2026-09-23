@@ -16,14 +16,13 @@ from brainhops.io.base.nifti import (
     _voxel_to_ras,
 )
 from brainhops.io.base.parsers import Confidence
+from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
-class _NiftiAffine(NiftiBasedTransformation):
+class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
     """Shared scoring and writing for affines derived from a NIfTI header."""
-
-    FORMAT_HINTS = ("affine",)
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -126,7 +125,7 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     NIfTI header.
     """
 
-    FORMAT_HINTS = ("nifti-affine",)
+    HINTS = ("nifti",)
 
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:

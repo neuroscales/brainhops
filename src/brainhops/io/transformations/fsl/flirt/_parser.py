@@ -3,7 +3,7 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Magic
+from bagof.magic import HIDE_IF_NONE, Field, Magic
 
 # core
 from brainhops._core.peek import peekable_lines
@@ -43,11 +43,15 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     to a NumPy array and used to build the world-space affine.
     """
 
-    moving: tx.Optional[_ImageLike] = None
+    moving: tx.Annotated[
+        tx.Optional[_ImageLike], Field(alias=("moving", "mov", "src"))
+    ] = None
     """The moving (source) image, a nibabel image or header, or a
     brainhops image."""
 
-    reference: tx.Optional[_ImageLike] = None
+    reference: tx.Annotated[
+        tx.Optional[_ImageLike], Field(alias=("reference", "ref"))
+    ] = None
     """The reference image, a nibabel image or header, or a brainhops
     image."""
 

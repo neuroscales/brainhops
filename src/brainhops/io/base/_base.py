@@ -317,9 +317,9 @@ class FileBasedObject(FileParser):
                     "Structured hints and options require a format "
                     "dispatcher, not a concrete parser."
                 )
-            return cls.load(spec.value, **kwargs)
+            return cls.load(spec.path, **kwargs)
         return parse(
-            Source(spec.value),
+            Source(spec.path),
             cls._REGISTRY,
             "load",
             "sniff",

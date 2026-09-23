@@ -39,7 +39,7 @@ class FLIRTTransform(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
-    FORMAT_HINTS = ("flirt",)
+    HINTS = ("flirt",)
     parameter_names: tx.ClassVar[str] = "flirt_matrix"
 
     _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
