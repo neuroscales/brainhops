@@ -21,6 +21,7 @@ from .transformations import (
     ImmutableSequence,
     ModeLike,
     Sequence,
+    SimplifyLike,
     Transformation,
 )
 
@@ -142,7 +143,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the geometry by simplifying its transformation.
