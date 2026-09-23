@@ -3,12 +3,13 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.path import FileOrContentLike
+from brainhops.io.base.specs import ImageSpec
 
 from ._base import FileBasedImage
 
 
 def load(
-    filelike: FileOrContentLike,
+    filelike: tx.Union[FileOrContentLike, ImageSpec],
     brute: bool = False,
     **kwargs,
 ) -> FileBasedImage:
@@ -17,8 +18,8 @@ def load(
 
     Parameters
     ----------
-    filelike : FileOrContentLike
-        Input file, or its content.
+    filelike : FileOrContentLike | ImageSpec
+        Input file, its content, or a structured image source.
     brute : bool
         If no format recognizes the input, try every registered reader.
     **kwargs

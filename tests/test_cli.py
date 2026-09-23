@@ -5,14 +5,19 @@ import pytest
 
 from brainhops.cli import main
 from brainhops.cli._errors import CliError, WritingUnavailable
-from brainhops.cli._io import _writable_image_formats, load_transform
+from brainhops.cli._io import (
+    _writable_image_formats,
+    load_image,
+    load_transform,
+)
 from brainhops.cli._reslice import (
     _load_push_transform,
+    _split_image_spec,
     _split_transform_spec,
     reslice_image,
 )
 from brainhops.datamodel.images import Image
-from brainhops.io.base import TransformationSpec
+from brainhops.io.base import ImageSpec, TransformationSpec
 
 nb = pytest.importorskip("nibabel")
 
@@ -51,6 +56,38 @@ def test_reslice_image_resamples_onto_reference_grid(
     assert isinstance(resliced, Image)
     # The output lives on the reference grid.
     assert resliced.shape == (3, 3, 3)
+
+
+def test_reslice_image_accepts_specs_for_input_and_reference(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write_nifti(tmp_path / "input.nii", shape=(4, 5, 6))
+    reference = _write_nifti(tmp_path / "reference.nii", shape=(3, 3, 3))
+
+    resliced = reslice_image(f"{source}|nifti", f"{reference}|nifti", [])
+
+    assert resliced.shape == (3, 3, 3)
+
+
+def test_split_image_spec_extracts_format_hint_and_options() -> None:
+    spec = _split_image_spec("image.dat|nifti|mmap:false")
+
+    assert spec == ImageSpec(
+        path="image.dat", hints=("nifti",), options={"mmap": "false"}
+    )
+
+
+def test_load_image_parses_a_string_source_spec(tmp_path) -> None:  # noqa: ANN001
+    source = _write_nifti(tmp_path / "input.nii")
+
+    image = load_image(f"{source}|nifti")
+
+    assert isinstance(image, Image)
+
+
+def test_unknown_image_format_hint_reports_available_hints() -> None:
+    with pytest.raises(CliError, match="Available hints"):
+        load_image(ImageSpec(path="image.dat", hints=("not-a-format",)))
 
 
 def test_reslice_command_reports_when_writing_is_unavailable(

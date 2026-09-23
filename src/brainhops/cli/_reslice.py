@@ -33,7 +33,7 @@ import argparse
 import typing_extensions as tx
 
 from brainhops.datamodel.images import Image
-from brainhops.io.base import OperationSpec, TransformationSpec
+from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec
 
 from ._errors import CliError
 from ._io import (
@@ -79,16 +79,23 @@ def add_parser(
     )
     parser.add_argument(
         "input",
-        help="Path to the image to resample.",
+        metavar="SOURCE",
+        help=(
+            "Image to resample, as a source specification: a path followed "
+            "by optional pipe-separated format hints and named options. "
+            "For example, 'input.dat|nifti'. Quote values containing '|' "
+            "when invoking the command from a shell."
+        ),
     )
     parser.add_argument(
         "-r",
         "--reference",
         required=True,
-        metavar="IMAGE",
+        metavar="SOURCE",
         help=(
             "Reference image whose geometry defines the output grid and "
-            "its placement in world space."
+            "its placement in world space, using the same source-"
+            "specification syntax as the input image."
         ),
     )
     parser.add_argument(
@@ -147,6 +154,14 @@ def _split_transform_spec(spec: str) -> TransformationSpec:
         ) from exc
 
 
+def _split_image_spec(spec: str) -> ImageSpec:
+    """Parse an image source, including hints and nested options."""
+    try:
+        return ImageSpec.from_arg(spec)
+    except ValueError as exc:
+        raise CliError(f"Invalid image source {spec!r}: {exc}") from exc
+
+
 def _load_push_transform(spec: str) -> Image:
     """Read one transform value, honouring its operator chain.
 
@@ -161,8 +176,8 @@ def _load_push_transform(spec: str) -> Image:
 
 
 def reslice_image(
-    input_path: str,
-    reference_path: str,
+    input_path: tx.Union[str, ImageSpec],
+    reference_path: tx.Union[str, ImageSpec],
     transform_paths: list,
     order: int = 1,
     bound: str = "reflect",
@@ -195,11 +210,21 @@ def reslice_image(
     own. The command wraps it with the step that writes the result to
     disk.
     """
-    image = load_image(input_path)
+    input_spec = (
+        input_path
+        if isinstance(input_path, ImageSpec)
+        else _split_image_spec(input_path)
+    )
+    image = load_image(input_spec)
     for spec in transform_paths:
         transform = _load_push_transform(spec)
         image = image(transform)
-    reference = load_image(reference_path)
+    reference_spec = (
+        reference_path
+        if isinstance(reference_path, ImageSpec)
+        else _split_image_spec(reference_path)
+    )
+    reference = load_image(reference_spec)
     return image.reslice(reference, order=order, bound=bound)
 
 

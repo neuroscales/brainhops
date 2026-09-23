@@ -7,6 +7,7 @@ from bagof.magic import Magic
 from brainhops._core.path import Path
 from brainhops.datamodel.images import Image
 from brainhops.io.base import (
+    ImageSpec,
     Parser,
     SourceSpec,
     TransformationSpec,
@@ -22,6 +23,15 @@ def test_source_spec_is_a_magic_model_with_a_path() -> None:
     assert isinstance(spec, Magic)
     assert isinstance(spec.path, Path)
     assert str(spec.path) == "image.nii"
+
+
+def test_image_spec_parses_image_hints_and_options() -> None:
+    spec = ImageSpec.from_arg("image.dat|nifti|mmap:false")
+
+    assert isinstance(spec, ImageSpec)
+    assert str(spec.path) == "image.dat"
+    assert spec.hints == ("nifti",)
+    assert spec.options == {"mmap": "false"}
 
 
 def test_nested_source_keeps_its_own_hints_and_options() -> None:

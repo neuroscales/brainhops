@@ -13,6 +13,7 @@ __all__ = [
     "sniff",
     "parsers",
     "register_format",
+    "ImageSpec",
     "Parser",
     "OperationSpec",
     "SourceSpec",
@@ -37,6 +38,7 @@ from ._base import (
 )
 from ._load import load, sniff
 from .specs import (
+    ImageSpec,
     OperationSpec,
     Parser,
     SourceSpec,

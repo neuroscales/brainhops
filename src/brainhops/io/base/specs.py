@@ -1,6 +1,7 @@
 """Structured file-source specifications and field parser registration."""
 
 __all__ = [
+    "ImageSpec",
     "OperationSpec",
     "Parser",
     "SourceSpec",
@@ -91,6 +92,10 @@ class SourceSpec(Magic, frozen=True):
     def _parse_operation(cls, segment: str) -> tx.Optional["OperationSpec"]:
         """Parse a class-owned operation, if this spec type declares it."""
         return None
+
+
+class ImageSpec(SourceSpec, frozen=True):
+    """A structured source specification for an image."""
 
 
 class OperationSpec(Magic, frozen=True):
