@@ -219,6 +219,178 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
         assert block.field.shape[-1] == 3
 
 
+# ----------------------------------------------------------------------
+#   WARP MEMORY LAYOUT
+# ----------------------------------------------------------------------
+#
+# ITK flattens its two kinds of warp differently, and the difference is
+# invisible in random data: either layout reshapes without complaint and
+# gives a plausible field. The fixtures below therefore carry a ramp
+# whose every entry names its own voxel and component --
+# `1000 * component + 100 * x + 10 * y + z` -- so a transposed axis or a
+# mistaken component stride cannot hide. Their grids have unit spacing
+# and an identity direction, so the world-space values SimpleITK reports
+# are already in the grid's own voxel units and the expected arrays can
+# be compared to `block.field` directly.
+#
+# The expected arrays are stored beside the fixtures, taken from
+# SimpleITK's own view of the images -- never from our decoder, which is
+# the thing under test. `tests/data/generate_itk_fixtures.py` regenerates
+# both, and is the only place SimpleITK is needed.
+
+
+@pytest.mark.parametrize(
+    "name, interleaved",
+    [
+        ("itk_displacement_ramp3d", True),
+        ("itk_bspline_ramp3d", False),
+    ],
+)
+def test_warp_field_is_decoded_in_itks_own_layout(
+    name: str, interleaved: bool
+) -> None:
+    """Each kind of warp is read in the layout ITK writes it in.
+
+    A `DisplacementFieldTransform`'s parameters are the raw buffer of an
+    image of vectors, so the component index varies fastest. A
+    `BSplineTransform`'s are one scalar coefficient image per axis,
+    written back to back, so it varies slowest. Reading either as the
+    other transposes the warp silently.
+    """
+    block = io.transformations.load(data_dir / f"{name}.tfm")[-1]
+    assert isinstance(block, itk.ITKDisplacementBase)
+
+    expected = np.load(data_dir / f"{name}_expected.npy")
+    field = np.asarray(block.field)
+    assert field.shape == expected.shape
+    np.testing.assert_allclose(field, expected)
+    assert block.interleaved is interleaved
+
+    # ... and the other layout really would have given something else,
+    # so the assertion above is not satisfied by both.
+    parameters = np.asarray(block.parameters)
+    shape = expected.shape[:-1]
+    ndim = len(shape)
+    other = (
+        parameters.reshape(ndim, *reversed(shape)).transpose(3, 2, 1, 0)
+        if interleaved
+        else parameters.reshape(*reversed(shape), ndim).transpose(2, 1, 0, 3)
+    )
+    assert not np.allclose(other, expected)
+
+
+def test_warp_fixtures_still_match_simpleitk() -> None:
+    """The stored expectations are still what ITK itself reports.
+
+    The tests above run from the committed arrays so the suite does not
+    need SimpleITK. This re-derives them when it happens to be installed,
+    so a stale fixture cannot quietly outlive the ITK behavior it pins.
+    """
+    sitk = pytest.importorskip("SimpleITK")
+
+    transform = sitk.ReadTransform(
+        str(data_dir / "itk_displacement_ramp3d.tfm")
+    )
+    field = sitk.DisplacementFieldTransform(transform).GetDisplacementField()
+    np.testing.assert_allclose(
+        sitk.GetArrayFromImage(field).transpose(2, 1, 0, 3),
+        np.load(data_dir / "itk_displacement_ramp3d_expected.npy"),
+    )
+
+    transform = sitk.ReadTransform(str(data_dir / "itk_bspline_ramp3d.tfm"))
+    images = sitk.BSplineTransform(transform).GetCoefficientImages()
+    np.testing.assert_allclose(
+        np.stack(
+            [sitk.GetArrayFromImage(i).transpose(2, 1, 0) for i in images],
+            axis=-1,
+        ),
+        np.load(data_dir / "itk_bspline_ramp3d_expected.npy"),
+    )
+
+
+# ----------------------------------------------------------------------
+#   EULER ANGLES
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["itk_euler3d", "itk_euler3d_zyx"])
+def test_euler_3d_composes_its_angles_the_way_itk_does(name: str) -> None:
+    """Both of ITK's angle orders give the matrix ITK gives.
+
+    `Euler3DTransform` composes its three axis rotations as `Rz @ Rx @ Ry`
+    unless its `ComputeZYX` flag is set, in which case it composes
+    `Rz @ Ry @ Rx`. The angles alone do not say which, so a reader that
+    assumes one order silently returns a valid but wrong rotation for
+    every file written with the other.
+
+    The expected matrix is ITK's own: its rotation from `GetMatrix`, and
+    its offset -- which is where the center of rotation folds in -- read
+    off `TransformPoint` at the origin.
+    """
+    block = TFMTransform.from_file(data_dir / f"{name}.tfm")[0]
+    assert block.type == itk.ITKTransformClass.Euler3DTransform
+
+    matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
+    np.testing.assert_allclose(
+        matrix, np.load(data_dir / f"{name}_expected.npy"), atol=1e-12
+    )
+
+
+def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
+    """ITK >= 5 writes the `ComputeZYX` flag as a fourth fixed parameter.
+
+    A reader that insists on exactly three refuses every Euler 3-D file
+    current ITK writes. The fourth entry is a flag, not a coordinate, so
+    it must also stay out of the center of rotation -- a four-long center
+    would make the block claim a fourth axis.
+    """
+    plain = TFMTransform.from_file(data_dir / "itk_euler3d.tfm")[0]
+    zyx = TFMTransform.from_file(data_dir / "itk_euler3d_zyx.tfm")[0]
+
+    assert len(plain.fixed_parameters) == 4
+    assert plain.compute_zyx is False
+    assert zyx.compute_zyx is True
+
+    for block in (plain, zyx):
+        center = np.asarray(block.center)
+        assert center.shape == (3,)
+        np.testing.assert_allclose(center, [4.0, 5.0, 6.0])
+
+    # A pre-5 file writes the center alone, and is read as ZXY -- the
+    # only order that existed before the flag did.
+    legacy = itk.ITKStruct(
+        type=itk.ITKTransformClass.Euler3DTransform,
+        precision="double",
+        ndim_input=3,
+        ndim_output=3,
+        parameters=plain.parameters,
+        fixed_parameters=(4.0, 5.0, 6.0),
+    )
+    assert legacy.compute_zyx is False
+    np.testing.assert_allclose(
+        np.asarray(legacy.compute().to(xforms.Affine, lossy=True).matrix),
+        np.load(data_dir / "itk_euler3d_expected.npy"),
+        atol=1e-12,
+    )
+
+
+def test_euler_3d_matches_simpleitk() -> None:
+    """The stored Euler expectations are still what ITK itself reports."""
+    sitk = pytest.importorskip("SimpleITK")
+
+    for name in ("itk_euler3d", "itk_euler3d_zyx"):
+        transform = sitk.Euler3DTransform(
+            sitk.ReadTransform(str(data_dir / f"{name}.tfm"))
+        )
+        expected = np.load(data_dir / f"{name}_expected.npy")
+        np.testing.assert_allclose(
+            expected[:, :3], np.asarray(transform.GetMatrix()).reshape(3, 3)
+        )
+        np.testing.assert_allclose(
+            expected[:, 3], transform.TransformPoint((0.0, 0.0, 0.0))
+        )
+
+
 def test_transform_group_is_gone() -> None:
     """Blocks live in `transformations`, so there is no second list."""
     transform = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")
