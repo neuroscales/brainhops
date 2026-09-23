@@ -17,6 +17,7 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import fields
 
 # core
 from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
@@ -35,6 +36,39 @@ from .modes import ModeLike, _ensure_proper_modes, _mode_admits
 # typing
 if tx.TYPE_CHECKING:
     from .inverse import Inverse
+
+
+def _pins_endpoints(cls: type) -> bool:
+    # Whether `cls` pins its endpoints to fixed coordinate systems
+    # instead of leaving them open. `Magic` clears the class body, so a
+    # class-level default is not visible in `cls.__dict__`; it survives
+    # on the built field, either as a per-instance factory (`build`) --
+    # which is how a mutable default such as a coordinate system is
+    # stored -- or as a plain non-`None` `default`. A class that leaves
+    # its endpoints open inherits `Transformation`'s `= None` default
+    # and builds nothing, so it reads as `False` here. The check is
+    # inherited along with the fields, so a subclass of a pinned class
+    # is pinned too.
+    for field in fields(cls):
+        if field.name in ("_input", "_output"):
+            if field.build or field.default is not None:
+                return True
+    return False
+
+
+def _unpinned_base(cls: type) -> type:
+    # The nearest ancestor of `cls` that does not pin its endpoints, or
+    # `cls` itself when `cls` does not pin them either. The walk stops
+    # short of `ConcreteTransformation`, which parameterizes nothing, so
+    # a class with no unpinned concrete ancestor is returned unchanged.
+    for base in cls.__mro__:
+        if base is ConcreteTransformation:
+            break
+        if not issubclass(base, ConcreteTransformation):
+            continue
+        if not _pins_endpoints(base):
+            return base
+    return cls
 
 
 class _LazyInverseMixin:
@@ -60,7 +94,20 @@ class _LazyInverseMixin:
         cls = type(self)
         param = cls.parameter_names
         if getattr(self, param) is None:
-            return cls(input=self.output, output=self.input)
+            # STOPGAP. Swapping the endpoints of a class that pins them
+            # -- `VoxelToLPS` and friends declare `_input`/`_output` as
+            # class-level defaults -- produces the right endpoints under
+            # a type whose name states the opposite direction, which
+            # misleads anything that dispatches on the type. Until the
+            # inversion rework decides whether such a class may be
+            # endpoint-swapped at all (and, if so, how it names the
+            # result), the swap is carried by the nearest ancestor that
+            # pins nothing, so the type claims no direction it does not
+            # have. A class that pins nothing is its own such ancestor
+            # and is built exactly as before. Delete this together with
+            # `_pins_endpoints`/`_unpinned_base` once that decision is
+            # made.
+            return _unpinned_base(cls)(input=self.output, output=self.input)
         wrapper = cls._inverse_type
         if wrapper is None:
             raise TypeError(f"{cls.__name__} has no typed inverse.")

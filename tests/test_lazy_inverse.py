@@ -15,6 +15,12 @@ import pytest
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel import transformations as _xf
 from brainhops.datamodel._transformations import inverse as _inv
+from brainhops.datamodel.systems import (
+    CoordinateSystem,
+    LPSCoordinateSystem,
+    RASCoordinateSystem,
+    VoxelCoordinateSystem,
+)
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
@@ -38,6 +44,12 @@ from brainhops.datamodel.transformations import (
     Transformation,
     Translation,
     is_identity,
+)
+from brainhops.io.transformations.base.affines import (
+    LPSToVoxel,
+    RASToVoxel,
+    VoxelToLPS,
+    VoxelToRAS,
 )
 
 
@@ -742,4 +754,85 @@ def test_refining_a_typed_inverse_leaves_its_forward_type_alone() -> None:
     assert isinstance(
         NiftiAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2]).inverse(),
         InverseNiftiAffine,
+    )
+
+
+# ----------------------------------------------------------------------
+#   ENDPOINT-PINNING SUBCLASSES
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cls, forward, backward",
+    [
+        (VoxelToRAS, VoxelCoordinateSystem, RASCoordinateSystem),
+        (RASToVoxel, RASCoordinateSystem, VoxelCoordinateSystem),
+        (VoxelToLPS, VoxelCoordinateSystem, LPSCoordinateSystem),
+        (LPSToVoxel, LPSCoordinateSystem, VoxelCoordinateSystem),
+    ],
+)
+def test_pinned_inverse_does_not_misname_its_direction(
+    cls: type, forward: type, backward: type
+) -> None:
+    # A class that pins its endpoints names the direction it maps. With
+    # no matrix there is nothing to invert, so the inverse is the eager
+    # endpoint-swapped transform -- but wearing `cls` it would carry the
+    # swapped endpoints under a name stating the opposite direction, and
+    # mislead whatever dispatches on the type. The endpoints are swapped
+    # and the type no longer claims a direction it does not have.
+    t = cls()
+    assert isinstance(t.input, forward)
+    assert isinstance(t.output, backward)
+
+    inv = t.inverse()
+    assert isinstance(inv.input, backward)
+    assert isinstance(inv.output, forward)
+    assert not isinstance(inv, cls)
+    assert type(inv) is Affine
+
+
+def test_pinned_inverse_falls_back_to_the_nearest_unpinned_base() -> None:
+    # The fallback is the nearest ancestor that pins nothing, so a
+    # pinned `Rotation` inverts to a `Rotation` rather than all the way
+    # up to `Affine`, and a subclass that inherits its pinning is
+    # treated as pinned too.
+    class PinnedRotation(Rotation):
+        _input: CoordinateSystem = VoxelCoordinateSystem()
+        _output: CoordinateSystem = RASCoordinateSystem()
+
+    class InheritsPinning(PinnedRotation):
+        pass
+
+    for cls in (PinnedRotation, InheritsPinning):
+        inv = cls().inverse()
+        assert type(inv) is Rotation
+        assert isinstance(inv.input, RASCoordinateSystem)
+        assert isinstance(inv.output, VoxelCoordinateSystem)
+
+
+@pytest.mark.parametrize("cls", [Affine, Rotation, Linear, Translation])
+def test_unpinned_empty_inverse_keeps_its_own_class(cls: type) -> None:
+    # The overwhelmingly common case is untouched: a class that leaves
+    # its endpoints open still inverts to its own class, endpoints
+    # swapped.
+    lps, ras = LPSCoordinateSystem(), RASCoordinateSystem()
+    inv = cls(input=lps, output=ras).inverse()
+    assert type(inv) is cls
+    assert inv.input == ras
+    assert inv.output == lps
+
+
+def test_pinned_inverse_with_a_matrix_is_untouched() -> None:
+    # The set-parameter path does not go through the fallback at all: it
+    # builds the typed lazy wrapper for the class, as before, and the
+    # wrapper already names no direction of its own.
+    matrix = np.diag([2.0, 4.0, 8.0, 1.0])[:3]
+    inv = VoxelToLPS(matrix=matrix).inverse()
+    assert isinstance(inv, InverseAffine)
+    assert inv.forward.matrix is matrix
+    assert isinstance(inv.input, LPSCoordinateSystem)
+    assert isinstance(inv.output, VoxelCoordinateSystem)
+    np.testing.assert_allclose(
+        np.asarray(inv.compute().matrix),
+        np.diag([0.5, 0.25, 0.125, 1.0])[:3],
     )
