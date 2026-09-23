@@ -98,6 +98,8 @@ class OmeZarrField(
     with an [`AxisError`][brainhops.datamodel.axes.AxisError].
     """
 
+    HINTS = ("ome", "ome-zarr")
+
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
 
     raw_levels: tx.Annotated[

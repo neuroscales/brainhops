@@ -12,12 +12,14 @@ from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import FileBasedTransformation
 
 from .._affines import _ImageGeometry
+from .._formats import FSLAffineFormat
 from .._repr import stored_repr
 from ._parser import FLIRTMatrixParser
 
 
 @register_format
 class FLIRTTransform(
+    FSLAffineFormat,
     FLIRTMatrixParser,
     _xforms.Affine,
     FileBasedTransformation,
@@ -37,6 +39,7 @@ class FLIRTTransform(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
+    HINTS = ("flirt",)
     parameter_names: tx.ClassVar[str] = "flirt_matrix"
 
     _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()

@@ -21,6 +21,7 @@ class H5Transform(
     """A transformation stored in an ITK binary (`.h5`) file."""
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5", ".hdf5")
+    HINTS = ("h5",)
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:

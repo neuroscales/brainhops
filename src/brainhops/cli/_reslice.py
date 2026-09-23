@@ -33,17 +33,30 @@ import argparse
 import typing_extensions as tx
 
 from brainhops.datamodel.images import Image
+from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec
 
 from ._errors import CliError
-from ._io import load_image, load_transform, save_image
+from ._io import (
+    load_image,
+    load_transform,
+    save_image,
+)
 
-# Operators that a transform value may carry after a `|`, and that are
-# applied to the loaded transform in written order. `inv` inverts the
-# transform. The rest are recognised so they parse and report cleanly,
-# but are not implemented yet (tracked in issue #47).
-_IMPLEMENTED_OPS = frozenset({"inv"})
-_UNIMPLEMENTED_OPS = frozenset({"sqrt", "square", "exp", "log"})
-_RECOGNIZED_OPS = _IMPLEMENTED_OPS | _UNIMPLEMENTED_OPS
+
+class _UnimplementedOperation(OperationSpec, frozen=True):
+    """A reserved transformation operation tracked in issue #47."""
+
+    def apply(self, value: tx.Any) -> tx.NoReturn:  # noqa: ARG002
+        raise CliError(
+            f"Transform operator '{self.name}' is not implemented yet; "
+            "tracked in issue #47."
+        )
+
+
+for _operation_name in ("sqrt", "square", "exp", "log"):
+    TransformationSpec.register_operation(_operation_name)(
+        _UnimplementedOperation
+    )
 
 
 def add_parser(
@@ -66,16 +79,23 @@ def add_parser(
     )
     parser.add_argument(
         "input",
-        help="Path to the image to resample.",
+        metavar="SOURCE",
+        help=(
+            "Image to resample, as a source specification: a path followed "
+            "by optional pipe-separated format hints and named options. "
+            "For example, 'input.dat|nifti'. Quote values containing '|' "
+            "when invoking the command from a shell."
+        ),
     )
     parser.add_argument(
         "-r",
         "--reference",
         required=True,
-        metavar="IMAGE",
+        metavar="SOURCE",
         help=(
             "Reference image whose geometry defines the output grid and "
-            "its placement in world space."
+            "its placement in world space, using the same source-"
+            "specification syntax as the input image."
         ),
     )
     parser.add_argument(
@@ -88,11 +108,15 @@ def add_parser(
         help=(
             "A forward (push) transformation to apply to the input image. "
             "Repeat the option to apply several, in the order given. The "
-            "value is a path, optionally followed by pipe-separated "
-            "operators applied in written order, for example "
-            "'warp.nii.gz|inv'. The '|inv' operator inverts the "
+            "value is a source specification: a path followed by optional "
+            "pipe-separated format hints, named options, and operators. "
+            "For example, 'affine.mat|flirt|reference:[ref.nii.gz]|inv'. "
+            "Bracketed option values are nested source specifications, so "
+            "they may carry their own hints and options. The '|inv' "
+            "operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
-            "'|' usually needs shell quoting. The operators 'sqrt', "
+            "'|' usually needs shell quoting; encode a literal pipe in a "
+            "path as '%%7C'. The operators 'sqrt', "
             "'square', 'exp' and 'log' are recognised but not implemented "
             "yet (tracked in issue #47)."
         ),
@@ -120,40 +144,22 @@ def add_parser(
     return parser
 
 
-def _split_operators(spec: str) -> tx.Tuple[str, tx.List[str]]:
-    """Split a transform value into its source and its operator chain.
-
-    Operators are recognised by peeling matching tokens off the *right*
-    end of the value. The value is split on `|`, and each trailing
-    segment that names a recognised operator is taken as an operator, in
-    written order. Peeling stops at the first segment that is not a
-    recognised operator, and the remaining leading segments are rejoined
-    with `|` as the source.
-
-    Peeling from the right, and only for known operators, keeps a source
-    that itself contains `|` -- a path or a cloud URI -- from being
-    misread. At least one segment is always kept as the source, so a file
-    literally named after an operator is never mistaken for one.
-    """
-    segments = spec.split("|")
-    operators: tx.List[str] = []
-    while len(segments) > 1 and segments[-1] in _RECOGNIZED_OPS:
-        operators.insert(0, segments.pop())
-    return "|".join(segments), operators
+def _split_transform_spec(spec: str) -> TransformationSpec:
+    """Parse a transform source, including nested options and operations."""
+    try:
+        return TransformationSpec.from_arg(spec)
+    except ValueError as exc:
+        raise CliError(
+            f"Invalid transformation source {spec!r}: {exc}"
+        ) from exc
 
 
-def _apply_operator(transform: Image, operator: str) -> Image:
-    """Apply one operator to a loaded transform.
-
-    `inv` returns the inverse of the transform. A recognised but
-    unimplemented operator raises a `CliError` pointing at issue #47.
-    """
-    if operator == "inv":
-        return transform.inverse()
-    raise CliError(
-        f"Transform operator '{operator}' is not implemented yet; "
-        f"tracked in issue #47."
-    )
+def _split_image_spec(spec: str) -> ImageSpec:
+    """Parse an image source, including hints and nested options."""
+    try:
+        return ImageSpec.from_arg(spec)
+    except ValueError as exc:
+        raise CliError(f"Invalid image source {spec!r}: {exc}") from exc
 
 
 def _load_push_transform(spec: str) -> Image:
@@ -164,16 +170,14 @@ def _load_push_transform(spec: str) -> Image:
     composition over the loaded transform, so `warp|a|b` is `b(a(load))`.
     The returned transform is a forward (push) map, ready to compose.
     """
-    source, operators = _split_operators(spec)
+    source = _split_transform_spec(spec)
     transform = load_transform(source)
-    for operator in operators:
-        transform = _apply_operator(transform, operator)
-    return transform
+    return source.apply_operations(transform)
 
 
 def reslice_image(
-    input_path: str,
-    reference_path: str,
+    input_path: tx.Union[str, ImageSpec],
+    reference_path: tx.Union[str, ImageSpec],
     transform_paths: list,
     order: int = 1,
     bound: str = "reflect",
@@ -206,11 +210,21 @@ def reslice_image(
     own. The command wraps it with the step that writes the result to
     disk.
     """
-    image = load_image(input_path)
+    input_spec = (
+        input_path
+        if isinstance(input_path, ImageSpec)
+        else _split_image_spec(input_path)
+    )
+    image = load_image(input_spec)
     for spec in transform_paths:
         transform = _load_push_transform(spec)
         image = image(transform)
-    reference = load_image(reference_path)
+    reference_spec = (
+        reference_path
+        if isinstance(reference_path, ImageSpec)
+        else _split_image_spec(reference_path)
+    )
+    reference = load_image(reference_spec)
     return image.reslice(reference, order=order, bound=bound)
 
 

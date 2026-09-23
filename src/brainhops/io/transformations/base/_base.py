@@ -8,9 +8,13 @@ from brainhops.io.base._base import (
     format_registry,
 )
 
+from ._formats import TransformationFormat
+
 
 @format_registry
-class FileBasedTransformation(Transformation, FileBasedObject):
+class FileBasedTransformation(
+    TransformationFormat, Transformation, FileBasedObject
+):
     """
     A transformation that is stored in a file.
 

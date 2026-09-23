@@ -1,6 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Alias
 
 # externals
 # core
@@ -18,6 +19,7 @@ from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
+from .._formats import FSLTransformationFormat
 from .._repr import stored_repr
 
 # FNIRT NIfTI intent codes. These constants are defined in `nifti1.h`.
@@ -59,7 +61,9 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 
 @register_format
-class FNIRTWarpField(NiftiBasedTransformation, _xforms.Sequence):
+class FNIRTWarpField(
+    FSLTransformationFormat, NiftiBasedTransformation, _xforms.Sequence
+):
     """A FNIRT non-linear transformation stored in a NIfTI file.
 
     FNIRT writes its non-linear registration as one of two things, which a
@@ -90,11 +94,17 @@ class FNIRTWarpField(NiftiBasedTransformation, _xforms.Sequence):
     recognized but not supported.
     """
 
-    moving: tx.Optional[_ImageLike] = None
+    HINTS = ("fnirt",)
+
+    moving: tx.Annotated[
+        tx.Optional[_ImageLike], Alias(("moving", "mov", "src"))
+    ] = None
     """The moving (source) image, a nibabel image or header, or a
     brainhops image."""
 
-    reference: tx.Optional[_ImageLike] = None
+    reference: tx.Annotated[
+        tx.Optional[_ImageLike], Alias(("reference", "ref"))
+    ] = None
     """The reference image. For a deformation field this defaults to the
     warp file's own geometry."""
 

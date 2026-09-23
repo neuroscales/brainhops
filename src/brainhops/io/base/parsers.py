@@ -10,6 +10,7 @@ import typing_extensions as tx
 # core
 from brainhops._core import path, peek
 from brainhops._core.streams import preserve_position
+from brainhops.io.base.specs import SourceSpec
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -566,6 +567,16 @@ class FileParser(FileSniffer):
 
         # Cannot parse this content -> return False or error
         raise ParserTypeError(f"Cannot parse file of type {type(other)}")
+
+    @classmethod
+    def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
+        """Build an object from an unqualified structured source."""
+        if spec.hints or spec.options:
+            raise TypeError(
+                "Structured hints and options require a format dispatcher, "
+                "not a concrete parser."
+            )
+        return cls.load(spec.path, **kwargs)
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:

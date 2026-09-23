@@ -23,6 +23,7 @@ from brainhops.io.base.parsers import (
     TextFileParser,
     TextFileParserWriter,
 )
+from brainhops.io.base.specs import SourceSpec
 
 _T = tx.TypeVar("_T")
 
@@ -301,9 +302,26 @@ class FileBasedObject(FileParser):
         build an instance of it from `other`. On a concrete format,
         build an instance of this class from `other`, in any supported
         form."""
+        if isinstance(other, SourceSpec):
+            return cls.from_spec(other, **kwargs)
         if not cls._is_dispatcher():
             return super().load(other, **kwargs)
         return parse(Source(other), cls._REGISTRY, "load", "sniff", **kwargs)
+
+    @classmethod
+    def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
+        """Load a structured source specification through this dispatcher."""
+        if not cls._is_dispatcher():
+            return super().from_spec(spec, **kwargs)
+        return parse(
+            Source(spec.path),
+            cls._REGISTRY,
+            "load",
+            "sniff",
+            hints=spec.hints,
+            options=spec.options,
+            **kwargs,
+        )
 
     @classmethod
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:

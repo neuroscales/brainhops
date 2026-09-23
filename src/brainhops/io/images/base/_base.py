@@ -10,8 +10,10 @@ from brainhops.io.base._base import (
     WritableFileBasedObject,
     format_registry,
 )
+from brainhops.io.base.specs import register_parser
 
 
+@register_parser(Image)
 @format_registry
 class FileBasedImage(Image, FileBasedObject):
     """

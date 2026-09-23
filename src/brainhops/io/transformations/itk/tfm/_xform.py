@@ -21,6 +21,7 @@ class TFMTransform(
     """A transformation stored in an ITK text (`.tfm`) file."""
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".tfm",)
+    HINTS = ("tfm",)
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:

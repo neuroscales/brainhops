@@ -22,6 +22,8 @@ class ITKTransform(_xforms.Sequence, FileBasedTransformation):
     and register themselves.
     """
 
+    HINTS = ("itk",)
+
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The chain of transformations, decoded from `transform_group`."""

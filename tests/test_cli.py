@@ -5,13 +5,19 @@ import pytest
 
 from brainhops.cli import main
 from brainhops.cli._errors import CliError, WritingUnavailable
-from brainhops.cli._io import _writable_image_formats
+from brainhops.cli._io import (
+    _writable_image_formats,
+    load_image,
+    load_transform,
+)
 from brainhops.cli._reslice import (
     _load_push_transform,
-    _split_operators,
+    _split_image_spec,
+    _split_transform_spec,
     reslice_image,
 )
 from brainhops.datamodel.images import Image
+from brainhops.io.base import ImageSpec, TransformationSpec
 
 nb = pytest.importorskip("nibabel")
 
@@ -52,6 +58,38 @@ def test_reslice_image_resamples_onto_reference_grid(
     assert resliced.shape == (3, 3, 3)
 
 
+def test_reslice_image_accepts_specs_for_input_and_reference(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    source = _write_nifti(tmp_path / "input.nii", shape=(4, 5, 6))
+    reference = _write_nifti(tmp_path / "reference.nii", shape=(3, 3, 3))
+
+    resliced = reslice_image(f"{source}|nifti", f"{reference}|nifti", [])
+
+    assert resliced.shape == (3, 3, 3)
+
+
+def test_split_image_spec_extracts_format_hint_and_options() -> None:
+    spec = _split_image_spec("image.dat|nifti|mmap:false")
+
+    assert spec == ImageSpec(
+        path="image.dat", hints=("nifti",), options={"mmap": "false"}
+    )
+
+
+def test_load_image_parses_a_string_source_spec(tmp_path) -> None:  # noqa: ANN001
+    source = _write_nifti(tmp_path / "input.nii")
+
+    image = load_image(f"{source}|nifti")
+
+    assert isinstance(image, Image)
+
+
+def test_unknown_image_format_hint_reports_available_hints() -> None:
+    with pytest.raises(CliError, match="Available hints"):
+        load_image(ImageSpec(path="image.dat", hints=("not-a-format",)))
+
+
 def test_reslice_command_reports_when_writing_is_unavailable(
     tmp_path,  # noqa: ANN001
 ) -> None:
@@ -88,27 +126,27 @@ class _FakeTransform:
         return _FakeTransform(inverted=not self.inverted)
 
 
-def test_split_operators_peels_known_ops_from_the_right() -> None:
-    assert _split_operators("warp.nii.gz") == ("warp.nii.gz", [])
-    assert _split_operators("warp.nii.gz|inv") == ("warp.nii.gz", ["inv"])
-    # Operators are kept in written order.
-    assert _split_operators("warp|inv|inv") == ("warp", ["inv", "inv"])
+def test_split_transform_spec_extracts_format_hint_and_operators() -> None:
+    spec = _split_transform_spec("affine.mat|flirt|inv")
+    assert str(spec.path) == "affine.mat"
+    assert spec.hints == ("flirt",)
+    assert [operation.name for operation in spec.operations] == ["inv"]
+
+    spec = _split_transform_spec("affine.mat|inv|hint:flirt,fnirt|inv")
+    assert str(spec.path) == "affine.mat"
+    assert spec.hints == ("flirt", "fnirt")
+    assert [operation.name for operation in spec.operations] == ["inv", "inv"]
 
 
-def test_split_operators_keeps_a_pipe_inside_a_source_path() -> None:
-    # A source that itself contains '|' (a cloud URI, say) is not split:
-    # only trailing tokens that name a known operator are peeled off.
-    assert _split_operators("s3://bucket/a|b/warp.nii.gz") == (
-        "s3://bucket/a|b/warp.nii.gz",
-        [],
-    )
-    assert _split_operators("s3://bucket/a|b/warp.nii.gz|inv") == (
-        "s3://bucket/a|b/warp.nii.gz",
-        ["inv"],
-    )
-    # A single segment that happens to match an operator name stays the
-    # source: at least one segment is always kept.
-    assert _split_operators("inv") == ("inv", [])
+def test_split_transform_spec_decodes_a_literal_pipe_in_source() -> None:
+    spec = _split_transform_spec("s3://bucket/a%7Cb/file.mat|flirt")
+    assert str(spec.path) == "s3://bucket/a|b/file.mat"
+    assert spec.hints == ("flirt",)
+
+
+def test_split_transform_spec_refuses_duplicate_options() -> None:
+    with pytest.raises(CliError, match="Duplicate source option"):
+        _split_transform_spec("affine.mat|moving:a.nii|moving:b.nii")
 
 
 def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa: ANN001
@@ -122,7 +160,7 @@ def test_plain_transform_value_is_applied_forward(monkeypatch) -> None:  # noqa:
 
     transform = _load_push_transform("warp.nii.gz")
 
-    assert seen["path"] == "warp.nii.gz"
+    assert seen["path"] == TransformationSpec(path="warp.nii.gz")
     assert transform.inverted is False
 
 
@@ -138,9 +176,85 @@ def test_inv_operator_inverts_the_loaded_transform(monkeypatch) -> None:  # noqa
     transform = _load_push_transform("warp.nii.gz|inv")
 
     # The operator is stripped before the path reaches the loader.
-    assert seen["path"] == "warp.nii.gz"
+    assert str(seen["path"].path) == "warp.nii.gz"
+    assert [operation.name for operation in seen["path"].operations] == ["inv"]
     # The loaded transform is inverted before it is composed.
     assert transform.inverted is True
+
+
+def test_format_hint_is_passed_to_the_transform_loader(monkeypatch) -> None:  # noqa: ANN001
+    seen = {}
+
+    def fake_load(path):  # noqa: ANN001, ANN202
+        seen["path"] = path
+        return _FakeTransform()
+
+    monkeypatch.setattr("brainhops.cli._reslice.load_transform", fake_load)
+    transform = _load_push_transform("affine.mat|flirt|inv")
+
+    assert str(seen["path"].path) == "affine.mat"
+    assert seen["path"].hints == ("flirt",)
+    assert [operation.name for operation in seen["path"].operations] == ["inv"]
+    assert transform.inverted is True
+
+
+def test_format_hint_selects_reader_without_a_matching_extension(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = tmp_path / "affine.unknown"
+    path.write_text(
+        "1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    transform = load_transform(str(path), hint="flirt")
+
+    assert type(transform).__name__ == "FLIRTTransform"
+    np.testing.assert_array_equal(transform.flirt_matrix, np.eye(4))
+
+
+def test_io_dispatch_accepts_singular_and_union_hints(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    from brainhops import io
+
+    path = tmp_path / "affine.unknown"
+    path.write_text(
+        "1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    singular = io.transformations.load(str(path), hint="flirt")
+    union = io.transformations.load(str(path), hint=("flirt", "fnirt"))
+
+    assert type(singular).__name__ == "FLIRTTransform"
+    assert type(union).__name__ == "FLIRTTransform"
+
+
+def test_flirt_options_load_nested_images_without_a_top_level_hint(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    matrix = tmp_path / "affine.mat"
+    matrix.write_text(
+        "1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n",
+        encoding="utf-8",
+    )
+    reference = _write_nifti(tmp_path / "reference.nii.gz")
+    moving = _write_nifti(tmp_path / "moving.nii.gz")
+
+    transform = _load_push_transform(
+        f"{matrix}|ref:[{reference}|nifti]|mov:[{moving}]"
+    )
+
+    assert type(transform).__name__ == "FLIRTTransform"
+    assert type(transform.reference).__name__ == "NiftiImage"
+    assert type(transform.moving).__name__ == "NiftiImage"
+    assert transform.matrix.shape == (3, 4)
+
+
+def test_unknown_format_hint_reports_available_hints() -> None:
+    with pytest.raises(CliError, match="Available hints"):
+        load_transform("affine.mat", hint="not-a-format")
 
 
 def test_unimplemented_operator_points_at_the_issue(monkeypatch) -> None:  # noqa: ANN001
