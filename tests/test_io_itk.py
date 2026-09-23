@@ -2,10 +2,13 @@
 from pathlib import Path
 
 # dependencies
+import numpy as np
 import pytest
 
 # internals
 from brainhops import io
+from brainhops.datamodel import transformations as xforms
+from brainhops.io.transformations import itk
 
 data_dir = Path(__file__).parent / "data"
 
@@ -71,8 +74,96 @@ def test_tfm_header_only_is_read_as_empty(tmp_path) -> None:  # noqa: ANN001
     header_only.write_text("# Insight Transform File V1.0\n")
 
     assert TFMTransform.sniff_line("") == 0.0
-    assert list(TFMTransform.from_file(header_only).transform_group) == []
+    assert list(TFMTransform.from_file(header_only).transformations) == []
     # The `.tfm` extension still routes it to the ITK reader, which reads
     # it as an empty transform.
     assert io.transformations.sniff(header_only) is TFMTransform
     assert type(io.transformations.load(header_only)) is TFMTransform
+
+
+# ----------------------------------------------------------------------
+#   BLOCKS AS TRANSFORMATIONS
+# ----------------------------------------------------------------------
+#
+# An ITK file is a chain of transform blocks, and each block is itself a
+# brainhops transformation: a structured `Sequence` whose children are
+# named, lazily evaluated slots. Nothing is converted after parsing.
+
+
+@pytest.mark.parametrize("filename", FILES_TFM + FILES_H5)
+def test_blocks_are_transformations(filename: str) -> None:
+    transform = io.transformations.load(filename)
+    assert isinstance(transform, xforms.Sequence)
+    for block in transform.transformations:
+        assert isinstance(block, itk.ITKStruct)
+        assert isinstance(block, xforms.Sequence)
+        # A block is a non-empty chain, and every child is a
+        # transformation in its own right.
+        assert len(block) >= 1
+        assert all(isinstance(t, xforms.Transformation) for t in block)
+
+
+def test_affine_block_exposes_named_cached_slots() -> None:
+    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    assert isinstance(block, itk.ITKAffineBase)
+
+    assert np.allclose(block.center, block.fixed_parameters)
+    assert isinstance(block.linear, xforms.Linear)
+    assert isinstance(block.translation, xforms.Translation)
+    assert list(block) == [
+        block.recenter,
+        block.linear,
+        block.uncenter,
+        block.translation,
+    ]
+
+    # Each slot is computed once and cached.
+    assert block.linear is block.linear
+    assert block.transformations is block.transformations
+
+    # Assigning a chain overrides the derived one; clearing it restores
+    # the derived one.
+    block.transformations = [xforms.Identity()]
+    assert len(block) == 1
+    block.transformations = None
+    assert len(block) == 4
+
+
+def test_versor_rigid_3d_applies_its_translation() -> None:
+    """The rotation acts about the center, then the translation applies."""
+    block = itk.ITKStruct(
+        type=itk.ITKTransformClass.VersorRigid3DTransform,
+        precision="double",
+        ndim_input=3,
+        ndim_output=3,
+        parameters=(0.0, 0.0, 0.0, 1.0, 2.0, 3.0),
+        fixed_parameters=(4.0, 5.0, 6.0),
+    )
+    matrix = block.compute().to(xforms.Affine, lossy=True).matrix
+    assert np.allclose(np.asarray(matrix)[:, :3], np.eye(3))
+    assert np.allclose(np.asarray(matrix)[:, 3], [1.0, 2.0, 3.0])
+
+
+def test_displacement_blocks_are_lps_to_lps_chains() -> None:
+    pytest.importorskip("h5py")
+    for name, order, coeff in [
+        ("itk_displacement3d.h5", 1, False),
+        ("itk_bspline3d.h5", 3, True),
+    ]:
+        block = io.transformations.load(data_dir / name)[-1]
+        assert isinstance(block, itk.ITKDisplacementBase)
+        assert list(block) == [
+            block.lps2voxel,
+            block.displacement,
+            block.voxel2lps,
+        ]
+        assert block.order == order
+        assert block.coeff == coeff
+        assert block.displacement.field is block.field
+        assert block.field.shape[-1] == 3
+
+
+def test_transform_group_is_gone() -> None:
+    """Blocks live in `transformations`, so there is no second list."""
+    transform = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")
+    assert not hasattr(transform, "transform_group")

@@ -76,11 +76,15 @@ class H5TransformParser(
     repr=HIDE_IF_NONE,
 ):
     """Parses an ITK binary (`.h5`) transform file into a chain of
-    transform blocks."""
+    transform blocks.
+
+    Each block is itself a brainhops transformation, so the parsed blocks
+    are stored straight into the `transformations` of the sequence that
+    this parser is mixed into.
+    """
 
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
-    transform_group: tx.List[ITKStruct] = Factory(list)
 
     # --- sniff --------------------------------------------------------
 
@@ -332,7 +336,7 @@ class H5TransformParser(
                 )
             )
 
-        obj.transform_group = blocks
+        obj.transformations = blocks
 
         if not keep_open:
             h5file.close()

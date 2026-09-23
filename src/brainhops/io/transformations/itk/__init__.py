@@ -1,8 +1,24 @@
 """Readers and writers for ITK transformation formats."""
 
-__all__ = ["tfm"]
+__all__ = [
+    "ITKAffineBase",
+    "ITKDisplacementBase",
+    "ITKPrecision",
+    "ITKStruct",
+    "ITKTransform",
+    "ITKTransformClass",
+    "tfm",
+]
 
 from . import tfm
+from ._common import (
+    ITKAffineBase,
+    ITKDisplacementBase,
+    ITKPrecision,
+    ITKStruct,
+    ITKTransformClass,
+)
+from ._xform import ITKTransform
 
 # The h5 reader needs h5py, which is optional. It is imported only when
 # h5py is available, mirroring how the transformations package imports
