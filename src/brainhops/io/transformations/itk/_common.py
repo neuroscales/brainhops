@@ -540,13 +540,44 @@ class ITKEuler3DStruct(ITKAffineBase):
     parameters: tx.Tuple[float, float, float, float, float, float]
     """Rotation angles (rx, ry, rz), followed by translation parameters."""
 
-    fixed_parameters: tx.Tuple[float, float, float]
-    """Center of rotation."""
+    fixed_parameters: tx.Union[
+        tx.Tuple[float, float, float],
+        tx.Tuple[float, float, float, float],
+    ]
+    """Center of rotation, and -- since ITK 5 -- the `ComputeZYX` flag.
+
+    Older files write the three coordinates of the center alone. ITK 5
+    appends a fourth entry carrying the transform's `ComputeZYX` flag, so
+    both lengths are accepted and a file from either era opens.
+    """
+
+    @smartproperty(cache=True)
+    def center(self) -> tx.Optional[ArrayProtocol]:
+        """The center of rotation.
+
+        Only the first three fixed parameters are coordinates; a fourth,
+        when present, is the `ComputeZYX` flag and would otherwise be
+        read as a fourth axis of the center.
+        """
+        return _nonempty(self.fixed_parameters[:3])
+
+    @lazyproperty
+    def compute_zyx(self) -> bool:
+        """Whether the angles compose as ZYX rather than ITK's ZXY.
+
+        ITK stores the flag as the fourth fixed parameter. A file that
+        does not write one was written before the flag existed, when the
+        order was unconditionally ZXY.
+        """
+        fixed = self.fixed_parameters
+        return len(fixed) > 3 and bool(fixed[3])
 
     @smartproperty(cache=True)
     def linear(self) -> _xforms.Rotation:
         """The rotation, parameterized by its Euler angles."""
-        return _xforms.Rotation(_euler_to_matrix(self.parameters[:3]))
+        return _xforms.Rotation(
+            _euler_to_matrix(self.parameters[:3], self.compute_zyx)
+        )
 
     @smartproperty(cache=True)
     def translation(self) -> _xforms.Translation:
@@ -1013,11 +1044,21 @@ def _versor_to_matrix(q: tx.Sequence[float]) -> np.ndarray:
     )
 
 
-def _euler_to_matrix(angles: tx.Sequence[float]) -> np.ndarray:
-    """Convert Euler angles to a rotation matrix."""
+def _euler_to_matrix(
+    angles: tx.Sequence[float], compute_zyx: bool = False
+) -> np.ndarray:
+    """Convert ITK Euler angles to a rotation matrix.
+
+    ITK composes the three axis rotations in one of two orders, and the
+    angles alone do not say which: it is `Rz @ Rx @ Ry` when the
+    transform's `ComputeZYX` flag is clear -- which is ITK's default --
+    and `Rz @ Ry @ Rx` when it is set. The caller therefore states the
+    convention rather than relying on a default, because reading a file
+    with the wrong one gives a valid rotation that is the wrong one.
+    """
     cx, cy, cz = np.cos(angles)
     sx, sy, sz = np.sin(angles)
     Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]], dtype=np.float64)
     Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float64)
     Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float64)
-    return Rz @ Ry @ Rx
+    return Rz @ Ry @ Rx if compute_zyx else Rz @ Rx @ Ry
