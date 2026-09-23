@@ -16,34 +16,8 @@ from dataclasses import dataclass
 import typing_extensions as tx
 from bagof.core.magic import get_from_registry
 from bagof.magic import ConvertTo, Factory, Magic
-from bagof.paths import NoDriverError
 
 from brainhops._core.path import Path
-
-
-class _DeferredURI:
-    """A lexical URI used when no path driver for its scheme is installed."""
-
-    def __init__(self, value: str) -> None:
-        self.value = value
-        self.name = value.rstrip("/").rsplit("/", 1)[-1]
-        self.protocol = value.split(":", 1)[0].lower()
-
-    def __fspath__(self) -> str:
-        return self.value
-
-    def __str__(self) -> str:
-        return self.value
-
-
-def _source_path(value: tx.Any) -> Path:
-    """Build a path, retaining an unsupported URI lexically for dispatch."""
-    try:
-        return Path(value)
-    except NoDriverError:
-        if not isinstance(value, str) or "://" not in value:
-            raise
-        return Path(_DeferredURI(value))
 
 
 @dataclass(frozen=True)
@@ -60,7 +34,7 @@ class Parser:
 class SourceSpec(Magic, frozen=True):
     """A source path plus format hints and typed named options."""
 
-    path: ConvertTo[Path, _source_path]
+    path: ConvertTo[Path]
     hints: tx.Tuple[str, ...] = ()
     options: Factory[tx.Dict[str, tx.Union[str, "SourceSpec"]]]
 
