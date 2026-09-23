@@ -312,6 +312,23 @@ class ITKDisplacementBase(ITKBlockBase):
     )
     """The boundary condition used outside of the field of view."""
 
+    interleaved: tx.ClassVar[bool] = True
+    """Whether the parameters store one whole vector per grid point.
+
+    ITK flattens the two kinds of warp differently, because in ITK they
+    are two different things.
+
+    A dense field's parameters *are* the buffer of an image of vectors:
+    one `Vector<T, D>` per voxel, so the `D` components of a voxel sit
+    next to each other and the component index varies fastest
+    (`interleaved`). A B-spline's parameters are `D` separate scalar
+    coefficient images written back to back, so a whole component spans
+    a contiguous plane and the component index varies slowest (planar).
+
+    Reading one layout as the other silently transposes the warp rather
+    than failing, so each subclass states which it is.
+    """
+
     # --- decoding -----------------------------------------------------
 
     @lazyproperty
@@ -323,9 +340,10 @@ class ITKDisplacementBase(ITKBlockBase):
     def field(self) -> ArrayProtocol:
         """The warp values on their own grid, in voxel units.
 
-        ITK stores them as a flat, C-ordered `(D, Nz, Ny, Nx)` block of
-        world-space displacements. They are reordered to `(Nx, Ny, Nz, D)`
-        and rotated into voxel units, because a
+        ITK stores them as a flat, C-ordered block of world-space
+        displacements, laid out either interleaved or planar -- see
+        `interleaved`. Either way they are reordered to
+        `(Nx, Ny, Nz, D)` and rotated into voxel units, because a
         [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField]
         adds its values in the units of its own grid.
         """  # noqa: E501
@@ -338,9 +356,19 @@ class ITKDisplacementBase(ITKBlockBase):
         if not hasattr(parameters, "reshape"):
             parameters = get_array_backend(parameters).asarray(parameters)
 
-        # Reorder from (D, Nz, Ny, Nx) to (Nx, Ny, Nz, D)
-        disp = parameters.reshape(ndim, *reversed(shape))
-        disp = disp.transpose(*range(ndim, 0, -1), 0)
+        # Reorder to (Nx, Ny, Nz, D). `shape` is (Nx, Ny, Nz) while the
+        # buffer is C-ordered with x varying fastest, so the spatial axes
+        # come out reversed either way and are flipped back; only where
+        # the component axis sits differs between the two layouts.
+        spatial = range(ndim - 1, -1, -1)
+        if self.interleaved:
+            # (Nz, Ny, Nx, D) -> (Nx, Ny, Nz, D)
+            disp = parameters.reshape(*reversed(shape), ndim)
+            disp = disp.transpose(*spatial, ndim)
+        else:
+            # (D, Nz, Ny, Nx) -> (Nx, Ny, Nz, D)
+            disp = parameters.reshape(ndim, *reversed(shape))
+            disp = disp.transpose(*(axis + 1 for axis in spatial), 0)
 
         # Multiply by the world-to-voxel affine to convert from world
         # displacements to voxel displacements. Only the linear part
@@ -806,12 +834,15 @@ class ITKDisplacementFieldStruct(ITKDisplacementBase):
 
     The parameters hold one world-space displacement per voxel of the
     grid that the fixed parameters describe, so the field is sampled,
-    not spline-encoded, and is interpolated linearly.
+    not spline-encoded, and is interpolated linearly. They are the raw
+    buffer of that image of vectors, so the components are interleaved.
     """
 
     type: tx.Literal[_ITKT.DisplacementFieldTransform] = (
         _ITKT.DisplacementFieldTransform
     )
+
+    interleaved: tx.ClassVar[bool] = True
 
 
 @_register_type("BSplineTransform")
@@ -822,6 +853,8 @@ class ITKBSplineStruct(ITKDisplacementBase):
     The parameters hold cubic B-spline coefficients on the control-point
     grid that the fixed parameters describe, so the field is evaluated
     -- not interpolated -- and coefficients outside the grid are zero.
+    They are one scalar coefficient image per axis, written back to
+    back, so the components are planar rather than interleaved.
     """
 
     type: tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
@@ -831,6 +864,7 @@ class ITKBSplineStruct(ITKDisplacementBase):
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
     )
+    interleaved: tx.ClassVar[bool] = False
 
 
 # ----------------------------------------------------------------------
