@@ -170,24 +170,70 @@ def _decode_pipe(value: str) -> str:
 
 
 def _split_top_level(text: str) -> tx.List[str]:
-    """Split on pipes outside square brackets, validating nesting."""
+    """Split on pipes outside bracketed option values.
+
+    A bracket is structural only when ``[`` immediately follows an option
+    tag in a modifier segment. Its matching ``]`` must end that source value:
+    it is followed by a pipe, the end of an enclosing source, or the end of
+    the argument. Other brackets are ordinary path characters.
+    """
     parts: tx.List[str] = []
     start = 0
     depth = 0
+    segment_starts = [0]
+    segment_numbers = [0]
+    literal_brackets = [0]
     for index, char in enumerate(text):
         if char == "[":
-            depth += 1
+            if _starts_nested_source(
+                text,
+                segment_starts[depth],
+                index,
+                segment_numbers[depth],
+            ):
+                depth += 1
+                segment_starts.append(index + 1)
+                segment_numbers.append(0)
+                literal_brackets.append(0)
+            else:
+                literal_brackets[depth] += 1
         elif char == "]":
-            depth -= 1
-            if depth < 0:
-                raise ValueError("Unmatched closing bracket in source spec.")
-        elif char == "|" and depth == 0:
-            parts.append(text[start:index])
-            start = index + 1
+            if literal_brackets[depth]:
+                literal_brackets[depth] -= 1
+            elif depth and _ends_nested_source(text, index):
+                depth -= 1
+                segment_starts.pop()
+                segment_numbers.pop()
+                literal_brackets.pop()
+        elif char == "|":
+            if depth == 0:
+                parts.append(text[start:index])
+                start = index + 1
+            segment_starts[depth] = index + 1
+            segment_numbers[depth] += 1
+            literal_brackets[depth] = 0
     if depth:
         raise ValueError("Unclosed bracket in source specification.")
     parts.append(text[start:])
     return parts
+
+
+def _starts_nested_source(
+    text: str, segment_start: int, bracket: int, segment_number: int
+) -> bool:
+    """Whether ``text[bracket]`` opens a bracketed option value."""
+    if segment_number == 0:
+        return False
+    tag = text[segment_start:bracket]
+    if tag.count(":") != 1 or not tag.endswith(":"):
+        return False
+    key = tag[:-1].strip()
+    return bool(key) and key != "hint"
+
+
+def _ends_nested_source(text: str, bracket: int) -> bool:
+    """Whether a closing bracket is at a nested-source boundary."""
+    return bracket + 1 == len(text) or text[bracket + 1] in "|]"
 
 
 _PARSERS: tx.Dict[tx.Hashable, tx.Any] = {}

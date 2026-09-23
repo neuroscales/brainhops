@@ -85,17 +85,56 @@ def test_nested_sources_may_be_nested_recursively() -> None:
 
 
 @pytest.mark.parametrize(
-    "text, message",
+    "text",
     [
-        ("outer|child:[inner", "Unclosed bracket"),
-        ("outer|child:inner]", "Unmatched closing bracket"),
+        "outer|child:[inner",
+        "outer|child:[inner].nii",
     ],
 )
-def test_unbalanced_nested_source_brackets_are_rejected(
-    text: str, message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
+def test_unclosed_nested_source_brackets_are_rejected(text: str) -> None:
+    with pytest.raises(ValueError, match="Unclosed bracket"):
         SourceSpec.from_arg(text)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "image[echo].nii",
+        "s3://bucket/[session]/image.nii",
+        "image].nii",
+    ],
+)
+def test_brackets_in_source_paths_are_literal(path: str) -> None:
+    spec = SourceSpec.from_arg(f"{path}|nifti")
+
+    assert str(spec.path) == path
+    assert spec.hints == ("nifti",)
+
+
+def test_brackets_in_nested_source_paths_are_literal() -> None:
+    spec = SourceSpec.from_arg(
+        "outer|child:[s3://bucket/[session]/image[echo].nii|nifti]"
+    )
+
+    child = spec.options["child"]
+    assert isinstance(child, SourceSpec)
+    assert str(child.path) == "s3://bucket/[session]/image[echo].nii"
+    assert child.hints == ("nifti",)
+
+
+def test_balanced_path_brackets_at_a_nested_boundary_are_literal() -> None:
+    spec = SourceSpec.from_arg("outer|child:[image[echo]|nifti]")
+
+    child = spec.options["child"]
+    assert isinstance(child, SourceSpec)
+    assert str(child.path) == "image[echo]"
+    assert child.hints == ("nifti",)
+
+
+def test_brackets_in_plain_option_values_are_literal() -> None:
+    spec = SourceSpec.from_arg("image.nii|label:run[1]")
+
+    assert spec.options == {"label": "run[1]"}
 
 
 def test_duplicate_options_are_rejected_before_construction() -> None:
