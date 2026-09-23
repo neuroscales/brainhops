@@ -19,45 +19,6 @@ if tx.TYPE_CHECKING:
 # same object would keep serving the stale inverse.
 INVERSE_CACHE = "_inverse_param_cache"
 
-# Each forward transformation type is paired with the `Inverse` subclass
-# that represents its inverse. `_lazy_inverse` looks the wrapper up here,
-# and the table is filled in once the wrapper classes are defined below.
-INVERSE_WRAPPERS: tx.Dict[tx.Type["Transformation"], tx.Type["Inverse"]] = {}
-
-
-def inverse_wrapper(cls: tx.Type["Transformation"]) -> tx.Type["Inverse"]:
-    """The `Inverse` subclass that represents the inverse of `cls`.
-
-    Only the base transformation types are registered in
-    `INVERSE_WRAPPERS`, so a subclass -- a format-specific affine such as
-    an `LPSToVoxel`, or any other refinement a reader declares -- has no
-    entry of its own and is served by the entry of its nearest registered
-    ancestor. The MRO is walked rather than the table scanned, so the
-    answer is the *most derived* registered base and does not depend on
-    the order the table happens to be filled in.
-
-    Parameters
-    ----------
-    cls : type
-        A forward transformation type.
-
-    Returns
-    -------
-    wrapper : type
-        The `Inverse` subclass that wraps `cls`.
-
-    Raises
-    ------
-    KeyError
-        If neither `cls` nor any of its bases is registered.
-    """
-    for base in cls.__mro__:
-        wrapper = INVERSE_WRAPPERS.get(base)
-        if wrapper is not None:
-            return wrapper
-    raise KeyError(cls)
-
-
 # The adaptor lives in `adaptors`, which imports this module. It
 # registers itself here at import time, so the sequence machinery can call
 # it without importing that module at load time and forming a cycle. The

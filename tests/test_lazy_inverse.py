@@ -671,10 +671,10 @@ def test_inverse_classes_are_public() -> None:
         assert isinstance(getattr(_xf, name), type), name
 
 
-def test_subclass_of_a_registered_type_has_an_inverse() -> None:
-    # The wrapper table only lists the base transformation types, so a
-    # subclass -- a format-specific affine, for instance -- is served by
-    # the entry of its nearest registered ancestor rather than raising.
+def test_subclass_inherits_the_inverse_of_its_base() -> None:
+    # Only the base transformation types are paired with a typed inverse,
+    # so a subclass -- a format-specific affine, for instance -- is served
+    # by the pairing it inherits rather than raising.
     class MyAffine(Affine):
         pass
 
@@ -689,10 +689,11 @@ def test_subclass_of_a_registered_type_has_an_inverse() -> None:
     )
 
 
-def test_inverse_wrapper_picks_the_most_derived_registered_base() -> None:
-    # `Rotation` is a `Linear` is an `Affine`, and all three are
-    # registered. A subclass of `Rotation` must get `InverseRotation`,
-    # not whichever of its registered ancestors comes first in the table.
+def test_inverse_comes_from_the_most_derived_paired_base() -> None:
+    # `Rotation` is a `Linear` is an `Affine`, and all three are paired
+    # with a typed inverse. A subclass of `Rotation` must get
+    # `InverseRotation`: attribute lookup finds the nearest base that
+    # carries a pairing, so the most derived one wins.
     class MyRotation(Rotation):
         pass
 
@@ -702,4 +703,43 @@ def test_inverse_wrapper_picks_the_most_derived_registered_base() -> None:
     assert isinstance(inv, InverseRotation)
     np.testing.assert_allclose(
         np.asarray(inv.compute().matrix), np.transpose(matrix), atol=1e-12
+    )
+
+
+def test_subclass_can_opt_out_of_the_inverse_of_its_base() -> None:
+    # A forward type whose inverse its base's typed inverse would get
+    # wrong drops the inherited pairing by setting it back to `None` in
+    # its own body, and says so rather than silently building the base's
+    # wrapper. The base keeps its own pairing.
+    class OpaqueAffine(Affine):
+        _inverse_type = None
+
+    t = OpaqueAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2])
+    with pytest.raises(TypeError, match="OpaqueAffine"):
+        t.inverse()
+    assert Affine._inverse_type is InverseAffine
+
+
+def test_refining_a_typed_inverse_leaves_its_forward_type_alone() -> None:
+    # A typed inverse claims a forward type only by declaring `_inverseof`
+    # in its own body. A refinement that does not redeclare it inherits
+    # the forward type it inverts but must not rewire `Affine` to itself,
+    # and redeclaring it is the way to pair a new forward type.
+    class MyInverseAffine(InverseAffine):
+        pass
+
+    assert MyInverseAffine._inverseof is Affine
+    assert Affine._inverse_type is InverseAffine
+
+    class NiftiAffine(Affine):
+        pass
+
+    class InverseNiftiAffine(InverseAffine):
+        _inverseof = NiftiAffine
+
+    assert NiftiAffine._inverse_type is InverseNiftiAffine
+    assert Affine._inverse_type is InverseAffine
+    assert isinstance(
+        NiftiAffine(matrix=np.diag([2.0, 4.0, 1.0])[:2]).inverse(),
+        InverseNiftiAffine,
     )

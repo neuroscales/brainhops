@@ -31,10 +31,25 @@ from . import registries
 from .base import Transformation
 from .meta import SubspaceTransformation
 from .modes import ModeLike, _ensure_proper_modes, _mode_admits
-from .registries import inverse_wrapper
+
+# typing
+if tx.TYPE_CHECKING:
+    from .inverse import Inverse
 
 
 class _LazyInverseMixin:
+    # The typed inverse that represents the inverse of this type. Each
+    # `Inverse` subclass names the forward type it inverts in its
+    # `_inverseof`, and hands that type this back-pointer as it is
+    # created, so the pairing is declared once and read back by plain
+    # attribute lookup. Inheritance then serves a refinement for free: a
+    # reader's `LPSToVoxel(Affine)` finds `InverseAffine` on `Affine`, and
+    # the most derived base wins, since a `MyRotation(Rotation)` finds
+    # `Rotation`'s `InverseRotation` before `Affine`'s. A forward type
+    # that has no typed inverse -- or that opts out of its base's by
+    # setting this back to `None` in its own body -- raises instead.
+    _inverse_type: tx.ClassVar[tx.Optional[tx.Type["Inverse"]]] = None
+
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         # The shared `inverse()` of every forward type that defers its
         # inversion to a type-transparent `Inverse` wrapper. A transformation
@@ -46,9 +61,10 @@ class _LazyInverseMixin:
         param = cls.parameter_names
         if getattr(self, param) is None:
             return cls(input=self.output, output=self.input)
-        obj = inverse_wrapper(cls)(
-            forward=self, input=self.output, output=self.input
-        )
+        wrapper = cls._inverse_type
+        if wrapper is None:
+            raise TypeError(f"{cls.__name__} has no typed inverse.")
+        obj = wrapper(forward=self, input=self.output, output=self.input)
         if compute:
             obj = obj.compute(**kwargs)
         return obj
