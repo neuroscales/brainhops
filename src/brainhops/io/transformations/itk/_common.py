@@ -926,9 +926,9 @@ def _inverse_chain(
 def _isotropic_scaling(scale: float, ndim: int) -> _xforms.Scaling:
     """An isotropic scaling, written out as one factor per axis.
 
-    ITK stores a similarity's scale as a single number. It is repeated
-    per axis rather than passed as a scalar, because a scalar `scale` is
-    a zero-dimensional array that the affine converters cannot size.
+    A scaling is parameterized by a vector, one factor per axis. ITK
+    stores the isotropic case as a single number, so the factor is
+    repeated to the transform's dimensionality on the way in.
     """
     return _xforms.Scaling(np.full(ndim, float(scale), dtype=np.float64))
 
