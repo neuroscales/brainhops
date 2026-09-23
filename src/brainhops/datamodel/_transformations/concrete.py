@@ -17,7 +17,6 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import fields
 
 # core
 from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
@@ -38,39 +37,6 @@ if tx.TYPE_CHECKING:
     from .inverse import Inverse
 
 
-def _pins_endpoints(cls: type) -> bool:
-    # Whether `cls` pins its endpoints to fixed coordinate systems
-    # instead of leaving them open. `Magic` clears the class body, so a
-    # class-level default is not visible in `cls.__dict__`; it survives
-    # on the built field, either as a per-instance factory (`build`) --
-    # which is how a mutable default such as a coordinate system is
-    # stored -- or as a plain non-`None` `default`. A class that leaves
-    # its endpoints open inherits `Transformation`'s `= None` default
-    # and builds nothing, so it reads as `False` here. The check is
-    # inherited along with the fields, so a subclass of a pinned class
-    # is pinned too.
-    for field in fields(cls):
-        if field.name in ("_input", "_output"):
-            if field.build or field.default is not None:
-                return True
-    return False
-
-
-def _unpinned_base(cls: type) -> type:
-    # The nearest ancestor of `cls` that does not pin its endpoints, or
-    # `cls` itself when `cls` does not pin them either. The walk stops
-    # short of `ConcreteTransformation`, which parameterizes nothing, so
-    # a class with no unpinned concrete ancestor is returned unchanged.
-    for base in cls.__mro__:
-        if base is ConcreteTransformation:
-            break
-        if not issubclass(base, ConcreteTransformation):
-            continue
-        if not _pins_endpoints(base):
-            return base
-    return cls
-
-
 class _LazyInverseMixin:
     # The typed inverse that represents the inverse of this type. Each
     # `Inverse` subclass names the forward type it inverts in its
@@ -84,6 +50,47 @@ class _LazyInverseMixin:
     # setting this back to `None` in its own body -- raises instead.
     _inverse_type: tx.ClassVar[tx.Optional[tx.Type["Inverse"]]] = None
 
+    # Some transformation types come in pairs that map the same two
+    # spaces in opposite directions -- `VoxelToLPS` and `LPSToVoxel` pin
+    # their endpoints, and each one's name states a direction. The
+    # inverse of such a type is not itself: it is the other half of the
+    # pair. The pairing is declared once, on either half, by naming the
+    # other in `_reverseof`; the hook below resolves it both ways into
+    # `_reverse_type`, which is what the inversion machinery reads.
+    #
+    # This is a different relation from `_inverse_type` above, and the
+    # two are not interchangeable. `_inverse_type` is the *lazy wrapper*
+    # that stands for an inversion not yet carried out, and it wears no
+    # direction of its own. `_reverse_type` is a concrete forward type
+    # that maps the opposite direction, so it is what an inversion
+    # resolves *to*. A type with no pair -- the overwhelming majority --
+    # leaves this `None` and inverts to itself, as it always has.
+    _reverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+    _reverse_type: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        # A type names its opposite half in `_reverseof`, and that single
+        # declaration pairs the two both ways: the declaring class is
+        # pointed at the type it names, and that type is pointed back.
+        # Declaring it on the second half of the pair to be defined is
+        # therefore enough, which is also the only place it can be
+        # declared -- the first half cannot name a class that does not
+        # exist yet.
+        super().__init_subclass__(**kwargs)
+        # Read from `cls.__dict__`, never `getattr`: only a class that
+        # declares `_reverseof` in its own body claims a pair. An
+        # inherited one would let a refinement such as
+        # `class MyLPSToVoxel(LPSToVoxel)` silently steal `VoxelToLPS`'s
+        # half of the pairing, and would also let the throwaway stand-in
+        # classes `Magic` builds while reading the MRO -- which reach
+        # this hook too -- do the same. A refinement instead inherits the
+        # pairing of its base, and reverses to that base's opposite half
+        # unless it declares a `_reverseof` of its own.
+        other = cls.__dict__.get("_reverseof")
+        if other is not None:
+            cls._reverse_type = other
+            other._reverse_type = cls
+
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         # The shared `inverse()` of every forward type that defers its
         # inversion to a type-transparent `Inverse` wrapper. A transformation
@@ -94,20 +101,12 @@ class _LazyInverseMixin:
         cls = type(self)
         param = cls.parameter_names
         if getattr(self, param) is None:
-            # STOPGAP. Swapping the endpoints of a class that pins them
-            # -- `VoxelToLPS` and friends declare `_input`/`_output` as
-            # class-level defaults -- produces the right endpoints under
-            # a type whose name states the opposite direction, which
-            # misleads anything that dispatches on the type. Until the
-            # inversion rework decides whether such a class may be
-            # endpoint-swapped at all (and, if so, how it names the
-            # result), the swap is carried by the nearest ancestor that
-            # pins nothing, so the type claims no direction it does not
-            # have. A class that pins nothing is its own such ancestor
-            # and is built exactly as before. Delete this together with
-            # `_pins_endpoints`/`_unpinned_base` once that decision is
-            # made.
-            return _unpinned_base(cls)(input=self.output, output=self.input)
+            # Nothing to invert, so the inverse is the plain
+            # endpoint-swapped transform -- under the type that maps the
+            # swapped direction, which for a paired type is its reverse.
+            return (cls._reverse_type or cls)(
+                input=self.output, output=self.input
+            )
         wrapper = cls._inverse_type
         if wrapper is None:
             raise TypeError(f"{cls.__name__} has no typed inverse.")

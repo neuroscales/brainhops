@@ -147,9 +147,11 @@ class Inverse(Transformation):
     def _materialize(self) -> Transformation:
         # The concrete inverse. A typed inverse builds a plain instance of
         # the forward type holding the inverted parameter, with the
-        # wrapper's (swapped) endpoints. The generic front-door defers to
-        # the forward transform's own inverse, which resolves to the typed
-        # inverse of that family.
+        # wrapper's (swapped) endpoints -- or, when the forward type is
+        # half of a pair that names the direction it maps, an instance of
+        # the other half. The generic front-door defers to the forward
+        # transform's own inverse, which resolves to the typed inverse of
+        # that family.
         forward = self.forward
         inverseof = type(self)._inverseof
         if inverseof is None:
@@ -164,12 +166,20 @@ class Inverse(Transformation):
             return resolved.to(**edits) if edits else resolved
         if forward is None:
             return inverseof(input=self.input, output=self.output)
-        return replace(
-            forward,
-            input=self.input,
-            output=self.output,
-            **{inverseof.parameter_names: self._cached_inverse_param()},
-        )
+        changes = {
+            "input": self.input,
+            "output": self.output,
+            inverseof.parameter_names: self._cached_inverse_param(),
+        }
+        # This is the path that matters for a type that names a
+        # direction: the wrapper wears no direction of its own, but what
+        # it materializes into does, and rebuilding the forward type
+        # around an inverted parameter would state the direction
+        # backwards. The other half of the pair states it right.
+        reverse = getattr(type(forward), "_reverse_type", None)
+        if reverse is None:
+            return replace(forward, **changes)
+        return reverse.from_instance(forward, **changes)
 
     def _inverse_param(self) -> tx.Optional[ArrayProtocol]:
         # The inverted parameter, worked out from the forward transform.
