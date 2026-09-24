@@ -12,6 +12,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from brainhops._core.bsplines import coeff2value_field
 from brainhops._ext.invfield import inverse as inverse_disp
 from brainhops.datamodel import transformations as _xf
 from brainhops.datamodel._transformations import inverse as _inv
@@ -246,10 +247,70 @@ def test_coefficient_inverse_refits_to_coefficients() -> None:
     np.testing.assert_allclose(np.asarray(recovered), expected, atol=1e-6)
 
 
-def test_coordinate_inverse_is_not_materialized() -> None:
-    cf = CoordinatesField(field=_small_field())
-    with pytest.raises(NotImplementedError):
-        _ = cf.inverse().field
+def _coordinate_field(seed: int = 0) -> tuple:
+    # A field of coordinates, expressed in the units of its own grid: the
+    # grid itself plus a small displacement. That is what the coordinate
+    # inverse assumes (see `InverseCoordinatesField`).
+    values = _small_field(seed=seed)
+    grid = np.stack(
+        np.meshgrid(
+            *[np.arange(s) for s in values.shape[:-1]], indexing="ij"
+        ),
+        -1,
+    )
+    return CoordinatesField(field=grid + values), grid, values
+
+
+def test_coordinate_inverse_matches_the_displacement_inverse() -> None:
+    # A coordinate field is the identity grid plus a displacement, so its
+    # inverse is that same grid plus the inverted displacement -- exactly
+    # what `InverseDisplacementField` produces for the displacement alone.
+    cf, grid, values = _coordinate_field()
+    np.testing.assert_allclose(
+        np.asarray(cf.inverse().field), grid + inverse_disp(values)
+    )
+
+
+def test_coordinate_inverse_materializes_to_a_plain_instance() -> None:
+    cf, grid, values = _coordinate_field(seed=1)
+    computed = cf.inverse().compute()
+    assert type(computed) is CoordinatesField
+    np.testing.assert_allclose(
+        np.asarray(computed.field), grid + inverse_disp(values)
+    )
+
+
+def test_coordinate_inverse_of_coefficients_stays_coefficients() -> None:
+    # A field of spline coefficients is inverted by re-fitting: the
+    # coefficients are read out as coordinates, inverted, and fitted back.
+    cf, _grid, _values = _coordinate_field(seed=2)
+    coeffs = cf.to(order=3).to(coeff=True)
+    inverse = coeffs.inverse()
+    assert inverse.coeff is True
+    assert inverse.order == coeffs.order
+    recovered = coeff2value_field(
+        np.asarray(inverse.field), order=coeffs.order, bound=coeffs.bound
+    )
+    np.testing.assert_allclose(
+        recovered, np.asarray(cf.inverse().field), atol=1e-6
+    )
+
+
+def test_coordinate_inverse_cancels_rather_than_inverting() -> None:
+    # It *can* be materialized, but it should not have to be: next to the
+    # field it inverts, the pair cancels and the mesh inversion never runs.
+    cf, _grid, _values = _coordinate_field(seed=3)
+    calls = {"n": 0}
+    real = _inv.inverse_disp
+
+    def counting(field: np.ndarray) -> np.ndarray:
+        calls["n"] += 1
+        return real(field)
+
+    with mock.patch.object(_inv, "inverse_disp", counting):
+        result = Sequence(transformations=[cf, cf.inverse()]).compute()
+    assert isinstance(result, Identity)
+    assert calls["n"] == 0
 
 
 # ----------------------------------------------------------------------
@@ -565,12 +626,6 @@ def test_to_plain_type_materializes() -> None:
     plain = df.inverse().to(DisplacementField)
     assert type(plain) is DisplacementField
     np.testing.assert_allclose(np.asarray(plain.field), inverse_disp(values))
-
-
-def test_coordinate_inverse_reports_a_clear_message() -> None:
-    cf = CoordinatesField(field=_small_field())
-    with pytest.raises(NotImplementedError, match="coordinate field"):
-        cf.inverse().compute()
 
 
 # ----------------------------------------------------------------------

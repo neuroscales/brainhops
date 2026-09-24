@@ -4,61 +4,74 @@ from functools import partial
 # dependencies
 import typing_extensions as tx
 
+# datamodel
+from brainhops.datamodel.hierarchy import Transformation as TransformationSet
+
 # typing
 if tx.TYPE_CHECKING:
     from .base import Transformation
     from .inverse import Inverse
     from .sequence import Sequence
 
-# The materialized inverse parameter is cached on the *forward* transform,
-# under this attribute name, rather than on the wrapper. A wrapper rebuilt
-# by `replace` or `.to(...)` keeps the same forward transform, so the cache
-# survives the rebuild and the inversion is not run again. The cache
-# assumes the forward transform is not mutated in place after it is
-# wrapped: a forward transform whose parameter is replaced by editing the
-# same object would keep serving the stale inverse.
+# --- inverse ----------------------------------------------------------
+
 INVERSE_CACHE = "_inverse_param_cache"
+"""
+The materialized inverse parameter is cached on the *forward* transform,
+under this attribute name, rather than on the wrapper. A wrapper rebuilt
+by `replace` or `.to(...)` keeps the same forward transform, so the cache
+survives the rebuild and the inversion is not run again. The cache
+assumes the forward transform is not mutated in place after it is
+wrapped: a forward transform whose parameter is replaced by editing the
+same object would keep serving the stale inverse.
+"""
 
-# Each forward transformation type is paired with the `Inverse` subclass
-# that represents its inverse. `_lazy_inverse` looks the wrapper up here,
-# and the table is filled in once the wrapper classes are defined below.
-INVERSE_WRAPPERS: tx.Dict[tx.Type["Transformation"], tx.Type["Inverse"]] = {}
+INVERSE: tx.Optional[tx.Type["Inverse"]] = None
+"""Registered `Inverse` class, to avoid cyclic imports."""
 
-# The adaptor lives in `adaptors`, which imports this module. It
-# registers itself here at import time, so the sequence machinery can call
-# it without importing that module at load time and forming a cycle. The
-# adaptor reconciles two consecutive transforms: it bridges a boundary
-# where the two systems merely reorder, rescale or flip their shared axes,
-# and it lifts a transform that acts on a subset of a boundary's axes into
-# the fuller axis space, leaving the extra axes as the identity, so a
-# lower-dimensional transform meets a higher-dimensional neighbour without
-# a dimensionality change.
+
+def register_inverse(cls: tx.Type["Inverse"]) -> None:
+    global INVERSE
+    INVERSE = cls
+    return cls
+
+
+# --- adapt ------------------------------------------------------------
+
 ADAPT: tx.Optional[tx.Callable[..., "Sequence"]] = None
+"""
+The adaptor lives in `adaptors`, which imports this module. It
+registers itself here at import time, so the sequence machinery can call
+it without importing that module at load time and forming a cycle. The
+adaptor reconciles two consecutive transforms: it bridges a boundary
+where the two systems merely reorder, rescale or flip their shared axes,
+and it lifts a transform that acts on a subset of a boundary's axes into
+the fuller axis space, leaving the extra axes as the identity, so a
+lower-dimensional transform meets a higher-dimensional neighbour without
+a dimensionality change.
+"""
 
 
 def register_adapt(func: tx.Callable[..., "Sequence"]) -> None:
     """Register the routine that reconciles two consecutive transforms."""
     global ADAPT
     ADAPT = func
+    return func
 
+
+# --- sequence ---------------------------------------------------------
 
 SEQUENCE: tx.Optional[tx.Type["Sequence"]] = None
+"""Registered `Sequence` class, to avoid cyclic imports."""
 
 
 def register_sequence(cls: tx.Type["Sequence"]) -> None:
-    """Register the routine that reconciles two consecutive transforms."""
     global SEQUENCE
     SEQUENCE = cls
+    return cls
 
 
-INVERSE: tx.Optional[tx.Type["Inverse"]] = None
-
-
-def register_inverse(cls: tx.Type["Inverse"]) -> None:
-    """Register the routine that reconciles two consecutive transforms."""
-    global INVERSE
-    INVERSE = cls
-
+# --- base -------------------------------------------------------------
 
 # The concrete `base.Transformation` root, registered at its import time so
 # that `modes._lower_key` can recognize a concrete transformation class as a
@@ -70,41 +83,117 @@ def register_transformation(cls: tx.Type["Transformation"]) -> None:
     """Register the concrete `Transformation` root class."""
     global TRANSFORMATION
     TRANSFORMATION = cls
+    return cls
 
 
-XFORM_PAIR = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
+# --- convert ----------------------------------------------------------
 
-CONVERTER = tx.Callable[["Transformation"], "Transformation"]
-CONVERTER_REGISTRY = tx.Dict[XFORM_PAIR, CONVERTER]
-CONVERTERS: CONVERTER_REGISTRY = {}
-CONVERTERS_FASTMAP: CONVERTER_REGISTRY = {}
+PairOfTypes = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
 
-COMPOSER = tx.Callable[["Transformation", "Transformation"], "Transformation"]
-# Each registered composer is stored with its dispatch priority, so a
-# higher-priority tier (such as the analytic cancel composers) is tried
-# ahead of the numeric composers regardless of hierarchy distance.
-COMPOSER_REGISTRY = tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, int]]
-COMPOSERS: COMPOSER_REGISTRY = {}
-# The fastmap caches, per concrete pair, the ordered tuple of candidate
-# composers `compose` should try, already sorted by dispatch order.
-COMPOSERS_FASTMAP: tx.Dict[XFORM_PAIR, tx.Tuple[COMPOSER, ...]] = {}
+Converter = tx.Callable[["Transformation"], "Transformation"]
+ConverterRegistry = tx.Dict[PairOfTypes, Converter]
 
-# Dispatch priority for a composer that decides purely from the types and
-# object identity of its operands, without reading any parameter (today,
-# the inverse-cancel pair `X @ X^-1 -> Identity`). It is tried ahead of the
-# numeric composers, which register at the default priority 0.
-ANALYTIC = 1
+CONVERTERS: ConverterRegistry = {}
+CONVERTERS_FASTMAP: ConverterRegistry = {}
 
-# A checker decides whether a transform is *established* in a hierarchy set:
-# `checker(t, compute) -> bool` (`compute=False` analytic, `True` numeric).
-# It is keyed by `(source transform type, hierarchy kind node)`, dispatched
-# like the composers/converters (nearest source in the class hierarchy wins).
-CHECKER = tx.Callable[["Transformation", bool], bool]
-CHECKER_REGISTRY = tx.Dict[tx.Tuple[type, type], CHECKER]
-CHECKERS: CHECKER_REGISTRY = {}
-# The fastmap caches, per concrete source type, the (kind node, checker)
-# pairs that apply to it, already reduced to the nearest source per kind.
-CHECKERS_FASTMAP: tx.Dict[type, tx.Tuple[tx.Tuple[type, CHECKER], ...]] = {}
+# --- compose ----------------------------------------------------------
+
+Composer = tx.Callable[["Transformation", "Transformation"], "Transformation"]
+ComposerRegistry = tx.Dict[PairOfTypes, Composer]
+"""
+A composer *fuses* two transforms into one by reading their parameters
+(multiplying matrices, resampling fields). Cost-free rewrites that decide
+from types and object identity alone are not composers: they are two-argument
+simplifiers (see `SIMPLIFIERS`), which `compose` consults first.
+"""
+
+COMPOSERS: ComposerRegistry = {}
+COMPOSERS_FASTMAP: tx.Dict[PairOfTypes, tx.Tuple[Composer, ...]] = {}
+"""
+The fastmap caches, per concrete pair, the ordered tuple of candidate
+composers `compose` should try, already sorted by dispatch order.
+"""
+
+# --- check ------------------------------------------------------------
+
+Kind = tx.Union[
+    tx.Type[TransformationSet],  # a hierarchy node
+    tx.Type["Transformation"]    # a concrete/field/wrapper class
+]
+
+Checker = tx.Callable[["Transformation", bool], bool]
+"""
+A checker decides whether a transform is *established* in a hierarchy set:
+`checker(t, compute) -> bool` (`compute=False` analytic, `True` numeric).
+It is keyed by `(source transform type, hierarchy kind node)`, dispatched
+like the composers/converters (nearest source in the class hierarchy wins).
+"""
+
+CheckerKey = tx.Tuple["Transformation", Kind]
+CheckerRegistry = tx.Dict[CheckerKey, Checker]
+
+
+CHECKERS: CheckerRegistry = {}
+CHECKERS_FASTMAP: tx.Dict[
+    tx.Type["Transformation"],
+    tx.Tuple[tx.Tuple[Kind, Checker], ...]
+] = {}
+"""
+The fastmap caches, per concrete source type, the (kind node, checker)
+pairs that apply to it, already reduced to the nearest source per kind.
+"""
+
+
+KIND_ALIASES: tx.Dict[str, Kind] = {}
+"""
+Registry of known transformation kinds, keyed by name (lower-case).
+
+A kind is either a hierarchy set node, or a concrete/field/wrapper class
+(or tuple of classes) matched by `isinstance`. See `check` for what
+separates the two.
+
+The registry is populated by `checkers` at import time.
+"""
+
+# --- simplify ---------------------------------------------------------
+
+LeafSimplifier = tx.Callable[..., "Transformation"]
+"""
+A one-argument simplifier: `f(t, policy) -> Transformation`. It is *total*
+(it always returns a transform, possibly `t` itself) and it rewrites one
+transform into an equivalent, cheaper one. `policy` is a `SimplifyTable`,
+which the simplifier resolves against `t`.
+"""
+
+PairSimplifier = tx.Callable[..., tx.Optional["Transformation"]]
+"""
+A two-argument simplifier:
+`f(first, second, policy) -> Transformation | None`.
+It is *partial*: `None` means "these two do not collapse", which is the
+common answer and so must not be an exception. The arguments are in
+**application order** -- `first` is applied before `second`, exactly as the
+two read in a [`Sequence`][]. Note that this is the reverse of `compose`,
+which takes its operands in matrix order; `compose` flips them at the single
+point where it delegates here.
+"""
+
+SimplifierKey = tx.Union[
+    tx.Type["Transformation"],                # a leaf simplifier
+    PairOfTypes,                              # a pair simplifier
+]
+SimplifierRegistry = tx.Dict[
+    SimplifierKey, tx.Union[LeafSimplifier, PairSimplifier]
+]
+
+SIMPLIFIERS: SimplifierRegistry = {}
+SIMPLIFIERS_FASTMAP: SimplifierRegistry = {}
+"""
+One registry holds both arities, keyed by a single type (leaf) or by a pair
+of types (pair). `simplify()` dispatches on the number of transforms it is
+given, so the two never collide.
+"""
+
+# --- utils ----------------------------------------------------------
 
 
 def distance(t1: type, t2: type, oriented: bool = True) -> int:

@@ -691,3 +691,48 @@ def test_subspace_compute_returns_self_unchanged() -> None:
     )
     assert subspace.compute() is subspace
     assert subspace.compute(mode="Affine") is subspace
+
+
+# ----------------------------------------------------------------------
+#   to(): WHAT COMES BACK, AND WHAT HAPPENS WHEN IT CANNOT
+# ----------------------------------------------------------------------
+
+
+def test_to_never_returns_a_type_that_was_not_asked_for() -> None:
+    # `convert` scores its target by `distance(cls, T2)`, which is finite
+    # whenever a converter produces a *supertype* of what was asked for --
+    # so the catch-all same-type converter matches every request. A
+    # conversion to a type nothing can produce must say so rather than
+    # quietly hand back the original type.
+    import pytest
+
+    from brainhops.datamodel.transformations import ConversionError
+
+    class Unreachable(Affine):
+        """A type no converter produces."""
+
+    with pytest.raises(ConversionError):
+        Affine(matrix=np.eye(3)[:2]).to(Unreachable)
+
+
+def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
+    import pytest
+
+    from brainhops.datamodel.transformations import (
+        LossyConversionError,
+        Rotation,
+    )
+
+    lin = Linear(matrix=np.diag([2.0, 3.0]))
+    # By default the loss is refused, and reported as an exception.
+    with pytest.raises(LossyConversionError):
+        lin.to(Rotation)
+    # `lossy=True` asks for it anyway, and returns the transform the
+    # conversion would have produced -- not the exception carrying it.
+    lossy = lin.to(Rotation, lossy=True)
+    assert type(lossy) is Rotation
+    # `error=<value>` stands in for the result instead of raising.
+    assert lin.to(Rotation, error=False) is False
+    # `error=<exception>` raises that one instead.
+    with pytest.raises(TypeError):
+        lin.to(Rotation, error=TypeError)

@@ -18,10 +18,7 @@ import numpy as np
 from brainhops.datamodel import hierarchy as H
 from brainhops.datamodel._transformations import inverse as _inv
 from brainhops.datamodel._transformations.concrete import is_translation
-from brainhops.datamodel._transformations.modes import (
-    _lower_simplify,
-    _resolve_simplify,
-)
+from brainhops.datamodel._transformations.simplify import SimplifyTable
 from brainhops.datamodel.enums import SimplifyPolicy
 from brainhops.datamodel.transformations import (
     Affine,
@@ -55,6 +52,14 @@ def _zero_inversions(thunk: object) -> object:
     assert calls["n"] == 0
     return result
 
+# --- old helpers wrapping new helpers ---------------------------------
+
+def normalize_simplify(value: object) -> SimplifyTable:
+    return SimplifyTable.from_like(value)
+
+
+def resolve_simplify(t: object, table: SimplifyTable) -> SimplifyPolicy:
+    return table.resolve(t)
 
 # ----------------------------------------------------------------------
 #   F1 - simplify pass never composes or materializes
@@ -155,8 +160,8 @@ def test_f4_is_translation_numeric() -> None:
 
 def test_f6_lower_simplify_accepts_mappingproxy() -> None:
     proxy = types.MappingProxyType({"affine": "numeric"})
-    table = _lower_simplify(proxy)
+    table = normalize_simplify(proxy)
     assert table[(H.AffineTransformation, None)] is SimplifyPolicy.numeric
     assert table[None] is SimplifyPolicy.analytic
     # And it resolves like the dict form.
-    assert _resolve_simplify(_aff(), table) is SimplifyPolicy.numeric
+    assert resolve_simplify(_aff(), table) is SimplifyPolicy.numeric

@@ -5,9 +5,11 @@ from bagof.magic import replace
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
+from brainhops.datamodel import hierarchy
 
 # locals
 from .base import Transformation
+from .check import is_kind
 from .concrete import (
     Affine,
     CartesianField,
@@ -16,6 +18,7 @@ from .concrete import (
     Identity,
     Linear,
     Permutation,
+    Rotation,
     Scaling,
     Translation,
 )
@@ -24,19 +27,29 @@ from .errors import ConversionError, LossyConversionError
 from .meta import SubspaceTransformation
 from .utils import get_ndim
 
+
+def smart_replace(t: Transformation, **kwargs) -> Transformation:
+    return replace(t, **kwargs) if kwargs else t
+
+
 # ----------------------------------------------------------------------
 #   SAME TYPE
 # ----------------------------------------------------------------------
 
 
+@converter(Identity, Identity)
+@converter(Translation, Translation)
+@converter(Scaling, Scaling)
+@converter(Permutation, Permutation)
+@converter(Rotation, Rotation)
+@converter(Affine, Affine)
+@converter(Linear, Linear)
 @converter
 def _(t: Transformation, **kwargs) -> Transformation:
     # A same-type conversion with no overrides is a pass-through; with
     # overrides it rebuilds the transform of the same type, applying the
     # named fields on top of the existing ones.
-    if not kwargs:
-        return t
-    return replace(t, **kwargs)
+    return smart_replace(t, **kwargs)
 
 
 @converter
@@ -50,7 +63,7 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
             bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
-    return replace(t, **kwargs)
+    return smart_replace(t, **kwargs)
 
 
 @converter
@@ -64,7 +77,7 @@ def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
             bound = kwargs.get("bound", t.bound)
             field = value2coeff_field(t.field, order=order, bound=bound)
             kwargs["field"] = field
-    return replace(t, **kwargs)
+    return smart_replace(t, **kwargs)
 
 
 @converter
@@ -74,7 +87,7 @@ def _(t: CartesianField, **kwargs) -> CartesianField:
     # `shape` over and lets the new instance regenerate the field, and any
     # `field` override is dropped.
     kwargs.pop("field", None)
-    return replace(t, **kwargs)
+    return smart_replace(t, **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -188,6 +201,39 @@ def _(t: Permutation) -> Linear:
         output=t.output,
     )
     return u
+
+
+@converter
+def _(t: Linear, **kwargs) -> Rotation:
+    # A `Rotation` stores the same matrix as a `Linear`, but promises it is
+    # orthogonal with determinant +1 -- which is what lets it invert by
+    # transposing instead of solving. The promise is checked, so converting
+    # a matrix that does not keep it is lossy.
+    if t.matrix is None:
+        return convert(Identity(input=t.input, output=t.output), Rotation)
+    kwargs.setdefault("matrix", t.matrix)
+    kwargs.setdefault("input", t.input)
+    kwargs.setdefault("output", t.output)
+    u = Rotation(**kwargs)
+    if not is_kind(
+        t, hierarchy.SpecialOrthogonalTransformation, compute=True
+    ):
+        raise LossyConversionError(result=u)
+    return u
+
+
+@converter
+def _(t: Identity, **kwargs) -> Rotation:
+    ndim = get_ndim(t)
+    return Rotation(
+        matrix=[
+            [1.0 if i == j else 0.0 for j in range(ndim)] for i in range(ndim)
+        ]
+        if ndim is not None
+        else None,
+        input=t.input,
+        output=t.output,
+    )
 
 
 @converter
@@ -406,6 +452,7 @@ _make_converter_chain(Scaling, Linear, Affine)
 _make_converter_chain(Permutation, Linear, Affine)
 
 # Lossy
+_make_converter_chain(Affine, Linear, Rotation)
 _make_converter_chain(Affine, Linear, Scaling)
 _make_converter_chain(Affine, Linear, Permutation)
 _make_converter_chain(Linear, Identity, Translation)

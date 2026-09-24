@@ -80,8 +80,35 @@ def get_backend() -> str:
     return _BACKEND
 
 
-def set_backend(backend: str) -> None:
+def backend_name(
+    backend: tx.Union[str, ModuleType, ArrayProtocol],
+) -> str:
+    """The name of a backend, given its name, its module, or one of its
+    arrays.
+
+    Raises
+    ------
+    ValueError
+        If nothing names a known backend.
+    """
+    if isinstance(backend, str):
+        if backend not in _MODULES:
+            raise ValueError(f"Unsupported backend: {backend}")
+        return backend
+    module = get_array_backend(backend)
+    for name, (array, _image) in _MODULES.items():
+        if module is array:
+            return name
+    raise ValueError(f"Unsupported backend: {backend}")
+
+
+def set_backend(backend: tx.Union[str, ModuleType]) -> None:
     """Set the current array backend
+
+    The backend may be named, or given as its array module -- which is what
+    [get_array_backend][brainhops.backends.get_array_backend] hands back, so
+    a caller that has an array in hand can select its backend without
+    naming it.
 
     Raises
     ------
@@ -93,8 +120,7 @@ def set_backend(backend: str) -> None:
         [available_backends][brainhops.backends.available_backends].
     """
     global _BACKEND
-    if backend not in _MODULES:
-        raise ValueError(f"Unsupported backend: {backend}")
+    backend = backend_name(backend)
     array, image = _MODULES[backend]
     if array is None:
         raise ImportError(f"The {backend} backend is not installed")

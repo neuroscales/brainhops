@@ -19,7 +19,7 @@ from numbers import Integral, Real
 import typing_extensions as tx
 
 # core
-from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
+from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
 
 # api
 from brainhops.backends import get_array_backend
@@ -29,45 +29,17 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 # transformations
 from . import registries
 from .base import Transformation
-from .meta import SubspaceTransformation
-from .modes import (
-    ModeLike,
-    SimplifyLike,
-    SimplifyPolicy,
-    _lower_simplify,
-    _resolve_simplify,
-)
-from .registries import INVERSE_WRAPPERS
-
-
-class _LazyInverseMixin:
-    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
-        # The shared `inverse()` of every forward type that defers its
-        # inversion to a type-transparent `Inverse` wrapper. A transformation
-        # with an unset parameter has nothing to invert, so its inverse is the
-        # plain endpoint-swapped transform. Otherwise the wrapper for this type
-        # is built, holding the transform as its `forward` and materializing
-        # the inverse only when its parameter is read or it is computed.
-        cls = type(self)
-        param = cls.parameter_names
-        if getattr(self, param) is None:
-            return cls(input=self.output, output=self.input)
-        obj = INVERSE_WRAPPERS[cls](
-            forward=self, input=self.output, output=self.input
-        )
-        if compute:
-            obj = obj.compute(**kwargs)
-        return obj
+from .check import is_kind
+from .modes import ModeLike
+from .simplify import SimplifyLike
+from .simplify import simplify as _simplify
 
 
 class ConcreteTransformation(Transformation):
     """Base class for concrete transformations that hold a parameter."""
 
     def compute(
-        self,
-        mode: tx.Optional[ModeLike] = None,
-        *,
-        simplify: SimplifyLike = "analytic",
+        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, downcasting it to the cheapest
@@ -90,93 +62,42 @@ class ConcreteTransformation(Transformation):
             decides whether the kind-checks run structure-only (`analytic`)
             or read values (`numeric`), or are skipped entirely (`none`).
         """
-        # `mode` is deliberately not consulted: simplification is gated only
-        # by the `simplify` table, never by the compose mode (a leaf composes
-        # nothing). The sequence engine gates composition itself.
-        policy = _resolve_simplify(self, _lower_simplify(simplify))
-        if policy is SimplifyPolicy.none:
-            return self
-        # `analytic` runs the kind-checks from structure only
-        # (`compute=False`): a `None`-valued parameter or a matching type is
-        # recognized, but no value is read. `numeric` runs them with
-        # `compute=True`, inspecting the values as well.
-        numeric = policy is SimplifyPolicy.numeric
-        checks = [
-            (is_identity, Identity),
-            (is_translation, Translation),
-            (is_scale, Scaling),
-            (is_permutation, Permutation),
-            (is_rotation, Rotation),
-            (is_linear, Linear),
-        ]
-        for check, cls in checks:
-            if check(self, compute=numeric):
-                # A no-op downcast keeps object identity, so inverse-cancel
-                # identity links and `subspace.compute() is subspace` hold,
-                # and pointless `to()` copies are avoided.
-                if isinstance(self, cls):
-                    return self
-                return self.to(cls)
-        return self
+        return _simplify(self, policy=simplify)
+
+    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
+        # The shared `inverse()` of every forward type that defers its
+        # inversion to a type-transparent `Inverse` wrapper. The wrapper
+        # holds this transform as its `forward` and materializes the
+        # inverse only when its parameter is read or it is computed, so a
+        # transform placed next to its own inverse cancels for free.
+        if self._is_unparameterized():
+            # Nothing to invert: an unset parameter reads as the identity,
+            # whose inverse is itself with the endpoints swapped. Wrapping
+            # it would only defer a computation that does not exist.
+            return self.to(input=self.output, output=self.input)
+        obj = registries.INVERSE(self)
+        if compute:
+            obj = obj.compute(**kwargs)
+        return obj
+
+    def _is_unparameterized(self) -> bool:
+        # Whether every parameter this transform is defined by is unset.
+        return all(
+            getattr(self, name, None) is None for name in self.data_fields
+        )
 
 
-def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
-    """`(Ni, No)` of a matrix leaf from the stored `matrix.shape`, or `None`.
-
-    `Affine`: the matrix is `(No, Ni + 1)`; `Linear`/`Rotation`: `(No, Ni)`.
-    Reads only the shape, never a value; never called on an `Inverse`.
-    Shared with `separable._element_dims` so the two readings cannot drift.
+class TransformationField(ConcreteTransformation):
     """
-    matrix = getattr(t, "matrix", None)
-    if matrix is None:
-        return None
-    no, cols = matrix.shape
-    ni = cols - 1 if isinstance(t, Affine) else cols
-    return ni, no
-
-
-def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
-    # The linear block whose rank decides injectivity/surjectivity at
-    # `numeric`. `None` for a parameter that is invertible by declaration
-    # (`Permutation`, `Translation`, `Identity`) or has no matrix.
-    if isinstance(t, Affine):
-        return None if t.matrix is None else t.matrix[:, :-1]
-    if isinstance(t, Linear):  # includes Rotation
-        return t.matrix
-    if isinstance(t, Scaling):
-        if t.scale is None:
-            return None
-        ab = get_array_backend(t.scale)
-        return ab.diag(t.scale)
-    return None
-
-
-def _matrix_rank(linear: ArrayProtocol) -> int:
-    # The rank of a linear block. `matrix_rank` is the single rank test,
-    # with a `det`-based fallback for a square matrix when a backend lacks
-    # it (a non-zero determinant means full rank).
-    ab = get_array_backend(linear)
-    matrix_rank = getattr(getattr(ab, "linalg", None), "matrix_rank", None)
-    if matrix_rank is not None:
-        return int(matrix_rank(linear))
-    no, ni = linear.shape
-    if no == ni:
-        return ni if bool(ab.linalg.det(linear) != 0) else ni - 1
-    raise NotImplementedError(
-        "the array backend provides neither matrix_rank nor a square "
-        "determinant fallback for rank computation"
-    )
-
-
-class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
-    """
-    A field of coordinates defined on a regular grid.
-
-    The input space corresponds to the regular grid on which the
-    coordinates are defined.
+    Base class for dense transformation fields (displacements or coordinates)
     """
 
-    parameter_names: tx.ClassVar[str] = "field"
+    # --- class attributes ---------------------------------------------
+
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "field",
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+
+    # --- attributes ---------------------------------------------------
 
     field: tx.Annotated[
         tx.Optional[ArrayProtocol],
@@ -209,6 +130,23 @@ class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
     ] = False
 
 
+class DisplacementField(TransformationField):
+    """
+    A field of displacements defined on a regular grid.
+
+    Both the input and output spaces correspond to the underlying grid.
+    """
+
+
+class CoordinatesField(TransformationField):
+    """
+    A field of coordinates defined on a regular grid.
+
+    The input space corresponds to the regular grid on which the
+    coordinates are defined.
+    """
+
+
 class CartesianField(CoordinatesField):
     """
     An identity transform over a regular grid of coordinates.
@@ -219,24 +157,22 @@ class CartesianField(CoordinatesField):
     and is generated on demand when accessed.
     """
 
-    # The grid is parameterized by its `shape`, not by the derived `field`.
-    # This is what marks a grid the identity (an unset `shape`), and -- as
-    # importantly -- it keeps the structural checks (`is_identity`,
-    # membership) from ever reading the `field` property, which would build
-    # the meshgrid. Reading `.field` is a value-level operation reserved for
-    # `compute=True`/`numeric`.
-    parameter_names: tx.ClassVar[str] = "shape"
+    # --- class attributes ---------------------------------------------
+
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "shape",
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = "field",
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+
+    # --- attributes ---------------------------------------------------
 
     shape: tx.Annotated[
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
-    # `field` is computed on demand from `shape` by the property below,
-    # so it is not a stored, constructor-taken field here. Declaring it a
-    # `ClassVar` overrides the inherited init-field from `CoordinatesField`
-    # and keeps `field` out of `__init__`, `fields()` and `replace()`,
-    # while the property keeps serving reads.
-    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+    # --- derived attributes -------------------------------------------
+    # Mark them as `ClassVar` to keep them out of `__init__`.
+
+    field: Derived[tx.Optional[ArrayProtocol]]
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
@@ -252,59 +188,24 @@ class CartesianField(CoordinatesField):
             )
         return self._field
 
-    def inverse(self) -> tx.Self:
-        # Inverse is itself, with switched input and output.
+    # --- methods ------------------------------------------------------
+
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
+        # A grid is the identity map over its own coordinates, so its
+        # inverse is itself with the endpoints switched. There is nothing
+        # to defer, so `compute` changes nothing.
         cls = type(self)
         return cls(shape=self.shape, input=self.output, output=self.input)
 
 
-class DisplacementField(_LazyInverseMixin, ConcreteTransformation):
-    """
-    A field of displacements defined on a regular grid.
-
-    Both the input and output spaces correspond to the underlying grid.
-    """
-
-    parameter_names: tx.ClassVar[str] = "field"
-
-    field: tx.Annotated[
-        tx.Optional[ArrayProtocol],
-        tx.Doc(
-            "An array of shape `(*shape, ndim)`, where `len(shape) == ndim`"
-        ),
-    ] = None
-
-    order: tx.Annotated[
-        InterpolationOrder, tx.Doc("The spline interpolation order")
-    ] = 1
-
-    bound: tx.Annotated[
-        tx.Union[BoundaryCondition, float],
-        tx.Doc(
-            """
-            The boundary condition used to deal with coordinates outside
-            of the field of view. If a float is given, it is treated as
-            a constant value.
-            """
-        ),
-    ] = BoundaryCondition.nearest
-
-    coeff: tx.Annotated[
-        bool,
-        tx.Doc(
-            """
-            If `True`, the field is treated as a field of spline coefficients,
-            rather than a field if values to interpolate.
-            """
-        ),
-    ] = False
-
-
 @hierarchy.AffineTransformation.register
-class Affine(_LazyInverseMixin, ConcreteTransformation):
+class Affine(ConcreteTransformation):
     """An affine transformation."""
 
-    parameter_names: tx.ClassVar[str] = "matrix"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = "homogeneous_matrix",
+
+    # --- attributes ---------------------------------------------------
 
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
@@ -318,6 +219,8 @@ class Affine(_LazyInverseMixin, ConcreteTransformation):
             """
         ),
     ] = None
+
+    # --- derived attributes -------------------------------------------
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -338,10 +241,12 @@ class Affine(_LazyInverseMixin, ConcreteTransformation):
 
 
 @hierarchy.LinearTransformation.register
-class Linear(_LazyInverseMixin, ConcreteTransformation):
+class Linear(ConcreteTransformation):
     """A linear transformation."""
 
-    parameter_names: tx.ClassVar[str] = "matrix"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+
+    # --- attributes ---------------------------------------------------
 
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
@@ -362,6 +267,8 @@ class Rotation(Linear):
     # TODO: Implement Rotation subclasses that use other representations
     # (e.g., quaternions, Euler angles, etc.)
 
+    # --- attributes ---------------------------------------------------
+
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
@@ -376,10 +283,12 @@ class Rotation(Linear):
 
 
 @hierarchy.Permutation.register
-class Permutation(_LazyInverseMixin, ConcreteTransformation):
+class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
-    parameter_names: tx.ClassVar[str] = "permutation"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "permutation",
+
+    # --- attributes ---------------------------------------------------
 
     permutation: tx.Annotated[
         tx.Optional[npvector[Integral]],
@@ -396,10 +305,12 @@ class Permutation(_LazyInverseMixin, ConcreteTransformation):
 
 
 @hierarchy.DiagonalTransformation.register
-class Scaling(_LazyInverseMixin, ConcreteTransformation):
+class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
-    parameter_names: tx.ClassVar[str] = "scale"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "scale",
+
+    # --- attributes ---------------------------------------------------
 
     scale: tx.Annotated[
         tx.Optional[npvector[Real]],
@@ -414,10 +325,12 @@ class Scaling(_LazyInverseMixin, ConcreteTransformation):
 
 
 @hierarchy.Translation.register
-class Translation(_LazyInverseMixin, ConcreteTransformation):
+class Translation(ConcreteTransformation):
     """A translation."""
 
-    parameter_names: tx.ClassVar[str] = "translation"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = "translation",
+
+    # --- attributes ---------------------------------------------------
 
     translation: tx.Annotated[
         tx.Optional[npvector[Real]],
@@ -439,7 +352,9 @@ class Identity(ConcreteTransformation):
     the input axes to the output axes, while preserving their orders.
     """
 
-    def inverse(self) -> tx.Self:
+    # --- methods ------------------------------------------------------
+
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
 
@@ -476,84 +391,7 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     simplifier, which only does so for a grid that sits strictly between
     two other transformations.
     """
-
-    # --- Meta transformations -----------------------------------------
-
-    # An inverse is the identity exactly when the transform it inverts
-    # is, so the answer is read from `forward`. This reads neither the
-    # check with `compute=False` nor the one with `compute=True` into
-    # materializing the (possibly unmaterializable) inverse of a field.
-    # An inverse of nothing is itself the identity.
-    if isinstance(xform, registries.INVERSE):
-        forward = xform.forward
-        if forward is None:
-            return True
-        return is_identity(forward, compute=compute)
-
-    # --- Generic check ------------------------------------------------
-
-    # If all parameters are None -> identity.
-    parameter_names = getattr(xform, "parameter_names", ())
-    if isinstance(parameter_names, str):
-        parameter_names = (parameter_names,)
-    if all(getattr(xform, param) is None for param in parameter_names):
-        return True
-
-    # --- Typed check --------------------------------------------------
-
-    if isinstance(xform, hierarchy.IdentityTransformation):
-        return True
-
-    if not compute:
-        return False
-
-    # A subspace transform is the identity when the transform it wraps
-    # is itself the identity and it reads the same axes it writes. A
-    # subspace that reorders axes is not the identity even when its
-    # inner transform is, so a differing pair of axis vectors keeps it
-    # non-identity.
-    if isinstance(xform, SubspaceTransformation):
-        inner = xform.transformation
-        if inner is not None and not is_identity(inner, compute=compute):
-            return False
-        input_axes = xform.input_axes
-        output_axes = xform.output_axes
-        if input_axes is None or output_axes is None:
-            return True
-        return list(input_axes) == list(output_axes)
-
-    # --- Compute concrete types ---------------------------------------
-
-    if isinstance(xform, Translation):
-        return (xform.translation == 0).all()
-    if isinstance(xform, Scaling):
-        return (xform.scale == 1).all()
-    if isinstance(xform, Permutation):
-        ndim = len(xform.permutation)
-        return (xform.permutation == list(range(ndim))).all()
-    if isinstance(xform, Linear):
-        rows, cols = xform.matrix.shape
-        if rows != cols:
-            # A transform between spaces of different dimension is never
-            # the identity, and its matrix cannot be compared to a square
-            # identity matrix.
-            return False
-        ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(rows)).all()
-    if isinstance(xform, Affine):
-        rows, cols = xform.matrix.shape
-        if cols != rows + 1:
-            # An affine whose input and output have different dimensions is
-            # never the identity. Its matrix is `(No, Ni + 1)`, so the
-            # identity requires `No == Ni`.
-            return False
-        ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(rows + 1)[:-1]).all()
-    if isinstance(xform, DisplacementField):
-        return (xform.field == 0).all()
-    if isinstance(xform, CartesianField):
-        return True
-    return False
+    return is_kind(xform, hierarchy.IdentityTransformation, compute)
 
 
 def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
@@ -566,19 +404,10 @@ def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a linear part equal to the identity.
     """
-    if isinstance(xform, hierarchy.Translation):
-        return True
-    if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        lin = xform.matrix[:, :-1]
-        rows, cols = lin.shape
-        if rows != cols:
-            return False
-        ab = get_array_backend(lin)
-        return bool((lin == ab.eye(rows)).all())
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.Translation, compute)
 
 
-def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
+def is_scaling(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure scaling.
 
     A transformation is recognized as a scaling when it is an instance
@@ -588,22 +417,7 @@ def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
     When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
     transformation is also inspected for a diagonal structure.
     """
-    if isinstance(xform, hierarchy.DiagonalTransformation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A scaling maps a space onto itself, so a non-square matrix
-            # (different input and output dimension) is never a scaling.
-            return False
-        ab = get_array_backend(matrix)
-        return not (matrix * (1 - ab.eye(rows))).any()
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_scale(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.DiagonalTransformation, compute)
 
 
 def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
@@ -617,29 +431,7 @@ def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
     transformation is also inspected for a binary, one-per-row and
     one-per-column structure.
     """
-    if isinstance(xform, hierarchy.Permutation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A permutation reorders the axes of one space, so a non-square
-            # matrix is never a permutation.
-            return False
-        ab = get_array_backend(matrix)
-        is_binary = bool(ab.isin(matrix, [0, 1]).all())
-        # Reduce the row/column sums to a single truth value before the
-        # `and`: comparing whole arrays with `and` raises on their
-        # ambiguous truth value.
-        is_perm = bool(
-            (matrix.sum(0) == 1).all() and (matrix.sum(1) == 1).all()
-        )
-        return is_binary and is_perm
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_permutation(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.Permutation, compute)
 
 
 def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
@@ -654,24 +446,7 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     transformation is also inspected for orthogonality and a positive
     determinant.
     """
-    if isinstance(xform, hierarchy.SpecialOrthogonalTransformation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A rotation is orthogonal, hence square; a non-square matrix
-            # is never a rotation, and its determinant is undefined.
-            return False
-        ab = get_array_backend(matrix)
-        is_orthogonal = bool((matrix @ matrix.T == ab.eye(rows)).all())
-        is_posdef = bool(ab.linalg.det(matrix) > 0)
-        return is_orthogonal and is_posdef
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_rotation(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.SpecialOrthogonalTransformation, compute)
 
 
 def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
@@ -684,13 +459,7 @@ def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a zero translation component.
     """
-    if isinstance(xform, hierarchy.LinearTransformation):
-        return True
-    if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        matrix = xform.matrix
-        no_translation = (matrix[:, -1] == 0).all()
-        return no_translation
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.LinearTransformation, compute)
 
 
 def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
@@ -700,6 +469,4 @@ def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     [`hierarchy.AffineTransformation`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself affine.
     """
-    if isinstance(xform, hierarchy.AffineTransformation):
-        return True
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, hierarchy.AffineTransformation, compute)

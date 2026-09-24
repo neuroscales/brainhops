@@ -35,73 +35,8 @@ from .concrete import (
     Translation,
 )
 from .errors import CompositionError
-from .inverse import Inverse, _cancels
 from .meta import SubspaceTransformation
-from .registries import ANALYTIC
 from .sequence import Sequence, _interpolates
-
-# ----------------------------------------------------------------------
-#     CANCELLATION (analytic priority)
-# ----------------------------------------------------------------------
-
-# A transform placed next to its own lazy inverse cancels to the identity.
-# These composers sit in the `ANALYTIC` priority tier, so `compose` tries
-# them ahead of any numeric composer (see the `compose` module docstring):
-# a cost-free rewrite runs before any parameter-reading one, so a lazy
-# inverse is never materialized when it could have cancelled. They decide
-# from the operand types and object identity alone -- `_cancels` reads no
-# field -- and decline with `NotImplemented` when the pair does not cancel,
-# handing off to the next candidate.
-
-
-@composer(priority=ANALYTIC)
-def _(To: Inverse, Ti: Transformation) -> Transformation:
-    return (
-        Identity(input=Ti.input, output=To.output)
-        if _cancels(Ti, To)
-        else NotImplemented
-    )
-
-
-@composer(priority=ANALYTIC)
-def _(To: Transformation, Ti: Inverse) -> Transformation:
-    return (
-        Identity(input=Ti.input, output=To.output)
-        if _cancels(Ti, To)
-        else NotImplemented
-    )
-
-
-# ----------------------------------------------------------------------
-#     IDENTITY
-# ----------------------------------------------------------------------
-
-
-@composer
-def _(To: Identity, Ti: Transformation) -> Transformation:
-    # Composing an identity on the left leaves the right transform, taking
-    # only the identity's output endpoint. When that endpoint is unset, or
-    # already matches, the transform is returned untouched: rebuilding it
-    # with `replace` would hand back a new object and break the `forward is`
-    # link that adjacent-inverse cancellation relies on (pinned by
-    # `test_lazy_inverse.py`). Otherwise the endpoint is set with `replace`
-    # only -- not `.compute()`, which would materialize a lazy `Inverse`
-    # leaf (a latent leak).
-    if To.output is None or To.output == Ti.output:
-        return Ti
-    return replace(Ti, output=To.output)
-
-
-@composer
-def _(To: Transformation, Ti: Identity) -> Transformation:
-    # The mirror: composing an identity on the right leaves the left
-    # transform, taking only the identity's input endpoint, and rebuilds it
-    # (with `replace`, never `.compute()`) only when that endpoint is set
-    # and differs.
-    if Ti.input is None or Ti.input == To.input:
-        return To
-    return replace(To, input=Ti.input)
-
 
 # ----------------------------------------------------------------------
 #     SEQUENCE

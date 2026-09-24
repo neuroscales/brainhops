@@ -21,7 +21,7 @@ import pytest
 from brainhops.backends import backend, get_array_backend
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel._transformations.sequence import (
-    _lower_modes,
+    normalize_modes,
 )
 from brainhops.datamodel.axes import (
     A,
@@ -303,7 +303,7 @@ def test_subspace_compose_subspace_mismatch_raises() -> None:
         compose(second, first)
 
 
-_DEFAULT_MODE = _lower_modes(None)
+_DEFAULT_MODE = normalize_modes(None)
 
 
 def test_merge_adjacent_subspaces_folds_a_matching_pair() -> None:
@@ -583,25 +583,35 @@ def test_compose_identity_with_lazy_inverse_stays_unmaterialized(
     assert isinstance(result, InverseDisplacementField)
 
 
-def test_dispatch_priority_tier_and_terminal_composition_error(
+def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
+    # Tier 1 of `compose` is the cost-free pair rewrite (see the `compose`
+    # module docstring). `~field @ field` has no numeric composer that could
+    # ever succeed -- a coordinate field's inverse cannot be materialized --
+    # so the only way it composes at all is through the pair simplifier that
+    # cancels the two. `compose` takes its operands in matrix order, so the
+    # field is written on the right.
+    cf = CoordinatesField(field=np.zeros((5, 6, 2)))
+    assert isinstance(compose(cf.inverse(), cf), Identity)
+
+
+def test_dispatch_order_and_terminal_composition_error(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # The dispatch order (see the `compose` module docstring): a composer in
-    # the ANALYTIC priority tier is tried ahead of a priority-0 family
-    # composer, and a `CompositionError` raised by a composer is terminal --
-    # dispatch stops, so later candidates are never reached.
+    # The dispatch order (see the `compose` module docstring): candidates are
+    # tried nearest-first in the class hierarchy, so a composer declared on
+    # `(Affine, Affine)` is tried ahead of one declared on the
+    # `(Transformation, Transformation)` root, and declining with
+    # `NotImplemented` hands off to the next candidate. A `CompositionError`
+    # raised by a composer is terminal -- dispatch stops, so later candidates
+    # are never reached.
     from brainhops.datamodel._transformations import compose as compose_mod
-    from brainhops.datamodel._transformations.registries import ANALYTIC
 
     a = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     b = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
     calls: list = []
 
-    # An analytic-priority composer that declines, plus a broader family
-    # composer at the default priority. The analytic one must be tried first
-    # and, on declining with NotImplemented, hand off to the family.
-    def declining_analytic(x1, x2):  # noqa: ANN001, ANN202
-        calls.append("analytic")
+    def declining_specific(x1, x2):  # noqa: ANN001, ANN202
+        calls.append("specific")
         return NotImplemented
 
     def family(x1, x2):  # noqa: ANN001, ANN202
@@ -612,34 +622,34 @@ def test_dispatch_priority_tier_and_terminal_composition_error(
         compose_mod,
         "COMPOSERS",
         {
-            (Affine, Affine): (declining_analytic, ANALYTIC),
-            (Transformation, Transformation): (family, 0),
+            (Affine, Affine): declining_specific,
+            (Transformation, Transformation): family,
         },
     )
     monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
 
     result = compose(a, b)
     assert isinstance(result, Identity)
-    assert calls == ["analytic", "family"]
+    assert calls == ["specific", "family"]
 
     # A composer that raises `CompositionError` stops dispatch: the family
-    # composer, a later (lower-priority) candidate, is never reached.
+    # composer, a later candidate, is never reached.
     calls.clear()
 
-    def raising_analytic(x1, x2):  # noqa: ANN001, ANN202
-        calls.append("analytic")
+    def raising_specific(x1, x2):  # noqa: ANN001, ANN202
+        calls.append("specific")
         raise CompositionError("right types, cannot combine")
 
     monkeypatch.setattr(
         compose_mod,
         "COMPOSERS",
         {
-            (Affine, Affine): (raising_analytic, ANALYTIC),
-            (Transformation, Transformation): (family, 0),
+            (Affine, Affine): raising_specific,
+            (Transformation, Transformation): family,
         },
     )
     monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
 
     with pytest.raises(CompositionError):
         compose(a, b)
-    assert calls == ["analytic"]
+    assert calls == ["specific"]

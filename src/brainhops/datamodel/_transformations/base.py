@@ -11,7 +11,8 @@ from brainhops.datamodel.systems import CoordinateSystem
 from . import registries
 from .convert import convert
 from .errors import ConversionError, LossyConversionError
-from .modes import ModeLike, SimplifyLike
+from .modes import ModeLike
+from .simplify import SimplifyLike
 
 # typing
 if tx.TYPE_CHECKING:
@@ -19,7 +20,8 @@ if tx.TYPE_CHECKING:
     from .sequence import Sequence
 
 
-@hierarchy.Transformation.register
+@hierarchy.Transformation.register   # virtual registration in hierarchy
+@registries.register_transformation  # register in registry for cyclic imports
 class Transformation(DataModelBase, reverse=True):
     """
     A transformation between coordinate systems.
@@ -48,9 +50,21 @@ class Transformation(DataModelBase, reverse=True):
         transformation would be represented as `Transform(input=B, output=A)`.
     """
 
-    parameter_names: tx.Annotated[
-        tx.ClassVar[tx.Union[str, tx.Tuple[str, ...]]],
+    # --- class attributes ---------------------------------------------
+
+    data_fields: tx.Annotated[
+        tx.ClassVar[tx.Tuple[str, ...]],
         tx.Doc("The attributes that parameterize the transformation."),
+    ] = ()
+
+    metadata_fields: tx.Annotated[
+        tx.ClassVar[tx.Tuple[str, ...]],
+        tx.Doc("The meta-attributes that define the encoding."),
+    ] = ()
+
+    derived_fields: tx.Annotated[
+        tx.ClassVar[tx.Tuple[str, ...]],
+        tx.Doc("The attributes that are derived from other attributes."),
     ] = ()
 
     # --- attributes ---------------------------------------------------
@@ -91,10 +105,7 @@ class Transformation(DataModelBase, reverse=True):
     # --- methods ------------------------------------------------------
 
     def compute(
-        self,
-        mode: tx.Optional[ModeLike] = None,
-        *,
-        simplify: SimplifyLike = "analytic",
+        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
@@ -102,20 +113,19 @@ class Transformation(DataModelBase, reverse=True):
         Parameters
         ----------
         mode : [list of] name or type, optional
-            Which kinds of transformations to materialize. `None` (the
-            default) admits every kind. On a leaf transformation, if a
-            `mode` is given and this leaf is not admitted by it, the leaf
-            is returned unchanged. Keys are transformation-set NAMES such as
-            `"affine"`, `"Aff"`, `"rigid"`, `"SO(3)"`, or wrapper/field keys
-            such as `"subspace"`, `"inverse"`, `"projection"`, `"field"`; a
-            hierarchy type is also accepted.
-        simplify : simplify policy, default="analytic"
-            How hard each leaf may be looked at, per its kind. Accepts a
-            single [`SimplifyPolicy`][]
-            (`False`/`"none"`/`None`, `"analytic"`, `True`/`"numeric"`),
-            a key (or list of keys) to restrict analytic simplification to
-            those kinds, or a `{key: policy}` mapping. The default,
-            `"analytic"`, simplifies every leaf from structure only.
+            Which kinds of transformations to materialize.
+            `True` (the default) admits every kind.
+            On a leaf transformation, if a `mode` is given and this leaf
+            is not admitted by it, the leaf is returned unchanged.
+            Keys are transformation types, names or symbols
+            (e.g., `"affine"`, `"Aff"`, `"rigid"`, `"SO(3)"`).
+        simplify : SimplifyLike, default="analytic"
+        What simplifications to apply to the transformation. See
+            Whether to simplify the transformation prior if possible,
+            and how hard to try to simplify them.
+            * `"analytic"` (the default) looks at the type structure only;
+            * `"numeric"` looks at the numeric values of the transformation;
+            * `False`/`"none"`/`None` disables simplification.
         """
         # `compute()` has no meaningful default: every family implements it
         # with the behaviour that fits its type -- `ConcreteTransformation`
@@ -183,6 +193,12 @@ class Transformation(DataModelBase, reverse=True):
         """
         Convert this transformation to a different type.
 
+        Conversion can be
+
+        * between type: `linear.to(Affine)`                ; or
+        * within type: `displacement.to(coeff=True)`       ; or
+        * both: `coords.to(DisplacementField, coeff=True)` .
+
         Parameters
         ----------
         cls : type, optional
@@ -207,19 +223,35 @@ class Transformation(DataModelBase, reverse=True):
         Transformation
             The converted transformation.
         """
+        # Conversion can be
+        # * between types: `linear.to(Affine)`                        ; or
+        # * within type:   `displacement.to(coeff=True)`              ; or
+        # * both:          `coords.to(DisplacementField, coeff=True)` .
+        #
+        # All of these things are handled by `convert()`. Within type
+        # conversion calls the `T -> T` converter, whereas between types
+        # conversion calls the `T1 -> T2` converter.
         cls = cls or type(self)
         try:
             return convert(self, cls, **kwargs)
         except LossyConversionError as e:
             if lossy:
-                return e
+                # The conversion is possible but discards information, and
+                # the caller asked for it anyway. The transform it would
+                # have produced travels on the exception.
+                return e.result
+            failure = e
         except ConversionError as e:
-            if error is True:
-                raise
-            elif isinstance(error, Exception) or (
-                isinstance(error, type) and issubclass(error, Exception)
-            ):
-                raise error from e
+            failure = e
+        # The conversion failed and the caller did not opt into the loss.
+        # `error` says what to do about it: re-raise, raise something else,
+        # or stand in for the result.
+        if error is True:
+            raise failure
+        if isinstance(error, Exception) or (
+            isinstance(error, type) and issubclass(error, Exception)
+        ):
+            raise error from failure
         return error
 
     # --- operators ----------------------------------------------------
@@ -345,8 +377,3 @@ compute]:
 
     def __invert__(self) -> "Transformation":
         return self.inverse()
-
-
-# Make the concrete root reachable from `modes._lower_key` without a
-# top-level `base` import there (which would cycle).
-registries.register_transformation(Transformation)

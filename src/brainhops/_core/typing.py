@@ -33,6 +33,22 @@ from bagof.magic import Frozen, NoInit, NoRepr
 
 T = tx.TypeVar("T")
 
+Deactivated = tx.ClassVar
+"""
+Marking a field as a `ClassVar` makes it virtually innert for itx magic
+metatype. It allows to "deactivate" an inherited field, so that it
+does not appear in the `__init__` signature or in `__repr__`.
+
+It stays listed in `fields(cls)`, but with `init=False` and `var=False`.
+"""
+
+Derived = tx.ClassVar
+"""
+Same idea as `Deactivated`, but with a more semantic names for fields
+that are proper fields in a base class, but become "virtual" (derived)
+in a child class.
+"""
+
 Const = tx.Annotated[T, Frozen(), NoInit()]
 """A field that is frozen and cannot be set through the constructor."""
 
