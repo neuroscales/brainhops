@@ -1,5 +1,5 @@
 r"""
-This module defines a transformation hierarchy.
+This module defines a transformation
 
 The class A is a subclass of B if A can be converted to B without loss.
 For example, Linear is a subclass of Affine. This is akin to set theory
@@ -79,12 +79,6 @@ All classical linear group can be extended with the translation group
       (or conformal) transformations. They only preserve angles.
 """
 
-# stdlib
-import re
-
-# dependencies
-import typing_extensions as tx
-
 # fmt: off
 # ruff: disable[E501]
 __all__ = [
@@ -96,7 +90,8 @@ __all__ = [
     "liegroup",
     "connected",
     "simplyconnected",
-    "parseType",
+    "TransformationFamily",
+    # --- GENERAL ------------------------------------------------------
     "TransformationBaseClass",
     "Transformation",
     "Morphism",                                     # ^ alias
@@ -157,19 +152,45 @@ __all__ = [
 # ruff: enable[E501]
 # fmt: on
 
-
+# stdlib
+import re
 from abc import ABC
+from collections.abc import Sequence as AbcSequence
+from functools import lru_cache
 
-GROUPS = set()
-LIE_GROUPS = set()
-CONNECTED = set()
-SIMPLYCONNECTED = set()
-NAMETOCLASS = {}
-FSYMBOLTOCLASS = {}
-SYMBOLTOCLASS = {}
+import typing_extensions as tx
+from bagof.magic import Magic, replace
+
+# ======================================================================
+#
+#                           R E G I S T R I E S
+#
+# ======================================================================
+
+_Type = tx.Type["TransformationBaseClass"]
+_Decorator = tx.Callable[["_Type"], "_Type"]
+_Set = tx.Set[_Type]
+_StrMap = tx.Dict[str, _Type]
+_TypeMap = tx.Dict[_Type, _Type]
+
+GROUPS: _Set = set()
+LIE_GROUPS: _Set = set()
+CONNECTED: _Set = set()
+SIMPLYCONNECTED: _Set = set()
+CLOSEDUNDER: tx.Dict[_Type, _Set] = {}
+NONLIFTABLE: _Set = set()
+
+NAMETOCLASS: _StrMap = {}
+FSYMBOLTOCLASS: _StrMap = {}
+SYMBOLTOCLASS: _StrMap = {}
+INVERTIBLE_OF: _TypeMap = {}
+NONINVERTIBLE_OF: _TypeMap = {}
 
 
-def is_group(cls: type) -> bool:
+# --- checks -----------------------------------------------------------
+
+
+def is_group(cls: _Type) -> bool:
     """Return whether a set of transformations forms a group.
 
     A class is recognized as a group when it, or one of its ancestors,
@@ -178,7 +199,7 @@ def is_group(cls: type) -> bool:
     return cls in GROUPS
 
 
-def is_lie_group(cls: type) -> bool:
+def is_lie_group(cls: _Type) -> bool:
     """Return whether a set of transformations forms a Lie group.
 
     A class is recognized as a Lie group when it, or one of its
@@ -187,7 +208,7 @@ def is_lie_group(cls: type) -> bool:
     return cls in LIE_GROUPS
 
 
-def is_connected(cls: type) -> bool:
+def is_connected(cls: _Type) -> bool:
     """Return whether a set of transformations is connected.
 
     A class is recognized as connected when it, or one of its
@@ -197,7 +218,7 @@ def is_connected(cls: type) -> bool:
     return cls in CONNECTED
 
 
-def is_simplyconnected(cls: type) -> bool:
+def is_simplyconnected(cls: _Type) -> bool:
     """Return whether a set of transformations is simply connected.
 
     A class is recognized as simply connected when it, or one of its
@@ -206,7 +227,111 @@ def is_simplyconnected(cls: type) -> bool:
     return cls in SIMPLYCONNECTED
 
 
-def group(cls: type) -> type:
+def is_invertible(cls: _Type) -> bool:
+    """
+    Return whether a set of transformations is known to be invertible.
+    """
+    return issubclass(cls, BijectiveTransformation)
+
+
+@lru_cache(maxsize=None)  # noqa: UP033
+def is_closedunder(cls: _Type, subcls: _Type) -> bool:
+    """
+    Return whether a set of transformations is closed under composition
+    with another set.
+
+    This is always the case when `subcls` is a subgroup of `cls`, or
+    when `subcls` is a subset of `cls` and `cls` is closed.
+
+    There can be more special cases, which are registered with the
+    [`closedunder`][] decorator.
+    """
+    # 1) Subset of group
+    if is_group(cls) and issubclass(subcls, cls):
+        return True
+    # 2) Registered closure
+    if subcls in CLOSEDUNDER.get(cls, set()):
+        return True
+    # 3) cls is closed under a superset of subcls
+    for supcls in subcls.__bases__:
+        if is_closedunder(cls, supcls):
+            return True
+    return False
+
+
+def is_closed(cls: _Type) -> bool:
+    """
+    Return whether a set of transformations is closed under composition.
+    """
+    return is_closedunder(cls, cls)
+
+
+def is_liftable(cls: _Type) -> bool:
+    """
+    Return whether a set of transformations is known to be liftable to a
+    higher-dimensional space.
+    """
+    # I don't try to infer liftability from the subsets or supersets of
+    # cls, because it is not very robust and depends very much on the
+    # definition of liftability (which "properties" do we want converved).
+    # Here, the property is "belong to the same group type" (but not the
+    # exact same group since we have changed dimensions). For example,
+    # all elements of SO(3) are elements of SO(4) when lifted from ℝ^3
+    # to ℝ^4. But SO(3) has subgroups that are liftable and others that
+    # are not, and it has supergroups that are liftable and other that
+    # are not.
+    return cls not in NONLIFTABLE
+
+
+# --- generators -------------------------------------------------------
+
+
+@lru_cache(maxsize=1)  # noqa: UP033
+def all_sets() -> tx.FrozenSet[type]:
+    """Return all known transformation sets."""
+    return frozenset(NAMETOCLASS.values())
+
+
+@lru_cache(maxsize=1)  # noqa: UP033
+def all_groups() -> tx.FrozenSet[type]:
+    """Return all known transformation groups."""
+    return frozenset(GROUPS)
+
+
+@lru_cache(maxsize=1)  # noqa: UP033
+def all_lie_groups() -> tx.FrozenSet[type]:
+    """Return all known Lie groups."""
+    return frozenset(LIE_GROUPS)
+
+
+def as_invertible(cls: _Type) -> _Type:
+    """
+    Return the invertible subset of a set of transformations, if any.
+
+    If the set is not known to have an invertible subset, return `None`.
+    """
+    node = INVERTIBLE_OF.get(cls, cls)
+    if not is_invertible(node):
+        raise TypeError(
+            f"{cls} is not a known invertible set of transformations"
+        )
+    return node
+
+
+def as_noninvertible(cls: _Type) -> _Type:
+    """
+    Return the non-invertible superset of a set of transformations, if any.
+
+    If the set is not known to be a subset of a non-invertible set, return
+    `None`.
+    """
+    return NONINVERTIBLE_OF.get(cls, cls)
+
+
+# --- decorators -------------------------------------------------------
+
+
+def group(cls: _Type) -> _Type:
     """
     Mark the set of transformations as forming a group under composition.
 
@@ -216,7 +341,7 @@ def group(cls: type) -> type:
     return cls
 
 
-def liegroup(cls: type) -> type:
+def liegroup(cls: _Type) -> _Type:
     """
     Mark the set of transformations as forming a Lie group under composition.
 
@@ -226,7 +351,7 @@ def liegroup(cls: type) -> type:
     return group(cls)
 
 
-def connected(cls: type) -> type:
+def connected(cls: _Type) -> _Type:
     """
     Mark the set of transformations as being connected.
 
@@ -236,7 +361,7 @@ def connected(cls: type) -> type:
     return cls
 
 
-def simplyconnected(cls: type) -> type:
+def simplyconnected(cls: _Type) -> _Type:
     """
     Mark the set of transformations as being simply connected.
 
@@ -244,6 +369,245 @@ def simplyconnected(cls: type) -> type:
     """
     SIMPLYCONNECTED.add(cls)
     return connected(cls)
+
+
+def invertible_subset_of(cls: _Type) -> _Decorator:
+    """
+    Mark the set of transformations as the invertible subset of another set.
+    """
+    def decorator(subcls: _Type) -> _Type:
+        INVERTIBLE_OF[cls] = subcls
+        NONINVERTIBLE_OF[subcls] = cls
+        return subcls
+
+    return decorator
+
+
+def closedunder(cls: _Type) -> _Decorator:
+    """
+    Mark the set of transformations as being closed under composition
+    with another set.
+
+    The argument is a set of transformations that is a superset of `cls`.
+    """
+    def decorator(subcls: _Type) -> _Type:
+        CLOSEDUNDER.setdefault(cls, set()).add(subcls)
+        return subcls
+
+    return decorator
+
+
+def closed(cls: _Type) -> _Type:
+    """
+    Mark the set of transformations as being closed under composition.
+    """
+    return closedunder(cls)(cls)
+
+
+def nonliftable(cls: _Type) -> _Type:
+    """
+    Mark the set of transformations as being non-liftable to a
+    higher-dimensional space.
+    """
+    NONLIFTABLE.add(cls)
+    return cls
+
+
+# ======================================================================
+#
+#                           F A M I L I E S
+#
+# ======================================================================
+
+Kind = tx.Type["TransformationBaseClass"]
+Dim = tx.Optional[int]
+KindLike = tx.Union[Kind, str]
+FamilyLike = tx.Union[tx.Self, tx.Tuple[KindLike, Dim], KindLike]
+
+
+class TransformationFamily(
+    # `eq`/`hash` are written by hand below: a family compares and hashes
+    # as its `(kind, ndim)` pair, so a plain tuple is an equal key.
+    AbcSequence, Magic, eq=False, hash=False, frozen=True
+):
+    """
+    A parametric family of transformations.
+
+    A family is parameterized by a base type and, optionally, a dimensionality.
+    """
+
+    # --- attributes ---------------------------------------------------
+
+    kind: Kind
+    """All transformations in this family are instances of this type."""
+
+    ndim: Dim = None
+    """The dimensionality of the transformations in this family, if known."""
+
+    @property
+    def name(self) -> str:
+        """The preferred name of the transformation family."""
+        return self.names[0]
+
+    @property
+    def names(self) -> tx.Tuple[str, ...]:
+        """The names of the transformation family."""
+        names = self.kind.NAME
+        if isinstance(names, str):
+            names = (names,)
+        return names
+
+    @property
+    def symbol(self) -> tx.Optional[str]:
+        """The symbol of the transformation family."""
+        return getattr(self.kind, "SYMBOL", None)
+
+    @property
+    def fsymbol(self) -> tx.Optional[str]:
+        """
+        The symbol of the transformation family, with its dimension.
+
+        If the family dimensionality is unknown, the dimension is the
+        placeholder `{n}`.
+        """
+        fsymbol = getattr(self.kind, "FSYMBOL", None)
+        ndim = self.ndim
+        if fsymbol and ndim is not None:
+            fsymbol = fsymbol.format(n=ndim)
+        return fsymbol
+
+    # --- magic --------------------------------------------------------
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def __getitem__(self, index: int) -> tx.Union[Kind, Dim]:
+        if index == 0:
+            return self.kind
+        if index == 1:
+            return self.ndim
+        raise IndexError(
+            f"index {index} out of range for TransformationFamily"
+        )
+
+    def __iter__(self) -> tx.Iterator[tx.Union[Kind, Dim]]:
+        yield self.kind
+        yield self.ndim
+
+    # A family *is* its `(kind, ndim)` pair, so it compares and hashes like
+    # one. Tables keyed by families (the simplify table, the mode list) can
+    # then be read with a plain tuple, and two spellings of the same family
+    # collide on one key.
+    def __eq__(self, other: tx.Any) -> bool:
+        if isinstance(other, TransformationFamily):
+            return self.to_tuple() == other.to_tuple()
+        if isinstance(other, tuple):
+            return self.to_tuple() == other
+        return NotImplemented
+
+    def __ne__(self, other: tx.Any) -> bool:
+        result = self.__eq__(other)
+        return result if result is NotImplemented else not result
+
+    def __hash__(self) -> int:
+        return hash(self.to_tuple())
+
+    # --- to -----------------------------------------------------------
+
+    def to_tuple(self) -> tx.Tuple[Kind, Dim]:
+        """Convert to a (kind, ndim) tuple."""
+        return (self.kind, self.ndim)
+
+    # --- from ---------------------------------------------------------
+
+    @classmethod
+    def parse(cls, repr: FamilyLike, ndim: Dim = None) -> tx.Self:
+        """Return a transformation family from its name, symbol or type.
+
+        An explicit `ndim` wins over one carried by `repr`; `ndim=None`
+        means "whatever `repr` says", so parsing a family is idempotent.
+
+        The cases are ordered so that no branch is reached with a value it
+        cannot type-check: a bare `issubclass` would raise on an `int` or a
+        `str`.
+        """
+        # --- already a family ---
+        if isinstance(repr, TransformationFamily):
+            if ndim is not None and repr.ndim != ndim:
+                repr = replace(repr, ndim=ndim)
+            return repr
+        # --- a (kind, ndim) pair ---
+        # A two-tuple whose second element is a dimension is a pair; any
+        # other tuple is a tuple *of kinds* (an `isinstance` kind such as
+        # the "field" alias), which is kept whole.
+        if isinstance(repr, tuple) and _is_kind_ndim_pair(repr):
+            return cls.from_tuple(repr)
+        # --- a bare dimension ---
+        # `bool` is an `int`, so it is excluded explicitly.
+        if isinstance(repr, int) and not isinstance(repr, bool):
+            return cls(Transformation, repr if ndim is None else ndim)
+        # --- a type, or a tuple of types ---
+        if isinstance(repr, type) or isinstance(repr, tuple):
+            return cls(repr, ndim)
+        # --- a name or a symbol ---
+        if isinstance(repr, str):
+            try:
+                return cls.from_name(repr, ndim)
+            except ValueError:
+                return cls.from_symbol(repr, ndim)
+        raise ValueError(f"invalid transformation family: {repr!r}")
+
+    @classmethod
+    def from_tuple(cls, pair: tx.Tuple[KindLike, Dim]) -> tx.Self:
+        """Return a transformation family from its `(kind, ndim)` pair."""
+        kind, ndim = pair
+        return cls.parse(kind, ndim)
+
+    @classmethod
+    def from_name(cls, name: str, ndim: Dim = None) -> tx.Self:
+        """Return a transformation family from its name."""
+        kind = NAMETOCLASS.get(name.lower())
+        if kind is None:
+            raise ValueError(f"invalid name for transformation family: {name}")
+        return cls.parse(kind, ndim)
+
+    @classmethod
+    def from_symbol(cls, symbol: str, ndim: Dim = None) -> tx.Self:
+        """Return a transformation family from its symbol."""
+        kind = SYMBOLTOCLASS.get(symbol)
+        if kind is not None:
+            return cls.parse(kind, ndim)
+
+        kind = FSYMBOLTOCLASS.get(symbol)
+        if kind is not None:
+            return cls.parse(kind, ndim)
+
+        for fsymbol, kind in FSYMBOLTOCLASS.items():
+            if "{n}" not in fsymbol:
+                continue
+            pattern = _fsymbol_to_pattern(fsymbol)
+            match = re.match(pattern, symbol)
+            if match:
+                return cls.parse(kind, int(match.group("n")))
+
+        raise ValueError(f"invalid symbol for transformation family: {symbol}")
+
+
+def _is_kind_ndim_pair(value: tx.Tuple) -> bool:
+    """Whether a tuple reads as a `(kind, ndim)` pair rather than as a
+    tuple of kinds.
+
+    A `(kind, ndim)` pair has exactly two elements whose second one is a
+    dimension: an `int` or `None`. Every other tuple -- including a
+    two-tuple of two classes, such as the "field" kind alias -- is a tuple
+    of kinds, matched by `isinstance` as a whole.
+    """
+    if len(value) != 2:
+        return False
+    ndim = value[1]
+    if isinstance(ndim, bool):
+        return False
+    return ndim is None or isinstance(ndim, int)
 
 
 def _fsymbol_to_pattern(fsymbol: str) -> str:
@@ -263,58 +627,21 @@ def _fsymbol_to_pattern(fsymbol: str) -> str:
     return "^" + pattern + "$"
 
 
-def parseType(
-    s: tx.Union[str, type, int],
-) -> tx.Tuple[tx.Optional[type], tx.Optional[int]]:
-    """
-    Resolve a string to its corresponding class in the transformation
-    hierarchy, and extract a dimension if the string encodes one.
-
-    Checks, in order if s is string:
-      1. NAMETOCLASS    -- case-insensitive match on `NAME` (e.g. "rotation")
-      2. SYMBOLTOCLASS  -- exact match on `SYMBOL`  (e.g. "SO")
-      3. FSYMBOLTOCLASS -- pattern match on `FSYMBOL`, which may contain
-         one or more `{n}` placeholders for the dimension (e.g. "SO(3)"
-         matches template "SO({n})", extracting n=3; all occurrences of
-         `{n}` in a template must agree on the same value)
-
-    NAMEs are matched case-insensitively; SYMBOLs and FSYMBOLs stay
-    case-sensitive (`"SO"`, `"SO(3)"`, `"O"`, `"E"` are mathematical
-    symbols).
-
-    Returns
-    -------
-    cls : type or None
-    dim : int or None
-    """
-    if isinstance(s, str):
-        if s.lower() in NAMETOCLASS:
-            return NAMETOCLASS[s.lower()], None
-        if s in SYMBOLTOCLASS:
-            return SYMBOLTOCLASS[s], None
-        if s in FSYMBOLTOCLASS:
-            return FSYMBOLTOCLASS[s], None
-        for fsymbol, cls in FSYMBOLTOCLASS.items():
-            if "{n}" not in fsymbol:
-                continue
-            pattern = _fsymbol_to_pattern(fsymbol)
-            m = re.match(pattern, s)
-            if m:
-                return cls, int(m.group("n"))
-        raise ValueError(f"invalid string for type lookup: {s}")
-    if isinstance(s, int):
-        return Transformation, s
-    return s, None
+# ======================================================================
+#
+#                           H I E R A R C H Y
+#
+# ======================================================================
 
 
 class TransformationBaseClass(ABC):
-    """The root of the transformation hierarchy.
+    """The root of the transformation
 
     A subclass declares its `SYMBOL` (a short mathematical symbol, such
     as `"SO"`), its `FSYMBOL` (the same symbol with a dimension
     placeholder, such as `"SO({n})"`), and its `NAME` (one or more
     plain-text names). These are recorded automatically on subclassing,
-    and are what [`parseType`][] resolves a string against.
+    and are what [`TransformationFamily.parse`][] resolves a string against.
     """
 
     SYMBOL: str
@@ -332,6 +659,7 @@ class TransformationBaseClass(ABC):
             SYMBOLTOCLASS[cls.SYMBOL] = cls
 
 
+@closed  # assuming domains are matching
 class Transformation(TransformationBaseClass):
     """Any coordinate transformation.
 
@@ -340,12 +668,13 @@ class Transformation(TransformationBaseClass):
 
     SYMBOL = "Trans"
     FSYMBOL = "Trans({n})"
-    NAME = ("Transformation",)
+    NAME = ("Transformation", "Morphism")
 
 
 Morphism = Transformation
 
 
+@closed  # assuming domains are matching
 class InjectiveTransformation(Transformation):
     """A one-to-one transformation (distinct inputs map to distinct outputs).
 
@@ -359,6 +688,7 @@ class InjectiveTransformation(Transformation):
     )
 
 
+@closed  # assuming domains are matching
 class SurjectiveTransformation(Transformation):
     """An onto transformation (every output is reached).
 
@@ -372,6 +702,8 @@ class SurjectiveTransformation(Transformation):
     )
 
 
+@group
+@invertible_subset_of(Transformation)
 class BijectiveTransformation(
     InjectiveTransformation, SurjectiveTransformation
 ):
@@ -388,12 +720,16 @@ class BijectiveTransformation(
         "BijectiveTransformation",
         "Bijective",
         "Bijection",
+        "InvertibleTransformation",
+        "Invertible",
     )
 
 
-Bijection = BijectiveTransformation
+Bijection = Bijective = BijectiveTransformation
+Invertible = InvertibleTransformation = BijectiveTransformation
 
 
+@group
 class Isomorphism(BijectiveTransformation):
     """
     In all useful senses, bijective morphisms are isomorphisms,
@@ -432,6 +768,7 @@ class VolumePreservingDiffeomorphism(Diffeomorphism):
 # ----------------------------------------------------------------------
 
 
+@closed
 class MatrixTransformation(Transformation):
     """Transformation that can be represented as a matrix.
 
@@ -445,6 +782,7 @@ class MatrixTransformation(Transformation):
 
 
 @group
+@invertible_subset_of(MatrixTransformation)
 class InvertibleMatrixTransformation(
     MatrixTransformation, BijectiveTransformation
 ):
@@ -478,6 +816,7 @@ class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
 # ----------------------------------------------------------------------
 
 
+@closed
 class AffineTransformation(MatrixTransformation):
     """An affine transformation. May not be invertible.
 
@@ -491,6 +830,7 @@ class AffineTransformation(MatrixTransformation):
 
 
 @liegroup
+@invertible_subset_of(AffineTransformation)
 class InvertibleAffineTransformation(
     AffineTransformation, InvertibleMatrixTransformation
 ):
@@ -569,6 +909,7 @@ VolumePreservingAffineTransformation = SpecialAffineTransformation
 
 
 @liegroup
+@nonliftable
 class ConformalEuclideanTransformation(InvertibleAffineTransformation):
     """
     An affine transformation that preserves angles (up to their sign).
@@ -589,6 +930,7 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
 
 @liegroup
 @connected
+@nonliftable
 class SpecialConformalEuclideanTransformation(
     ConformalEuclideanTransformation
 ):
@@ -663,6 +1005,7 @@ RigidTransformation = SpecialEuclideanTransformation
 
 
 @liegroup
+@nonliftable
 class Dilation(ConformalEuclideanTransformation):
     """
     A dilation is a similitude with no rotation, i.e. a scaling with
@@ -681,6 +1024,7 @@ class Dilation(ConformalEuclideanTransformation):
 
 @liegroup
 @simplyconnected
+@nonliftable
 class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
     """
     A dilation with a positive scaling factor.
@@ -716,6 +1060,7 @@ class Translation(PositiveDilation, SpecialEuclideanTransformation):
 # ----------------------------------------------------------------------
 
 
+@closed
 class LinearTransformation(AffineTransformation):
     """A linear transformation. May not be invertible."""
 
@@ -726,6 +1071,7 @@ class LinearTransformation(AffineTransformation):
 
 
 @liegroup
+@invertible_subset_of(LinearTransformation)
 class InvertibleLinearTransformation(
     LinearTransformation, InvertibleAffineTransformation
 ):
@@ -795,6 +1141,7 @@ class SpecialLinearTransformation(
 
 
 @liegroup
+@nonliftable
 class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
     """
     A linear transformation that preserves (absolute) angles (CO)
@@ -815,15 +1162,14 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
 
 @liegroup
 @connected
+@nonliftable
 class SpecialConformalOrthogonalTransformation(
     ConformalOrthogonalTransformation, SpecialLinearTransformation
 ):
     """
-    An linear transformation that preserves angles (CSO)
+    A linear transformation that preserves angles (CSO)
 
     symbol: CSO = SO x ℝ+
-
-    alias: Dilation
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group
     """
@@ -833,6 +1179,8 @@ class SpecialConformalOrthogonalTransformation(
     NAME = (
         "SpecialConformalOrthogonalTransformation",
         "SpecialConformalOrthogonal",
+        "ConformalSpecialOrthogonalTransformation",
+        "ConformalSpecialOrthogonal",
     )
 
 
@@ -928,7 +1276,7 @@ class Permutation(SignedPermutation, OrthogonalTransformation):
 
     A generalized permutation with non-zero entries +1.
 
-    Permutations form the symmetric Lie group, named S.
+    Permutations form the symmetric group, named S.
 
     symbol: S
 
@@ -940,6 +1288,49 @@ class Permutation(SignedPermutation, OrthogonalTransformation):
     NAME = ("Permutation",)
 
 
+@group
+class EvenPermutation(Permutation, SpecialOrthogonalTransformation):
+    """An even permutation.
+
+    A permutation with determinant +1.
+
+    A permutation matrix is orthogonal, and an even one has determinant
+    +1, so the even permutations are exactly the permutations that lie in
+    SO(n). That edge is what makes SO(n) closed under composition with an
+    even permutation -- and hence what lets a subspace transform that
+    reindexes its axes by an even permutation stay a rotation.
+
+    Even permutations form the (finite discrete) Alternating Group A.
+
+    symbol: A
+
+    wiki: https://en.wikipedia.org/wiki/Alternating_group
+    """
+
+    SYMBOL = "A"
+    FSYMBOL = "A_{n}"
+    NAME = ("EvenPermutation",)
+
+
+@group
+class OddPermutation(Permutation):
+    """An odd permutation.
+
+    A permutation with determinant -1.
+
+    symbol: S \\ A
+
+    wiki: https://en.wikipedia.org/wiki/Permutation_group
+    wiki: https://en.wikipedia.org/wiki/Alternating_group
+    """
+
+    SYMBOL = "S \\ A"
+    FSYMBOL = "S_{n} \\ A_{n}"
+    NAME = ("OddPermutation",)
+
+
+
+@closed
 class DiagonalTransformation(LinearTransformation):
     """A diagonal matrix, may not be invertible.
 
@@ -950,10 +1341,12 @@ class DiagonalTransformation(LinearTransformation):
     NAME = (
         "DiagonalTransformation",
         "Diagonal",
+        "Scaling",
     )
 
 
 @liegroup
+@invertible_subset_of(DiagonalTransformation)
 class InvertibleDiagonalTransformation(
     DiagonalTransformation, GeneralizedPermutation
 ):
@@ -993,6 +1386,7 @@ class PositiveDiagonalTransformation(
     NAME = (
         "PositiveDiagonalTransformation",
         "PositiveDiagonal",
+        "PositiveScaling",
     )
 
 
@@ -1046,6 +1440,8 @@ class SpecialDiagonalTransformation(
 CardinalReflection = SpecialDiagonalTransformation
 
 
+@closed
+@nonliftable
 class MultiplicativeTransformation(
     DiagonalTransformation,
 ):
@@ -1063,6 +1459,8 @@ class MultiplicativeTransformation(
 
 
 @liegroup
+@nonliftable
+@invertible_subset_of(MultiplicativeTransformation)
 class InvertibleMultiplicativeTransformation(
     MultiplicativeTransformation, InvertibleDiagonalTransformation
 ):
@@ -1091,6 +1489,7 @@ Homothety = InvertibleMultiplicativeTransformation
 
 @liegroup
 @simplyconnected
+@nonliftable
 class PositiveMultiplicativeTransformation(
     MultiplicativeTransformation, PositiveDiagonalTransformation
 ):

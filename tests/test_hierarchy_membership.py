@@ -15,34 +15,36 @@ from brainhops.datamodel import hierarchy
 from brainhops.datamodel.transformations import Affine, Linear, Translation
 
 # ----------------------------------------------------------------------
-#   CASE-INSENSITIVE parseType
+#   CASE-INSENSITIVE parse
 # ----------------------------------------------------------------------
 
 
-def test_parsetype_name_is_case_insensitive() -> None:
+def test_parse_name_is_case_insensitive() -> None:
     for name in ("affine", "Affine", "AFFINE", "AfFiNe"):
-        cls, dim = hierarchy.parseType(name)
+        cls, dim = hierarchy.TransformationFamily.parse(name)
         assert cls is hierarchy.AffineTransformation
         assert dim is None
-    assert hierarchy.parseType("translation")[0] is hierarchy.Translation
-    assert hierarchy.parseType("rotation")[0] is (
+    assert hierarchy.TransformationFamily.parse("translation")[0] is (
+        hierarchy.Translation
+    )
+    assert hierarchy.TransformationFamily.parse("rotation")[0] is (
         hierarchy.SpecialOrthogonalTransformation
     )
 
 
-def test_parsetype_symbols_stay_case_sensitive() -> None:
+def test_parse_symbols_stay_case_sensitive() -> None:
     # SYMBOL / FSYMBOL are mathematical symbols, matched case-sensitively.
-    cls, dim = hierarchy.parseType("SO(3)")
+    cls, dim = hierarchy.TransformationFamily.parse("SO(3)")
     assert cls is hierarchy.SpecialOrthogonalTransformation
     assert dim == 3
-    assert hierarchy.parseType("SO")[0] is (
+    assert hierarchy.TransformationFamily.parse("SO")[0] is (
         hierarchy.SpecialOrthogonalTransformation
     )
 
 
-def test_parsetype_raises_on_unknown() -> None:
+def test_parse_raises_on_unknown() -> None:
     with pytest.raises(ValueError):
-        hierarchy.parseType("DefinitelyNotAType")
+        hierarchy.TransformationFamily.parse("DefinitelyNotAType")
 
 
 # ----------------------------------------------------------------------
@@ -90,13 +92,13 @@ def test_euclidean_lattice_edges() -> None:
 
 
 def test_injective_surjective_names_resolve() -> None:
-    assert hierarchy.parseType("injection")[0] is (
+    assert hierarchy.TransformationFamily.parse("injection")[0] is (
         hierarchy.InjectiveTransformation
     )
-    assert hierarchy.parseType("surjective")[0] is (
+    assert hierarchy.TransformationFamily.parse("surjective")[0] is (
         hierarchy.SurjectiveTransformation
     )
-    assert hierarchy.parseType("bijection")[0] is (
+    assert hierarchy.TransformationFamily.parse("bijection")[0] is (
         hierarchy.BijectiveTransformation
     )
 

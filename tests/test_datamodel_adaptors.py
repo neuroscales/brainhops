@@ -1223,17 +1223,27 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
 
 
 def test_is_identity_recognizes_a_subspace_of_the_identity() -> None:
-    # A subspace transform whose inner transform is itself the identity, and
-    # which reads the same axes it writes, is the identity under compute. It
-    # is not recognized as such without compute, because its inner transform
-    # is set.
+    # A subspace transform lifts its inner transform into the full space, so
+    # its membership follows from the inner's, at the same level. An
+    # `Identity` inner is the identity by *type*, with no value to read, so
+    # a same-axes subspace of it is recognized structurally -- `compute` is
+    # not needed. (It is a `SubspaceTransformation` of a *parameterized*
+    # inner, such as the scaling below, that structure cannot settle.)
     subspace = SubspaceTransformation(
         transformation=Identity(),
         input_axes=np.asarray([0, 1, 2]),
         output_axes=np.asarray([0, 1, 2]),
     )
-    assert is_identity(subspace) is False
+    assert is_identity(subspace) is True
     assert is_identity(subspace, compute=True) is True
+    # A subspace that reindexes its axes permutes coordinates, so it is not
+    # the identity however trivial its inner is.
+    reindex = SubspaceTransformation(
+        transformation=Identity(),
+        input_axes=np.asarray([0, 1, 2]),
+        output_axes=np.asarray([1, 0, 2]),
+    )
+    assert is_identity(reindex) is False
 
 
 def test_is_identity_keeps_a_non_identity_subspace_non_identity() -> None:
