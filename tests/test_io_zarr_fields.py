@@ -5,7 +5,6 @@ real store round-trips. The placement is anisotropic and rotated so that
 the voxel-to-voxel normalization is visible.
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -33,15 +32,7 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.transformations.zarr import OmeFieldError, OmeZarrField
 from brainhops.io.transformations.zarr._axes import _to_axis
 
-# OmeZarrField is an OME-Zarr file format, so it is available only when
-# abczarr is installed, and opening a store runs through abczarr's
-# zarr-python driver, which needs zarr-python 3 and therefore Python 3.11 or
-# newer. The whole module is gated the same way the image-zarr tests are.
 abczarr = pytest.importorskip("abczarr")
-pytestmark = pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason="OME-Zarr fields need zarr-python 3, which needs Python 3.11",
-)
 
 
 def _write_field_store(

@@ -1,17 +1,266 @@
+"""The registries every dispatcher and every cyclic import goes through.
+
+Two unrelated things live here, for the same reason: both must be
+importable by every module of the package without forming a cycle.
+
+* [`Dispatcher`][], the registry base class. A dispatcher is a `dict` of
+  functions keyed by types, called with values, that picks the function
+  whose declared types sit *nearest* those of its arguments -- the way a
+  method override does, but on several arguments at once. `convert` and
+  `is_kind` are dispatchers; see their modules for what their keys mean.
+
+* the late-bound singletons (`INVERSE`, `ADAPT`, `SEQUENCE`,
+  `TRANSFORMATION`) and the tables (`COMPOSERS`, `SIMPLIFIERS`) that a
+  module registers into at import time, so that a lower layer can reach a
+  higher one without importing it.
+"""
+
 # stdlib
-from functools import partial
+from functools import lru_cache
 
 # dependencies
 import typing_extensions as tx
-
-# datamodel
-from brainhops.datamodel.hierarchy import Transformation as TransformationSet
 
 # typing
 if tx.TYPE_CHECKING:
     from .base import Transformation
     from .inverse import Inverse
     from .sequence import Sequence
+
+
+# --- dispatch ---------------------------------------------------------
+
+
+def type_distance(
+    t1: tx.Union[type, tx.Tuple[type, ...]],
+    t2: tx.Union[type, tx.Tuple[type, ...]],
+    oriented: bool = True
+) -> float:
+    """
+    Compute the distance between two types or tuple of types in the
+    class hierarchy.
+    """
+    if not isinstance(t1, tuple):
+        t1 = (t1,)
+    if not isinstance(t2, tuple):
+        t2 = (t2,)
+    if len(t1) != len(t2):
+        raise ValueError("type_distance() requires tuples of the same length")
+    return sum(_type_distance(a, b, oriented=oriented) for a, b in zip(t1, t2))
+
+
+@lru_cache(maxsize=None)  # noqa: UP033
+def _type_distance(
+    t1: type, t2: type, oriented: bool = True
+) -> float:
+    """Compute the distance between two types in the class hierarchy."""
+    # TODO: handle type hints (Union, Any)
+    if t1 is t2:
+        return 0
+    if issubclass(t1, t2):
+        n = len(t1.__bases__)
+        return 1 + min(
+            # favor earlier bases: a fractional penalty per base position,
+            # too small to ever outweigh a whole step, so that two bases at
+            # the same distance are separated the way the MRO separates
+            # them, rather than by an accident of registration order.
+            _type_distance(base, t2, oriented=False) + (i/n)
+            for i, base in enumerate(t1.__bases__)
+        )
+    if issubclass(t2, t1) and not oriented:
+        return _type_distance(t2, t1, oriented=True)
+    return float("inf")
+
+
+Key = tx.Union[type, tx.Tuple[type, ...]]
+KEY = tx.TypeVar("KEY", bound=Key, default=Key)
+FN = tx.TypeVar("FN", bound=tx.Callable, default=tx.Callable, covariant=True)
+
+
+class Dispatcher(dict, tx.Generic[KEY, FN]):
+    """
+    A registry of functions keyed by types, with nearest-match dispatch.
+
+    A subclass says what its keys mean and how it is called, by overriding
+
+    | method            | what it decides                              |
+    |-------------------|----------------------------------------------|
+    | `key_from_func`   | the key a bare `@register` reads from hints  |
+    | `key_from_args`   | the key a call looks up                      |
+    | `key_distance`    | how a call's key is scored against a registered one |
+    | `candidate_group` | which registrations compete for one answer   |
+    | `__apply__`       | how the function is called                   |
+    | `__error__`       | what a call with no registered function does |
+    | `__pre_check__`   | what a call refuses outright                 |
+    | `__post_check__`  | what a result is checked for                 |
+
+    Every hook but `key_distance`/`key_from_func` receives the call's own
+    arguments, so a subclass can raise with the values in hand.
+
+    A dispatcher answers with *one* function -- [`get`][], the nearest --
+    which is what a total operation wants (exactly one converter produces an
+    `Affine`). A partial one wants them all, nearest first, to try in turn:
+    that is [`candidates`][], and `get` is its first element.
+    """
+
+    def __new__(cls, *args, **kwargs) -> tx.Self:
+        obj = super().__new__(cls)
+        obj._CACHE = {}
+        obj._CANDIDATES = {}
+        return obj
+
+    @tx.overload
+    def register(self, *types: type) -> tx.Callable[[FN], FN]:
+        """Return a decorator to register a function for the given types."""
+        ...
+
+    @tx.overload
+    def register(self, func: FN) -> FN:
+        """Register a function for the types inferred from its signature."""
+        ...
+
+    def register(
+        self, *args, _func: tx.Optional[FN] = None, **kwargs
+    ) -> tx.Callable[[FN], FN]:
+        if _func is None and args and not isinstance(args[0], type):
+            return self.register(*args[1:], _func=args[0], **kwargs)
+
+        if _func is None:
+            def decorator(func: FN) -> FN:
+                return self.register(*args, _func=func, **kwargs)
+            return decorator
+
+        if not args:
+            args = self.key_from_func(_func)
+        elif len(args) == 1:
+            args = args[0]
+        self[args] = _func
+        self._CACHE.clear()
+        self._CANDIDATES.clear()
+        return _func
+
+    @classmethod
+    def key_from_func(cls, func: tx.Callable) -> KEY:
+        """Guess the key for a function from its type hints."""
+        hints = tx.get_type_hints(func)
+        types = tuple(
+            tx.get_args(hint)[0] if tx.get_origin(hint) is type else hint
+            for hint in hints.values()
+        )
+        if not types:
+            raise ValueError(f"no type hints found for {func}")
+        return types[0] if len(types) == 1 else types
+
+    @classmethod
+    def key_from_args(cls, *args, **kwargs) -> KEY:
+        """Guess the key for a function from its arguments."""
+        args = tuple(
+            type(arg) if not isinstance(arg, type) else arg
+            for arg in args
+        )
+        return args[0] if len(args) == 1 else args
+
+    @classmethod
+    def key_distance(cls, key: KEY, registered: KEY) -> tx.Any:
+        """
+        Score a registered key against the key a call looks up.
+
+        `None` means "does not apply"; otherwise the lowest score wins, and
+        any orderable score will do -- a subclass that ranks two axes
+        against each other returns a tuple, read lexicographically.
+
+        By default every element is *covariant*: the called type must be a
+        subtype of the registered one, and the score is how far apart the
+        two sit.
+        """
+        distance = type_distance(key, registered)
+        return None if distance == float("inf") else distance
+
+    def get(self, key: KEY, default: tx.Any = None) -> tx.Optional[FN]:
+        """Get the function registered for the given key, or None."""
+        MISSING = object()
+        if (func := super().get(key, MISSING)) is not MISSING:
+            return func
+        if (func := self._CACHE.get(key, MISSING)) is not MISSING:
+            return func
+        # fallback to nearest match in the hierarchy
+        candidates = self.candidates(key)
+        func = candidates[0] if candidates else default
+        self._CACHE[key] = func
+        return func
+
+    @classmethod
+    def candidate_group(cls, registered: KEY) -> tx.Any:
+        """
+        The group a registered key competes in.
+
+        Registrations in one group answer the same question, so only the
+        nearest of them is a candidate -- the way a method override hides
+        the method it overrides. By default each registration is its own
+        group, so every applicable function is a candidate.
+        """
+        return registered
+
+    def candidates(self, key: KEY) -> tx.Tuple[FN, ...]:
+        """
+        The functions that apply to `key`, nearest first.
+
+        One per group (see [`candidate_group`][]), and one per function: a
+        function registered several times is a candidate once, since it is
+        called with the arguments rather than with the key it matched.
+
+        The tuple is cached per key, and invalidated by a registration.
+        """
+        cached = self._CANDIDATES.get(key)
+        if cached is not None:
+            return cached
+        # `order` keeps the sort total (and stable) when two registrations
+        # tie, since a function is not orderable.
+        nearest: tx.Dict[tx.Any, tx.Tuple[tx.Any, int, FN]] = {}
+        for order, (registered, func) in enumerate(self.items()):
+            distance = self.key_distance(key, registered)
+            if distance is None:
+                continue  # does not apply
+            group = self.candidate_group(registered)
+            current = nearest.get(group)
+            if current is None or distance < current[0]:
+                nearest[group] = (distance, order, func)
+        found, seen = [], set()
+        for _distance, _order, func in sorted(
+            nearest.values(), key=lambda candidate: candidate[:2]
+        ):
+            if id(func) not in seen:
+                seen.add(id(func))
+                found.append(func)
+        self._CANDIDATES[key] = found = tuple(found)
+        return found
+
+    def __apply__(self, func: FN, *args, **kwargs) -> tx.Any:
+        return func(*args, **kwargs)
+
+    def __error__(self, *args, **kwargs) -> tx.Any:
+        raise ValueError(
+            f"no function registered for {self.key_from_args(*args, **kwargs)}"
+        )
+
+    def __pre_check__(self, *args, **kwargs) -> None:
+        pass
+
+    def __post_check__(self, result: tx.Any, *args, **kwargs) -> tx.Any:
+        return result
+
+    def __call__(self, *args, **kwargs) -> tx.Any:
+        """Apply the function registered for the given types."""
+        self.__pre_check__(*args, **kwargs)
+        func = self.get(self.key_from_args(*args, **kwargs))
+        if func is None:
+            # No function applies: the subclass decides whether that is an
+            # error or an answer.
+            return self.__error__(*args, **kwargs)
+        result = self.__apply__(func, *args, **kwargs)
+        result = self.__post_check__(result, *args, **kwargs)
+        return result
+
 
 # --- inverse ----------------------------------------------------------
 
@@ -45,7 +294,7 @@ registers itself here at import time, so the sequence machinery can call
 it without importing that module at load time and forming a cycle. The
 adaptor reconciles two consecutive transforms: it bridges a boundary
 where the two systems merely reorder, rescale or flip their shared axes,
-and it lifts a transform that acts on a subset of a boundary's axes into
+and it embeds a transform that acts on a subset of a boundary's axes in
 the fuller axis space, leaving the extra axes as the identity, so a
 lower-dimensional transform meets a higher-dimensional neighbour without
 a dimensionality change.
@@ -85,18 +334,9 @@ def register_transformation(cls: tx.Type["Transformation"]) -> None:
     TRANSFORMATION = cls
     return cls
 
-
-# --- convert ----------------------------------------------------------
+# --- compose ----------------------------------------------------------
 
 PairOfTypes = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
-
-Converter = tx.Callable[["Transformation"], "Transformation"]
-ConverterRegistry = tx.Dict[PairOfTypes, Converter]
-
-CONVERTERS: ConverterRegistry = {}
-CONVERTERS_FASTMAP: ConverterRegistry = {}
-
-# --- compose ----------------------------------------------------------
 
 Composer = tx.Callable[["Transformation", "Transformation"], "Transformation"]
 ComposerRegistry = tx.Dict[PairOfTypes, Composer]
@@ -112,47 +352,6 @@ COMPOSERS_FASTMAP: tx.Dict[PairOfTypes, tx.Tuple[Composer, ...]] = {}
 """
 The fastmap caches, per concrete pair, the ordered tuple of candidate
 composers `compose` should try, already sorted by dispatch order.
-"""
-
-# --- check ------------------------------------------------------------
-
-Kind = tx.Union[
-    tx.Type[TransformationSet],  # a hierarchy node
-    tx.Type["Transformation"]    # a concrete/field/wrapper class
-]
-
-Checker = tx.Callable[["Transformation", bool], bool]
-"""
-A checker decides whether a transform is *established* in a hierarchy set:
-`checker(t, compute) -> bool` (`compute=False` analytic, `True` numeric).
-It is keyed by `(source transform type, hierarchy kind node)`, dispatched
-like the composers/converters (nearest source in the class hierarchy wins).
-"""
-
-CheckerKey = tx.Tuple["Transformation", Kind]
-CheckerRegistry = tx.Dict[CheckerKey, Checker]
-
-
-CHECKERS: CheckerRegistry = {}
-CHECKERS_FASTMAP: tx.Dict[
-    tx.Type["Transformation"],
-    tx.Tuple[tx.Tuple[Kind, Checker], ...]
-] = {}
-"""
-The fastmap caches, per concrete source type, the (kind node, checker)
-pairs that apply to it, already reduced to the nearest source per kind.
-"""
-
-
-KIND_ALIASES: tx.Dict[str, Kind] = {}
-"""
-Registry of known transformation kinds, keyed by name (lower-case).
-
-A kind is either a hierarchy set node, or a concrete/field/wrapper class
-(or tuple of classes) matched by `isinstance`. See `check` for what
-separates the two.
-
-The registry is populated by `checkers` at import time.
 """
 
 # --- simplify ---------------------------------------------------------
@@ -192,17 +391,3 @@ One registry holds both arities, keyed by a single type (leaf) or by a pair
 of types (pair). `simplify()` dispatches on the number of transforms it is
 given, so the two never collide.
 """
-
-# --- utils ----------------------------------------------------------
-
-
-def distance(t1: type, t2: type, oriented: bool = True) -> int:
-    """Compute the distance between two types in the class hierarchy."""
-    # TODO: handle type hints (Union, Any)
-    if t1 == t2:
-        return 0
-    if issubclass(t1, t2):
-        return 1 + min(map(partial(distance, t2=t2), t1.__bases__))
-    if issubclass(t2, t1) and not oriented:
-        return 1 + min(map(partial(distance, t2=t1), t2.__bases__))
-    return float("inf")

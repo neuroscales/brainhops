@@ -5,7 +5,7 @@ from bagof.magic import replace
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 
 # locals
 from .base import Transformation
@@ -215,9 +215,7 @@ def _(t: Linear, **kwargs) -> Rotation:
     kwargs.setdefault("input", t.input)
     kwargs.setdefault("output", t.output)
     u = Rotation(**kwargs)
-    if not is_kind(
-        t, hierarchy.SpecialOrthogonalTransformation, compute=True
-    ):
+    if not is_kind(t, kinds.SpecialOrthogonal, compute=True):
         raise LossyConversionError(result=u)
     return u
 

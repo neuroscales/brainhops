@@ -26,7 +26,7 @@ from .meta import SubspaceTransformation
 from .modes import (
     Family,
     ModeLike,
-    matches_mode,
+    is_family,
     mode_children,
     normalize_modes,
 )
@@ -432,19 +432,19 @@ def _compose_mode(
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
 
-    # Compose any consecutive run that matches the mode. `matches_mode`
+    # Compose any consecutive run that matches the mode. `is_family`
     # sees through wrappers via `is_kind` (analytic), so a subspace that
-    # lifts an affine matches `mode="affine"` and composes with its
+    # embeds an affine matches `mode="affine"` and composes with its
     # neighbours.
     while inputs:
         item = inputs.pop(0)
-        if matches_mode(item, mode):
-            while inputs and matches_mode(inputs[0], mode):
+        if is_family(item, mode):
+            while inputs and is_family(inputs[0], mode):
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
                     # `compose` is mode-free: the gate that decides which
-                    # adjacent transforms are handed to it is `matches_mode`
+                    # adjacent transforms are handed to it is `is_family`
                     # above, not the composer.
                     item = compose(next_input, item)
                 except CompositionError:
@@ -461,27 +461,19 @@ def _compose_mode(
     return Sequence(transformations=outputs)
 
 
-# NOTE
-#   The interior-grid drop and the adjacent-inverse cancellation used to
-#   live here, as `_drop_interior_grids` and `_annihilates`. Both are
-#   cost-free rewrites of a *pair* of transforms, so both are now
-#   simplifiers (see `simplifiers`), reached from step 1 of
-#   `_compute_sequence` and from `compose`'s first tier.
-
-
 # ----------------------------------------------------------------------
 #    UTILS
 # ----------------------------------------------------------------------
 
 
 def _normalize_inverse(t: Transformation) -> Transformation:
-    # Expand a generic `Inverse` front-door into the typed inverse of the
-    # transform it holds, so the sequence engine computes it and
+    # Expand a generic `Inverse` front-door into the typed inverse of
+    # the transform it holds, so the sequence engine computes it and
     # cancellation recognizes it like any other inverse. An endpoint
-    # override on the `Inverse` is carried onto the result. A typed inverse
-    # (its `_inverseof` is set) is already such a result and is left as is:
-    # `Inverse(forward=X)` becomes `X.inverse()`, which for a field or an
-    # affine is the typed inverse whose `forward` is `X`.
+    # override on the `Inverse` is carried onto the result. A typed
+    # inverse (its `_inverseof` is set) is already such a result and is
+    # left as is: `Inverse(forward=X)` becomes `X.inverse()`, which for
+    # a field or an affine is the typed inverse whose `forward` is `X`.
     if not isinstance(t, Inverse) or t._inverseof is not None:
         return t
     if t.forward is None:
@@ -504,10 +496,10 @@ def _is_flat(self: Sequence) -> bool:
 
 def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
     # Flatten nested sequences into a single list, without touching the
-    # endpoints of any transform (unlike `_flatten`, which may rebuild the
-    # first and last transform to propagate coordinate systems, and in
-    # doing so would read a lazy field). A generic `Inverse` front-door is
-    # expanded to its typed inverse along the way.
+    # endpoints of any transform (unlike `_flatten`, which may rebuild
+    # the first and last transform to propagate coordinate systems, and
+    # in doing so would read a lazy field). A generic `Inverse`
+    # front-door is expanded to its typed inverse along the way.
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
@@ -519,12 +511,14 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 
 def _interpolates(xform: Transformation) -> bool:
-    # Whether applying a transform resamples data through a spline. A
-    # transform interpolates when, looking past a sequence, a subspace
+    # Whether applying a transform resamples data through a spline.
+    #
+    # A transform interpolates when, looking past a sequence, a subspace
     # wrapper, and an inverse, it reaches a displacement field or a
-    # coordinate field that is not a plain grid. A `CartesianField` is the
-    # identity map over its grid and reads no value off it, so it does not
-    # interpolate. An affine, a permutation, and the like never interpolate.
+    # coordinate field that is not a plain grid. A `CartesianField` is
+    # the identity map over its grid and reads no value off it, so it
+    # does not interpolate. An affine, a permutation, and the like never
+    # interpolate.
     if xform is None:
         return False
     if isinstance(xform, Inverse):
@@ -548,7 +542,7 @@ def _interpolates(xform: Transformation) -> bool:
 def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
     # Add `nxt` to the running list `spliced`, reconciling the boundary it
     # shares with the transform already at the end of the list. The adaptor
-    # returns the pair with whatever bridge or subspace lift the boundary
+    # returns the pair with whatever bridge or subspace embedding the boundary
     # needs already placed between them. The two transforms it contains are
     # never rebuilt, so a leaf stays the same object its inverse names and
     # the adjacent-inverse cancellation still links the two by identity.
@@ -560,9 +554,9 @@ def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
         registries.ADAPT(prev, nxt, allow_type_grouped_positional=True)
     )
     if pieces[0] is not prev:
-        # `prev` was lifted into the fuller space of `nxt`, so the piece
+        # `prev` was embedded in the fuller space of `nxt`, so the piece
         # that replaces it now presents a different left boundary. The old
-        # `prev` is dropped and the lifted piece is re-spliced against
+        # `prev` is dropped and the embedded piece is re-spliced against
         # `prev`'s own left neighbour, which may in turn need reconciling.
         spliced.pop()
         _splice(spliced, pieces[0])

@@ -11,13 +11,16 @@ from unittest import mock
 
 import numpy as np
 
-from brainhops.datamodel import hierarchy as H
+from brainhops.datamodel import kinds as H
 from brainhops.datamodel._transformations import checkers as _checkers
 from brainhops.datamodel._transformations import inverse as _inv
 from brainhops.datamodel._transformations.checkers import (
     _bijective_targets,
-    _lift_targets,
+    _embed_targets,
     _permute_targets,
+)
+from brainhops.datamodel._transformations.concrete import (
+    TransformationField,
 )
 from brainhops.datamodel.transformations import (
     Affine,
@@ -49,39 +52,39 @@ def _M(t: object, node: str, policy: object = "analytic") -> bool:
 # ----------------------------------------------------------------------
 
 
-def test_lift_targets() -> None:
-    assert _lift_targets(H.Translation) == (H.Translation,)
-    # ConformalEuclidean is not liftable; its single maximal liftable subnode
-    # is Euclidean. Now that the lattice places Translation/SE under
+def test_embed_targets() -> None:
+    assert _embed_targets(H.Translation) == (H.Translation,)
+    # ConformalEuclidean is not embeddable; its single maximal embeddable
+    # subnode is Euclidean. Now that the lattice places Translation/SE under
     # Euclidean, this collapses to just `(Euclidean,)`.
-    assert _lift_targets(H.ConformalEuclideanTransformation) == (
-        H.EuclideanTransformation,
+    assert _embed_targets(H.ConformalEuclidean) == (
+        H.Euclidean,
     )
 
 
 def test_permute_targets() -> None:
     assert _permute_targets(H.Translation, True) == ()
-    assert _permute_targets(H.EuclideanTransformation, False) == (
-        H.EuclideanTransformation,
+    assert _permute_targets(H.Euclidean, False) == (
+        H.Euclidean,
     )
-    assert _permute_targets(H.SpecialOrthogonalTransformation, True) == (
-        H.SpecialOrthogonalTransformation,
+    assert _permute_targets(H.SpecialOrthogonal, True) == (
+        H.SpecialOrthogonal,
     )
-    assert H.SpecialOrthogonalTransformation not in _permute_targets(
-        H.SpecialOrthogonalTransformation, False
+    assert H.SpecialOrthogonal not in _permute_targets(
+        H.SpecialOrthogonal, False
     )
 
 
 def test_bijective_targets() -> None:
-    assert _bijective_targets(H.AffineTransformation) == (
-        H.InvertibleAffineTransformation,
+    assert _bijective_targets(H.Affine) == (
+        H.InvertibleAffine,
     )
-    assert _bijective_targets(H.Transformation) == (H.BijectiveTransformation,)
-    assert _bijective_targets(H.InjectiveTransformation) == (
-        H.BijectiveTransformation,
+    assert _bijective_targets(H.Transformation) == (H.Bijection,)
+    assert _bijective_targets(H.Injection) == (
+        H.Bijection,
     )
-    assert _bijective_targets(H.DiagonalTransformation) == (
-        H.InvertibleDiagonalTransformation,
+    assert _bijective_targets(H.Diagonal) == (
+        H.InvertibleDiagonal,
     )
 
 
@@ -220,7 +223,7 @@ def test_numeric_only_facts() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_subspace_lift() -> None:
+def test_subspace_embedding() -> None:
     same = SubspaceTransformation(
         transformation=Affine(matrix=np.eye(4)[:3]),
         input_axes=[0, 1, 2],
@@ -238,7 +241,8 @@ def test_subspace_lift() -> None:
 
 
 def test_subspace_reindex_permutes() -> None:
-    # A reindexing subspace composes the lift with a coordinate permutation.
+    # A reindexing subspace composes the embedding with a coordinate
+    # permutation.
     subT = SubspaceTransformation(
         transformation=Translation(translation=[1.0, 2.0]),
         input_axes=[0, 1],
@@ -356,7 +360,7 @@ def test_projection_membership() -> None:
 
 
 # ----------------------------------------------------------------------
-#   CLASS / CALLABLE KINDS
+#   CLASS KINDS
 # ----------------------------------------------------------------------
 
 
@@ -365,22 +369,13 @@ def test_class_kinds() -> None:
     assert is_kind(inv, Inverse)
     assert not is_kind(Affine(matrix=np.eye(4)[:3]), Inverse)
     df = DisplacementField(field=np.zeros((4, 4, 2)))
-    assert is_kind(df, (DisplacementField, CoordinatesField))
+    # One kind is one class: the two field types are asked about through the
+    # base they share, never as a tuple of the two.
+    assert is_kind(df, TransformationField)
+    assert is_kind(CoordinatesField(field=np.zeros((4, 4, 2))),
+                   TransformationField)
+    assert not is_kind(Affine(matrix=np.eye(4)[:3]), TransformationField)
     assert issubclass(InverseAffine, Inverse)
-
-
-def test_callable_kind_receives_t_and_compute() -> None:
-    seen = {}
-
-    def kind(t: object, compute: object) -> bool:
-        seen["t"] = t
-        seen["compute"] = compute
-        return True
-
-    t = Translation(translation=[1.0])
-    assert is_kind(t, kind)
-    assert seen["t"] is t
-    assert seen["compute"] is False  # analytic by default
 
 
 # ----------------------------------------------------------------------
@@ -453,7 +448,7 @@ def test_mode_composes_affine_run_of_mixed_kinds() -> None:
     aff = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     rot = Rotation(matrix=[[0.0, -1.0], [1.0, 0.0]])
     result = Sequence(transformations=[trans, aff, rot]).compute(mode="affine")
-    assert is_kind(result, H.AffineTransformation)
+    assert is_kind(result, H.Affine)
     assert not isinstance(result, Sequence)
 
 
@@ -464,7 +459,7 @@ def test_mode_name_means_the_set() -> None:
     sca = Scaling(scale=[2.0, 3.0])
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
     result = Sequence(transformations=[aff, lin, sca]).compute(mode="affine")
-    assert is_kind(result, H.AffineTransformation)
+    assert is_kind(result, H.Affine)
     assert not isinstance(result, Sequence)
 
 
@@ -482,5 +477,5 @@ def test_mode_Aff_admits_only_invertible_affines() -> None:
     # Membership drives mode admission: a wide (surjective, non-invertible)
     # affine is admitted by `mode="affine"` but not by `mode="Aff"`.
     wide = Affine(matrix=np.zeros((2, 4)))  # 3-D -> 2-D
-    assert is_kind(wide, H.AffineTransformation)
-    assert not is_kind(wide, H.InvertibleAffineTransformation)
+    assert is_kind(wide, H.Affine)
+    assert not is_kind(wide, H.InvertibleAffine)

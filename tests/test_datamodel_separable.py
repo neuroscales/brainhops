@@ -12,7 +12,7 @@ import pytest
 import brainhops.backends as backends
 from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import separable as sep
 from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
@@ -882,7 +882,7 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
             @ geometry.transformation
             @ geometry.grid
         )
-        part = transformation.compute(mode=hierarchy.AffineTransformation)
+        part = transformation.compute(mode=kinds.Affine)
         els = list(part.transformations[1:])
         comps = _components(els, 3)
         # Every group is a single grid axis and a single data axis, and

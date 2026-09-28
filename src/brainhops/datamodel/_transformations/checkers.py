@@ -1,19 +1,27 @@
-"""Kind-membership checkers, registered into `registries.CHECKERS`.
+"""Kind-membership checkers, registered into `check.is_kind`.
 
 This is to `check` what `composers` is to `compose` and `converters` is to
 `convert`: the machinery lives in `check`, and every concrete checker
-implementation lives here and registers via `@checker(SourceType, KindNode)`
-at import time. It also holds the lattice-fact tables the wrapper checkers
-reason with (as module-level data keyed by node, not attributes on the
-hierarchy classes) and the field/wrapper name aliases.
+implementation lives here and registers at import time. It also holds the
+lattice-fact tables the wrapper checkers reason with (as module-level data
+keyed by node, not attributes on the kind classes) and the field/wrapper
+name aliases.
+
+A checker is written the way it is called -- `(query, kind, compute)`, with
+the pair it is keyed by read from the first two hints:
+
+    @checker
+    def _(query: Affine, kind: type[kinds.Translation], compute: bool) -> bool
 
 Each checker is *sound*: it returns True only when membership is genuinely
 (or, at analytic, optimistically from shape) established, so OR-ing the
-applicable ones (see `check.is_kind`) is correct.
+applicable ones (see `check.is_kind`) is correct -- and each is registered
+against the *smallest* set it decides, since `is_kind` reaches every
+superset of a set it establishes.
 """
 
 # stdlib
-from functools import lru_cache
+from functools import lru_cache, wraps
 
 # dependencies
 import typing_extensions as tx
@@ -23,7 +31,7 @@ from brainhops._core.typing import ArrayProtocol
 
 # datamodel
 from brainhops.backends import get_array_backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 
 # internals
 from .base import Transformation
@@ -36,6 +44,7 @@ from .concrete import (
     Linear,
     Permutation,
     Scaling,
+    TransformationField,
     Translation,
 )
 from .inverse import Inverse
@@ -46,6 +55,33 @@ from .meta import (
     SubspaceTransformation,
 )
 
+
+def identity_from(field: str) -> tx.Callable:
+    """Decorator that reads an unset parameter as the identity.
+
+    A leaf that holds no parameter *is* the identity map, so it is a member
+    of every set that contains the identity -- which is every set a checker
+    wrapped in this decorator is registered against. No value is read, so
+    the answer holds at analytic as well as at numeric.
+    """
+
+    def decorator(func: tx.Callable) -> tx.Callable:
+
+        @wraps(func)
+        def wrapper(
+            query: Transformation,
+            kind: tx.Type[kinds.TransformationKind],
+            compute: bool
+        ) -> bool:
+            if getattr(query, field) is None:
+                return True
+            return func(query, kind, compute)
+
+        return wrapper
+
+    return decorator
+
+
 # ======================================================================
 #
 #                           C H E C K E R S
@@ -53,87 +89,82 @@ from .meta import (
 # ======================================================================
 
 # --- Identity ---------------------------------------------------------
+# The identity is the bottom of the lattice, a member of nearly every set in
+# it, so these checkers answer far more questions than their own node: they
+# are what establishes a parameterless `Scaling` in the translations, a
+# unit-diagonal `Linear` in the rotations, and a zero field in the affines.
+# Every other checker in this module is written against the smallest set it
+# decides, for the same reason.
 
-IdentityTarget = hierarchy.IdentityTransformation
+IdentityType = tx.Type[kinds.Identity]
 
 
-@checker(IdentityTarget)
-def _(query: Translation, compute: bool) -> bool:
-    if query.translation is None:
-        return True
+@checker
+@identity_from("translation")
+def _(query: Translation, kind: IdentityType, compute: bool) -> bool:
     if compute:
-        return (query.translation == 0).all()
+        return bool((query.translation == 0).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: Scaling, compute: bool) -> bool:
-    if query.scale is None:
-        return True
+@checker
+@identity_from("scale")
+def _(query: Scaling, kind: IdentityType, compute: bool) -> bool:
     if compute:
-        return (query.scale == 1).all()
+        return bool((query.scale == 1).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: Permutation, compute: bool) -> bool:
-    if query.permutation is None:
-        return True
+@checker
+@identity_from("permutation")
+def _(query: Permutation, kind: IdentityType, compute: bool) -> bool:
     if compute:
         ndim = len(query.permutation)
-        return (query.permutation == list(range(ndim))).all()
+        return bool((query.permutation == list(range(ndim))).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: Linear, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: IdentityType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if cols != rows:
             return False
         ab = get_array_backend(matrix)
-        return (matrix == ab.eye(rows)).all()
+        return bool((matrix == ab.eye(rows)).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: Affine, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: IdentityType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
         ab = get_array_backend(matrix)
-        return (matrix == ab.eye(rows + 1)[:-1]).all()
+        return bool((matrix == ab.eye(rows + 1)[:-1]).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
+@checker
+@identity_from("field")
+def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
     if compute:
-        return (field == 0).all()
+        return bool((query.field == 0).all())
     return False
 
 
-@checker(IdentityTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
+@checker
+@identity_from("field")
+def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
     return False
 
 
-
-
-# --- Grid -------------------------------------------------------------
+# <<< special case >>>
 # A [`CartesianField`][] is the identity map over its own grid: its `field`
 # is the coordinates of the grid points themselves. So a grid establishes
 # membership in the identity set -- and, through it, in every set that
@@ -147,104 +178,63 @@ def _(query: CoordinatesField, compute: bool) -> bool:
 # a membership question never builds the meshgrid.
 
 
-def _grid_is_identity(query: CartesianField, compute: bool) -> bool:
-    if query.shape is None:
-        return True
+@checker
+@identity_from("shape")
+def _(query: CartesianField, kind: IdentityType, compute: bool) -> bool:
     return bool(compute)
 
 
 # --- Translation ------------------------------------------------------
 
-TranslationTarget = hierarchy.Translation
+TranslationType = tx.Type[kinds.Translation]
 
 
-@checker(TranslationTarget)
-def _(query: Scaling, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(TranslationTarget)
-def _(query: Permutation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(TranslationTarget)
-def _(query: Linear, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(TranslationTarget)
-def _(query: Affine, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: TranslationType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
         ab = get_array_backend(matrix)
-        # The linear block must be the identity, not merely diagonal: a
-        # constant map (a zero linear block) is not a translation.
         return bool((matrix[:, :-1] == ab.eye(rows)).all())
     return False
 
 
-@checker(TranslationTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
+@checker
+@identity_from("field")
+def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
     if compute:
+        field = query.field
         first = (0,) * (len(field.shape) - 1) + (slice(None),)
-        return (field == field[first]).all()
+        return bool((field == field[first]).all())
     return False
-
-
-@checker(TranslationTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
 
 
 # --- Scaling ----------------------------------------------------------
 
-ScaleTarget = hierarchy.DiagonalTransformation
+ScaleType = tx.Type[kinds.Diagonal]
 
 
-@checker(ScaleTarget)
-def _(query: Translation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(ScaleTarget)
-def _(query: Permutation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(ScaleTarget)
-def _(query: Linear, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: ScaleType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if rows != cols:
             return False
         ab = get_array_backend(matrix)
-        return not (matrix * (1 - ab.eye(rows))).any()
+        return not bool((matrix * (1 - ab.eye(rows))).any())
     return False
 
 
-@checker(ScaleTarget)
-def _(query: Affine, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: ScaleType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
@@ -252,32 +242,12 @@ def _(query: Affine, compute: bool) -> bool:
         # `eye(rows + 1)[:-1]` has the same shape as the affine matrix and
         # marks its diagonal, so the mask keeps every off-diagonal entry
         # *and* the translation column: a diagonal affine has neither.
-        return not (matrix * (1 - ab.eye(rows + 1)[:-1])).any()
+        return not bool((matrix * (1 - ab.eye(rows + 1)[:-1])).any())
     return False
-
-
-@checker(ScaleTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
-@checker(ScaleTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
 
 
 # <<< special cases >>>
-
-
-# >>> refinements of the diagonal set
+# <<< refinements of the diagonal set >>>
 #
 # Every fact below is a property of the diagonal *vector*, so it is written
 # once, as a predicate on that vector, and registered for every leaf that
@@ -293,50 +263,60 @@ def _isotropic(scale: ArrayProtocol) -> bool:
     return bool((scale == scale[:1]).all())
 
 
-def _diag_invertible(scale: ArrayProtocol) -> bool:
+def _diag_inv(scale: ArrayProtocol) -> bool:
     return bool((scale != 0).all())
 
 
-def _diag_positive(scale: ArrayProtocol) -> bool:
+def _diag_pos(scale: ArrayProtocol) -> bool:
     return bool((scale > 0).all())
 
 
-def _diag_special(scale: ArrayProtocol) -> bool:
+def _diag_spec(scale: ArrayProtocol) -> bool:
     ab = get_array_backend(scale)
     return bool((ab.abs(scale) == 1).all())
 
 
-def _diag_multiplicative(scale: ArrayProtocol) -> bool:
+def _diag_iso(scale: ArrayProtocol) -> bool:
     return _isotropic(scale)
 
 
-def _diag_multiplicative_invertible(scale: ArrayProtocol) -> bool:
-    return _isotropic(scale) and bool(scale[0] != 0)
+def _diag_iso_inv(scale: ArrayProtocol) -> bool:
+    return _isotropic(scale) and _diag_inv(scale)
 
 
-def _diag_multiplicative_positive(scale: ArrayProtocol) -> bool:
-    return _isotropic(scale) and bool(scale[0] > 0)
+def _diag_iso_pos(scale: ArrayProtocol) -> bool:
+    return _isotropic(scale) and _diag_pos(scale)
 
 
 _DIAGONAL_FACTS: tx.Dict[type, tx.Callable[[ArrayProtocol], bool]] = {
-    hierarchy.InvertibleDiagonalTransformation: _diag_invertible,
-    hierarchy.PositiveDiagonalTransformation: _diag_positive,
-    hierarchy.SpecialDiagonalTransformation: _diag_special,
-    hierarchy.MultiplicativeTransformation: _diag_multiplicative,
-    hierarchy.InvertibleMultiplicativeTransformation:
-        _diag_multiplicative_invertible,
-    hierarchy.PositiveMultiplicativeTransformation:
-        _diag_multiplicative_positive,
+    kinds.InvertibleDiagonal: _diag_inv,
+    kinds.PositiveDiagonal: _diag_pos,
+    kinds.SpecialDiagonal: _diag_spec,
+    kinds.Multiplicative: _diag_iso,
+    kinds.InvertibleMultiplicative: _diag_iso_inv,
+    kinds.PositiveMultiplicative: _diag_iso_pos,
 }
 
 # Invertibility is the one fact assumed optimistically from structure: a
 # scaling is presumed non-degenerate until its values say otherwise, the
 # same optimism the matrix leaves get from their shape (see
 # `_matrix_invertible`). Every other refinement needs the values.
+#
+# So the only node a `Scaling` is established in structurally is the
+# invertible *diagonal* set: diagonality is its whole parameter, and
+# invertibility is the optimistic part. `InvertibleMultiplicative` is not
+# here, even though it too is an invertible node -- it also asserts
+# isotropy, which is a property of the values, and which `Multiplicative`
+# itself (rightly) declines to establish at analytic.
 _OPTIMISTIC = (
-    hierarchy.InvertibleDiagonalTransformation,
-    hierarchy.InvertibleMultiplicativeTransformation,
+    kinds.InvertibleDiagonal,
 )
+
+_DATAFIELD = {
+    Scaling: "scale",
+    Linear: "matrix",
+    Affine: "matrix",
+}
 
 
 def _diagonal_values(
@@ -366,22 +346,18 @@ def _diagonal_values(
     return ab.diagonal(matrix)
 
 
-def _unset_parameter(query: Transformation) -> bool:
-    # Whether a leaf holds no parameter at all, in which case it is the
-    # identity -- a member of every refinement below.
-    for name in ("scale", "matrix", "permutation", "translation"):
-        if hasattr(query, name):
-            return getattr(query, name) is None
-    return False
-
-
-def _diagonal_checker(node: type) -> tx.Callable:
+def _diagonal_checker(source: type, node: type) -> tx.Callable:
+    # The checker deciding "is this `source` a member of `node`", for one of
+    # the refinements above. Registered explicitly rather than by hints: the
+    # pair it is keyed by is the loop variable, not something a generated
+    # closure could annotate.
     fact = _DIAGONAL_FACTS[node]
     optimistic = node in _OPTIMISTIC
 
-    def _checker(query: Transformation, compute: bool) -> bool:
-        if _unset_parameter(query):
-            return True
+    @identity_from(_DATAFIELD[source])
+    def _checker(
+        query: Transformation, kind: type, compute: bool
+    ) -> bool:
         if not compute:
             # Structure alone establishes diagonality only for a
             # `Scaling`, whose whole parameter is the diagonal. A matrix
@@ -395,31 +371,20 @@ def _diagonal_checker(node: type) -> tx.Callable:
 
 for _node in _DIAGONAL_FACTS:
     for _src in (Scaling, Linear, Affine):
-        checker(_src, _node)(_diagonal_checker(_node))
+        checker(_src, _node)(_diagonal_checker(_src, _node))
 del _node, _src
 
 
 # --- Permutation ------------------------------------------------------
 
-PermTarget = hierarchy.Permutation
+PermType = tx.Type[kinds.Permutation]
 
 
-@checker(PermTarget)
-def _(query: Translation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(PermTarget)
-def _(query: Scaling, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(PermTarget)
-def _(query: Linear, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: PermType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if rows != cols:
             return False
@@ -432,12 +397,11 @@ def _(query: Linear, compute: bool) -> bool:
     return False
 
 
-@checker(PermTarget)
-def _(query: Affine, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: PermType, compute: bool) -> bool:
     if compute:
+        matrix = query.matrix
         rows, cols = matrix.shape
         if cols != rows + 1:
             return False
@@ -454,31 +418,18 @@ def _(query: Affine, compute: bool) -> bool:
     return False
 
 
-@checker(PermTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
-@checker(PermTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
 # <<< special cases >>>
 
 
-@checker(hierarchy.EvenPermutation)
-def _(query: Permutation, compute: bool) -> bool:
-    permutation = query.permutation
-    if permutation is None:
-        return True
+EvenPermType = tx.Type[kinds.EvenPermutation]
+OddPermType = tx.Type[kinds.OddPermutation]
+
+
+@checker
+@identity_from("permutation")
+def _(query: Permutation, kind: EvenPermType, compute: bool) -> bool:
     if compute:
+        permutation = query.permutation
         ndim = len(permutation)
         if ndim != len(set(permutation)):
             return False
@@ -486,50 +437,27 @@ def _(query: Permutation, compute: bool) -> bool:
     return False
 
 
-@checker(hierarchy.OddPermutation)
-def _(query: Permutation, compute: bool) -> bool:
-    permutation = query.permutation
-    if permutation is None:
+@checker
+def _(query: Permutation, kind: OddPermType, compute: bool) -> bool:
+    # The identity is even, so -- unlike every other checker here -- an
+    # unset parameter establishes nothing.
+    if query.permutation is None:
         return False
     return (
-        is_kind(query, hierarchy.Permutation, compute) and not
-        is_kind(query, hierarchy.EvenPermutation, compute)
+        is_kind(query, kinds.Permutation, compute) and not
+        is_kind(query, kinds.EvenPermutation, compute)
     )
 
 
 # --- Rotation ---------------------------------------------------------
 
-RotTarget = hierarchy.SpecialOrthogonalTransformation
+RotType = tx.Type[kinds.SpecialOrthogonal]
 
 
-@checker(RotTarget)
-def _(query: Translation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(RotTarget)
-def _(query: Scaling, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(RotTarget)
-def _(query: Permutation, compute: bool) -> bool:
-    permutation = query.permutation
-    if permutation is None:
-        return True
-    if compute:
-        ndim = len(permutation)
-        if ndim != len(set(permutation)):
-            return False
-        return _reindex_is_even(permutation, list(range(ndim)))
-    return False
-
-
-@checker(RotTarget)
-def _(query: Linear, compute: bool) -> bool:
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: RotType, compute: bool) -> bool:
     matrix = query.matrix
-    if matrix is None:
-        return True
     if compute:
         rows, cols = matrix.shape
         if rows != cols:
@@ -541,11 +469,10 @@ def _(query: Linear, compute: bool) -> bool:
     return False
 
 
-@checker(RotTarget)
-def _(query: Affine, compute: bool) -> bool:
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: RotType, compute: bool) -> bool:
     matrix = query.matrix
-    if matrix is None:
-        return True
     if compute:
         rows, cols = matrix.shape
         if cols != rows + 1:
@@ -561,133 +488,118 @@ def _(query: Affine, compute: bool) -> bool:
     return False
 
 
-@checker(RotTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
-@checker(RotTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
 # --- Linear ---------------------------------------------------------
 
-LinTarget = hierarchy.LinearTransformation
+LinType = tx.Type[kinds.Linear]
 
 
-@checker(LinTarget)
-def _(query: Translation, compute: bool) -> bool:
-    return is_kind(query, hierarchy.IdentityTransformation, compute)
-
-
-@checker(LinTarget)
-def _(query: Scaling, compute: bool) -> bool:
+@checker
+def _(query: Scaling, kind: LinType, compute: bool) -> bool:
     return True
 
 
-@checker(LinTarget)
-def _(query: Permutation, compute: bool) -> bool:
+@checker
+def _(query: Permutation, kind: LinType, compute: bool) -> bool:
     return True
 
 
-@checker(LinTarget)
-def _(query: Affine, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        # An affine is linear when its translation column vanishes. The
-        # linear block may be rectangular, so no squareness is required.
-        return bool((matrix[:, -1] == 0).all())
-    return False
-
-
-@checker(LinTarget)
-def _(query: DisplacementField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
-
-
-@checker(LinTarget)
-def _(query: CoordinatesField, compute: bool) -> bool:
-    field = query.field
-    if field is None:
-        return True
-    return False
+@checker
+@identity_from("matrix")
+def _(query: Affine, kind: LinType, compute: bool) -> bool:
+    if not compute:
+        return False
+    # An affine is linear when its translation column vanishes. The
+    # linear block may be rectangular, so no squareness is required.
+    return bool((query.matrix[:, -1] == 0).all())
 
 
 # <<< special cases >>>
 
 
-@checker(hierarchy.PositiveLinearTransformation)
-def _(query: Linear, compute: bool) -> bool:
+PosLinType = tx.Type[kinds.PositiveLinear]
+SLType = tx.Type[kinds.SpecialLinear]
+COType = tx.Type[kinds.ConformalOrthogonal]
+CSOType = tx.Type[kinds.SpecialConformalOrthogonal]
+OType = tx.Type[kinds.Orthogonal]
+MonomialType = tx.Type[kinds.GeneralizedPermutation]
+SignedMonomialType = tx.Type[kinds.SignedPermutation]
+
+
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: PosLinType, compute: bool) -> bool:
+    if not compute:
+        return False
     matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        rows, cols = matrix.shape
-        if rows != cols:
-            return False
-        ab = get_array_backend(matrix)
-        return bool(ab.linalg.det(matrix) > 0)
-    return False
+    rows, cols = matrix.shape
+    if rows != cols:
+        return False
+    ab = get_array_backend(matrix)
+    return bool(ab.linalg.det(matrix) > 0)
 
 
-@checker(hierarchy.SpecialLinearTransformation)
-def _(query: Linear, compute: bool) -> bool:
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: SLType, compute: bool) -> bool:
+    if not compute:
+        return False
     matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        rows, cols = matrix.shape
-        if rows != cols:
-            return False
-        ab = get_array_backend(matrix)
-        return bool(ab.linalg.det(matrix) == 1)
-    return False
+    rows, cols = matrix.shape
+    if rows != cols:
+        return False
+    ab = get_array_backend(matrix)
+    return bool(ab.linalg.det(matrix) == 1)
 
 
-@checker(hierarchy.SpecialConformalOrthogonalTransformation)
-def _(query: Linear, compute: bool) -> bool:
+def _is_conformal(matrix: ArrayProtocol) -> bool:
+    # `A A' = c**2 I` for some `c > 0`: a positive multiple of an orthogonal
+    # matrix, which is what "preserves angles" means. Such an `A` has
+    # `||A||_F = c sqrt(n)`, so dividing it out turns the question into a
+    # plain orthogonality test and the scale never has to be recovered.
+    rows, cols = matrix.shape
+    if rows != cols:
+        return False
+    ab = get_array_backend(matrix)
+    fro = ab.linalg.norm(matrix, ord="fro")
+    if bool(fro == 0):
+        return False
+    normalized = matrix * (rows ** 0.5 / fro)
+    return bool((normalized @ normalized.T == ab.eye(rows)).all())
+
+
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: COType, compute: bool) -> bool:
+    if not compute:
+        return False
+    return _is_conformal(query.matrix)
+
+
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: CSOType, compute: bool) -> bool:
+    if not compute:
+        return False
     matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        rows, cols = matrix.shape
-        if rows != cols:
-            return False
-        ab = get_array_backend(matrix)
-        fro = ab.linalg.norm(matrix, ord="fro")
-        if bool(fro == 0):
-            return False
-        matrix = matrix * (rows ** 0.5 / fro)
-        is_orthogonal = bool((matrix @ matrix.T == ab.eye(rows)).all())
-        is_posdef = bool(ab.linalg.det(matrix) > 0)
-        return is_orthogonal and is_posdef
-    return False
+    if not _is_conformal(matrix):
+        return False
+    # The *special* conformal group is the component with positive
+    # determinant; normalising by a positive factor cannot change its sign.
+    ab = get_array_backend(matrix)
+    return bool(ab.linalg.det(matrix) > 0)
 
 
-@checker(hierarchy.OrthogonalTransformation)
-def _(query: Linear, compute: bool) -> bool:
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: OType, compute: bool) -> bool:
+    if not compute:
+        return False
     matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        rows, cols = matrix.shape
-        if rows != cols:
-            return False
-        ab = get_array_backend(matrix)
-        return bool((matrix @ matrix.T == ab.eye(rows)).all())
-    return False
+    rows, cols = matrix.shape
+    if rows != cols:
+        return False
+    ab = get_array_backend(matrix)
+    return bool((matrix @ matrix.T == ab.eye(rows)).all())
 
 
 def _is_monomial(matrix: ArrayProtocol) -> bool:
@@ -702,47 +614,26 @@ def _is_monomial(matrix: ArrayProtocol) -> bool:
     )
 
 
-@checker(hierarchy.GeneralizedPermutation)
-def _(query: Linear, compute: bool) -> bool:
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: MonomialType, compute: bool) -> bool:
+    if not compute:
+        return False
+    return _is_monomial(query.matrix)
+
+
+@checker
+@identity_from("matrix")
+def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
+    if not compute:
+        return False
+    # A signed permutation is a monomial matrix whose non-zero entries
+    # are all +1 or -1.
     matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        return _is_monomial(matrix)
-    return False
-
-
-@checker(hierarchy.SignedPermutation)
-def _(query: Linear, compute: bool) -> bool:
-    matrix = query.matrix
-    if matrix is None:
-        return True
-    if compute:
-        # A signed permutation is a monomial matrix whose non-zero entries
-        # are all +1 or -1.
-        if not _is_monomial(matrix):
-            return False
-        ab = get_array_backend(matrix)
-        return bool(ab.isin(matrix, [-1, 0, 1]).all())
-    return False
-
-
-# --- Grid registration ------------------------------------------------
-# Registered against every target a grid could be established in. A grid
-# inherits from `CoordinatesField`, whose checkers read `.field`; these
-# shadow them per target, so a membership question on a grid never builds
-# the meshgrid.
-
-for _target in (
-    IdentityTarget,
-    TranslationTarget,
-    ScaleTarget,
-    PermTarget,
-    RotTarget,
-    LinTarget,
-):
-    checker(CartesianField, _target)(_grid_is_identity)
-del _target
+    if not _is_monomial(matrix):
+        return False
+    ab = get_array_backend(matrix)
+    return bool(ab.isin(matrix, [-1, 0, 1]).all())
 
 
 # ======================================================================
@@ -800,7 +691,8 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
     )
 
 
-def _matrix_invertible(t: Transformation, compute: bool) -> bool:
+@identity_from("matrix")
+def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
     # A square matrix leaf: optimistically invertible from shape, confirmed
     # by full rank at `numeric`.
     dims = _matrix_dims(t)
@@ -817,7 +709,8 @@ def _matrix_invertible(t: Transformation, compute: bool) -> bool:
     return _matrix_rank(linear) == no
 
 
-def _matrix_surjective(t: Transformation, compute: bool) -> bool:
+@identity_from("matrix")
+def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
     # Wide or square: optimistically full row rank (onto), confirmed by rank.
     dims = _matrix_dims(t)
     if dims is None:
@@ -831,7 +724,8 @@ def _matrix_surjective(t: Transformation, compute: bool) -> bool:
     return _matrix_rank(linear) == no
 
 
-def _matrix_injective(t: Transformation, compute: bool) -> bool:
+@identity_from("matrix")
+def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
     # Tall or square: optimistically full column rank (one-to-one),
     # confirmed by rank.
     dims = _matrix_dims(t)
@@ -846,6 +740,46 @@ def _matrix_injective(t: Transformation, compute: bool) -> bool:
     return _matrix_rank(linear) == ni
 
 
+# --- The linear part of an affine -------------------------------------
+# An `Affine` whose translation column vanishes *is* its linear part, so it
+# is established in exactly the sets that part is established in. Written
+# once, rather than as one checker per (Affine, node) pair: the fact is about
+# the representation, not about any particular set. Without it the facts an
+# `Affine` can establish would stop at the handful of nodes given a checker
+# of their own, and a translation-free affine could not be shown orthogonal,
+# special-linear, monomial, and so on.
+
+
+def _affine_is_linear_part(
+    query: Affine, kind: tx.Type[kinds.TransformationKind], compute: bool
+) -> bool:
+    matrix = query.matrix
+    if matrix is None:
+        # The identity -- a member of every set that *holds* the identity,
+        # which is not every set on the linear side: `OddPermutation` is one
+        # it is not in. So this is tested, not assumed (unlike
+        # `identity_from`, whose checkers are each registered against a set
+        # known to contain it).
+        return issubclass(kinds.Identity, kind)
+    if not compute:
+        # Reading the translation column is reading a value.
+        return False
+    if bool(matrix[:, -1].any()):
+        return False  # a genuine translation: not linear at all
+    return is_kind(Linear(matrix=matrix[:, :-1]), kind, compute)
+
+
+# Registered only where an `Affine` has no checker of its own: one key holds
+# one checker, so registering this against a node the sections above already
+# cover would *replace* the specialised one -- which decides the same
+# question, but knows things this cannot (a `Scaling`-like diagonal is
+# established from its own parameter, and an unset one is the identity).
+for _node in kinds.all_sets():
+    if issubclass(_node, kinds.Linear) and (Affine, _node) not in is_kind:
+        checker(Affine, _node)(_affine_is_linear_part)
+del _node
+
+
 # --- Shape-established facts ------------------------------------------
 # Invertibility, injectivity and surjectivity are the facts a matrix leaf
 # establishes from the *shape* of its matrix, optimistically: a square
@@ -853,18 +787,19 @@ def _matrix_injective(t: Transformation, compute: bool) -> bool:
 # Numeric confirms or retracts each with the rank of the linear block.
 #
 # Only the *invertible* node of each family is registered, never the
-# bijective/injective/surjective roots directly: `is_kind` reaches a
-# superset from any subset it establishes, so `InvertibleAffine` already
-# answers `Bijective`, `Injective` and `Surjective` for a square affine.
-# The two roots are registered on their own for the rectangular cases,
-# which no invertible node covers.
+# bijective root directly: a query about a superset reaches the nearest
+# subset that is registered, so `InvertibleAffine` already answers
+# `Bijective` for a square affine. `Injection` and `Surjection` are
+# registered on their own because they are *not* supersets of an invertible
+# node only -- a rectangular matrix is one-to-one or onto without being
+# invertible, and no invertible node covers that.
 
-checker(Affine, hierarchy.InvertibleAffineTransformation)(_matrix_invertible)
-checker(Linear, hierarchy.InvertibleLinearTransformation)(_matrix_invertible)
-checker(Affine, hierarchy.SurjectiveTransformation)(_matrix_surjective)
-checker(Linear, hierarchy.SurjectiveTransformation)(_matrix_surjective)
-checker(Affine, hierarchy.InjectiveTransformation)(_matrix_injective)
-checker(Linear, hierarchy.InjectiveTransformation)(_matrix_injective)
+checker(Affine, kinds.InvertibleAffine)(_matrix_invertible)
+checker(Linear, kinds.InvertibleLinear)(_matrix_invertible)
+checker(Affine, kinds.Surjection)(_matrix_surjective)
+checker(Linear, kinds.Surjection)(_matrix_surjective)
+checker(Affine, kinds.Injection)(_matrix_injective)
+checker(Linear, kinds.Injection)(_matrix_injective)
 
 
 # ======================================================================
@@ -872,9 +807,9 @@ checker(Linear, hierarchy.InjectiveTransformation)(_matrix_injective)
 #                        L A T T I C E   F A C T S
 #
 # ======================================================================
-# Facts about the lattice, used to reason about the wrappers (a lift of, a
-# permutation of, an inversion of an inner set). Kept as module-level tables
-# keyed by node, so the hierarchy stays pure set/group theory.
+# Facts about the lattice, used to reason about the wrappers (an embedding
+# of, a permutation of, an inversion of an inner set). Kept as module tables
+# keyed by node, so [`kinds`][] stays pure set/group theory.
 
 
 def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
@@ -889,17 +824,17 @@ def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _lift_targets(node: type) -> tx.Tuple[type, ...]:
+def _embed_targets(node: type) -> tx.Tuple[type, ...]:
     # `blockdiag(inner, I) in node` iff `inner in M` for some M in these
-    # targets. If `node` is liftable it is its own target; else the maximal
-    # liftable strict subnodes of `node`.
-    if hierarchy.is_liftable(node):
+    # targets. If `node` is embeddable it is its own target; else the maximal
+    # embeddable strict subnodes of `node`.
+    if kinds.is_embeddable(node):
         return (node,)
     return tuple(
         _maximal(
-            n for n in hierarchy.all_sets() if (
+            n for n in kinds.all_sets() if (
                 issubclass(n, node) and n is not node and
-                hierarchy.is_liftable(n)
+                kinds.is_embeddable(n)
             )
         )
     )
@@ -908,15 +843,15 @@ def _lift_targets(node: type) -> tx.Tuple[type, ...]:
 @lru_cache(maxsize=None)  # noqa: UP033
 def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
     # `P @ blockdiag(...) in node` (P a coordinate permutation of the given
-    # parity) iff the lifted map in M for some M in these targets.
-    perm = hierarchy.EvenPermutation if even else hierarchy.Permutation
+    # parity) iff the embedded map in M for some M in these targets.
+    perm = kinds.EvenPermutation if even else kinds.Permutation
     def is_closed(node: type) -> bool:
-        return hierarchy.is_closedunder(node, perm)
+        return kinds.is_closedunder(node, perm)
 
     if is_closed(node):
         return (node,)
     return tuple(_maximal(
-            n for n in hierarchy.all_sets()
+            n for n in kinds.all_sets()
             if issubclass(n, node) and n is not node and is_closed(n)
     ))
 
@@ -926,14 +861,14 @@ def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
     # The inverse of `T` is in `node` iff `T in M` for some M in these
     # targets: `node` itself when it is bijective (closed under inversion),
     # else the maximal bijective subnodes of `node`.
-    if issubclass(node, hierarchy.BijectiveTransformation):
+    if issubclass(node, kinds.Bijection):
         return (node,)
     return tuple(
         _maximal(
             n
-            for n in hierarchy.all_sets()
+            for n in kinds.all_sets()
             if issubclass(n, node)
-            and issubclass(n, hierarchy.BijectiveTransformation)
+            and issubclass(n, kinds.Bijection)
         )
     )
 
@@ -976,8 +911,9 @@ def _reindex_is_even(input_axes: tx.Any, output_axes: tx.Any) -> bool:
 # ======================================================================
 # Each wrapper's membership depends on its contents, so it is decided by a
 # checker that recurses into the wrapped transform via `is_kind` (carrying
-# `compute` through). A checker is registered per node `C`, deciding "is this
-# wrapper a member of `C`"; `is_kind` OR-s the applicable ones.
+# `compute` through). One function decides "is this wrapper a member of
+# `node`" for every node, reasoning from the lattice facts above rather than
+# from a table of registrations.
 
 
 def _inner_member(
@@ -987,17 +923,18 @@ def _inner_member(
     # identity (`blockdiag(I, I) = I`), a member of `m` exactly when `m`
     # contains the identity node.
     if inner is None:
-        return issubclass(hierarchy.IdentityTransformation, m)
+        return issubclass(kinds.Identity, m)
     return is_kind(inner, m, compute)
 
 
 def _subspace_member(
-    sub: SubspaceTransformation, compute: bool, node: type
+    sub: SubspaceTransformation, node: type, compute: bool
 ) -> bool:
-    # A subspace is `P @ blockdiag(inner, I)`: a lift of `inner` into the full
-    # space, optionally composed with a coordinate permutation `P` when it
-    # reindexes axes. Its membership in `node` follows from the inner's
-    # membership in the lift (and permutation) targets of `node`.
+    # A subspace is `P @ blockdiag(inner, I)`: an embedding of `inner` into
+    # the full space, optionally composed with a coordinate permutation `P`
+    # when it reindexes axes. Its membership in `node` follows from the
+    # inner's membership in the embedding (and permutation) targets of
+    # `node`.
     inner = sub.transformation
     same = (sub.input_axes is None and sub.output_axes is None) or (
         sub.input_axes is not None
@@ -1006,17 +943,17 @@ def _subspace_member(
     )
     if same:
         return any(
-            _inner_member(inner, m, compute) for m in _lift_targets(node)
+            _inner_member(inner, m, compute) for m in _embed_targets(node)
         )
     even = _reindex_is_even(sub.input_axes, sub.output_axes)
     return any(
         _inner_member(inner, m, compute)
         for target in _permute_targets(node, even)
-        for m in _lift_targets(target)
+        for m in _embed_targets(target)
     )
 
 
-def _projection_member(proj: Projection, compute: bool, node: type) -> bool:
+def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
     # Establish injectivity/surjectivity/identity from the axis lists. A
     # projection that only drops axes is surjective; one that only creates
     # axes is injective; one that does both establishes nothing beyond
@@ -1024,15 +961,15 @@ def _projection_member(proj: Projection, compute: bool, node: type) -> bool:
     dropped = 0 if proj.dropped is None else len(proj.dropped)
     created = 0 if proj.created is None else len(proj.created)
     if not dropped and not created:
-        return issubclass(hierarchy.IdentityTransformation, node)
+        return issubclass(kinds.Identity, node)
     if dropped and not created:
-        return issubclass(hierarchy.SurjectiveTransformation, node)
+        return issubclass(kinds.Surjection, node)
     if created and not dropped:
-        return issubclass(hierarchy.InjectiveTransformation, node)
+        return issubclass(kinds.Injection, node)
     return False
 
 
-def _bijection_member(bij: Bijection, compute: bool, node: type) -> bool:
+def _bijection_member(bij: Bijection, node: type, compute: bool) -> bool:
     # Delegate to the forward map (or the inverse of the backward when no
     # forward is given). A `Bijection` is declared bijective, so a node that
     # only its invertible variant would establish (e.g. `Affine` when the
@@ -1044,11 +981,11 @@ def _bijection_member(bij: Bijection, compute: bool, node: type) -> bool:
         return False
     if is_kind(f, node, compute):
         return True
-    relaxed = hierarchy.as_noninvertible(node)
+    relaxed = kinds.as_noninvertible(node)
     return relaxed is not None and is_kind(f, relaxed, compute)
 
 
-def _inverse_member(inv: Inverse, compute: bool, node: type) -> bool:
+def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
     # An inverse never reads its own parameter, at any level. Every set under
     # `Bijective` is closed under inversion, so `Inverse(T) in N` for such an
     # `N` exactly when `T in N`; for a general node it holds when `T` is in
@@ -1056,23 +993,20 @@ def _inverse_member(inv: Inverse, compute: bool, node: type) -> bool:
     # `_bijective_targets` is `(Bijective,)`: the inverse of a non-bijection
     # is not a function.
     if inv.forward is None:
-        return issubclass(hierarchy.IdentityTransformation, node)
+        return issubclass(kinds.Identity, node)
     return any(
         is_kind(inv.forward, m, compute) for m in _bijective_targets(node)
     )
 
 
 def _register_wrapper(source: type, member: tx.Callable) -> None:
-    # Register `member(t, compute, node=C)` for every hierarchy node `C`.
-    for node in hierarchy.all_sets():
-        checker(source, node)(_bind_node(member, node))
-
-
-def _bind_node(member: tx.Callable, node: type) -> tx.Callable:
-    def _checker(t: Transformation, compute: bool) -> bool:
-        return member(t, compute, node)
-
-    return _checker
+    # A wrapper reasons about whichever node it is asked about, so the same
+    # function serves them all -- but it must be registered against every
+    # one of them: a question about `C` is answered by the nearest checker
+    # registered against a *subset* of `C`, and only an exact registration
+    # is nearer than the leaf checkers the wrapper must shadow.
+    for node in kinds.all_sets():
+        checker(source, node)(member)
 
 
 _register_wrapper(SubspaceTransformation, _subspace_member)
@@ -1086,23 +1020,21 @@ _register_wrapper(Inverse, _inverse_member)
 #                        K I N D   A L I A S E S
 #
 # ======================================================================
-# The alias table names a kind that a hierarchy NAME or SYMBOL does not
-# already name. Two sorts of entry live here:
+# The alias table names the kinds a [`kinds`][] NAME or SYMBOL does not
+# already name, and only those: a wrapper, a field, a container. They have no
+# kind node, because membership depends on their contents rather than on a
+# set they belong to, so a name that resolves to one is matched by
+# `isinstance`. One name resolves to one class -- `"field"` names the base
+# the two field types share, not both of them.
 #
-# * a **class kind** -- a wrapper, a field, a container. These have no
-#   hierarchy node, because membership depends on their contents rather
-#   than on a set they belong to, so a name that resolves to one is matched
-#   by `isinstance`.
-# * a **friendlier spelling of a set node** -- `"scaling"` for the diagonal
-#   set. These keep set semantics; only the spelling is new.
+# A friendlier spelling of a *node* does not belong here: it belongs in that
+# node's `NAME`, which is what `TransformationKind.parse` reads. `"scaling"`
+# and `"positivescaling"` are already names of the diagonal and positive
+# diagonal sets, so they need no entry.
 register_kind_alias("inverse", Inverse)
 register_kind_alias("subspace", SubspaceTransformation)
 register_kind_alias("projection", Projection)
 register_kind_alias("meta", MetaTransformation)
-register_kind_alias("field", (DisplacementField, CoordinatesField))
+register_kind_alias("field", TransformationField)
 register_kind_alias("displacements", DisplacementField)
 register_kind_alias("coordinates", CoordinatesField)
-register_kind_alias("scaling", hierarchy.DiagonalTransformation)
-register_kind_alias(
-    "positivescaling", hierarchy.PositiveDiagonalTransformation
-)

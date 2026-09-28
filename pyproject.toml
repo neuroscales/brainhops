@@ -9,7 +9,9 @@ dependencies = [
     "numpy",
     "scipy",
     "bagof-hints >= 0.1",
-    "bagof-magic >= 0.2",
+    # 0.2 parameterises a polymorphic class (`Inverse[Affine]`), which the
+    # typed inverses declare; 0.1 raises on it.
+    "bagof-magic >= 0.2.1",
     "bagof-paths >= 0.2",
 ]
 dynamic = ["version"]
@@ -36,12 +38,19 @@ fsl = ["brainhops[nifti]"]
 # newer, so the zarr-python dependency is pinned to that on capable
 # interpreters and the I/O is unavailable on older ones.
 zarr = [
-    # 0.2 for OME 0.6 support; 0.2.1 opens and creates a store from any
-    # os.PathLike, not only str and pathlib.Path.
-    "abczarr[zarr-py] >= 0.2.1",
+    # 0.2 for OME 0.6 support;
+    # 0.2.1 opens and creates a store from any os.PathLike.
+    "abczarr >= 0.2.1",
+    # abczarr reads and writes Zarr through a driver.
+    # The zarr-py driver needs zarr-python 3, which requires python >= 3.11
     "zarr >= 3; python_version >= '3.11'",
+    # On older interpreters, we fallback to tensorstore, which supports
+    # zarr3 since 0.1.43, and has sets of versions compatible on the
+    # range 3.8-3.10.
+    "tensorstore >= 0.1.43 ; python_version <= '3.10'",
 ]
-zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1"]
+zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
+zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
 io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
 
@@ -49,11 +58,10 @@ io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
 test = [
     "pytest",
     "pytest-cov",
-    "h5py",
-    "nibabel",
-    "dask",
-    "abczarr[zarr-py] >= 0.2.1",
-    "zarr >= 3; python_version >= '3.11'",
+    "brainhops[dask]",
+    "brainhops[itk]",
+    "brainhops[nibabel]",
+    "brainhops[zarr]"
 ]
 
 # doc
@@ -108,6 +116,7 @@ ignore = [
     "UP006",    # list[...] annotations need 3.9 at runtime
     "UP007",    # X | Y unions need 3.10
     "UP035",    # deprecated typing import (typing_extensions is intentional)
+    "UP033",    # cache (instead of lru_cache(None)) needs 3.9
     "UP045",    # X | None optionals need 3.10
     "E741",     # Allow for the variable I | Ambiguous variable name
 ]

@@ -23,13 +23,20 @@ __all__ = [
 import typing_extensions as tx
 
 # datamodel
-from brainhops.datamodel.hierarchy import Transformation as TransformationSet
-from brainhops.datamodel.hierarchy import TransformationFamily
+from brainhops.datamodel.kinds import Transformation as TransformationSet
+from brainhops.datamodel.kinds import TransformationFamily
 
-# The single membership predicate, and the single key-lowering routine,
-# both live in `check`, next to the checker registry they dispatch on. They
-# are re-exported here because mode resolution is their main caller.
-from .check import FamilyLike, Kind, KindLike, is_kind, lower_family
+# The membership predicates, and the single key-normalizing routine, all
+# live in `check`, next to the checker registry they dispatch on. They are
+# re-exported here because mode resolution is their main caller.
+from .check import (
+    FamilyLike,
+    Kind,
+    KindLike,
+    is_family,
+    is_kind,
+    normalize_family,
+)
 
 # typing
 if tx.TYPE_CHECKING:
@@ -46,10 +53,10 @@ dimensionality.
 ModeLike = tx.Union[None, bool, FamilyLike, tx.Iterable[FamilyLike]]
 """Possible input to the `mode` argument of [`compute()`][]."""
 
-normalize_family = lower_family
-"""Normalize any mode/simplify key into a [`TransformationFamily`][]."""
-
-__all__ += ["Family", "FamilyLike", "Kind", "KindLike"]
+__all__ += [
+    "Family", "FamilyLike", "Kind", "KindLike",
+    "is_family", "is_kind", "normalize_family",
+]
 
 
 # ======================================================================
@@ -62,11 +69,9 @@ __all__ += ["Family", "FamilyLike", "Kind", "KindLike"]
 def _is_kind_like(kind: tx.Any) -> bool:
     if isinstance(kind, str):
         return True
-    if isinstance(kind, type) and issubclass(kind, TransformationSet):
-        return True
-    if isinstance(kind, tuple) and all(isinstance(k, type) for k in kind):
-        return True
-    return False
+    # One kind is one node of the hierarchy -- and a concrete transform is
+    # registered into it, so it is one too.
+    return isinstance(kind, type) and issubclass(kind, TransformationSet)
 
 
 def _is_family_like(mode: tx.Any) -> bool:
@@ -121,37 +126,15 @@ def mode_children(mode: Family) -> tx.List[Family]:
     """
     children = []
     seen = set()
-    kind, ndim = mode
-    subclasses = getattr(kind, "__subclasses__", lambda: [])
+    subclasses = getattr(mode.kind, "__subclasses__", lambda: [])
     for child in subclasses():
-        if (child, ndim) not in seen:
-            seen.add((child, ndim))
-            children.append(TransformationFamily(child, ndim))
+        family = TransformationFamily(child, mode.ndim)
+        if family not in seen:
+            seen.add(family)
+            children.append(family)
     return children
-
-
-def matches_mode(t: "Transformation", mode: Family) -> bool:
-    """Whether a single family admits a transform."""
-    kind, ndim = mode
-    # Resolution always runs at analytic (`compute=False`): it never
-    # reads a value to decide which mode admits a leaf or which simplify
-    # entry applies.
-    if not is_kind(t, kind, compute=False):
-        return False
-    if ndim is None:
-        return True
-    # FIXME
-    #   In many transforms, the ndim can be guessed from the content of the
-    #   xform, even if the input/output spaces are not set (e.g. the shape of
-    #   the matrix or the field). The current implementation is a stricter
-    #   bound.
-    if t.input is None or t.output is None:
-        return False
-    if t.input.axes is None or t.output.axes is None:
-        return False
-    return len(t.input.axes) == ndim and len(t.output.axes) == ndim
 
 
 def mode_admits(t: "Transformation", modes: tx.Iterable[Family]) -> bool:
     """Whether any family in `modes` admits a transform."""
-    return any(matches_mode(t, m) for m in modes)
+    return any(is_family(t, m) for m in modes)

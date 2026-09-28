@@ -23,7 +23,7 @@ from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
 
 # api
 from brainhops.backends import get_array_backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 
 # transformations
@@ -242,7 +242,7 @@ class CartesianField(CoordinatesField):
         return cls(shape=self.shape, input=self.output, output=self.input)
 
 
-@hierarchy.AffineTransformation.register
+@kinds.Affine.register
 class Affine(ConcreteTransformation):
     """An affine transformation."""
 
@@ -284,7 +284,7 @@ class Affine(ConcreteTransformation):
         return homogeneous_matrix
 
 
-@hierarchy.LinearTransformation.register
+@kinds.Linear.register
 class Linear(ConcreteTransformation):
     """A linear transformation."""
 
@@ -304,7 +304,7 @@ class Linear(ConcreteTransformation):
     ] = None
 
 
-@hierarchy.SpecialOrthogonalTransformation.register
+@kinds.SpecialOrthogonal.register
 class Rotation(Linear):
     """An orthogonal transformation with determinant 1, i.e., a rotation."""
 
@@ -326,7 +326,7 @@ class Rotation(Linear):
     ] = None
 
 
-@hierarchy.Permutation.register
+@kinds.Permutation.register
 class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
@@ -348,7 +348,7 @@ class Permutation(ConcreteTransformation):
     ] = None
 
 
-@hierarchy.DiagonalTransformation.register
+@kinds.Diagonal.register
 class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
@@ -368,7 +368,7 @@ class Scaling(ConcreteTransformation):
     ] = None
 
 
-@hierarchy.Translation.register
+@kinds.Translation.register
 class Translation(ConcreteTransformation):
     """A translation."""
 
@@ -388,7 +388,7 @@ class Translation(ConcreteTransformation):
     ] = None
 
 
-@hierarchy.IdentityTransformation.register
+@kinds.Identity.register
 class Identity(ConcreteTransformation):
     """An identity transformation.
 
@@ -435,54 +435,54 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     simplifier, which only does so for a grid that sits strictly between
     two other transformations.
     """
-    return is_kind(xform, hierarchy.IdentityTransformation, compute)
+    return is_kind(xform, kinds.Identity, compute)
 
 
 def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure translation.
 
     A transformation is recognized as a translation when it is an
-    instance of [`hierarchy.Translation`][], or when [`is_identity`][]
+    instance of [`kinds.Translation`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a translation by zero.
 
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a linear part equal to the identity.
     """
-    return is_kind(xform, hierarchy.Translation, compute)
+    return is_kind(xform, kinds.Translation, compute)
 
 
 def is_scaling(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure scaling.
 
     A transformation is recognized as a scaling when it is an instance
-    of [`hierarchy.DiagonalTransformation`][], or when [`is_identity`][]
+    of [`kinds.Diagonal`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a scaling by one.
 
     When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
     transformation is also inspected for a diagonal structure.
     """
-    return is_kind(xform, hierarchy.DiagonalTransformation, compute)
+    return is_kind(xform, kinds.Diagonal, compute)
 
 
 def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure permutation of axes.
 
     A transformation is recognized as a permutation when it is an
-    instance of [`hierarchy.Permutation`][], or when [`is_identity`][]
+    instance of [`kinds.Permutation`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a trivial permutation.
 
     When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
     transformation is also inspected for a binary, one-per-row and
     one-per-column structure.
     """
-    return is_kind(xform, hierarchy.Permutation, compute)
+    return is_kind(xform, kinds.Permutation, compute)
 
 
 def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure rotation.
 
     A transformation is recognized as a rotation when it is an instance
-    of [`hierarchy.SpecialOrthogonalTransformation`][], or when
+    of [`kinds.SpecialOrthogonal`][], or when
     [`is_identity`][] recognizes it as the identity, which is itself a
     rotation by zero.
 
@@ -490,27 +490,27 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     transformation is also inspected for orthogonality and a positive
     determinant.
     """
-    return is_kind(xform, hierarchy.SpecialOrthogonalTransformation, compute)
+    return is_kind(xform, kinds.SpecialOrthogonal, compute)
 
 
 def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is linear, without a translation.
 
     A transformation is recognized as linear when it is an instance of
-    [`hierarchy.LinearTransformation`][], or when [`is_identity`][]
+    [`kinds.Linear`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself linear.
 
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a zero translation component.
     """
-    return is_kind(xform, hierarchy.LinearTransformation, compute)
+    return is_kind(xform, kinds.Linear, compute)
 
 
 def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is affine.
 
     A transformation is recognized as affine when it is an instance of
-    [`hierarchy.AffineTransformation`][], or when [`is_identity`][]
+    [`kinds.Affine`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself affine.
     """
-    return is_kind(xform, hierarchy.AffineTransformation, compute)
+    return is_kind(xform, kinds.Affine, compute)

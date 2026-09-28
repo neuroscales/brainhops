@@ -4,7 +4,6 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import replace
 
 # core
 from brainhops._core.affines import inv as inverse_affine
@@ -44,7 +43,7 @@ if tx.TYPE_CHECKING:
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
 
-def inverseparam(func: tx.Callable) -> property:
+def _invcache(func: tx.Callable) -> property:
     """A parameter of an inverse, derived on demand and cached.
 
     The materialized value is cached on the **forward** transform, under
@@ -77,7 +76,7 @@ def inverseparam(func: tx.Callable) -> property:
 
 
 @register_inverse
-class Inverse(Transformation, polymorphic=True):  # tx.Generic[TRANSFORMATION],
+class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
     """The inverse of a transformation, resolved on demand.
 
     An `Inverse` holds a forward transformation and represents its
@@ -96,6 +95,13 @@ class Inverse(Transformation, polymorphic=True):  # tx.Generic[TRANSFORMATION],
     forward transformation of that family.
     """
 
+    # --- class attributes ---------------------------------------------
+
+    # The forward transformation type a typed inverse inverts. It is unset
+    # on the generic `Inverse` front-door and set on each typed subclass,
+    # which drives both the materialization below and the wrapper registry.
+    _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
+
     # --- attributes ---------------------------------------------------
 
     forward: tx.Annotated[
@@ -103,11 +109,6 @@ class Inverse(Transformation, polymorphic=True):  # tx.Generic[TRANSFORMATION],
         tx.Doc("The forward transformation whose inverse this represents."),
     ] = None
 
-    # The forward transformation type a typed inverse inverts. It is unset
-    # on the generic `Inverse` front-door and set on each typed subclass,
-    # which drives both the materialization below and the back-pointer
-    # handed to the forward type by `__init_subclass__`.
-    _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
 
     # --- properties ---------------------------------------------------
 
@@ -170,7 +171,7 @@ class Inverse(Transformation, polymorphic=True):  # tx.Generic[TRANSFORMATION],
         if cls is None or cls is type(self):
             # An endpoint or metadata edit keeps the inverse unresolved,
             # reusing the forward transform and its cached materialization.
-            return replace(self, **kwargs) if kwargs else self
+            return super().to(cls, **kwargs)
         # A conversion to another type, including the forward type,
         # materializes the concrete inverse first, then converts onward.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
@@ -245,7 +246,7 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
 
 
 class InverseTranslation(
-    Inverse, Translation, # [Translation]
+    Inverse[Translation], Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)}
 ):
     """The inverse of a [`Translation`][], resolved on demand."""
@@ -268,7 +269,7 @@ class InverseTranslation(
 
     translation: Derived[tx.Optional[npvector[Real]]]
 
-    @inverseparam
+    @_invcache
     def translation(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.translation is None:
             return None
@@ -299,7 +300,7 @@ class InverseScaling(
 
     scale: Derived[tx.Optional[npvector[Real]]]
 
-    @inverseparam
+    @_invcache
     def scale(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.scale is None:
             return None
@@ -330,7 +331,7 @@ class InversePermutation(
 
     permutation: Derived[tx.Optional[npvector[Integral]]]
 
-    @inverseparam
+    @_invcache
     def permutation(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.permutation is None:
             return None
@@ -343,7 +344,7 @@ class InversePermutation(
 
 
 class InverseRotation(
-    Inverse, Rotation, # [Rotation]
+    Inverse[Rotation], Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
     # A `Rotation` is a `Linear`, so `Inverse(forward=rotation)` matches
     # `InverseLinear` just as well. The more specific wrapper wins: it
@@ -370,7 +371,7 @@ class InverseRotation(
 
     matrix: Derived[tx.Optional[npmatrix[Real]]]
 
-    @inverseparam
+    @_invcache
     def matrix(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.matrix is None:
             return None
@@ -379,7 +380,7 @@ class InverseRotation(
 
 
 class InverseLinear(
-    Inverse, Linear, # [Linear]
+    Inverse[Linear], Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)}
 ):
     """The inverse of a [`Linear`][] transformation, resolved on demand."""
@@ -402,7 +403,7 @@ class InverseLinear(
 
     matrix: Derived[tx.Optional[npmatrix[Real]]]
 
-    @inverseparam
+    @_invcache
     def matrix(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.matrix is None:
             return None
@@ -411,7 +412,7 @@ class InverseLinear(
 
 
 class InverseAffine(
-    Inverse, Affine, # [Affine]
+    Inverse[Affine], Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)}
 ):
     """The inverse of an [`Affine`][] transformation, resolved on demand."""
@@ -433,7 +434,7 @@ class InverseAffine(
 
     matrix: Derived[tx.Optional[npmatrix[Real]]]
 
-    @inverseparam
+    @_invcache
     def matrix(self) -> tx.Optional[ArrayProtocol]:
         if self.forward.matrix is None:
             return None
@@ -441,7 +442,7 @@ class InverseAffine(
 
 
 class InverseDisplacementField(
-    Inverse, DisplacementField, # [DisplacementField]
+    Inverse[DisplacementField], DisplacementField,
     on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)}
 ):
     """The inverse of a [`DisplacementField`][], resolved on demand.
@@ -476,22 +477,14 @@ class InverseDisplacementField(
     bound: Derived[tx.Union[BoundaryCondition, float]]
     coeff: Derived[bool]
 
-    @inverseparam
+    @_invcache
     def field(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.field is None:
-            return None
         forward = self.forward
-        if not forward.coeff:
-            return inverse_disp(forward.field)
-        # A coefficient field is inverted by re-fitting: the coefficients
-        # are read out as values, the value field is inverted, and the
-        # result is fitted back to coefficients.
-        values = coeff2value_field(
-            forward.field, order=forward.order, bound=forward.bound
-        )
-        inverse_values = inverse_disp(values)
-        return value2coeff_field(
-            inverse_values, order=forward.order, bound=forward.bound
+        return _inv_disp(
+            forward.field,
+            coeff=forward.coeff,
+            order=forward.order,
+            bound=forward.bound
         )
 
     @property
@@ -508,7 +501,7 @@ class InverseDisplacementField(
 
 
 class InverseCoordinatesField(
-    Inverse, CoordinatesField,  # [CoordinatesField]
+    Inverse[CoordinatesField], CoordinatesField,
     on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)}
 ):
     """The inverse of a [`CoordinatesField`][], resolved on demand.
@@ -558,39 +551,15 @@ class InverseCoordinatesField(
     bound: Derived[tx.Union[BoundaryCondition, float]]
     coeff: Derived[bool]
 
-    @inverseparam
+    @_invcache
     def field(self) -> tx.Optional[ArrayProtocol]:
         forward = self.forward
-        if forward.field is None:
-            return None
-        # A coordinate field is the identity grid plus a displacement, so
-        # it is inverted by inverting that displacement and adding the grid
-        # back. See the class docstring: this reads the coordinates as
-        # living in the units of their own grid.
-        #
-        # FIXME
-        #   A better approach is to regress out the affine transformation
-        #   from the field, such that the normalised field is close to
-        #   being in voxel space. The objective would be
-        #   ``||aff @ field - idgrid||_F``.
-        coords = forward.field
-        if forward.coeff:
-            # The coefficients are read out as values first: the arithmetic
-            # below is on coordinates, not on spline coefficients.
-            coords = coeff2value_field(
-                coords, order=forward.order, bound=forward.bound
-            )
-        # The grid is built on the backend the field lives on, rather than
-        # on whichever backend happens to be selected.
-        ab = get_array_backend(coords)
-        with backend(ab):
-            idgrid = CartesianField(shape=coords.shape[:-1]).field
-        inverse_coords = inverse_disp(coords - idgrid) + idgrid
-        if forward.coeff:
-            inverse_coords = value2coeff_field(
-                inverse_coords, order=forward.order, bound=forward.bound
-            )
-        return inverse_coords
+        return _inv_coords(
+            forward.field,
+            coeff=forward.coeff,
+            order=forward.order,
+            bound=forward.bound
+        )
 
     @property
     def order(self) -> InterpolationOrder:
@@ -603,3 +572,62 @@ class InverseCoordinatesField(
     @property
     def coeff(self) -> bool:
         return self.forward.coeff
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+def _inv_disp(
+    disp: ArrayProtocol, coeff: bool=False, **options
+) -> ArrayProtocol:
+    if disp is None:
+        return None
+    if not coeff:
+        return inverse_disp(disp)
+    # A coefficient field is inverted by re-fitting: the coefficients
+    # are read out as values, the value field is inverted, and the
+    # result is fitted back to coefficients.
+    disp = coeff2value_field(disp, **options)
+    disp = inverse_disp(disp)
+    return value2coeff_field(disp, **options)
+
+
+def _inv_coords(
+    coords: ArrayProtocol, coeff: bool=False, **options
+) -> ArrayProtocol:
+    if coords is None:
+        return None
+
+    # A coordinate field is the identity grid plus a displacement, so
+    # it is inverted by inverting that displacement and adding the grid
+    # back. See the class docstring: this reads the coordinates as
+    # living in the units of their own grid.
+    #
+    # FIXME
+    #   A better approach is to regress out the affine transformation
+    #   from the field, such that the normalised field is close to
+    #   being in voxel space. The objective would be
+    #   ``||aff @ field - idgrid||_F``.
+
+    if coeff:
+        # The coefficients are read out as values first: the arithmetic
+        # below is on coordinates, not on spline coefficients.
+        coords = coeff2value_field(coords, **options)
+
+    # Compute the identity coordinates mapping.
+    # The grid is built on the backend the field lives on,
+    # rather than on whichever backend happens to be selected.
+    ab = get_array_backend(coords)
+    with backend(ab):
+        idgrid = CartesianField(shape=coords.shape[:-1]).field
+
+    # Invert the coordinates field via the equivalent displacement field.
+    inverse_coords = inverse_disp(coords - idgrid) + idgrid
+
+    if coeff:
+        # Convert back to coefficients, so that the inverse uses the
+        # same parameters as the forward field.
+        inverse_coords = value2coeff_field(inverse_coords, **options)
+
+    return inverse_coords

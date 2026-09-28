@@ -9,7 +9,7 @@ OME kind with a brainhops kind is written once.
 Each direction is dispatch-driven rather than a chain of type tests. A
 converter is registered for one type, and the mapping selects the converter
 whose registered type is closest to the value's type in the class
-hierarchy. The closeness is measured by [`distance`][], the same measure the
+hierarchy. The closeness is measured by [`type_distance`][], the same one
 brainhops transformation converters use, so a new kind is added by
 registering a converter rather than by extending a conditional.
 
@@ -31,7 +31,7 @@ import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
 
 # internals
-from brainhops.datamodel._transformations.registries import distance
+from brainhops.datamodel._transformations.registries import type_distance
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -163,7 +163,7 @@ def from_ome(
     kind = type(transform)
     best_distance, best = float("inf"), None
     for registered, func in _FROM_OME.items():
-        dist = distance(kind, registered)
+        dist = type_distance(kind, registered)
         if dist < best_distance:
             best_distance, best = dist, func
     if best is None or best_distance == float("inf"):
@@ -331,7 +331,7 @@ def to_ome(
     kind = type(transform)
     best_distance, best = float("inf"), None
     for registered, func in _TO_OME.items():
-        dist = distance(kind, registered)
+        dist = type_distance(kind, registered)
         if dist < best_distance:
             best_distance, best = dist, func
     if best is not None and best_distance < float("inf"):

@@ -15,7 +15,11 @@ import numpy as np
 import pytest
 from bagof.magic import replace
 
-from brainhops.datamodel._transformations.adaptors import adapt, bridge, lift
+from brainhops.datamodel._transformations.adaptors import (
+    adapt,
+    bridge,
+    embed,
+)
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel.axes import (
     A,
@@ -953,7 +957,7 @@ def _homogeneous_of_each(sequence: Sequence) -> np.ndarray:
 
 
 def test_subset_transform_is_wrapped_in_a_subspace() -> None:
-    # A 3D LPS transform meeting a 4D (x, y, z, t) boundary is lifted into
+    # A 3D LPS transform meeting a 4D (x, y, z, t) boundary is embedded in
     # the 4D space by a SubspaceTransformation over the three spatial axes.
     first = _voxel_to_ras_time(np.eye(4, 5))
     second = _lps_affine_3d(np.eye(3, 4))
@@ -968,7 +972,7 @@ def test_subset_transform_is_wrapped_in_a_subspace() -> None:
 
 def test_unnamed_unoriented_subset_transform_is_wrapped() -> None:
     # A 3-spatial transform whose axes carry no name and no orientation
-    # meeting a 4-axis (x, y, z, t) image is still lifted onto the spatial
+    # meeting a 4-axis (x, y, z, t) image is still embedded in the spatial
     # axes. The subset match uses the grouped-positional fallback, so the
     # three unnamed spatial axes pair with the three spatial axes of the
     # image and the time axis is left alone. The pairing warns.
@@ -1036,7 +1040,7 @@ def test_subspace_wrap_round_trips_through_inverse() -> None:
 def test_spatial_transform_across_a_4d_image_via_compute() -> None:
     # End to end: a 3D LPS transform applied after a 4D voxel-to-RAS map.
     # Composing the two crosses from a 4D (x, y, z, t) space into a 3D LPS
-    # transform. The adaptor lifts the transform onto the spatial axes and
+    # transform. The adaptor embeds the transform in the spatial axes and
     # leaves time alone, and the composition maps the spatial coordinates
     # by the transform while carrying the time coordinate through.
     voxel_matrix = np.array(
@@ -1054,7 +1058,7 @@ def test_spatial_transform_across_a_4d_image_via_compute() -> None:
     second = _lps_affine_3d(itk_matrix)
 
     result = Sequence([first, second]).compute()
-    # The lifted 3D transform is a non-interpolating subspace wrapper (it
+    # The embedded 3D transform is a non-interpolating subspace wrapper (it
     # merely embeds an affine into the spatial axes), so it now folds into a
     # single 4D affine under the default mode rather than staying an opaque
     # wrapper. Nothing is lost: the composed matrix is exactly the embedded
@@ -1078,7 +1082,7 @@ def test_spatial_transform_across_a_4d_image_via_compute() -> None:
 
 
 def test_wrapped_result_round_trips_through_compute() -> None:
-    # The lifted transform composes and inverts through compute(): a
+    # The embedded transform composes and inverts through compute(): a
     # sequence and its reverse cancel to the identity on the full 4D space.
     itk_matrix = np.array(
         [[0.9, 0.1, 0.0, 1.0], [-0.1, 0.9, 0.0, 2.0], [0.0, 0.0, 1.0, 3.0]]
@@ -1086,7 +1090,7 @@ def test_wrapped_result_round_trips_through_compute() -> None:
     first = _voxel_to_ras_time(np.eye(4, 5))
     second = _lps_affine_3d(itk_matrix)
     forward = Sequence([first, second]).compute()
-    # The lifted transform now folds into a single 4D affine, so the round
+    # The embedded transform now folds into a single 4D affine, so the round
     # trip is read from the folded result (and its inverse) rather than from
     # a surviving sequence of wrappers.
     forward_matrix = _composed_homogeneous(forward)
@@ -1120,8 +1124,8 @@ def test_bridge_refuses_a_dimensionality_mismatch() -> None:
         bridge(_ras_time_system("4d"), LPSCoordinateSystem())
 
 
-def test_backward_lift_wraps_a_3d_transform_before_a_4d_one() -> None:
-    # A 3D LPS transform followed by a 4D voxel-to-world map is lifted the
+def test_backward_embedding_wraps_a_3d_transform_before_a_4d_one() -> None:
+    # A 3D LPS transform followed by a 4D voxel-to-world map is embedded the
     # other way: the fuller space is on the output side of the boundary, so
     # the 3D transform is wrapped into a SubspaceTransformation over the
     # spatial axes and placed before the 4D map. The wrapper writes into the
@@ -1141,7 +1145,7 @@ def test_backward_lift_wraps_a_3d_transform_before_a_4d_one() -> None:
     second = _voxel_to_ras_time(voxel_matrix)
 
     result = Sequence([first, second]).compute()
-    # The backward-lifted 3D transform is likewise a non-interpolating
+    # The backward-embedded 3D transform is likewise a non-interpolating
     # subspace wrapper, so it folds into a single 4D affine under the default
     # mode instead of staying an opaque wrapper. The composed matrix is the
     # voxel map, the RAS/LPS flip and the embedded transform multiplied
@@ -1160,7 +1164,7 @@ def test_backward_lift_wraps_a_3d_transform_before_a_4d_one() -> None:
 def test_extra_spatial_axis_is_not_absorbed_backward_and_raises() -> None:
     # The mirror of the forward refusal. A 3D transform followed by a
     # four-spatial-axis system on the output side is a genuine
-    # dimensionality mismatch, not a pass-through, so the lift declines and
+    # dimensionality mismatch, not a pass-through, so embedding declines and
     # the adaptor raises rather than inventing an axis.
     four_spatial = CoordinateSystem(
         name="four-spatial",
@@ -1181,7 +1185,7 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
 
     The ITK transform is read from an ITK text file, so it needs no ``itk``
     package. It acts in LPS over three spatial axes. Composing it after a
-    4D voxel-to-RAS map lifts it onto the spatial axes of the 4D space and
+    4D voxel-to-RAS map embeds it in the spatial axes of the 4D space and
     leaves the time axis unchanged.
     """
     transformations = pytest.importorskip("brainhops.io.transformations")
@@ -1198,7 +1202,7 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
     voxel_to_world = _voxel_to_ras_time(voxel_matrix)
 
     result = Sequence([voxel_to_world, itk]).compute()
-    # The ITK 3D transform lifts onto the spatial axes as a non-interpolating
+    # The ITK 3D transform embeds in the spatial axes as a non-interpolating
     # subspace wrapper, which now folds into a single 4D affine under the
     # default mode. The composed matrix still embeds the ITK transform on the
     # spatial axes and leaves time untouched.
@@ -1223,7 +1227,7 @@ def test_itk_3d_transform_applied_to_a_4d_image_wraps_the_spatial_axes(
 
 
 def test_is_identity_recognizes_a_subspace_of_the_identity() -> None:
-    # A subspace transform lifts its inner transform into the full space, so
+    # A subspace transform embeds its inner transform in the full space, so
     # its membership follows from the inner's, at the same level. An
     # `Identity` inner is the identity by *type*, with no value to read, so
     # a same-axes subspace of it is recognized structurally -- `compute` is
@@ -1350,7 +1354,7 @@ def test_4d_reslice_through_a_3d_warp_field_order3() -> None:
 
 
 def test_time_component_is_carried_through_a_3d_warp() -> None:
-    # The subspace lift leaves the time axis alone: the coordinate field
+    # The subspace embedding leaves the time axis alone: the coordinate field
     # the reslice computes holds an exact time coordinate.
     image = _image_4d()
     warp = _spatial_warp()
@@ -1368,7 +1372,7 @@ def test_time_component_is_carried_through_a_3d_warp() -> None:
 
 def test_3d_affine_applied_to_a_4d_image_via_reslice() -> None:
     # T2. A 3D affine warp applied to a 4D image reslices end to end. This
-    # raised before the backward lift and the subspace composers existed.
+    # raised before the backward embedding and the subspace composers existed.
     image = _image_4d()
     warp_aff = Affine(
         matrix=np.eye(3, 4),
@@ -1401,21 +1405,21 @@ def test_own_geometry_reslice_is_exact_and_never_inverts_a_field(
 
 
 # ----------------------------------------------------------------------
-#   lift AND THE DISCRETE GUARD
+#   embed AND THE DISCRETE GUARD
 # ----------------------------------------------------------------------
 
 
-def test_lift_refuses_a_cartesian_field() -> None:
+def test_embed_refuses_a_cartesian_field() -> None:
     # T5. A grid defines a sampling domain, not a transform to place inside
-    # a subspace, so it is never lifted.
+    # a subspace, so it is never embedded.
     grid = CartesianField(
         shape=(6, 7, 5),
         input=_spatial3("grid"),
         output=_spatial3("grid"),
     )
     full = _ras_time("full")
-    assert lift(grid, full=full, side="input", extents=None) is None
-    assert lift(grid, full=full, side="output", extents=None) is None
+    assert embed(grid, full=full, side="input", extents=None) is None
+    assert embed(grid, full=full, side="output", extents=None) is None
 
 
 def _discrete_ras_time(name: str) -> CoordinateSystem:
@@ -1426,8 +1430,8 @@ def _discrete_ras_time(name: str) -> CoordinateSystem:
     )
 
 
-def test_lift_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
-    # T6, lift side. An interpolating transform lifted onto a discrete axis
+def test_embed_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
+    # T6, embed side. An interpolating transform embedded in a discrete axis
     # is refused, because a field is sampled between grid points.
     voxel = _spatial3("warp-voxel")
     field = DisplacementField(
@@ -1435,7 +1439,7 @@ def test_lift_refuses_an_interpolating_transform_on_a_discrete_axis() -> None:
     )
     full = _discrete_ras_time("full")
     with pytest.raises(AdaptationError):
-        lift(field, full=full, side="input", extents=None)
+        embed(field, full=full, side="input", extents=None)
 
 
 def test_compose_refuses_interpolating_subspace_on_discrete_axis() -> None:
@@ -1484,8 +1488,8 @@ def test_adapt_keeps_first_by_identity_for_a_bridge() -> None:
     assert result.transformations[-1] is second
 
 
-def test_adapt_keeps_first_by_identity_for_a_forward_lift() -> None:
-    # T7. A forward lift wraps the second transform and leaves the first
+def test_adapt_keeps_first_by_identity_for_a_forward_embedding() -> None:
+    # T7. A forward embedding wraps the second transform and leaves the first
     # untouched, so the first element is the exact object passed in.
     first = _voxel_to_ras_time(np.eye(4, 5))
     second = _lps_affine_3d(np.eye(3, 4))
@@ -1495,8 +1499,8 @@ def test_adapt_keeps_first_by_identity_for_a_forward_lift() -> None:
     assert isinstance(wrapped, SubspaceTransformation)
 
 
-def test_backward_lift_finds_the_original_leaf_by_identity() -> None:
-    # T7. A backward lift wraps the first transform. The original leaf is
+def test_backward_embedding_finds_the_original_leaf_by_identity() -> None:
+    # T7. A backward embedding wraps the first transform. The original leaf is
     # still reachable inside the wrapper, found by identity, so no leaf is
     # rebuilt.
     first = _lps_affine_3d(np.eye(3, 4))
@@ -1510,7 +1514,7 @@ def test_backward_lift_finds_the_original_leaf_by_identity() -> None:
 
 
 # ----------------------------------------------------------------------
-#   adapt() REPORTS THE FULLER ENDPOINT AFTER A LIFT
+#   adapt() REPORTS THE FULLER ENDPOINT AFTER AN EMBEDDING
 # ----------------------------------------------------------------------
 
 
@@ -1523,13 +1527,13 @@ def _composed_homogeneous(result: Transformation) -> np.ndarray:
 
 
 # A non-trivial 3D affine, so a dropped or misplaced axis shows up plainly.
-_LIFT_AFFINE_3D = np.array(
+_EMBED_AFFINE_3D = np.array(
     [[1.3, 0.2, -0.1, 4.0], [0.0, 0.9, 0.3, -2.0], [0.1, 0.0, 1.1, 1.0]]
 )
 
 
-def test_adapt_forward_lift_output_matches_its_last_piece() -> None:
-    # A forward lift wraps `second` into the fuller space, so the sequence
+def test_adapt_forward_embedding_output_matches_its_last_piece() -> None:
+    # A forward embedding wraps `second` in the fuller space, so the sequence
     # leaves its coordinates in that fuller output system, not the smaller
     # output system of `second`.
     first = _voxel_to_ras_time(np.eye(4, 5))
@@ -1540,8 +1544,8 @@ def test_adapt_forward_lift_output_matches_its_last_piece() -> None:
     assert len(result.output.axes) == 4
 
 
-def test_adapt_backward_lift_input_matches_its_first_piece() -> None:
-    # A backward lift wraps `first` into the fuller space, so the sequence
+def test_adapt_backward_embedding_input_matches_its_first_piece() -> None:
+    # A backward embedding wraps `first` in the fuller space, so the sequence
     # reads its coordinates from that fuller input system, not the smaller
     # input system of `first`.
     first = _lps_affine_3d(np.eye(3, 4))
@@ -1552,13 +1556,13 @@ def test_adapt_backward_lift_input_matches_its_first_piece() -> None:
     assert len(result.input.axes) == 4
 
 
-def test_adapt_forward_lift_composes_like_the_flat_sequence() -> None:
-    # A sequence built around a forward-lift adapt computes to the same
+def test_adapt_forward_embedding_composes_like_the_flat_sequence() -> None:
+    # A sequence built around a forward-embedding adapt computes to the same
     # transform as the flat three-element sequence. Before the endpoint fix
     # the nested form raised, because the adapt sequence reported a stale
     # smaller output system.
     v2w = _voxel_to_ras_time(np.eye(4, 5))
-    aff = _lps_affine_3d(_LIFT_AFFINE_3D)
+    aff = _lps_affine_3d(_EMBED_AFFINE_3D)
     flat = Sequence([v2w, aff, v2w.inverse()]).compute()
     nested = Sequence([adapt(v2w, aff), v2w.inverse()]).compute()
     np.testing.assert_allclose(
@@ -1566,12 +1570,13 @@ def test_adapt_forward_lift_composes_like_the_flat_sequence() -> None:
     )
 
 
-def test_adapt_backward_lift_composes_like_the_flat_sequence() -> None:
-    # The mirror of the forward case. A sequence built around a backward-lift
+def test_adapt_backward_embedding_composes_like_the_flat_sequence() -> None:
+    # The mirror of the forward case. A sequence built around a
+    # backward-embedding
     # adapt computes to the same transform as the flat three-element
     # sequence.
     v2w = _voxel_to_ras_time(np.eye(4, 5))
-    aff = _lps_affine_3d(_LIFT_AFFINE_3D)
+    aff = _lps_affine_3d(_EMBED_AFFINE_3D)
     flat = Sequence([v2w.inverse(), aff, v2w]).compute()
     nested = Sequence([v2w.inverse(), adapt(aff, v2w)]).compute()
     np.testing.assert_allclose(

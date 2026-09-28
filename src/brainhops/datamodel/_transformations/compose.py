@@ -54,7 +54,7 @@ from brainhops._core.typing import safe_get_origin
 
 # internals
 from .errors import CompositionError
-from .registries import COMPOSERS, COMPOSERS_FASTMAP, distance
+from .registries import COMPOSERS, COMPOSERS_FASTMAP, type_distance
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
@@ -104,7 +104,7 @@ def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
     for order, ((T1, T2), func) in enumerate(COMPOSERS.items()):
         best = float("inf")
         for A, B in itertools.product(_expand(T1), _expand(T2)):
-            dist = distance(t1, A) + distance(t2, B)
+            dist = type_distance(t1, A) + type_distance(t2, B)
             if dist < best:
                 best = dist
         if best < float("inf"):

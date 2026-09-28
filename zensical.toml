@@ -25,7 +25,7 @@ nav = [
       "api/datamodel/geometry.md",
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
-      "api/datamodel/hierarchy.md",
+      "api/datamodel/kinds.md",
     ]},
     {"io" = [
       "api/io/index.md",

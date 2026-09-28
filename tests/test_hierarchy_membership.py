@@ -11,7 +11,7 @@ wrapper and value-dependent keys are handled in the policy layer instead
 
 import pytest
 
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel.transformations import Affine, Linear, Translation
 
 # ----------------------------------------------------------------------
@@ -21,30 +21,30 @@ from brainhops.datamodel.transformations import Affine, Linear, Translation
 
 def test_parse_name_is_case_insensitive() -> None:
     for name in ("affine", "Affine", "AFFINE", "AfFiNe"):
-        cls, dim = hierarchy.TransformationFamily.parse(name)
-        assert cls is hierarchy.AffineTransformation
-        assert dim is None
-    assert hierarchy.TransformationFamily.parse("translation")[0] is (
-        hierarchy.Translation
+        family = kinds.TransformationFamily.parse(name)
+        assert family.kind is kinds.Affine
+        assert family.ndim is None
+    assert kinds.TransformationFamily.parse("translation").kind is (
+        kinds.Translation
     )
-    assert hierarchy.TransformationFamily.parse("rotation")[0] is (
-        hierarchy.SpecialOrthogonalTransformation
+    assert kinds.TransformationFamily.parse("rotation").kind is (
+        kinds.SpecialOrthogonal
     )
 
 
 def test_parse_symbols_stay_case_sensitive() -> None:
     # SYMBOL / FSYMBOL are mathematical symbols, matched case-sensitively.
-    cls, dim = hierarchy.TransformationFamily.parse("SO(3)")
-    assert cls is hierarchy.SpecialOrthogonalTransformation
-    assert dim == 3
-    assert hierarchy.TransformationFamily.parse("SO")[0] is (
-        hierarchy.SpecialOrthogonalTransformation
+    family = kinds.TransformationFamily.parse("SO(3)")
+    assert family.kind is kinds.SpecialOrthogonal
+    assert family.ndim == 3
+    assert kinds.TransformationFamily.parse("SO").kind is (
+        kinds.SpecialOrthogonal
     )
 
 
 def test_parse_raises_on_unknown() -> None:
     with pytest.raises(ValueError):
-        hierarchy.TransformationFamily.parse("DefinitelyNotAType")
+        kinds.TransformationFamily.parse("DefinitelyNotAType")
 
 
 # ----------------------------------------------------------------------
@@ -54,19 +54,19 @@ def test_parse_raises_on_unknown() -> None:
 
 def test_injective_surjective_are_bases_of_bijective() -> None:
     assert issubclass(
-        hierarchy.BijectiveTransformation, hierarchy.InjectiveTransformation
+        kinds.Bijection, kinds.Injection
     )
     assert issubclass(
-        hierarchy.BijectiveTransformation, hierarchy.SurjectiveTransformation
+        kinds.Bijection, kinds.Surjection
     )
     # Every invertible node is therefore injective and surjective.
     assert issubclass(
-        hierarchy.InvertibleAffineTransformation,
-        hierarchy.InjectiveTransformation,
+        kinds.InvertibleAffine,
+        kinds.Injection,
     )
     assert issubclass(
-        hierarchy.SpecialOrthogonalTransformation,
-        hierarchy.SurjectiveTransformation,
+        kinds.SpecialOrthogonal,
+        kinds.Surjection,
     )
 
 
@@ -75,15 +75,15 @@ def test_euclidean_lattice_edges() -> None:
     # translation is special-euclidean (hence euclidean), while a translation
     # is still not orthogonal.
     assert issubclass(
-        hierarchy.SpecialEuclideanTransformation,
-        hierarchy.EuclideanTransformation,
+        kinds.SpecialEuclidean,
+        kinds.Euclidean,
     )
     assert issubclass(
-        hierarchy.Translation, hierarchy.SpecialEuclideanTransformation
+        kinds.Translation, kinds.SpecialEuclidean
     )
-    assert issubclass(hierarchy.Translation, hierarchy.EuclideanTransformation)
+    assert issubclass(kinds.Translation, kinds.Euclidean)
     assert not issubclass(
-        hierarchy.Translation, hierarchy.OrthogonalTransformation
+        kinds.Translation, kinds.Orthogonal
     )
     # And a concrete translation is a member of the euclidean set.
     from brainhops.datamodel.transformations import Translation, is_kind
@@ -92,14 +92,14 @@ def test_euclidean_lattice_edges() -> None:
 
 
 def test_injective_surjective_names_resolve() -> None:
-    assert hierarchy.TransformationFamily.parse("injection")[0] is (
-        hierarchy.InjectiveTransformation
+    assert kinds.TransformationFamily.parse("injection").kind is (
+        kinds.Injection
     )
-    assert hierarchy.TransformationFamily.parse("surjective")[0] is (
-        hierarchy.SurjectiveTransformation
+    assert kinds.TransformationFamily.parse("surjective").kind is (
+        kinds.Surjection
     )
-    assert hierarchy.TransformationFamily.parse("bijection")[0] is (
-        hierarchy.BijectiveTransformation
+    assert kinds.TransformationFamily.parse("bijection").kind is (
+        kinds.Bijection
     )
 
 
@@ -112,15 +112,15 @@ def test_concrete_membership_is_transitive() -> None:
     # `Linear` registers to `LinearTransformation`, a subclass of
     # `AffineTransformation`, so a linear instance is an affine.
     assert isinstance(
-        Linear(matrix=[[2.0, 0.0], [0.0, 3.0]]), hierarchy.AffineTransformation
+        Linear(matrix=[[2.0, 0.0], [0.0, 3.0]]), kinds.Affine
     )
     # The converse does not hold: a general affine is not linear.
     assert not isinstance(
         Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]),
-        hierarchy.LinearTransformation,
+        kinds.Linear,
     )
     assert isinstance(
-        Translation(translation=[1.0, 2.0]), hierarchy.AffineTransformation
+        Translation(translation=[1.0, 2.0]), kinds.Affine
     )
 
 
@@ -130,7 +130,7 @@ def test_concrete_membership_is_transitive() -> None:
 
 
 def test_field_transformation_node_absent() -> None:
-    assert not hasattr(hierarchy, "FieldTransformation")
+    assert not hasattr(kinds, "FieldTransformation")
 
 
 def test_removed_88b_nodes_are_gone() -> None:
@@ -139,7 +139,7 @@ def test_removed_88b_nodes_are_gone() -> None:
         "SubspaceTransformation",
         "InverseTransformation",
     ):
-        assert not hasattr(hierarchy, name), name
+        assert not hasattr(kinds, name), name
 
 
 def test_removed_88b_helpers_are_gone() -> None:
@@ -153,9 +153,9 @@ def test_removed_88b_helpers_are_gone() -> None:
         "is_member",
         "NAMETOCLASS_CI",
     ):
-        assert not hasattr(hierarchy, name), name
+        assert not hasattr(kinds, name), name
 
 
 def test_nametoclass_is_lowercase_keyed() -> None:
-    assert "affine" in hierarchy.NAMETOCLASS
-    assert "Affine" not in hierarchy.NAMETOCLASS
+    assert "affine" in kinds.NAMETOCLASS
+    assert "Affine" not in kinds.NAMETOCLASS

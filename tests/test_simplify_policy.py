@@ -10,12 +10,12 @@ from unittest import mock
 import numpy as np
 import pytest
 
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import inverse as _inv
 from brainhops.datamodel._transformations.modes import normalize_family
 from brainhops.datamodel._transformations.simplify import SimplifyTable
 from brainhops.datamodel.enums import SimplifyPolicy
-from brainhops.datamodel.hierarchy import TransformationFamily
+from brainhops.datamodel.kinds import TransformationFamily
 from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
@@ -34,8 +34,8 @@ none, analytic, numeric = (
     SimplifyPolicy.analytic,
     SimplifyPolicy.numeric,
 )
-AFF = TransformationFamily(hierarchy.AffineTransformation, None)
-LIN = TransformationFamily(hierarchy.LinearTransformation, None)
+AFF = TransformationFamily(kinds.Affine, None)
+LIN = TransformationFamily(kinds.Linear, None)
 
 
 def _small(shape: tuple = (6, 7, 2), seed: int = 0) -> np.ndarray:
@@ -73,17 +73,17 @@ def test_key_and_list_restrict_to_those() -> None:
         None: none,
         TransformationFamily(Affine, None): analytic
     }
-    assert normalize_simplify(hierarchy.LinearTransformation) == {
+    assert normalize_simplify(kinds.Linear) == {
         None: none,
         LIN: analytic,
     }
     table = normalize_simplify(["scaling", "translation"])
     assert table[None] is none
     assert table[
-        TransformationFamily(hierarchy.DiagonalTransformation, None)
+        TransformationFamily(kinds.Diagonal, None)
     ] is analytic
     assert table[
-        TransformationFamily(hierarchy.Translation, None)
+        TransformationFamily(kinds.Translation, None)
     ] is analytic
 
 
@@ -105,7 +105,7 @@ def test_mapping_fallback_and_collisions() -> None:
     )
     t = normalize_simplify({"affine": "numeric", Affine: "none"})
     assert t[AFF] is numeric  # the set key
-    assert t[(Affine, None)] is none  # the distinct class key
+    assert t[TransformationFamily(Affine, None)] is none  # the class key
 
 
 def test_lowering_is_idempotent() -> None:
@@ -114,14 +114,12 @@ def test_lowering_is_idempotent() -> None:
 
 
 def test_special_and_symbol_keys() -> None:
-    assert normalize_family("SO(3)") == (
-        hierarchy.SpecialOrthogonalTransformation,
-        3,
+    assert normalize_family("SO(3)") == TransformationFamily(
+        kinds.SpecialOrthogonal, 3
     )
-    assert normalize_family(3) == (hierarchy.Transformation, 3)
-    assert normalize_family("scaling") == (
-        hierarchy.DiagonalTransformation,
-        None,
+    assert normalize_family(3) == TransformationFamily(kinds.Transformation, 3)
+    assert normalize_family("scaling") == TransformationFamily(
+        kinds.Diagonal, None
     )
     from brainhops.datamodel.transformations import (
         CartesianField,
@@ -139,23 +137,27 @@ def test_special_and_symbol_keys() -> None:
         "displacements",  # plural (class name stays DisplacementField)
         "coordinates",  # plural (class name stays CoordinatesField)
     ):
-        kind, ndim = normalize_family(key)
-        assert isinstance(kind, (type, tuple))
-    assert normalize_family("bijection")[0] is (
-        hierarchy.BijectiveTransformation
-    )
-    assert normalize_family("rotation")[0] is (
-        hierarchy.SpecialOrthogonalTransformation
-    )
+        # One kind is one class, whichever sort of kind it is.
+        assert isinstance(normalize_family(key).kind, type)
+    assert normalize_family("bijection").kind is kinds.Bijection
+    assert normalize_family("rotation").kind is kinds.SpecialOrthogonal
     # A concrete class is an `isinstance` kind (the class itself), never the
     # hierarchy set it registered to.
-    assert normalize_family(Rotation) == (Rotation, None)
-    assert normalize_family(Identity) == (Identity, None)
+    assert normalize_family(Rotation) == TransformationFamily(Rotation, None)
+    assert normalize_family(Identity) == TransformationFamily(Identity, None)
     # a class kind
-    assert normalize_family(InverseAffine) == (InverseAffine, None)
-    assert normalize_family(DisplacementField) == (DisplacementField, None)
-    assert normalize_family(Projection) == (Projection, None)
-    assert normalize_family(CartesianField) == (CartesianField, None)
+    assert normalize_family(InverseAffine) == TransformationFamily(
+        InverseAffine, None
+    )
+    assert normalize_family(DisplacementField) == TransformationFamily(
+        DisplacementField, None
+    )
+    assert normalize_family(Projection) == TransformationFamily(
+        Projection, None
+    )
+    assert normalize_family(CartesianField) == TransformationFamily(
+        CartesianField, None
+    )
     _ = Inverse
 
 
@@ -164,8 +166,10 @@ def test_invalid_keys_raise() -> None:
 
     # A class with no hierarchy node is now a valid `isinstance` kind (it no
     # longer has to resolve to a set), so it lowers rather than raising.
-    assert normalize_family(Sequence) == (Sequence, None)
-    assert normalize_family(MultiscaleField) == (MultiscaleField, None)
+    assert normalize_family(Sequence) == TransformationFamily(Sequence, None)
+    assert normalize_family(MultiscaleField) == TransformationFamily(
+        MultiscaleField, None
+    )
     with pytest.raises(ValueError):
         normalize_simplify("not-a-name")
     with pytest.raises(ValueError):

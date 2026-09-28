@@ -459,7 +459,7 @@ def test_subspace_to_affine_on_a_field_inner_raises() -> None:
 
 
 def test_subspace_affine_embed_folds_a_non_interpolating_subspace() -> None:
-    # A subspace transform that merely lifts an affine into a larger space is
+    # A subspace transform that merely embeds an affine in a larger space is
     # non-interpolating, so composing it with an affine folds the two into a
     # single affine rather than keeping the wrapper. The folded matrix equals
     # reducing the subspace to an affine and composing.

@@ -10,7 +10,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import npvector
 
 # datamodel
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel.axes import Axis
 
 # internals
@@ -52,13 +52,13 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     The transformation acts on the axes named by `input_axes` and
     `output_axes`, and leaves every other axis unchanged. The
     dimensionality of the space is preserved. An axis that is not named
-    passes through as the identity. This lifts a transformation defined
+    passes through as the identity. This embeds a transformation defined
     over a few axes, such as a spatial transformation over `(x, y, z)`,
     into a larger space, such as `(x, y, z, t)`, where it acts on the
     spatial axes and leaves time untouched.
 
     Generic in the wrapped transformation type:
-    `SubspaceTransformation[TRANSFORMATION]` lifts a `TRANSFORMATION`. Its
+    `SubspaceTransformation[TRANSFORMATION]` embeds a `TRANSFORMATION`. Its
     membership is decided by a checker registered in `checkers` that recurses
     into the wrapped transform.
     """
@@ -146,7 +146,7 @@ class Projection(MetaTransformation):
         )
 
 
-@hierarchy.BijectiveTransformation.register
+@kinds.Bijection.register
 class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     """
     A transformation whose inverse is explicitly defined.

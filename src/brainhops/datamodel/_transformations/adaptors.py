@@ -41,8 +41,8 @@ There are two entry points:
    sequence that contains both of them, with the reconciling bridge
    placed where the two systems meet.
    When the two systems have different numbers of axes, and one transform
-   acts on a subset of the other's axes, `adapt` lifts the smaller
-   transform into the fuller space instead, so it acts on those axes and
+   acts on a subset of the other's axes, `adapt` embeds the smaller
+   transform in the fuller space instead, so it acts on those axes and
    leaves the extra axes unchanged.
 """
 
@@ -170,10 +170,10 @@ def bridge(
             f"reorders, rescales, and flips matched axes and never adds "
             f"or drops one. When one transform acts on a subset of the "
             f"other's axes, such as a spatial transform meeting a "
-            f"spatial-and-time image, composition lifts the smaller "
-            f"transform onto the axes it acts on. Those axes could not "
+            f"spatial-and-time image, composition embeds the smaller "
+            f"transform in the axes it acts on. Those axes could not "
             f"be matched to a subset of the fuller system here, so the "
-            f"lift was not possible. Give the shared axes matching "
+            f"embedding was not possible. Give the shared axes matching "
             f"names, units, or orientations so they can be identified."
         )
 
@@ -475,13 +475,13 @@ def adapt(
 
     The result always contains both `first` and `second`, as a
     [`Sequence`][]. The sequence usually runs from the input of `first`
-    to the output of `second`. A lift is the exception:
+    to the output of `second`. An embedding is the exception:
 
-    * A forward lift wraps `second` so that it acts in the fuller space,
-      and the sequence then ends in that fuller output system rather
-      than the output of `second`.
+    * A forward embedding wraps `second` so that it acts in the fuller
+      space, and the sequence then ends in that fuller output system
+      rather than the output of `second`.
 
-    * A backward lift wraps `first`, and the sequence then begins in
+    * A backward embedding wraps `first`, and the sequence then begins in
       that fuller input system rather than the input of `first`.
 
     In general:
@@ -496,11 +496,11 @@ def adapt(
 
     * When the two systems have different numbers of axes, one transform
       acts on a subset of the other's axes. The transform on the fewer
-      axes is lifted into the fuller space by a [`SubspaceTransformation`][]
+      axes is embedded in the fuller space by a [`SubspaceTransformation`][]
       that acts on those axes and leaves the extra axes unchanged.
 
       - A 3D spatial transform meeting a 4D spatial-and-time boundary
-        is lifted this way, whether the fuller space is on the input
+        is embedded this way, whether the fuller space is on the input
         side or the output side of the boundary.
 
       - A genuine dimensionality mismatch, where the extra axes are not
@@ -528,9 +528,9 @@ def adapt(
     -------
     Sequence
         A sequence that contains both `first` and `second`, with any
-        reconciling bridge or subspace lift placed where their systems
+        reconciling bridge or subspace embedding placed where their systems
         meet. `first` and `second` are never rebuilt, so each is the same
-        object it was passed as, unless it was lifted into a fuller space.
+        object it was passed as, unless it was embedded in a fuller space.
     """
     source = first.output
     target = second.input
@@ -550,30 +550,32 @@ def adapt(
     extents = extents or None
 
     # The sequence normally runs from the input of `first` to the output of
-    # `second`. A lift replaces one of them with a wrapper that acts in the
-    # fuller space, so the endpoint on the lifted side comes from the wrapper
-    # rather than the original transform.
+    # `second`. An embedding replaces one of them with a wrapper that acts
+    # in the fuller space, so the endpoint on the embedded side comes from
+    # the wrapper rather than the original transform.
     seq_input = first.input
     seq_output = second.output
 
-    # --- dimensionality mismatch: build the lift ----------------------
+    # --- dimensionality mismatch: build the embedding -----------------
     if len(source.axes) != len(target.axes):
-        # One transform acts on a subset of the other's axes. Lift the
-        # smaller one into the fuller space, trying the fuller input side of
+        # One transform acts on a subset of the other's axes. Embed the
+        # smaller one in the fuller space, trying the fuller input side of
         # `second` first and then the fuller output side of `first`.
-        lifted = lift(second, full=source, side="input", extents=extents)
-        if lifted is not None:
-            pieces: tx.List[Transformation] = [first, lifted]
-            # The lifted `second` acts in the fuller space, so the sequence
+        embedded = embed(second, full=source, side="input", extents=extents)
+        if embedded is not None:
+            pieces: tx.List[Transformation] = [first, embedded]
+            # The embedded `second` acts in the fuller space, so the sequence
             # leaves its coordinates in that fuller output system.
-            seq_output = lifted.output
+            seq_output = embedded.output
         else:
-            lifted = lift(first, full=target, side="output", extents=extents)
-            if lifted is not None:
-                pieces = [lifted, second]
-                # The lifted `first` reads the fuller space, so the sequence
+            embedded = embed(
+                first, full=target, side="output", extents=extents
+            )
+            if embedded is not None:
+                pieces = [embedded, second]
+                # The embedded `first` reads the fuller space, so the sequence
                 # takes its coordinates from that fuller input system.
-                seq_input = lifted.input
+                seq_input = embedded.input
             else:
                 # Not a same-dimensionality subset on either side, so this
                 # is a genuine dimensionality mismatch. `bridge` cannot add
@@ -607,14 +609,14 @@ def adapt(
     return Sequence(transformations=pieces, input=seq_input, output=seq_output)
 
 
-def lift(
+def embed(
     transform: Transformation,
     *,
     full: tx.Optional[CoordinateSystem],
     side: str,
     extents: tx.Optional[Extents] = None,
 ) -> tx.Optional[SubspaceTransformation]:
-    """Lift a transform onto the axes it acts on inside a fuller space.
+    """Embed a transform in the axes it acts on inside a fuller space.
 
     The transformation `transform` acts on a subset of the axes of the
     fuller system `full`. This routine wraps `transform` in a
@@ -637,13 +639,13 @@ def lift(
     The return value is `None` when the subset is not a clean
     same-dimensionality subset of `full`, so the caller can fall back to
     refusing a genuine dimensionality mismatch. A [`CartesianField`][]
-    is never lifted, because it defines a sampling domain rather than a
+    is never embedded, because it defines a sampling domain rather than a
     transform to place inside a subspace.
 
     Parameters
     ----------
     transform : Transformation
-        The transform to lift into the axis space of `full`.
+        The transform to embed in the axis space of `full`.
     full : CoordinateSystem, optional
         The fuller system that the wrapped transform reads and writes.
     side : {"input", "output"}
@@ -708,7 +710,7 @@ def lift(
             axis = full_axes[position]
             if axis.discrete:
                 raise AdaptationError(
-                    f"Cannot lift an interpolating transform onto the "
+                    f"Cannot embed an interpolating transform in the "
                     f"discrete axis {(axis.name or axis.type)!r}. A field "
                     f"is sampled between grid points, which a discrete "
                     f"axis does not allow."
@@ -716,7 +718,7 @@ def lift(
 
     sub_full = CoordinateSystem(axes=[full_axes[i] for i in positions])
 
-    # --- lift input ---------------------------------------------------
+    # --- embed input --------------------------------------------------
     if side == "input":
         sub_bridge = make_bridge(sub_full, sub_input)
         if is_identity(sub_bridge):
@@ -735,7 +737,7 @@ def lift(
         wrapper_input = full
         wrapper_output = CoordinateSystem(axes=out_full_axes)
 
-    # --- lift output --------------------------------------------------
+    # --- embed output -------------------------------------------------
     else:
         sub_bridge = make_bridge(sub_output, sub_full)
         if is_identity(sub_bridge):
@@ -783,7 +785,7 @@ def _subset_positions(
     """
 
     # The grouped-positional fallback is enabled, so a subset of unnamed
-    # and unoriented axes of one type still lifts, the same way an
+    # and unoriented axes of one type still embeds, the same way an
     # implicit bridge pairs such axes. The warning belongs to the bridge
     # built overthe subset below, so the message returned here is discarded.
     match, _ = _match_axes(

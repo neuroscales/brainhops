@@ -15,11 +15,12 @@ from unittest import mock
 
 import numpy as np
 
-from brainhops.datamodel import hierarchy as H
+from brainhops.datamodel import kinds as H
 from brainhops.datamodel._transformations import inverse as _inv
 from brainhops.datamodel._transformations.concrete import is_translation
 from brainhops.datamodel._transformations.simplify import SimplifyTable
 from brainhops.datamodel.enums import SimplifyPolicy
+from brainhops.datamodel.kinds import TransformationFamily
 from brainhops.datamodel.transformations import (
     Affine,
     Bijection,
@@ -149,7 +150,7 @@ def test_f4_is_translation_numeric() -> None:
     assert not is_translation(const, compute=True)
     assert is_translation(transl, compute=True)
     # A constant map is not invertible; a genuine translation is a Translation.
-    assert not is_kind(const, H.InvertibleAffineTransformation, compute=True)
+    assert not is_kind(const, H.InvertibleAffine, compute=True)
     assert is_kind(transl, H.Translation, compute=True)
 
 
@@ -161,7 +162,9 @@ def test_f4_is_translation_numeric() -> None:
 def test_f6_lower_simplify_accepts_mappingproxy() -> None:
     proxy = types.MappingProxyType({"affine": "numeric"})
     table = normalize_simplify(proxy)
-    assert table[(H.AffineTransformation, None)] is SimplifyPolicy.numeric
+    assert table[TransformationFamily(H.Affine, None)] is (
+        SimplifyPolicy.numeric
+    )
     assert table[None] is SimplifyPolicy.analytic
     # And it resolves like the dict form.
     assert resolve_simplify(_aff(), table) is SimplifyPolicy.numeric

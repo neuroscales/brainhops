@@ -448,7 +448,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
 
 @composer
 def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
-    # Embed a subspace transform that merely lifts an affine into a larger
+    # Embed a subspace transform that merely embeds an affine in a larger
     # space, then compose the two as plain affines. A subspace that wraps a
     # field cannot be reduced this way -- a field is applied by composing it
     # with a sampling domain, not by reduction to an affine -- so it stays a

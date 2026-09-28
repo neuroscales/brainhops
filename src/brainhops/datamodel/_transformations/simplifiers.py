@@ -29,7 +29,7 @@ What a simplifier may not do
   compose mode. A simplifier that inverted a field would defeat the whole
   point of the lazy wrapper, which is to cancel before anyone pays for it.
 * **Make a sequence longer, or reconcile a boundary.** Inserting a bridge,
-  or lifting an operand into a fuller axis space, is composition's
+  or embedding an operand in a fuller axis space, is composition's
   business; a pair whose systems disagree is declined instead. See the
   note above `_collapse` for why that loses nothing.
 """
@@ -39,7 +39,7 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # datamodel
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 
 # internals
 from .base import Transformation
@@ -80,14 +80,14 @@ NUMERIC = SimplifyPolicy.numeric
 # concrete class that represents it is what makes the rewrite a downcast
 # and never an upcast: a `Rotation` stops at the rotation rung rather than
 # being widened to `Linear` by the rung below.
-_LADDER: tx.Tuple[tx.Tuple[type, tx.Type[Transformation]], ...] = (
-    (hierarchy.IdentityTransformation, Identity),
-    (hierarchy.Translation, Translation),
-    (hierarchy.DiagonalTransformation, Scaling),
-    (hierarchy.Permutation, Permutation),
-    (hierarchy.SpecialOrthogonalTransformation, Rotation),
-    (hierarchy.LinearTransformation, Linear),
-    (hierarchy.AffineTransformation, Affine),
+_LADDER: tx.Tuple[tx.Tuple[kinds.Kind, tx.Type[Transformation]], ...] = (
+    (kinds.Identity, Identity),
+    (kinds.Translation, Translation),
+    (kinds.Diagonal, Scaling),
+    (kinds.Permutation, Permutation),
+    (kinds.SpecialOrthogonal, Rotation),
+    (kinds.Linear, Linear),
+    (kinds.Affine, Affine),
 )
 
 
@@ -158,7 +158,7 @@ def _(t: Inverse, policy: SimplifyTable) -> Transformation:
 
 @simplifier
 def _(t: SubspaceTransformation, policy: SimplifyTable) -> Transformation:
-    """Simplify the transform a subspace lifts.
+    """Simplify the transform a subspace embeds.
 
     A subspace over the same input and output axes whose inner transform
     is (or becomes) the identity is the identity on the full space. A
@@ -386,7 +386,7 @@ def _(
 
 def _same_axes(t: SubspaceTransformation) -> bool:
     # Whether a subspace reads and writes the same axes, in the same
-    # order -- i.e. whether it lifts its inner transform without also
+    # order -- i.e. whether it embeds its inner transform without also
     # reindexing the coordinates.
     if t.input_axes is None and t.output_axes is None:
         return True
@@ -425,7 +425,7 @@ def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:
 
 # NOTE
 #   Simplification does not reconcile boundaries at all -- it neither
-#   bridges nor lifts. Two reasons, and the second is the one that settles
+#   bridges nor embeds. Two reasons, and the second is the one that settles
 #   it:
 #
 #   * A genuine cancelling pair never needs reconciling. An `Inverse`'s
@@ -436,34 +436,16 @@ def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:
 #     `_compute_sequence`). It has to run first, because a bridge reads its
 #     neighbours -- a reversed array-index axis needs the extent an
 #     adjacent grid carries, and that grid is one of the things the sweep
-#     below may drop. `adapt` lifts as well as bridges, so by the time this
-#     pass sees a pair, a lower-dimensional operand has already been lifted
+#     below may drop. `adapt` embeds as well as bridges, so by the time this
+#     pass sees a pair, a lower-dimensional operand has already been embedded
 #     into the fuller axis space and the two are comparable.
 #
 #   What remains is the standalone `t.simplify()` path, which bridges
-#   nothing: there, a pair that only a lift would make comparable is left
+#   nothing: there, a pair that only an embedding would make comparable is
+#   left
 #   alone. That is the intended reading of "simplification never lengthens
 #   a sequence" -- it declines rather than reaching for machinery that
 #   belongs to composition.
-
-
-def _collapse(
-    first: Transformation, second: Transformation, policy: SimplifyTable
-) -> tx.Optional[Transformation]:
-    # The single transform `[first, second]` collapses to, or `None`.
-    #
-    # The sweep is policy-gated: a pair whose resolved policy is `none` is
-    # left alone. The policy of a *pair* is the safest of its members', so
-    # protecting one kind protects every pair it takes part in.
-    #
-    # This gate is on the sweep only. `compose` runs the very same pair
-    # rules with an analytic floor, ungated -- because `compose` must hand
-    # back a single transform, and for a pair such as `~field @ field` the
-    # cost-free rewrite is the only result that exists. So `simplify=False`
-    # means "do not go looking for collapses", not "never collapse".
-    if policy.resolve(first, second) is NONE:
-        return None
-    return _simplify(first, second, policy=policy)
 
 
 def _collapse_pass(
@@ -483,7 +465,7 @@ def _collapse_pass(
             if len(stack) >= 2 and _droppable_grid(stack[-1], policy):
                 stack.pop()
                 continue
-            merged = _collapse(stack[-1], nxt, policy)
+            merged = _simplify(stack[-1], nxt, policy=policy)
             if merged is None:
                 break
             stack.pop()

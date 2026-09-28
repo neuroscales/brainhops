@@ -3,7 +3,7 @@ import typing_extensions as tx
 
 # api
 from brainhops._core.properties import smartproperty
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 
@@ -20,7 +20,7 @@ if tx.TYPE_CHECKING:
     from .sequence import Sequence
 
 
-@hierarchy.Transformation.register   # virtual registration in hierarchy
+@kinds.Transformation.register   # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
 class Transformation(DataModelBase, reverse=True):
     """

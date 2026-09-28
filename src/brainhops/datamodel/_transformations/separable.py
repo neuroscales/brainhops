@@ -29,7 +29,7 @@ from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 
 # api
 from brainhops.backends import get_array_backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 
 # locals
 from .base import Transformation
@@ -454,7 +454,7 @@ def _restricted_affine(sub: tx.List[Transformation]) -> tx.Optional[Affine]:
     if not nongrid:
         return None
     composed = Sequence(transformations=nongrid).compute(
-        mode=hierarchy.AffineTransformation
+        mode=kinds.Affine
     )
     return composed.to(Affine)
 
@@ -488,7 +488,7 @@ def _classify(
     k = len(data_axes)
     sub = _restrict(comp, els, shape)
     composed = Sequence(transformations=sub).compute(
-        mode=hierarchy.AffineTransformation
+        mode=kinds.Affine
     )
     interpolating = _interpolates(composed)
 
@@ -866,7 +866,7 @@ def pull_separable(
         return pull(data, seq.compute().field, **opt)
 
     try:
-        part = seq.compute(mode=hierarchy.AffineTransformation)
+        part = seq.compute(mode=kinds.Affine)
     except Exception:
         return fallback()
 

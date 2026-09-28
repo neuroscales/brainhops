@@ -19,6 +19,15 @@ inheritance describes set inclusion (i.e., `isubclass(A, B)` implies
 `A ⊆ B`). All transformations act on the n-dimensional euclidean space
 ℝⁿ, and are assigned a "composition" operator.
 
+The implication only goes that way: a declared edge is a true inclusion,
+but a true inclusion need not be declared. Inclusion is a DAG and an MRO
+is a linear order, so some true edges cannot be added at all -- ℝ* ⊆ ℝ* ⋉ T
+(`InvertibleMultiplicative` inside `Dilation`) is one: the identity lies at
+the foot of both the linear and the affine chain, and declaring that edge
+makes C3 order the two chains in contradictory ways. Membership questions
+are therefore asked of [`is_kind`][], which reads the values as well as
+the edges, and never of `issubclass` alone.
+
 Some of these transformation sets (but not all!) are groups under the
 composition operator. This is indicated by the [`group`][] decorator.
 If a set A is a subset of set B, and both A and B are groups, then A is
@@ -83,6 +92,8 @@ All classical linear group can be extended with the translation group
 # ruff: disable[E501]
 __all__ = [
     "is_group",
+    "is_transformation_set",
+    "is_kind_ndim_pair",
     "is_lie_group",
     "is_connected",
     "is_simplyconnected",
@@ -92,62 +103,62 @@ __all__ = [
     "simplyconnected",
     "TransformationFamily",
     # --- GENERAL ------------------------------------------------------
-    "TransformationBaseClass",
+    "TransformationKind",
     "Transformation",
     "Morphism",                                     # ^ alias
-    "InjectiveTransformation",
-    "SurjectiveTransformation",
-    "BijectiveTransformation",
+    "Injection",
+    "Surjection",
+    "Bijection",
     "Bijection",                                    # ^ alias
     "Isomorphism",
     "Diffeomorphism",                               # Diff
     "VolumePreservingDiffeomorphism",               # SDiff
     # --- MATRIX -------------------------------------------------------
-    "MatrixTransformation",
-    "InvertibleMatrixTransformation",
-    "PositiveDefiniteMatrixTransformation",
+    "Matrix",
+    "InvertibleMatrix",
+    "PositiveDefiniteMatrix",
     # --- AFFINE -------------------------------------------------------
-    "AffineTransformation",                         # <not a group>
-    "InvertibleAffineTransformation",               # Aff              (det ≠ 0)
-    "PositiveAffineTransformation",                 # Aff+             (det > 0)
-    "SpecialAffineTransformation",                  # SAff = SL  ⋉ T   (det = 1)
+    "Affine",                         # <not a group>
+    "InvertibleAffine",               # Aff              (det ≠ 0)
+    "PositiveAffine",                 # Aff+             (det > 0)
+    "SpecialAffine",                  # SAff = SL  ⋉ T   (det = 1)
     "VolumePreservingAffineTransformation",         # ^ alias
-    "ConformalEuclideanTransformation",             # CE   = CO  ⋉ T   (det ≠ 0)
-    "SpecialConformalEuclideanTransformation",      # CSE  = CSO ⋉ T   (det > 0)
+    "ConformalEuclidean",             # CE   = CO  ⋉ T   (det ≠ 0)
+    "SpecialConformal",      # CSE  = CSO ⋉ T   (det > 0)
     "Similitude",                                   # ^ alias
-    "EuclideanTransformation",                      # E    = O   ⋉ T   (det =±1)
-    "SpecialEuclideanTransformation",               # SE   = SO  ⋉ T   (det = 1)
+    "Euclidean",                      # E    = O   ⋉ T   (det =±1)
+    "SpecialEuclidean",               # SE   = SO  ⋉ T   (det = 1)
     "RigidTransformation",                          # ^ alias
     "Dilation",                                     # ℝ* ⋉ T           (det ≠ 0)
     "PositiveDilation",                             # ℝ+ ⋉ T           (det > 0)
     "Translation",                                  # T                (det = 1)
     # --- LINEAR -------------------------------------------------------
-    "LinearTransformation",                         # M = matrix set
-    "InvertibleLinearTransformation",               # GL               (det ≠ 0)
-    "PositiveLinearTransformation",                 # GL+              (det > 0)
-    "SpecialLinearTransformation",                  # SL               (det = 1)
-    "ConformalOrthogonalTransformation",            # CO  = O x ℝ*     (det ≠ 0)
-    "SpecialConformalOrthogonalTransformation",     # CSO = O x ℝ+     (det > 0)
-    "OrthogonalTransformation",                     # O                (det =±1)
-    "SpecialOrthogonalTransformation",              # SO               (det = 1)
+    "Linear",                         # M = matrix set
+    "InvertibleLinear",               # GL               (det ≠ 0)
+    "PositiveLinear",                 # GL+              (det > 0)
+    "SpecialLinear",                  # SL               (det = 1)
+    "ConformalOrthogonal",            # CO  = O x ℝ*     (det ≠ 0)
+    "SpecialConformalOrthogonal",     # CSO = O x ℝ+     (det > 0)
+    "Orthogonal",                     # O                (det =±1)
+    "SpecialOrthogonal",              # SO               (det = 1)
     "Rotation",                                     # ^ alias
     "GeneralizedPermutation",                       # S ⋉ Δ            (det ≠ 0)
     "SignedPermutation",                            # S ⋉ Δ+           (det ≠ 0)
     "Permutation",                                  # S                (det ≠ 0)
-    "DiagonalTransformation",                       # <not a group>
-    "InvertibleDiagonalTransformation",             # Δ                (det ≠ 0)
-    "PositiveDiagonalTransformation",               # Δ+               (det > 0)
+    "Diagonal",                       # <not a group>
+    "InvertibleDiagonal",             # Δ                (det ≠ 0)
+    "PositiveDiagonal",               # Δ+               (det > 0)
     "Reflection",                                   #
     "FiniteReflection",                             #
-    "SpecialDiagonalTransformation",                # SΔ               (det =±1)
+    "SpecialDiagonal",                # SΔ               (det =±1)
     "CardinalReflection",                           # ^ alias
-    "MultiplicativeTransformation",                 # ℝ
-    "InvertibleMultiplicativeTransformation",       # ℝ*               (det ≠ 0)
+    "Multiplicative",                 # ℝ
+    "InvertibleMultiplicative",       # ℝ*               (det ≠ 0)
     "Homothety",                                    # ^ alias
-    "PositiveMultiplicativeTransformation",         # ℝ+               (det > 0)
+    "PositiveMultiplicative",         # ℝ+               (det > 0)
     "PositiveHomothety",                            # ^ alias
     # --- IDENTITY -----------------------------------------------------
-    "IdentityTransformation",                       # I                (det = 1)
+    "Identity",                       # I                (det = 1)
 ]
 # ruff: enable[E501]
 # fmt: on
@@ -167,7 +178,7 @@ from bagof.magic import Magic, replace
 #
 # ======================================================================
 
-_Type = tx.Type["TransformationBaseClass"]
+_Type = tx.Type["TransformationKind"]
 _Decorator = tx.Callable[["_Type"], "_Type"]
 _Set = tx.Set[_Type]
 _StrMap = tx.Dict[str, _Type]
@@ -178,7 +189,7 @@ LIE_GROUPS: _Set = set()
 CONNECTED: _Set = set()
 SIMPLYCONNECTED: _Set = set()
 CLOSEDUNDER: tx.Dict[_Type, _Set] = {}
-NONLIFTABLE: _Set = set()
+NONEMBEDDABLE: _Set = set()
 
 NAMETOCLASS: _StrMap = {}
 FSYMBOLTOCLASS: _StrMap = {}
@@ -231,7 +242,7 @@ def is_invertible(cls: _Type) -> bool:
     """
     Return whether a set of transformations is known to be invertible.
     """
-    return issubclass(cls, BijectiveTransformation)
+    return issubclass(cls, Bijection)
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
@@ -266,21 +277,50 @@ def is_closed(cls: _Type) -> bool:
     return is_closedunder(cls, cls)
 
 
-def is_liftable(cls: _Type) -> bool:
+def is_transformation_set(cls: tx.Any) -> bool:
     """
-    Return whether a set of transformations is known to be liftable to a
-    higher-dimensional space.
+    Return whether an object is a node of this hierarchy, i.e. whether
+    it denotes a *set* of maps rather than a representation of one.
+
+    True for a class defined in this module (a real subclass of
+    [`TransformationKind`][]), False for a concrete transformation, a
+    field, a wrapper or a container. A concrete transformation is
+    only ever a *virtual* subclass of the node it registered to, and
+    virtual registration does not touch the MRO, so the test separates
+    the two cleanly.
     """
-    # I don't try to infer liftability from the subsets or supersets of
+    if not isinstance(cls, type):
+        return False
+    return TransformationKind in cls.__mro__
+
+
+def is_embeddable(cls: _Type) -> bool:
+    """
+    Return whether a set of transformations is known to embed into a
+    higher-dimensional space by padding with the identity.
+
+    The embedding is `T -> T ⊕ I`, block-diagonal: `T` acts on the axes
+    it already acted on, and the new ones pass through. The set is
+    embeddable when the result stays in the same set one dimension up,
+    `G(n) ⊕ I ⊆ G(n+k)`. Every element of SO(3) is an element of SO(4)
+    that way; no element of ℝ* (a scaling by the same factor along every
+    axis) is, since `diag(2, 2, 2, 1)` is not isotropic in ℝ⁴.
+
+    !!! note
+
+        This is an *embedding*: an injective homomorphism placing one
+        group inside a bigger one.
+    """
+    # I don't try to infer embeddability from the subsets or supersets of
     # cls, because it is not very robust and depends very much on the
-    # definition of liftability (which "properties" do we want converved).
+    # definition of embeddability (which "properties" do we want conserved).
     # Here, the property is "belong to the same group type" (but not the
     # exact same group since we have changed dimensions). For example,
-    # all elements of SO(3) are elements of SO(4) when lifted from ℝ^3
-    # to ℝ^4. But SO(3) has subgroups that are liftable and others that
-    # are not, and it has supergroups that are liftable and other that
+    # all elements of SO(3) are elements of SO(4) when embedded from ℝ^3
+    # to ℝ^4. But SO(3) has subgroups that are embeddable and others that
+    # are not, and it has supergroups that are embeddable and other that
     # are not.
-    return cls not in NONLIFTABLE
+    return cls not in NONEMBEDDABLE
 
 
 # --- generators -------------------------------------------------------
@@ -374,6 +414,8 @@ def simplyconnected(cls: _Type) -> _Type:
 def invertible_subset_of(cls: _Type) -> _Decorator:
     """
     Mark the set of transformations as the invertible subset of another set.
+
+    wiki: https://en.wikipedia.org/wiki/Inverse_element
     """
     def decorator(subcls: _Type) -> _Type:
         INVERTIBLE_OF[cls] = subcls
@@ -389,6 +431,8 @@ def closedunder(cls: _Type) -> _Decorator:
     with another set.
 
     The argument is a set of transformations that is a superset of `cls`.
+
+    wiki: https://en.wikipedia.org/wiki/Closure_(mathematics)
     """
     def decorator(subcls: _Type) -> _Type:
         CLOSEDUNDER.setdefault(cls, set()).add(subcls)
@@ -400,16 +444,20 @@ def closedunder(cls: _Type) -> _Decorator:
 def closed(cls: _Type) -> _Type:
     """
     Mark the set of transformations as being closed under composition.
+
+    wiki: https://en.wikipedia.org/wiki/Closure_(mathematics)
     """
     return closedunder(cls)(cls)
 
 
-def nonliftable(cls: _Type) -> _Type:
+def nonembeddable(cls: _Type) -> _Type:
     """
-    Mark the set of transformations as being non-liftable to a
-    higher-dimensional space.
+    Mark the set of transformations as *not* embedding into a
+    higher-dimensional space by padding with the identity.
+
+    See [`is_embeddable`][] for what the embedding is.
     """
-    NONLIFTABLE.add(cls)
+    NONEMBEDDABLE.add(cls)
     return cls
 
 
@@ -419,16 +467,14 @@ def nonliftable(cls: _Type) -> _Type:
 #
 # ======================================================================
 
-Kind = tx.Type["TransformationBaseClass"]
+Kind = tx.Type["TransformationKind"]
 Dim = tx.Optional[int]
 KindLike = tx.Union[Kind, str]
 FamilyLike = tx.Union[tx.Self, tx.Tuple[KindLike, Dim], KindLike]
 
 
 class TransformationFamily(
-    # `eq`/`hash` are written by hand below: a family compares and hashes
-    # as its `(kind, ndim)` pair, so a plain tuple is an equal key.
-    AbcSequence, Magic, eq=False, hash=False, frozen=True
+    AbcSequence, Magic, eq=True, hash=True, frozen=True
 ):
     """
     A parametric family of transformations.
@@ -477,9 +523,10 @@ class TransformationFamily(
         return fsymbol
 
     # --- magic --------------------------------------------------------
+    # > allows unpacking into a 2-tuple
 
     def __len__(self) -> int:
-        return len(self.names)
+        return 2
 
     def __getitem__(self, index: int) -> tx.Union[Kind, Dim]:
         if index == 0:
@@ -493,24 +540,6 @@ class TransformationFamily(
     def __iter__(self) -> tx.Iterator[tx.Union[Kind, Dim]]:
         yield self.kind
         yield self.ndim
-
-    # A family *is* its `(kind, ndim)` pair, so it compares and hashes like
-    # one. Tables keyed by families (the simplify table, the mode list) can
-    # then be read with a plain tuple, and two spellings of the same family
-    # collide on one key.
-    def __eq__(self, other: tx.Any) -> bool:
-        if isinstance(other, TransformationFamily):
-            return self.to_tuple() == other.to_tuple()
-        if isinstance(other, tuple):
-            return self.to_tuple() == other
-        return NotImplemented
-
-    def __ne__(self, other: tx.Any) -> bool:
-        result = self.__eq__(other)
-        return result if result is NotImplemented else not result
-
-    def __hash__(self) -> int:
-        return hash(self.to_tuple())
 
     # --- to -----------------------------------------------------------
 
@@ -537,17 +566,19 @@ class TransformationFamily(
                 repr = replace(repr, ndim=ndim)
             return repr
         # --- a (kind, ndim) pair ---
-        # A two-tuple whose second element is a dimension is a pair; any
-        # other tuple is a tuple *of kinds* (an `isinstance` kind such as
-        # the "field" alias), which is kept whole.
-        if isinstance(repr, tuple) and _is_kind_ndim_pair(repr):
+        if isinstance(repr, tuple):
+            if not is_kind_ndim_pair(repr):
+                raise ValueError(
+                    f"Invalid (kind, ndim) pair: {repr!r}. A family pairs one "
+                    f"kind with one dimension (or None)."
+                )
             return cls.from_tuple(repr)
         # --- a bare dimension ---
         # `bool` is an `int`, so it is excluded explicitly.
         if isinstance(repr, int) and not isinstance(repr, bool):
             return cls(Transformation, repr if ndim is None else ndim)
-        # --- a type, or a tuple of types ---
-        if isinstance(repr, type) or isinstance(repr, tuple):
+        # --- a kind ---
+        if isinstance(repr, type):
             return cls(repr, ndim)
         # --- a name or a symbol ---
         if isinstance(repr, str):
@@ -555,7 +586,7 @@ class TransformationFamily(
                 return cls.from_name(repr, ndim)
             except ValueError:
                 return cls.from_symbol(repr, ndim)
-        raise ValueError(f"invalid transformation family: {repr!r}")
+        raise ValueError(f"Invalid transformation kind or family: {repr!r}")
 
     @classmethod
     def from_tuple(cls, pair: tx.Tuple[KindLike, Dim]) -> tx.Self:
@@ -568,7 +599,7 @@ class TransformationFamily(
         """Return a transformation family from its name."""
         kind = NAMETOCLASS.get(name.lower())
         if kind is None:
-            raise ValueError(f"invalid name for transformation family: {name}")
+            raise ValueError(f"Invalid name for transformation kind: {name}")
         return cls.parse(kind, ndim)
 
     @classmethod
@@ -590,17 +621,17 @@ class TransformationFamily(
             if match:
                 return cls.parse(kind, int(match.group("n")))
 
-        raise ValueError(f"invalid symbol for transformation family: {symbol}")
+        raise ValueError(
+            f"Invalid symbol for transformation kind or family: {symbol}"
+        )
 
 
-def _is_kind_ndim_pair(value: tx.Tuple) -> bool:
-    """Whether a tuple reads as a `(kind, ndim)` pair rather than as a
-    tuple of kinds.
+def is_kind_ndim_pair(value: tx.Tuple) -> bool:
+    """Whether a tuple is a well-formed `(kind, ndim)` pair.
 
-    A `(kind, ndim)` pair has exactly two elements whose second one is a
-    dimension: an `int` or `None`. Every other tuple -- including a
-    two-tuple of two classes, such as the "field" kind alias -- is a tuple
-    of kinds, matched by `isinstance` as a whole.
+    Exactly two elements, whose second one is a dimension: an `int` or
+    `None`. A `bool` is an `int` in Python but not a dimension, so it is
+    excluded.
     """
     if len(value) != 2:
         return False
@@ -634,7 +665,7 @@ def _fsymbol_to_pattern(fsymbol: str) -> str:
 # ======================================================================
 
 
-class TransformationBaseClass(ABC):
+class TransformationKind(ABC):
     """The root of the transformation
 
     A subclass declares its `SYMBOL` (a short mathematical symbol, such
@@ -646,7 +677,7 @@ class TransformationBaseClass(ABC):
 
     SYMBOL: str
     FSYMBOL: str
-    NAME: tuple
+    NAME: tx.Tuple[str, ...] = ()
 
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
@@ -658,9 +689,14 @@ class TransformationBaseClass(ABC):
         if getattr(cls, "SYMBOL", None):
             SYMBOLTOCLASS[cls.SYMBOL] = cls
 
+    @classmethod
+    def parse(cls, repr: KindLike) -> tx.Type[tx.Self]:
+        """Return a transformation kind from its name, symbol or type."""
+        return TransformationFamily.parse(repr).kind
+
 
 @closed  # assuming domains are matching
-class Transformation(TransformationBaseClass):
+class Transformation(TransformationKind):
     """Any coordinate transformation.
 
     alias: Morphism
@@ -675,38 +711,42 @@ Morphism = Transformation
 
 
 @closed  # assuming domains are matching
-class InjectiveTransformation(Transformation):
+class Injection(Transformation):
     """A one-to-one transformation (distinct inputs map to distinct outputs).
 
     wiki: https://en.wikipedia.org/wiki/Injective_function
     """
 
     NAME = (
-        "InjectiveTransformation",
-        "Injective",
         "Injection",
+        "Injective",
+        "InjectiveTransformation",
     )
 
 
+InjectiveTransformation = Injective = Injection
+
+
 @closed  # assuming domains are matching
-class SurjectiveTransformation(Transformation):
+class Surjection(Transformation):
     """An onto transformation (every output is reached).
 
     wiki: https://en.wikipedia.org/wiki/Surjective_function
     """
 
     NAME = (
-        "SurjectiveTransformation",
-        "Surjective",
         "Surjection",
+        "Surjective",
+        "SurjectiveTransformation",
     )
+
+
+SurjectiveTransformation = Surjective = Surjection
 
 
 @group
 @invertible_subset_of(Transformation)
-class BijectiveTransformation(
-    InjectiveTransformation, SurjectiveTransformation
-):
+class Bijection(Injection, Surjection):
     """An invertible transformation.
 
     A bijection is both injective and surjective.
@@ -717,20 +757,20 @@ class BijectiveTransformation(
     """
 
     NAME = (
-        "BijectiveTransformation",
-        "Bijective",
         "Bijection",
-        "InvertibleTransformation",
+        "Bijective",
         "Invertible",
+        "BijectiveTransformation",
+        "InvertibleTransformation",
     )
 
 
-Bijection = Bijective = BijectiveTransformation
-Invertible = InvertibleTransformation = BijectiveTransformation
+BijectiveTransformation = Bijective = Bijection
+InvertibleTransformation = Invertible = Bijection
 
 
 @group
-class Isomorphism(BijectiveTransformation):
+class Isomorphism(Bijection):
     """
     In all useful senses, bijective morphisms are isomorphisms,
     but there are mathematical spaces on which this is not true.
@@ -769,46 +809,58 @@ class VolumePreservingDiffeomorphism(Diffeomorphism):
 
 
 @closed
-class MatrixTransformation(Transformation):
+class Matrix(Transformation):
     """Transformation that can be represented as a matrix.
 
     wiki: https://en.wikipedia.org/wiki/Transformation_matrix
     """
 
     NAME = (
-        "MatrixTransformation",
         "Matrix",
+        "MatrixTransformation",
     )
 
 
+MatrixTransformation = Matrix
+
+
 @group
-@invertible_subset_of(MatrixTransformation)
-class InvertibleMatrixTransformation(
-    MatrixTransformation, BijectiveTransformation
-):
+@invertible_subset_of(Matrix)
+class InvertibleMatrix(Matrix, Diffeomorphism):
     """A matrix transformation that is invertible.
+
+    A matrix map is smooth, and an invertible one has a smooth (matrix)
+    inverse, so this is where the smooth end of the lattice attaches: every
+    invertible affine transformation is a diffeomorphism, and a volume
+    preserving one (SL, SAff) is one of those.
 
     wiki: https://en.wikipedia.org/wiki/Invertible_matrix
     """
 
     NAME = (
-        "InvertibleMatrixTransformation",
         "InvertibleMatrix",
+        "InvertibleMatrixTransformation",
     )
+
+
+InvertibleMatrixTransformation = InvertibleMatrix
 
 
 @group
 @simplyconnected
-class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
+class PositiveDefiniteMatrix(InvertibleMatrix):
     """An invertible matrix transformation with positive determinant.
 
     wiki: https://en.wikipedia.org/wiki/Positive-definite_matrix
     """
 
     NAME = (
-        "PositiveDefiniteMatrixTransformation",
         "PositiveDefiniteMatrix",
+        "PositiveDefiniteMatrixTransformation",
     )
+
+
+PositiveDefiniteMatrixTransformation = PositiveDefiniteMatrix
 
 
 # ----------------------------------------------------------------------
@@ -817,23 +869,25 @@ class PositiveDefiniteMatrixTransformation(InvertibleMatrixTransformation):
 
 
 @closed
-class AffineTransformation(MatrixTransformation):
+class Affine(Matrix):
     """An affine transformation. May not be invertible.
 
     wiki: https://en.wikipedia.org/wiki/Affine_transformation
     """
 
     NAME = (
-        "AffineTransformation",
         "Affine",
+        "AffineMatrix",
+        "AffineTransformation",
     )
 
 
+AffineTransformation = AffineMatrix = Affine
+
+
 @liegroup
-@invertible_subset_of(AffineTransformation)
-class InvertibleAffineTransformation(
-    AffineTransformation, InvertibleMatrixTransformation
-):
+@invertible_subset_of(Affine)
+class InvertibleAffine(Affine, InvertibleMatrix):
     """
     An invertible affine transformation
 
@@ -850,16 +904,20 @@ class InvertibleAffineTransformation(
     SYMBOL = "Aff"
     FSYMBOL = "Aff(ℝ^{n})"
     NAME = (
-        "InvertibleAffineTransformation",
         "InvertibleAffine",
+        "InvertibleAffineMatrix",
+        "InvertibleAffineTransformation",
+        "AffineGroup"
     )
+
+
+InvertibleAffineTransformation = InvertibleAffineMatrix = InvertibleAffine
+AffineGroup = InvertibleAffine
 
 
 @liegroup
 @simplyconnected
-class PositiveAffineTransformation(
-    InvertibleAffineTransformation, PositiveDefiniteMatrixTransformation
-):
+class PositiveAffine(InvertibleAffine, PositiveDefiniteMatrix):
     """
     Affine transformation with a positive determinant.
 
@@ -867,21 +925,31 @@ class PositiveAffineTransformation(
     single connected component.
 
     symbol: Aff+ = GL+ ⋉ T
+
+    wiki: https://en.wikipedia.org/wiki/Affine_group
     """
 
     SYMBOL = "Aff+"
     FSYMBOL = "Aff+(ℝ^{n})"
     NAME = (
-        "PositiveAffineTransformation",
         "PositiveAffine",
+        "PositiveAffineGroup",
+        "PositiveDefiniteAffine",
+        "PositiveAffineMatrix",
+        "PositiveDefiniteAffineMatrix",
+        "PositiveAffineTransformation",
+        "PositiveDefiniteAffineTransformation",
     )
+
+
+PositiveAffineTransformation = PositiveAffine
+PositiveDefiniteAffineTransformation = PositiveDefiniteAffine = PositiveAffine
+PositiveDefiniteAffineMatrix = PositiveAffineGroup = PositiveAffine
 
 
 @liegroup
 @simplyconnected
-class SpecialAffineTransformation(
-    PositiveAffineTransformation, VolumePreservingDiffeomorphism
-):
+class SpecialAffine(PositiveAffine, VolumePreservingDiffeomorphism):
     """
     An affine transformation with determinant +1 -- preserves volumes
 
@@ -898,19 +966,21 @@ class SpecialAffineTransformation(
     SYMBOL = "SAff"
     FSYMBOL = "SAff({n})"
     NAME = (
-        "SpecialAffineTransformation",
         "SpecialAffine",
-        "VolumePreservingAffineTransformation",
+        "SpecialAffineTransformation",
+        "SpecialAffineGroup",
         "VolumePreservingAffine",
+        "VolumePreservingAffineTransformation",
     )
 
 
-VolumePreservingAffineTransformation = SpecialAffineTransformation
+SpecialAffineTransformation = SpecialAffineGroup = SpecialAffine
+VolumePreservingAffineTransformation = VolumePreservingAffine = SpecialAffine
 
 
 @liegroup
-@nonliftable
-class ConformalEuclideanTransformation(InvertibleAffineTransformation):
+@nonembeddable
+class ConformalEuclidean(InvertibleAffine):
     """
     An affine transformation that preserves angles (up to their sign).
 
@@ -923,17 +993,19 @@ class ConformalEuclideanTransformation(InvertibleAffineTransformation):
     SYMBOL = "CE"
     FSYMBOL = "CE({n})"
     NAME = (
-        "ConformalEuclideanTransformation",
         "ConformalEuclidean",
+        "ConformalEuclideanGroup",
+        "ConformalEuclideanTransformation",
     )
+
+
+ConformalEuclideanTransformation = ConformalEuclideanGroup = ConformalEuclidean
 
 
 @liegroup
 @connected
-@nonliftable
-class SpecialConformalEuclideanTransformation(
-    ConformalEuclideanTransformation
-):
+@nonembeddable
+class SpecialConformal(ConformalEuclidean, PositiveAffine):
     """
     An affine transformation that preserves angles
 
@@ -948,18 +1020,27 @@ class SpecialConformalEuclideanTransformation(
     SYMBOL = "CSE"
     FSYMBOL = "CSE({n})"
     NAME = (
-        "SpecialConformalEuclideanTransformation",
         "SpecialConformalEuclidean",
+        "SpecialConformalEuclideanGroup",
+        "SpecialConformalEuclideanTransformation",
+        "ConformalSpecialEuclidean",
+        "ConformalSpecialEuclideanGroup",
+        "ConformalSpecialEuclideanTransformation",
         "Similitude",
         "SimilitudeTransformation",
     )
 
 
-Similitude = SpecialConformalEuclideanTransformation
+SpecialConformalEuclideanGroup = SpecialConformal
+SpecialConformalEuclideanTransformation = SpecialConformal
+ConformalSpecialEuclidean = SpecialConformal
+ConformalSpecialEuclideanGroup = SpecialConformal
+ConformalSpecialEuclideanTransformation = SpecialConformal
+SimilitudeTransformation = Similitude = SpecialConformal
 
 
 @liegroup
-class EuclideanTransformation(ConformalEuclideanTransformation):
+class Euclidean(ConformalEuclidean):
     """
     A euclidean transformation with determinant ± 1
 
@@ -971,16 +1052,18 @@ class EuclideanTransformation(ConformalEuclideanTransformation):
     SYMBOL = "E"
     FSYMBOL = "E({n})"
     NAME = (
-        "EuclideanTransformation",
         "Euclidean",
+        "EuclideanGroup",
+        "EuclideanTransformation",
     )
+
+
+EuclideanTransformation = EuclideanGroup = Euclidean
 
 
 @liegroup
 @connected
-class SpecialEuclideanTransformation(
-    SpecialConformalEuclideanTransformation, EuclideanTransformation
-):
+class SpecialEuclidean(SpecialConformal, Euclidean, SpecialAffine):
     """
     A euclidean transformation with determinant +1
 
@@ -994,19 +1077,21 @@ class SpecialEuclideanTransformation(
     SYMBOL = "SE"
     FSYMBOL = "SE({n})"
     NAME = (
-        "SpecialEuclideanTransformation",
         "SpecialEuclidean",
-        "RigidTransformation",
+        "SpecialEuclideanTransformation",
+        "SpecialEuclideanGroup",
         "Rigid",
+        "RigidTransformation",
     )
 
 
-RigidTransformation = SpecialEuclideanTransformation
+SpecialEuclideanTransformation = SpecialEuclideanGroup = SpecialEuclidean
+RigidTransformation = Rigid = SpecialEuclidean
 
 
 @liegroup
-@nonliftable
-class Dilation(ConformalEuclideanTransformation):
+@nonembeddable
+class Dilation(ConformalEuclidean):
     """
     A dilation is a similitude with no rotation, i.e. a scaling with
     translation.
@@ -1019,19 +1104,21 @@ class Dilation(ConformalEuclideanTransformation):
 
     SYMBOL = "ℝ* ⋉ T"
     FSYMBOL = "ℝ* ⋉ T({n})"
-    NAME = ("Dilation",)
+    NAME = ("Dilation", "HomothetyTranslations", "HomothecyTranslations")
+
+
+HomothetyTranslations = HomothecyTranslations = Dilation
 
 
 @liegroup
 @simplyconnected
-@nonliftable
-class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
+@nonembeddable
+class PositiveDilation(Dilation, SpecialConformal):
     """
     A dilation with a positive scaling factor.
 
     symbol: ℝ+ ⋉ T
 
-    wiki: https://en.wikipedia.org/wiki/Homothety
     wiki: https://en.wikipedia.org/wiki/Dilation_(metric_space)
     """
 
@@ -1042,7 +1129,7 @@ class PositiveDilation(Dilation, SpecialConformalEuclideanTransformation):
 
 @liegroup
 @simplyconnected
-class Translation(PositiveDilation, SpecialEuclideanTransformation):
+class Translation(PositiveDilation, SpecialEuclidean):
     """A translation.
 
     symbol: T
@@ -1061,20 +1148,21 @@ class Translation(PositiveDilation, SpecialEuclideanTransformation):
 
 
 @closed
-class LinearTransformation(AffineTransformation):
+class Linear(Affine):
     """A linear transformation. May not be invertible."""
 
     NAME = (
-        "LinearTransformation",
         "Linear",
+        "LinearTransformation",
     )
 
 
+LinearTransformation = Linear
+
+
 @liegroup
-@invertible_subset_of(LinearTransformation)
-class InvertibleLinearTransformation(
-    LinearTransformation, InvertibleAffineTransformation
-):
+@invertible_subset_of(Linear)
+class InvertibleLinear(Linear, InvertibleAffine):
     """
     An invertible linear transformation.
 
@@ -1092,16 +1180,17 @@ class InvertibleLinearTransformation(
     SYMBOL = "GL"
     FSYMBOL = "GL({n})"
     NAME = (
-        "InvertibleLinearTransformation",
         "InvertibleLinear",
+        "InvertibleLinearTransformation",
     )
+
+
+InvertibleLinearTransformation = InvertibleLinear
 
 
 @liegroup
 @connected
-class PositiveLinearTransformation(
-    InvertibleLinearTransformation, PositiveAffineTransformation
-):
+class PositiveLinear(InvertibleLinear, PositiveAffine):
     """
     Linear transformation with a positive determinant.
 
@@ -1114,18 +1203,26 @@ class PositiveLinearTransformation(
     SYMBOL = "GL+"
     FSYMBOL = "GL+({n})"
     NAME = (
-        "PositiveLinearTransformation",
         "PositiveLinear",
+        "PositiveLinearTransformation",
+        "PositiveDefiniteLinear",
+        "PositiveDefiniteLinearTransformation",
     )
+
+
+PositiveLinearTransformation = PositiveLinear
+PositiveDefiniteLinearTransformation = PositiveDefiniteLinear = PositiveLinear
 
 
 @liegroup
 @connected
-class SpecialLinearTransformation(
-    PositiveLinearTransformation, VolumePreservingDiffeomorphism
-):
+class SpecialLinear(PositiveLinear, SpecialAffine):
     """
     A linear transformation with determinant 1 -- preserves volumes .
+
+    A linear map is an affine map whose translation vanishes, so SL sits
+    inside SAff = SL ⋉ T -- the horizontal link of the diagram above -- and
+    reaches `VolumePreservingDiffeomorphism` through it.
 
     symbol: SL
 
@@ -1135,14 +1232,17 @@ class SpecialLinearTransformation(
     SYMBOL = "SL"
     FSYMBOL = "SL({n})"
     NAME = (
-        "SpecialLinearTransformation",
         "SpecialLinear",
+        "SpecialLinearTransformation",
     )
 
 
+SpecialLinearTransformation = SpecialLinear
+
+
 @liegroup
-@nonliftable
-class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
+@nonembeddable
+class ConformalOrthogonal(InvertibleLinear, ConformalEuclidean):
     """
     A linear transformation that preserves (absolute) angles (CO)
 
@@ -1155,21 +1255,33 @@ class ConformalOrthogonalTransformation(InvertibleLinearTransformation):
     SYMBOL = "CO"
     FSYMBOL = "CO({n})"
     NAME = (
-        "ConformalOrthogonalTransformation",
         "ConformalOrthogonal",
+        "ConformalOrthogonalTransformation",
     )
+
+
+ConformalOrthogonalTransformation = ConformalOrthogonal
 
 
 @liegroup
 @connected
-@nonliftable
-class SpecialConformalOrthogonalTransformation(
-    ConformalOrthogonalTransformation, SpecialLinearTransformation
+@nonembeddable
+class SpecialConformalOrthogonal(
+    ConformalOrthogonal, PositiveLinear, SpecialConformal
 ):
     """
     A linear transformation that preserves angles (CSO)
 
     symbol: CSO = SO x ℝ+
+
+    !!! note
+
+        A scaled rotation `c R` has determinant `c**n`, which is positive
+        but only equal to one when `c` is. CSO therefore sits under GL+
+        (`PositiveLinear`), in the positive-determinant column of the
+        diagram above, and *not* under SL: it does not preserve volumes.
+        The rotations do -- see [`SpecialOrthogonal`][], which declares SL
+        for itself.
 
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group
     """
@@ -1177,17 +1289,20 @@ class SpecialConformalOrthogonalTransformation(
     SYMBOL = "CSO"
     FSYMBOL = "CSO({n})"
     NAME = (
-        "SpecialConformalOrthogonalTransformation",
         "SpecialConformalOrthogonal",
-        "ConformalSpecialOrthogonalTransformation",
+        "SpecialConformalOrthogonalTransformation",
         "ConformalSpecialOrthogonal",
+        "ConformalSpecialOrthogonalTransformation",
     )
 
 
+SpecialConformalOrthogonalTransformation = SpecialConformalOrthogonal
+ConformalSpecialOrthogonal = SpecialConformalOrthogonal
+ConformalSpecialOrthogonalTransformation = SpecialConformalOrthogonal
+
+
 @liegroup
-class OrthogonalTransformation(
-    ConformalOrthogonalTransformation, EuclideanTransformation
-):
+class Orthogonal(ConformalOrthogonal, Euclidean):
     """
     A orthogonal matrix (AA' = I) with determinant ±1
 
@@ -1199,17 +1314,21 @@ class OrthogonalTransformation(
     SYMBOL = "O"
     FSYMBOL = "O({n})"
     NAME = (
-        "OrthogonalTransformation",
         "Orthogonal",
+        "OrthogonalTransformation",
     )
+
+
+OrthogonalTransformation = Orthogonal
 
 
 @liegroup
 @connected
-class SpecialOrthogonalTransformation(
-    OrthogonalTransformation,
-    SpecialConformalOrthogonalTransformation,
-    SpecialEuclideanTransformation,
+class SpecialOrthogonal(
+    Orthogonal,
+    SpecialConformalOrthogonal,
+    SpecialEuclidean,
+    SpecialLinear,
 ):
     """
     A orthogonal matrix (AA' = I) with determinant +1
@@ -1218,24 +1337,32 @@ class SpecialOrthogonalTransformation(
 
     alias: Rotation
 
+    !!! note
+
+        SL is declared here rather than inherited: a rotation preserves
+        volumes, but the conformal group it also belongs to does not (see
+        [`SpecialConformalOrthogonal`][]), so no ancestor can carry the
+        fact.
+
     wiki: https://en.wikipedia.org/wiki/Orthogonal_group#Special_orthogonal_group
     """  # noqa: E501
 
     SYMBOL = "SO"
     FSYMBOL = "SO({n})"
     NAME = (
-        "SpecialOrthogonalTransformation",
         "SpecialOrthogonal",
+        "SpecialOrthogonalTransformation",
         "Rotation",
         "RotationTransformation",
     )
 
 
-Rotation = SpecialOrthogonalTransformation
+SpecialOrthogonalTransformation = SpecialOrthogonal
+RotationTransformation = Rotation = SpecialOrthogonal
 
 
 @group
-class GeneralizedPermutation(InvertibleLinearTransformation):
+class GeneralizedPermutation(InvertibleLinear):
     """A generalized permutation.
 
     Permutations are invertible by definition.
@@ -1251,11 +1378,21 @@ class GeneralizedPermutation(InvertibleLinearTransformation):
 
     SYMBOL = "S ⋉ Δ"
     FSYMBOL = "S_{n} ⋉ Δ({n})"
-    NAME = ("GeneralizedPermutation",)
+    NAME = (
+        "GeneralizedPermutation",
+        "GeneralizedPermutationMatrix",
+        "Monomial",
+        "MonomialMatrix",
+        "MonomialTransformation",
+    )
+
+
+GeneralizedPermutationMatrix = GeneralizedPermutation
+Monomial = MonomialMatrix = MonomialTransformation = GeneralizedPermutation
 
 
 @group
-class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
+class SignedPermutation(GeneralizedPermutation, Orthogonal):
     """A signed permutation.
 
     A generalized permutation with non-zero entries ±1.
@@ -1267,11 +1404,14 @@ class SignedPermutation(GeneralizedPermutation, OrthogonalTransformation):
 
     SYMBOL = "S ⋉ SΔ"
     FSYMBOL = "S_{n} ⋉ SΔ({n})"
-    NAME = ("SignedPermutation",)
+    NAME = ("SignedPermutation", "SignedPermutationMatrix")
+
+
+SignedPermutationMatrix = SignedPermutation
 
 
 @group
-class Permutation(SignedPermutation, OrthogonalTransformation):
+class Permutation(SignedPermutation, Orthogonal):
     """A permutation.
 
     A generalized permutation with non-zero entries +1.
@@ -1285,11 +1425,14 @@ class Permutation(SignedPermutation, OrthogonalTransformation):
 
     SYMBOL = "S"
     FSYMBOL = "S_{n}"
-    NAME = ("Permutation",)
+    NAME = ("Permutation", "PermutationMatrix", "SymmetricGroup")
+
+
+SymmetricGroup = PermutationMatrix = Permutation
 
 
 @group
-class EvenPermutation(Permutation, SpecialOrthogonalTransformation):
+class EvenPermutation(Permutation, SpecialOrthogonal):
     """An even permutation.
 
     A permutation with determinant +1.
@@ -1309,14 +1452,23 @@ class EvenPermutation(Permutation, SpecialOrthogonalTransformation):
 
     SYMBOL = "A"
     FSYMBOL = "A_{n}"
-    NAME = ("EvenPermutation",)
+    NAME = ("EvenPermutation", "AlternatingGroup")
 
 
-@group
+AlternatingGroup = EvenPermutation
+
+
 class OddPermutation(Permutation):
     """An odd permutation.
 
     A permutation with determinant -1.
+
+    !!! note
+
+        This is the *coset* `S \\ A`, not a group: composing two odd
+        permutations gives an even one, so the set is not closed under
+        composition and does not contain the identity. It is the one node
+        here that is neither.
 
     symbol: S \\ A
 
@@ -1331,7 +1483,7 @@ class OddPermutation(Permutation):
 
 
 @closed
-class DiagonalTransformation(LinearTransformation):
+class Diagonal(Linear):
     """A diagonal matrix, may not be invertible.
 
     wiki: https://en.wikipedia.org/wiki/Diagonal_matrix
@@ -1339,17 +1491,21 @@ class DiagonalTransformation(LinearTransformation):
     """
 
     NAME = (
-        "DiagonalTransformation",
         "Diagonal",
+        "DiagonalMatrix",
+        "DiagonalTransformation",
         "Scaling",
+        "ScalingTransformation",
     )
 
 
+DiagonalMatrix = DiagonalTransformation = Diagonal
+ScalingTransformation = Scaling = Diagonal
+
+
 @liegroup
-@invertible_subset_of(DiagonalTransformation)
-class InvertibleDiagonalTransformation(
-    DiagonalTransformation, GeneralizedPermutation
-):
+@invertible_subset_of(Diagonal)
+class InvertibleDiagonal(Diagonal, GeneralizedPermutation):
     """An invertible diagonal matrix.
 
     Invertible diagonal matrices form a Lie group.
@@ -1363,16 +1519,19 @@ class InvertibleDiagonalTransformation(
     SYMBOL = "Δ"
     FSYMBOL = "Δ({n})"
     NAME = (
-        "InvertibleDiagonalTransformation",
         "InvertibleDiagonal",
+        "InvertibleDiagonalMatrix",
+        "InvertibleDiagonalTransformation",
     )
+
+
+InvertibleDiagonalMatrix = InvertibleDiagonal
+InvertibleDiagonalTransformation = InvertibleDiagonal
 
 
 @liegroup
 @simplyconnected
-class PositiveDiagonalTransformation(
-    InvertibleDiagonalTransformation, PositiveLinearTransformation
-):
+class PositiveDiagonal(InvertibleDiagonal, PositiveLinear):
     """A diagonal matrix with positive entries.
 
     This group does not include reflections, and has therefore a
@@ -1384,14 +1543,21 @@ class PositiveDiagonalTransformation(
     SYMBOL = "Δ+"
     FSYMBOL = "Δ+({n})"
     NAME = (
-        "PositiveDiagonalTransformation",
         "PositiveDiagonal",
+        "PositiveDiagonalMatrix",
+        "PositiveDiagonalTransformation",
         "PositiveScaling",
+        "PositiveScalingTransformation",
     )
 
 
+PositiveDiagonalMatrix = PositiveDiagonal
+PositiveDiagonalTransformation = PositiveDiagonal
+PositiveDiagonalTransformation = PositiveScaling = PositiveDiagonal
+
+
 @group
-class Reflection(OrthogonalTransformation):
+class Reflection(Orthogonal):
     """A reflection.
 
     This group includes all reflections along any hyperplane that goes
@@ -1400,7 +1566,10 @@ class Reflection(OrthogonalTransformation):
     wiki: https://en.wikipedia.org/wiki/Reflection_group
     """
 
-    NAME = ("Reflection",)
+    NAME = ("Reflection", "ReflectionGroup")
+
+
+ReflectionGroup = Reflection
 
 
 @group
@@ -1413,13 +1582,14 @@ class FiniteReflection(Reflection):
     wiki: https://en.wikipedia.org/wiki/Reflection_group
     """
 
-    NAME = ("FiniteReflection",)
+    NAME = ("FiniteReflection", "FiniteReflectionGroup")
+
+
+FiniteReflectionGroup = FiniteReflection
 
 
 @group
-class SpecialDiagonalTransformation(
-    InvertibleDiagonalTransformation, SignedPermutation, FiniteReflection
-):
+class SpecialDiagonal(InvertibleDiagonal, SignedPermutation, FiniteReflection):
     """A diagonal matrix with entries ±1.
 
     symbol: SΔ
@@ -1432,19 +1602,21 @@ class SpecialDiagonalTransformation(
     SYMBOL = "SΔ"
     FSYMBOL = "SΔ({n})"
     NAME = (
-        "SpecialDiagonalTransformation",
         "SpecialDiagonal",
+        "SpecialDiagonalMatrix",
+        "SpecialDiagonalTransformation",
+        "CardinalReflection",
+        "CardinalReflectionGroup",
     )
 
 
-CardinalReflection = SpecialDiagonalTransformation
+SpecialDiagonalMatrix = SpecialDiagonalTransformation = SpecialDiagonal
+CardinalReflectionGroup = CardinalReflection = SpecialDiagonal
 
 
 @closed
-@nonliftable
-class MultiplicativeTransformation(
-    DiagonalTransformation,
-):
+@nonembeddable
+class Multiplicative(Diagonal):
     """A scaling with the same factor in all dimensions.
 
     symbol: ℝ
@@ -1453,18 +1625,27 @@ class MultiplicativeTransformation(
     SYMBOL = "ℝ"
     FSYMBOL = "ℝ"
     NAME = (
-        "MultiplicativeTransformation",
         "Multiplicative",
+        "MultiplicativeTransformation",
+        "Multiplication",
+        "ScaledIdentityMatrix",
     )
 
 
+MultiplicativeTransformation = Multiplication = Multiplicative
+ScaledIdentityMatrix = Multiplicative
+
+
 @liegroup
-@nonliftable
-@invertible_subset_of(MultiplicativeTransformation)
-class InvertibleMultiplicativeTransformation(
-    MultiplicativeTransformation, InvertibleDiagonalTransformation
+@nonembeddable
+@invertible_subset_of(Multiplicative)
+class InvertibleMultiplicative(
+    Multiplicative, InvertibleDiagonal, ConformalOrthogonal
 ):
     """A scaling with the same positive factor in all dimensions.
+
+    An isotropic scaling preserves angles: `c I` is `|c|` times the
+    orthogonal `sign(c) I`, so ℝ* lies in CO.
 
     symbol: ℝ*
 
@@ -1477,23 +1658,36 @@ class InvertibleMultiplicativeTransformation(
     SYMBOL = "ℝ*"
     FSYMBOL = "ℝ*"
     NAME = (
-        "InvertibleMultiplicativeTransformation",
         "InvertibleMultiplicative",
+        "InvertibleMultiplicativeTransformation",
+        "InvertibleMultiplication",
+        "MultiplicativeGroup",
         "Homothety",
         "HomothetyTransformation",
+        "Homothecy",
+        "HomothecyTransformation",
+        "HomogeneousDilation",
     )
 
 
-Homothety = InvertibleMultiplicativeTransformation
+InvertibleMultiplication = InvertibleMultiplicative
+InvertibleMultiplicativeTransformation = InvertibleMultiplicative
+HomothetyTransformation = Homothety = InvertibleMultiplicative
+HomothecyTransformation = Homothecy = InvertibleMultiplicative
+MultiplicativeGroup = HomogeneousDilation = InvertibleMultiplicative
 
 
 @liegroup
 @simplyconnected
-@nonliftable
-class PositiveMultiplicativeTransformation(
-    MultiplicativeTransformation, PositiveDiagonalTransformation
+@nonembeddable
+class PositiveMultiplicative(
+    InvertibleMultiplicative, PositiveDiagonal, SpecialConformalOrthogonal
 ):
     """A scaling with the same positive factor in all dimensions.
+
+    A positive factor is a non-zero one, so this is a subgroup of ℝ*
+    (`InvertibleMultiplicative`) and not merely a subset of ℝ
+    (`Multiplicative`), which it reaches through it.
 
     symbol: ℝ+
 
@@ -1505,14 +1699,19 @@ class PositiveMultiplicativeTransformation(
     SYMBOL = "ℝ+"
     FSYMBOL = "ℝ+"
     NAME = (
-        "PositiveMultiplicativeTransformation",
         "PositiveMultiplicative",
+        "PositiveMultiplicativeTransformation",
+        "PositiveMultiplicativeGroup",
+        "PositiveMultiplication",
         "PositiveHomothety",
         "PositiveHomothetyTransformation",
     )
 
 
-PositiveHomothety = PositiveMultiplicativeTransformation
+PositiveMultiplication = PositiveMultiplicative
+PositiveMultiplicativeTransformation = PositiveMultiplicative
+PositiveHomothetyTransformation = PositiveHomothety = PositiveMultiplicative
+PositiveMultiplicativeGroup = PositiveMultiplicative
 
 
 # ----------------------------------------------------------------------
@@ -1522,13 +1721,18 @@ PositiveHomothety = PositiveMultiplicativeTransformation
 
 @liegroup
 @simplyconnected
-class IdentityTransformation(
-    Translation,
-    Permutation,
-    PositiveMultiplicativeTransformation,
-    SpecialOrthogonalTransformation,
+class Identity(
+    Translation,             # T
+    EvenPermutation,         # A   -- the identity permutation is even
+    SpecialDiagonal,         # SΔ  -- and so a cardinal reflection group
+    PositiveMultiplicative,  # ℝ+
+    SpecialOrthogonal,       # SO
 ):
     """The identity transformation.
+
+    Every set marked [`group`][] contains the identity, so the bases above
+    are the *maximal* such sets: `Permutation` and `Reflection`, say, are
+    reached through the tighter `EvenPermutation` and `SpecialDiagonal`.
 
     symbol: I
 
@@ -1538,6 +1742,10 @@ class IdentityTransformation(
     SYMBOL = "I"
     FSYMBOL = "I({n})"
     NAME = (
-        "IdentityTransformation",
         "Identity",
+        "IdentityMatrix",
+        "IdentityTransformation",
     )
+
+
+IdentityTransformation = IdentityMatrix = Identity

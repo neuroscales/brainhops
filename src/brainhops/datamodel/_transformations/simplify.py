@@ -26,7 +26,7 @@ every adjacent pair and is told "no" most of the time, so it needs the
 simplify contract, not the compose one.
 
 A simplifier may never make a sequence longer, and never reconciles a
-boundary: inserting a bridge, or lifting an operand into a fuller axis
+boundary: inserting a bridge, or embedding an operand in a fuller axis
 space, is composition's business. A pair whose systems disagree is simply
 declined. (Inside `compute`, that pair has already been reconciled before
 the simplify pass sees it -- see `sequence._compute_sequence`.)
@@ -79,7 +79,7 @@ from .modes import (
     Family,
     FamilyLike,
     _is_family_like,
-    matches_mode,
+    is_family,
     normalize_family,
 )
 from .registries import (
@@ -87,7 +87,7 @@ from .registries import (
     SIMPLIFIERS_FASTMAP,
     LeafSimplifier,
     PairSimplifier,
-    distance,
+    type_distance,
 )
 from .utils import boundary_disagrees
 
@@ -203,7 +203,7 @@ def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
     for key, func in SIMPLIFIERS.items():
         if isinstance(key, tuple):
             continue  # a pair simplifier
-        dist = distance(T, key)
+        dist = type_distance(T, key)
         if dist < best_distance:
             best_distance, best_func = dist, func
     if best_distance == float("inf"):
@@ -231,7 +231,7 @@ def get_pair_simplifiers(
         if not isinstance(registered, tuple):
             continue  # a leaf simplifier
         A, B = registered
-        dist = distance(T1, A) + distance(T2, B)
+        dist = type_distance(T1, A) + type_distance(T2, B)
         if dist < float("inf"):
             scored.append((func, dist, order))
     scored.sort(key=lambda s: (s[1], s[2]))
@@ -263,20 +263,24 @@ def simplify(
         nothing applies. For a pair, the single transform the two collapse
         to, or `None` when they do not collapse.
     """
-    root = registries.TRANSFORMATION
     if not transformations or len(transformations) > 2:
         raise TypeError(
             "simplify() takes one or two transformations, "
             f"not {len(transformations)}"
         )
-    if root is not None and not all(
-        isinstance(t, root) for t in transformations
+
+    Transformation = registries.TRANSFORMATION
+    if Transformation is not None and not all(
+        isinstance(t, Transformation) for t in transformations
     ):
         raise TypeError(
             "simplify() takes transformations positionally and its policy "
             "as the `policy` keyword"
         )
+
     policy = SimplifyTable.from_like(policy)
+    if policy.resolve(*transformations) is SimplifyPolicy.none:
+        return transformations[0] if len(transformations) == 1 else None
 
     if len(transformations) == 1:
         t, = transformations
@@ -288,6 +292,7 @@ def simplify(
         return func(t, policy=policy)
 
     first, second = transformations
+
     if boundary_disagrees(first, second):
         # Every pair rule assumes the two ends of the boundary line up: a
         # rule that drops one of the operands, or replaces both by an
@@ -300,6 +305,7 @@ def simplify(
         # may not do. `compute` bridges before it simplifies, so within a
         # sequence the pair is reconciled by the time it gets here.
         return None
+
     for func in get_pair_simplifiers(type(first), type(second)):
         result = func(first, second, policy=policy)
         if result is not None:
@@ -484,7 +490,7 @@ class SimplifyTable(dict):
         matched = [
             policy
             for family, policy in self.items()
-            if family is not None and matches_mode(t, family)
+            if family is not None and is_family(t, family)
         ]
         return _safest_policy(*matched) if matched else self[None]
 
