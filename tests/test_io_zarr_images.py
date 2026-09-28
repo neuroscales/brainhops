@@ -6,6 +6,7 @@ seam maps the brainhops F-order ``(x, y, z, t, c)`` to the OME-Zarr C-order
 ``(t, c, z, y, x)`` at the boundary.
 """
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,20 @@ from brainhops.io.images.zarr import (
 )
 
 abczarr = pytest.importorskip("abczarr")
+
+# Reading an OME-Zarr displacement/coordinate field identifies the vector
+# component axis from the field array's OME metadata or its zarr v3
+# `dimension_names`. Only zarr-python 3 persists those, and it requires
+# Python 3.11 or newer; the older stacks available below 3.11 (zarr-python 2
+# with no `dimension_names`, or the tensorstore driver, which drops it) can
+# store a bare field array but not the axis metadata the reader needs, so
+# the field readers cannot round-trip there. The module is gated on the
+# interpreter version, matching how the OME-Zarr feature is scoped.
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="OME-Zarr field metadata needs zarr-python 3, which needs "
+    "Python 3.11 or newer",
+)
 
 
 def _diag_affine(

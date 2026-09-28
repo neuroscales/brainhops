@@ -80,6 +80,32 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
     return _map_coordinates
 
 
+def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
+    """The (autoreshaping) ``map_coordinates`` to use for a backend.
+
+    Older `dask-image` releases have no `ndinterp.map_coordinates`, so a
+    dask array would otherwise fail with `AttributeError`. There is nothing
+    to chunk over anyway -- `map_coordinates` needs random access to the
+    whole input -- so each block is materialized and interpolated with its
+    concrete (scipy or cupy) ndimage, the same computation the non-dask
+    backends run, and the result is wrapped back into the array backend.
+    Newer stacks keep the native (lazy) `dask_image` path unchanged.
+    """
+    if hasattr(nd, "map_coordinates"):
+        return _autoreshape(nd.map_coordinates)
+
+    def fallback(
+        input: ArrayProtocol, coords: ArrayProtocol, **kwargs
+    ) -> ArrayProtocol:
+        block = input.compute() if hasattr(input, "compute") else input
+        pts = coords.compute() if hasattr(coords, "compute") else coords
+        concrete = get_ndimage_backend(block)
+        result = _autoreshape(concrete.map_coordinates)(block, pts, **kwargs)
+        return nx.asarray(result)
+
+    return fallback
+
+
 def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
@@ -130,7 +156,7 @@ def pull(
     order = int(order)
     opts = {"order": order, "mode": mode, "cval": cval, "prefilter": not coeff}
     # Interpolate each batch
-    map_coordinates = _autoreshape(nd.map_coordinates)
+    map_coordinates = _map_coordinates_for(nx, nd)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = map_coordinates(input[index], coords, **opts)
     return output
@@ -351,7 +377,7 @@ def coeff2value(
     mode, cval = _scipy_boundary(bound)
     order = int(order)
     opts = {"order": order, "mode": mode, "cval": cval, "prefilter": False}
-    map_coordinates = _autoreshape(nd.map_coordinates)
+    map_coordinates = _map_coordinates_for(nx, nd)
     for index in itertools.product(*[range(s) for s in batch]):
         output[index] = map_coordinates(input[index], grid, **opts)
     return output
