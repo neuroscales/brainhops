@@ -56,7 +56,7 @@ from .concrete import (
     is_identity,
 )
 from .errors import ConversionError
-from .inverse import Inverse, _cancels
+from .inverse import Inverse
 from .meta import Bijection, Projection, SubspaceTransformation
 from .multiscale import MultiscaleField
 from .sequence import Sequence, _unnest
@@ -351,11 +351,12 @@ def _(
     # here. It does not reduce to the bare identity (it is a pure axis
     # reindex), so it is left to the composers to fold into a single
     # reindexing subspace transform; do not "fix" it into this rule.
-    same_axes = (first.input_axes is None) == (
-        second.output_axes is None
-    ) and (
-        first.input_axes is None
-        or list(first.input_axes) == list(second.output_axes)
+    same_axes = (
+        (first.input_axes is None) == (second.output_axes is None) and
+        (
+            first.input_axes is None or
+            list(first.input_axes) == list(second.output_axes)
+        )
     )
     if not same_axes:
         return None
@@ -382,6 +383,23 @@ def _(
 #                             H E L P E R S
 #
 # ======================================================================
+
+
+def _cancels(first: Transformation, second: Transformation) -> bool:
+    """Whether ``[first, second]`` cancels to the identity for free.
+
+    `first` is applied before `second`. The two cancel when `second` is the
+    lazy inverse of `first`, or `first` is the lazy inverse of `second`. An
+    `Inverse` names the transform it undoes as its `forward`, so the test is
+    a plain identity check that materializes neither field: it is O(1) and
+    decides from object identity alone. This covers both a typed inverse
+    and a generic `Inverse(forward=X)`.
+    """
+    if isinstance(second, Inverse) and second.forward is first:
+        return True
+    if isinstance(first, Inverse) and first.forward is second:
+        return True
+    return False
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:

@@ -40,7 +40,11 @@ class FLIRTTransform(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mat",)
     HINTS = ("flirt",)
-    parameter_names: tx.ClassVar[str] = "flirt_matrix"
+    # The stored parameter is the raw FLIRT matrix: `matrix` is derived from
+    # it and the two image geometries, so reading it is not free and may
+    # raise. Naming the raw field here keeps `_is_unparameterized()` (and so
+    # `inverse()`) off that path.
+    data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
     _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
     _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()

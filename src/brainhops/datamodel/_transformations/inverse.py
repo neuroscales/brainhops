@@ -99,7 +99,9 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
 
     # The forward transformation type a typed inverse inverts. It is unset
     # on the generic `Inverse` front-door and set on each typed subclass,
-    # which drives both the materialization below and the wrapper registry.
+    # which is what the materialization below rebuilds. Which wrapper a
+    # given transform gets is decided polymorphically, from the `on={...}`
+    # predicates below, so nothing is registered anywhere.
     _inverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
 
     # --- attributes ---------------------------------------------------
@@ -219,30 +221,6 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         if reverse is not None:
             return reverse.from_instance(forward, **changes)
         return forward.to(**changes)
-
-
-def _cancels(first: Transformation, second: Transformation) -> bool:
-    """Whether ``[first, second]`` cancels to the identity for free.
-
-    `first` is applied before `second`. The two cancel when `second` is the
-    lazy inverse of `first`, or `first` is the lazy inverse of `second`. An
-    `Inverse` names the transform it undoes as its `forward`, so the test is
-    a plain identity check that materializes neither field: it is O(1) and
-    decides from object identity alone. This covers both a typed inverse
-    and a generic `Inverse(forward=X)`.
-    """
-    if isinstance(second, Inverse) and second.forward is first:
-        return True
-    if isinstance(first, Inverse) and first.forward is second:
-        return True
-    return False
-
-
-# NOTE (issue #93): the typed inverses below parameterize the generic
-# (`Inverse[Translation]`, ...) for introspectable hints only. Making
-# `Inverse(forward=x)` construct the matching typed inverse polymorphically
-# (via the bagof.magic constructor) is a separate follow-up, not done here;
-# `Inverse(forward=x)` stays generic-until-materialize.
 
 
 class InverseTranslation(
