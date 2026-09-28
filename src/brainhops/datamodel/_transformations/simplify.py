@@ -178,8 +178,7 @@ def _key_from_hints(func: tx.Callable) -> tx.Any:
         hints[name]
         for name, param in inspect.signature(func).parameters.items()
         if name != "policy"
-        and param.kind
-        not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+        and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
     )
     if len(types) == 1:
         return types[0]
@@ -212,9 +211,7 @@ def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
     return best_func
 
 
-def get_pair_simplifiers(
-    T1: type, T2: type
-) -> tx.Tuple[PairSimplifier, ...]:
+def get_pair_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
     """The pair simplifiers that apply to `(T1, T2)`, nearest first.
 
     A pair simplifier is *partial*, so several may apply and each may
@@ -283,7 +280,7 @@ def simplify(
         return transformations[0] if len(transformations) == 1 else None
 
     if len(transformations) == 1:
-        t, = transformations
+        (t,) = transformations
         func = get_simplifier(type(t))
         if func is None:
             # The root type is always registered, so this can only mean the
@@ -363,9 +360,10 @@ def _is_policy_like(value: tx.Any) -> bool:
         return True
     if isinstance(value, SimplifyPolicy):
         return True
-    if (
-        isinstance(value, str) and
-        value.lower() in ("none", "analytic", "numeric")
+    if isinstance(value, str) and value.lower() in (
+        "none",
+        "analytic",
+        "numeric",
     ):
         return True
     return False

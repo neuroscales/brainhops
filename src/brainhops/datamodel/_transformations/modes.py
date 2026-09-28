@@ -54,8 +54,13 @@ ModeLike = tx.Union[None, bool, FamilyLike, tx.Iterable[FamilyLike]]
 """Possible input to the `mode` argument of [`compute()`][]."""
 
 __all__ += [
-    "Family", "FamilyLike", "Kind", "KindLike",
-    "is_family", "is_kind", "normalize_family",
+    "Family",
+    "FamilyLike",
+    "Kind",
+    "KindLike",
+    "is_family",
+    "is_kind",
+    "normalize_family",
 ]
 
 

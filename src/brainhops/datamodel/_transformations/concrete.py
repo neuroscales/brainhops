@@ -78,7 +78,10 @@ class ConcreteTransformation(Transformation):
             other._reverse_type = cls
 
     def compute(
-        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, downcasting it to the cheapest
@@ -138,7 +141,7 @@ class TransformationField(ConcreteTransformation):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "field",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
 
     # --- attributes ---------------------------------------------------
@@ -203,8 +206,8 @@ class CartesianField(CoordinatesField):
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "shape",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "field",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("shape",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
 
     # --- attributes ---------------------------------------------------
@@ -246,8 +249,8 @@ class CartesianField(CoordinatesField):
 class Affine(ConcreteTransformation):
     """An affine transformation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "homogeneous_matrix",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("homogeneous_matrix",)
 
     # --- attributes ---------------------------------------------------
 
@@ -288,7 +291,7 @@ class Affine(ConcreteTransformation):
 class Linear(ConcreteTransformation):
     """A linear transformation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
 
@@ -330,7 +333,7 @@ class Rotation(Linear):
 class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "permutation",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
 
     # --- attributes ---------------------------------------------------
 
@@ -352,7 +355,7 @@ class Permutation(ConcreteTransformation):
 class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "scale",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
 
     # --- attributes ---------------------------------------------------
 
@@ -372,7 +375,7 @@ class Scaling(ConcreteTransformation):
 class Translation(ConcreteTransformation):
     """A translation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "translation",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
 
     # --- attributes ---------------------------------------------------
 

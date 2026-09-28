@@ -34,7 +34,7 @@ if tx.TYPE_CHECKING:
 def type_distance(
     t1: tx.Union[type, tx.Tuple[type, ...]],
     t2: tx.Union[type, tx.Tuple[type, ...]],
-    oriented: bool = True
+    oriented: bool = True,
 ) -> float:
     """
     Compute the distance between two types or tuple of types in the
@@ -50,9 +50,7 @@ def type_distance(
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _type_distance(
-    t1: type, t2: type, oriented: bool = True
-) -> float:
+def _type_distance(t1: type, t2: type, oriented: bool = True) -> float:
     """Compute the distance between two types in the class hierarchy."""
     # TODO: handle type hints (Union, Any)
     if t1 is t2:
@@ -64,7 +62,7 @@ def _type_distance(
             # too small to ever outweigh a whole step, so that two bases at
             # the same distance are separated the way the MRO separates
             # them, rather than by an accident of registration order.
-            _type_distance(base, t2, oriented=False) + (i/n)
+            _type_distance(base, t2, oriented=False) + (i / n)
             for i, base in enumerate(t1.__bases__)
         )
     if issubclass(t2, t1) and not oriented:
@@ -126,8 +124,10 @@ class Dispatcher(dict, tx.Generic[KEY, FN]):
             return self.register(*args[1:], _func=args[0], **kwargs)
 
         if _func is None:
+
             def decorator(func: FN) -> FN:
                 return self.register(*args, _func=func, **kwargs)
+
             return decorator
 
         if not args:
@@ -155,8 +155,7 @@ class Dispatcher(dict, tx.Generic[KEY, FN]):
     def key_from_args(cls, *args, **kwargs) -> KEY:
         """Guess the key for a function from its arguments."""
         args = tuple(
-            type(arg) if not isinstance(arg, type) else arg
-            for arg in args
+            type(arg) if not isinstance(arg, type) else arg for arg in args
         )
         return args[0] if len(args) == 1 else args
 
@@ -334,6 +333,7 @@ def register_transformation(cls: tx.Type["Transformation"]) -> None:
     TRANSFORMATION = cls
     return cls
 
+
 # --- compose ----------------------------------------------------------
 
 PairOfTypes = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
@@ -377,8 +377,8 @@ point where it delegates here.
 """
 
 SimplifierKey = tx.Union[
-    tx.Type["Transformation"],                # a leaf simplifier
-    PairOfTypes,                              # a pair simplifier
+    tx.Type["Transformation"],  # a leaf simplifier
+    PairOfTypes,  # a pair simplifier
 ]
 SimplifierRegistry = tx.Dict[
     SimplifierKey, tx.Union[LeafSimplifier, PairSimplifier]

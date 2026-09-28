@@ -111,7 +111,7 @@ class Sequence(SequenceMixin, Transformation):
         * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "transformations",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("transformations",)
 
     # --- attributes ---------------------------------------------------
 
@@ -178,45 +178,48 @@ class Sequence(SequenceMixin, Transformation):
         )
 
     def compute(
-        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         """
-        Compute the resulting transform of the sequence of transformations.
+         Compute the resulting transform of the sequence of transformations.
 
-        Assuming that `mode=True`:
+         Assuming that `mode=True`:
 
-        * If all transformations in the sequence are affine-like
-          transformations, `compute()` returns an affine-like transform.
+         * If all transformations in the sequence are affine-like
+           transformations, `compute()` returns an affine-like transform.
 
-       * If the first (= rightmost) transform in the sequence is a
-          coordinate field, `compute()` returns a coordinate field.
+        * If the first (= rightmost) transform in the sequence is a
+           coordinate field, `compute()` returns a coordinate field.
 
-        * If the first (= rightmost) transform in the sequence is an
-          affine-like transform, and the sequence contains at least one
-          non-affine-like transform, `compute()` returns a sequence of two
-          transformations:
+         * If the first (= rightmost) transform in the sequence is an
+           affine-like transform, and the sequence contains at least one
+           non-affine-like transform, `compute()` returns a sequence of two
+           transformations:
 
-          1. the composition of all affine-like transformations that
-             appear before the first non-affine-like transform in the
-            sequence, and
-          2. the composition of all transformations in the sequence,
-             starting from the first non-affine-like transform in the
-             sequence.
+           1. the composition of all affine-like transformations that
+              appear before the first non-affine-like transform in the
+             sequence, and
+           2. the composition of all transformations in the sequence,
+              starting from the first non-affine-like transform in the
+              sequence.
 
-        Parameters
-        ----------
-        mode : [list of] name or type, optional
-            Kinds of transformations to compose.
-            * If `True` (default): compose every kind in the sequence.
-            * If `False`: compose nothing (simplify-only).
-            * If a (list of) transformation type(s): compose only pairs
-              of transformations of these kinds.
-        simplify : simplify policy, default="analytic"
-            Whether to simplify sub-transformations prior to composition,
-            and how hard to try to simplify them.
-            * `"analytic"` (the default) looks at the type structure only;
-            * `"numeric"` looks at the numeric values of the transformation;
-            * `False`/`"none"`/`None` disables simplification.
+         Parameters
+         ----------
+         mode : [list of] name or type, optional
+             Kinds of transformations to compose.
+             * If `True` (default): compose every kind in the sequence.
+             * If `False`: compose nothing (simplify-only).
+             * If a (list of) transformation type(s): compose only pairs
+               of transformations of these kinds.
+         simplify : simplify policy, default="analytic"
+             Whether to simplify sub-transformations prior to composition,
+             and how hard to try to simplify them.
+             * `"analytic"` (the default) looks at the type structure only;
+             * `"numeric"` looks at the numeric values of the transformation;
+             * `False`/`"none"`/`None` disables simplification.
         """
         modes = normalize_modes(mode)
         policy = SimplifyTable.from_like(simplify)

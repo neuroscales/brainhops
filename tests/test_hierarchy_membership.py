@@ -53,12 +53,8 @@ def test_parse_raises_on_unknown() -> None:
 
 
 def test_injective_surjective_are_bases_of_bijective() -> None:
-    assert issubclass(
-        kinds.Bijection, kinds.Injection
-    )
-    assert issubclass(
-        kinds.Bijection, kinds.Surjection
-    )
+    assert issubclass(kinds.Bijection, kinds.Injection)
+    assert issubclass(kinds.Bijection, kinds.Surjection)
     # Every invertible node is therefore injective and surjective.
     assert issubclass(
         kinds.InvertibleAffine,
@@ -78,13 +74,9 @@ def test_euclidean_lattice_edges() -> None:
         kinds.SpecialEuclidean,
         kinds.Euclidean,
     )
-    assert issubclass(
-        kinds.Translation, kinds.SpecialEuclidean
-    )
+    assert issubclass(kinds.Translation, kinds.SpecialEuclidean)
     assert issubclass(kinds.Translation, kinds.Euclidean)
-    assert not issubclass(
-        kinds.Translation, kinds.Orthogonal
-    )
+    assert not issubclass(kinds.Translation, kinds.Orthogonal)
     # And a concrete translation is a member of the euclidean set.
     from brainhops.datamodel.transformations import Translation, is_kind
 
@@ -111,17 +103,13 @@ def test_injective_surjective_names_resolve() -> None:
 def test_concrete_membership_is_transitive() -> None:
     # `Linear` registers to `LinearTransformation`, a subclass of
     # `AffineTransformation`, so a linear instance is an affine.
-    assert isinstance(
-        Linear(matrix=[[2.0, 0.0], [0.0, 3.0]]), kinds.Affine
-    )
+    assert isinstance(Linear(matrix=[[2.0, 0.0], [0.0, 3.0]]), kinds.Affine)
     # The converse does not hold: a general affine is not linear.
     assert not isinstance(
         Affine(matrix=[[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]),
         kinds.Linear,
     )
-    assert isinstance(
-        Translation(translation=[1.0, 2.0]), kinds.Affine
-    )
+    assert isinstance(Translation(translation=[1.0, 2.0]), kinds.Affine)
 
 
 # ----------------------------------------------------------------------

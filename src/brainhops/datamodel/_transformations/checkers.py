@@ -71,7 +71,7 @@ def identity_from(field: str) -> tx.Callable:
         def wrapper(
             query: Transformation,
             kind: tx.Type[kinds.TransformationKind],
-            compute: bool
+            compute: bool,
         ) -> bool:
             if getattr(query, field) is None:
                 return True
@@ -308,9 +308,7 @@ _DIAGONAL_FACTS: tx.Dict[type, tx.Callable[[ArrayProtocol], bool]] = {
 # here, even though it too is an invertible node -- it also asserts
 # isotropy, which is a property of the values, and which `Multiplicative`
 # itself (rightly) declines to establish at analytic.
-_OPTIMISTIC = (
-    kinds.InvertibleDiagonal,
-)
+_OPTIMISTIC = (kinds.InvertibleDiagonal,)
 
 _DATAFIELD = {
     Scaling: "scale",
@@ -355,9 +353,7 @@ def _diagonal_checker(source: type, node: type) -> tx.Callable:
     optimistic = node in _OPTIMISTIC
 
     @identity_from(_DATAFIELD[source])
-    def _checker(
-        query: Transformation, kind: type, compute: bool
-    ) -> bool:
+    def _checker(query: Transformation, kind: type, compute: bool) -> bool:
         if not compute:
             # Structure alone establishes diagonality only for a
             # `Scaling`, whose whole parameter is the diagonal. A matrix
@@ -443,9 +439,8 @@ def _(query: Permutation, kind: OddPermType, compute: bool) -> bool:
     # unset parameter establishes nothing.
     if query.permutation is None:
         return False
-    return (
-        is_kind(query, kinds.Permutation, compute) and not
-        is_kind(query, kinds.EvenPermutation, compute)
+    return is_kind(query, kinds.Permutation, compute) and not is_kind(
+        query, kinds.EvenPermutation, compute
     )
 
 
@@ -563,7 +558,7 @@ def _is_conformal(matrix: ArrayProtocol) -> bool:
     fro = ab.linalg.norm(matrix, ord="fro")
     if bool(fro == 0):
         return False
-    normalized = matrix * (rows ** 0.5 / fro)
+    normalized = matrix * (rows**0.5 / fro)
     return bool((normalized @ normalized.T == ab.eye(rows)).all())
 
 
@@ -609,9 +604,7 @@ def _is_monomial(matrix: ArrayProtocol) -> bool:
     if rows != cols:
         return False
     nonzero = matrix != 0
-    return bool(
-        (nonzero.sum(0) == 1).all() and (nonzero.sum(1) == 1).all()
-    )
+    return bool((nonzero.sum(0) == 1).all() and (nonzero.sum(1) == 1).all())
 
 
 @checker
@@ -832,9 +825,12 @@ def _embed_targets(node: type) -> tx.Tuple[type, ...]:
         return (node,)
     return tuple(
         _maximal(
-            n for n in kinds.all_sets() if (
-                issubclass(n, node) and n is not node and
-                kinds.is_embeddable(n)
+            n
+            for n in kinds.all_sets()
+            if (
+                issubclass(n, node)
+                and n is not node
+                and kinds.is_embeddable(n)
             )
         )
     )
@@ -845,15 +841,19 @@ def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
     # `P @ blockdiag(...) in node` (P a coordinate permutation of the given
     # parity) iff the embedded map in M for some M in these targets.
     perm = kinds.EvenPermutation if even else kinds.Permutation
+
     def is_closed(node: type) -> bool:
         return kinds.is_closedunder(node, perm)
 
     if is_closed(node):
         return (node,)
-    return tuple(_maximal(
-            n for n in kinds.all_sets()
+    return tuple(
+        _maximal(
+            n
+            for n in kinds.all_sets()
             if issubclass(n, node) and n is not node and is_closed(n)
-    ))
+        )
+    )
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
@@ -867,8 +867,7 @@ def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
         _maximal(
             n
             for n in kinds.all_sets()
-            if issubclass(n, node)
-            and issubclass(n, kinds.Bijection)
+            if issubclass(n, node) and issubclass(n, kinds.Bijection)
         )
     )
 

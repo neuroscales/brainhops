@@ -20,7 +20,7 @@ if tx.TYPE_CHECKING:
     from .sequence import Sequence
 
 
-@kinds.Transformation.register   # virtual registration in hierarchy
+@kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
 class Transformation(DataModelBase, reverse=True):
     """
@@ -105,7 +105,10 @@ class Transformation(DataModelBase, reverse=True):
     # --- methods ------------------------------------------------------
 
     def compute(
-        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.

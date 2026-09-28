@@ -41,7 +41,9 @@ LIN = TransformationFamily(kinds.Linear, None)
 def _small(shape: tuple = (6, 7, 2), seed: int = 0) -> np.ndarray:
     return np.random.RandomState(seed).randn(*shape) * 0.05
 
+
 # --- old helpers wrapping new helpers ---------------------------------
+
 
 def normalize_simplify(value: object) -> SimplifyTable:
     return SimplifyTable.from_like(value)
@@ -49,6 +51,7 @@ def normalize_simplify(value: object) -> SimplifyTable:
 
 def resolve_simplify(t: object, table: SimplifyTable) -> SimplifyPolicy:
     return table.resolve(t)
+
 
 # ----------------------------------------------------------------------
 #   LOWERING TO A TABLE
@@ -71,7 +74,7 @@ def test_key_and_list_restrict_to_those() -> None:
     # means the set.
     assert normalize_simplify(Affine) == {
         None: none,
-        TransformationFamily(Affine, None): analytic
+        TransformationFamily(Affine, None): analytic,
     }
     assert normalize_simplify(kinds.Linear) == {
         None: none,
@@ -79,12 +82,8 @@ def test_key_and_list_restrict_to_those() -> None:
     }
     table = normalize_simplify(["scaling", "translation"])
     assert table[None] is none
-    assert table[
-        TransformationFamily(kinds.Diagonal, None)
-    ] is analytic
-    assert table[
-        TransformationFamily(kinds.Translation, None)
-    ] is analytic
+    assert table[TransformationFamily(kinds.Diagonal, None)] is analytic
+    assert table[TransformationFamily(kinds.Translation, None)] is analytic
 
 
 def test_mapping_fallback_and_collisions() -> None:
@@ -185,14 +184,16 @@ def test_invalid_keys_raise() -> None:
 
 def test_resolution() -> None:
     lin = Linear(matrix=np.diag([2.0, 3.0]))
-    assert resolve_simplify(
-        lin, normalize_simplify({"affine": "numeric"})
-    ) is numeric
+    assert (
+        resolve_simplify(lin, normalize_simplify({"affine": "numeric"}))
+        is numeric
+    )
     aff = Affine(matrix=np.array([[2.0, 0, 1], [0, 3, 2]]))
     # A general affine is not linear, so the None-absent analytic fallback.
-    assert resolve_simplify(
-        aff, normalize_simplify({"linear": "numeric"})
-    ) is analytic
+    assert (
+        resolve_simplify(aff, normalize_simplify({"linear": "numeric"}))
+        is analytic
+    )
 
 
 def test_resolution_safest_among_matched() -> None:
@@ -215,9 +216,9 @@ def test_resolution_safest_among_matched() -> None:
 
 def test_resolution_fallback_and_bare_list() -> None:
     df = DisplacementField(field=_small())
-    assert resolve_simplify(
-        df, normalize_simplify({None: "numeric"})
-    ) is numeric
+    assert (
+        resolve_simplify(df, normalize_simplify({None: "numeric"})) is numeric
+    )
     assert resolve_simplify(df, normalize_simplify(["affine"])) is none
     # Two spellings of the same set NAME collide on one lowered key -> safest.
     lin = Linear(matrix=np.diag([2.0, 3.0]))

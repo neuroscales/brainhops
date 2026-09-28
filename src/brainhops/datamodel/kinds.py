@@ -417,6 +417,7 @@ def invertible_subset_of(cls: _Type) -> _Decorator:
 
     wiki: https://en.wikipedia.org/wiki/Inverse_element
     """
+
     def decorator(subcls: _Type) -> _Type:
         INVERTIBLE_OF[cls] = subcls
         NONINVERTIBLE_OF[subcls] = cls
@@ -434,6 +435,7 @@ def closedunder(cls: _Type) -> _Decorator:
 
     wiki: https://en.wikipedia.org/wiki/Closure_(mathematics)
     """
+
     def decorator(subcls: _Type) -> _Type:
         CLOSEDUNDER.setdefault(cls, set()).add(subcls)
         return subcls
@@ -907,7 +909,7 @@ class InvertibleAffine(Affine, InvertibleMatrix):
         "InvertibleAffine",
         "InvertibleAffineMatrix",
         "InvertibleAffineTransformation",
-        "AffineGroup"
+        "AffineGroup",
     )
 
 
@@ -1481,7 +1483,6 @@ class OddPermutation(Permutation):
     NAME = ("OddPermutation",)
 
 
-
 @closed
 class Diagonal(Linear):
     """A diagonal matrix, may not be invertible.
@@ -1722,11 +1723,11 @@ PositiveMultiplicativeGroup = PositiveMultiplicative
 @liegroup
 @simplyconnected
 class Identity(
-    Translation,             # T
-    EvenPermutation,         # A   -- the identity permutation is even
-    SpecialDiagonal,         # SΔ  -- and so a cardinal reflection group
+    Translation,  # T
+    EvenPermutation,  # A   -- the identity permutation is even
+    SpecialDiagonal,  # SΔ  -- and so a cardinal reflection group
     PositiveMultiplicative,  # ℝ+
-    SpecialOrthogonal,       # SO
+    SpecialOrthogonal,  # SO
 ):
     """The identity transformation.
 

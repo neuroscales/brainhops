@@ -49,7 +49,6 @@ class partial(_partial):
         return super().__call__(*args, **kwargs)
 
 
-
 if sys.version_info.minor >= 11:
     from enum import StrEnum
 else:

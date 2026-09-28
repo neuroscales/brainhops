@@ -57,16 +57,12 @@ def test_embed_targets() -> None:
     # ConformalEuclidean is not embeddable; its single maximal embeddable
     # subnode is Euclidean. Now that the lattice places Translation/SE under
     # Euclidean, this collapses to just `(Euclidean,)`.
-    assert _embed_targets(H.ConformalEuclidean) == (
-        H.Euclidean,
-    )
+    assert _embed_targets(H.ConformalEuclidean) == (H.Euclidean,)
 
 
 def test_permute_targets() -> None:
     assert _permute_targets(H.Translation, True) == ()
-    assert _permute_targets(H.Euclidean, False) == (
-        H.Euclidean,
-    )
+    assert _permute_targets(H.Euclidean, False) == (H.Euclidean,)
     assert _permute_targets(H.SpecialOrthogonal, True) == (
         H.SpecialOrthogonal,
     )
@@ -76,16 +72,10 @@ def test_permute_targets() -> None:
 
 
 def test_bijective_targets() -> None:
-    assert _bijective_targets(H.Affine) == (
-        H.InvertibleAffine,
-    )
+    assert _bijective_targets(H.Affine) == (H.InvertibleAffine,)
     assert _bijective_targets(H.Transformation) == (H.Bijection,)
-    assert _bijective_targets(H.Injection) == (
-        H.Bijection,
-    )
-    assert _bijective_targets(H.Diagonal) == (
-        H.InvertibleDiagonal,
-    )
+    assert _bijective_targets(H.Injection) == (H.Bijection,)
+    assert _bijective_targets(H.Diagonal) == (H.InvertibleDiagonal,)
 
 
 # ----------------------------------------------------------------------
@@ -372,8 +362,9 @@ def test_class_kinds() -> None:
     # One kind is one class: the two field types are asked about through the
     # base they share, never as a tuple of the two.
     assert is_kind(df, TransformationField)
-    assert is_kind(CoordinatesField(field=np.zeros((4, 4, 2))),
-                   TransformationField)
+    assert is_kind(
+        CoordinatesField(field=np.zeros((4, 4, 2))), TransformationField
+    )
     assert not is_kind(Affine(matrix=np.eye(4)[:3]), TransformationField)
     assert issubclass(InverseAffine, Inverse)
 

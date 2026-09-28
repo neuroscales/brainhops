@@ -53,7 +53,9 @@ def _zero_inversions(thunk: object) -> object:
     assert calls["n"] == 0
     return result
 
+
 # --- old helpers wrapping new helpers ---------------------------------
+
 
 def normalize_simplify(value: object) -> SimplifyTable:
     return SimplifyTable.from_like(value)
@@ -61,6 +63,7 @@ def normalize_simplify(value: object) -> SimplifyTable:
 
 def resolve_simplify(t: object, table: SimplifyTable) -> SimplifyPolicy:
     return table.resolve(t)
+
 
 # ----------------------------------------------------------------------
 #   F1 - simplify pass never composes or materializes

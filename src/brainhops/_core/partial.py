@@ -8,12 +8,12 @@ from .properties import lazyproperty
 
 
 class AnnotatedPartial:
-
     def __init__(self, func: Callable, *args, **keywords) -> None:
         self.partial = partial(func, *args, **keywords)
         update_wrapper(
-            self, func,
-            assigned=("__module__", "__name__", "__qualname__", "__doc__")
+            self,
+            func,
+            assigned=("__module__", "__name__", "__qualname__", "__doc__"),
         )
 
     @property

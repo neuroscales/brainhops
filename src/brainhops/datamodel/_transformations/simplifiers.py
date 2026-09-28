@@ -351,12 +351,11 @@ def _(
     # here. It does not reduce to the bare identity (it is a pure axis
     # reindex), so it is left to the composers to fold into a single
     # reindexing subspace transform; do not "fix" it into this rule.
-    same_axes = (
-        (first.input_axes is None) == (second.output_axes is None) and
-        (
-            first.input_axes is None or
-            list(first.input_axes) == list(second.output_axes)
-        )
+    same_axes = (first.input_axes is None) == (
+        second.output_axes is None
+    ) and (
+        first.input_axes is None
+        or list(first.input_axes) == list(second.output_axes)
     )
     if not same_axes:
         return None
@@ -413,9 +412,7 @@ def _same_axes(t: SubspaceTransformation) -> bool:
     return list(t.input_axes) == list(t.output_axes)
 
 
-def _with_endpoints(
-    t: Transformation, like: Transformation
-) -> Transformation:
+def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
     # Carry the endpoints a wrapper declared onto the transform that
     # replaces it. Only the declared ones are read, so a derived endpoint
     # stays derived.
@@ -508,9 +505,7 @@ def _downcast_pass(
     return out
 
 
-def _rebuild(
-    seq: Sequence, leaves: tx.List[Transformation]
-) -> Transformation:
+def _rebuild(seq: Sequence, leaves: tx.List[Transformation]) -> Transformation:
     # The transform a simplified sequence presents. A sequence that
     # collapsed to nothing is the identity between its own endpoints; one
     # that collapsed to a single transform *is* that transform, carrying

@@ -265,9 +265,7 @@ def _coordinate_field(seed: int = 0) -> tuple:
     # inverse assumes (see `InverseCoordinatesField`).
     values = _small_field(seed=seed)
     grid = np.stack(
-        np.meshgrid(
-            *[np.arange(s) for s in values.shape[:-1]], indexing="ij"
-        ),
+        np.meshgrid(*[np.arange(s) for s in values.shape[:-1]], indexing="ij"),
         -1,
     )
     return CoordinatesField(field=grid + values), grid, values

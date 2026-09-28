@@ -36,7 +36,10 @@ class MetaTransformation(Transformation):
     """
 
     def compute(
-        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         # A meta transformation holds no parameter of its own to fuse, so
         # computing it is simplifying it: the registered simplifier for its
@@ -66,7 +69,9 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "transformation", "input_axes", "output_axes",
+        "transformation",
+        "input_axes",
+        "output_axes",
     )
 
     # --- attributes ---------------------------------------------------

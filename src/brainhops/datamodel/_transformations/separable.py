@@ -453,9 +453,7 @@ def _restricted_affine(sub: tx.List[Transformation]) -> tx.Optional[Affine]:
     nongrid = sub[1:]
     if not nongrid:
         return None
-    composed = Sequence(transformations=nongrid).compute(
-        mode=kinds.Affine
-    )
+    composed = Sequence(transformations=nongrid).compute(mode=kinds.Affine)
     return composed.to(Affine)
 
 
@@ -487,9 +485,7 @@ def _classify(
     data_axes = comp["D"]
     k = len(data_axes)
     sub = _restrict(comp, els, shape)
-    composed = Sequence(transformations=sub).compute(
-        mode=kinds.Affine
-    )
+    composed = Sequence(transformations=sub).compute(mode=kinds.Affine)
     interpolating = _interpolates(composed)
 
     n_in = int(np.prod([data_shape[d] for d in data_axes]))

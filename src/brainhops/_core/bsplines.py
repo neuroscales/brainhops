@@ -1,16 +1,54 @@
 # stdlib
 import itertools
+from types import ModuleType
 
 # dependencies
 import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
+from brainhops._core.dependencies import da
 from brainhops.backends import (
     best_backend,
     get_array_backend,
     get_ndimage_backend,
 )
+
+
+def _spline_filter_1block(block: ArrayProtocol, **opts) -> ArrayProtocol:
+    """Prefilter a single materialized block with its own ndimage backend.
+
+    The block is concrete (numpy or cupy), so its ndimage package is the
+    non-dask one, whose `spline_filter` prefilters the whole block at once.
+    """
+    return get_ndimage_backend(block).spline_filter(block, **opts)
+
+
+def _spline_filter(
+    input: ArrayProtocol, nd: ModuleType, **opts
+) -> ArrayProtocol:
+    """Apply an ndimage spline prefilter, staying correct for a dask array
+    that is smaller than the prefilter's overlap depth.
+
+    `dask_image.spline_filter` prefilters through `map_overlap`, whose
+    overlap depth is the spline's precision support (14 samples for a
+    cubic). When an axis is shorter than that depth, dask cannot build the
+    overlap and raises `ValueError` while the graph is assembled -- even
+    when the array is a single chunk, since the depth still exceeds the
+    axis. An array that small gains nothing from chunking, so it is
+    prefiltered exactly as one block with the per-block (scipy or cupy)
+    filter, which is what `map_overlap` approximates and matches the
+    coefficients the non-dask backends compute.
+    """
+    if da is not None and isinstance(input, da.Array):
+        try:
+            return nd.spline_filter(input, **opts)
+        except ValueError:
+            single = input.rechunk(-1)
+            return single.map_blocks(
+                _spline_filter_1block, dtype="float64", **opts
+            )
+    return nd.spline_filter(input, **opts)
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
@@ -423,7 +461,7 @@ def value2coeff(
     mode = bound if isinstance(bound, str) else "constant"
     opts = dict(order=order, mode=mode)
     for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = nd.spline_filter(input[index], **opts)
+        output[index] = _spline_filter(input[index], nd, **opts)
     return output
 
 

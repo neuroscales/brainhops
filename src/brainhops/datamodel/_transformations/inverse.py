@@ -111,7 +111,6 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         tx.Doc("The forward transformation whose inverse this represents."),
     ] = None
 
-
     # --- properties ---------------------------------------------------
 
     # An inverse maps the forward's output back to its input, so it knows
@@ -147,7 +146,10 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         return forward
 
     def compute(
-        self, mode: ModeLike = True, *, simplify: SimplifyLike = "analytic",
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         """Resolve the inverse, if the mode admits it.
 
@@ -224,16 +226,17 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
 
 
 class InverseTranslation(
-    Inverse[Translation], Translation,
-    on={"forward": partial(isinstance, PLACEHOLDER, Translation)}
+    Inverse[Translation],
+    Translation,
+    on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
 ):
     """The inverse of a [`Translation`][], resolved on demand."""
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "translation",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
 
     # --- attributes ---------------------------------------------------
 
@@ -255,16 +258,17 @@ class InverseTranslation(
 
 
 class InverseScaling(
-    Inverse, Scaling, # [Scaling]
-    on={"forward": partial(isinstance, PLACEHOLDER, Scaling)}
+    Inverse,
+    Scaling,  # [Scaling]
+    on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
 ):
     """The inverse of a [`Scaling`][], resolved on demand."""
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "scale",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
 
     # --- attributes ---------------------------------------------------
 
@@ -286,16 +290,17 @@ class InverseScaling(
 
 
 class InversePermutation(
-    Inverse, Permutation, # [Permutation]
-    on={"forward": partial(isinstance, PLACEHOLDER, Permutation)}
+    Inverse,
+    Permutation,  # [Permutation]
+    on={"forward": partial(isinstance, PLACEHOLDER, Permutation)},
 ):
     """The inverse of a [`Permutation`][], resolved on demand."""
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "permutation",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
 
     # --- attributes ---------------------------------------------------
 
@@ -322,7 +327,8 @@ class InversePermutation(
 
 
 class InverseRotation(
-    Inverse[Rotation], Rotation,
+    Inverse[Rotation],
+    Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
     # A `Rotation` is a `Linear`, so `Inverse(forward=rotation)` matches
     # `InverseLinear` just as well. The more specific wrapper wins: it
@@ -334,8 +340,8 @@ class InverseRotation(
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
 
@@ -358,16 +364,17 @@ class InverseRotation(
 
 
 class InverseLinear(
-    Inverse[Linear], Linear,
-    on={"forward": partial(isinstance, PLACEHOLDER, Linear)}
+    Inverse[Linear],
+    Linear,
+    on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
 ):
     """The inverse of a [`Linear`][] transformation, resolved on demand."""
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
 
@@ -390,16 +397,17 @@ class InverseLinear(
 
 
 class InverseAffine(
-    Inverse[Affine], Affine,
-    on={"forward": partial(isinstance, PLACEHOLDER, Affine)}
+    Inverse[Affine],
+    Affine,
+    on={"forward": partial(isinstance, PLACEHOLDER, Affine)},
 ):
     """The inverse of an [`Affine`][] transformation, resolved on demand."""
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = "matrix",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
     forward: tx.Annotated[
@@ -420,8 +428,9 @@ class InverseAffine(
 
 
 class InverseDisplacementField(
-    Inverse[DisplacementField], DisplacementField,
-    on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)}
+    Inverse[DisplacementField],
+    DisplacementField,
+    on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)},
 ):
     """The inverse of a [`DisplacementField`][], resolved on demand.
 
@@ -434,10 +443,13 @@ class InverseDisplacementField(
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field", "order", "bound", "coeff"
+        "field",
+        "order",
+        "bound",
+        "coeff",
     )
 
     # --- attributes ---------------------------------------------------
@@ -462,7 +474,7 @@ class InverseDisplacementField(
             forward.field,
             coeff=forward.coeff,
             order=forward.order,
-            bound=forward.bound
+            bound=forward.bound,
         )
 
     @property
@@ -479,8 +491,9 @@ class InverseDisplacementField(
 
 
 class InverseCoordinatesField(
-    Inverse[CoordinatesField], CoordinatesField,
-    on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)}
+    Inverse[CoordinatesField],
+    CoordinatesField,
+    on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)},
 ):
     """The inverse of a [`CoordinatesField`][], resolved on demand.
 
@@ -508,10 +521,13 @@ class InverseCoordinatesField(
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
-    data_fields: tx.ClassVar[tx.Tuple[str]] = "forward",
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field", "order", "bound", "coeff"
+        "field",
+        "order",
+        "bound",
+        "coeff",
     )
 
     # --- attributes ---------------------------------------------------
@@ -536,7 +552,7 @@ class InverseCoordinatesField(
             forward.field,
             coeff=forward.coeff,
             order=forward.order,
-            bound=forward.bound
+            bound=forward.bound,
         )
 
     @property
@@ -556,8 +572,9 @@ class InverseCoordinatesField(
 #   HELPERS
 # ----------------------------------------------------------------------
 
+
 def _inv_disp(
-    disp: ArrayProtocol, coeff: bool=False, **options
+    disp: ArrayProtocol, coeff: bool = False, **options
 ) -> ArrayProtocol:
     if disp is None:
         return None
@@ -572,7 +589,7 @@ def _inv_disp(
 
 
 def _inv_coords(
-    coords: ArrayProtocol, coeff: bool=False, **options
+    coords: ArrayProtocol, coeff: bool = False, **options
 ) -> ArrayProtocol:
     if coords is None:
         return None
