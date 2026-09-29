@@ -6,9 +6,33 @@ __all__ = [
     "InterpolationOrder",
     "OrientationType",
     "AnatomicalOrientationValue",
+    "SimplifyPolicy",
 ]
 
 from brainhops._core.enum import IntEnum, StrEnum
+
+
+class SimplifyPolicy(StrEnum):
+    """How hard a transformation may be looked at, and therefore how far it
+    may be simplified.
+
+    * `none` -- declared type only: nothing is inspected, nothing is
+      rewritten.
+    * `analytic` -- structure only: `None` parameters, array shapes, axis
+      lists and wrapper contents are read; no value is read and no lazy
+      inverse is materialized. Invertibility, injectivity and surjectivity
+      of a matrix transformation are *assumed from its shape* at this level
+      (a square matrix is presumed invertible, a wide one surjective, a tall
+      one injective).
+    * `numeric` -- values too: zero tests, diagonality, orthogonality, rank;
+      a typed inverse may be materialized when a leaf is downcast. Rank
+      replaces the analytic shape assumption, so a square singular matrix is
+      *not* invertible here.
+    """
+
+    none = "none"
+    analytic = "analytic"
+    numeric = "numeric"
 
 
 # ruff: disable[E501]

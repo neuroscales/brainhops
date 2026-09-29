@@ -17,7 +17,9 @@ from .base import Transformation
 from .concrete import Affine, CoordinatesField, DisplacementField, Identity
 from .errors import ConversionError
 from .inverse import Inverse
-from .sequence import ImmutableSequence, ModeLike, Sequence
+from .modes import ModeLike
+from .sequence import ImmutableSequence, Sequence
+from .simplify import SimplifyLike
 
 # typing
 SINGLE_SCALE = tx.TypeVar("SINGLE_SCALE", covariant=True)
@@ -152,7 +154,7 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         self,
         mode: tx.Optional[ModeLike] = None,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         """Compute the field as a plain transformation.
 

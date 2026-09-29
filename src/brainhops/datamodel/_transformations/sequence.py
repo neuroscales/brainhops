@@ -19,30 +19,20 @@ from .concrete import (
     CoordinatesField,
     DisplacementField,
     Identity,
-    is_identity,
 )
 from .errors import CompositionError
-
-# `_cancels` is the O(1), identity-only cancel test. It lives in `inverse`,
-# next to the `Inverse` class it reads, and is used here by `_annihilates`.
-from .inverse import Inverse, _cancels
+from .inverse import Inverse
 from .meta import SubspaceTransformation
-
-# The mode types and helpers live in their own module so that `base`,
-# `inverse` and `meta` can import them at the top level without the
-# `sequence` <-> `base` import cycle. They are re-exported here because
-# other modules (and the package `__init__`) import `ModeLike` from
-# `sequence`.
-from .modes import (  # noqa: F401
+from .modes import (
+    Family,
     ModeLike,
-    _ensure_proper_modes,
-    _is_proper_mode,
-    _matches_mode,
-    _mode_admits,
-    _mode_children,
-    _ModePair,
+    is_family,
+    mode_children,
+    normalize_modes,
 )
 from .registries import register_sequence
+from .simplify import SimplifyLike, SimplifyTable
+from .simplify import simplify as _simplify
 
 
 class SequenceMixin(AbcSequence):
@@ -103,6 +93,7 @@ class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
         self.transformations.remove(value)
 
 
+@register_sequence
 class Sequence(SequenceMixin, Transformation):
     """A sequence of transformations.
 
@@ -120,7 +111,7 @@ class Sequence(SequenceMixin, Transformation):
         * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    parameter_names: tx.ClassVar[str] = "transformations"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("transformations",)
 
     # --- attributes ---------------------------------------------------
 
@@ -167,73 +158,78 @@ class Sequence(SequenceMixin, Transformation):
     # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
-        cls = type(self)
+        # NOTE
+        #   Not all sequence subclasses can contain their inverse.
+        #   We therefore return an exact `Sequence`, rather than using
+        #   `type(self)`.
         if self.transformations is None:
-            return cls(input=self.output, output=self.input)
-        # Only the endpoints this sequence was *given* are carried over,
-        # swapped. Reading `self.output`/`self.input` would hand the
-        # derived values to the constructor, which stores them as
-        # declared ones; the reversed children derive the same answer
-        # anyway.
-        return cls(
+            return Sequence(input=self.output, output=self.input)
+        return Sequence(
             transformations=[
                 t.inverse(compute=compute, **kwargs)
                 for t in reversed(self.transformations)
             ],
-            input=getattr(self, "_output", None),
-            output=getattr(self, "_input", None),
+            # NOTE
+            #   we carry over the declared (private) endpoints, not the
+            #   derived (public) ones, so that the latter keep being
+            #   derived in the inverse object.
+            input=self._output,
+            output=self._input,
         )
 
     def compute(
         self,
-        mode: tx.Optional[ModeLike] = None,
+        mode: ModeLike = True,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> Transformation:
         """
-        Compute the resulting transform of the sequence of transformations.
+         Compute the resulting transform of the sequence of transformations.
 
-        If all transformations in the sequence are affine-like transformations,
-        `compute()` returns an affine-like transform.
+         Assuming that `mode=True`:
 
-        If the first (= rightmost) transform in the sequence is a
-        coordinate field, `compute()` returns a coordinate field.
+         * If all transformations in the sequence are affine-like
+           transformations, `compute()` returns an affine-like transform.
 
-        If the first (= rightmost) transform in the sequence is an
-        affine-like transform, and the sequence contains at least one
-        non-affine-like transform, `compute()` returns a sequence of two
-        transformations:
-        1. the composition of all affine-like transformations that appear
-           before the first non-affine-like transform in the sequence, and
-        2. the composition of all transformations in the sequence, starting
-           from the first non-affine-like transform in the sequence.
+        * If the first (= rightmost) transform in the sequence is a
+           coordinate field, `compute()` returns a coordinate field.
 
-        A sequence may contain a stored field that no sampling domain
-        precedes. Computing that sequence folds the rest of the sequence
-        into the field and returns a field, rather than sampling the field
-        on a grid. The returned field is exact within the field of view of
-        the stored field. Outside that field of view the result is an
-        approximation, because the boundary condition extrapolates the
-        coordinates that fall beyond the grid. A sequence that instead
-        begins with a sampling domain evaluates the field on that domain,
-        and its result is exact everywhere. Reslicing an image and
-        [`Points.compute`][] both begin with such a domain.
+         * If the first (= rightmost) transform in the sequence is an
+           affine-like transform, and the sequence contains at least one
+           non-affine-like transform, `compute()` returns a sequence of two
+           transformations:
 
-        Parameters
-        ----------
-        mode : [list of] str, optional
-            Types of transformations to compute.
-            * If `None` (default): compute all transformations in the sequence.
-            * If the name of a transformation type: compute only consecutive
-              sequences of transformations that match the specified type.
+           1. the composition of all affine-like transformations that
+              appear before the first non-affine-like transform in the
+             sequence, and
+           2. the composition of all transformations in the sequence,
+              starting from the first non-affine-like transform in the
+              sequence.
+
+         Parameters
+         ----------
+         mode : [list of] name or type, optional
+             Kinds of transformations to compose.
+             * If `True` (default): compose every kind in the sequence.
+             * If `False`: compose nothing (simplify-only).
+             * If a (list of) transformation type(s): compose only pairs
+               of transformations of these kinds.
+         simplify : simplify policy, default="analytic"
+             Whether to simplify sub-transformations prior to composition,
+             and how hard to try to simplify them.
+             * `"analytic"` (the default) looks at the type structure only;
+             * `"numeric"` looks at the numeric values of the transformation;
+             * `False`/`"none"`/`None` disables simplification.
         """
-        modes = _ensure_proper_modes(mode)
+        modes = normalize_modes(mode)
+        policy = SimplifyTable.from_like(simplify)
         if not modes:
-            return self  # No-op
-        result = _compute_sequence(self, mode=modes)
-        if simplify:
-            result = _simplify_result(result)
-        return result
+            # `mode=False` (compose nothing): simplification alone. Each
+            # leaf is downcast per its policy and each free pair collapses,
+            # but nothing is composed, bridged or materialized -- this is
+            # exactly what `simplify()` does.
+            return _simplify(self, policy=policy)
+        return _compute_sequence(self, modes, policy)
 
     def _flattened(self) -> tx.Self:
         # Flatten nested sequences into a single sequence, and propagate
@@ -257,10 +253,7 @@ class Sequence(SequenceMixin, Transformation):
                 flattened.extend(t._flattened().transformations or [])
             else:
                 flattened.append(t)
-        return replace(self, transformations=flattened)
-
-
-register_sequence(Sequence)
+        return self.to(transformations=flattened)
 
 
 class MutableSequence(MutableSequenceMixin, Sequence):
@@ -324,172 +317,95 @@ class ImmutableSequence(Sequence):
 # ----------------------------------------------------------------------
 
 
-def _simplify_result(result: Transformation) -> Transformation:
-    # Apply the numeric downcast (`simplify`) to a computed result. The
-    # kind-checks are run on each leaf so the cheapest compatible type is
-    # picked, without recomposing (which would ignore the requested mode).
-    # This is why the general path cannot express it: routing the result
-    # back through `compute()` with a no-op mode would either return early
-    # (an empty mode is a no-op) or, under `mode=None`, recompose across the
-    # boundaries the requested mode was told to keep.
-    #
-    # A surviving `CartesianField` is left untouched. A grid is the
-    # identity map over its coordinates, so the numeric checks would
-    # downcast it to `Identity` and drop the sampling domain it defines.
-    # `_compute_sequence` only ever leaves a grid in a leading, trailing or
-    # standalone position -- all sampling domains -- so no grid that
-    # reaches here may be simplified away.
-    if isinstance(result, Sequence):
-        return replace(
-            result,
-            transformations=[
-                _simplify_leaf(t) for t in (result.transformations or [])
-            ],
-        )
-    return _simplify_leaf(result)
-
-
-def _simplify_leaf(t: Transformation) -> Transformation:
-    # Downcast a single computed leaf, preserving a grid (see above).
-    if isinstance(t, CartesianField):
-        return t
-    return t.compute(simplify=True)
-
-
-def _composes_under(t: Transformation, mode: _ModePair) -> bool:
-    # Whether the run loop should hand `t` to `compose` under this mode.
-    # A transform that plainly matches the mode composes. A non-interpolating
-    # subspace wrapper (one that merely lifts an affine, or the like, into a
-    # larger space) also composes when its inner transform is admitted by the
-    # mode: the ndim test is then re-run on the wrapper's own (full-space)
-    # endpoints. An interpolating subspace wraps a field and is never seen
-    # through here, so a restrictive mode leaves two field-wrappers separate
-    # rather than resampling one through the other.
-    if _matches_mode(t, mode):
-        return True
-    if isinstance(t, SubspaceTransformation) and not _interpolates(t):
-        cls, ndim = mode
-        inner = t.transformation
-        if inner is None or isinstance(inner, cls):
-            # rerun only the ndim test on the wrapper's endpoints
-            return _matches_mode(t, (type(t), ndim))
-    return False
-
-
 def _compute_sequence(
     seq: Sequence,
-    mode: tx.List[_ModePair],
-    memo: tx.Optional[tx.Set[_ModePair]] = None,
+    modes: tx.List[Family],
+    policy: SimplifyTable,
 ) -> Transformation:
-    # We optimize by recursively finding the subclasses of all the modes
-    # specified. This allows us to combine similar transformations first
-    # before combining other transformations. For example say the user
-    # lists Affine as the mode. This will then recursively call this
-    # function with all subclasses then all subclasses of subclasses etc.
-    # in a depth first search fashion. This means if there are translations
-    # that are next to each other in the sequence it will combine the
-    # translations before combining any of the affines.
+    """Compute a sequence: bridge, simplify, compose -- to a fixpoint.
 
-    # --- If we are called from the public method, `mode` is a `list`.
-    # > Simplify to a fixpoint, then recurse per mode with a memo.
-    if memo is None:
-        # Each simplification pass can expose a new adjacent
-        # transform/inverse pair. Dropping a strictly interior grid
-        # can make a pair adjacent, and so can composing a run. So the
-        # cancellation runs *after* the grids are dropped, and re-runs
-        # after each composition pass, until a pass no longer shrinks the
-        # sequence. Counts are measured on the fully unnested element list,
-        # so the loop terminates even when a composition folds into a
-        # nested sequence.
-        while True:
-            # Flatten without rebuilding any endpoint, so a transform stays
-            # the same object that its inverse names. Cancellation tests
-            # that link by identity, and `_flattened` (used below to
-            # propagate coordinate systems) would rebuild the first and
-            # last elements and break it.
+    The three steps are ordered by what each of them is allowed to cost.
 
-            # Reconcile any boundary where two adjacent transforms disagree
-            # on the system they share, before those transforms are
-            # flattened and composed. The composers assume compatible
-            # systems, so the bridge that reorders, rescales, or flips the
-            # mismatched axes is inserted here. Bridging runs on the direct
-            # children, because a nested sequence carries its endpoint
-            # systems on itself and flattening would drop them. A bridge is
-            # built from exactly invertible pieces, so two opposite bridges
-            # cancel and simplify away.
-            bridged = _insert_bridges(seq.transformations or [])
-            flat = _unnest(bridged)
-            before = len(flat)
-            seq = replace(seq, transformations=flat)
-            if not flat:
-                # Empty sequence -> return
-                # TODO/FIXME: return an Identity instead?
-                return seq
+    1. **Bridge.** Reconcile every boundary where two adjacent transforms
+       disagree on the system they share. The composers assume compatible
+       systems, so the bridge that reorders, rescales or flips the
+       mismatched axes is inserted here -- the one step that *adds* an
+       element, which is why it belongs to computation and not to
+       simplification. It runs first because a bridge reads its neighbours:
+       a reversed array-index axis needs the extent that an adjacent grid
+       carries, and that grid is exactly what step 2 may drop. Bridging
+       reads no parameter and materializes nothing, so running it ahead of
+       the cancellation below costs nothing. A bridge is built from exactly
+       invertible pieces, so two opposite bridges cancel and simplify away
+       on the next round.
 
-            # Factor away any strictly interior grid before composing. An
-            # interior `CartesianField` is the identity map over its grid,
-            # and its neighbours overwrite those coordinates, so it is
-            # redundant. The first and last elements define the sampling
-            # domain and are left in place.
-            seq = _drop_interior_grids(seq)
+    2. **Simplify.** Downcast every leaf and collapse every pair that
+       collapses for free. This runs before every composition, because it
+       is the only step that can make a lazy inverse disappear without
+       paying for it: once a composer has folded a neighbour into a field,
+       the pair that would have cancelled is gone. Simplification never
+       lengthens the sequence.
 
-            # Identity-based cancellation, run as a single stack sweep before
-            # any typed composition. A transform placed next to its own lazy
-            # inverse annihilates it, and so does a subspace-wrapped
-            # transform placed next to its own subspace-wrapped inverse; both
-            # cancel by identity, materializing no field. Each removal can
-            # expose a new adjacent pair, so the sweep keeps a stack and
-            # cancels the top of the stack against the next transform.
-            #
-            # This runs *before* composition, and not after it, because
-            # composition must not materialize a neighbour before an
-            # adjacent pair has cancelled: otherwise `grid @ affine` folds
-            # into a field before an adjacent `Sub(warp) @ Sub(warp^-1)` pair
-            # can cancel, and the warp is resampled needlessly (or, for a
-            # field that cannot be inverted, at all).
-            flat = _unnest(seq.transformations)
-            stack: tx.List[Transformation] = []
-            cancelled = False
-            for t in flat:
-                if stack and _annihilates(stack[-1], t):
-                    stack.pop()
-                    cancelled = True
-                else:
-                    stack.append(t)
-            if cancelled:
-                if not stack:
-                    # A sequence that cancels entirely is the identity from
-                    # the input of its first element to the output of its
-                    # last. The element endpoints are used, falling back to
-                    # the sequence's own where an element leaves one unset.
-                    # `or` relies on a `CoordinateSystem` never being falsy: it
-                    # defines no `__bool__`/`__len__`, so it is always truthy
-                    # and `or` selects the element endpoint when set, the
-                    # sequence's otherwise. A future `__len__` on
-                    # `CoordinateSystem` would make an empty system falsy and
-                    # would need this revisited.
-                    first, last = flat[0], flat[-1]
-                    return Identity(
-                        input=first.input or seq.input,
-                        output=last.output or seq.output,
-                    )
-                seq = replace(seq, transformations=stack)
+    3. **Compose.** Fuse each run of adjacent transforms the mode admits,
+       reading their parameters.
 
-            # Propagate the sequence's own endpoints onto its first and
-            # last elements, but only when it carries any, so the identity
-            # link is preserved in the common case of an endpoint-less
-            # composition.
-            if seq.input is not None or seq.output is not None:
-                seq = seq._flattened()
-            submemo: tx.Set[_ModePair] = set()
-            for submode in mode:
-                seq = _compute_sequence(seq, submode, memo=submemo)
-                if not isinstance(seq, Sequence):
-                    return seq
-            if len(_unnest(seq.transformations)) >= before:
-                # No pass shrank the sequence, so a further cancellation
-                # cannot either. Nothing left to simplify.
-                return seq
+    A round that does not shorten the sequence cannot be improved on by
+    another, so the loop stops there.
+    """
+    while True:
+        # --- 1. bridge ---
+        # Bridging runs on the direct children, because a nested sequence
+        # carries its endpoint systems on itself and flattening would drop
+        # them. Flattening then happens without rebuilding any endpoint, so
+        # a transform stays the same object that its inverse names and the
+        # cancellation below keeps linking the two by identity.
+        flat = _unnest(_insert_bridges(seq.transformations or []))
+        if not flat:
+            return Identity(input=seq.input, output=seq.output)
+        seq = seq.to(transformations=flat)
+        before = len(flat)
+
+        # Propagate the sequence's own endpoints onto its first and last
+        # elements, but only when it carries any, so the identity link is
+        # preserved in the common case of an endpoint-less composition.
+        if seq.input is not None or seq.output is not None:
+            seq = seq._flattened()
+
+        # --- 2. simplify ---
+        simplified = _simplify(seq, policy=policy)
+        if not isinstance(simplified, Sequence):
+            # It collapsed to a single transform: nothing left to compose.
+            return simplified
+        seq = simplified
+
+        # --- 3. compose ---
+        memo: tx.Set[Family] = set()
+        for submode in modes:
+            result = _compose_mode(seq, submode, memo)
+            if not isinstance(result, Sequence):
+                # A single transform: give it one last downcast, since the
+                # products of a composition are exactly the leaves the
+                # simplify pass above has not seen.
+                return _simplify(result, policy=policy)
+            seq = result
+
+        if len(_unnest(seq.transformations)) >= before:
+            # No pass shrank the sequence, so a further round cannot
+            # either. One last simplify pass over the composition products.
+            return _simplify(seq, policy=policy)
+
+
+def _compose_mode(
+    seq: Sequence,
+    mode: Family,
+    memo: tx.Set[Family],
+) -> Transformation:
+    # Compose the runs a single mode admits, depth first.
+    #
+    # We optimize by recursively descending into the subclasses of the
+    # mode. This combines similar transformations first: given `mode
+    # = affine`, two adjacent translations are folded into one translation
+    # before anything is widened to an affine.
 
     # --- Flatten sequence
     if not _is_flat(seq):
@@ -499,15 +415,13 @@ def _compute_sequence(
     if not seq.transformations:
         return seq
 
-    # --- Otherwise, `mode` is a single mode
-    # > if the mode has been seen, return the sequence as is
+    # --- A mode already visited has nothing left to fold
     if mode in memo:
         return seq
 
-    # --- Else compute all children of the mode
-    children = _mode_children(mode)
-    for child in children:
-        seq = _compute_sequence(seq, child, memo=memo)
+    # --- First, fold every child mode (finer kinds first)
+    for child in mode_children(mode):
+        seq = _compose_mode(seq, child, memo)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -521,21 +435,25 @@ def _compute_sequence(
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
 
-    # Compose any consecutive sequence that composes under the mode
+    # Compose any consecutive run that matches the mode. `is_family`
+    # sees through wrappers via `is_kind` (analytic), so a subspace that
+    # embeds an affine matches `mode="affine"` and composes with its
+    # neighbours.
     while inputs:
         item = inputs.pop(0)
-        if _composes_under(item, mode):
-            while inputs and _composes_under(inputs[0], mode):
+        if is_family(item, mode):
+            while inputs and is_family(inputs[0], mode):
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
                     # `compose` is mode-free: the gate that decides which
-                    # adjacent transforms are handed to it is `_composes_under`
+                    # adjacent transforms are handed to it is `is_family`
                     # above, not the composer.
                     item = compose(next_input, item)
                 except CompositionError:
-                    # NOTE(YB):
-                    # When does this happen? When we don't know how to adapt?
+                    # The two are of admitted kinds but cannot be combined
+                    # (e.g. two subspace transforms whose axes do not line
+                    # up). Keep them side by side and carry on.
                     outputs.append(item)
                     item = next_input
         outputs.append(item)
@@ -546,51 +464,19 @@ def _compute_sequence(
     return Sequence(transformations=outputs)
 
 
-def _drop_interior_grids(seq: Sequence) -> Sequence:
-    """Remove every strictly interior grid from a sequence.
-
-    A [`CartesianField`][] is the identity map over its grid. A grid that
-    sits strictly between two other transformations is therefore
-    redundant. The transformation before it and the transformation after
-    it overwrite its coordinates, so `A @ grid @ B` computes the same
-    field as `A @ B`. Each such interior grid is removed, which lets the
-    two neighbours compose directly.
-
-    The first element, the last element, and a standalone element are left
-    in place. A grid in one of those positions defines the sampling domain
-    onto which data is resampled, and removing it would lose that domain.
-    A sequence of one or two transformations has no interior, so it is
-    returned unchanged.
-
-    Only a [`CartesianField`][] is removed, because only a grid is the
-    identity map by construction. A general field of coordinates or a
-    field of displacements carries its own values, which the neighbours do
-    not reproduce, so such a field is kept wherever it appears.
-    """
-    xforms = seq.transformations or []
-    if len(xforms) <= 2:
-        return seq
-    kept = [xforms[0]]
-    for elem in xforms[1:-1]:
-        if isinstance(elem, CartesianField) and is_identity(
-            elem, compute=True
-        ):
-            continue
-        kept.append(elem)
-    kept.append(xforms[-1])
-    if len(kept) == len(xforms):
-        return seq
-    return replace(seq, transformations=kept)
+# ----------------------------------------------------------------------
+#    UTILS
+# ----------------------------------------------------------------------
 
 
 def _normalize_inverse(t: Transformation) -> Transformation:
-    # Expand a generic `Inverse` front-door into the typed inverse of the
-    # transform it holds, so the sequence engine computes it and
+    # Expand a generic `Inverse` front-door into the typed inverse of
+    # the transform it holds, so the sequence engine computes it and
     # cancellation recognizes it like any other inverse. An endpoint
-    # override on the `Inverse` is carried onto the result. A typed inverse
-    # (its `_inverseof` is set) is already such a result and is left as is:
-    # `Inverse(forward=X)` becomes `X.inverse()`, which for a field or an
-    # affine is the typed inverse whose `forward` is `X`.
+    # override on the `Inverse` is carried onto the result. A typed
+    # inverse (its `_inverseof` is set) is already such a result and is
+    # left as is: `Inverse(forward=X)` becomes `X.inverse()`, which for
+    # a field or an affine is the typed inverse whose `forward` is `X`.
     if not isinstance(t, Inverse) or t._inverseof is not None:
         return t
     if t.forward is None:
@@ -604,72 +490,6 @@ def _normalize_inverse(t: Transformation) -> Transformation:
     return inv.to(**kwargs) if kwargs else inv
 
 
-def _annihilates(first: Transformation, second: Transformation) -> bool:
-    # Whether `[first, second]` (with `first` applied first) reduces to the
-    # identity without materializing any field. This is the predicate the
-    # single stack sweep in `_compute_sequence` cancels pairs by.
-    #
-    # A transform placed next to its own lazy inverse annihilates it, named
-    # by identity through `forward` (see `_cancels`). And two subspace
-    # transforms over the same axes annihilate when the axes chain, the net
-    # map introduces no reindex (the axes the first reads are the axes the
-    # second writes), and their inner transforms compose to the identity:
-    # either because one inner is the lazy inverse of the other, or because
-    # both inners are already the identity. This is exactly the case that
-    # lets a subspace-wrapped field meet its own subspace-wrapped inverse and
-    # cancel, rather than the field being resampled through a neighbour first.
-    if _cancels(first, second):
-        return True
-    if not (
-        isinstance(first, SubspaceTransformation)
-        and isinstance(second, SubspaceTransformation)
-    ):
-        return False
-    if (
-        first.output_axes is None
-        or second.input_axes is None
-        or list(first.output_axes) != list(second.input_axes)
-    ):
-        return False
-    # A *reindexing* inverse pair -- whose axes chain (checked above) but
-    # whose net map still permutes axes (`first.input_axes` !=
-    # `second.output_axes`) -- is deliberately NOT annihilated here. It does
-    # not reduce to the bare identity (it is a pure axis reindex), so it is
-    # left to the run loop to fold into a single reindexing subspace
-    # transform; do not "fix" it into this sweep.
-    same_axes = (first.input_axes is None) == (
-        second.output_axes is None
-    ) and (
-        first.input_axes is None
-        or list(first.input_axes) == list(second.output_axes)
-    )
-    if not same_axes:
-        return False
-    inner_first = first.transformation
-    inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
-        return True
-    # `compute=False` only: this sweep is the always-on analytic pass, run for
-    # every adjacent subspace pair on every fixpoint iteration. A numeric
-    # `compute=True` check would scan a whole displacement field
-    # (`(field == 0).all()`) each time; that belongs to the later per-type
-    # policy, not here. Nothing depends on the numeric branch -- the
-    # `transformation=None` case is `inner is None`, and the lazy-inverse case
-    # is `_cancels` above.
-    first_identity = inner_first is None or is_identity(
-        inner_first, compute=False
-    )
-    second_identity = inner_second is None or is_identity(
-        inner_second, compute=False
-    )
-    return first_identity and second_identity
-
-
-# ----------------------------------------------------------------------
-#    UTILS
-# ----------------------------------------------------------------------
-
-
 def _is_flat(self: Sequence) -> bool:
     # Check if the sequence is flat (does not contain any nested sequences).
     if self.transformations is None:
@@ -679,10 +499,10 @@ def _is_flat(self: Sequence) -> bool:
 
 def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
     # Flatten nested sequences into a single list, without touching the
-    # endpoints of any transform (unlike `_flatten`, which may rebuild the
-    # first and last transform to propagate coordinate systems, and in
-    # doing so would read a lazy field). A generic `Inverse` front-door is
-    # expanded to its typed inverse along the way.
+    # endpoints of any transform (unlike `_flatten`, which may rebuild
+    # the first and last transform to propagate coordinate systems, and
+    # in doing so would read a lazy field). A generic `Inverse`
+    # front-door is expanded to its typed inverse along the way.
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)
@@ -694,12 +514,14 @@ def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
 
 
 def _interpolates(xform: Transformation) -> bool:
-    # Whether applying a transform resamples data through a spline. A
-    # transform interpolates when, looking past a sequence, a subspace
+    # Whether applying a transform resamples data through a spline.
+    #
+    # A transform interpolates when, looking past a sequence, a subspace
     # wrapper, and an inverse, it reaches a displacement field or a
-    # coordinate field that is not a plain grid. A `CartesianField` is the
-    # identity map over its grid and reads no value off it, so it does not
-    # interpolate. An affine, a permutation, and the like never interpolate.
+    # coordinate field that is not a plain grid. A `CartesianField` is
+    # the identity map over its grid and reads no value off it, so it
+    # does not interpolate. An affine, a permutation, and the like never
+    # interpolate.
     if xform is None:
         return False
     if isinstance(xform, Inverse):
@@ -723,7 +545,7 @@ def _interpolates(xform: Transformation) -> bool:
 def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
     # Add `nxt` to the running list `spliced`, reconciling the boundary it
     # shares with the transform already at the end of the list. The adaptor
-    # returns the pair with whatever bridge or subspace lift the boundary
+    # returns the pair with whatever bridge or subspace embedding the boundary
     # needs already placed between them. The two transforms it contains are
     # never rebuilt, so a leaf stays the same object its inverse names and
     # the adjacent-inverse cancellation still links the two by identity.
@@ -735,9 +557,9 @@ def _splice(spliced: tx.List[Transformation], nxt: Transformation) -> None:
         registries.ADAPT(prev, nxt, allow_type_grouped_positional=True)
     )
     if pieces[0] is not prev:
-        # `prev` was lifted into the fuller space of `nxt`, so the piece
+        # `prev` was embedded in the fuller space of `nxt`, so the piece
         # that replaces it now presents a different left boundary. The old
-        # `prev` is dropped and the lifted piece is re-spliced against
+        # `prev` is dropped and the embedded piece is re-spliced against
         # `prev`'s own left neighbour, which may in turn need reconciling.
         spliced.pop()
         _splice(spliced, pieces[0])

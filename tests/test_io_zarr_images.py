@@ -31,16 +31,18 @@ from brainhops.io.images.zarr import (
 
 abczarr = pytest.importorskip("abczarr")
 
-# The zarr I/O runs through abczarr's zarr-python driver, and that driver
-# requires zarr-python 3, which itself requires Python 3.11 or newer. On an
-# older interpreter the driver cannot be installed at all, so the whole
-# feature is unavailable there. These tests are gated on the interpreter
-# version, not on driver presence: on every supported interpreter a driver
-# is guaranteed by the test dependencies, so a missing driver there is a
-# real failure rather than a skip.
+# Reading an OME-Zarr displacement/coordinate field identifies the vector
+# component axis from the field array's OME metadata or its zarr v3
+# `dimension_names`. Only zarr-python 3 persists those, and it requires
+# Python 3.11 or newer; the older stacks available below 3.11 (zarr-python 2
+# with no `dimension_names`, or the tensorstore driver, which drops it) can
+# store a bare field array but not the axis metadata the reader needs, so
+# the field readers cannot round-trip there. The module is gated on the
+# interpreter version, matching how the OME-Zarr feature is scoped.
 pytestmark = pytest.mark.skipif(
     sys.version_info < (3, 11),
-    reason="zarr I/O requires zarr-python 3, which needs Python 3.11 or newer",
+    reason="OME-Zarr field metadata needs zarr-python 3, which needs "
+    "Python 3.11 or newer",
 )
 
 

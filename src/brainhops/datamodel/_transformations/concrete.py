@@ -19,52 +19,40 @@ from numbers import Integral, Real
 import typing_extensions as tx
 
 # core
-from brainhops._core.typing import ArrayProtocol, npmatrix, npvector
+from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
 
 # api
 from brainhops.backends import get_array_backend
-from brainhops.datamodel import hierarchy
+from brainhops.datamodel import kinds
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 
 # transformations
 from . import registries
 from .base import Transformation
-from .meta import SubspaceTransformation
-from .modes import ModeLike, _ensure_proper_modes, _mode_admits
-
-# typing
-if tx.TYPE_CHECKING:
-    from .inverse import Inverse
+from .check import is_kind
+from .modes import ModeLike
+from .simplify import SimplifyLike
+from .simplify import simplify as _simplify
 
 
-class _LazyInverseMixin:
-    # The typed inverse that represents the inverse of this type. Each
-    # `Inverse` subclass names the forward type it inverts in its
-    # `_inverseof`, and hands that type this back-pointer as it is
-    # created, so the pairing is declared once and read back by plain
-    # attribute lookup. Inheritance then serves a refinement for free: a
-    # reader's `LPSToVoxel(Affine)` finds `InverseAffine` on `Affine`, and
-    # the most derived base wins, since a `MyRotation(Rotation)` finds
-    # `Rotation`'s `InverseRotation` before `Affine`'s. A forward type
-    # that has no typed inverse -- or that opts out of its base's by
-    # setting this back to `None` in its own body -- raises instead.
-    _inverse_type: tx.ClassVar[tx.Optional[tx.Type["Inverse"]]] = None
+class ConcreteTransformation(Transformation):
+    """Base class for concrete transformations that hold a parameter."""
 
-    # Some transformation types come in pairs that map the same two
-    # spaces in opposite directions -- `VoxelToLPS` and `LPSToVoxel` pin
-    # their endpoints, and each one's name states a direction. The
-    # inverse of such a type is not itself: it is the other half of the
-    # pair. The pairing is declared once, on either half, by naming the
-    # other in `_reverseof`; the hook below resolves it both ways into
-    # `_reverse_type`, which is what the inversion machinery reads.
+    # Some transformation types come in pairs that map the same two spaces
+    # in opposite directions -- `VoxelToLPS` and `LPSToVoxel` pin their
+    # endpoints, and each one's name states a direction. The inverse of such
+    # a type is not itself: it is the other half of the pair. The pairing is
+    # declared once, on either half, by naming the other in `_reverseof`;
+    # the hook below resolves it both ways into `_reverse_type`, which is
+    # what `inverse()` reads.
     #
-    # This is a different relation from `_inverse_type` above, and the
-    # two are not interchangeable. `_inverse_type` is the *lazy wrapper*
-    # that stands for an inversion not yet carried out, and it wears no
-    # direction of its own. `_reverse_type` is a concrete forward type
-    # that maps the opposite direction, so it is what an inversion
-    # resolves *to*. A type with no pair -- the overwhelming majority --
-    # leaves this `None` and inverts to itself, as it always has.
+    # This is not the same relation as the wrapper that stands for an
+    # inversion not yet carried out. That wrapper is an `Inverse`, picked
+    # polymorphically from the transform handed to it, and it wears no
+    # direction of its own; `_reverse_type` is a concrete forward type that
+    # maps the opposite direction, so it is what an inversion resolves *to*.
+    # A type with no pair -- the overwhelming majority -- leaves this `None`
+    # and inverts to itself.
     _reverseof: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
     _reverse_type: tx.ClassVar[tx.Optional[tx.Type[Transformation]]] = None
 
@@ -73,57 +61,27 @@ class _LazyInverseMixin:
         # declaration pairs the two both ways: the declaring class is
         # pointed at the type it names, and that type is pointed back.
         # Declaring it on the second half of the pair to be defined is
-        # therefore enough, which is also the only place it can be
-        # declared -- the first half cannot name a class that does not
-        # exist yet.
+        # therefore enough, which is also the only place it can be declared
+        # -- the first half cannot name a class that does not exist yet.
         super().__init_subclass__(**kwargs)
         # Read from `cls.__dict__`, never `getattr`: only a class that
-        # declares `_reverseof` in its own body claims a pair. An
-        # inherited one would let a refinement such as
-        # `class MyLPSToVoxel(LPSToVoxel)` silently steal `VoxelToLPS`'s
-        # half of the pairing, and would also let the throwaway stand-in
-        # classes `Magic` builds while reading the MRO -- which reach
-        # this hook too -- do the same. A refinement instead inherits the
-        # pairing of its base, and reverses to that base's opposite half
-        # unless it declares a `_reverseof` of its own.
+        # declares `_reverseof` in its own body claims a pair. An inherited
+        # one would let a refinement such as `class MyLPSToVoxel(LPSToVoxel)`
+        # silently steal `VoxelToLPS`'s half of the pairing, and would also
+        # let the throwaway stand-in classes `Magic` builds while reading the
+        # MRO -- which reach this hook too -- do the same. A refinement
+        # instead inherits the pairing of its base, and reverses to that
+        # base's opposite half unless it declares a `_reverseof` of its own.
         other = cls.__dict__.get("_reverseof")
         if other is not None:
             cls._reverse_type = other
             other._reverse_type = cls
 
-    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
-        # The shared `inverse()` of every forward type that defers its
-        # inversion to a type-transparent `Inverse` wrapper. A transformation
-        # with an unset parameter has nothing to invert, so its inverse is the
-        # plain endpoint-swapped transform. Otherwise the wrapper for this type
-        # is built, holding the transform as its `forward` and materializing
-        # the inverse only when its parameter is read or it is computed.
-        cls = type(self)
-        param = cls.parameter_names
-        if getattr(self, param) is None:
-            # Nothing to invert, so the inverse is the plain
-            # endpoint-swapped transform -- under the type that maps the
-            # swapped direction, which for a paired type is its reverse.
-            return (cls._reverse_type or cls)(
-                input=self.output, output=self.input
-            )
-        wrapper = cls._inverse_type
-        if wrapper is None:
-            raise TypeError(f"{cls.__name__} has no typed inverse.")
-        obj = wrapper(forward=self, input=self.output, output=self.input)
-        if compute:
-            obj = obj.compute(**kwargs)
-        return obj
-
-
-class ConcreteTransformation(Transformation):
-    """Base class for concrete transformations that hold a parameter."""
-
     def compute(
         self,
-        mode: tx.Optional[ModeLike] = None,
+        mode: ModeLike = True,
         *,
-        simplify: bool = False,
+        simplify: SimplifyLike = "analytic",
     ) -> tx.Self:
         """
         Compute the transformation, downcasting it to the cheapest
@@ -136,46 +94,57 @@ class ConcreteTransformation(Transformation):
 
         Parameters
         ----------
-        mode : [list of] str or type, optional
-            Which kinds of transformations to materialize. `None` (the
-            default) admits every kind. If a `mode` is given and this leaf
-            is not admitted by it, the leaf is returned unchanged.
-        simplify : bool, default=False
-            Run the numeric kind-checks that downcast the transformation
-            to the cheapest compatible type.
+        mode : [list of] name or type, optional
+            Ignored on a leaf. `mode` gates which kinds *compose*, and a
+            leaf has nothing to compose; its downcast is gated only by
+            `simplify` (simplification is decoupled from the compose mode).
+        simplify : simplify policy, default="analytic"
+            How hard this leaf may be looked at. The resolved
+            [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
+            decides whether the kind-checks run structure-only (`analytic`)
+            or read values (`numeric`), or are skipped entirely (`none`).
         """
-        # A leaf that the requested mode does not admit is left untouched.
-        # This mirrors how the sequence simplifier only composes
-        # transformations that match the mode. The checks and the concrete
-        # types both live in this module, so nothing is imported in the
-        # body.
-        if mode is not None and not _mode_admits(
-            self, _ensure_proper_modes(mode)
-        ):
-            return self
-        checks = [
-            (is_identity, Identity),
-            (is_translation, Translation),
-            (is_scale, Scaling),
-            (is_permutation, Permutation),
-            (is_rotation, Rotation),
-            (is_linear, Linear),
-        ]
-        for check, cls in checks:
-            if check(self, compute=simplify):
-                return self.to(cls)
-        return self
+        return _simplify(self, policy=simplify)
+
+    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
+        # The shared `inverse()` of every forward type that defers its
+        # inversion to a type-transparent `Inverse` wrapper. The wrapper
+        # holds this transform as its `forward` and materializes the
+        # inverse only when its parameter is read or it is computed, so a
+        # transform placed next to its own inverse cancels for free.
+        if self._is_unparameterized():
+            # Nothing to invert: an unset parameter reads as the identity,
+            # whose inverse is itself with the endpoints swapped. Wrapping
+            # it would only defer a computation that does not exist.
+            reverse = type(self)._reverse_type
+            if reverse is not None:
+                # ... except for a paired type, whose swapped direction is
+                # the other half of the pair, not itself.
+                return reverse(input=self.output, output=self.input)
+            return self.to(input=self.output, output=self.input)
+        obj = registries.INVERSE(self)
+        if compute:
+            obj = obj.compute(**kwargs)
+        return obj
+
+    def _is_unparameterized(self) -> bool:
+        # Whether every parameter this transform is defined by is unset.
+        return all(
+            getattr(self, name, None) is None for name in self.data_fields
+        )
 
 
-class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
+class TransformationField(ConcreteTransformation):
     """
-    A field of coordinates defined on a regular grid.
-
-    The input space corresponds to the regular grid on which the
-    coordinates are defined.
+    Base class for dense transformation fields (displacements or coordinates)
     """
 
-    parameter_names: tx.ClassVar[str] = "field"
+    # --- class attributes ---------------------------------------------
+
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+
+    # --- attributes ---------------------------------------------------
 
     field: tx.Annotated[
         tx.Optional[ArrayProtocol],
@@ -208,6 +177,23 @@ class CoordinatesField(_LazyInverseMixin, ConcreteTransformation):
     ] = False
 
 
+class DisplacementField(TransformationField):
+    """
+    A field of displacements defined on a regular grid.
+
+    Both the input and output spaces correspond to the underlying grid.
+    """
+
+
+class CoordinatesField(TransformationField):
+    """
+    A field of coordinates defined on a regular grid.
+
+    The input space corresponds to the regular grid on which the
+    coordinates are defined.
+    """
+
+
 class CartesianField(CoordinatesField):
     """
     An identity transform over a regular grid of coordinates.
@@ -218,16 +204,22 @@ class CartesianField(CoordinatesField):
     and is generated on demand when accessed.
     """
 
+    # --- class attributes ---------------------------------------------
+
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("shape",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+
+    # --- attributes ---------------------------------------------------
+
     shape: tx.Annotated[
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
-    # `field` is computed on demand from `shape` by the property below,
-    # so it is not a stored, constructor-taken field here. Declaring it a
-    # `ClassVar` overrides the inherited init-field from `CoordinatesField`
-    # and keeps `field` out of `__init__`, `fields()` and `replace()`,
-    # while the property keeps serving reads.
-    field: tx.ClassVar[tx.Optional[ArrayProtocol]]
+    # --- derived attributes -------------------------------------------
+    # Mark them as `ClassVar` to keep them out of `__init__`.
+
+    field: Derived[tx.Optional[ArrayProtocol]]
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
@@ -243,59 +235,24 @@ class CartesianField(CoordinatesField):
             )
         return self._field
 
-    def inverse(self) -> tx.Self:
-        # Inverse is itself, with switched input and output.
+    # --- methods ------------------------------------------------------
+
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
+        # A grid is the identity map over its own coordinates, so its
+        # inverse is itself with the endpoints switched. There is nothing
+        # to defer, so `compute` changes nothing.
         cls = type(self)
         return cls(shape=self.shape, input=self.output, output=self.input)
 
 
-class DisplacementField(_LazyInverseMixin, ConcreteTransformation):
-    """
-    A field of displacements defined on a regular grid.
-
-    Both the input and output spaces correspond to the underlying grid.
-    """
-
-    parameter_names: tx.ClassVar[str] = "field"
-
-    field: tx.Annotated[
-        tx.Optional[ArrayProtocol],
-        tx.Doc(
-            "An array of shape `(*shape, ndim)`, where `len(shape) == ndim`"
-        ),
-    ] = None
-
-    order: tx.Annotated[
-        InterpolationOrder, tx.Doc("The spline interpolation order")
-    ] = 1
-
-    bound: tx.Annotated[
-        tx.Union[BoundaryCondition, float],
-        tx.Doc(
-            """
-            The boundary condition used to deal with coordinates outside
-            of the field of view. If a float is given, it is treated as
-            a constant value.
-            """
-        ),
-    ] = BoundaryCondition.nearest
-
-    coeff: tx.Annotated[
-        bool,
-        tx.Doc(
-            """
-            If `True`, the field is treated as a field of spline coefficients,
-            rather than a field if values to interpolate.
-            """
-        ),
-    ] = False
-
-
-@hierarchy.AffineTransformation.register
-class Affine(_LazyInverseMixin, ConcreteTransformation):
+@kinds.Affine.register
+class Affine(ConcreteTransformation):
     """An affine transformation."""
 
-    parameter_names: tx.ClassVar[str] = "matrix"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("homogeneous_matrix",)
+
+    # --- attributes ---------------------------------------------------
 
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
@@ -309,6 +266,8 @@ class Affine(_LazyInverseMixin, ConcreteTransformation):
             """
         ),
     ] = None
+
+    # --- derived attributes -------------------------------------------
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -328,11 +287,13 @@ class Affine(_LazyInverseMixin, ConcreteTransformation):
         return homogeneous_matrix
 
 
-@hierarchy.LinearTransformation.register
-class Linear(_LazyInverseMixin, ConcreteTransformation):
+@kinds.Linear.register
+class Linear(ConcreteTransformation):
     """A linear transformation."""
 
-    parameter_names: tx.ClassVar[str] = "matrix"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+
+    # --- attributes ---------------------------------------------------
 
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
@@ -346,12 +307,14 @@ class Linear(_LazyInverseMixin, ConcreteTransformation):
     ] = None
 
 
-@hierarchy.SpecialOrthogonalTransformation.register
+@kinds.SpecialOrthogonal.register
 class Rotation(Linear):
     """An orthogonal transformation with determinant 1, i.e., a rotation."""
 
     # TODO: Implement Rotation subclasses that use other representations
     # (e.g., quaternions, Euler angles, etc.)
+
+    # --- attributes ---------------------------------------------------
 
     matrix: tx.Annotated[
         tx.Optional[npmatrix[Real]],
@@ -366,11 +329,13 @@ class Rotation(Linear):
     ] = None
 
 
-@hierarchy.Permutation.register
-class Permutation(_LazyInverseMixin, ConcreteTransformation):
+@kinds.Permutation.register
+class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
-    parameter_names: tx.ClassVar[str] = "permutation"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
+
+    # --- attributes ---------------------------------------------------
 
     permutation: tx.Annotated[
         tx.Optional[npvector[Integral]],
@@ -386,11 +351,13 @@ class Permutation(_LazyInverseMixin, ConcreteTransformation):
     ] = None
 
 
-@hierarchy.DiagonalTransformation.register
-class Scaling(_LazyInverseMixin, ConcreteTransformation):
+@kinds.Diagonal.register
+class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
-    parameter_names: tx.ClassVar[str] = "scale"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
+
+    # --- attributes ---------------------------------------------------
 
     scale: tx.Annotated[
         tx.Optional[npvector[Real]],
@@ -404,11 +371,13 @@ class Scaling(_LazyInverseMixin, ConcreteTransformation):
     ] = None
 
 
-@hierarchy.Translation.register
-class Translation(_LazyInverseMixin, ConcreteTransformation):
+@kinds.Translation.register
+class Translation(ConcreteTransformation):
     """A translation."""
 
-    parameter_names: tx.ClassVar[str] = "translation"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
+
+    # --- attributes ---------------------------------------------------
 
     translation: tx.Annotated[
         tx.Optional[npvector[Real]],
@@ -422,7 +391,7 @@ class Translation(_LazyInverseMixin, ConcreteTransformation):
     ] = None
 
 
-@hierarchy.IdentityTransformation.register
+@kinds.Identity.register
 class Identity(ConcreteTransformation):
     """An identity transformation.
 
@@ -430,7 +399,9 @@ class Identity(ConcreteTransformation):
     the input axes to the output axes, while preserving their orders.
     """
 
-    def inverse(self) -> tx.Self:
+    # --- methods ------------------------------------------------------
+
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
 
@@ -455,10 +426,11 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     identity map over its grid by construction. When `compute` is true, a
     [`CartesianField`][] is therefore recognized as the identity. When
     `compute` is false, a [`CartesianField`][] that carries a grid is not
-    recognized as the identity, because its `field` parameter is set. A
-    [`CartesianField`][] with no grid has an unset `field` parameter and
+    recognized as the identity, because its `shape` parameter is set. A
+    [`CartesianField`][] with no grid has an unset `shape` parameter and
     is recognized as the identity by the parameter check under either
-    value of `compute`.
+    value of `compute`. The `shape` is read, never the derived `field`, so
+    the meshgrid is not built by a structural check.
 
     Recognizing a grid as the identity does not mean a grid may be dropped
     on sight. A grid also defines the sampling domain onto which data is
@@ -466,172 +438,54 @@ def is_identity(xform: Transformation, /, compute: bool = False) -> bool:
     simplifier, which only does so for a grid that sits strictly between
     two other transformations.
     """
-
-    # --- Meta transformations -----------------------------------------
-
-    # An inverse is the identity exactly when the transform it inverts
-    # is, so the answer is read from `forward`. This reads neither the
-    # check with `compute=False` nor the one with `compute=True` into
-    # materializing the (possibly unmaterializable) inverse of a field.
-    # An inverse of nothing is itself the identity.
-    if isinstance(xform, registries.INVERSE):
-        forward = xform.forward
-        if forward is None:
-            return True
-        return is_identity(forward, compute=compute)
-
-    # --- Generic check ------------------------------------------------
-
-    # If all parameters are None -> identity.
-    parameter_names = getattr(xform, "parameter_names", ())
-    if isinstance(parameter_names, str):
-        parameter_names = (parameter_names,)
-    if all(getattr(xform, param) is None for param in parameter_names):
-        return True
-
-    # --- Typed check --------------------------------------------------
-
-    if isinstance(xform, hierarchy.IdentityTransformation):
-        return True
-
-    if not compute:
-        return False
-
-    # A subspace transform is the identity when the transform it wraps
-    # is itself the identity and it reads the same axes it writes. A
-    # subspace that reorders axes is not the identity even when its
-    # inner transform is, so a differing pair of axis vectors keeps it
-    # non-identity.
-    if isinstance(xform, SubspaceTransformation):
-        inner = xform.transformation
-        if inner is not None and not is_identity(inner, compute=compute):
-            return False
-        input_axes = xform.input_axes
-        output_axes = xform.output_axes
-        if input_axes is None or output_axes is None:
-            return True
-        return list(input_axes) == list(output_axes)
-
-    # --- Compute concrete types ---------------------------------------
-
-    if isinstance(xform, Translation):
-        return (xform.translation == 0).all()
-    if isinstance(xform, Scaling):
-        return (xform.scale == 1).all()
-    if isinstance(xform, Permutation):
-        ndim = len(xform.permutation)
-        return (xform.permutation == list(range(ndim))).all()
-    if isinstance(xform, Linear):
-        rows, cols = xform.matrix.shape
-        if rows != cols:
-            # A transform between spaces of different dimension is never
-            # the identity, and its matrix cannot be compared to a square
-            # identity matrix.
-            return False
-        ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(rows)).all()
-    if isinstance(xform, Affine):
-        rows, cols = xform.matrix.shape
-        if cols != rows + 1:
-            # An affine whose input and output have different dimensions is
-            # never the identity. Its matrix is `(No, Ni + 1)`, so the
-            # identity requires `No == Ni`.
-            return False
-        ab = get_array_backend(xform.matrix)
-        return (xform.matrix == ab.eye(rows + 1)[:-1]).all()
-    if isinstance(xform, DisplacementField):
-        return (xform.field == 0).all()
-    if isinstance(xform, CartesianField):
-        return True
-    return False
+    return is_kind(xform, kinds.Identity, compute)
 
 
 def is_translation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure translation.
 
     A transformation is recognized as a translation when it is an
-    instance of [`hierarchy.Translation`][], or when [`is_identity`][]
+    instance of [`kinds.Translation`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a translation by zero.
 
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a linear part equal to the identity.
     """
-    if isinstance(xform, hierarchy.Translation):
-        return True
-    if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        return (xform.matrix[:, :-1] == 0).all()
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.Translation, compute)
 
 
-def is_scale(xform: Transformation, /, compute: bool = False) -> bool:
+def is_scaling(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure scaling.
 
     A transformation is recognized as a scaling when it is an instance
-    of [`hierarchy.DiagonalTransformation`][], or when [`is_identity`][]
+    of [`kinds.Diagonal`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a scaling by one.
 
     When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
     transformation is also inspected for a diagonal structure.
     """
-    if isinstance(xform, hierarchy.DiagonalTransformation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A scaling maps a space onto itself, so a non-square matrix
-            # (different input and output dimension) is never a scaling.
-            return False
-        ab = get_array_backend(matrix)
-        return not (matrix * (1 - ab.eye(rows))).any()
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_scale(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.Diagonal, compute)
 
 
 def is_permutation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure permutation of axes.
 
     A transformation is recognized as a permutation when it is an
-    instance of [`hierarchy.Permutation`][], or when [`is_identity`][]
+    instance of [`kinds.Permutation`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself a trivial permutation.
 
     When `compute` is true, the matrix of a [`Linear`][] or [`Affine`][]
     transformation is also inspected for a binary, one-per-row and
     one-per-column structure.
     """
-    if isinstance(xform, hierarchy.Permutation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A permutation reorders the axes of one space, so a non-square
-            # matrix is never a permutation.
-            return False
-        ab = get_array_backend(matrix)
-        is_binary = bool(ab.isin(matrix, [0, 1]).all())
-        # Reduce the row/column sums to a single truth value before the
-        # `and`: comparing whole arrays with `and` raises on their
-        # ambiguous truth value.
-        is_perm = bool(
-            (matrix.sum(0) == 1).all() and (matrix.sum(1) == 1).all()
-        )
-        return is_binary and is_perm
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_permutation(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.Permutation, compute)
 
 
 def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is a pure rotation.
 
     A transformation is recognized as a rotation when it is an instance
-    of [`hierarchy.SpecialOrthogonalTransformation`][], or when
+    of [`kinds.SpecialOrthogonal`][], or when
     [`is_identity`][] recognizes it as the identity, which is itself a
     rotation by zero.
 
@@ -639,52 +493,27 @@ def is_rotation(xform: Transformation, /, compute: bool = False) -> bool:
     transformation is also inspected for orthogonality and a positive
     determinant.
     """
-    if isinstance(xform, hierarchy.SpecialOrthogonalTransformation):
-        return True
-    if compute and isinstance(xform, Linear) and xform.matrix is not None:
-        matrix = xform.matrix
-        rows, cols = matrix.shape
-        if rows != cols:
-            # A rotation is orthogonal, hence square; a non-square matrix
-            # is never a rotation, and its determinant is undefined.
-            return False
-        ab = get_array_backend(matrix)
-        is_orthogonal = bool((matrix @ matrix.T == ab.eye(rows)).all())
-        is_posdef = bool(ab.linalg.det(matrix) > 0)
-        return is_orthogonal and is_posdef
-    if isinstance(xform, Affine) and xform.matrix is not None:
-        return is_linear(xform, compute=compute) and is_rotation(
-            xform.to(Linear), compute=compute
-        )
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.SpecialOrthogonal, compute)
 
 
 def is_linear(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is linear, without a translation.
 
     A transformation is recognized as linear when it is an instance of
-    [`hierarchy.LinearTransformation`][], or when [`is_identity`][]
+    [`kinds.Linear`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself linear.
 
     When `compute` is true, the matrix of an [`Affine`][] transformation
     is also inspected for a zero translation component.
     """
-    if isinstance(xform, hierarchy.LinearTransformation):
-        return True
-    if compute and isinstance(xform, Affine) and xform.matrix is not None:
-        matrix = xform.matrix
-        no_translation = (matrix[:, -1] == 0).all()
-        return no_translation
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.Linear, compute)
 
 
 def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     """Return whether a transformation is affine.
 
     A transformation is recognized as affine when it is an instance of
-    [`hierarchy.AffineTransformation`][], or when [`is_identity`][]
+    [`kinds.Affine`][], or when [`is_identity`][]
     recognizes it as the identity, which is itself affine.
     """
-    if isinstance(xform, hierarchy.AffineTransformation):
-        return True
-    return is_identity(xform, compute=compute)
+    return is_kind(xform, kinds.Affine, compute)
