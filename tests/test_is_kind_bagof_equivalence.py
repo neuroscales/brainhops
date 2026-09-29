@@ -120,19 +120,16 @@ def oracle_selected_set(x: object, kind: type) -> tx.Union[bool, frozenset]:
 
 
 def live_selected_set(x: object, kind: type) -> tx.Union[bool, frozenset]:
-    """The set of checker implementations the live `is_kind` would OR."""
+    """The set of checker implementations the live `is_kind` would OR.
+
+    Read through the same (memoized) selection `is_kind` itself uses, so
+    the comparison covers the per-`(type, kind)` memo as well as the
+    library's enumeration behind it.
+    """
     gated = _gate(x, kind)
     if gated is True or gated is False:
         return gated
-    mro = type(x).__mro__
-    best: tx.Dict[type, tx.Tuple[int, tx.Callable]] = {}
-    for method in is_kind._function.candidates(x, gated, False):
-        shim = method.function
-        rank = mro.index(shim._source) if shim._source in mro else len(mro)
-        current = best.get(shim._node)
-        if current is None or rank < current[0]:
-            best[shim._node] = (rank, shim._impl)
-    return frozenset(id(impl) for _rank, impl in best.values())
+    return frozenset(id(impl) for impl in is_kind._selection(x, gated, False))
 
 
 # --- valid, value-varied instances covering every checker branch ------

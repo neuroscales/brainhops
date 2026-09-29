@@ -470,3 +470,35 @@ def test_mode_Aff_admits_only_invertible_affines() -> None:
     wide = Affine(matrix=np.zeros((2, 4)))  # 3-D -> 2-D
     assert is_kind(wide, H.Affine)
     assert not is_kind(wide, H.InvertibleAffine)
+
+
+def test_selection_memo_follows_registry_and_values() -> None:
+    # The per-(type, kind) selection memo must stay exact: the checkers still
+    # read each instance's values, a new checker changes the selection, and
+    # so does a new virtual subclass (the ABC cache token moves).
+    import abc
+
+    from brainhops.datamodel._transformations.check import IsKind
+
+    class Source(abc.ABC):  # noqa: B024 (registered into, not implemented)
+        def __init__(self, flag: bool = False) -> None:
+            self.flag = flag
+
+    class Virtual:
+        flag = True
+
+    ik = IsKind()
+    ik.register(Source, H.Affine)(lambda x, kind, compute: x.flag)
+
+    # Same type, different values: the selection is shared, the answer is not.
+    assert ik(Source(flag=True), H.Matrix)
+    assert not ik(Source(flag=False), H.Matrix)
+
+    # A new checker invalidates the memo for an already-seen (type, kind).
+    ik.register(Source, H.InvertibleAffine)(lambda x, kind, compute: True)
+    assert ik(Source(flag=False), H.Matrix)
+
+    # A new virtual subclass invalidates it too.
+    assert not ik(Virtual(), H.Matrix)
+    Source.register(Virtual)
+    assert ik(Virtual(), H.Matrix)
