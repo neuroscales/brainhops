@@ -31,9 +31,22 @@ pair of operand types (which may be [`Union`][typing.Union]s -- the library
 reads a union hint natively). For a concrete pair, the single *most specific*
 composer is chosen -- position by position, so a composer on `(Sequence,
 Sequence)` beats one on `(Sequence, Transformation)` because `Sequence` is a
-subtype of `Transformation`. A specificity tie is broken by registration
-order (the earliest-registered wins), which is what the `priority` on each
-registration encodes.
+subtype of `Transformation`. A genuine specificity tie -- two composers
+neither of which is more specific for the concrete pair in hand -- is *not*
+resolved by registration order: the library raises
+[`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError], which
+propagates out of `compose`. We would rather surface a real ambiguity than
+silently pick a bad composer by registration accident.
+
+The one structural near-tie the composers contain is the pair `(Sequence,
+Transformation)` and `(Transformation, Sequence)`, which are mutually
+incomparable as *rules*. But their only concrete overlap is a `(Sequence,
+Sequence)` operand pair, and the registered `(Sequence, Sequence)` composer
+is strictly more specific there and wins it outright, so no concrete pair
+actually raises. (`bagof` v0.2's pairwise registration check does not see
+that dominating third rule, so it emits a benign `RuntimeWarning` about the
+incomparable pair at import; the enhancement note in
+`docs/design/bagof-dispatchers-migration.md` records it.)
 
 A composer raises [`CompositionError`][] to refuse -- "the types are right
 but these two cannot be combined" (for example, two subspace transforms whose
@@ -55,9 +68,6 @@ transforms are handed to `compose` is the sequence engine's job, not the
 composers'.
 """
 
-# stdlib
-import itertools
-
 # dependencies
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
@@ -75,8 +85,6 @@ if tx.TYPE_CHECKING:
 _compose: Function = Function("compose")
 """The dispatched function every registered composer joins."""
 
-_composer_order = itertools.count()
-
 
 def composer(func: tx.Callable) -> tx.Callable:
     """Register a function as a composer of two transformations.
@@ -86,11 +94,12 @@ def composer(func: tx.Callable) -> tx.Callable:
     parameters*; a rewrite that decides from types and object identity alone
     belongs in `simplifiers`, which `compose` consults first.
 
-    Registrations carry a strictly decreasing `priority`, so the
-    earliest-registered composer wins a specificity tie -- the tie-break the
-    bespoke registry got from registration order.
+    Composers carry no `priority`: a genuine specificity tie is left to raise
+    [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError] rather
+    than be resolved by registration order, so a real ambiguity surfaces
+    instead of silently picking a bad composer (see the module docstring).
     """
-    _compose.register(func, priority=-next(_composer_order))
+    _compose.register(func)
     return func
 
 
@@ -114,7 +123,10 @@ def compose(
 
     # Tier 2. The registered, parameter-reading composers. The library picks
     # the single most specific one; a `CompositionError` it raises propagates
-    # out and stops composition.
+    # out and stops composition. Only `NoMethodError` -- "no composer applies"
+    # -- is caught here; an `AmbiguousMethodError` from a genuine specificity
+    # tie is a real registry fault the maintainer wants surfaced, so it is
+    # deliberately NOT caught and propagates out unchanged.
     t1, t2 = type(x1), type(x2)
     try:
         result = _compose(x1, x2)

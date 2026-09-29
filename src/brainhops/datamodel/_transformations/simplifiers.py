@@ -1,9 +1,9 @@
 """Simplifier implementations, registered through `simplify.simplifier`.
 
 This is to `simplify` what `composers` is to `compose` and `checkers` is to
-`check`: the machinery lives in `simplify` (two `bagof.dispatchers`
-functions, one per arity), every rule lives here and registers at import
-time.
+`check`: the machinery lives in `simplify` (a single `bagof.dispatchers`
+function holding both arities as overloads, dispatched by argument count),
+every rule lives here and registers at import time.
 
 Two arities
 -----------

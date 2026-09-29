@@ -74,15 +74,37 @@ Sequence)` composer; both build a sequence and `.compute()` it, and the two
 normalise to the same transform. The full test suite passes on both
 interpreters with the library's (correct) choice.
 
-A specificity tie is broken by a strictly decreasing `priority` per
-registration, reproducing the bespoke registration-order tie-break.
+Composers carry **no** `priority`: a genuine specificity tie is left to raise
+`AmbiguousMethodError`, which propagates out of `compose`. We would rather a
+real ambiguity is surfaced than have registration order silently pick a bad
+composer. Empirically this raises for no concrete pair -- resolving all 6724
+ordered concrete pairs with priority removed yields zero `AmbiguousMethodError`
+at call time. The one structural near-tie is the incomparable rule pair
+`(Sequence, Transformation)` / `(Transformation, Sequence)`; their only
+concrete overlap is a `(Sequence, Sequence)` operand pair, which the strictly
+more specific `(Sequence, Sequence)` composer dominates and wins outright.
 
-### `simplify` — one function per arity
+`bagof` v0.2's *registration-time* pairwise ambiguity check
+(`_warn_new_ambiguities`) does not see that dominating third rule, so it emits
+a benign `RuntimeWarning` (and lists the pair in `ambiguities()`) for the
+incomparable pair at import even though no reachable call is ambiguous. This
+is a **false positive**: the check compares two methods in isolation and does
+not account for a more specific third method covering their overlap. It does
+not break CI (there is no warnings-as-errors filter, and it fires once at
+import), so it is left in place rather than papered over with a filter that
+could hide a real future ambiguity. **Enhancement note (E5):** the pairwise
+registration check should treat a pair as unambiguous when a third registered
+method strictly dominates the pair's entire concrete overlap.
+
+### `simplify` — one function, both arities as overloads
 
 `simplify` is variadic: one transform (a *total* leaf downcast) or two (a
-*partial* pair collapse that returns `None` to decline). It now dispatches
-through two `bagof.dispatchers` functions, one per arity, and `simplify`
-picks between them by how many transforms it was given.
+*partial* pair collapse that returns `None` to decline). It dispatches through
+a **single** `bagof.dispatchers` function that holds both arities as
+overloads: a leaf is `(t, policy)` and a pair is `(first, second, policy)`, so
+the two land on different call shapes and `bagof.dispatchers` (v0.2) selects
+by argument count -- leaves and pairs never compete. `simplify` calls that one
+function with one transform or two accordingly.
 
 * **Leaves** are pure single-winner: the winner matched the bespoke registry
   on every type, zero ambiguities. Clean.
@@ -178,6 +200,20 @@ achieves this by accident; a declared "context parameter" would make the
 intent explicit and spare implementations the shim `convert` needs to accept
 and drop a dispatch-only argument. This is a small ergonomic addition, not a
 change to the dispatch model.
+
+### E5 — registration-time ambiguity check should account for a dominating method
+
+`Function._warn_new_ambiguities` (RFC 0001 §5) compares a newly registered
+method against each existing one *pairwise*. When two methods are incomparable
+but a third registered method strictly dominates the whole of their concrete
+overlap, no reachable call is actually ambiguous, yet the pairwise check still
+warns. `compose` hits this once priority is dropped: `(Sequence,
+Transformation)` and `(Transformation, Sequence)` are incomparable, but their
+only overlap `(Sequence, Sequence)` is owned by the more specific `(Sequence,
+Sequence)` composer, so the import-time `RuntimeWarning` is a false positive.
+Both the registration warning and `ambiguities()` should suppress a pair
+whose entire concrete overlap region is covered by a strictly more specific
+registered method, since no reachable call can then be ambiguous.
 
 ## Validation
 

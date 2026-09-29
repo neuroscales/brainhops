@@ -1,8 +1,9 @@
 """Simplification: the optional, never-failing rewrites.
 
 A *simplifier* rewrites transforms into an equivalent but cheaper
-representation. It comes in two arities, dispatched by [`simplify`][]
-through two `bagof.dispatchers` functions, one per arity:
+representation. It comes in two arities, held as overloads on a single
+`bagof.dispatchers` function that [`simplify`][] dispatches by argument
+count -- one transform selects a leaf overload, two select a pair overload:
 
 * **one in, one out** -- `f(t, policy) -> Transformation`. Total: it always
   returns a transform, possibly `t` itself. This is the leaf downcast (an
@@ -131,25 +132,28 @@ SimplifyLike = tx.Union[
 # ======================================================================
 
 
-# Two `bagof.dispatchers` functions, one per arity, so a call never has to
-# tell a leaf simplifier from a pair one: `simplify` picks the function by
-# how many transforms it was given.
+# One `bagof.dispatchers` function holding both arities as overloads: a leaf
+# simplifier is `(t, policy)` and a pair simplifier is `(first, second,
+# policy)`, so the two land on different call shapes and never compete --
+# `bagof.dispatchers` (v0.2) dispatches by argument count, picking a leaf
+# overload for one transform and a pair overload for two. `simplify` calls it
+# with one transform or two accordingly.
 #
 # A leaf simplifier is *total* -- exactly one applies, the most specific, the
 # way a method override wins -- which is `bagof.dispatchers`' native
-# single-winner model. A pair simplifier is *partial*: it returns `None` to
-# decline, and several may apply to one concrete pair with none more specific
-# than another (`(Identity, Transformation)` against `(Transformation,
-# Inverse)`, say). The bespoke registry broke that tie by registration order;
-# here each pair carries a `priority` that decreases with registration order,
-# so the earliest-registered wins a specificity tie, exactly as before. The
-# `None`-decline contract is preserved -- the chosen simplifier returning
-# `None` is the decline -- and, for the rules registered here, the winner's
-# decision never differs from a lower candidate's, so single-winner dispatch
-# reproduces the old chain of responsibility. (Where it would not, in general,
-# is the gap written up in `docs/design/bagof-dispatchers-migration.md`.)
-_simplify_leaf: Function = Function("simplify_leaf")
-_simplify_pair: Function = Function("simplify_pair")
+# single-winner model, so leaves carry no `priority`. A pair simplifier is
+# *partial*: it returns `None` to decline, and several may apply to one
+# concrete pair with none more specific than another (`(Identity,
+# Transformation)` against `(Transformation, Inverse)`, say). The bespoke
+# registry broke that tie by registration order; here each pair carries a
+# `priority` that decreases with registration order, so the earliest-registered
+# wins a specificity tie, exactly as before. The `None`-decline contract is
+# preserved -- the chosen simplifier returning `None` is the decline -- and,
+# for the rules registered here, the winner's decision never differs from a
+# lower candidate's, so single-winner dispatch reproduces the old chain of
+# responsibility. (Where it would not, in general, is the gap written up in
+# `docs/design/bagof-dispatchers-migration.md`.)
+_simplify: Function = Function("simplify")
 _pair_order = itertools.count()
 
 
@@ -171,14 +175,17 @@ def _arity_from_hints(func: tx.Callable) -> int:
 
 
 def _register_leaf(func: tx.Callable) -> tx.Callable:
-    _simplify_leaf.register(func)
+    # A leaf lands on the `(t, policy)` shape and is single-winner (total), so
+    # it carries no priority.
+    _simplify.register(func)
     return func
 
 
 def _register_pair(func: tx.Callable) -> tx.Callable:
-    # Earlier registrations win a specificity tie: a strictly decreasing
-    # priority reproduces the bespoke registry's registration-order tie-break.
-    _simplify_pair.register(func, priority=-next(_pair_order))
+    # A pair lands on the `(first, second, policy)` shape. Earlier
+    # registrations win a specificity tie: a strictly decreasing priority
+    # reproduces the bespoke registry's registration-order tie-break.
+    _simplify.register(func, priority=-next(_pair_order))
     return func
 
 
@@ -227,9 +234,9 @@ def simplifier(*args) -> tx.Callable:
         # written, so the function is registered under the given types.
         overlay = (*types, SimplifyTable)
         if len(types) == 1:
-            _simplify_leaf.register(overlay)(func)
+            _simplify.register(overlay)(func)
         else:
-            _simplify_pair.register(overlay, priority=-next(_pair_order))(func)
+            _simplify.register(overlay, priority=-next(_pair_order))(func)
         return func
 
     return decorator
@@ -242,7 +249,7 @@ def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
     one wins, the way a method override does.
     """
     try:
-        return _simplify_leaf.resolve(T, SimplifyTable)
+        return _simplify.resolve(T, SimplifyTable)
     except NoMethodError:
         return None
 
@@ -258,7 +265,7 @@ def get_pair_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
     expect -- or an empty tuple when none applies.
     """
     try:
-        return (_simplify_pair.resolve(T1, T2, SimplifyTable),)
+        return (_simplify.resolve(T1, T2, SimplifyTable),)
     except NoMethodError:
         return ()
 
@@ -308,7 +315,7 @@ def simplify(
     if len(transformations) == 1:
         (t,) = transformations
         try:
-            return _simplify_leaf(t, policy=policy)
+            return _simplify(t, policy=policy)
         except NoMethodError:
             # The root type is always registered, so this can only mean the
             # registry was not imported.
@@ -336,7 +343,7 @@ def simplify(
         # registration order). It returns `None` to decline, which -- like
         # no simplifier applying at all -- is the ordinary "these two do not
         # collapse" answer, not an error.
-        return _simplify_pair(first, second, policy=policy)
+        return _simplify(first, second, policy=policy)
     except NoMethodError:
         return None
 
