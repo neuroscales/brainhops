@@ -36,8 +36,7 @@ Checkers
 --------
 A concrete or wrapper transform establishes membership in a kind node beyond
 its declared type through a *checker*, registered against its own class in
-[`is_kind`][], which is a [`Dispatcher`][] -- the same pattern as `convert`.
-`@checker` on a function
+[`is_kind`][]. `@checker` on a function
 
     def _(query: Affine, kind: type[kinds.Translation], compute: bool) -> bool
 
@@ -75,7 +74,28 @@ through the special-orthogonal node; a `Scaling` is established in the
 bijections through the invertible-diagonal node, and in the translations
 through the identity node. Ask only the nearest of those and the answer is
 still sound, but it turns on which sibling happens to sit nearer -- so all
-of them are asked, nearest first, and the first `True` wins.
+of them are asked, and the answers are OR-ed.
+
+Machinery
+---------
+The enumeration of the applicable checkers is a
+[`bagof.dispatchers`][] `Function`. Each checker is registered as a method
+`(query: Source, kind: type[Super[Node]], compute)`: the source is matched
+*covariantly* (`Source` a supertype of `type(t)`, the ordinary argument
+direction), the kind *contravariantly* through a lower bound
+([`Super`][bagof.dispatchers.Super]) so that node `N` answers a query about
+kind `K` when `N` is a subset of `K` (the kinds lattice is plain
+subclassing), and `compute` is left unannotated so it is carried through to
+the checker without taking part in specificity. `Function.candidates`
+enumerates *every* applicable method rather than picking one winner; the
+single-winner model the library offers `convert`, `compose` and `simplify`
+would ask only one checker and drop the rest, changing the answer.
+
+What the library does not do, and this module keeps, is the *reduction*: the
+candidates are grouped by node, the source nearest on `type(t)`'s MRO is kept
+per node (the override that shadows an inherited base), and the survivors'
+booleans are OR-ed. The full rationale, and the enhancements this rests on,
+are in the migration memo under `docs/design/`.
 """
 
 __all__ = [
@@ -93,14 +113,15 @@ __all__ = [
     "register_kind_alias",
 ]
 
+# stdlib
+import warnings
+
 # dependencies
 import typing_extensions as tx
+from bagof.dispatchers import Function, Super
 
 # datamodel
 from brainhops.datamodel import kinds
-
-# internals
-from .registries import Dispatcher, type_distance
 
 # typing
 if tx.TYPE_CHECKING:
@@ -143,93 +164,133 @@ is populated by `checkers` at import time.
 """
 
 
-# --- Dispatcher -------------------------------------------------------
+# --- Machinery --------------------------------------------------------
 
 
-class IsKind(Dispatcher[Key, Checker]):
+class IsKind:
     """
-    A registry of the functions that check whether an instance is of a
-    certain kind.
+    The membership predicate and the registry of its checkers.
 
-    The registry is a [`Dispatcher`][] that maps a `(transformation type,
-    kind node)` pair to a checker function. When called with a transform and
-    a kind, it asks every checker that applies, nearest first, and stops at
-    the first one to establish membership -- see the module docstring for
-    which checkers apply, and why more than one may.
+    A [`bagof.dispatchers`][] `Function` enumerates the checkers that apply
+    to a `(transformation, kind)` question -- source covariant, kind
+    contravariant via a [`Super`][bagof.dispatchers.Super] lower bound, and
+    `compute` carried (see the module docstring). This class wraps it with
+    the reduction the library does not do: a per-node most-specific grouping
+    feeding an OR.
+
+    It also stays *dict-like* over its `(source, node)` keys -- `key in
+    is_kind`, `is_kind.get(key)` -- because `checkers` reads the registry to
+    decide whether a generated checker would clash with a hand-written one.
     """
 
-    @classmethod
-    def key_from_func(cls, func: Checker) -> Key:
+    def __init__(self) -> None:
+        self._function = Function("is_kind")
+        # The registered checkers, keyed by the `(source, node)` pair a call
+        # would look up. The values are the *shims* (see `_add`), from which
+        # the underlying implementation is read back through `get`.
+        self._registry: tx.Dict[Key, tx.Any] = {}
+
+    # -- registration ---------------------------------------------------
+
+    def register(self, *args: tx.Any) -> tx.Any:
+        """Register a checker, or return a decorator that does.
+
+        Used bare (`@is_kind.register`), the `(source, node)` pair is read
+        from the function's first two hints, the second unwrapped from its
+        `type[...]`. Used with explicit types
+        (`is_kind.register(Source, Node)`), those key it instead -- the form
+        a generated checker that carries no hints needs. Either way the
+        original function is returned, so the decorators stack.
+        """
+        if len(args) == 2 and all(isinstance(a, type) for a in args):
+            source, node = args
+
+            def decorator(func: Checker) -> Checker:
+                self._add(source, node, func)
+                return func
+
+            return decorator
+        if (
+            len(args) == 1
+            and callable(args[0])
+            and not isinstance(args[0], type)
+        ):
+            func = args[0]
+            source, node = self._key_from_func(func)
+            self._add(source, node, func)
+            return func
+        raise TypeError(
+            "a checker is registered from a function, or against a "
+            f"(source, node) pair of types, not {args!r}"
+        )
+
+    @staticmethod
+    def _key_from_func(func: Checker) -> Key:
         hints = tx.get_type_hints(func)
         inp, out, *_ = hints.values()
         if tx.get_origin(out) is type:
             out = tx.get_args(out)[0]
         return inp, out
 
-    @classmethod
-    def key_from_args(
-        cls, x: Transformation, kind: Kind, *args, **kwargs
-    ) -> Key:
-        return type(x), kind
-
-    @classmethod
-    def key_distance(
-        cls, key: Key, registered: Key
-    ) -> tx.Optional[tx.Tuple[float, float]]:
-        # The source comes first: among the checkers registered against one
-        # node, only the one whose source is nearest is asked (see
-        # `candidates`), and that is what lets a wrapper shadow the concrete
-        # base it also inherits from. The kind then orders the nodes, so the
-        # largest subset of the question is asked first.
-        source, kind = key
-        registered_source, registered_kind = registered
-        if not issubclass(source, registered_source):
-            return None  # not an ancestor of the queried transform
-        # Nearest *on the MRO*, not by `type_distance`: a `Generic`
-        # subscription such as `Inverse[Affine]` inserts a real intermediate
-        # class, which puts a whole extra step between `InverseAffine` and
-        # `Inverse` and would make `type_distance` rank the concrete `Affine`
-        # base nearer. The MRO has no such trouble: the wrapper and its
-        # subscription both precede the base there, which is precisely the
-        # precedence a subclass declared them with.
-        mro = source.__mro__
-        try:
-            source_rank = mro.index(registered_source)
-        except ValueError:
-            source_rank = len(mro)  # an ancestor that is not on the MRO
-        # The kind is *contravariant*: the registered node must be a subset
-        # of the queried one, and the largest such subset is the nearest.
-        kind_distance = type_distance(registered_kind, kind)
-        if kind_distance == float("inf"):
-            return None  # not a subset of the queried kind
-        return source_rank, kind_distance
-
-    def __setitem__(self, key: Key, func: Checker) -> None:
-        # Every registration funnels through here, whichever form it was
-        # written in, so this is where a key is checked.
-        if not isinstance(key, tuple) or len(key) != 2:
-            raise TypeError(
-                f"a checker is keyed by a (transformation type, kind node) "
-                f"pair, not by {key!r}"
-            )
-        _, kind = key
-        if not kinds.is_transformation_set(kind):
+    def _add(self, source: type, node: Kind, func: Checker) -> None:
+        if not kinds.is_transformation_set(node):
             raise TypeError(
                 f"a checker may only be registered against a kind node, not "
-                f"{kind!r}. A class kind is matched by isinstance and needs "
+                f"{node!r}. A class kind is matched by isinstance and needs "
                 f"no checker."
             )
-        super().__setitem__(key, func)
 
-    @classmethod
-    def candidate_group(cls, registered: Key) -> Kind:
-        # The checkers registered against one node compete: whether a
-        # transform is in that node has one answer, given by the checker
-        # whose source is nearest, exactly as a method override would. Two
-        # *different* nodes do not compete -- each proves its own set, and
-        # incomparable sets prove different things -- so both are asked.
-        _, node = registered
-        return node
+        # A fresh shim per `(source, node)`. Distinct callables keep the
+        # library's methods distinct even where one implementation is
+        # registered against many nodes (the wrappers), and carry the
+        # `(source, node)` the per-node grouping needs. The shim forwards the
+        # *queried* kind, not the registered node -- a wrapper reasons about
+        # the question it was asked.
+        def shim(x: tx.Any, kind: type, compute: bool) -> bool:
+            # The library overlays the source and kind hints onto the first
+            # two parameters at registration, so the `Any`/`type` here are
+            # placeholders it never reads. `compute` keeps a plain `bool` on
+            # every method -- identical, so it is carried through without
+            # taking part in specificity. (The parameters are annotated with
+            # resolvable types rather than the module's forward-reference
+            # aliases, which the library cannot resolve at registration.)
+            return func(x, kind, compute)
+
+        shim.__module__ = getattr(func, "__module__", shim.__module__)
+        shim.__qualname__ = f"is_kind[{source.__name__} in {node.__name__}]"
+        shim._impl = func  # type: ignore[attr-defined]
+        shim._source = source  # type: ignore[attr-defined]
+        shim._node = node  # type: ignore[attr-defined]
+
+        # `compute` (the shim's third parameter) carries the same `bool` hint
+        # on every method, so it is passed through to the checker without
+        # taking part in specificity -- the library has no first-class context
+        # parameter. The kind is matched by a lower bound: `type[Super[node]]`
+        # accepts a queried kind `K` exactly when `node` is a subset of `K`,
+        # the contravariant direction.
+        with warnings.catch_warnings():
+            # Two checkers on one source against *incomparable* nodes are an
+            # ambiguity only for single-winner dispatch: a query about a kind
+            # above both matches both with neither more specific. is_kind asks
+            # every candidate and OR-s them, so there is nothing to
+            # disambiguate; the registration-time warning is a false positive
+            # here (migration memo, E5). It is silenced rather than left to
+            # flood the import.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self._function.register((source, tx.Type[Super[node]]))(shim)
+        self._registry[(source, node)] = shim
+
+    # -- dict-like lookup (for `checkers`) ------------------------------
+
+    def __contains__(self, key: Key) -> bool:
+        return key in self._registry
+
+    def get(self, key: Key, default: tx.Any = None) -> tx.Optional[Checker]:
+        """Get the checker registered for a `(source, node)` pair, or None."""
+        shim = self._registry.get(key)
+        return default if shim is None else shim._impl
+
+    # -- calling --------------------------------------------------------
 
     def __call__(
         self, x: Transformation, kind: KindLike, compute: bool = False
@@ -269,12 +330,44 @@ class IsKind(Dispatcher[Key, Checker]):
             # is the whole answer, and nothing establishes it beyond that.
             return False
         compute = bool(compute)
-        # Nothing applying is an answer -- "not established" -- so an empty
-        # disjunction is exactly right, and never an error.
-        return any(
-            check(x, kind, compute)
-            for check in self.candidates((type(x), kind))
-        )
+
+        # The library enumerates every applicable checker (source a supertype
+        # of `type(x)`, node a subset of `kind`). Group them by node and keep,
+        # per node, the checker whose source is nearest on `type(x)`'s MRO --
+        # the override that lets a wrapper shadow the concrete base it
+        # inherits from. Nearest *on the MRO* rather than by a distance
+        # metric: a `Generic` subscription such as `Inverse[Affine]` inserts a
+        # real intermediate class, which the MRO already orders ahead of the
+        # concrete base, exactly the precedence the subclass declared.
+        mro = type(x).__mro__
+
+        def source_rank(source: type) -> int:
+            try:
+                return mro.index(source)
+            except ValueError:
+                return len(mro)  # an ancestor that is not on the MRO
+
+        best: tx.Dict[Kind, tx.Tuple[int, tx.Any]] = {}
+        for method in self._function.candidates(x, kind, compute):
+            shim = method.function
+            rank = source_rank(shim._source)
+            current = best.get(shim._node)
+            if current is None or rank < current[0]:
+                best[shim._node] = (rank, shim)
+
+        # OR the survivors. One implementation may win several nodes (a
+        # wrapper), and is called once: it reads the queried kind, not the
+        # node, so the calls would be identical. Nothing applying is the
+        # answer "not established" -- an empty disjunction, never an error.
+        seen: tx.Set[int] = set()
+        for _rank, shim in best.values():
+            impl = shim._impl
+            if id(impl) in seen:
+                continue
+            seen.add(id(impl))
+            if impl(x, kind, compute):
+                return True
+        return False
 
 
 # --- Public API -------------------------------------------------------

@@ -8,10 +8,14 @@ OME kind with a brainhops kind is written once.
 
 Each direction is dispatch-driven rather than a chain of type tests. A
 converter is registered for one type, and the mapping selects the converter
-whose registered type is closest to the value's type in the class
-hierarchy. The closeness is measured by [`type_distance`][], the same one
-brainhops transformation converters use, so a new kind is added by
-registering a converter rather than by extending a conditional.
+whose registered type is the nearest supertype of the value's type. The
+selection is a [`bagof.dispatchers`][] `Function` -- the same
+most-specific-single-winner dispatch the brainhops transformation converters
+use -- so a new kind is added by registering a converter rather than by
+extending a conditional. Each registration carries a decreasing `priority`,
+so that a specificity tie between two incomparable registered types falls to
+the earliest registered, reproducing the first-registered-wins tie-break the
+bespoke metric had by dictionary order.
 
 A scale maps to a [`Scaling`][brainhops.datamodel.transformations.Scaling],
 a translation to a
@@ -25,13 +29,16 @@ in that leanest form, and any other affine is written as a full affine, so
 a rotation or a shear is kept rather than refused.
 """
 
+# stdlib
+import itertools
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
 from abczarr.ome.v0_6 import transformations as _ot
+from bagof.dispatchers import Function, NoMethodError
 
 # internals
-from brainhops.datamodel._transformations.registries import type_distance
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -133,13 +140,20 @@ def _map_axis_transform(
 # ----------------------------------------------------------------------
 #   read: OME-Zarr coordinate transformation -> brainhops transformation
 # ----------------------------------------------------------------------
-_FROM_OME = {}  # type: tx.Dict[type, tx.Callable]
+_from_ome_fn: Function = Function("from_ome")
+_from_order = itertools.count()
 
 
 def _from_ome(ome_type: type) -> tx.Callable:
-    # Register a reader for one OME-Zarr coordinate transformation type.
+    # Register a reader for one OME-Zarr coordinate transformation type. Only
+    # the first parameter (the OME transform) is dispatched on; the rest are
+    # overlaid with `object` so they are carried, not matched. A decreasing
+    # priority makes the earliest registration win a specificity tie.
     def register(func: tx.Callable) -> tx.Callable:
-        _FROM_OME[ome_type] = func
+        _from_ome_fn.register(
+            (ome_type, object, object, object),
+            priority=-next(_from_order),
+        )(func)
         return func
 
     return register
@@ -160,20 +174,15 @@ def from_ome(
     does not read is refused with an
     [`OmeMappingError`][brainhops.io.transformations.zarr._map.OmeMappingError].
     """
-    kind = type(transform)
-    best_distance, best = float("inf"), None
-    for registered, func in _FROM_OME.items():
-        dist = type_distance(kind, registered)
-        if dist < best_distance:
-            best_distance, best = dist, func
-    if best is None or best_distance == float("inf"):
-        name = getattr(transform, "type", kind.__name__)
+    try:
+        return _from_ome_fn(transform, perm, ndim, read_field)
+    except NoMethodError:
+        name = getattr(transform, "type", type(transform).__name__)
         raise OmeMappingError(
             "This OME-Zarr image is placed by a "
             f"{name!r} coordinate transformation, which brainhops cannot yet "
             "read as an image geometry."
-        )
-    return best(transform, perm, ndim, read_field)
+        ) from None
 
 
 @_from_ome(_ot.Identity)
@@ -299,13 +308,19 @@ _RICH_TYPES = frozenset(
     {"rotation", "affine", "mapAxis", "displacements", "coordinates"}
 )
 
-_TO_OME = {}  # type: tx.Dict[type, tx.Callable]
+_to_ome_fn: Function = Function("to_ome")
+_to_order = itertools.count()
 
 
 def _to_ome_for(brainhops_type: type) -> tx.Callable:
-    # Register a writer for one brainhops transformation type.
+    # Register a writer for one brainhops transformation type. Only the first
+    # parameter is dispatched on; the rest are overlaid with `object`. A
+    # decreasing priority makes the earliest registration win a tie.
     def register(func: tx.Callable) -> tx.Callable:
-        _TO_OME[brainhops_type] = func
+        _to_ome_fn.register(
+            (brainhops_type, object, object),
+            priority=-next(_to_order),
+        )(func)
         return func
 
     return register
@@ -328,15 +343,12 @@ def to_ome(
     refused with an
     [`OmeMappingError`][brainhops.io.transformations.zarr._map.OmeMappingError].
     """
-    kind = type(transform)
-    best_distance, best = float("inf"), None
-    for registered, func in _TO_OME.items():
-        dist = type_distance(kind, registered)
-        if dist < best_distance:
-            best_distance, best = dist, func
-    if best is not None and best_distance < float("inf"):
-        return best(transform, storage_perm, ndim)
-    return _affine_to_ome(transform, storage_perm, ndim)
+    # The nearest registered writer wins; a type no registered writer is an
+    # ancestor of falls through to the general affine writer.
+    try:
+        return _to_ome_fn(transform, storage_perm, ndim)
+    except NoMethodError:
+        return _affine_to_ome(transform, storage_perm, ndim)
 
 
 def scale_translation_from_affine(
