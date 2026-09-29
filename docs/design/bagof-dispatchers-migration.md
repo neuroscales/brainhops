@@ -138,6 +138,17 @@ function with one transform or two accordingly.
 
 ### `is_kind` — an all-applicable, combined predicate
 
+> **Update (#101).** `is_kind` has since been rehomed onto `bagof.dispatchers`
+> v0.3: `Function.candidates` enumerates every applicable checker and a
+> `Type[Super[node]]` lower bound matches the kind contravariantly, while
+> brainhops keeps the per-node grouping and the OR reducer (see the `check`
+> module docstring). Equivalence with the old `type_distance` dispatch was
+> verified at migration time in #101 -- the selected checker set and the
+> end-to-end boolean at both `compute` levels, over every concrete instance ×
+> kind node -- rather than kept as a regression test, since re-deriving the
+> old dispatch over that whole grid is too slow for every CI run. The rest of
+> this section records why the first migration (#99) left it bespoke.
+
 `is_kind(t, kind, compute=False)` is **not** single-winner, so it was left on
 the bespoke `Dispatcher` unchanged. Three things put it outside the library's
 model:
