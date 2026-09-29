@@ -82,6 +82,7 @@ class ConcreteTransformation(Transformation):
         mode: ModeLike = True,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         """
         Compute the transformation, downcasting it to the cheapest
@@ -103,7 +104,20 @@ class ConcreteTransformation(Transformation):
             [`SimplifyPolicy`][brainhops.datamodel.enums.SimplifyPolicy]
             decides whether the kind-checks run structure-only (`analytic`)
             or read values (`numeric`), or are skipped entirely (`none`).
+        factor : bool, default=False
+            Whether to factor this leaf into its axis-group normal form. A
+            leaf factors by wrapping itself in a one-element sequence, so a
+            diagonal affine (say) splits into its per-axis blocks. Off by
+            default.
         """
+        if factor:
+            # A leaf asked to factor is handed to the sequence engine as a
+            # one-element sequence, which runs the factor pass. The engine
+            # never passes `factor` back to a leaf's `compute`, so there is
+            # no recursion.
+            return registries.SEQUENCE([self]).compute(
+                mode, simplify=simplify, factor=True
+            )
         return _simplify(self, policy=simplify)
 
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:

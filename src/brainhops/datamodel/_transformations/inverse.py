@@ -150,6 +150,7 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         mode: ModeLike = True,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         """Resolve the inverse, if the mode admits it.
 
@@ -158,11 +159,14 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         simplifier, which may only rewrite for free. The compose `mode` is
         the gate -- a mode that does not admit this wrapper leaves it lazy,
         so an adjacent pair can still cancel in a sequence -- and
-        `simplify` then still downcasts what it wraps.
+        `simplify` then still downcasts what it wraps. `factor` is forwarded
+        to the materialized result.
         """
         modes = normalize_modes(mode)
         if mode_admits(self, modes):
-            return self._materialize().compute(mode, simplify=simplify)
+            return self._materialize().compute(
+                mode, simplify=simplify, factor=factor
+            )
         return _simplify(self, policy=simplify)
 
     def to(

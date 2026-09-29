@@ -21,6 +21,7 @@ from .concrete import (
     Identity,
 )
 from .errors import CompositionError
+from .factor import _factor
 from .inverse import Inverse
 from .meta import SubspaceTransformation
 from .modes import (
@@ -182,6 +183,7 @@ class Sequence(SequenceMixin, Transformation):
         mode: ModeLike = True,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> Transformation:
         """
          Compute the resulting transform of the sequence of transformations.
@@ -220,6 +222,17 @@ class Sequence(SequenceMixin, Transformation):
              * `"analytic"` (the default) looks at the type structure only;
              * `"numeric"` looks at the numeric values of the transformation;
              * `False`/`"none"`/`None` disables simplification.
+         factor : bool, default=False
+             Whether to rewrite the sequence into its axis-group normal
+             form `[grid?, F_1..F_m, Pi_perm?]`: a leading grid (if any),
+             one axis-preserving subspace factor per group of axes that
+             transform together, and a trailing reindex permutation. Off
+             by default, so the result is byte-for-byte the plain
+             `compute()` result. Nothing is ever composed across groups;
+             `mode` still decides whether the restricted pieces inside a
+             group compose. A chain that creates or drops axes is left
+             unfactored. With `mode=False` nothing is computed, so
+             `factor` has nothing to act on and is ignored.
         """
         modes = normalize_modes(mode)
         policy = SimplifyTable.from_like(simplify)
@@ -229,7 +242,7 @@ class Sequence(SequenceMixin, Transformation):
             # but nothing is composed, bridged or materialized -- this is
             # exactly what `simplify()` does.
             return _simplify(self, policy=policy)
-        return _compute_sequence(self, modes, policy)
+        return _compute_sequence(self, modes, policy, factor=factor)
 
     def _flattened(self) -> tx.Self:
         # Flatten nested sequences into a single sequence, and propagate
@@ -321,6 +334,7 @@ def _compute_sequence(
     seq: Sequence,
     modes: tx.List[Family],
     policy: SimplifyTable,
+    factor: bool = False,
 ) -> Transformation:
     """Compute a sequence: bridge, simplify, compose -- to a fixpoint.
 
@@ -351,7 +365,28 @@ def _compute_sequence(
 
     A round that does not shorten the sequence cannot be improved on by
     another, so the loop stops there.
+
+    Under `factor=True`, a fourth step runs between 2 and 3:
+
+    2b. **Factor.** Rewrite the sequence into its axis-group normal form
+        (see the `factor` module). It runs after simplification, so a lazy
+        pair has already cancelled and every leaf is downcast, and before
+        composition, which two extra gates then keep from undoing it (see
+        `_factor_pair_ok`). The factor pass may lengthen the sequence, so
+        the length test above cannot detect the fixpoint: a round that
+        leaves every leaf the *same object* is the fixpoint instead, with a
+        hard iteration cap that raises rather than loop forever should a
+        pass fail to be identity-preserving on the normal form. With
+        `factor=False` none of this runs, and the length-based exit is
+        unchanged.
     """
+    # The factor pass memoizes each leaf's dependency pattern by `id` across
+    # rounds; the keepalive list pins those leaves so an `id` is never reused
+    # while the cache holds it.
+    dep_cache: tx.Dict[int, tx.Any] = {}
+    dep_keepalive: tx.List[Transformation] = []
+    iteration = 0
+    max_iter = 0
     while True:
         # --- 1. bridge ---
         # Bridging runs on the direct children, because a nested sequence
@@ -364,6 +399,8 @@ def _compute_sequence(
             return Identity(input=seq.input, output=seq.output)
         seq = seq.to(transformations=flat)
         before = len(flat)
+        if factor and not max_iter:
+            max_iter = _factor_cap(flat)
 
         # Propagate the sequence's own endpoints onto its first and last
         # elements, but only when it carries any, so the identity link is
@@ -378,10 +415,17 @@ def _compute_sequence(
             return simplified
         seq = simplified
 
+        # --- 2b. factor ---
+        if factor:
+            factored = _factor(seq, modes, policy, dep_cache, dep_keepalive)
+            if not isinstance(factored, Sequence):
+                return factored
+            seq = factored
+
         # --- 3. compose ---
         memo: tx.Set[Family] = set()
         for submode in modes:
-            result = _compose_mode(seq, submode, memo)
+            result = _compose_mode(seq, submode, memo, factor)
             if not isinstance(result, Sequence):
                 # A single transform: give it one last downcast, since the
                 # products of a composition are exactly the leaves the
@@ -389,7 +433,23 @@ def _compute_sequence(
                 return _simplify(result, policy=policy)
             seq = result
 
-        if len(_unnest(seq.transformations)) >= before:
+        if factor:
+            # The fixpoint under `factor=True`: a round that left every leaf
+            # the same object. Its simplify step has already seen exactly
+            # these leaves, so no final pass is needed.
+            after = _unnest(seq.transformations)
+            if len(after) == len(flat) and all(
+                a is b for a, b in zip(after, flat)
+            ):
+                return seq
+            iteration += 1
+            if iteration > max_iter:
+                raise RuntimeError(
+                    "compute did not converge under factor=True after "
+                    f"{iteration} iterations; a pass is not "
+                    "identity-preserving on the normal form"
+                )
+        elif len(_unnest(seq.transformations)) >= before:
             # No pass shrank the sequence, so a further round cannot
             # either. One last simplify pass over the composition products.
             return _simplify(seq, policy=policy)
@@ -399,6 +459,7 @@ def _compose_mode(
     seq: Sequence,
     mode: Family,
     memo: tx.Set[Family],
+    factor: bool = False,
 ) -> Transformation:
     # Compose the runs a single mode admits, depth first.
     #
@@ -421,7 +482,7 @@ def _compose_mode(
 
     # --- First, fold every child mode (finer kinds first)
     for child in mode_children(mode):
-        seq = _compose_mode(seq, child, memo)
+        seq = _compose_mode(seq, child, memo, factor)
         if not isinstance(seq, Sequence):
             return seq
 
@@ -443,6 +504,10 @@ def _compose_mode(
         item = inputs.pop(0)
         if is_family(item, mode):
             while inputs and is_family(inputs[0], mode):
+                if factor and not _factor_pair_ok(item, inputs[0]):
+                    # Under `factor=True`, composition must not undo the
+                    # factor pass (see `_factor_pair_ok`).
+                    break
                 next_input = inputs.pop(0)
                 try:
                     # NOTE: we compose to the left ! (see sequence definition)
@@ -462,6 +527,59 @@ def _compose_mode(
     if len(outputs) == 1:
         return outputs[0]
     return Sequence(transformations=outputs)
+
+
+def _factor_pair_ok(a: Transformation, b: Transformation) -> bool:
+    # Whether the compose pass may combine the adjacent pair `(a, b)` under
+    # `factor=True`. Two extra gates keep composition from undoing the
+    # factor pass:
+    #   1. a `CartesianField` (the sampling domain) composes with nothing;
+    #   2. a subspace factor composes only next to another subspace over the
+    #      same axes, or an `Identity` -- never with a bare permutation or
+    #      affine, which the subspace composers would fold it into, destroying
+    #      the normal form.
+    if isinstance(a, CartesianField) or isinstance(b, CartesianField):
+        return False
+    a_sub = isinstance(a, SubspaceTransformation)
+    b_sub = isinstance(b, SubspaceTransformation)
+    if not a_sub and not b_sub:
+        return True
+    if isinstance(a, Identity) or isinstance(b, Identity):
+        return True
+    if a_sub and b_sub:
+        return _axes_tuple(a.input_axes) == _axes_tuple(
+            b.input_axes
+        ) and _axes_tuple(a.output_axes) == _axes_tuple(b.output_axes)
+    return False
+
+
+def _axes_tuple(axes: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
+    # An axis vector (possibly a numpy array) as a comparable tuple.
+    return None if axes is None else tuple(int(x) for x in axes)
+
+
+def _factor_cap(flat: tx.List[Transformation]) -> int:
+    # A generous upper bound on productive fixpoint rounds under
+    # `factor=True`: `2 * (N + L) + 4`, with `N` an over-estimate of the work
+    # dimension and `L` the chain length, floored so a legitimate multi-round
+    # convergence is never cut short. It is only a safety net: a pass that
+    # is identity-preserving on the normal form converges in a few rounds.
+    n = 0
+    for t in flat:
+        shape = getattr(t, "shape", None)
+        if shape is not None:
+            n = max(n, len(shape))
+        if not isinstance(t, Inverse):
+            # Never read an inverse's matrix: it would materialize it.
+            matrix = getattr(t, "matrix", None)
+            if matrix is not None:
+                rows, cols = matrix.shape
+                n = max(n, int(rows), int(cols))
+        for name in ("input_axes", "output_axes"):
+            axes = getattr(t, name, None)
+            if axes is not None and len(axes):
+                n = max(n, max(int(x) for x in axes) + 1)
+    return max(2 * (n + len(flat)) + 4, 16)
 
 
 # ----------------------------------------------------------------------
