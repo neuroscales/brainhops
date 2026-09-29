@@ -1,8 +1,9 @@
-"""Simplifier implementations, registered into `registries.SIMPLIFIERS`.
+"""Simplifier implementations, registered through `simplify.simplifier`.
 
 This is to `simplify` what `composers` is to `compose` and `checkers` is to
-`check`: the machinery lives in `simplify`, every rule lives here and
-registers at import time.
+`check`: the machinery lives in `simplify` (two `bagof.dispatchers`
+functions, one per arity), every rule lives here and registers at import
+time.
 
 Two arities
 -----------

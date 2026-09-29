@@ -1,8 +1,8 @@
 """Simplification: the optional, never-failing rewrites.
 
 A *simplifier* rewrites transforms into an equivalent but cheaper
-representation. It comes in two arities, both dispatched by [`simplify`][]
-and both registered in the same `registries.SIMPLIFIERS` table:
+representation. It comes in two arities, dispatched by [`simplify`][]
+through two `bagof.dispatchers` functions, one per arity:
 
 * **one in, one out** -- `f(t, policy) -> Transformation`. Total: it always
   returns a transform, possibly `t` itself. This is the leaf downcast (an
@@ -61,14 +61,13 @@ __all__ = [
 
 # stdlib
 import inspect
+import itertools
 from collections.abc import Mapping
-from functools import partial
 
 # dependencies
 import typing_extensions as tx
-
-# bagof
 from bagof.converters import get_converter
+from bagof.dispatchers import Function, NoMethodError
 
 # datamodel
 from brainhops.datamodel.enums import SimplifyPolicy
@@ -82,18 +81,28 @@ from .modes import (
     is_family,
     normalize_family,
 )
-from .registries import (
-    SIMPLIFIERS,
-    SIMPLIFIERS_FASTMAP,
-    LeafSimplifier,
-    PairSimplifier,
-    type_distance,
-)
 from .utils import boundary_disagrees
 
 # typing
 if tx.TYPE_CHECKING:
     from .base import Transformation
+
+LeafSimplifier = tx.Callable[..., "Transformation"]
+"""
+A one-argument simplifier: `f(t, policy) -> Transformation`. It is *total*
+(it always returns a transform, possibly `t` itself) and it rewrites one
+transform into an equivalent, cheaper one. `policy` is a `SimplifyTable`,
+which the simplifier resolves against `t`.
+"""
+
+PairSimplifier = tx.Callable[..., tx.Optional["Transformation"]]
+"""
+A two-argument simplifier:
+`f(first, second, policy) -> Transformation | None`.
+It is *partial*: `None` means "these two do not collapse", which is the
+common answer and so must not be an exception. The arguments are in
+**application order** -- `first` is applied before `second`.
+"""
 
 
 # ======================================================================
@@ -120,6 +129,57 @@ SimplifyLike = tx.Union[
 #                            D I S P A T C H
 #
 # ======================================================================
+
+
+# Two `bagof.dispatchers` functions, one per arity, so a call never has to
+# tell a leaf simplifier from a pair one: `simplify` picks the function by
+# how many transforms it was given.
+#
+# A leaf simplifier is *total* -- exactly one applies, the most specific, the
+# way a method override wins -- which is `bagof.dispatchers`' native
+# single-winner model. A pair simplifier is *partial*: it returns `None` to
+# decline, and several may apply to one concrete pair with none more specific
+# than another (`(Identity, Transformation)` against `(Transformation,
+# Inverse)`, say). The bespoke registry broke that tie by registration order;
+# here each pair carries a `priority` that decreases with registration order,
+# so the earliest-registered wins a specificity tie, exactly as before. The
+# `None`-decline contract is preserved -- the chosen simplifier returning
+# `None` is the decline -- and, for the rules registered here, the winner's
+# decision never differs from a lower candidate's, so single-winner dispatch
+# reproduces the old chain of responsibility. (Where it would not, in general,
+# is the gap written up in `docs/design/bagof-dispatchers-migration.md`.)
+_leaf_simplifiers: Function = Function("simplify_leaf")
+_pair_simplifiers: Function = Function("simplify_pair")
+_pair_order = itertools.count()
+
+
+def _arity_from_hints(func: tx.Callable) -> int:
+    # The number of transform operands a bare `@simplifier` declares: every
+    # parameter but `policy` and the catch-alls. One is a leaf, two a pair.
+    n = sum(
+        1
+        for name, param in inspect.signature(func).parameters.items()
+        if name != "policy"
+        and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+    )
+    if n not in (1, 2):
+        raise TypeError(
+            f"a simplifier takes one or two transformations (plus `policy`), "
+            f"but {func.__qualname__} declares {n}"
+        )
+    return n
+
+
+def _register_leaf(func: tx.Callable) -> tx.Callable:
+    _leaf_simplifiers.register(func)
+    return func
+
+
+def _register_pair(func: tx.Callable) -> tx.Callable:
+    # Earlier registrations win a specificity tie: a strictly decreasing
+    # priority reproduces the bespoke registry's registration-order tie-break.
+    _pair_simplifiers.register(func, priority=-next(_pair_order))
+    return func
 
 
 @tx.overload
@@ -149,92 +209,60 @@ def simplifier(*args) -> tx.Callable:
     hints of every parameter but `policy`: one such parameter registers a
     leaf simplifier, two register a pair simplifier. Used with explicit
     types (`@simplifier(Identity, Transformation)`), those types key it
-    instead.
+    instead -- the form a generated simplifier that carries no hints needs.
     """
     if len(args) == 1 and not isinstance(args[0], type):
         func = args[0]
-        SIMPLIFIERS[_key_from_hints(func)] = func
-        SIMPLIFIERS_FASTMAP.clear()
-        return func
-    if not args or not all(isinstance(a, type) for a in args):
+        arity = _arity_from_hints(func)
+        return _register_leaf(func) if arity == 1 else _register_pair(func)
+    if not args or len(args) > 2 or not all(isinstance(a, type) for a in args):
         raise TypeError(
             "simplifier() takes a function, or one or two transformation "
             f"types, not {args!r}"
         )
-    return partial(_register, key=args[0] if len(args) == 1 else args)
+    types = args
 
+    def decorator(func: tx.Callable) -> tx.Callable:
+        # Overlay the operand hints, leaving `policy` (and any catch-all) as
+        # written, so the function is registered under the given types.
+        overlay = (*types, SimplifyTable)
+        if len(types) == 1:
+            _leaf_simplifiers.register(overlay)(func)
+        else:
+            _pair_simplifiers.register(overlay, priority=-next(_pair_order))(
+                func
+            )
+        return func
 
-def _register(func: tx.Callable, key: tx.Any) -> tx.Callable:
-    SIMPLIFIERS[key] = func
-    SIMPLIFIERS_FASTMAP.clear()
-    return func
-
-
-def _key_from_hints(func: tx.Callable) -> tx.Any:
-    # The operand types, read from the hints of every parameter that is not
-    # the policy. One operand keys a leaf simplifier, two key a pair.
-    hints = tx.get_type_hints(func)
-    types = tuple(
-        hints[name]
-        for name, param in inspect.signature(func).parameters.items()
-        if name != "policy"
-        and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
-    )
-    if len(types) == 1:
-        return types[0]
-    if len(types) == 2:
-        return types
-    raise TypeError(
-        f"a simplifier takes one or two transformations (plus `policy`), "
-        f"but {func.__qualname__} declares {len(types)}"
-    )
+    return decorator
 
 
 def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
     """The leaf simplifier registered nearest to `T` in the class hierarchy.
 
-    A leaf simplifier is *total*, so exactly one answers: the nearest one
-    wins, the way a method override does.
+    A leaf simplifier is *total*, so exactly one answers: the most specific
+    one wins, the way a method override does.
     """
-    if T in SIMPLIFIERS_FASTMAP:
-        return SIMPLIFIERS_FASTMAP[T]
-    best_distance, best_func = float("inf"), None
-    for key, func in SIMPLIFIERS.items():
-        if isinstance(key, tuple):
-            continue  # a pair simplifier
-        dist = type_distance(T, key)
-        if dist < best_distance:
-            best_distance, best_func = dist, func
-    if best_distance == float("inf"):
-        best_func = None
-    SIMPLIFIERS_FASTMAP[T] = best_func
-    return best_func
+    try:
+        return _leaf_simplifiers.resolve(T, SimplifyTable)
+    except NoMethodError:
+        return None
 
 
 def get_pair_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
-    """The pair simplifiers that apply to `(T1, T2)`, nearest first.
+    """The pair simplifier that applies to `(T1, T2)`, or an empty tuple.
 
-    A pair simplifier is *partial*, so several may apply and each may
-    decline: the candidates form a chain of responsibility, exactly as the
-    composers do. They are ordered by summed hierarchy distance, with
-    registration order breaking a tie.
+    A pair simplifier is *partial* and may decline. The bespoke registry
+    returned every applicable candidate, nearest first, for `simplify` to
+    try in turn; `bagof.dispatchers` instead selects the single most
+    specific one (ties broken by registration order, see [`simplifier`][]),
+    so this returns that one -- as a one-tuple, to keep the shape callers
+    expect -- or an empty tuple when none applies.
     """
-    key = (T1, T2)
-    cached = SIMPLIFIERS_FASTMAP.get(key)
-    if cached is not None:
-        return cached
-    scored = []
-    for order, (registered, func) in enumerate(SIMPLIFIERS.items()):
-        if not isinstance(registered, tuple):
-            continue  # a leaf simplifier
-        A, B = registered
-        dist = type_distance(T1, A) + type_distance(T2, B)
-        if dist < float("inf"):
-            scored.append((func, dist, order))
-    scored.sort(key=lambda s: (s[1], s[2]))
-    funcs = tuple(s[0] for s in scored)
-    SIMPLIFIERS_FASTMAP[key] = funcs
-    return funcs
+    try:
+        return (_pair_simplifiers.resolve(T1, T2, SimplifyTable),)
+    except NoMethodError:
+        return ()
 
 
 def simplify(
@@ -281,12 +309,14 @@ def simplify(
 
     if len(transformations) == 1:
         (t,) = transformations
-        func = get_simplifier(type(t))
-        if func is None:
+        try:
+            return _leaf_simplifiers(t, policy=policy)
+        except NoMethodError:
             # The root type is always registered, so this can only mean the
             # registry was not imported.
-            raise ValueError(f"no simplifier registered for {type(t)}")
-        return func(t, policy=policy)
+            raise ValueError(
+                f"no simplifier registered for {type(t)}"
+            ) from None
 
     first, second = transformations
 
@@ -303,13 +333,14 @@ def simplify(
         # sequence the pair is reconciled by the time it gets here.
         return None
 
-    for func in get_pair_simplifiers(type(first), type(second)):
-        result = func(first, second, policy=policy)
-        if result is not None:
-            return result
-    # No pair simplifier applies, or every one declined: the two do not
-    # collapse. That is the ordinary answer, not an error.
-    return None
+    try:
+        # The single most specific pair simplifier (ties broken by
+        # registration order). It returns `None` to decline, which -- like
+        # no simplifier applying at all -- is the ordinary "these two do not
+        # collapse" answer, not an error.
+        return _pair_simplifiers(first, second, policy=policy)
+    except NoMethodError:
+        return None
 
 
 # ======================================================================

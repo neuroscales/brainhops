@@ -597,59 +597,57 @@ def test_compose_tries_the_pair_simplifiers_before_any_composer() -> None:
 def test_dispatch_order_and_terminal_composition_error(
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    # The dispatch order (see the `compose` module docstring): candidates are
-    # tried nearest-first in the class hierarchy, so a composer declared on
-    # `(Affine, Affine)` is tried ahead of one declared on the
-    # `(Transformation, Transformation)` root, and declining with
-    # `NotImplemented` hands off to the next candidate. A `CompositionError`
-    # raised by a composer is terminal -- dispatch stops, so later candidates
-    # are never reached.
+    # Dispatch (see the `compose` module docstring): the composers are a
+    # `bagof.dispatchers` function, and a call runs the single *most specific*
+    # one. A composer declared on `(Affine, Affine)` is more specific than one
+    # on the `(Transformation, Transformation)` root, so the root is never
+    # reached for a pair of affines. Unlike the bespoke registry this
+    # replaced, there is no `NotImplemented`-decline hand-off to a less
+    # specific composer: a composer returning `NotImplemented` is treated as
+    # "no composer applies", and a `CompositionError` it raises is terminal.
+    from bagof.dispatchers import Function
+
     from brainhops.datamodel._transformations import compose as compose_mod
 
     a = Affine(matrix=np.array([[2.0, 0.0, 1.0], [0.0, 3.0, 2.0]]))
     b = Affine(matrix=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
     calls: list = []
 
-    def declining_specific(x1, x2):  # noqa: ANN001, ANN202
-        calls.append("specific")
-        return NotImplemented
+    def make_composers(specific):  # noqa: ANN001, ANN202
+        fn = Function("compose")
 
-    def family(x1, x2):  # noqa: ANN001, ANN202
-        calls.append("family")
+        def family(x1: Transformation, x2: Transformation) -> Transformation:
+            calls.append("family")
+            return Identity()
+
+        fn.register(specific)
+        fn.register(family)
+        return fn
+
+    # The most specific composer -- `(Affine, Affine)` -- is the only one run;
+    # the `(Transformation, Transformation)` root never fires for two affines.
+    def specific_identity(x1: Affine, x2: Affine) -> Transformation:
+        calls.append("specific")
         return Identity()
 
     monkeypatch.setattr(
-        compose_mod,
-        "COMPOSERS",
-        {
-            (Affine, Affine): declining_specific,
-            (Transformation, Transformation): family,
-        },
+        compose_mod, "_composers", make_composers(specific_identity)
     )
-    monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
-
     result = compose(a, b)
     assert isinstance(result, Identity)
-    assert calls == ["specific", "family"]
+    assert calls == ["specific"]
 
-    # A composer that raises `CompositionError` stops dispatch: the family
-    # composer, a later candidate, is never reached.
+    # A composer that raises `CompositionError` is terminal -- it stops
+    # composition, and the less specific root composer is never reached.
     calls.clear()
 
-    def raising_specific(x1, x2):  # noqa: ANN001, ANN202
+    def specific_raises(x1: Affine, x2: Affine) -> Transformation:
         calls.append("specific")
         raise CompositionError("right types, cannot combine")
 
     monkeypatch.setattr(
-        compose_mod,
-        "COMPOSERS",
-        {
-            (Affine, Affine): raising_specific,
-            (Transformation, Transformation): family,
-        },
+        compose_mod, "_composers", make_composers(specific_raises)
     )
-    monkeypatch.setattr(compose_mod, "COMPOSERS_FASTMAP", {})
-
     with pytest.raises(CompositionError):
         compose(a, b)
     assert calls == ["specific"]
