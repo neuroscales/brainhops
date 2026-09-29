@@ -24,37 +24,56 @@ Tiers
 2. **The registered composers.** These read parameters -- they multiply
    matrices and resample fields.
 
-Dispatch order within tier 2
-----------------------------
-For a concrete pair of operand types, every registered composer whose
-declared types are ancestors of that pair (with a finite summed hierarchy
-`distance`) is a candidate. The candidates are tried nearest-first, with
-registration order breaking a tie. The first candidate whose result
-``is not NotImplemented`` wins. A composer returns ``NotImplemented`` to
-decline and hand off to the next candidate; it raises
-[`CompositionError`][] to stop dispatch entirely -- that means "the types
-are right but these two cannot be combined" (for example, two subspace
-transforms whose axes do not line up). If no candidate applies, or every
-candidate declines, `compose` raises [`CompositionError`][].
+Dispatch within tier 2
+----------------------
+The registered composers are a [`bagof.dispatchers`][] function keyed by the
+pair of operand types (which may be [`Union`][typing.Union]s -- the library
+reads a union hint natively). For a concrete pair, the single *most specific*
+composer is chosen -- position by position, so a composer on `(Sequence,
+Sequence)` beats one on `(Sequence, Transformation)` because `Sequence` is a
+subtype of `Transformation`. A genuine specificity tie -- two composers
+neither of which is more specific for the concrete pair in hand -- is *not*
+resolved by registration order: the library raises
+[`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError], which
+propagates out of `compose`. We would rather surface a real ambiguity than
+silently pick a bad composer by registration accident.
+
+The one structural near-tie the composers contain is the pair `(Sequence,
+Transformation)` and `(Transformation, Sequence)`, which are mutually
+incomparable as *rules*. But their only concrete overlap is a `(Sequence,
+Sequence)` operand pair, and the registered `(Sequence, Sequence)` composer
+is strictly more specific there and wins it outright, so no concrete pair
+actually raises. (`bagof` v0.2's pairwise registration check does not see
+that dominating third rule, so it emits a benign `RuntimeWarning` about the
+incomparable pair at import; the enhancement note in
+`docs/design/bagof-dispatchers-migration.md` records it.)
+
+A composer raises [`CompositionError`][] to refuse -- "the types are right
+but these two cannot be combined" (for example, two subspace transforms whose
+axes do not line up). That propagates straight out, stopping composition. If
+no composer applies at all, `compose` raises [`CompositionError`][] too,
+after checking whether the two ends of the shared boundary merely disagree.
+
+Unlike the bespoke registry this replaced, the library selects one winner
+rather than a nearest-first chain: there is no `NotImplemented`-decline
+hand-off to a less specific composer, because no registered composer needs
+one (each concrete pair has a single most specific composer that always
+produces a result or refuses with `CompositionError`). A general
+chain-of-responsibility mode is the enhancement proposed for
+`bagof.dispatchers` in `docs/design/bagof-dispatchers-migration.md`; a
+composer returning `NotImplemented` is treated here as "no composer applies".
 
 `compose` itself knows nothing about modes. Gating which adjacent
 transforms are handed to `compose` is the sequence engine's job, not the
 composers'.
 """
 
-# stdlib
-import itertools
-import types as _types
-
 # dependencies
 import typing_extensions as tx
-
-# core
-from brainhops._core.typing import safe_get_origin
+from bagof.dispatchers import Function, NoMethodError
 
 # internals
 from .errors import CompositionError
-from .registries import COMPOSERS, COMPOSERS_FASTMAP, type_distance
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
@@ -62,57 +81,26 @@ from .utils import boundary_disagrees
 if tx.TYPE_CHECKING:
     from .base import Transformation
 
-# `types.UnionType` (the runtime type of a PEP 604 `X | Y` union) only
-# exists on Python 3.10+. It is `None` on older interpreters.
-_UnionTypes = (tx.Union,)
-if hasattr(_types, "UnionType"):
-    _UnionTypes += (_types.UnionType,)
+
+_compose: Function = Function("compose")
+"""The dispatched function every registered composer joins."""
 
 
 def composer(func: tx.Callable) -> tx.Callable:
     """Register a function as a composer of two transformations.
 
-    The composer's declared parameter types key it in the registry. A
-    composer *reads parameters*; a rewrite that decides from types and
-    object identity alone belongs in `simplifiers`, which `compose`
-    consults first.
+    The composer's declared parameter types (read off its two parameters'
+    hints, which may be unions) key it in the dispatcher. A composer *reads
+    parameters*; a rewrite that decides from types and object identity alone
+    belongs in `simplifiers`, which `compose` consults first.
+
+    Composers carry no `priority`: a genuine specificity tie is left to raise
+    [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError] rather
+    than be resolved by registration order, so a real ambiguity surfaces
+    instead of silently picking a bad composer (see the module docstring).
     """
-    types = tuple(tx.get_type_hints(func).values())[:2]
-    COMPOSERS[types] = func
-    COMPOSERS_FASTMAP.clear()
+    _compose.register(func)
     return func
-
-
-def _expand(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
-    # Expand a `X | Y` union hint into its members; a plain type is a
-    # one-tuple of itself.
-    if safe_get_origin(hint) in _UnionTypes:
-        return tx.get_args(hint)
-    return (hint,)
-
-
-def _candidates(t1: type, t2: type) -> tx.Tuple[tx.Callable, ...]:
-    # Every registered composer whose declared types are ancestors of
-    # `(t1, t2)` with a finite summed hierarchy distance, stably ordered by
-    # distance with registration order breaking ties (so the order
-    # reproduces the historical first-registered-wins on a tie). The result
-    # is cached per concrete pair in `COMPOSERS_FASTMAP`.
-    cached = COMPOSERS_FASTMAP.get((t1, t2))
-    if cached is not None:
-        return cached
-    scored = []
-    for order, ((T1, T2), func) in enumerate(COMPOSERS.items()):
-        best = float("inf")
-        for A, B in itertools.product(_expand(T1), _expand(T2)):
-            dist = type_distance(t1, A) + type_distance(t2, B)
-            if dist < best:
-                best = dist
-        if best < float("inf"):
-            scored.append((func, best, order))
-    scored.sort(key=lambda s: (s[1], s[2]))
-    funcs = tuple(s[0] for s in scored)
-    COMPOSERS_FASTMAP[(t1, t2)] = funcs
-    return funcs
 
 
 def compose(
@@ -123,10 +111,9 @@ def compose(
 
     `x2` is applied first, then `x1`, so the result maps ``x -> x1(x2(x))``.
     A cost-free rewrite is tried first (see the module docstring); failing
-    that, the registered composers are tried in dispatch order and the
-    first result that ``is not NotImplemented`` is returned. A composer
-    that raises [`CompositionError`][] stops dispatch; if none applies or
-    all decline, `compose` raises [`CompositionError`][].
+    that, the single most specific registered composer is chosen and run. A
+    composer that raises [`CompositionError`][] stops composition; if none
+    applies, `compose` raises [`CompositionError`][].
     """
     # Tier 1. The pair simplifiers read in application order, so the
     # operands are flipped: `x2` is the one applied first.
@@ -134,12 +121,20 @@ def compose(
     if result is not None:
         return result
 
-    # Tier 2. The registered, parameter-reading composers.
+    # Tier 2. The registered, parameter-reading composers. The library picks
+    # the single most specific one; a `CompositionError` it raises propagates
+    # out and stops composition. Only `NoMethodError` -- "no composer applies"
+    # -- is caught here; an `AmbiguousMethodError` from a genuine specificity
+    # tie is a real registry fault the maintainer wants surfaced, so it is
+    # deliberately NOT caught and propagates out unchanged.
     t1, t2 = type(x1), type(x2)
-    for func in _candidates(t1, t2):
-        result = func(x1, x2)
-        if result is not NotImplemented:
-            return result
+    try:
+        result = _compose(x1, x2)
+    except NoMethodError:
+        result = NotImplemented
+    if result is not NotImplemented:
+        return result
+
     if boundary_disagrees(x2, x1):
         # The composers assume the two ends of the boundary line up, and
         # these two do not. Say so, rather than reporting it as a missing

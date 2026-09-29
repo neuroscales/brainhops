@@ -8,6 +8,7 @@ dependencies = [
     "typing_extensions",
     "numpy",
     "scipy",
+    "bagof-dispatchers >= 0.3",
     "bagof-hints >= 0.1",
     # 0.2 parameterises a polymorphic class (`Inverse[Affine]`), which the
     # typed inverses declare; 0.1 raises on it.

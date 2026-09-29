@@ -6,13 +6,16 @@ importable by every module of the package without forming a cycle.
 * [`Dispatcher`][], the registry base class. A dispatcher is a `dict` of
   functions keyed by types, called with values, that picks the function
   whose declared types sit *nearest* those of its arguments -- the way a
-  method override does, but on several arguments at once. `convert` and
-  `is_kind` are dispatchers; see their modules for what their keys mean.
+  method override does, but on several arguments at once. `is_kind` is a
+  dispatcher; see its module for what its keys mean. (`compose`, `convert`
+  and `simplify` used to be dispatchers too, and now dispatch through
+  `bagof.dispatchers` instead -- `is_kind` stays bespoke because its
+  membership question is not single-winner; see the migration memo under
+  `docs/design/`.)
 
 * the late-bound singletons (`INVERSE`, `ADAPT`, `SEQUENCE`,
-  `TRANSFORMATION`) and the tables (`COMPOSERS`, `SIMPLIFIERS`) that a
-  module registers into at import time, so that a lower layer can reach a
-  higher one without importing it.
+  `TRANSFORMATION`) that a module registers into at import time, so that a
+  lower layer can reach a higher one without importing it.
 """
 
 # stdlib
@@ -334,60 +337,12 @@ def register_transformation(cls: tx.Type["Transformation"]) -> None:
     return cls
 
 
-# --- compose ----------------------------------------------------------
-
-PairOfTypes = tx.Tuple[tx.Type["Transformation"], tx.Type["Transformation"]]
-
-Composer = tx.Callable[["Transformation", "Transformation"], "Transformation"]
-ComposerRegistry = tx.Dict[PairOfTypes, Composer]
-"""
-A composer *fuses* two transforms into one by reading their parameters
-(multiplying matrices, resampling fields). Cost-free rewrites that decide
-from types and object identity alone are not composers: they are two-argument
-simplifiers (see `SIMPLIFIERS`), which `compose` consults first.
-"""
-
-COMPOSERS: ComposerRegistry = {}
-COMPOSERS_FASTMAP: tx.Dict[PairOfTypes, tx.Tuple[Composer, ...]] = {}
-"""
-The fastmap caches, per concrete pair, the ordered tuple of candidate
-composers `compose` should try, already sorted by dispatch order.
-"""
-
-# --- simplify ---------------------------------------------------------
-
-LeafSimplifier = tx.Callable[..., "Transformation"]
-"""
-A one-argument simplifier: `f(t, policy) -> Transformation`. It is *total*
-(it always returns a transform, possibly `t` itself) and it rewrites one
-transform into an equivalent, cheaper one. `policy` is a `SimplifyTable`,
-which the simplifier resolves against `t`.
-"""
-
-PairSimplifier = tx.Callable[..., tx.Optional["Transformation"]]
-"""
-A two-argument simplifier:
-`f(first, second, policy) -> Transformation | None`.
-It is *partial*: `None` means "these two do not collapse", which is the
-common answer and so must not be an exception. The arguments are in
-**application order** -- `first` is applied before `second`, exactly as the
-two read in a [`Sequence`][]. Note that this is the reverse of `compose`,
-which takes its operands in matrix order; `compose` flips them at the single
-point where it delegates here.
-"""
-
-SimplifierKey = tx.Union[
-    tx.Type["Transformation"],  # a leaf simplifier
-    PairOfTypes,  # a pair simplifier
-]
-SimplifierRegistry = tx.Dict[
-    SimplifierKey, tx.Union[LeafSimplifier, PairSimplifier]
-]
-
-SIMPLIFIERS: SimplifierRegistry = {}
-SIMPLIFIERS_FASTMAP: SimplifierRegistry = {}
-"""
-One registry holds both arities, keyed by a single type (leaf) or by a pair
-of types (pair). `simplify()` dispatches on the number of transforms it is
-given, so the two never collide.
-"""
+# --- compose / convert / simplify -------------------------------------
+#
+# These three no longer keep a table here. Their rules are registered into
+# `bagof.dispatchers` functions in the `compose`, `convert` and `simplify`
+# modules: `compose` and `convert` are single-winner most-specific dispatch
+# (`convert` on `type(x)` and, via a `type[...]` parameter, on the target
+# class value), and `simplify` uses one function per arity. See the migration
+# memo under `docs/design/` for why they map onto the library's model and why
+# `is_kind` (above) stays bespoke.
