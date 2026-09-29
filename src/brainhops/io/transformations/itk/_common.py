@@ -74,7 +74,7 @@ class ITKPrecision(StrEnum):
     Double = "double"
 
 
-class ITKStruct(Magic, kw_only=True, convert=True):
+class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
     """This object represents a single ITK transform block.
 
     It holds what an ITK file stores about one block -- its transform
@@ -84,17 +84,18 @@ class ITKStruct(Magic, kw_only=True, convert=True):
     [`Sequence`][brainhops.datamodel.transformations.Sequence] through
     [`ITKBlockBase`][], so a parsed block is already a brainhops
     transformation.
+
+    It is `polymorphic`: each concrete block registers the transform
+    class it stands for with `on={"type": ...}`, so building
+    `ITKStruct(type=..., ...)` -- which is what a parser does for every
+    block it reads -- dispatches to the right subtype from the `type`
+    field alone, and a `type` no block claims falls back to a bare
+    `ITKStruct`. The intermediate bases below opt out with
+    `polymorphic=False` so that a block registers with `ITKStruct`
+    itself rather than with whichever family base it happens to inherit
+    from, keeping the whole table reachable from the one door the parsers
+    knock on.
     """
-
-    _REGISTRY: tx.ClassVar[tx.Mapping[str, type]] = {}
-
-    def __new__(cls, *args, **kwargs) -> None:
-        if cls is not ITKStruct:
-            return super().__new__(cls)
-        if not hasattr(cls, "_REGISTRY"):
-            cls._REGISTRY = {}
-        cls = cls._REGISTRY.get(kwargs.get("type"), cls)
-        return super().__new__(cls)
 
     type: ITKTransformClass
     """The ITK transform class name (e.g., "AffineTransform")."""
@@ -147,22 +148,12 @@ class ITKStruct(Magic, kw_only=True, convert=True):
             )
 
 
-def _register_type(*names: str) -> tx.Callable:
-
-    def decorator(cls: type) -> type:
-        for name in names:
-            ITKStruct._REGISTRY[name] = cls
-        return cls
-
-    return decorator
-
-
 # ----------------------------------------------------------------------
 #   BASES
 # ----------------------------------------------------------------------
 
 
-class ITKBlockBase(ITKStruct, _xforms.Sequence):
+class ITKBlockBase(ITKStruct, _xforms.Sequence, polymorphic=False):
     """What every ITK block shares: its endpoints and its inverse.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world
@@ -189,7 +180,7 @@ class ITKBlockBase(ITKStruct, _xforms.Sequence):
         return _inverse_chain(self, compute=compute, **kwargs)
 
 
-class ITKAffineBase(ITKBlockBase):
+class ITKAffineBase(ITKBlockBase, polymorphic=False):
     """An ITK block that encodes an affine-like transformation.
 
     ITK does not store an affine-like block as a single matrix. It stores
@@ -277,7 +268,7 @@ class ITKAffineBase(ITKBlockBase):
         return tuple(child for child in chain if child is not None)
 
 
-class ITKDisplacementBase(ITKBlockBase):
+class ITKDisplacementBase(ITKBlockBase, polymorphic=False):
     """An ITK block that encodes a dense or spline-based warp.
 
     The warp lives on its own voxel grid, whose geometry the fixed
@@ -427,11 +418,8 @@ class ITKDisplacementBase(ITKBlockBase):
 # ----------------------------------------------------------------------
 
 
-@_register_type("IdentityTransform")
-class ITKIdentityStruct(ITKAffineBase):
+class ITKIdentityStruct(ITKAffineBase, on={"type": _ITKT.IdentityTransform}):
     """Identity transform with no parameters."""
-
-    type: tx.Literal[_ITKT.IdentityTransform] = _ITKT.IdentityTransform
 
     parameters: tx.Tuple[tx.Any, ...] = ()
 
@@ -446,13 +434,12 @@ class ITKIdentityStruct(ITKAffineBase):
         return _xforms.Identity(input=self.input, output=self.output)
 
 
-@_register_type("TranslationTransform")
-class ITKTranslationStruct(ITKAffineBase):
+class ITKTranslationStruct(
+    ITKAffineBase, on={"type": _ITKT.TranslationTransform}
+):
     """
     Translation transform with parameters for translation in each dimension.
     """
-
-    type: tx.Literal[_ITKT.TranslationTransform] = _ITKT.TranslationTransform
 
     fixed_parameters: tx.Tuple[tx.Any, ...] = ()
 
@@ -466,11 +453,8 @@ class ITKTranslationStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters)
 
 
-@_register_type("ScaleTransform")
-class ITKScaleStruct(ITKAffineBase):
+class ITKScaleStruct(ITKAffineBase, on={"type": _ITKT.ScaleTransform}):
     """Scale transform with parameters for scaling in each dimension."""
-
-    type: tx.Literal[_ITKT.ScaleTransform] = _ITKT.ScaleTransform
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -482,15 +466,12 @@ class ITKScaleStruct(ITKAffineBase):
         return _xforms.Scaling(self.parameters)
 
 
-@_register_type("ScaleLogarithmicTransform")
-class ITKScaleLogarithmicStruct(ITKAffineBase):
+class ITKScaleLogarithmicStruct(
+    ITKAffineBase, on={"type": _ITKT.ScaleLogarithmicTransform}
+):
     """
     Scale logarithmic transform with parameters for scaling in each dimension.
     """
-
-    type: tx.Literal[_ITKT.ScaleLogarithmicTransform] = (
-        _ITKT.ScaleLogarithmicTransform
-    )
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -502,11 +483,8 @@ class ITKScaleLogarithmicStruct(ITKAffineBase):
         return _xforms.Scaling(np.exp(self.parameters))
 
 
-@_register_type("Euler2DTransform")
-class ITKEuler2DStruct(ITKAffineBase):
+class ITKEuler2DStruct(ITKAffineBase, on={"type": _ITKT.Euler2DTransform}):
     """Euler 2D transform with parameters for rotation and translation."""
-
-    type: tx.Literal[_ITKT.Euler2DTransform] = _ITKT.Euler2DTransform
 
     ndim_input: tx.Literal[2] = 2
     ndim_output: tx.Literal[2] = 2
@@ -528,11 +506,8 @@ class ITKEuler2DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[1:3])
 
 
-@_register_type("Euler3DTransform")
-class ITKEuler3DStruct(ITKAffineBase):
+class ITKEuler3DStruct(ITKAffineBase, on={"type": _ITKT.Euler3DTransform}):
     """Euler 3D transform with parameters for rotation and translation."""
-
-    type: tx.Literal[_ITKT.Euler3DTransform] = _ITKT.Euler3DTransform
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -585,11 +560,8 @@ class ITKEuler3DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[3:6])
 
 
-@_register_type("VersorTransform")
-class ITKVersorStruct(ITKAffineBase):
+class ITKVersorStruct(ITKAffineBase, on={"type": _ITKT.VersorTransform}):
     """Versor transform with parameters for rotation in each dimension."""
-
-    type: tx.Literal[_ITKT.VersorTransform] = _ITKT.VersorTransform
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -609,15 +581,12 @@ class ITKVersorStruct(ITKAffineBase):
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
 
 
-@_register_type("VersorRigid3DTransform")
-class ITKVersorRigid3DStruct(ITKAffineBase):
+class ITKVersorRigid3DStruct(
+    ITKAffineBase, on={"type": _ITKT.VersorRigid3DTransform}
+):
     """
     Versor rigid 3D transform with parameters for rotation and translation.
     """
-
-    type: tx.Literal[_ITKT.VersorRigid3DTransform] = (
-        _ITKT.VersorRigid3DTransform
-    )
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -639,14 +608,13 @@ class ITKVersorRigid3DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[3:6])
 
 
-@_register_type("Similarity2DTransform")
-class ITKSimilarity2DStruct(ITKAffineBase):
+class ITKSimilarity2DStruct(
+    ITKAffineBase, on={"type": _ITKT.Similarity2DTransform}
+):
     """
     Similarity 2D transform with parameters for rotation, translation,
     and scaling.
     """
-
-    type: tx.Literal[_ITKT.Similarity2DTransform] = _ITKT.Similarity2DTransform
 
     ndim_input: tx.Literal[2] = 2
     ndim_output: tx.Literal[2] = 2
@@ -683,14 +651,13 @@ class ITKSimilarity2DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[2:4])
 
 
-@_register_type("Similarity3DTransform")
-class ITKSimilarity3DStruct(ITKAffineBase):
+class ITKSimilarity3DStruct(
+    ITKAffineBase, on={"type": _ITKT.Similarity3DTransform}
+):
     """
     Similarity 3D transform with parameters for rotation, translation,
     and scaling.
     """
-
-    type: tx.Literal[_ITKT.Similarity3DTransform] = _ITKT.Similarity3DTransform
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -730,16 +697,13 @@ class ITKSimilarity3DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[3:6])
 
 
-@_register_type("ScaleVersor3DTransform")
-class ITKScaleVersor3DStruct(ITKAffineBase):
+class ITKScaleVersor3DStruct(
+    ITKAffineBase, on={"type": _ITKT.ScaleVersor3DTransform}
+):
     """
     Scale versor 3D transform with parameters for rotation, translation,
     and scaling.
     """
-
-    type: tx.Literal[_ITKT.ScaleVersor3DTransform] = (
-        _ITKT.ScaleVersor3DTransform
-    )
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -769,16 +733,13 @@ class ITKScaleVersor3DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[3:6])
 
 
-@_register_type("ScaleSkewVersor3DTransform")
-class ITKScaleSkewVersor3DStruct(ITKAffineBase):
+class ITKScaleSkewVersor3DStruct(
+    ITKAffineBase, on={"type": _ITKT.ScaleSkewVersor3DTransform}
+):
     """
     Scale skew versor 3D transform with parameters for rotation, translation,
     scaling, and skewing.
     """
-
-    type: tx.Literal[_ITKT.ScaleSkewVersor3DTransform] = (
-        _ITKT.ScaleSkewVersor3DTransform
-    )
 
     ndim_input: tx.Literal[3] = 3
     ndim_output: tx.Literal[3] = 3
@@ -828,13 +789,10 @@ class ITKScaleSkewVersor3DStruct(ITKAffineBase):
         return _xforms.Translation(self.parameters[3:6])
 
 
-@_register_type("AffineTransform")
-class ITKAffineStruct(ITKAffineBase):
+class ITKAffineStruct(ITKAffineBase, on={"type": _ITKT.AffineTransform}):
     """
     Affine transform with parameters for linear transformation and translation.
     """
-
-    type: tx.Literal[_ITKT.AffineTransform] = _ITKT.AffineTransform
 
     def __post_init__(self) -> None:
         self._check_same_ndim()
@@ -858,8 +816,9 @@ class ITKAffineStruct(ITKAffineBase):
         )
 
 
-@_register_type("DisplacementFieldTransform")
-class ITKDisplacementFieldStruct(ITKDisplacementBase):
+class ITKDisplacementFieldStruct(
+    ITKDisplacementBase, on={"type": _ITKT.DisplacementFieldTransform}
+):
     """
     Displacement field transform with parameters for a dense deformation map.
 
@@ -869,15 +828,12 @@ class ITKDisplacementFieldStruct(ITKDisplacementBase):
     buffer of that image of vectors, so the components are interleaved.
     """
 
-    type: tx.Literal[_ITKT.DisplacementFieldTransform] = (
-        _ITKT.DisplacementFieldTransform
-    )
-
     interleaved: tx.ClassVar[bool] = True
 
 
-@_register_type("BSplineTransform")
-class ITKBSplineStruct(ITKDisplacementBase):
+class ITKBSplineStruct(
+    ITKDisplacementBase, on={"type": _ITKT.BSplineTransform}
+):
     """
     B-spline transform with parameters for a dense deformation map.
 
@@ -887,8 +843,6 @@ class ITKBSplineStruct(ITKDisplacementBase):
     They are one scalar coefficient image per axis, written back to
     back, so the components are planar rather than interleaved.
     """
-
-    type: tx.Literal[_ITKT.BSplineTransform] = _ITKT.BSplineTransform
 
     order: tx.ClassVar[int] = 3
     coeff: tx.ClassVar[bool] = True
