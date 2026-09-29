@@ -107,14 +107,32 @@ by argument count -- leaves and pairs never compete. `simplify` calls that one
 function with one transform or two accordingly.
 
 * **Leaves** are pure single-winner: the winner matched the bespoke registry
-  on every type, zero ambiguities. Clean.
-* **Pairs** matched the bespoke winner on every pair too, but 255 pairs are a
-  *specificity tie* the library reports as `AmbiguousMethodError`
+  on every type, zero ambiguities. Clean. `simplify` dispatches a leaf with
+  `_simplify(t, policy)`.
+* **Pairs** are a chain of responsibility, restored on `bagof.dispatchers`
+  v0.3's `Function.candidates()` (enhancement E2 below, now shipped). `simplify`
+  walks `_simplify.candidates(first, second, policy)` most-specific-first and
+  calls each *partial* rule until one returns non-`None`; all declining is the
+  ordinary "these two do not collapse" answer. `candidates()` yields
+  specificity ties in registration order, which is the same tie-break the
+  bespoke registry used, so no explicit `priority` is needed. We verified this
+  empirically: over the 2529 applicable ordered concrete pairs the first
+  candidate the chain tries matches the previous single-winner+`priority`
+  selection on **every** pair, and the 255 genuine specificity ties
   (`(Identity, Transformation)` versus `(Transformation, Inverse)`, and the
-  like — neither is more specific). The bespoke registry broke those ties by
-  registration order, so each pair registration carries a decreasing
-  `priority` that does the same. The `None`-decline contract is preserved: the
-  chosen simplifier returning `None` *is* the decline.
+  like — neither is more specific) are exactly the pairs the chain now walks
+  instead of picking one arbitrarily.
+
+  Dropping `priority` means bagof's *registration-time* pairwise check
+  (`_warn_new_ambiguities`) sees each of those 255 ties as a would-be ambiguous
+  single-winner registration and warns. Because `simplify` consumes pairs as an
+  all-applicable chain, not a single winner, that warning is not a defect, so it
+  is silenced with a `warnings.catch_warnings()` filter scoped to the *pair*
+  registrations only — never around leaf registrations, where a real
+  single-winner tie must still surface. The scoped silence is removable once
+  bagof grows the all-applicable-Function mode (E1), which would let the chain
+  register as a combining function rather than a would-be-ambiguous single
+  winner.
 
 ## What stayed bespoke, and why
 
@@ -162,24 +180,27 @@ membership predicates, validators and multi-handler fan-outs live on
 `bagof.dispatchers` at all. It is orthogonal to the sub-hint machinery and
 would reuse the existing applicability and specificity passes.
 
-### E2 — an ordered-candidate view / chain-of-responsibility decline protocol
+### E2 — an ordered-candidate view / chain-of-responsibility decline protocol — **shipped, adopted for pairs**
 
 Both `compose` (a composer historically returned `NotImplemented` to hand off
 to the next candidate) and the pair simplifiers (a rule returns `None` to
 decline) are *chains of responsibility*: try the applicable methods
-most-specific-first until one accepts. brainhops no longer needs the fall-
-through — no registered composer declines, and the pair rules' declines never
-differ from a lower candidate's, so single-winner + `priority` reproduces the
-old behaviour — but the pattern is general. The library could expose either
+most-specific-first until one accepts. This was proposed as either
 
-* `Function.candidates(*args) -> Iterator[Method]`, yielding the applicable
+* `Function.candidates(*args) -> tuple[Method, ...]`, yielding the applicable
   methods in specificity order (ties in registration order), letting a caller
   run its own chain; or
 * a first-class decline sentinel, so a method returning it is skipped and the
   next most specific is tried, with `NoMethodError` only if all decline.
 
-The first is the smaller, more composable primitive and also subsumes E1 for
-callers that would rather reduce the candidates themselves.
+`bagof.dispatchers` v0.3 shipped the first (with `itercandidates`,
+`resolve_candidates`, `bestcandidates` and friends). The pair simplifiers now
+use it directly: `simplify` walks `_simplify.candidates(first, second, policy)`
+and tries each until one returns non-`None`, which restores the true chain of
+responsibility and removed the interim `priority` bookkeeping this branch first
+carried. `compose` still runs single-winner (no registered composer declines).
+The candidate view is the smaller, more composable primitive and also subsumes
+E1 for callers that would rather reduce the candidates themselves.
 
 ### E3 — per-parameter variance / a pluggable relation
 

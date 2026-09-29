@@ -56,13 +56,12 @@ __all__ = [
     "ANALYTIC_FLOOR",
     "simplifier",
     "simplify",
-    "get_simplifier",
-    "get_pair_simplifiers",
+    "get_simplifiers",
 ]
 
 # stdlib
 import inspect
-import itertools
+import warnings
 from collections.abc import Mapping
 
 # dependencies
@@ -135,26 +134,27 @@ SimplifyLike = tx.Union[
 # One `bagof.dispatchers` function holding both arities as overloads: a leaf
 # simplifier is `(t, policy)` and a pair simplifier is `(first, second,
 # policy)`, so the two land on different call shapes and never compete --
-# `bagof.dispatchers` (v0.2) dispatches by argument count, picking a leaf
-# overload for one transform and a pair overload for two. `simplify` calls it
-# with one transform or two accordingly.
+# `bagof.dispatchers` dispatches by argument count, picking a leaf overload for
+# one transform and a pair overload for two. `simplify` calls it with one
+# transform or two accordingly.
 #
 # A leaf simplifier is *total* -- exactly one applies, the most specific, the
 # way a method override wins -- which is `bagof.dispatchers`' native
-# single-winner model, so leaves carry no `priority`. A pair simplifier is
-# *partial*: it returns `None` to decline, and several may apply to one
-# concrete pair with none more specific than another (`(Identity,
-# Transformation)` against `(Transformation, Inverse)`, say). The bespoke
-# registry broke that tie by registration order; here each pair carries a
-# `priority` that decreases with registration order, so the earliest-registered
-# wins a specificity tie, exactly as before. The `None`-decline contract is
-# preserved -- the chosen simplifier returning `None` is the decline -- and,
-# for the rules registered here, the winner's decision never differs from a
-# lower candidate's, so single-winner dispatch reproduces the old chain of
-# responsibility. (Where it would not, in general, is the gap written up in
-# `docs/design/bagof-dispatchers-migration.md`.)
+# single-winner model, so `simplify` dispatches a leaf with `_simplify(t,
+# policy)` and leaves carry no `priority`.
+#
+# A pair simplifier is *partial*: it returns `None` to decline, and several may
+# apply to one concrete pair with none more specific than another (`(Identity,
+# Transformation)` against `(Transformation, Inverse)`, say). That is a genuine
+# chain of responsibility, so `simplify` does not dispatch a single winner for
+# a pair; it walks `_simplify.candidates(first, second, policy)`
+# most-specific-first and calls each until one returns non-`None`. Ties in
+# specificity are yielded in registration order, so the earliest-registered
+# rule is tried first among equals -- the same tie-break the bespoke registry
+# (and this branch's earlier `priority=` bookkeeping) used, now free of any
+# explicit priority. The `None`-decline contract is preserved: a rule returning
+# `None` hands off to the next candidate rather than raising.
 _simplify: Function = Function("simplify")
-_pair_order = itertools.count()
 
 
 def _arity_from_hints(func: tx.Callable) -> int:
@@ -176,16 +176,28 @@ def _arity_from_hints(func: tx.Callable) -> int:
 
 def _register_leaf(func: tx.Callable) -> tx.Callable:
     # A leaf lands on the `(t, policy)` shape and is single-winner (total), so
-    # it carries no priority.
+    # it carries no priority -- and its registration is NOT silenced: a real
+    # single-winner tie between two leaves must still surface as bagof's
+    # registration `RuntimeWarning`.
     _simplify.register(func)
     return func
 
 
 def _register_pair(func: tx.Callable) -> tx.Callable:
-    # A pair lands on the `(first, second, policy)` shape. Earlier
-    # registrations win a specificity tie: a strictly decreasing priority
-    # reproduces the bespoke registry's registration-order tie-break.
-    _simplify.register(func, priority=-next(_pair_order))
+    # A pair lands on the `(first, second, policy)` shape and carries no
+    # priority: `simplify` consumes pairs as an all-applicable chain over
+    # `candidates()`, so specificity ties (~255 genuinely incomparable pairs
+    # such as `(Identity, Transformation)` vs `(Transformation, Inverse)`) are
+    # not defects -- every applicable rule is tried in turn. bagof's
+    # registration check compares methods pairwise and would emit a
+    # `RuntimeWarning` for each such tie, so silence it SCOPED to the pair
+    # registration only. (Removable once bagof grows an all-applicable-Function
+    # mode -- enhancement E1 in docs/design/bagof-dispatchers-migration.md,
+    # which the maintainer is adding -- so the chain no longer registers a
+    # would-be-ambiguous single-winner function.)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        _simplify.register(func)
     return func
 
 
@@ -236,38 +248,61 @@ def simplifier(*args) -> tx.Callable:
         if len(types) == 1:
             _simplify.register(overlay)(func)
         else:
-            _simplify.register(overlay, priority=-next(_pair_order))(func)
+            # A pair carries no priority and is silenced like `_register_pair`.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                _simplify.register(overlay)(func)
         return func
 
     return decorator
 
 
-def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
-    """The leaf simplifier registered nearest to `T` in the class hierarchy.
+@tx.overload
+def get_simplifiers(T: type) -> tx.Optional[LeafSimplifier]:
+    """The leaf simplifier for `T`, or `None`."""
+    ...
 
-    A leaf simplifier is *total*, so exactly one answers: the most specific
-    one wins, the way a method override does.
+
+@tx.overload
+def get_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
+    """The pair simplifiers for `(T1, T2)`, most specific first."""
+    ...
+
+
+def get_simplifiers(*types: type) -> tx.Any:
+    """The simplifier(s) registered for one transform type, or a pair.
+
+    A single arity-dispatched accessor over the one `bagof.dispatchers`
+    function that backs [`simplify`][], reflecting each arity's dispatch
+    shape:
+
+    * **One type** selects a leaf simplifier, which is *total* and
+      single-winner: exactly one answers, the most specific, the way a
+      method override does. Returns that one, or `None` when none is
+      registered.
+    * **Two types** select the pair simplifiers, which are *partial* and
+      form a chain of responsibility: several may apply and each may
+      decline (`None`). Returns every applicable rule, most specific first
+      (specificity ties in registration order) -- the exact order
+      [`simplify`][] walks and tries in turn -- or an empty tuple when none
+      applies.
     """
-    try:
-        return _simplify.resolve(T, SimplifyTable)
-    except NoMethodError:
-        return None
-
-
-def get_pair_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
-    """The pair simplifier that applies to `(T1, T2)`, or an empty tuple.
-
-    A pair simplifier is *partial* and may decline. The bespoke registry
-    returned every applicable candidate, nearest first, for `simplify` to
-    try in turn; `bagof.dispatchers` instead selects the single most
-    specific one (ties broken by registration order, see [`simplifier`][]),
-    so this returns that one -- as a one-tuple, to keep the shape callers
-    expect -- or an empty tuple when none applies.
-    """
-    try:
-        return (_simplify.resolve(T1, T2, SimplifyTable),)
-    except NoMethodError:
-        return ()
+    if len(types) == 1:
+        try:
+            return _simplify.resolve(types[0], SimplifyTable).function
+        except NoMethodError:
+            return None
+    if len(types) == 2:
+        return tuple(
+            method.function
+            for method in _simplify.resolve_candidates(
+                types[0], types[1], SimplifyTable
+            )
+        )
+    raise TypeError(
+        "get_simplifiers() takes one transformation type (a leaf) or two "
+        f"(a pair), not {len(types)}"
+    )
 
 
 def simplify(
@@ -338,14 +373,17 @@ def simplify(
         # sequence the pair is reconciled by the time it gets here.
         return None
 
-    try:
-        # The single most specific pair simplifier (ties broken by
-        # registration order). It returns `None` to decline, which -- like
-        # no simplifier applying at all -- is the ordinary "these two do not
-        # collapse" answer, not an error.
-        return _simplify(first, second, policy=policy)
-    except NoMethodError:
-        return None
+    # A chain of responsibility over the applicable pair simplifiers,
+    # most-specific-first (specificity ties in registration order). Each is
+    # *partial*: it returns `None` to decline and hand off to the next. The
+    # first non-`None` result is the collapse. All declining -- or no rule
+    # applying at all -- is the ordinary "these two do not collapse" answer,
+    # not an error, so an empty candidate list simply falls through to `None`.
+    for candidate in _simplify.candidates(first, second, policy=policy):
+        result = candidate(first, second, policy=policy)
+        if result is not None:
+            return result
+    return None
 
 
 # ======================================================================
