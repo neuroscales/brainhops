@@ -41,7 +41,7 @@ FROM = tx.TypeVar("FROM", bound=Transformation, default=Transformation)
 TO = tx.TypeVar("TO", bound=Transformation, default=Transformation)
 
 
-_converters: Function = Function("convert")
+_convert: Function = Function("convert")
 """The dispatched function every registered converter joins."""
 
 
@@ -68,7 +68,7 @@ def _register(inp: type, out: type, func: Converter) -> Converter:
     _method.__qualname__ = (
         f"convert[{inp.__name__} -> {getattr(out, '__name__', out)}]"
     )
-    _converters.register((inp, tx.Type[out]))(_method)
+    _convert.register((inp, tx.Type[out]))(_method)
     return func
 
 
@@ -150,7 +150,7 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
         something that is not a `cls`.
     """
     try:
-        result = _converters(x, cls, **kwargs)
+        result = _convert(x, cls, **kwargs)
     except (NoMethodError, AmbiguousMethodError):
         raise ConversionError(
             f"No converter found for: {type(x)} -> {cls}"

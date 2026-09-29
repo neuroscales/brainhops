@@ -631,7 +631,7 @@ def test_dispatch_order_and_terminal_composition_error(
         return Identity()
 
     monkeypatch.setattr(
-        compose_mod, "_composers", make_composers(specific_identity)
+        compose_mod, "_compose", make_composers(specific_identity)
     )
     result = compose(a, b)
     assert isinstance(result, Identity)
@@ -646,7 +646,7 @@ def test_dispatch_order_and_terminal_composition_error(
         raise CompositionError("right types, cannot combine")
 
     monkeypatch.setattr(
-        compose_mod, "_composers", make_composers(specific_raises)
+        compose_mod, "_compose", make_composers(specific_raises)
     )
     with pytest.raises(CompositionError):
         compose(a, b)

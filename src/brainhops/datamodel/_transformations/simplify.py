@@ -148,8 +148,8 @@ SimplifyLike = tx.Union[
 # decision never differs from a lower candidate's, so single-winner dispatch
 # reproduces the old chain of responsibility. (Where it would not, in general,
 # is the gap written up in `docs/design/bagof-dispatchers-migration.md`.)
-_leaf_simplifiers: Function = Function("simplify_leaf")
-_pair_simplifiers: Function = Function("simplify_pair")
+_simplify_leaf: Function = Function("simplify_leaf")
+_simplify_pair: Function = Function("simplify_pair")
 _pair_order = itertools.count()
 
 
@@ -171,14 +171,14 @@ def _arity_from_hints(func: tx.Callable) -> int:
 
 
 def _register_leaf(func: tx.Callable) -> tx.Callable:
-    _leaf_simplifiers.register(func)
+    _simplify_leaf.register(func)
     return func
 
 
 def _register_pair(func: tx.Callable) -> tx.Callable:
     # Earlier registrations win a specificity tie: a strictly decreasing
     # priority reproduces the bespoke registry's registration-order tie-break.
-    _pair_simplifiers.register(func, priority=-next(_pair_order))
+    _simplify_pair.register(func, priority=-next(_pair_order))
     return func
 
 
@@ -227,11 +227,9 @@ def simplifier(*args) -> tx.Callable:
         # written, so the function is registered under the given types.
         overlay = (*types, SimplifyTable)
         if len(types) == 1:
-            _leaf_simplifiers.register(overlay)(func)
+            _simplify_leaf.register(overlay)(func)
         else:
-            _pair_simplifiers.register(overlay, priority=-next(_pair_order))(
-                func
-            )
+            _simplify_pair.register(overlay, priority=-next(_pair_order))(func)
         return func
 
     return decorator
@@ -244,7 +242,7 @@ def get_simplifier(T: type) -> tx.Optional[LeafSimplifier]:
     one wins, the way a method override does.
     """
     try:
-        return _leaf_simplifiers.resolve(T, SimplifyTable)
+        return _simplify_leaf.resolve(T, SimplifyTable)
     except NoMethodError:
         return None
 
@@ -260,7 +258,7 @@ def get_pair_simplifiers(T1: type, T2: type) -> tx.Tuple[PairSimplifier, ...]:
     expect -- or an empty tuple when none applies.
     """
     try:
-        return (_pair_simplifiers.resolve(T1, T2, SimplifyTable),)
+        return (_simplify_pair.resolve(T1, T2, SimplifyTable),)
     except NoMethodError:
         return ()
 
@@ -310,7 +308,7 @@ def simplify(
     if len(transformations) == 1:
         (t,) = transformations
         try:
-            return _leaf_simplifiers(t, policy=policy)
+            return _simplify_leaf(t, policy=policy)
         except NoMethodError:
             # The root type is always registered, so this can only mean the
             # registry was not imported.
@@ -338,7 +336,7 @@ def simplify(
         # registration order). It returns `None` to decline, which -- like
         # no simplifier applying at all -- is the ordinary "these two do not
         # collapse" answer, not an error.
-        return _pair_simplifiers(first, second, policy=policy)
+        return _simplify_pair(first, second, policy=policy)
     except NoMethodError:
         return None
 

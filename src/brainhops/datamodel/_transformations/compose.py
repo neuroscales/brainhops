@@ -72,7 +72,7 @@ if tx.TYPE_CHECKING:
     from .base import Transformation
 
 
-_composers: Function = Function("compose")
+_compose: Function = Function("compose")
 """The dispatched function every registered composer joins."""
 
 _composer_order = itertools.count()
@@ -90,7 +90,7 @@ def composer(func: tx.Callable) -> tx.Callable:
     earliest-registered composer wins a specificity tie -- the tie-break the
     bespoke registry got from registration order.
     """
-    _composers.register(func, priority=-next(_composer_order))
+    _compose.register(func, priority=-next(_composer_order))
     return func
 
 
@@ -117,7 +117,7 @@ def compose(
     # out and stops composition.
     t1, t2 = type(x1), type(x2)
     try:
-        result = _composers(x1, x2)
+        result = _compose(x1, x2)
     except NoMethodError:
         result = NotImplemented
     if result is not NotImplemented:
