@@ -163,6 +163,7 @@ class SingleScaleImage(Image):
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
+        copy: bool = False,
     ) -> tx.Self:
         """
         Apply transformations to current data and return new image.
@@ -193,13 +194,21 @@ class SingleScaleImage(Image):
             If True, the input image is assumed to already contain spline
             coefficients. If False, the input image is prefiltered
             before interpolation.
+        copy : bool
+            Whether the output data must be a fresh array. As with
+            `torch.Tensor.to`, when `False` the output data may share
+            memory with the input data: a reslice that only gathers (a
+            flip, a permutation, or a unit-step slice, such as a reslice
+            onto the image's own grid) can return a view of it. When
+            `True` the output data never shares memory with the input
+            data.
 
         Returns
         -------
         Image
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff)
+        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
 
         # Guess geometry of output image
         if geometry is None:
@@ -396,6 +405,7 @@ class MultiScaleImage(Image):
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
+        copy: bool = False,
     ) -> tx.Self:
         """
         Apply transformations to current data and return new image
@@ -432,13 +442,21 @@ class MultiScaleImage(Image):
             If True, the input image is assumed to already contain spline
             coefficients. If False, the input image is prefiltered
             before interpolation.
+        copy : bool
+            Whether the output data must be a fresh array. As with
+            `torch.Tensor.to`, when `False` the output data may share
+            memory with the input data: a reslice that only gathers (a
+            flip, a permutation, or a unit-step slice, such as a reslice
+            onto the image's own grid) can return a view of it. When
+            `True` the output data never shares memory with the input
+            data.
 
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff)
+        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),

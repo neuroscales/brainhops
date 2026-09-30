@@ -35,7 +35,7 @@ import typing_extensions as tx
 from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 
 # api
-from brainhops.backends import get_array_backend
+from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
 
 # locals
@@ -506,6 +506,7 @@ def pull_separable(
     order: int,
     bound: tx.Union[str, float],
     coeff: bool,
+    copy: bool = False,
 ) -> tx.Any:
     """Reslice `data` through `seq`, exploiting separable axes.
 
@@ -543,6 +544,13 @@ def pull_separable(
         [`pull`][brainhops._core.bsplines.pull].
     coeff : bool
         Whether the data already contains spline coefficients.
+    copy : bool
+        Whether the result must be a fresh array. As with
+        `torch.Tensor.to`, when `False` the result may share memory with
+        `data`: a reslice that only gathers (a flip, a permutation, or a
+        unit-step slice, such as a reslice onto the data's own grid) can
+        return a view of it. When `True` the result never shares memory
+        with `data`. No copy is made when the result is already fresh.
 
     Returns
     -------
@@ -552,7 +560,9 @@ def pull_separable(
     opt = dict(order=order, bound=bound, coeff=coeff)
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
-        return pull(data, seq.compute().field, **opt)
+        # The monolithic pull writes into an array it allocates, so its
+        # result is always fresh.
+        return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
 
     # The pipeline runs in a floating working dtype so an integer input is
     # not rounded between steps. The weight-matrix step already produces a
@@ -562,6 +572,10 @@ def pull_separable(
     out_dtype = np.dtype(data.dtype)
     floating = np.issubdtype(out_dtype, np.floating)
     arr = data if floating else data.astype(float)
+    # Whether `arr` is known to be a new array. A lift to float, a step
+    # that interpolates, and the final cast each allocate one. Only the
+    # gather steps and the transpose can return a view of `data`.
+    fresh = not floating or any(step["kind"] != "gather" for step in steps)
     labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
     for step in steps:
         arr, labels = step["run"](arr, labels)
@@ -573,6 +587,7 @@ def pull_separable(
     # scipy's `map_coordinates`, so an integer or boolean output is finished
     # the same way scipy's `CASE_INTERP_OUT_INT` does.
     if arr.dtype != out_dtype:
+        fresh = True
         if out_dtype.kind == "b":
             # scipy truncates toward zero for a boolean output, so a
             # fractional value such as 0.6 becomes False.
@@ -586,4 +601,16 @@ def pull_separable(
             arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
         else:
             arr = arr.astype(out_dtype)
-    return arr
+    return _fresh(arr, data, copy, fresh)
+
+
+def _fresh(arr: tx.Any, data: tx.Any, copy: bool, fresh: bool) -> tx.Any:
+    """Return `arr`, copied if `copy` is set and it may alias `data`.
+
+    `fresh` says the caller knows `arr` is a new array, so no copy is
+    needed. Otherwise the backend is asked whether the two may share
+    memory, and a backend that cannot tell (dask) is copied regardless.
+    """
+    if not copy or fresh or may_share_memory(arr, data) is False:
+        return arr
+    return copy_array(arr)

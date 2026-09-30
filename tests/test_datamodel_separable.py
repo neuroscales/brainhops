@@ -1676,3 +1676,153 @@ def test_endpointless_subspace_beside_a_permutation_reslices() -> None:
         ref = pull(data, coords[..., [2, 0, 1]], **opt)
         got = sep.pull_separable(data, seq, **opt)
     assert np.allclose(got, ref)
+
+
+# ----------------------------------------------------------------------
+#   COPY
+# ----------------------------------------------------------------------
+
+
+def _own_grid_image(dtype: object = float) -> SingleScaleImage:
+    data = np.arange(3 * 4 * 5, dtype=dtype).reshape(3, 4, 5)
+    src = Affine(
+        matrix=np.diag([2.0, 2.0, 2.0, 1.0])[:-1],
+        input=_voxel_system(3),
+        output=_voxel_system(3),
+    )
+    return SingleScaleImage(data=data, transformations=[src])
+
+
+def _cras_to_fras() -> tuple:
+    # A cRAS image resliced onto an fRAS grid that flips its first axis
+    # and swaps it with the second: a permutation and flip bridge, which
+    # only gathers.
+    from brainhops.datamodel.systems import (
+        CRASCoordinateSystem,
+        FRASCoordinateSystem,
+        RASCoordinateSystem,
+    )
+
+    data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
+    src = Affine(
+        matrix=np.diag([2.0, 2.0, 2.0, 1.0])[:-1],
+        input=CRASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    # Output voxel (a, b, c) reads input voxel (3 - b, a, c).
+    target = Affine(
+        matrix=np.asarray(
+            [[0.0, -2.0, 0.0, 6.0], [2.0, 0.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0]]
+        ),
+        input=FRASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    geometry = Geometry(
+        (
+            CartesianField(
+                shape=(5, 4, 6),
+                input=FRASCoordinateSystem(),
+                output=FRASCoordinateSystem(),
+            ),
+            target,
+        )
+    )
+    return SingleScaleImage(data=data, transformations=[src]), geometry
+
+
+def _assert_fresh_copy(resliced: np.ndarray, source: np.ndarray) -> None:
+    before = source.copy()
+    assert not np.shares_memory(resliced, source)
+    resliced[...] = -1
+    assert np.array_equal(source, before)
+
+
+def test_own_grid_reslice_without_copy_is_a_view() -> None:
+    # Documents the view: a reslice onto the image's own grid only
+    # gathers, and by default hands back a view of the input.
+    with backend("numpy"):
+        img = _own_grid_image()
+        resliced = img.reslice(copy=False)
+    assert np.shares_memory(resliced.data, img.data)
+    assert np.array_equal(resliced.data, img.data)
+
+
+def test_own_grid_reslice_with_copy_is_fresh() -> None:
+    with backend("numpy"):
+        img = _own_grid_image()
+        resliced = img.reslice(copy=True)
+    assert np.array_equal(resliced.data, img.data)
+    _assert_fresh_copy(resliced.data, img.data)
+
+
+def test_gather_only_reslice_without_copy_is_a_view() -> None:
+    with backend("numpy"):
+        img, geometry = _cras_to_fras()
+        resliced = img.reslice(geometry, copy=False)
+        ref = img.reslice(geometry, copy=True)
+    assert np.shares_memory(resliced.data, img.data)
+    assert np.array_equal(resliced.data, ref.data)
+
+
+def test_gather_only_reslice_with_copy_is_fresh() -> None:
+    with backend("numpy"):
+        img, geometry = _cras_to_fras()
+        resliced = img.reslice(geometry, copy=True)
+    # The flip and the swap are real.
+    expected = img.data[::-1].transpose(1, 0, 2)
+    assert np.array_equal(resliced.data, expected)
+    _assert_fresh_copy(resliced.data, img.data)
+
+
+def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A half-voxel shift interpolates every axis, so the pipeline already
+    # allocates its result and `copy=True` must not copy it again.
+    def _no_copy(arr: object) -> object:
+        raise AssertionError("an already fresh result was copied")
+
+    monkeypatch.setattr(sep, "copy_array", _no_copy)
+    system = _voxel_system(3)
+    matrix = np.eye(4)[:-1]
+    matrix[:, -1] = 0.5
+    grid = CartesianField(shape=(3, 4, 5), input=system, output=system)
+    affine = Affine(matrix=matrix, input=system, output=system)
+    seq = Sequence(transformations=[grid, affine])
+    opt = dict(order=1, bound="reflect", coeff=False)
+    with backend("numpy"):
+        data = np.arange(3 * 4 * 5, dtype=float).reshape(3, 4, 5)
+        got = sep.pull_separable(data, seq, copy=True, **opt)
+        ref = pull(data, seq.compute().field, **opt)
+    assert np.allclose(got, ref)
+    _assert_fresh_copy(got, data)
+
+
+def test_backend_reports_memory_sharing_or_that_it_cannot_tell() -> None:
+    data = np.arange(6.0)
+    assert backends.may_share_memory(data, data[::-1]) is True
+    assert backends.may_share_memory(data, data.copy()) is False
+    copied = backends.copy_array(data[::-1])
+    assert not np.shares_memory(copied, data)
+    da = pytest.importorskip("dask.array")
+    lazy = da.from_array(data, chunks=2)
+    # A dask graph cannot be inspected for aliasing.
+    assert backends.may_share_memory(lazy[::-1], lazy) is None
+    assert backends.copy_array(lazy) is not lazy
+
+
+def test_copy_on_the_dask_backend_is_fresh() -> None:
+    # dask cannot say whether a result aliases its input, so `copy=True`
+    # copies every chunk of a gather-only reslice.
+    da = pytest.importorskip("dask.array")
+    pytest.importorskip("dask_image")
+    with backend("dask"):
+        img = _own_grid_image()
+        source = np.asarray(img.data).copy()
+        img = SingleScaleImage(
+            data=da.from_array(source, chunks=2),
+            transformations=img.transformations,
+        )
+        resliced = np.asarray(img.reslice(copy=True).data.compute())
+    assert np.array_equal(resliced, source)
+    assert not np.shares_memory(resliced, source)

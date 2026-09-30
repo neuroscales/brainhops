@@ -184,6 +184,49 @@ def get_array_backend(
     return get_array_backend()
 
 
+def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
+    """Whether two arrays might share memory, if the backend can tell.
+
+    For numpy and cupy this is the backend's own `may_share_memory`, a
+    conservative bounds check: `False` means the arrays certainly do not
+    overlap, `True` means they might. A dask array is a lazy graph whose
+    computed chunks can alias the chunks it was built from, which cannot be
+    read off the graph, so `None` is returned for it, and for an array-like
+    of no known backend: the caller cannot rule sharing out.
+    """
+    if x is y:
+        return True
+    backends = []
+    for array in (x, y):
+        if np is not None and isinstance(array, np.ndarray):
+            backends.append(np)
+        elif cp is not None and isinstance(array, cp.ndarray):
+            backends.append(cp)
+        else:
+            # A dask array, or an array-like of no known backend (a lazy
+            # file proxy, say), whose memory cannot be inspected.
+            return None
+    if backends[0] is not backends[1]:
+        # A host array and a device array cannot alias each other.
+        return False
+    return bool(backends[0].may_share_memory(x, y))
+
+
+def copy_array(x: ArrayProtocol) -> ArrayProtocol:
+    """A copy of `x` that shares no memory with it, in the same backend.
+
+    A dask array's own `copy()` is a no-op on a multi-chunk array, since
+    dask arrays are treated as immutable, so every chunk is copied
+    explicitly instead.
+    """
+    if da is not None and isinstance(x, da.Array):
+        return x.map_blocks(lambda block: block.copy(), dtype=x.dtype)
+    if hasattr(x, "copy"):
+        return x.copy()
+    # An array-like of no known backend is read into a fresh host array.
+    return np.array(x, copy=True)
+
+
 def _ndimage_of(name: str) -> ModuleType:
     """The ndimage package of a backend, by name.
 
