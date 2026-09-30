@@ -726,6 +726,97 @@ def test_reindex_split_across_groups() -> None:
 # ----------------------------------------------------------------------
 
 
+def _uncomposable_left() -> list:
+    # A group's pieces are a system-less subspace (the restricted sequence
+    # inner) followed by an affine (the restricted `Linear`): the subspace
+    # cannot be embedded, so the group cannot be composed.
+    linear = np.array(
+        [
+            [0.8, 0.4, 0.0, 0.3],
+            [0.1, 0.9, 0.0, -0.6],
+            [0.0, 0.0, 1.3, 0.0],
+            [-0.15, -0.15, 0.0, 0.7],
+        ]
+    )
+    inner = Sequence(
+        [
+            Scaling(scale=np.array([1.7, 0.75, 0.5])),
+            Translation(translation=np.array([-2.0, 0.0, 1.0])),
+        ]
+    )
+    return [
+        SubspaceTransformation(
+            transformation=inner,
+            input_axes=np.array([0, 2, 3]),
+            output_axes=np.array([0, 2, 3]),
+        ),
+        Linear(matrix=linear),
+    ]
+
+
+@pytest.mark.parametrize("form", ["reindex", "permutation"])
+def test_group_whose_pieces_cannot_compose_is_left_unfactored(
+    form: str,
+) -> None:
+    # `compute(factor=True)` used to raise a `ConversionError` here, where
+    # `compute()` succeeds. The reindex `in [1, 2, 3] -> out [2, 3, 1]` is
+    # the permutation `[0, 3, 1, 2]`; both forms hit it.
+    if form == "reindex":
+        head = SubspaceTransformation(
+            transformation=None,
+            input_axes=np.array([1, 2, 3]),
+            output_axes=np.array([2, 3, 1]),
+        )
+    else:
+        head = Permutation(permutation=np.array([0, 3, 1, 2]))
+    grid = CartesianField(shape=(3, 3, 5, 4))
+    seq = Sequence([grid, head, *_uncomposable_left()])
+    assert fac.factor_sequence(seq) is seq
+    assert np.allclose(_field(seq.compute(factor=True)), _field(seq))
+
+
+def test_uncomposable_affine_then_subspace_is_left_unfactored() -> None:
+    # The mirror: an affine piece (the local reindex) followed by a
+    # system-less subspace piece (a nested subspace's inner).
+    forward = Affine(
+        matrix=np.array(
+            [
+                [1.1, 0.0, 0.1, 0.2],
+                [-0.1, 1.2, -0.5, -0.6],
+                [0.1, 0.2, 0.6, -0.8],
+            ]
+        )
+    )
+    nested = SubspaceTransformation(
+        transformation=Scaling(scale=np.array([1.8])),
+        input_axes=np.array([0]),
+        output_axes=np.array([0]),
+    )
+    seq = Sequence(
+        [
+            CartesianField(shape=(4, 3, 5, 4)),
+            SubspaceTransformation(
+                transformation=None,
+                input_axes=np.array([1, 3]),
+                output_axes=np.array([3, 1]),
+            ),
+            SubspaceTransformation(
+                transformation=forward.inverse(),
+                input_axes=np.array([1, 2, 3]),
+                output_axes=np.array([1, 2, 3]),
+            ),
+            SubspaceTransformation(
+                transformation=nested,
+                input_axes=np.array([1, 3]),
+                output_axes=np.array([1, 3]),
+            ),
+            _sub(Scaling(scale=np.array([1.5, 1.8, 1.65, 1.7])), [0, 1, 2, 3]),
+        ]
+    )
+    assert fac.factor_sequence(seq) is seq
+    assert np.allclose(_field(seq.compute(factor=True)), _field(seq))
+
+
 def test_rectangular_chain_left_unfactored() -> None:
     # A tall (2 -> 3) affine creates an axis; it is left unfactored.
     grid = CartesianField(shape=(4, 5))

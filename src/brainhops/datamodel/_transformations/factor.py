@@ -55,7 +55,7 @@ import typing_extensions as tx
 # internals
 from .base import Transformation
 from .concrete import CartesianField, Identity, Permutation, is_identity
-from .errors import RestrictionError
+from .errors import CompositionError, ConversionError, RestrictionError
 from .meta import SubspaceTransformation
 from .restrict import restrict
 from .utils import UNREADABLE, affine_matrix, axis_list
@@ -205,6 +205,8 @@ def factor_sequence(
         # An element cannot be cut into the pieces of these groups soundly:
         # leave the chain unfactored rather than drop a piece.
         return seq
+    if factors is None:
+        return seq  # a group's pieces cannot be composed
     perm = _build_perm(groups, n_in)
 
     if _same_structure(body, factors, perm):
@@ -596,7 +598,8 @@ def _build_factors(
     stages: tx.List[_Stage],
     mode: "ModeLike",
     simplify: "SimplifyLike",
-) -> tx.List[SubspaceTransformation]:
+) -> tx.Optional[tx.List[SubspaceTransformation]]:
+    # `None` when the pieces of some group cannot be composed.
     from .sequence import Sequence
 
     factors: tx.List[SubspaceTransformation] = []
@@ -608,9 +611,18 @@ def _build_factors(
         # sequence, under the caller's own mode and simplify policy, so the
         # pieces inside a group compose exactly as far as `mode` admits --
         # and a restricted transform/inverse pair cancels first, for free.
-        inner = Sequence(transformations=sub).compute(
-            mode, simplify=simplify, factor=False
-        )
+        try:
+            inner = Sequence(transformations=sub).compute(
+                mode, simplify=simplify, factor=False
+            )
+        except (ConversionError, CompositionError):
+            # Factoring is an optimization: the original chain is returned
+            # unchanged and computed as it would be without `factor`, so
+            # leaving it unfactored is always sound. The restricted pieces
+            # can fail to compose where the whole chain does not: a piece
+            # that stays a subspace carries no coordinate systems, so it
+            # cannot be embedded next to an affine piece of the same group.
+            return None
         if _inner_is_identity(inner):
             continue
         axes = np.asarray(group.axes, dtype=int)
