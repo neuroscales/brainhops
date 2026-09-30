@@ -235,6 +235,26 @@ def test_subspace_field_with_a_pass_through_axis_stays_wrapped() -> None:
     assert list(piece.input_axes) == [1] and list(piece.output_axes) == [1]
 
 
+def test_inner_less_reindex_over_its_whole_group_is_a_local_swap() -> None:
+    # `in 0 -> out 1`, `in 1 -> out 0`, axis 2 passes through.
+    piece = restrict(_sub(None, [0, 1], [1, 0]), [0, 1], [0, 1], 3, 3)
+    assert type(piece) is Affine
+    assert np.array_equal(_matrix(piece), [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
+
+
+def test_inner_less_reindex_one_acted_axis_in_order_is_nothing() -> None:
+    # The block holds `in 0 -> out 1` only: an identity piece.
+    assert restrict(_sub(None, [0, 1], [1, 0]), [1], [0], 3, 3) is None
+
+
+def test_inner_less_reindex_partial_block_out_of_order() -> None:
+    # `in 2 -> out 0` with the pass-through `in 1 -> out 1`: in the block's
+    # local axes, output 0 reads input 1 and output 1 reads input 0.
+    piece = restrict(_sub(None, [0, 2], [2, 0]), [0, 1], [1, 2], 3, 3)
+    assert type(piece) is Affine
+    assert np.array_equal(_matrix(piece), [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
+
+
 def test_restrict_refuses_an_unsupported_type() -> None:
     with pytest.raises(RestrictionError, match="Cannot restrict"):
         restrict(np.eye(2), [0], [0], 2, 2)

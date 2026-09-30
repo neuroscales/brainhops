@@ -403,13 +403,11 @@ def _subspace_pattern(
         return _read_pattern_affine(element, ndim, ndim)
     ki, ko = len(in_axes), len(out_axes)
     if inner is None and ki == ko:
-        if in_axes != out_axes:
-            # An inner-less subspace that names different input and output
-            # axes is read two ways: as a reindex (by the affine converter
-            # and the subspace composer) and as the identity (by the
-            # subspace-on-field composer). Leave it unfactored.
-            return None
-        # No inner is the identity over the acted axes.
+        # No inner is the identity over the acted axes: `input_axes[k]`
+        # feeds `output_axes[k]`, and the other axes pass through in order.
+        # When the axes differ, the embedding makes it a reindex, which
+        # every reader (the affine converter and both subspace composers,
+        # since #110) agrees on.
         inner_dep = np.eye(ko, dtype=bool)
     elif interpolates:
         # An interpolating inner couples every acted-on axis to every other.

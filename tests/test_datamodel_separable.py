@@ -497,6 +497,38 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
             assert np.allclose(got, ref)
 
 
+@pytest.mark.parametrize("order", [0, 1, 3])
+def test_separable_matches_monolithic_through_an_inner_less_reindex(
+    order: int,
+) -> None:
+    # An inner-less subspace over different axes is a reindex (#110). It is
+    # now factored, so the reslice runs per group, and still matches the
+    # monolithic pull.
+    system = _voxel_system(3)
+    with backend("numpy"):
+        rng = np.random.default_rng(0)
+        data = rng.normal(size=(7, 6, 5))
+        grid = CartesianField(shape=(6, 7, 5), input=system, output=system)
+        swap = SubspaceTransformation(
+            transformation=None,
+            input_axes=np.asarray([0, 1]),
+            output_axes=np.asarray([1, 0]),
+            input=system,
+            output=system,
+        )
+        matrix = np.zeros((3, 4))
+        matrix[range(3), range(3)] = [0.9, 1.2, 1.0]
+        matrix[:, -1] = [0.3, -0.4, 1.0]
+        affine = Affine(matrix=matrix, input=system, output=system)
+        seq = Sequence(transformations=[grid, swap, affine])
+        opt = dict(order=order, bound="reflect", coeff=False)
+        assert sep._plan(data.shape, seq, **opt) is not None
+        got = sep.pull_separable(data, seq, **opt)
+        ref = pull(data, seq.compute().field, **opt)
+    assert got.shape == (6, 7, 5)
+    assert np.allclose(got, ref)
+
+
 def _pull_pair_cast(
     column: np.ndarray,
     scale0: float,

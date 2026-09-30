@@ -16,6 +16,8 @@ import pytest
 import brainhops._ext.invfield as invfield
 from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import sequence as seqmod
+from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
@@ -626,26 +628,97 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
     assert np.allclose(_field(result), _field(Sequence([grid, scale])))
 
 
-def test_subspace_without_inner_over_different_axes_is_unfactored() -> None:
-    # An inner-less subspace whose input and output axes differ is read as a
-    # reindex by the affine converter but as the identity by the
-    # subspace-on-field composer, so it is left unfactored (it used to
-    # crash the dependency reader).
-    reindex = SubspaceTransformation(
+# An inner-less subspace over different input and output axes is a reindex
+# (#110): `input_axes[k]` feeds `output_axes[k]`, and the other axes pass
+# through in order. These chains carry systems on every element so the
+# monolithic `compute()` can embed their subspaces; the normal form's
+# trailing permutation is applied by hand (see above).
+_XYZ = CoordinateSystem(
+    name="voxel", axes=[SpatialAxis(name=n, unit=None) for n in "xyz"]
+)
+_SHAPE = (4, 5, 6)
+
+
+def _reindex(in_axes: list, out_axes: list) -> SubspaceTransformation:
+    return SubspaceTransformation(
         transformation=None,
-        input_axes=np.array([0, 1]),
-        output_axes=np.array([1, 0]),
+        input_axes=np.asarray(in_axes, dtype=int),
+        output_axes=np.asarray(out_axes, dtype=int),
+        input=_XYZ,
+        output=_XYZ,
     )
-    seq = Sequence(
-        [
-            CartesianField(shape=(4, 5, 6)),
-            reindex,
-            _sub(Scaling(scale=np.array([1.5])), [2]),
-        ]
+
+
+def _grid_xyz() -> CartesianField:
+    return CartesianField(shape=_SHAPE, input=_XYZ, output=_XYZ)
+
+
+def _coords() -> np.ndarray:
+    axes = [np.arange(n, dtype=float) for n in _SHAPE]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+
+
+def _normal_form_field(nf: Sequence) -> np.ndarray:
+    *body, last = nf.transformations
+    if not isinstance(last, Permutation):
+        return _field(nf)
+    return _field(Sequence(body))[..., np.asarray(last.permutation)]
+
+
+def test_subspace_without_inner_over_different_axes_is_a_reindex() -> None:
+    # It used to be left unfactored, when the subspace-on-field composer
+    # still read it as the identity.
+    scale = SubspaceTransformation(
+        transformation=Scaling(scale=np.array([1.5])),
+        input_axes=np.array([2]),
+        output_axes=np.array([2]),
+        input=_XYZ,
+        output=_XYZ,
     )
-    assert fac.factor_sequence(seq) is seq
-    result = seq.compute(factor=True)
-    assert np.allclose(_field(result), _field(seq))
+    seq = Sequence([_grid_xyz(), _reindex([0, 1], [1, 0]), scale])
+    assert fac.factor_sequence(seq) is not seq
+    nf = seq.compute(factor=True)
+    assert _factor_axes(nf) == [(2,)]
+    assert list(nf.transformations[-1].permutation) == [1, 0, 2]
+    ground = _coords()[..., [1, 0, 2]] * [1.0, 1.0, 1.5]
+    assert np.allclose(_normal_form_field(nf), ground)
+    assert np.allclose(_normal_form_field(nf), _field(seq))
+
+
+@pytest.mark.parametrize("swap_first", [True, False])
+def test_reindex_swap_next_to_a_scaling(swap_first: bool) -> None:
+    # A pure swap of axes 0 and 1: three singleton groups, each scaled by
+    # the factor its data axis carries, and the swap as the trailing
+    # permutation.
+    s = np.array([2.0, 3.0, 4.0])
+    scaling = Scaling(scale=s, input=_XYZ, output=_XYZ)
+    swap = _reindex([0, 1], [1, 0])
+    els = [swap, scaling] if swap_first else [scaling, swap]
+    seq = Sequence([_grid_xyz(), *els])
+    nf = seq.compute(factor=True)
+    assert _factor_axes(nf) == [(0,), (1,), (2,)]
+    assert isinstance(nf.transformations[-1], Permutation)
+    assert list(nf.transformations[-1].permutation) == [1, 0, 2]
+    x = _coords()
+    ground = x[..., [1, 0, 2]] * s if swap_first else (x * s)[..., [1, 0, 2]]
+    assert np.allclose(_normal_form_field(nf), ground)
+    assert np.allclose(_normal_form_field(nf), _field(seq))
+
+
+def test_reindex_split_across_groups() -> None:
+    # The reindex sends axis 2 to axis 0 and axis 0 to axis 2; the affine
+    # after it couples axes 0 and 1. Each group holds only one of the
+    # reindex's acted axes, and the {1, 2} group reads them out of order.
+    matrix = np.array(
+        [[1.0, 0.5, 0.0, 0.0], [0.3, 1.0, 0.0, 0.0], [0.0, 0.0, 2.0, 1.0]]
+    )
+    affine = Affine(matrix=matrix, input=_XYZ, output=_XYZ)
+    seq = Sequence([_grid_xyz(), _reindex([0, 2], [2, 0]), affine])
+    nf = seq.compute(factor=True)
+    assert _factor_axes(nf) == [(0,), (1, 2)]
+    ground = _coords()[..., [2, 1, 0]] @ matrix[:, :3].T + matrix[:, 3]
+    assert np.allclose(_normal_form_field(nf), ground)
+    assert np.allclose(_normal_form_field(nf), _field(seq))
 
 
 # ----------------------------------------------------------------------
