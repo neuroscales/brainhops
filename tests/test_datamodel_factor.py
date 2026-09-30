@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import brainhops._ext.invfield as invfield
+from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import sequence as seqmod
 from brainhops.datamodel.transformations import (
     Affine,
@@ -295,6 +296,108 @@ def test_reversed_order_gives_the_same_partition() -> None:
     forward = Sequence([grid, a, b]).compute(factor=True)
     reverse = Sequence([grid, b, a]).compute(factor=True)
     assert _factor_axes(forward) == _factor_axes(reverse)
+
+
+# ----------------------------------------------------------------------
+#   RESTRICTION KEEPS THE CHEAPER TYPE
+# ----------------------------------------------------------------------
+
+
+def _pieces(els: list, ndim: int) -> list:
+    """The restricted pieces of every group, before they are composed."""
+    stages = fac._build_stages(els, ndim, {}, [])
+    groups = fac._partition(stages, ndim)
+    return [fac._restrict_group(group, stages) for group in groups]
+
+
+def test_restrict_keeps_scaling_and_translation_types() -> None:
+    # A restricted scaling stays a scaling and a restricted translation stays
+    # a translation, rather than being widened to a general affine sub-block.
+    els = [
+        Scaling(scale=np.asarray([2.0, 3.0])),
+        Translation(translation=np.asarray([1.0, -2.0])),
+    ]
+    pieces = _pieces(els, 2)
+    assert len(pieces) == 2
+    for sub in pieces:
+        assert [type(t).__name__ for t in sub] == ["Scaling", "Translation"]
+
+
+def test_restrict_keeps_permutation_type() -> None:
+    els = [Permutation(permutation=np.asarray([1, 0, 2]))]
+    pieces = _pieces(els, 3)
+    assert len(pieces) == 3
+    for sub in pieces:
+        assert [type(t).__name__ for t in sub] == ["Permutation"]
+
+
+def test_restrict_drops_matrix_less_affine() -> None:
+    # An affine with no matrix is the identity. It is restricted without
+    # indexing into a missing matrix, and dropped from every group.
+    matrix = np.zeros((2, 3))
+    matrix[0, 0], matrix[1, 1] = 2.0, 3.0
+    els = [Affine(matrix=matrix), Affine(matrix=None)]
+    pieces = _pieces(els, 2)
+    assert len(pieces) == 2
+    for sub in pieces:
+        assert [type(t).__name__ for t in sub] == ["Affine"]
+
+
+# ----------------------------------------------------------------------
+#   A WIDER INTERMEDIATE STAGE
+# ----------------------------------------------------------------------
+
+
+def _widened_chain() -> Sequence:
+    # A 3-d chain (x, y, t) that embeds a constant z coordinate, warps
+    # (x, y, z) together, and projects z away again. The middle stages have
+    # four axes, the ends three.
+    embed = np.zeros((4, 4))
+    embed[0, 0], embed[1, 1], embed[2, 2] = 1.3, 0.7, 1.0
+    embed[2, 3], embed[3, 3] = 1.0, 0.5
+    rng = np.random.default_rng(0)
+    warp = DisplacementField(
+        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, order=1, bound="reflect"
+    )
+    sub = SubspaceTransformation(
+        transformation=warp,
+        input_axes=np.asarray([0, 1, 3]),
+        output_axes=np.asarray([0, 1, 3]),
+    )
+    project = np.eye(3, 5)
+    return Sequence(
+        [
+            CartesianField(shape=(4, 5, 3)),
+            Affine(matrix=embed),
+            sub,
+            Affine(matrix=project),
+        ]
+    )
+
+
+def test_widened_intermediate_stage_factors() -> None:
+    # The warp couples x and y through the embedded z, while t only passes
+    # through the wider stage: two groups, whose inners both go through it.
+    seq = _widened_chain()
+    nf = seq.compute(factor=True)
+    assert _factor_axes(nf) == [(0, 1), (2,)]
+    assert np.allclose(_field(Sequence(list(nf.transformations))), _field(seq))
+
+
+def test_intermediate_axis_that_reaches_no_end_is_left_unfactored() -> None:
+    # An axis created from a constant and dropped again reaches neither the
+    # grid nor the data, so no per-axis step can apply it: unfactored.
+    embed = np.zeros((3, 3))
+    embed[0, 0], embed[1, 1], embed[2, 2] = 2.0, 3.0, 1.0
+    seq = Sequence(
+        [
+            CartesianField(shape=(4, 5)),
+            Affine(matrix=embed),
+            Affine(matrix=np.eye(2, 4)),
+        ]
+    )
+    nf = seq.compute(mode="translation", factor=True)
+    assert list(nf.transformations) == list(seq.transformations)
 
 
 # ----------------------------------------------------------------------

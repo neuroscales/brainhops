@@ -19,12 +19,13 @@ tiled together.
   its data axes; omitted when it is the identity.
 
 Scope. Only *dimension-preserving* chains, whose groups are all square
-(``|G| == |D|``), are factored. A chain that creates or drops axes (a
-rectangular affine, a projection, a ``None``-index broadcast), or that has a
-mixed / rank-deficient group, is left unfactored and returned unchanged --
-the same conservative fallback the reslice detector uses today. The
-embedding / drop projections (``E`` / ``Pi_drop``) of the full normal form
-are a follow-up.
+(``|G| == |D|``), are factored. An intermediate stage may have more or fewer
+axes than the chain's ends (an embedding into a wider space, a warp there,
+and a projection back), in which case a group's inner passes through that
+wider space. A chain whose ends differ (a rectangular affine, a projection,
+a ``None``-index broadcast), or that has a mixed / rank-deficient group, is
+left unfactored and returned unchanged. The embedding / drop projections
+(``E`` / ``Pi_drop``) of the full normal form are a follow-up.
 
 The pass is *idempotent* and *identity-preserving*: a sequence already in
 normal form is returned unchanged (same objects), and a leaf the pass does
@@ -74,9 +75,9 @@ if tx.TYPE_CHECKING:
 
 @dataclass
 class _Stage:
-    # One chain element read in the (dimension-preserving) work view.
+    # One chain element read in the work view.
     element: Transformation
-    pattern: np.ndarray  # (N, N) bool: output axis i depends on input axis j
+    pattern: np.ndarray  # (N_out, N_in) bool: output i depends on input j
 
 
 @dataclass
@@ -183,17 +184,18 @@ def _affine_matrix(element: Transformation) -> tx.Any:
 
 def _pattern(
     element: Transformation,
-    ndim: int,
+    ni: int,
+    no: int,
     dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
     dep_keepalive: tx.List[Transformation],
 ) -> tx.Optional[np.ndarray]:
-    # The element's `(ndim, ndim)` boolean dependency pattern in the work
-    # view, memoized by `id`. The keepalive list pins the element so its `id`
-    # is not reused while the cache holds its pattern.
+    # The element's `(no, ni)` boolean dependency pattern in the work view,
+    # memoized by `id`. The keepalive list pins the element so its `id` is
+    # not reused while the cache holds its pattern.
     key = id(element)
     if key in dep_cache:
         return dep_cache[key]
-    pat = _read_pattern(element, ndim, dep_cache, dep_keepalive)
+    pat = _read_pattern(element, ni, no, dep_cache, dep_keepalive)
     dep_cache[key] = pat
     dep_keepalive.append(element)
     return pat
@@ -201,7 +203,8 @@ def _pattern(
 
 def _read_pattern(
     element: Transformation,
-    ndim: int,
+    ni: int,
+    no: int,
     dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
     dep_keepalive: tx.List[Transformation],
 ) -> tx.Optional[np.ndarray]:
@@ -212,31 +215,38 @@ def _read_pattern(
         # A nested sub-chain (e.g. a subspace inner that composed only
         # partially under a restrictive mode): the pattern is the product of
         # its members' patterns along the chain.
-        acc = np.eye(ndim, dtype=bool)
+        acc = np.eye(ni, dtype=bool)
+        ndim = ni
         for member in element.transformations or []:
-            part = _read_pattern(member, ndim, dep_cache, dep_keepalive)
-            if part is None or part.shape != (ndim, ndim):
+            dims = _element_ndim(member, ndim)
+            if dims is None or dims[0] != ndim:
+                return None
+            part = _read_pattern(member, *dims, dep_cache, dep_keepalive)
+            if part is None or part.shape != dims[::-1]:
                 return None
             acc = (part.astype(int) @ acc.astype(int)) > 0
-        return acc
+            ndim = dims[1]
+        return acc if acc.shape == (no, ni) else None
     if isinstance(element, SubspaceTransformation):
-        return _subspace_pattern(element, ndim, dep_cache, dep_keepalive)
+        if ni != no:
+            return None
+        return _subspace_pattern(element, ni, dep_cache, dep_keepalive)
     if isinstance(element, Inverse):
         forward = element.forward
         if forward is None:
-            return np.eye(ndim, dtype=bool)
+            return np.eye(ni, dtype=bool) if ni == no else None
         # The pattern of a lazy inverse is the transpose of the forward's,
         # which never materializes it and gives the same coupling components.
-        fpat = _read_pattern(forward, ndim, dep_cache, dep_keepalive)
-        if fpat is None or fpat.shape != (ndim, ndim):
+        fpat = _read_pattern(forward, no, ni, dep_cache, dep_keepalive)
+        if fpat is None or fpat.shape != (ni, no):
             return None
         return fpat.T
     if _interpolates(element):
         # A raw field couples every axis to every axis.
-        return np.ones((ndim, ndim), dtype=bool)
+        return np.ones((no, ni), dtype=bool) if ni == no else None
     if isinstance(element, Identity):
-        return np.eye(ndim, dtype=bool)
-    return _read_pattern_affine(element, ndim)
+        return np.eye(ni, dtype=bool) if ni == no else None
+    return _read_pattern_affine(element, ni, no)
 
 
 def _subspace_pattern(
@@ -256,7 +266,7 @@ def _subspace_pattern(
             # An interpolating subspace naming no axes cannot be read.
             return None
         # A non-interpolating subspace carries its full affine embedding.
-        return _read_pattern_affine(element, ndim)
+        return _read_pattern_affine(element, ndim, ndim)
     ki, ko = len(in_axes), len(out_axes)
     if interpolates:
         # An interpolating inner couples every acted-on axis to every other.
@@ -264,11 +274,11 @@ def _subspace_pattern(
     else:
         inner_dep = None
         if ki == ko:
-            candidate = _read_pattern(inner, ki, dep_cache, dep_keepalive)
+            candidate = _read_pattern(inner, ki, ko, dep_cache, dep_keepalive)
             if candidate is not None and candidate.shape == (ko, ki):
                 inner_dep = candidate
         if inner_dep is None:
-            return _read_pattern_affine(element, ndim)
+            return _read_pattern_affine(element, ndim, ndim)
     dep = np.zeros((ndim, ndim), dtype=bool)
     for a, o in enumerate(out_axes):
         for b, i in enumerate(in_axes):
@@ -282,14 +292,14 @@ def _subspace_pattern(
 
 
 def _read_pattern_affine(
-    element: Transformation, ndim: int
+    element: Transformation, ni: int, no: int
 ) -> tx.Optional[np.ndarray]:
     matrix = _affine_matrix(element)
     if matrix is _UNREADABLE:
         return None
     if matrix is None:
-        return np.eye(ndim, dtype=bool)
-    if matrix.shape[0] != ndim or matrix.shape[1] - 1 != ndim:
+        return np.eye(ni, dtype=bool) if ni == no else None
+    if matrix.shape[0] != no or matrix.shape[1] - 1 != ni:
         return None
     return matrix[:, :-1] != 0
 
@@ -306,25 +316,32 @@ def _build_stages(
     dep_keepalive: tx.List[Transformation],
 ) -> tx.Optional[tx.List[_Stage]]:
     # Read every element's dependency pattern in the work view. Returns
-    # `None` when the chain is not dimension-preserving-square or an element
-    # cannot be read, so the caller leaves the sequence unfactored.
+    # `None` when the chain's ends differ in dimension or an element cannot
+    # be read, so the caller leaves the sequence unfactored. An element may
+    # change the dimension in between (an embedding, then a projection).
     stages: tx.List[_Stage] = []
     ndim = n_in
     for element in body:
         dims = _element_ndim(element, ndim)
-        if dims is None:
+        if dims is None or dims[0] != ndim:
             return None
         ni, no = dims
-        if ni != ndim or no != ndim:
-            # Not dimension-preserving: created / dropped axes are left to a
-            # follow-up (no E / Pi_drop is emitted yet).
-            return None
-        pat = _pattern(element, ndim, dep_cache, dep_keepalive)
-        if pat is None or pat.shape != (ndim, ndim):
+        pat = _pattern(element, ni, no, dep_cache, dep_keepalive)
+        if pat is None or pat.shape != (no, ni):
             return None
         stages.append(_Stage(element=element, pattern=pat))
         ndim = no
+    if ndim != n_in:
+        # Not dimension-preserving: created / dropped axes are left to a
+        # follow-up (no E / Pi_drop is emitted yet).
+        return None
     return stages
+
+
+def _stage_dims(stages: tx.List[_Stage], n_axes: int) -> tx.List[int]:
+    # The axis count at every stage: stage 0 is the chain's input, and
+    # stage `s` is the output of element `s`.
+    return [n_axes] + [s.pattern.shape[0] for s in stages]
 
 
 def _partition(
@@ -334,26 +351,24 @@ def _partition(
     # and whose edges are the true entries of each stage pattern. Returns
     # `None` on any non-square group (mixed / source / sink), so the chain is
     # left unfactored.
-    num_stages = len(stages) + 1
-    uf = _UnionFind(num_stages * n_axes)
+    dims = _stage_dims(stages, n_axes)
+    offsets = np.cumsum([0] + dims).tolist()
+    uf = _UnionFind(offsets[-1])
 
     def node(stage: int, axis: int) -> int:
-        return stage * n_axes + axis
+        return offsets[stage] + axis
 
     for stage, s in enumerate(stages, start=1):
-        pat = s.pattern
-        for i in range(n_axes):
-            for j in range(n_axes):
-                if pat[i, j]:
-                    uf.union(node(stage, i), node(stage - 1, j))
+        for i, j in zip(*np.nonzero(s.pattern)):
+            uf.union(node(stage, int(i)), node(stage - 1, int(j)))
 
     roots: tx.Dict[int, tx.Dict[int, tx.List[int]]] = {}
-    for stage in range(num_stages):
-        for axis in range(n_axes):
+    for stage, dim in enumerate(dims):
+        for axis in range(dim):
             root = uf.find(node(stage, axis))
             roots.setdefault(root, {}).setdefault(stage, []).append(axis)
 
-    last = num_stages - 1
+    last = len(dims) - 1
     groups: tx.List[_Group] = []
     for comp in roots.values():
         grid_axes = sorted(comp.get(0, []))
@@ -470,7 +485,9 @@ def _restrict_subspace(
         # recurse into the inner over its own local axes, which keeps the
         # cheaper type (a diagonal `Sub(Scaling, ...)` restricts to a
         # `Scaling`, not a rank-deficient affine sub-block).
-        piece = _restrict_element(inner, local_out, local_in, len(in_axes))
+        piece = _restrict_element(
+            inner, local_out, local_in, len(in_axes), len(out_axes)
+        )
     sub_in = [cols.index(in_axes[j]) for j in local_in]
     sub_out = [rows.index(out_axes[j]) for j in local_out]
     everything = list(range(len(cols)))
@@ -528,18 +545,19 @@ def _restrict_inverse(
     element: Transformation,
     rows: tx.List[int],
     cols: tx.List[int],
-    ndim: int,
+    ni: int,
+    no: int,
 ) -> tx.Optional[Transformation]:
     forward = element.forward
     if forward is None:
         return None
-    if len(rows) == ndim and len(cols) == ndim:
+    if len(rows) == no and len(cols) == ni:
         # The group covers the whole element: return the inverse object
         # itself, so it stays lazy and cancels by identity.
         return element
     # A block-diagonal inverse: restrict the forward with swapped rows/cols
     # and re-invert, which stays lazy.
-    inner = _restrict_element(forward, cols, rows, ndim)
+    inner = _restrict_element(forward, cols, rows, no, ni)
     if inner is None:
         return None
     return inner.inverse()
@@ -549,12 +567,13 @@ def _restrict_element(
     element: Transformation,
     rows: tx.List[int],
     cols: tx.List[int],
-    ndim: int,
+    ni: int,
+    no: int,
 ) -> tx.Optional[Transformation]:
     # The piece a group contributes for one element, restricted to the
     # group's axes at that element's stages. `rows` / `cols` are sorted
-    # positions in the element's `ndim`-dimensional output / input. `None`
-    # marks an identity piece.
+    # positions in the element's `no`-dimensional output / `ni`-dimensional
+    # input. `None` marks an identity piece.
     from .inverse import Inverse
     from .sequence import _interpolates
 
@@ -563,7 +582,7 @@ def _restrict_element(
     if isinstance(element, SubspaceTransformation):
         return _restrict_subspace(element, rows, cols)
     if isinstance(element, Inverse):
-        return _restrict_inverse(element, rows, cols, ndim)
+        return _restrict_inverse(element, rows, cols, ni, no)
     if _interpolates(element):
         # A raw field couples the whole space, so it is its own single group
         # and is spliced whole.
@@ -577,7 +596,7 @@ def _restrict_element(
 
 
 def _restrict_group(
-    group: _Group, stages: tx.List[_Stage], ndim: int
+    group: _Group, stages: tx.List[_Stage]
 ) -> tx.List[Transformation]:
     sub: tx.List[Transformation] = []
     for stage, s in enumerate(stages, start=1):
@@ -585,7 +604,8 @@ def _restrict_group(
         cols = group.per_stage.get(stage - 1, [])
         if not rows or not cols:
             continue
-        piece = _restrict_element(s.element, rows, cols, ndim)
+        no, ni = s.pattern.shape
+        piece = _restrict_element(s.element, rows, cols, ni, no)
         if piece is not None:
             sub.append(piece)
     return sub
@@ -618,13 +638,12 @@ def _build_factors(
     stages: tx.List[_Stage],
     modes: tx.List["Family"],
     policy: "SimplifyTable",
-    ndim: int,
 ) -> tx.List[SubspaceTransformation]:
     from .sequence import Sequence
 
     factors: tx.List[SubspaceTransformation] = []
     for group in groups:
-        sub = _restrict_group(group, stages, ndim)
+        sub = _restrict_group(group, stages)
         if not sub:
             continue
         # The group's restricted sub-chain is computed like any other
@@ -740,7 +759,7 @@ def _factor(
     if len(groups) <= 1:
         return seq  # trivial: nothing separable -> unchanged, same objects
 
-    factors = _build_factors(groups, stages, modes, policy, n_in)
+    factors = _build_factors(groups, stages, modes, policy)
     perm = _build_perm(groups, n_in)
 
     if _same_structure(body, factors, perm):
