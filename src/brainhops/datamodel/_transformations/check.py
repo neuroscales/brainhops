@@ -94,8 +94,11 @@ would ask only one checker and drop the rest, changing the answer.
 What the library does not do, and this module keeps, is the *reduction*: the
 candidates are grouped by node, the source nearest on `type(t)`'s MRO is kept
 per node (the override that shadows an inherited base), and the survivors'
-booleans are OR-ed. The full rationale, and the enhancements this rests on,
-are in the migration memo under `docs/design/`.
+booleans are OR-ed. The library does not cache that enumeration either (it
+tests every method against the argument values), so the selection -- which
+depends on `(type(t), kind)` alone -- is memoized per that pair; only the
+OR, which reads values, runs on every call. The full rationale, and the
+enhancements this rests on, are in the migration memo under `docs/design/`.
 """
 
 __all__ = [
@@ -114,7 +117,7 @@ __all__ = [
 ]
 
 # stdlib
-import warnings
+import abc
 
 # dependencies
 import typing_extensions as tx
@@ -143,6 +146,9 @@ numeric). It is keyed by `(source transform type, kind node)` and is given
 the node that was queried, which may be a superset of the one it was
 registered against.
 """
+
+Selection: tx.TypeAlias = tx.Tuple[Checker, ...]
+"""The checker implementations one `(type, kind)` query ORs, in order."""
 
 KindLike: tx.TypeAlias = tx.Union[
     Kind,
@@ -189,6 +195,11 @@ class IsKind:
         # would look up. The values are the *shims* (see `_add`), from which
         # the underlying implementation is read back through `get`.
         self._registry: tx.Dict[Key, tx.Any] = {}
+        # The per-`(type(x), kind)` selection memo (see `_selection`), with
+        # the ABC cache token it was filled under. `None` until first use,
+        # and reset to `None` by every registration.
+        self._memo: tx.Optional[tx.Tuple[object, tx.Dict[Key, Selection]]]
+        self._memo = None
 
     # -- registration ---------------------------------------------------
 
@@ -268,17 +279,16 @@ class IsKind:
         # parameter. The kind is matched by a lower bound: `type[Super[node]]`
         # accepts a queried kind `K` exactly when `node` is a subset of `K`,
         # the contravariant direction.
-        with warnings.catch_warnings():
-            # Two checkers on one source against *incomparable* nodes are an
-            # ambiguity only for single-winner dispatch: a query about a kind
-            # above both matches both with neither more specific. is_kind asks
-            # every candidate and OR-s them, so there is nothing to
-            # disambiguate; the registration-time warning is a false positive
-            # here (migration memo, E5). It is silenced rather than left to
-            # flood the import.
-            warnings.simplefilter("ignore", RuntimeWarning)
-            self._function.register((source, tx.Type[Super[node]]))(shim)
+        #
+        # Two checkers on one source against *incomparable* nodes tie for a
+        # query about a kind above both, with neither more specific. That is
+        # an ambiguity only for single-winner dispatch, which is never used
+        # here: is_kind asks every candidate and OR-s them, and `candidates`
+        # returns tied methods silently (bagof-dispatchers reports ambiguity
+        # only when a single-winner call hits it, not at registration).
+        self._function.register((source, tx.Type[Super[node]]))(shim)
         self._registry[(source, node)] = shim
+        self._memo = None  # a new checker can change any selection
 
     # -- dict-like lookup (for `checkers`) ------------------------------
 
@@ -331,6 +341,69 @@ class IsKind:
             return False
         compute = bool(compute)
 
+        # OR the selected implementations. The *selection* depends on types
+        # only and is memoized (see `_selection`); the checkers read values,
+        # so the disjunction itself runs on every call. Nothing applying is
+        # the answer "not established" -- an empty disjunction, never an
+        # error.
+        for impl in self._selection(x, kind, compute):
+            if impl(x, kind, compute):
+                return True
+        return False
+
+    # -- selection ------------------------------------------------------
+
+    def _selection(
+        self, x: Transformation, kind: Kind, compute: bool
+    ) -> Selection:
+        """
+        The checker implementations to OR for `(type(x), kind)`, memoized.
+
+        Enumerating the candidates is the expensive part of a call: the
+        library tests every registered method against the argument values
+        and does not cache the enumeration. It is also a function of
+        `(type(x), kind)` alone, so it is memoized on that key:
+
+        * every method is registered as `(source, type[Super[node]], bool)`
+          by `_add`, with `source` and `node` plain classes. Whether it
+          applies is `isinstance(x, source)` -- a function of `type(x)`,
+          since no class in the hierarchy defines a value-reading
+          `__instancecheck__` -- and `issubclass(node, kind)` -- a function
+          of the kind value;
+        * `compute` is coerced to a `bool` before it gets here and every
+          method hints it `bool`, so it always applies: it is carried to
+          the checkers, never dispatched on;
+        * the reduction below reads only the candidates and `type(x)`'s
+          MRO.
+
+        So any two calls with the same `(type(x), kind)` select the same
+        implementations, in the same order. What can change the answer is
+        the registry, not the arguments: a new checker (`_add` drops the
+        memo) or a new virtual subclass anywhere in an ABC hierarchy (the
+        memo is keyed on `abc.get_cache_token()`, as the library's own
+        dispatch cache is).
+
+        Concurrent calls are safe without a lock. The memo is an
+        `(token, dict)` pair swapped in whole, so a stale dict is never
+        re-labelled with a fresh token; two threads missing on one key
+        both compute the same selection, and the last `dict` write wins,
+        harmlessly (a benign race); a selection computed against a
+        registry that changed underneath it lands in a dict that is
+        already discarded.
+        """
+        token = abc.get_cache_token()
+        memo = self._memo
+        if memo is None or memo[0] != token:
+            memo = self._memo = (token, {})
+        key = (type(x), kind)
+        selection = memo[1].get(key)
+        if selection is None:
+            selection = memo[1][key] = self._select(x, kind, compute)
+        return selection
+
+    def _select(
+        self, x: Transformation, kind: Kind, compute: bool
+    ) -> Selection:
         # The library enumerates every applicable checker (source a supertype
         # of `type(x)`, node a subset of `kind`). Group them by node and keep,
         # per node, the checker whose source is nearest on `type(x)`'s MRO --
@@ -355,19 +428,18 @@ class IsKind:
             if current is None or rank < current[0]:
                 best[shim._node] = (rank, shim)
 
-        # OR the survivors. One implementation may win several nodes (a
-        # wrapper), and is called once: it reads the queried kind, not the
-        # node, so the calls would be identical. Nothing applying is the
-        # answer "not established" -- an empty disjunction, never an error.
+        # One implementation may win several nodes (a wrapper), and is kept
+        # once: it reads the queried kind, not the node, so the calls would
+        # be identical. The order is the survivors' order, as before.
+        selection: tx.List[Checker] = []
         seen: tx.Set[int] = set()
         for _rank, shim in best.values():
             impl = shim._impl
             if id(impl) in seen:
                 continue
             seen.add(id(impl))
-            if impl(x, kind, compute):
-                return True
-        return False
+            selection.append(impl)
+        return tuple(selection)
 
 
 # --- Public API -------------------------------------------------------

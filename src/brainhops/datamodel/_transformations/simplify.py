@@ -61,7 +61,6 @@ __all__ = [
 
 # stdlib
 import inspect
-import warnings
 from collections.abc import Mapping
 
 # dependencies
@@ -176,9 +175,8 @@ def _arity_from_hints(func: tx.Callable) -> int:
 
 def _register_leaf(func: tx.Callable) -> tx.Callable:
     # A leaf lands on the `(t, policy)` shape and is single-winner (total), so
-    # it carries no priority -- and its registration is NOT silenced: a real
-    # single-winner tie between two leaves must still surface as bagof's
-    # registration `RuntimeWarning`.
+    # it carries no priority: a real tie between two leaves raises
+    # `AmbiguousMethodError` when a call hits it.
     _simplify.register(func)
     return func
 
@@ -188,16 +186,10 @@ def _register_pair(func: tx.Callable) -> tx.Callable:
     # priority: `simplify` consumes pairs as an all-applicable chain over
     # `candidates()`, so specificity ties (~255 genuinely incomparable pairs
     # such as `(Identity, Transformation)` vs `(Transformation, Inverse)`) are
-    # not defects -- every applicable rule is tried in turn. bagof's
-    # registration check compares methods pairwise and would emit a
-    # `RuntimeWarning` for each such tie, so silence it SCOPED to the pair
-    # registration only. (Removable once bagof grows an all-applicable-Function
-    # mode -- enhancement E1 in docs/design/bagof-dispatchers-migration.md,
-    # which the maintainer is adding -- so the chain no longer registers a
-    # would-be-ambiguous single-winner function.)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        _simplify.register(func)
+    # not defects -- every applicable rule is tried in turn, and `candidates()`
+    # returns tied rules silently (in registration order). No single-winner
+    # call is ever made on a pair, so no tie is ever reported.
+    _simplify.register(func)
     return func
 
 
@@ -244,14 +236,10 @@ def simplifier(*args) -> tx.Callable:
     def decorator(func: tx.Callable) -> tx.Callable:
         # Overlay the operand hints, leaving `policy` (and any catch-all) as
         # written, so the function is registered under the given types.
+        # Neither a leaf nor a pair carries a priority (see `_register_leaf`
+        # and `_register_pair`).
         overlay = (*types, SimplifyTable)
-        if len(types) == 1:
-            _simplify.register(overlay)(func)
-        else:
-            # A pair carries no priority and is silenced like `_register_pair`.
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                _simplify.register(overlay)(func)
+        _simplify.register(overlay)(func)
         return func
 
     return decorator
