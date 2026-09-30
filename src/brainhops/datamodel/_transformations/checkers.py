@@ -291,7 +291,7 @@ def _diag_iso_pos(scale: ArrayProtocol) -> bool:
 _DIAGONAL_FACTS: tx.Dict[type, tx.Callable[[ArrayProtocol], bool]] = {
     kinds.InvertibleDiagonal: _diag_inv,
     kinds.PositiveDiagonal: _diag_pos,
-    kinds.SpecialDiagonal: _diag_spec,
+    kinds.SpecialOrthogonalDiagonal: _diag_spec,
     kinds.Multiplicative: _diag_iso,
     kinds.InvertibleMultiplicative: _diag_iso_inv,
     kinds.PositiveMultiplicative: _diag_iso_pos,
@@ -979,7 +979,7 @@ def _bijection_member(bij: Bijection, node: type, compute: bool) -> bool:
         return False
     if is_kind(f, node, compute):
         return True
-    relaxed = kinds.as_noninvertible(node)
+    relaxed = kinds.as_unrestricted(node)
     return relaxed is not None and is_kind(f, relaxed, compute)
 
 
