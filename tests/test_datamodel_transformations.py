@@ -362,6 +362,37 @@ def test_identity_composes_with_affine_in_both_orders() -> None:
     np.testing.assert_allclose(last.matrix, affine.matrix)
 
 
+def test_permutation_composes_in_application_order() -> None:
+    # Regression: `Permutation @ Permutation` indexed the outer permutation
+    # by the inner one. With `y[i] = x[perm[i]]`, `To(Ti(x))[i]` is
+    # `x[Ti.perm[To.perm[i]]]`, so the composed vector is
+    # `Ti.perm[To.perm]`. The two permutations below do not commute.
+    a = CoordinateSystem(name="A")
+    b = CoordinateSystem(name="B")
+    c = CoordinateSystem(name="C")
+    inner = Permutation(permutation=np.array([1, 0, 2]), input=a, output=b)
+    outer = Permutation(permutation=np.array([1, 2, 0]), input=b, output=c)
+
+    result = Sequence([inner, outer]).compute()
+    assert isinstance(result, Permutation)
+    assert result.input is a
+    assert result.output is c
+    np.testing.assert_array_equal(result.permutation, [0, 2, 1])
+
+    # Sequential application to a point.
+    x = np.array([10.0, 20.0, 30.0])
+    np.testing.assert_array_equal(
+        x[result.permutation], x[inner.permutation][outer.permutation]
+    )
+
+    # Dense matrix product.
+    dense = xc.convert(result, Linear).matrix
+    expected = (
+        xc.convert(outer, Linear).matrix @ xc.convert(inner, Linear).matrix
+    )
+    np.testing.assert_array_equal(dense, expected)
+
+
 def test_subspace_inverse_without_transform_swaps_axes() -> None:
     # With no inner transformation, `inverse` only swaps the input/output
     # spaces and their axes; it must not touch a `transformations`
