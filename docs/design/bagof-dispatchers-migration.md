@@ -96,6 +96,14 @@ could hide a real future ambiguity. **Enhancement note (E5):** the pairwise
 registration check should treat a pair as unambiguous when a third registered
 method strictly dominates the pair's entire concrete overlap.
 
+**Resolved in bagof-dispatchers 0.3.1** (brainhops now requires it): the
+registration-time check is gone, and ambiguity is reported only when a call
+hits it, as `AmbiguousMethodError`. `ambiguities()` also runs the full
+selection over every registered method, so the dominated `(Sequence,
+Transformation)` / `(Transformation, Sequence)` pair is no longer listed and
+no import-time warning is emitted. A genuine composer tie still raises at the
+call, as intended.
+
 ### `simplify` — one function, both arities as overloads
 
 `simplify` is variadic: one transform (a *total* leaf downcast) or two (a
@@ -133,6 +141,13 @@ function with one transform or two accordingly.
   bagof grows the all-applicable-Function mode (E1), which would let the chain
   register as a combining function rather than a would-be-ambiguous single
   winner.
+
+  **Resolved in bagof-dispatchers 0.3.1:** registration no longer warns
+  (ambiguity is reported only at a single-winner call, see E5), and
+  `candidates()` still returns tied methods silently, so the scoped filters
+  (here and around `is_kind`'s checker registrations) have been removed. A
+  real tie between two *leaf* simplifiers now surfaces as
+  `AmbiguousMethodError` at the call that hits it.
 
 ## What stayed bespoke, and why
 
@@ -233,7 +248,7 @@ intent explicit and spare implementations the shim `convert` needs to accept
 and drop a dispatch-only argument. This is a small ergonomic addition, not a
 change to the dispatch model.
 
-### E5 — registration-time ambiguity check should account for a dominating method
+### E5 — registration-time ambiguity check should account for a dominating method — **resolved in 0.3.1**
 
 `Function._warn_new_ambiguities` (RFC 0001 §5) compares a newly registered
 method against each existing one *pairwise*. When two methods are incomparable
@@ -246,6 +261,15 @@ Sequence)` composer, so the import-time `RuntimeWarning` is a false positive.
 Both the registration warning and `ambiguities()` should suppress a pair
 whose entire concrete overlap region is covered by a strictly more specific
 registered method, since no reachable call can then be ambiguous.
+
+bagof-dispatchers 0.3.1 ("report ambiguity at the call, not at
+registration") removed the registration-time check altogether: a tie is
+reported only when a single-winner call hits it, as `AmbiguousMethodError`,
+while `candidates()` / `resolve_candidates()` still return tied methods
+silently. `ambiguities()` now runs the full selection over every registered
+method, so a pair whose overlap a third method wins is no longer listed.
+brainhops requires `bagof-dispatchers >= 0.3.1` and has dropped the scoped
+warning filters it carried for this.
 
 ## Validation
 

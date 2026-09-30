@@ -43,10 +43,9 @@ Transformation)` and `(Transformation, Sequence)`, which are mutually
 incomparable as *rules*. But their only concrete overlap is a `(Sequence,
 Sequence)` operand pair, and the registered `(Sequence, Sequence)` composer
 is strictly more specific there and wins it outright, so no concrete pair
-actually raises. (`bagof` v0.2's pairwise registration check does not see
-that dominating third rule, so it emits a benign `RuntimeWarning` about the
-incomparable pair at import; the enhancement note in
-`docs/design/bagof-dispatchers-migration.md` records it.)
+actually raises. (Since bagof-dispatchers 0.3.1, ambiguity is reported only
+at a call that hits it, so this dominated pair no longer draws a spurious
+import-time `RuntimeWarning`.)
 
 A composer raises [`CompositionError`][] to refuse -- "the types are right
 but these two cannot be combined" (for example, two subspace transforms whose
