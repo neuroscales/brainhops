@@ -38,8 +38,11 @@ pair simplifiers, which link a transform to its lazy inverse by object
 identity) still sees it.
 
 Reading a chain never materializes a lazy inverse: an `Inverse` is read as
-the transpose of its forward's dependency pattern, and restricted by
-restricting its forward and re-inverting lazily. Composition inside a group
+the transpose of its forward's dependency pattern. How each element is cut
+into the pieces of each group is the dispatched `restrict` operation (see
+the `restrict` module), which keeps each piece's type, restricts a lazy
+inverse by restricting its forward and re-inverting lazily, and keeps an
+element a group holds whole as the same object. Composition inside a group
 goes through the ordinary [`Sequence.compute`][], so a restricted
 ``Sub(warp) . Sub(warp^-1)`` pair meets as ``[warp, warp^-1]`` and is
 collapsed by the cancellation pair simplifier before any composer runs.
@@ -54,17 +57,10 @@ import typing_extensions as tx
 
 # internals
 from .base import Transformation
-from .concrete import (
-    Affine,
-    CartesianField,
-    Identity,
-    Permutation,
-    Scaling,
-    Translation,
-    is_identity,
-)
-from .errors import ConversionError
+from .concrete import CartesianField, Identity, Permutation, is_identity
 from .meta import SubspaceTransformation
+from .restrict import restrict
+from .utils import UNREADABLE, affine_matrix, axis_list
 
 # typing
 if tx.TYPE_CHECKING:
@@ -93,28 +89,9 @@ class _Group:
     per_stage: tx.Dict[int, tx.List[int]] = field(default_factory=dict)
 
 
-# Returned by `_restrict_simple` for a piece that restricts to the identity.
-_DROP = object()
-
-# Returned by `_affine_matrix` for an element that has no affine reading (no
-# converter to `Affine` -- a projection, a bijection, ...). Distinct from
-# `None`, which marks an unparameterized (identity) affine-ish element: an
-# unreadable element must leave the chain unfactored, never be read as the
-# identity and dropped.
-_UNREADABLE = object()
-
-
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
-
-
-def _axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
-    # A plain list of integer axis indices. An axis vector may be a numpy
-    # array (ambiguous truth value), so it is tested against `None`.
-    if axes is None:
-        return []
-    return [int(a) for a in axes]
 
 
 class _UnionFind:
@@ -164,26 +141,13 @@ def _element_ndim(
         return no, ni
     if _interpolates(element):
         return ndim, ndim
-    matrix = _affine_matrix(element)
-    if matrix is _UNREADABLE:
+    matrix = affine_matrix(element)
+    if matrix is UNREADABLE:
         return None
     if matrix is None:
         return ndim, ndim
     no, cols = matrix.shape
     return cols - 1, no
-
-
-def _affine_matrix(element: Transformation) -> tx.Any:
-    # The affine matrix of an affine-ish element, `None` when the element is
-    # matrix-less (an identity), or `_UNREADABLE` when it cannot be converted
-    # to an affine at all. Never called on an `Inverse` (its `.matrix` would
-    # materialize the inverse).
-    try:
-        affine = element.to(Affine)
-    except ConversionError:
-        return _UNREADABLE
-    matrix = affine.matrix
-    return None if matrix is None else np.asarray(matrix)
 
 
 def _pattern(
@@ -262,8 +226,8 @@ def _subspace_pattern(
     from .sequence import _interpolates
 
     inner = element.transformation
-    in_axes = _axis_list(element.input_axes)
-    out_axes = _axis_list(element.output_axes)
+    in_axes = axis_list(element.input_axes)
+    out_axes = axis_list(element.output_axes)
     interpolates = _interpolates(inner)
     if not in_axes or not out_axes:
         if interpolates:
@@ -298,8 +262,8 @@ def _subspace_pattern(
 def _read_pattern_affine(
     element: Transformation, ni: int, no: int
 ) -> tx.Optional[np.ndarray]:
-    matrix = _affine_matrix(element)
-    if matrix is _UNREADABLE:
+    matrix = affine_matrix(element)
+    if matrix is UNREADABLE:
         return None
     if matrix is None:
         return np.eye(ni, dtype=bool) if ni == no else None
@@ -403,205 +367,16 @@ def _partition(
 
 
 # ----------------------------------------------------------------------
-#   RESTRICTION (type-preserving)
+#   RESTRICTION (see the `restrict` module)
 # ----------------------------------------------------------------------
-
-
-def _restrict_simple(
-    element: Transformation, rows: tx.List[int], cols: tx.List[int]
-) -> tx.Any:
-    # Restrict a `Scaling` / `Translation` / `Permutation` to a group's axes,
-    # keeping its type. `_DROP` marks an identity restriction; `None` falls
-    # back to the affine sub-block.
-    if isinstance(element, Scaling):
-        if element.scale is None:
-            return _DROP
-        return Scaling(scale=np.asarray(element.scale)[cols])
-    if isinstance(element, Translation):
-        if element.translation is None:
-            return _DROP
-        return Translation(translation=np.asarray(element.translation)[rows])
-    if isinstance(element, Permutation):
-        if element.permutation is None:
-            return _DROP
-        permutation = np.asarray(element.permutation)
-        col_pos = {c: j for j, c in enumerate(cols)}
-        new_perm = []
-        for r in rows:
-            source = int(permutation[r])
-            if source not in col_pos:
-                return None
-            new_perm.append(col_pos[source])
-        return Permutation(permutation=np.asarray(new_perm, dtype=int))
-    return None
-
-
-def _restrict_via_affine(
-    element: Transformation, rows: tx.List[int], cols: tx.List[int]
-) -> tx.Optional[Transformation]:
-    matrix = _affine_matrix(element)
-    if matrix is None or matrix is _UNREADABLE:
-        # An identity piece (or, defensively, one the stage reader would
-        # already have refused).
-        return None
-    n_in = matrix.shape[1] - 1
-    return Affine(matrix=matrix[np.ix_(rows, list(cols) + [n_in])])
-
-
-def _restrict_subspace(
-    element: SubspaceTransformation, rows: tx.List[int], cols: tx.List[int]
-) -> tx.Optional[Transformation]:
-    # A subspace acts on its named axes and passes every other axis through
-    # (in order). Its piece for a group is the same subspace re-expressed over
-    # the group's *local* axes: the acted axes that fall in the group keep
-    # their inner (restricted, when the group holds only part of a separable
-    # inner), and any pass-through axis the group also holds -- one coupled
-    # to the acted axes by another stage -- stays pass-through.
-    from .inverse import Inverse
-    from .sequence import _interpolates
-
-    in_axes = _axis_list(element.input_axes)
-    out_axes = _axis_list(element.output_axes)
-    inner = element.transformation
-    interpolates = _interpolates(inner)
-    if not in_axes or not out_axes:
-        if interpolates:
-            # Unreachable: the stage reader refuses such a subspace.
-            return element
-        return _restrict_via_affine(element, rows, cols)
-    local_in = [j for j, a in enumerate(in_axes) if a in cols]
-    local_out = [j for j, a in enumerate(out_axes) if a in rows]
-    if not local_in and not local_out:
-        # The group only holds pass-through axes of this subspace, which it
-        # maps in order: an identity piece.
-        return None
-    whole = len(local_in) == len(in_axes) and len(local_out) == len(out_axes)
-    if whole or interpolates:
-        # The group holds every acted axis (an interpolating inner couples all
-        # of them, so it is never split across groups): keep the inner as the
-        # very same object, so `Sub(warp) . Sub(warp^-1)` still cancels by
-        # identity inside the group, materializing no field.
-        piece = inner
-    elif inner is None:
-        piece = None
-    else:
-        # Partial overlap of a non-interpolating (hence separable) inner:
-        # recurse into the inner over its own local axes, which keeps the
-        # cheaper type (a diagonal `Sub(Scaling, ...)` restricts to a
-        # `Scaling`, not a rank-deficient affine sub-block).
-        piece = _restrict_element(
-            inner, local_out, local_in, len(in_axes), len(out_axes)
-        )
-    sub_in = [cols.index(in_axes[j]) for j in local_in]
-    sub_out = [rows.index(out_axes[j]) for j in local_out]
-    everything = list(range(len(cols)))
-    if sub_in == everything and sub_out == list(range(len(rows))):
-        # The acted axes are the whole group, in order: the piece is the
-        # (restricted) inner itself.
-        return piece
-    if piece is None and sub_in == sub_out:
-        # An identity inner over axes the group maps in order.
-        return None
-    if not interpolates and not isinstance(piece, Inverse):
-        # An affine-ish inner is embedded into the group's local space as a
-        # plain affine: an endpoint-less subspace cannot be widened to an
-        # affine when it meets an affine neighbour inside the group, since
-        # its axis count would have to be read from systems it does not
-        # carry. A lazy inverse is left wrapped rather than read, which
-        # would materialize it.
-        matrix = None if piece is None else _affine_matrix(piece)
-        if matrix is not _UNREADABLE:
-            return _embed_affine(matrix, sub_in, sub_out, len(cols), len(rows))
-    return SubspaceTransformation(
-        transformation=piece,
-        input_axes=np.asarray(sub_in, dtype=int),
-        output_axes=np.asarray(sub_out, dtype=int),
-    )
-
-
-def _embed_affine(
-    matrix: tx.Optional[np.ndarray],
-    sub_in: tx.List[int],
-    sub_out: tx.List[int],
-    n_in: int,
-    n_out: int,
-) -> Affine:
-    # The `(n_out, n_in + 1)` affine that applies `matrix` (an identity when
-    # `None`) from local input axes `sub_in` to local output axes `sub_out`
-    # and passes every other axis through, in order -- the local-space
-    # equivalent of a subspace over those axes.
-    embedded = np.zeros((n_out, n_in + 1))
-    pass_in = [c for c in range(n_in) if c not in sub_in]
-    pass_out = [r for r in range(n_out) if r not in sub_out]
-    for r, c in zip(pass_out, pass_in):
-        embedded[r, c] = 1.0
-    for a, r in enumerate(sub_out):
-        if matrix is None:
-            embedded[r, sub_in[a]] = 1.0
-            continue
-        for b, c in enumerate(sub_in):
-            embedded[r, c] = matrix[a, b]
-        embedded[r, n_in] = matrix[a, -1]
-    return Affine(matrix=embedded)
-
-
-def _restrict_inverse(
-    element: Transformation,
-    rows: tx.List[int],
-    cols: tx.List[int],
-    ni: int,
-    no: int,
-) -> tx.Optional[Transformation]:
-    forward = element.forward
-    if forward is None:
-        return None
-    if len(rows) == no and len(cols) == ni:
-        # The group covers the whole element: return the inverse object
-        # itself, so it stays lazy and cancels by identity.
-        return element
-    # A block-diagonal inverse: restrict the forward with swapped rows/cols
-    # and re-invert, which stays lazy.
-    inner = _restrict_element(forward, cols, rows, no, ni)
-    if inner is None:
-        return None
-    return inner.inverse()
-
-
-def _restrict_element(
-    element: Transformation,
-    rows: tx.List[int],
-    cols: tx.List[int],
-    ni: int,
-    no: int,
-) -> tx.Optional[Transformation]:
-    # The piece a group contributes for one element, restricted to the
-    # group's axes at that element's stages. `rows` / `cols` are sorted
-    # positions in the element's `no`-dimensional output / `ni`-dimensional
-    # input. `None` marks an identity piece.
-    from .inverse import Inverse
-    from .sequence import _interpolates
-
-    if isinstance(element, Identity):
-        return None
-    if isinstance(element, SubspaceTransformation):
-        return _restrict_subspace(element, rows, cols)
-    if isinstance(element, Inverse):
-        return _restrict_inverse(element, rows, cols, ni, no)
-    if _interpolates(element):
-        # A raw field couples the whole space, so it is its own single group
-        # and is spliced whole.
-        return element
-    simple = _restrict_simple(element, rows, cols)
-    if simple is _DROP:
-        return None
-    if simple is not None:
-        return simple
-    return _restrict_via_affine(element, rows, cols)
 
 
 def _restrict_group(
     group: _Group, stages: tx.List[_Stage]
 ) -> tx.List[Transformation]:
+    # The group's pieces, one per element it touches, in chain order. Each
+    # element is restricted to the group's axes at its two stages by the
+    # dispatched `restrict` operation; an identity piece is left out.
     sub: tx.List[Transformation] = []
     for stage, s in enumerate(stages, start=1):
         rows = group.per_stage.get(stage, [])
@@ -609,7 +384,7 @@ def _restrict_group(
         if not rows or not cols:
             continue
         no, ni = s.pattern.shape
-        piece = _restrict_element(s.element, rows, cols, ni, no)
+        piece = restrict(s.element, rows, cols, ni, no)
         if piece is not None:
             sub.append(piece)
     return sub
@@ -711,9 +486,9 @@ def _same_structure(
         else:
             if not isinstance(got, SubspaceTransformation):
                 return False
-            if _axis_list(got.input_axes) != _axis_list(want.input_axes):
+            if axis_list(got.input_axes) != axis_list(want.input_axes):
                 return False
-            if _axis_list(got.output_axes) != _axis_list(want.output_axes):
+            if axis_list(got.output_axes) != axis_list(want.output_axes):
                 return False
     return True
 

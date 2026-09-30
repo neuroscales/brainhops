@@ -42,9 +42,9 @@ from brainhops.datamodel import kinds
 from .base import Transformation
 from .concrete import Affine, CartesianField, Permutation
 from .errors import CompositionError, ConversionError
-from .factor import _axis_list
 from .meta import SubspaceTransformation
 from .sequence import Sequence, _interpolates
+from .utils import axis_list
 
 # ----------------------------------------------------------------------
 #   READING THE NORMAL FORM
@@ -74,7 +74,7 @@ def _groups(
     if body and isinstance(body[-1], Permutation):
         permutation = body.pop().permutation
         if permutation is not None:
-            perm = _axis_list(permutation)
+            perm = axis_list(permutation)
     if sorted(perm) != list(range(ndim)):
         return None
     # The permutation sends grid axis `perm[d]` to data axis `d`.
@@ -84,8 +84,8 @@ def _groups(
     for factor in body:
         if not isinstance(factor, SubspaceTransformation):
             return None
-        axes = _axis_list(factor.input_axes)
-        if not axes or axes != _axis_list(factor.output_axes):
+        axes = axis_list(factor.input_axes)
+        if not axes or axes != axis_list(factor.output_axes):
             return None
         if len(set(axes)) != len(axes) or not free.issuperset(axes):
             # Overlapping factors are not independent steps.

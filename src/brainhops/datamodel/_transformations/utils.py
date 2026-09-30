@@ -1,5 +1,9 @@
 # dependencies
+import numpy as np
 import typing_extensions as tx
+
+# internals
+from .errors import ConversionError
 
 if tx.TYPE_CHECKING:
     # internals
@@ -51,3 +55,40 @@ def boundary_disagrees(
     output of `first` and the input of `second`.
     """
     return systems_disagree(first.output, second.input)
+
+
+def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
+    """A plain list of integer axis indices (empty for `None`).
+
+    An axis vector may be a numpy array, whose truth value is ambiguous, so
+    it is tested against `None` rather than for truthiness.
+    """
+    if axes is None:
+        return []
+    return [int(a) for a in axes]
+
+
+UNREADABLE = object()
+"""
+Returned by `affine_matrix` for a transform that has no affine reading
+(no converter to `Affine`: a projection, a bijection, a field, ...). It is
+distinct from `None`, which marks an unparameterized (identity) affine-ish
+transform.
+"""
+
+
+def affine_matrix(t: "Transformation") -> tx.Any:
+    """The affine matrix of an affine-ish transform, as a numpy array.
+
+    Returns `None` when the transform is matrix-less (an identity), and
+    `UNREADABLE` when it cannot be converted to an `Affine` at all.
+    Never call it on a lazy `Inverse`: converting one materializes it.
+    """
+    from .concrete import Affine
+
+    try:
+        affine = t.to(Affine)
+    except ConversionError:
+        return UNREADABLE
+    matrix = affine.matrix
+    return None if matrix is None else np.asarray(matrix)
