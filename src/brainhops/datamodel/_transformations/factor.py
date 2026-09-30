@@ -27,6 +27,10 @@ a ``None``-index broadcast), or that has a mixed / rank-deficient group, is
 left unfactored and returned unchanged. The embedding / drop projections
 (``E`` / ``Pi_drop``) of the full normal form are a follow-up.
 
+The reslice executor (the `separable` module) reads this normal form to
+decide how to sample the data of each group, so it is the one place where
+the axis groups of a transformation are worked out.
+
 The pass is *idempotent* and *identity-preserving*: a sequence already in
 normal form is returned unchanged (same objects), and a leaf the pass does
 not split keeps its identity, so the adjacent-inverse cancellation (the

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from brainhops.backends import backend
-from brainhops.datamodel._transformations import separable as sep
 from brainhops.datamodel.axes import SpatialAxis
 from brainhops.datamodel.geometry import Geometry, _index2transform
 from brainhops.datamodel.images import SingleScaleImage
@@ -197,12 +196,5 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     )
     geometry = img.geometry[index]
     with backend("numpy"):
-        transformation = (
-            img.transformation.inverse()
-            @ geometry.transformation
-            @ geometry.grid
-        )
-        got = sep.pull_separable(
-            data, transformation, order=order, bound="reflect", coeff=False
-        )
-    assert np.array_equal(got, data[index])
+        got = img.reslice(geometry, order=order, bound="reflect").data
+    assert np.array_equal(np.asarray(got), data[index])

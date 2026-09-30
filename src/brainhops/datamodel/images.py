@@ -218,10 +218,11 @@ class SingleScaleImage(Image):
         )
 
         # Compute voxel-to-voxel transformation and apply it to the data.
-        # The transformation is factored into independent per-axis groups,
+        # The transformation is computed into its axis-group normal form
+        # (`compute(factor=True)`), and each group is applied on its own,
         # so an axis that is only rescaled, flipped, or permuted is handled
-        # cheaply and only the coupled group keeps the N-dimensional pull.
-        # The factoring is imported lazily to avoid an import cycle.
+        # cheaply and only a coupled group keeps the N-dimensional pull.
+        # The executor is imported lazily to avoid an import cycle.
         from ._transformations.separable import pull_separable
 
         transformation = (
