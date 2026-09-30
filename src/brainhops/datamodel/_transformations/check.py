@@ -585,19 +585,19 @@ def normalize_family(family_like: FamilyLike) -> Family:
     """
     # A `(kind, ndim)` pair names its dimension explicitly. It is the only
     # tuple a family reads: a tuple of *kinds* is not a kind.
-    kind_like, ndim = family_like, None
+    kind_like, ndims = family_like, ()
     if isinstance(family_like, tuple):
-        if not kinds.is_kind_ndim_pair(family_like):
+        if not kinds.is_family_tuple(family_like):
             raise ValueError(
                 f"Invalid (kind, ndim) pair: {family_like!r}. A family pairs "
                 f"one kind with one dimension (or None)."
             )
-        kind_like, ndim = family_like
+        kind_like, *ndims = family_like
     # A string goes through the alias table first, so that a name the kind
     # hierarchy does not know (a wrapper, a field, a friendlier spelling)
     # normalizes like any other key.
     if isinstance(kind_like, str):
         alias = KIND_ALIASES.get(kind_like.lower())
         if alias is not None:
-            return kinds.TransformationFamily(alias, ndim)
-    return kinds.TransformationFamily.parse(kind_like, ndim)
+            return kinds.TransformationFamily(alias, *ndims)
+    return kinds.TransformationFamily.parse(kind_like, *ndims)

@@ -245,7 +245,7 @@ class CartesianField(CoordinatesField):
         return cls(shape=self.shape, input=self.output, output=self.input)
 
 
-@kinds.Affine.register
+@kinds.Affine
 class Affine(ConcreteTransformation):
     """An affine transformation."""
 
@@ -287,7 +287,7 @@ class Affine(ConcreteTransformation):
         return homogeneous_matrix
 
 
-@kinds.Linear.register
+@kinds.Linear
 class Linear(ConcreteTransformation):
     """A linear transformation."""
 
@@ -307,7 +307,7 @@ class Linear(ConcreteTransformation):
     ] = None
 
 
-@kinds.SpecialOrthogonal.register
+@kinds.SpecialOrthogonal
 class Rotation(Linear):
     """An orthogonal transformation with determinant 1, i.e., a rotation."""
 
@@ -329,7 +329,7 @@ class Rotation(Linear):
     ] = None
 
 
-@kinds.Permutation.register
+@kinds.Permutation
 class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
@@ -351,7 +351,7 @@ class Permutation(ConcreteTransformation):
     ] = None
 
 
-@kinds.Diagonal.register
+@kinds.Diagonal
 class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
@@ -371,7 +371,7 @@ class Scaling(ConcreteTransformation):
     ] = None
 
 
-@kinds.Translation.register
+@kinds.Translation
 class Translation(ConcreteTransformation):
     """A translation."""
 
@@ -391,7 +391,7 @@ class Translation(ConcreteTransformation):
     ] = None
 
 
-@kinds.Identity.register
+@kinds.Identity
 class Identity(ConcreteTransformation):
     """An identity transformation.
 
