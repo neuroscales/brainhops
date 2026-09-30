@@ -68,6 +68,123 @@ def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
     return [int(a) for a in axes]
 
 
+def axis_counts(
+    t: tx.Any,
+) -> tx.Tuple[tx.Optional[int], tx.Optional[int]]:
+    """The `(input, output)` axis counts a transformation states.
+
+    Each count is `None` when nothing on `t` states it. They are read, in
+    order, from:
+
+    * a matrix shape (`Affine`, `Linear`, `Rotation`), allowing for the
+      homogeneous column of an affine;
+    * the length of `scale`, `translation` or `permutation`;
+    * a field: the last dimension of a displacement field, the spatial rank
+      and last dimension of a coordinates field, the rank of a grid;
+    * a lazy inverse: its forward's counts, swapped;
+    * a sequence: its ends, reading past any leading (or trailing) member
+      that preserves the dimension without stating it;
+    * the declared input and output systems.
+
+    Only *declared* systems are read. A subspace that declares none
+    reconstructs a system spanning only up to its highest named axis, which
+    may be narrower than the space it acts in, so a subspace states its
+    counts through its declared systems only.
+
+    Reading never materializes a lazy inverse or composes a sequence.
+    """
+    from .base import Transformation
+    from .checkers import _matrix_dims
+    from .concrete import (
+        Affine,
+        CartesianField,
+        CoordinatesField,
+        DisplacementField,
+        Linear,
+        Permutation,
+        Scaling,
+        Translation,
+    )
+    from .inverse import Inverse
+    from .sequence import Sequence
+
+    if not isinstance(t, Transformation):
+        return None, None
+    ni: tx.Optional[int] = None
+    no: tx.Optional[int] = None
+    if isinstance(t, Inverse):
+        # Before the concrete families: a typed inverse such as
+        # `InverseScaling` is also a `Scaling`.
+        if t.forward is not None:
+            no, ni = axis_counts(t.forward)
+    elif isinstance(t, Sequence):
+        ni, no = _sequence_ends(list(t.transformations or []))
+    elif isinstance(t, (Affine, Linear)):
+        dims = _matrix_dims(t)
+        if dims is not None:
+            ni, no = dims
+    else:
+        for name, cls in (
+            ("scale", Scaling),
+            ("translation", Translation),
+            ("permutation", Permutation),
+        ):
+            value = getattr(t, name, None) if isinstance(t, cls) else None
+            if value is not None:
+                ni = no = len(value)
+        if isinstance(t, CartesianField):
+            if t.shape is not None:
+                ni = no = len(t.shape)
+        elif isinstance(t, (DisplacementField, CoordinatesField)):
+            field = t.field
+            if field is not None:
+                no = int(field.shape[-1])
+                if isinstance(t, DisplacementField):
+                    ni = no
+                else:
+                    ni = len(field.shape) - 1
+    if ni is None:
+        ni = _system_len(getattr(t, "_input", None))
+    if no is None:
+        no = _system_len(getattr(t, "_output", None))
+    return ni, no
+
+
+def _system_len(system: tx.Optional["CoordinateSystem"]) -> tx.Optional[int]:
+    axes = getattr(system, "axes", None)
+    return None if axes is None else len(axes)
+
+
+def _sequence_ends(
+    members: tx.List["Transformation"],
+) -> tx.Tuple[tx.Optional[int], tx.Optional[int]]:
+    # The input count of the first member that states one, and the output
+    # count of the last. A member that states neither count is read past
+    # only when it is known to preserve the dimension (an identity, a
+    # subspace, a matrix-less affine, a field); anything else stops the
+    # read, so a count is never taken across a member that may change it.
+    ni = _first_count(members, 0)
+    no = _first_count(members[::-1], 1)
+    return ni, no
+
+
+def _first_count(
+    members: tx.List["Transformation"], side: int
+) -> tx.Optional[int]:
+    from .factor import _element_ndim
+    from .sequence import Sequence
+
+    for member in members:
+        counts = axis_counts(member)
+        if counts[side] is not None:
+            return counts[side]
+        if counts[1 - side] is not None or isinstance(member, Sequence):
+            return None
+        if _element_ndim(member, -1) != (-1, -1):
+            return None
+    return None
+
+
 UNREADABLE = object()
 """
 Returned by `affine_matrix` for a transform that has no affine reading

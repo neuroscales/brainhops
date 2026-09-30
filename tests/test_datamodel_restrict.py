@@ -13,8 +13,13 @@ import pytest
 from brainhops.datamodel._transformations.errors import RestrictionError
 from brainhops.datamodel._transformations.registries import INVERSE_CACHE
 from brainhops.datamodel._transformations.restrict import embed, restrict
+from brainhops.datamodel._transformations.utils import axis_counts
+from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
+    CartesianField,
+    CoordinatesField,
     DisplacementField,
     Identity,
     Inverse,
@@ -308,3 +313,141 @@ def test_embed_field_stays_wrapped() -> None:
 def test_embed_refuses_an_unsupported_type() -> None:
     with pytest.raises(TypeError, match="Cannot embed"):
         embed(np.eye(2), [0], [0], 2, 2)
+
+
+def test_embed_refuses_a_transform_that_contradicts_its_axes() -> None:
+    # A 2-axis scaling cannot act on the single axis `[1]`.
+    with pytest.raises(RestrictionError, match="1 input axes were given"):
+        embed(Scaling(scale=np.asarray([2.0, 3.0])), [1], [1], 3, 3)
+
+
+# ----------------------------------------------------------------------
+#   AXIS COUNTS
+# ----------------------------------------------------------------------
+
+
+def _system(n: int) -> CoordinateSystem:
+    return CoordinateSystem(
+        axes=[SpatialAxis(name=f"a{i}", unit=None) for i in range(n)]
+    )
+
+
+@pytest.mark.parametrize(
+    "t, counts",
+    [
+        (Affine(matrix=np.zeros((2, 4))), (3, 2)),
+        (Linear(matrix=np.zeros((2, 3))), (3, 2)),
+        (Rotation(matrix=np.eye(3)), (3, 3)),
+        (Scaling(scale=np.ones(3)), (3, 3)),
+        (Translation(translation=np.zeros(4)), (4, 4)),
+        (Permutation(permutation=np.asarray([1, 0])), (2, 2)),
+        (DisplacementField(field=np.zeros((3, 3, 2))), (2, 2)),
+        (CoordinatesField(field=np.zeros((3, 3, 4))), (2, 4)),
+        (CartesianField(shape=(3, 4, 5)), (3, 3)),
+        (Scaling(scale=None, input=_system(3), output=_system(3)), (3, 3)),
+        (Identity(input=_system(2), output=_system(2)), (2, 2)),
+        (Affine(matrix=np.zeros((2, 4))).inverse(), (2, 3)),
+        (Inverse(forward=Linear(matrix=np.zeros((2, 3)))), (2, 3)),
+        (
+            SubspaceTransformation(
+                transformation=Scaling(scale=np.ones(1)),
+                input_axes=np.asarray([0]),
+                output_axes=np.asarray([0]),
+                input=_system(4),
+                output=_system(4),
+            ),
+            (4, 4),
+        ),
+        (
+            Sequence(
+                [
+                    Identity(),
+                    Affine(matrix=np.zeros((2, 4))),
+                    Scaling(scale=None),
+                    Linear(matrix=np.zeros((5, 2))),
+                ]
+            ),
+            (3, 5),
+        ),
+    ],
+    ids=lambda v: type(v).__name__ if not isinstance(v, tuple) else "",
+)
+def test_axis_counts_are_read_from_the_transformation(
+    t: object, counts: tuple
+) -> None:
+    assert axis_counts(t) == counts
+
+
+@pytest.mark.parametrize(
+    "t",
+    [
+        Identity(),
+        Affine(matrix=None),
+        Scaling(scale=None),
+        Inverse(forward=None),
+        # An endpoint-less subspace: its reconstructed system spans only up
+        # to its highest named axis, so it is not read.
+        SubspaceTransformation(
+            transformation=Scaling(scale=np.ones(1), input=_system(1)),
+            input_axes=np.asarray([0]),
+            output_axes=np.asarray([0]),
+        ),
+        # A sequence is not read across a member that may change the
+        # dimension without stating by how much.
+        Sequence([Projection(dropped=[1]), Scaling(scale=np.ones(2))]),
+    ],
+    ids=lambda v: type(v).__name__,
+)
+def test_axis_counts_unknown_when_nothing_states_them(t: object) -> None:
+    ni, _ = axis_counts(t)
+    assert ni is None
+
+
+def test_restrict_infers_the_axis_counts() -> None:
+    t = Affine(
+        matrix=np.asarray(
+            [[1.0, 2.0, 0.0, 5.0], [3.0, 4.0, 0.0, 6.0], [0.0, 0.0, 7.0, 8.0]]
+        )
+    )
+    inferred = restrict(t, [0, 1], [0, 1])
+    explicit = restrict(t, [0, 1], [0, 1], 3, 3)
+    assert np.array_equal(_matrix(inferred), _matrix(explicit))
+    piece = restrict(Scaling(scale=np.asarray([2.0, 3.0, 4.0])), [2], [2])
+    assert np.array_equal(piece.scale, [4.0])
+
+
+def test_restrict_infers_the_counts_of_an_inverse_and_a_subspace() -> None:
+    forward = Scaling(scale=np.asarray([2.0, 4.0]))
+    piece = restrict(forward.inverse(), [1], [1])
+    assert isinstance(piece, Inverse)
+    assert not getattr(forward, INVERSE_CACHE, None)
+    sub = SubspaceTransformation(
+        transformation=Scaling(scale=np.asarray([2.0])),
+        input_axes=np.asarray([2]),
+        output_axes=np.asarray([2]),
+        input=_system(3),
+        output=_system(3),
+    )
+    assert np.array_equal(restrict(sub, [2], [2]).scale, [2.0])
+
+
+def test_explicit_counts_are_the_override_when_nothing_is_stated() -> None:
+    assert restrict(Identity(), [0], [0], 2, 2) is None
+    piece = restrict(Affine(matrix=None), [1], [1], 2, 2)
+    assert piece is None
+
+
+def test_restrict_refuses_when_nothing_states_the_counts() -> None:
+    with pytest.raises(RestrictionError, match="Cannot infer the number"):
+        restrict(Identity(), [0], [0])
+    with pytest.raises(RestrictionError, match="Cannot infer the number"):
+        restrict(Identity(), [0], [0], ni=2)
+
+
+def test_restrict_refuses_counts_that_contradict_the_transformation() -> None:
+    t = Scaling(scale=np.asarray([2.0, 3.0]))
+    with pytest.raises(RestrictionError, match="3 input axes were given"):
+        restrict(t, [0], [0], 3, 3)
+    affine = Affine(matrix=np.zeros((2, 4)))
+    with pytest.raises(RestrictionError, match="3 output axes were given"):
+        restrict(affine, [0], [0], 3, 3)

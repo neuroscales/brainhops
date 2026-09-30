@@ -8,14 +8,20 @@ place that knows, type by type, how to do so.
 `restrict(t, rows, cols, ni, no)` is the piece of `t` that maps the input
 axes `cols` to the output axes `rows`, as a transformation over those axes
 only. `t` maps `ni` axes to `no` axes, and `rows` / `cols` are sorted
-positions among them. The block must be *decoupled* from the rest of `t`:
-no output in `rows` reads an input outside `cols`, and no output outside
-`rows` reads an input in `cols`. The factor pass guarantees this, since
-its axis groups are connected components of the chain's dependency graph.
-The result is `None` when the piece is the identity (it maps `cols` to
-`rows` in order and changes nothing), which lets the caller drop it. A
-piece that cannot be cut out soundly raises `RestrictionError`; it is
-never read as the identity.
+positions among them. The counts may be omitted when `t` states them (a
+matrix shape, a parameter length, a field, declared systems; see
+`utils.axis_counts`), and a given count must agree with a stated one. The
+wider space's counts `embed` takes are not inferred: `t` does not say how
+many pass-through axes surround it.
+
+The block must be *decoupled* from the rest of `t`: no output in `rows`
+reads an input outside `cols`, and no output outside `rows` reads an input
+in `cols`. The factor pass guarantees this, since its axis groups are
+connected components of the chain's dependency graph. The result is `None`
+when the piece is the identity (it maps `cols` to `rows` in order and
+changes nothing), which lets the caller drop it. A piece that cannot be
+cut out soundly raises `RestrictionError`; it is never read as the
+identity.
 
 `embed(t, in_axes, out_axes, ni, no)` goes the other way. It is the
 transformation from `ni` to `no` axes that applies `t` from the input
@@ -80,6 +86,7 @@ from bagof.dispatchers import Function, NoMethodError
 
 # internals
 from .errors import RestrictionError
+from .utils import axis_counts
 
 # typing
 if tx.TYPE_CHECKING:
@@ -120,8 +127,8 @@ def restrict(
     t: "Transformation",
     rows: tx.List[int],
     cols: tx.List[int],
-    ni: int,
-    no: int,
+    ni: tx.Optional[int] = None,
+    no: tx.Optional[int] = None,
 ) -> tx.Optional["Transformation"]:
     """Restrict a transformation to a decoupled block of its axes.
 
@@ -133,8 +140,11 @@ def restrict(
         Sorted positions of the block among the `no` output axes.
     cols : list[int]
         Sorted positions of the block among the `ni` input axes.
-    ni, no : int
-        The number of input and output axes of `t`.
+    ni, no : int, optional
+        The number of input and output axes of `t`. Each is inferred from
+        `t` when omitted (see `axis_counts`), and checked against it when
+        given, so the factor pass, which knows its stage widths, still
+        passes them.
 
     Returns
     -------
@@ -149,7 +159,10 @@ def restrict(
         When no rule applies, as for an object that is not a
         transformation, or when the block cannot be cut out of `t`
         soundly (see the rules for `Sequence` and `Transformation`).
+        Also when an axis count is omitted and `t` does not state it, or
+        when a given count contradicts the one `t` states.
     """
+    ni, no = _resolve_counts(t, ni, no)
     try:
         return _restrict(t, rows, cols, ni, no)
     except NoMethodError:
@@ -178,7 +191,10 @@ def embed(
     out_axes : list[int]
         The positions `t` writes among the `no` output axes.
     ni, no : int
-        The number of input and output axes of the wider space.
+        The number of input and output axes of the wider space. They are
+        not inferred: `t` states only its own counts, which are
+        `len(in_axes)` and `len(out_axes)` (and are checked against them),
+        not how many pass-through axes surround it.
 
     Returns
     -------
@@ -191,8 +207,36 @@ def embed(
     TypeError
         When no rule applies, as for an object that is not a
         transformation.
+    RestrictionError
+        When the counts `t` states contradict `in_axes` / `out_axes`.
     """
+    if t is not None:
+        _resolve_counts(t, len(in_axes), len(out_axes))
     try:
         return _embed(t, in_axes, out_axes, ni, no)
     except NoMethodError:
         raise TypeError(f"Cannot embed a {type(t).__name__}") from None
+
+
+def _resolve_counts(
+    t: tx.Any, ni: tx.Optional[int], no: tx.Optional[int]
+) -> tx.Tuple[int, int]:
+    # The axis counts of `t`: the given ones, checked against those `t`
+    # states, or those `t` states when omitted.
+    stated = axis_counts(t)
+    resolved = []
+    for given, known, side in zip((ni, no), stated, ("input", "output")):
+        name = type(t).__name__
+        if given is None:
+            if known is None:
+                raise RestrictionError(
+                    f"Cannot infer the number of {side} axes of a {name}, "
+                    f"which states none: pass it explicitly"
+                )
+            given = known
+        elif known is not None and int(given) != known:
+            raise RestrictionError(
+                f"{given} {side} axes were given for a {name} that has {known}"
+            )
+        resolved.append(int(given))
+    return resolved[0], resolved[1]
