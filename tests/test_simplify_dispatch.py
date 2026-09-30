@@ -8,8 +8,6 @@ returns non-`None`. Leaves stay single-winner. The two getters
 arity-dispatched `get_simplifiers`.
 """
 
-import warnings
-
 import pytest
 from bagof.dispatchers import Function
 
@@ -98,16 +96,14 @@ def test_chain_falls_through_when_the_most_specific_declines() -> None:
         pass
 
     chain = Function("chain")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
 
-        @chain.register
-        def specific(first: B, second: B, policy: object) -> object:
-            return None  # declines
+    @chain.register
+    def specific(first: B, second: B, policy: object) -> object:
+        return None  # declines
 
-        @chain.register
-        def general(first: A, second: A, policy: object) -> object:
-            return "general"
+    @chain.register
+    def general(first: A, second: A, policy: object) -> object:
+        return "general"
 
     b = B()
     order = [m.function.__name__ for m in chain.candidates(b, b, object())]

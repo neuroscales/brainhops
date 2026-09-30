@@ -113,9 +113,6 @@ __all__ = [
     "register_kind_alias",
 ]
 
-# stdlib
-import warnings
-
 # dependencies
 import typing_extensions as tx
 from bagof.dispatchers import Function, Super
@@ -268,16 +265,14 @@ class IsKind:
         # parameter. The kind is matched by a lower bound: `type[Super[node]]`
         # accepts a queried kind `K` exactly when `node` is a subset of `K`,
         # the contravariant direction.
-        with warnings.catch_warnings():
-            # Two checkers on one source against *incomparable* nodes are an
-            # ambiguity only for single-winner dispatch: a query about a kind
-            # above both matches both with neither more specific. is_kind asks
-            # every candidate and OR-s them, so there is nothing to
-            # disambiguate; the registration-time warning is a false positive
-            # here (migration memo, E5). It is silenced rather than left to
-            # flood the import.
-            warnings.simplefilter("ignore", RuntimeWarning)
-            self._function.register((source, tx.Type[Super[node]]))(shim)
+        #
+        # Two checkers on one source against *incomparable* nodes tie for a
+        # query about a kind above both, with neither more specific. That is
+        # an ambiguity only for single-winner dispatch, which is never used
+        # here: is_kind asks every candidate and OR-s them, and `candidates`
+        # returns tied methods silently (bagof-dispatchers reports ambiguity
+        # only when a single-winner call hits it, not at registration).
+        self._function.register((source, tx.Type[Super[node]]))(shim)
         self._registry[(source, node)] = shim
 
     # -- dict-like lookup (for `checkers`) ------------------------------
