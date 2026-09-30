@@ -96,7 +96,7 @@ def _(To: Linear, Ti: Linear) -> Linear:
 @composer
 def _(To: Permutation, Ti: Permutation) -> Permutation:
     return Permutation(
-        permutation=To.permutation[Ti.permutation],
+        permutation=Ti.permutation[To.permutation],
         input=Ti.input,
         output=To.output,
     )
