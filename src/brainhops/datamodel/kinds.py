@@ -158,7 +158,6 @@ All classical linear group can be extended with the translation group
 #
 # ======================================================================
 
-
 __all__ = []
 
 # stdlib
@@ -174,10 +173,12 @@ from brainhops._core.compat import PLACEHOLDER, partial
 
 # --- API helpers ------------------------------------------------------
 
+
 def public(obj: tx.Any) -> tx.Any:
     # Mark an object as public, which adds its name to __all__
     __all__.append(obj.__name__)
     return obj
+
 
 # ======================================================================
 #
@@ -525,9 +526,7 @@ Dim: tx.TypeAlias = tx.Optional[int]
 KindLike: tx.TypeAlias = tx.Union[Kind, str]
 FamilyTuple: tx.TypeAlias = tx.Tuple[KindLike, Dim, Dim]
 FamilyTupleLike: tx.TypeAlias = tx.Union[
-    tx.Tuple[KindLike],
-    tx.Tuple[KindLike, Dim],
-    tx.Tuple[KindLike, Dim, Dim]
+    tx.Tuple[KindLike], tx.Tuple[KindLike, Dim], tx.Tuple[KindLike, Dim, Dim]
 ]
 FamilyLike: tx.TypeAlias = tx.Union[tx.Self, FamilyTupleLike, KindLike, int]
 MISSING = object()
@@ -880,7 +879,6 @@ class AnglePreserving(Transformation):
     """
 
 
-
 @closed  # assuming domains are matching
 @alias("Injective", "InjectiveMap", "InjectiveTransformation")
 class Injection(Transformation):
@@ -949,8 +947,7 @@ class VolumePreservingDiffeomorphism(VolumePreserving, Diffeomorphism):
 @group
 @public
 class OrientationPreservingDiffeomorphism(
-    OrientationPreserving,
-    Diffeomorphism
+    OrientationPreserving, Diffeomorphism
 ):
     """A diffeomorphism that preserves orientation."""
 
@@ -961,10 +958,7 @@ class OrientationPreservingDiffeomorphism(
 @group
 @nonembeddable
 @alias("AnglePreservingDiffeomorphism")
-class ConformalDiffeomorphism(
-    AnglePreserving,
-    Diffeomorphism
-):
+class ConformalDiffeomorphism(AnglePreserving, Diffeomorphism):
     """A diffeomorphism that preserves angles."""
 
 
@@ -1021,18 +1015,14 @@ class InvertibleMatrix(Matrix, Diffeomorphism):
 @connected
 @public
 class OrientationPreservingMatrix(
-    OrientationPreservingDiffeomorphism,
-    InvertibleMatrix
+    OrientationPreservingDiffeomorphism, InvertibleMatrix
 ):
     """An invertible matrix transformation with positive determinant."""
 
 
 @group
 @public
-class VolumePreservingMatrix(
-    VolumePreservingDiffeomorphism,
-    InvertibleMatrix
-):
+class VolumePreservingMatrix(VolumePreservingDiffeomorphism, InvertibleMatrix):
     """An invertible matrix transformation with determinant ± 1."""
 
 
@@ -1111,9 +1101,7 @@ class VolumePreservingAffine(InvertibleAffine, VolumePreservingMatrix):
     "SpecialAffineTransformation",
 )
 class SpecialAffine(
-    PositiveAffine,
-    VolumePreservingAffine,
-    SpecialDiffeomorphism
+    PositiveAffine, VolumePreservingAffine, SpecialDiffeomorphism
 ):
     """
     An affine transformation with determinant +1 -- preserves volumes
@@ -1204,7 +1192,7 @@ class Euclidean(ConformalEuclidean, VolumePreservingAffine):
     "SpecialEuclideanMap",
     "SpecialEuclideanTransformation",
     "Rigid",
-    "RigidTransformation"
+    "RigidTransformation",
 )
 class SpecialEuclidean(SpecialConformal, Euclidean, SpecialAffine):
     """
@@ -1462,7 +1450,7 @@ class SpecialOrthogonal(
     "Monomial",
     "MonomialGroup",
     "MonomialMatrix",
-    "MonomialTransformation"
+    "MonomialTransformation",
 )
 class GeneralizedPermutation(InvertibleLinear):
     """A generalized permutation.
@@ -1484,9 +1472,7 @@ class GeneralizedPermutation(InvertibleLinear):
 
 @liegroup
 @alias(
-    "SignedPermutationMatrix",
-    "SignedPermutationGroup",
-    "HyperoctahedralGroup"
+    "SignedPermutationMatrix", "SignedPermutationGroup", "HyperoctahedralGroup"
 )
 class SignedPermutation(GeneralizedPermutation, Orthogonal):
     """A signed permutation.
@@ -1573,7 +1559,7 @@ class OddPermutation(Permutation):
     "DiagonalMatrix",
     "DiagonalTransformation",
     "Scaling",
-    "ScalingTransformation"
+    "ScalingTransformation",
 )
 class Diagonal(Linear):
     """A diagonal matrix, may not be invertible.
@@ -1610,7 +1596,7 @@ class InvertibleDiagonal(Diagonal, GeneralizedPermutation):
     "PositiveDiagonalMatrix",
     "PositiveDiagonalTransformation",
     "PositiveScaling",
-    "PositiveScalingTransformation"
+    "PositiveScalingTransformation",
 )
 class PositiveDiagonal(InvertibleDiagonal, PositiveLinear):
     """A diagonal matrix with positive entries.
@@ -1642,7 +1628,7 @@ class SpecialDiagonal(InvertibleDiagonal, SpecialLinear):
     "OrthogonalDiagonalMatrix",
     "OrthogonalDiagonalTransformation",
     "CardinalReflection",
-    "CardinalReflectionGroup"
+    "CardinalReflectionGroup",
 )
 class OrthogonalDiagonal(InvertibleDiagonal, SignedPermutation):
     """
@@ -1767,11 +1753,11 @@ class PositiveMultiplicative(
     "IdentityTransformation",
 )
 class Identity(
-    Translation,                # T
-    EvenPermutation,            # A   -- the identity permutation is even
-    SpecialOrthogonalDiagonal,  # SΔ+ -- and so a cardinal reflection group
-    PositiveMultiplicative,     # ℝ+
-    SpecialOrthogonal,          # SO
+    Translation,
+    EvenPermutation,
+    SpecialOrthogonalDiagonal,
+    PositiveMultiplicative,
+    SpecialOrthogonal,
 ):
     """The identity transformation.
 
