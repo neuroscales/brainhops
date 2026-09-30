@@ -27,26 +27,23 @@ a ``None``-index broadcast), or that has a mixed / rank-deficient group, is
 left unfactored and returned unchanged. The embedding / drop projections
 (``E`` / ``Pi_drop``) of the full normal form are a follow-up.
 
-The reslice executor (the `separable` module) reads this normal form to
-decide how to sample the data of each group, so it is the one place where
-the axis groups of a transformation are worked out.
+The entry point is `factor_sequence`, which `Sequence.compute` runs on
+every round of its fixpoint under `factor=True`. The reslice executor (the
+`separable` module) reads the normal form it produces to decide how to
+sample the data of each group, so this is the one place where the axis
+groups of a transformation are worked out.
 
-The pass is *idempotent* and *identity-preserving*: a sequence already in
-normal form is returned unchanged (same objects), and a leaf the pass does
-not split keeps its identity, so the adjacent-inverse cancellation (the
-pair simplifiers, which link a transform to its lazy inverse by object
-identity) still sees it.
-
-Reading a chain never materializes a lazy inverse: an `Inverse` is read as
-the transpose of its forward's dependency pattern. How each element is cut
-into the pieces of each group is the dispatched `restrict` operation (see
-the `restrict` module), which keeps each piece's type, restricts a lazy
-inverse by restricting its forward and re-inverting lazily, and keeps an
-element a group holds whole as the same object. Composition inside a group
-goes through the ordinary [`Sequence.compute`][], so a restricted
-``Sub(warp) . Sub(warp^-1)`` pair meets as ``[warp, warp^-1]`` and is
-collapsed by the cancellation pair simplifier before any composer runs.
+How a chain element is cut into the pieces of each group is not decided
+here: it is the dispatched `restrict` operation (see the `restrict`
+module), which keeps each piece's type, keeps a lazy inverse lazy, and
+keeps an element the group holds whole as the same object. Composition
+inside a group then goes through the ordinary [`Sequence.compute`][], so
+a restricted ``Sub(warp) . Sub(warp^-1)`` pair meets as ``[warp,
+warp^-1]`` and is collapsed by the cancellation pair simplifier before any
+composer runs.
 """
+
+__all__ = ["factor_sequence", "PatternCache"]
 
 # stdlib
 from dataclasses import dataclass, field
@@ -64,9 +61,195 @@ from .utils import UNREADABLE, affine_matrix, axis_list
 
 # typing
 if tx.TYPE_CHECKING:
-    from .modes import Family
+    from .modes import ModeLike
     from .sequence import Sequence
-    from .simplify import SimplifyTable
+    from .simplify import SimplifyLike
+
+
+# ======================================================================
+#
+#                              P U B L I C
+#
+# ======================================================================
+
+
+def factor_sequence(
+    seq: "Sequence",
+    mode: "ModeLike" = True,
+    *,
+    simplify: "SimplifyLike" = "analytic",
+    cache: tx.Optional["PatternCache"] = None,
+) -> Transformation:
+    """Rewrite a sequence into its axis-group normal form.
+
+    The chain is read as a graph whose nodes are the axes at every stage
+    and whose edges are the dependencies of each element. The connected
+    components of that graph are the groups of axes that transform
+    together. Each element is restricted to every group it touches, and
+    each group's pieces are composed on their own, into one factor per
+    group:
+
+        NF = [grid]? . F_1 . F_2 . ... . F_m . [Pi_perm]?
+
+    See the module docstring for the shape of the normal form and for the
+    chains that are left unfactored.
+
+    This is one round of the factor pass. `Sequence.compute(factor=True)`
+    runs it between simplification and composition until a fixpoint, and
+    is how it is normally reached. It is not part of the public
+    `transformations` API.
+
+    Parameters
+    ----------
+    seq : Sequence
+        The chain to factor. Nested sequences are flattened. A leading
+        `CartesianField` is the sampling grid and is kept as it is.
+    mode : [list of] name or type, default=True
+        Which kinds may compose *inside* a group, as in
+        [`Sequence.compute`][]. Nothing is ever composed across groups.
+    simplify : simplify policy, default="analytic"
+        The simplify policy under which each group's pieces are composed,
+        as in [`Sequence.compute`][].
+    cache : PatternCache, optional
+        A memo of each element's dependency pattern, to share across the
+        rounds of one `compute`, whose elements are mostly the same
+        objects from one round to the next. A fresh one is used when
+        omitted.
+
+    Returns
+    -------
+    Transformation
+        One of:
+
+        * `seq` itself (the same object), when the chain does not factor
+          (a single group, a chain whose ends differ in dimension, an
+          element that cannot be read) or is already in normal form for
+          its partition. The pass is therefore idempotent, which is what
+          lets the fixpoint loop stop.
+        * A sequence `[grid?, F_1, ..., F_m, Pi_perm?]` with the endpoints
+          of `seq`. Every `F_i` is a `SubspaceTransformation` with equal
+          input and output axes, the axes of different factors are
+          disjoint, and the factors are ordered by their first axis.
+          `Pi_perm` is present only when it is not the identity.
+        * An `Identity` with the endpoints of `seq`, when every factor
+          reduces to the identity and there is neither a grid nor a
+          permutation left.
+
+        An element that a group holds whole is kept as the same object,
+        so the adjacent-inverse cancellation (which links a transform to
+        its lazy inverse by identity) still sees it, and no lazy inverse
+        is ever materialized to read the chain.
+
+    Examples
+    --------
+    A diagonal scaling followed by an axis swap splits into one factor per
+    scaled axis and a trailing permutation. The unit scale of the last
+    axis is the identity, so its factor is dropped.
+
+    >>> import numpy as np
+    >>> from brainhops.datamodel.transformations import (
+    ...     CartesianField, Permutation, Scaling, Sequence,
+    ... )
+    >>> seq = Sequence([
+    ...     CartesianField(shape=(4, 5, 6)),
+    ...     Scaling(scale=np.array([2.0, 3.0, 1.0])),
+    ...     Permutation(permutation=np.array([1, 0, 2])),
+    ... ])
+    >>> nf = factor_sequence(seq)
+    >>> grid, *body = nf.transformations
+    >>> [type(t).__name__ for t in body]
+    ['SubspaceTransformation', 'SubspaceTransformation', 'Permutation']
+    >>> [f.input_axes.tolist() for f in body[:2]]
+    [[0], [1]]
+    """
+    from .sequence import _unnest
+
+    if cache is None:
+        cache = PatternCache()
+
+    xforms = _unnest(seq.transformations)
+    if not xforms:
+        return seq
+
+    grid: tx.Optional[CartesianField] = None
+    body = xforms
+    if isinstance(xforms[0], CartesianField):
+        grid = xforms[0]
+        body = xforms[1:]
+    if not body:
+        return seq
+    if any(isinstance(t, CartesianField) for t in body):
+        # An interior or trailing grid is not our shape (interior grids are
+        # dropped before this pass); leave it unfactored.
+        return seq
+
+    n_in = _chain_ndim_in(grid, body)
+    if n_in is None:
+        return seq
+
+    stages = _build_stages(body, n_in, cache)
+    if stages is None:
+        return seq  # not dimension-preserving / unreadable
+
+    groups = _partition(stages, n_in)
+    if groups is None:
+        return seq  # a mixed / source / sink group -> unfactored
+    if len(groups) <= 1:
+        return seq  # trivial: nothing separable -> unchanged, same objects
+
+    factors = _build_factors(groups, stages, mode, simplify)
+    perm = _build_perm(groups, n_in)
+
+    if _same_structure(body, factors, perm):
+        # Already in normal form for this partition: keep the same objects so
+        # the fixpoint loop's identity-based exit test converges.
+        return seq
+
+    elements: tx.List[Transformation] = []
+    if grid is not None:
+        elements.append(grid)
+    elements.extend(factors)
+    if perm is not None:
+        elements.append(perm)
+    if not elements:
+        return Identity(input=seq.input, output=seq.output)
+    return seq.to(transformations=elements)
+
+
+@dataclass
+class PatternCache:
+    """A memo of each chain element's dependency pattern.
+
+    The pattern of an element is the boolean `(n_out, n_in)` matrix whose
+    entry `(i, j)` says that output axis `i` depends on input axis `j`. It
+    is keyed by the element's `id`, and the element is pinned in
+    `keepalive` so that its `id` is never reused by another object while
+    the cache holds it. A cache is meant to live for one `compute`.
+    """
+
+    patterns: tx.Dict[int, tx.Optional[np.ndarray]] = field(
+        default_factory=dict
+    )
+    keepalive: tx.List[Transformation] = field(default_factory=list)
+
+    def pattern(
+        self, element: Transformation, ni: int, no: int
+    ) -> tx.Optional[np.ndarray]:
+        """The `(no, ni)` pattern of `element`, or `None` if unreadable."""
+        key = id(element)
+        if key in self.patterns:
+            return self.patterns[key]
+        pat = _read_pattern(element, ni, no)
+        self.patterns[key] = pat
+        self.keepalive.append(element)
+        return pat
+
+
+# ======================================================================
+#
+#                             H E L P E R S
+#
+# ======================================================================
 
 # ----------------------------------------------------------------------
 #   DATA STRUCTURES
@@ -87,11 +270,6 @@ class _Group:
     grid_axes: tx.List[int]  # G (chain-input positions)
     data_axes: tx.List[int]  # D (chain-output positions), paired with `axes`
     per_stage: tx.Dict[int, tx.List[int]] = field(default_factory=dict)
-
-
-# ----------------------------------------------------------------------
-#   UTILITIES
-# ----------------------------------------------------------------------
 
 
 class _UnionFind:
@@ -115,6 +293,11 @@ class _UnionFind:
 # ----------------------------------------------------------------------
 #   DEPENDENCY PATTERNS
 # ----------------------------------------------------------------------
+#
+# Reading a chain never materializes a lazy inverse: an `Inverse` is read
+# as the transpose of its forward's dependency pattern. An element with no
+# affine reading (`UNREADABLE`) must leave the chain unfactored, never be
+# read as the identity.
 
 
 def _element_ndim(
@@ -150,32 +333,11 @@ def _element_ndim(
     return cols - 1, no
 
 
-def _pattern(
-    element: Transformation,
-    ni: int,
-    no: int,
-    dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
-    dep_keepalive: tx.List[Transformation],
+def _read_pattern(
+    element: Transformation, ni: int, no: int
 ) -> tx.Optional[np.ndarray]:
     # The element's `(no, ni)` boolean dependency pattern in the work view,
-    # memoized by `id`. The keepalive list pins the element so its `id` is
-    # not reused while the cache holds its pattern.
-    key = id(element)
-    if key in dep_cache:
-        return dep_cache[key]
-    pat = _read_pattern(element, ni, no, dep_cache, dep_keepalive)
-    dep_cache[key] = pat
-    dep_keepalive.append(element)
-    return pat
-
-
-def _read_pattern(
-    element: Transformation,
-    ni: int,
-    no: int,
-    dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
-    dep_keepalive: tx.List[Transformation],
-) -> tx.Optional[np.ndarray]:
+    # or `None` when it cannot be read.
     from .inverse import Inverse
     from .sequence import Sequence, _interpolates
 
@@ -189,7 +351,7 @@ def _read_pattern(
             dims = _element_ndim(member, ndim)
             if dims is None or dims[0] != ndim:
                 return None
-            part = _read_pattern(member, *dims, dep_cache, dep_keepalive)
+            part = _read_pattern(member, *dims)
             if part is None or part.shape != dims[::-1]:
                 return None
             acc = (part.astype(int) @ acc.astype(int)) > 0
@@ -198,14 +360,14 @@ def _read_pattern(
     if isinstance(element, SubspaceTransformation):
         if ni != no:
             return None
-        return _subspace_pattern(element, ni, dep_cache, dep_keepalive)
+        return _subspace_pattern(element, ni)
     if isinstance(element, Inverse):
         forward = element.forward
         if forward is None:
             return np.eye(ni, dtype=bool) if ni == no else None
         # The pattern of a lazy inverse is the transpose of the forward's,
         # which never materializes it and gives the same coupling components.
-        fpat = _read_pattern(forward, no, ni, dep_cache, dep_keepalive)
+        fpat = _read_pattern(forward, no, ni)
         if fpat is None or fpat.shape != (ni, no):
             return None
         return fpat.T
@@ -218,10 +380,7 @@ def _read_pattern(
 
 
 def _subspace_pattern(
-    element: SubspaceTransformation,
-    ndim: int,
-    dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
-    dep_keepalive: tx.List[Transformation],
+    element: SubspaceTransformation, ndim: int
 ) -> tx.Optional[np.ndarray]:
     from .sequence import _interpolates
 
@@ -242,7 +401,7 @@ def _subspace_pattern(
     else:
         inner_dep = None
         if ki == ko:
-            candidate = _read_pattern(inner, ki, ko, dep_cache, dep_keepalive)
+            candidate = _read_pattern(inner, ki, ko)
             if candidate is not None and candidate.shape == (ko, ki):
                 inner_dep = candidate
         if inner_dep is None:
@@ -277,11 +436,22 @@ def _read_pattern_affine(
 # ----------------------------------------------------------------------
 
 
+def _chain_ndim_in(
+    grid: tx.Optional[CartesianField], body: tx.List[Transformation]
+) -> tx.Optional[int]:
+    # The chain's input dimensionality: the grid's axis count when a grid
+    # leads, else read from the first element that states a dimension.
+    if grid is not None and grid.shape is not None:
+        return len(grid.shape)
+    for element in body:
+        dims = _element_ndim(element, -1)
+        if dims is not None and dims[0] >= 0:
+            return dims[0]
+    return None
+
+
 def _build_stages(
-    body: tx.List[Transformation],
-    n_in: int,
-    dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
-    dep_keepalive: tx.List[Transformation],
+    body: tx.List[Transformation], n_in: int, cache: PatternCache
 ) -> tx.Optional[tx.List[_Stage]]:
     # Read every element's dependency pattern in the work view. Returns
     # `None` when the chain's ends differ in dimension or an element cannot
@@ -294,7 +464,7 @@ def _build_stages(
         if dims is None or dims[0] != ndim:
             return None
         ni, no = dims
-        pat = _pattern(element, ni, no, dep_cache, dep_keepalive)
+        pat = cache.pattern(element, ni, no)
         if pat is None or pat.shape != (no, ni):
             return None
         stages.append(_Stage(element=element, pattern=pat))
@@ -367,7 +537,7 @@ def _partition(
 
 
 # ----------------------------------------------------------------------
-#   RESTRICTION (see the `restrict` module)
+#   NORMAL FORM
 # ----------------------------------------------------------------------
 
 
@@ -375,8 +545,8 @@ def _restrict_group(
     group: _Group, stages: tx.List[_Stage]
 ) -> tx.List[Transformation]:
     # The group's pieces, one per element it touches, in chain order. Each
-    # element is restricted to the group's axes at its two stages by the
-    # dispatched `restrict` operation; an identity piece is left out.
+    # element is restricted to the group's axes at its two stages (see the
+    # `restrict` module); an identity piece is left out.
     sub: tx.List[Transformation] = []
     for stage, s in enumerate(stages, start=1):
         rows = group.per_stage.get(stage, [])
@@ -388,11 +558,6 @@ def _restrict_group(
         if piece is not None:
             sub.append(piece)
     return sub
-
-
-# ----------------------------------------------------------------------
-#   NORMAL FORM
-# ----------------------------------------------------------------------
 
 
 def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
@@ -415,8 +580,8 @@ def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
 def _build_factors(
     groups: tx.List[_Group],
     stages: tx.List[_Stage],
-    modes: tx.List["Family"],
-    policy: "SimplifyTable",
+    mode: "ModeLike",
+    simplify: "SimplifyLike",
 ) -> tx.List[SubspaceTransformation]:
     from .sequence import Sequence
 
@@ -430,7 +595,7 @@ def _build_factors(
         # pieces inside a group compose exactly as far as `mode` admits --
         # and a restricted transform/inverse pair cancels first, for free.
         inner = Sequence(transformations=sub).compute(
-            modes, simplify=policy, factor=False
+            mode, simplify=simplify, factor=False
         )
         if _inner_is_identity(inner):
             continue
@@ -491,81 +656,3 @@ def _same_structure(
             if axis_list(got.output_axes) != axis_list(want.output_axes):
                 return False
     return True
-
-
-def _factor(
-    seq: "Sequence",
-    modes: tx.List["Family"],
-    policy: "SimplifyTable",
-    dep_cache: tx.Dict[int, tx.Optional[np.ndarray]],
-    dep_keepalive: tx.List[Transformation],
-) -> Transformation:
-    """The factor pass. Returns `seq` (same object) when nothing factors.
-
-    `dep_cache` memoizes each leaf's dependency pattern by `id`, and
-    `dep_keepalive` pins the leaves it holds so an `id` is never reused while
-    the cache holds it; the caller owns both for the length of one `compute`.
-    """
-    from .sequence import _unnest
-
-    xforms = _unnest(seq.transformations)
-    if not xforms:
-        return seq
-
-    grid: tx.Optional[CartesianField] = None
-    body = xforms
-    if isinstance(xforms[0], CartesianField):
-        grid = xforms[0]
-        body = xforms[1:]
-    if not body:
-        return seq
-    if any(isinstance(t, CartesianField) for t in body):
-        # An interior or trailing grid is not our shape (interior grids are
-        # dropped before this pass); leave it unfactored.
-        return seq
-
-    n_in = _chain_ndim_in(grid, body)
-    if n_in is None:
-        return seq
-
-    stages = _build_stages(body, n_in, dep_cache, dep_keepalive)
-    if stages is None:
-        return seq  # not dimension-preserving / unreadable
-
-    groups = _partition(stages, n_in)
-    if groups is None:
-        return seq  # a mixed / source / sink group -> unfactored
-    if len(groups) <= 1:
-        return seq  # trivial: nothing separable -> unchanged, same objects
-
-    factors = _build_factors(groups, stages, modes, policy)
-    perm = _build_perm(groups, n_in)
-
-    if _same_structure(body, factors, perm):
-        # Already in normal form for this partition: keep the same objects so
-        # the fixpoint loop's identity-based exit test converges.
-        return seq
-
-    elements: tx.List[Transformation] = []
-    if grid is not None:
-        elements.append(grid)
-    elements.extend(factors)
-    if perm is not None:
-        elements.append(perm)
-    if not elements:
-        return Identity(input=seq.input, output=seq.output)
-    return seq.to(transformations=elements)
-
-
-def _chain_ndim_in(
-    grid: tx.Optional[CartesianField], body: tx.List[Transformation]
-) -> tx.Optional[int]:
-    # The chain's input dimensionality: the grid's axis count when a grid
-    # leads, else read from the first element that states a dimension.
-    if grid is not None and grid.shape is not None:
-        return len(grid.shape)
-    for element in body:
-        dims = _element_ndim(element, -1)
-        if dims is not None and dims[0] >= 0:
-            return dims[0]
-    return None

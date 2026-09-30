@@ -46,6 +46,129 @@ from .meta import SubspaceTransformation
 from .sequence import Sequence, _interpolates
 from .utils import axis_list
 
+# ======================================================================
+#
+#                              P U B L I C
+#
+# ======================================================================
+
+
+def pull_separable(
+    data: tx.Any,
+    seq: Transformation,
+    *,
+    order: int,
+    bound: tx.Union[str, float],
+    coeff: bool,
+    copy: bool = False,
+) -> tx.Any:
+    """Reslice `data` through `seq`, exploiting separable axes.
+
+    The transformation `seq` maps the coordinates of the output grid to
+    the coordinates of `data`. Its leading element is the sampling grid, a
+    [`CartesianField`][brainhops.datamodel.transformations.CartesianField]
+    whose shape is the shape of the output grid and whose output system is
+    the coordinate system of that grid. The system in which `seq` leaves
+    its coordinates is the coordinate system of the data. The output shape
+    and both coordinate systems are read from `seq`, so they are not passed
+    separately.
+
+    `seq` is computed into its axis-group normal form
+    (`compute(factor=True)`), and each group is applied on its own. A group
+    that needs no interpolation is a gather or a view, a one-dimensional
+    affine group is a weight matrix, and any other group keeps the
+    N-dimensional pull over its own axes.
+
+    The result equals the monolithic reslice within the interpolation
+    tolerance. When the transformation does not factor, the whole of it is
+    one group and the monolithic pull is used, so the result is then
+    bit-identical to the monolithic reslice.
+
+    Parameters
+    ----------
+    data : array-like
+        The image data to reslice.
+    seq : Transformation
+        The transformation from the output grid to the data coordinates,
+        before it is computed.
+    order : {0..5}
+        The interpolation order.
+    bound : str or float
+        The boundary condition, as accepted by
+        [`pull`][brainhops._core.bsplines.pull].
+    coeff : bool
+        Whether the data already contains spline coefficients.
+    copy : bool
+        Whether the result must be a fresh array. As with
+        `torch.Tensor.to`, when `False` the result may share memory with
+        `data`: a reslice that only gathers (a flip, a permutation, or a
+        unit-step slice, such as a reslice onto the data's own grid) can
+        return a view of it. When `True` the result never shares memory
+        with `data`. No copy is made when the result is already fresh, nor
+        on the dask backend: a dask array is immutable, and writing into
+        the result rebinds its own graph, never that of `data`, so a lazy
+        result is returned as is. (Its computed value may still be a view
+        of the numpy array a gather-only graph was built from, which is
+        outside what `copy` promises.)
+
+    Returns
+    -------
+    array-like
+        The resliced data, of the shape of the output grid.
+    """
+    opt = dict(order=order, bound=bound, coeff=coeff)
+    steps = _plan(tuple(data.shape), seq, **opt)
+    if steps is None:
+        # The monolithic pull writes into an array it allocates, so its
+        # result is always fresh.
+        return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
+
+    # The pipeline runs in a floating working dtype so an integer input is
+    # not rounded between steps. The weight-matrix step already produces a
+    # float64 result, and the gather and pull steps preserve the dtype they
+    # are given, so an integer input is lifted to float once here.
+    ab = get_array_backend(data)
+    out_dtype = np.dtype(data.dtype)
+    floating = np.issubdtype(out_dtype, np.floating)
+    arr = data if floating else data.astype(float)
+    # Whether `arr` is known to be a new array. A lift to float, a step
+    # that interpolates, and the final cast each allocate one. Only the
+    # gather steps and the transpose can return a view of `data`.
+    fresh = not floating or any(step["kind"] != "gather" for step in steps)
+    labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
+    for step in steps:
+        arr, labels = step["run"](arr, labels)
+
+    permutation = [labels.index(("grid", g)) for g in range(data.ndim)]
+    arr = ab.transpose(arr, permutation)
+    # The assembled array is cast back to the input dtype exactly once, at
+    # the end. The monolithic pull returns the input dtype and reproduces
+    # scipy's `map_coordinates`, so an integer or boolean output is finished
+    # the same way scipy's `CASE_INTERP_OUT_INT` does.
+    if arr.dtype != out_dtype:
+        fresh = True
+        if out_dtype.kind == "b":
+            # scipy truncates toward zero for a boolean output, so a
+            # fractional value such as 0.6 becomes False.
+            arr = ab.trunc(arr).astype(out_dtype)
+        elif np.issubdtype(out_dtype, np.integer):
+            # scipy rounds an integer output half away from zero, then
+            # clips it to the dtype range so an overshoot saturates
+            # instead of wrapping. The order is round, clip, cast.
+            rounded = ab.trunc(ab.where(arr > 0, arr + 0.5, arr - 0.5))
+            info = np.iinfo(out_dtype)
+            arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
+        else:
+            arr = arr.astype(out_dtype)
+    return _fresh(arr, data, copy, fresh)
+
+
+# ======================================================================
+#
+#                             H E L P E R S
+#
+# ======================================================================
+
 # ----------------------------------------------------------------------
 #   READING THE NORMAL FORM
 # ----------------------------------------------------------------------
@@ -495,118 +618,8 @@ def _make_pull(
 
 
 # ----------------------------------------------------------------------
-#   ENTRY POINT
+#   COPY
 # ----------------------------------------------------------------------
-
-
-def pull_separable(
-    data: tx.Any,
-    seq: Transformation,
-    *,
-    order: int,
-    bound: tx.Union[str, float],
-    coeff: bool,
-    copy: bool = False,
-) -> tx.Any:
-    """Reslice `data` through `seq`, exploiting separable axes.
-
-    The transformation `seq` maps the coordinates of the output grid to
-    the coordinates of `data`. Its leading element is the sampling grid, a
-    [`CartesianField`][brainhops.datamodel.transformations.CartesianField]
-    whose shape is the shape of the output grid and whose output system is
-    the coordinate system of that grid. The system in which `seq` leaves
-    its coordinates is the coordinate system of the data. The output shape
-    and both coordinate systems are read from `seq`, so they are not passed
-    separately.
-
-    `seq` is computed into its axis-group normal form
-    (`compute(factor=True)`), and each group is applied on its own. A group
-    that needs no interpolation is a gather or a view, a one-dimensional
-    affine group is a weight matrix, and any other group keeps the
-    N-dimensional pull over its own axes.
-
-    The result equals the monolithic reslice within the interpolation
-    tolerance. When the transformation does not factor, the whole of it is
-    one group and the monolithic pull is used, so the result is then
-    bit-identical to the monolithic reslice.
-
-    Parameters
-    ----------
-    data : array-like
-        The image data to reslice.
-    seq : Transformation
-        The transformation from the output grid to the data coordinates,
-        before it is computed.
-    order : {0..5}
-        The interpolation order.
-    bound : str or float
-        The boundary condition, as accepted by
-        [`pull`][brainhops._core.bsplines.pull].
-    coeff : bool
-        Whether the data already contains spline coefficients.
-    copy : bool
-        Whether the result must be a fresh array. As with
-        `torch.Tensor.to`, when `False` the result may share memory with
-        `data`: a reslice that only gathers (a flip, a permutation, or a
-        unit-step slice, such as a reslice onto the data's own grid) can
-        return a view of it. When `True` the result never shares memory
-        with `data`. No copy is made when the result is already fresh, nor
-        on the dask backend: a dask array is immutable, and writing into
-        the result rebinds its own graph, never that of `data`, so a lazy
-        result is returned as is. (Its computed value may still be a view
-        of the numpy array a gather-only graph was built from, which is
-        outside what `copy` promises.)
-
-    Returns
-    -------
-    array-like
-        The resliced data, of the shape of the output grid.
-    """
-    opt = dict(order=order, bound=bound, coeff=coeff)
-    steps = _plan(tuple(data.shape), seq, **opt)
-    if steps is None:
-        # The monolithic pull writes into an array it allocates, so its
-        # result is always fresh.
-        return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
-
-    # The pipeline runs in a floating working dtype so an integer input is
-    # not rounded between steps. The weight-matrix step already produces a
-    # float64 result, and the gather and pull steps preserve the dtype they
-    # are given, so an integer input is lifted to float once here.
-    ab = get_array_backend(data)
-    out_dtype = np.dtype(data.dtype)
-    floating = np.issubdtype(out_dtype, np.floating)
-    arr = data if floating else data.astype(float)
-    # Whether `arr` is known to be a new array. A lift to float, a step
-    # that interpolates, and the final cast each allocate one. Only the
-    # gather steps and the transpose can return a view of `data`.
-    fresh = not floating or any(step["kind"] != "gather" for step in steps)
-    labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
-    for step in steps:
-        arr, labels = step["run"](arr, labels)
-
-    permutation = [labels.index(("grid", g)) for g in range(data.ndim)]
-    arr = ab.transpose(arr, permutation)
-    # The assembled array is cast back to the input dtype exactly once, at
-    # the end. The monolithic pull returns the input dtype and reproduces
-    # scipy's `map_coordinates`, so an integer or boolean output is finished
-    # the same way scipy's `CASE_INTERP_OUT_INT` does.
-    if arr.dtype != out_dtype:
-        fresh = True
-        if out_dtype.kind == "b":
-            # scipy truncates toward zero for a boolean output, so a
-            # fractional value such as 0.6 becomes False.
-            arr = ab.trunc(arr).astype(out_dtype)
-        elif np.issubdtype(out_dtype, np.integer):
-            # scipy rounds an integer output half away from zero, then
-            # clips it to the dtype range so an overshoot saturates
-            # instead of wrapping. The order is round, clip, cast.
-            rounded = ab.trunc(ab.where(arr > 0, arr + 0.5, arr - 0.5))
-            info = np.iinfo(out_dtype)
-            arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
-        else:
-            arr = arr.astype(out_dtype)
-    return _fresh(arr, data, copy, fresh)
 
 
 def _fresh(arr: tx.Any, data: tx.Any, copy: bool, fresh: bool) -> tx.Any:

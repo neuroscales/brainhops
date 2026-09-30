@@ -21,7 +21,7 @@ from .concrete import (
     Identity,
 )
 from .errors import CompositionError
-from .factor import _factor
+from .factor import PatternCache, factor_sequence
 from .inverse import Inverse
 from .meta import SubspaceTransformation
 from .modes import (
@@ -369,22 +369,19 @@ def _compute_sequence(
     Under `factor=True`, a fourth step runs between 2 and 3:
 
     2b. **Factor.** Rewrite the sequence into its axis-group normal form
-        (see the `factor` module). It runs after simplification, so a lazy
-        pair has already cancelled and every leaf is downcast, and before
-        composition, which two extra gates then keep from undoing it (see
-        `_factor_pair_ok`). The factor pass may lengthen the sequence, so
-        the length test above cannot detect the fixpoint: a round that
-        leaves every leaf the *same object* is the fixpoint instead, with a
-        hard iteration cap that raises rather than loop forever should a
-        pass fail to be identity-preserving on the normal form. With
-        `factor=False` none of this runs, and the length-based exit is
-        unchanged.
+        (see `factor.factor_sequence`). It runs after simplification, so a
+        lazy pair has already cancelled and every leaf is downcast, and
+        before composition, which two extra gates then keep from undoing
+        it (see `_factor_pair_ok`). The factor pass may lengthen the
+        sequence, so the length test above cannot detect the fixpoint: a
+        round that leaves every leaf the *same object* is the fixpoint
+        instead, with a hard iteration cap that raises rather than loop
+        forever should a pass fail to be identity-preserving on the normal
+        form. With `factor=False` none of this runs, and the length-based
+        exit is unchanged.
     """
-    # The factor pass memoizes each leaf's dependency pattern by `id` across
-    # rounds; the keepalive list pins those leaves so an `id` is never reused
-    # while the cache holds it.
-    dep_cache: tx.Dict[int, tx.Any] = {}
-    dep_keepalive: tx.List[Transformation] = []
+    # The factor pass memoizes each leaf's dependency pattern across rounds.
+    cache = PatternCache()
     iteration = 0
     max_iter = 0
     while True:
@@ -417,7 +414,9 @@ def _compute_sequence(
 
         # --- 2b. factor ---
         if factor:
-            factored = _factor(seq, modes, policy, dep_cache, dep_keepalive)
+            factored = factor_sequence(
+                seq, modes, simplify=policy, cache=cache
+            )
             if not isinstance(factored, Sequence):
                 return factored
             seq = factored

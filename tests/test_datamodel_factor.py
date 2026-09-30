@@ -305,7 +305,7 @@ def test_reversed_order_gives_the_same_partition() -> None:
 
 def _pieces(els: list, ndim: int) -> list:
     """The restricted pieces of every group, before they are composed."""
-    stages = fac._build_stages(els, ndim, {}, [])
+    stages = fac._build_stages(els, ndim, fac.PatternCache())
     groups = fac._partition(stages, ndim)
     return [fac._restrict_group(group, stages) for group in groups]
 
@@ -558,9 +558,8 @@ def test_cap_raises_on_non_identity_preserving_pass(
     def broken(
         seq: object,
         mode: object,
-        table: object,
-        dep_cache: object,
-        dep_keepalive: object,
+        simplify: object = None,
+        cache: object = None,
     ) -> object:
         leaves = list(seq.transformations or [])
         if not leaves:
@@ -570,7 +569,7 @@ def test_cap_raises_on_non_identity_preserving_pass(
         ]
         return replace(seq, transformations=fresh)
 
-    monkeypatch.setattr(seqmod, "_factor", broken)
+    monkeypatch.setattr(seqmod, "factor_sequence", broken)
     grid = CartesianField(shape=(4, 5))
     seq = Sequence([grid, Scaling(scale=np.array([2.0, 3.0]))])
     with pytest.raises(RuntimeError, match="did not converge"):
