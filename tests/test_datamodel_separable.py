@@ -1798,31 +1798,40 @@ def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
     _assert_fresh_copy(got, data)
 
 
-def test_backend_reports_memory_sharing_or_that_it_cannot_tell() -> None:
+def test_backend_reports_memory_sharing() -> None:
     data = np.arange(6.0)
     assert backends.may_share_memory(data, data[::-1]) is True
     assert backends.may_share_memory(data, data.copy()) is False
     copied = backends.copy_array(data[::-1])
     assert not np.shares_memory(copied, data)
+    # An array-like of no known backend cannot be inspected.
+    assert backends.may_share_memory(data, [0.0, 1.0]) is None
     da = pytest.importorskip("dask.array")
     lazy = da.from_array(data, chunks=2)
-    # A dask graph cannot be inspected for aliasing.
-    assert backends.may_share_memory(lazy[::-1], lazy) is None
-    assert backends.copy_array(lazy) is not lazy
+    # A dask array is immutable: distinct dask arrays never alias.
+    assert backends.may_share_memory(lazy[::-1], lazy) is False
+    assert backends.may_share_memory(lazy[::-1], data) is False
+    assert backends.may_share_memory(lazy, lazy) is True
 
 
-def test_copy_on_the_dask_backend_is_fresh() -> None:
-    # dask cannot say whether a result aliases its input, so `copy=True`
-    # copies every chunk of a gather-only reslice.
+def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A dask array is immutable, so a gather-only reslice under `copy=True`
+    # returns its lazy result as is, with no copy step, and still right.
     da = pytest.importorskip("dask.array")
     pytest.importorskip("dask_image")
+
+    def _no_copy(arr: object) -> object:
+        raise AssertionError("a dask result was copied")
+
+    monkeypatch.setattr(sep, "copy_array", _no_copy)
     with backend("dask"):
         img = _own_grid_image()
         source = np.asarray(img.data).copy()
-        img = SingleScaleImage(
-            data=da.from_array(source, chunks=2),
-            transformations=img.transformations,
-        )
-        resliced = np.asarray(img.reslice(copy=True).data.compute())
-    assert np.array_equal(resliced, source)
-    assert not np.shares_memory(resliced, source)
+        lazy = da.from_array(source, chunks=2)
+        img = SingleScaleImage(data=lazy, transformations=img.transformations)
+        resliced = img.reslice(copy=True).data
+    assert isinstance(resliced, da.Array)
+    assert resliced is not lazy
+    assert np.array_equal(resliced.compute(), source)

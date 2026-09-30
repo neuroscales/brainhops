@@ -550,7 +550,12 @@ def pull_separable(
         `data`: a reslice that only gathers (a flip, a permutation, or a
         unit-step slice, such as a reslice onto the data's own grid) can
         return a view of it. When `True` the result never shares memory
-        with `data`. No copy is made when the result is already fresh.
+        with `data`. No copy is made when the result is already fresh, nor
+        on the dask backend: a dask array is immutable, and writing into
+        the result rebinds its own graph, never that of `data`, so a lazy
+        result is returned as is. (Its computed value may still be a view
+        of the numpy array a gather-only graph was built from, which is
+        outside what `copy` promises.)
 
     Returns
     -------
@@ -609,7 +614,9 @@ def _fresh(arr: tx.Any, data: tx.Any, copy: bool, fresh: bool) -> tx.Any:
 
     `fresh` says the caller knows `arr` is a new array, so no copy is
     needed. Otherwise the backend is asked whether the two may share
-    memory, and a backend that cannot tell (dask) is copied regardless.
+    memory, and an array of a backend that cannot tell is copied
+    regardless. A dask result never shares memory with its input, so it is
+    never copied.
     """
     if not copy or fresh or may_share_memory(arr, data) is False:
         return arr

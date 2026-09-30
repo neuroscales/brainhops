@@ -189,10 +189,13 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
 
     For numpy and cupy this is the backend's own `may_share_memory`, a
     conservative bounds check: `False` means the arrays certainly do not
-    overlap, `True` means they might. A dask array is a lazy graph whose
-    computed chunks can alias the chunks it was built from, which cannot be
-    read off the graph, so `None` is returned for it, and for an array-like
-    of no known backend: the caller cannot rule sharing out.
+    overlap, `True` means they might. A dask array never shares memory with
+    another array object: it is immutable, and `x[...] = v` rebinds the
+    graph of `x` itself, never that of the array it was built from, so
+    `False` is returned for it unless the two are the same object. An
+    array-like of no known backend (a lazy file proxy, say) cannot be
+    inspected, so `None` is returned for it: the caller cannot rule sharing
+    out.
     """
     if x is y:
         return True
@@ -202,10 +205,17 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
             backends.append(np)
         elif cp is not None and isinstance(array, cp.ndarray):
             backends.append(cp)
+        elif da is not None and isinstance(array, da.Array):
+            backends.append(da)
         else:
-            # A dask array, or an array-like of no known backend (a lazy
-            # file proxy, say), whose memory cannot be inspected.
+            # An array-like of no known backend, whose memory cannot be
+            # inspected.
             return None
+    if da in backends:
+        # Distinct dask arrays never alias: a write rebinds one array's own
+        # graph. (A computed result can be a view of a numpy array the graph
+        # was built from, but that is outside what this function answers.)
+        return False
     if backends[0] is not backends[1]:
         # A host array and a device array cannot alias each other.
         return False
@@ -215,12 +225,9 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
 def copy_array(x: ArrayProtocol) -> ArrayProtocol:
     """A copy of `x` that shares no memory with it, in the same backend.
 
-    A dask array's own `copy()` is a no-op on a multi-chunk array, since
-    dask arrays are treated as immutable, so every chunk is copied
-    explicitly instead.
+    A dask array's own `copy()` returns a new array object over the same
+    graph, which is all an immutable array needs: no chunk is copied.
     """
-    if da is not None and isinstance(x, da.Array):
-        return x.map_blocks(lambda block: block.copy(), dtype=x.dtype)
     if hasattr(x, "copy"):
         return x.copy()
     # An array-like of no known backend is read into a fresh host array.

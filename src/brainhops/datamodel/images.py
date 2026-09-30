@@ -201,7 +201,9 @@ class SingleScaleImage(Image):
             flip, a permutation, or a unit-step slice, such as a reslice
             onto the image's own grid) can return a view of it. When
             `True` the output data never shares memory with the input
-            data.
+            data. A dask array is never copied: it is immutable, and
+            writing into the output rebinds the output's own graph, never
+            the input's, so the lazy output is returned as is.
 
         Returns
         -------
@@ -449,7 +451,9 @@ class MultiScaleImage(Image):
             flip, a permutation, or a unit-step slice, such as a reslice
             onto the image's own grid) can return a view of it. When
             `True` the output data never shares memory with the input
-            data.
+            data. A dask array is never copied: it is immutable, and
+            writing into the output rebinds the output's own graph, never
+            the input's, so the lazy output is returned as is.
 
         Returns
         -------
