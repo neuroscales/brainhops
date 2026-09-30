@@ -55,6 +55,7 @@ import typing_extensions as tx
 # internals
 from .base import Transformation
 from .concrete import CartesianField, Identity, Permutation, is_identity
+from .errors import RestrictionError
 from .meta import SubspaceTransformation
 from .restrict import restrict
 from .utils import UNREADABLE, affine_matrix, axis_list
@@ -123,7 +124,8 @@ def factor_sequence(
 
         * `seq` itself (the same object), when the chain does not factor
           (a single group, a chain whose ends differ in dimension, an
-          element that cannot be read) or is already in normal form for
+          element that cannot be read or cannot be restricted to its
+          groups) or is already in normal form for
           its partition. The pass is therefore idempotent, which is what
           lets the fixpoint loop stop.
         * A sequence `[grid?, F_1, ..., F_m, Pi_perm?]` with the endpoints
@@ -197,7 +199,12 @@ def factor_sequence(
     if len(groups) <= 1:
         return seq  # trivial: nothing separable -> unchanged, same objects
 
-    factors = _build_factors(groups, stages, mode, simplify)
+    try:
+        factors = _build_factors(groups, stages, mode, simplify)
+    except RestrictionError:
+        # An element cannot be cut into the pieces of these groups soundly:
+        # leave the chain unfactored rather than drop a piece.
+        return seq
     perm = _build_perm(groups, n_in)
 
     if _same_structure(body, factors, perm):
@@ -395,7 +402,16 @@ def _subspace_pattern(
         # A non-interpolating subspace carries its full affine embedding.
         return _read_pattern_affine(element, ndim, ndim)
     ki, ko = len(in_axes), len(out_axes)
-    if interpolates:
+    if inner is None and ki == ko:
+        if in_axes != out_axes:
+            # An inner-less subspace that names different input and output
+            # axes is read two ways: as a reindex (by the affine converter
+            # and the subspace composer) and as the identity (by the
+            # subspace-on-field composer). Leave it unfactored.
+            return None
+        # No inner is the identity over the acted axes.
+        inner_dep = np.eye(ko, dtype=bool)
+    elif interpolates:
         # An interpolating inner couples every acted-on axis to every other.
         inner_dep = np.ones((ko, ki), dtype=bool)
     else:

@@ -26,6 +26,17 @@ class ConversionError(TypeError):
     """Raised when a transformation cannot be converted to another type."""
 
 
+class RestrictionError(TypeError):
+    """Raised when a transformation cannot be restricted to a block of axes.
+
+    Either no restriction rule applies to its type, or the block cannot be
+    cut out of it soundly (a chain inside which the block is coupled to the
+    other axes, or a transform with no affine reading). The factor pass
+    leaves a chain unfactored when this is raised, rather than drop a
+    piece it cannot restrict.
+    """
+
+
 class LossyConversionError(ConversionError):
     """Raised when a conversion would discard information.
 

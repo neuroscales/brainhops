@@ -577,6 +577,78 @@ def test_cap_raises_on_non_identity_preserving_pass(
 
 
 # ----------------------------------------------------------------------
+#   REGRESSIONS
+# ----------------------------------------------------------------------
+
+
+def _sequence_inner_chain() -> Sequence:
+    # A subspace whose inner is a (non-field) sequence, split across two
+    # groups: each group holds one of its axes.
+    inner = Sequence(
+        [
+            Scaling(scale=np.array([0.5, 0.75])),
+            Translation(translation=np.array([1.0, -0.5])),
+        ]
+    )
+    return Sequence([CartesianField(shape=(4, 5, 6)), _sub(inner, [0, 1])])
+
+
+def test_sequence_inner_split_across_groups_is_kept() -> None:
+    # Its pieces used to be dropped, leaving only the grid.
+    seq = _sequence_inner_chain()
+    result = seq.compute(factor=True)
+    assert _factor_axes(result) == [(0,), (1,)]
+    assert np.allclose(_field(result), _field(_sequence_inner_chain()))
+
+
+def test_unrestrictable_element_leaves_the_chain_unfactored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brainhops.datamodel._transformations.errors import RestrictionError
+
+    def refuse(*args: object) -> None:
+        raise RestrictionError("cannot")
+
+    monkeypatch.setattr(fac, "restrict", refuse)
+    seq = Sequence(
+        [CartesianField(shape=(4, 5)), Scaling(scale=np.array([2.0, 3.0]))]
+    )
+    assert fac.factor_sequence(seq) is seq
+
+
+def test_subspace_without_inner_is_read_as_the_identity() -> None:
+    # It used to crash the dependency reader.
+    grid = CartesianField(shape=(4, 5, 6))
+    scale = Scaling(scale=np.array([0.5, 0.75, 0.9]))
+    seq = Sequence([grid, _sub(None, [1]), scale])
+    result = fac.factor_sequence(seq)
+    assert _factor_axes(result) == [(0,), (1,), (2,)]
+    assert np.allclose(_field(result), _field(Sequence([grid, scale])))
+
+
+def test_subspace_without_inner_over_different_axes_is_unfactored() -> None:
+    # An inner-less subspace whose input and output axes differ is read as a
+    # reindex by the affine converter but as the identity by the
+    # subspace-on-field composer, so it is left unfactored (it used to
+    # crash the dependency reader).
+    reindex = SubspaceTransformation(
+        transformation=None,
+        input_axes=np.array([0, 1]),
+        output_axes=np.array([1, 0]),
+    )
+    seq = Sequence(
+        [
+            CartesianField(shape=(4, 5, 6)),
+            reindex,
+            _sub(Scaling(scale=np.array([1.5])), [2]),
+        ]
+    )
+    assert fac.factor_sequence(seq) is seq
+    result = seq.compute(factor=True)
+    assert np.allclose(_field(result), _field(seq))
+
+
+# ----------------------------------------------------------------------
 #   FALLBACKS (unfactored)
 # ----------------------------------------------------------------------
 

@@ -13,7 +13,9 @@ no output in `rows` reads an input outside `cols`, and no output outside
 `rows` reads an input in `cols`. The factor pass guarantees this, since
 its axis groups are connected components of the chain's dependency graph.
 The result is `None` when the piece is the identity (it maps `cols` to
-`rows` in order and changes nothing), which lets the caller drop it.
+`rows` in order and changes nothing), which lets the caller drop it. A
+piece that cannot be cut out soundly raises `RestrictionError`; it is
+never read as the identity.
 
 `embed(t, in_axes, out_axes, ni, no)` goes the other way. It is the
 transformation from `ni` to `no` axes that applies `t` from the input
@@ -75,6 +77,9 @@ problems.
 # dependencies
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
+
+# internals
+from .errors import RestrictionError
 
 # typing
 if tx.TYPE_CHECKING:
@@ -140,14 +145,17 @@ def restrict(
 
     Raises
     ------
-    TypeError
+    RestrictionError
         When no rule applies, as for an object that is not a
-        transformation.
+        transformation, or when the block cannot be cut out of `t`
+        soundly (see the rules for `Sequence` and `Transformation`).
     """
     try:
         return _restrict(t, rows, cols, ni, no)
     except NoMethodError:
-        raise TypeError(f"Cannot restrict a {type(t).__name__}") from None
+        raise RestrictionError(
+            f"Cannot restrict a {type(t).__name__}"
+        ) from None
 
 
 def embed(

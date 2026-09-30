@@ -10,6 +10,7 @@ rule is exercised once, plus the refusal of an unsupported type.
 import numpy as np
 import pytest
 
+from brainhops.datamodel._transformations.errors import RestrictionError
 from brainhops.datamodel._transformations.registries import INVERSE_CACHE
 from brainhops.datamodel._transformations.restrict import embed, restrict
 from brainhops.datamodel.transformations import (
@@ -19,6 +20,7 @@ from brainhops.datamodel.transformations import (
     Inverse,
     Linear,
     Permutation,
+    Projection,
     Rotation,
     Scaling,
     Sequence,
@@ -112,9 +114,43 @@ def test_field_is_kept_whole() -> None:
     assert restrict(warp, [0, 1], [0, 1], 2, 2) is warp
 
 
-def test_sequence_holding_a_field_is_kept_whole() -> None:
+def test_sequence_covering_the_block_is_the_same_object() -> None:
     seq = Sequence([Scaling(scale=np.asarray([2.0, 3.0])), _warp(2)])
     assert restrict(seq, [0, 1], [0, 1], 2, 2) is seq
+
+
+def test_sequence_is_restricted_member_by_member() -> None:
+    # Regression: a partial block of a sequence with no affine reading used
+    # to be dropped as the identity.
+    seq = Sequence(
+        [
+            Scaling(scale=np.asarray([2.0, 3.0])),
+            Translation(translation=np.asarray([1.0, -1.0])),
+        ]
+    )
+    piece = restrict(seq, [1], [1], 2, 2)
+    assert isinstance(piece, Sequence)
+    scale, shift = piece.transformations
+    assert type(scale) is Scaling and np.array_equal(scale.scale, [3.0])
+    assert type(shift) is Translation
+    assert np.array_equal(shift.translation, [-1.0])
+
+
+def test_sequence_member_coupling_the_block_is_refused() -> None:
+    shear = Affine(matrix=np.asarray([[1.0, 0.5, 0.0], [0.0, 1.0, 0.0]]))
+    seq = Sequence([Scaling(scale=np.asarray([2.0, 3.0])), shear])
+    with pytest.raises(RestrictionError):
+        restrict(seq, [1], [1], 2, 2)
+
+
+def test_partial_inverse_of_a_sequence_stays_lazy() -> None:
+    forward = Scaling(scale=np.asarray([2.0, 4.0]))
+    seq = Sequence([forward, Translation(translation=np.asarray([1.0, 2.0]))])
+    piece = restrict(Inverse(forward=seq), [1], [1], 2, 2)
+    shift, scale = piece.transformations
+    assert isinstance(shift, Inverse) and isinstance(scale, Inverse)
+    assert np.array_equal(scale.forward.scale, [4.0])
+    assert not getattr(forward, INVERSE_CACHE, None)
 
 
 @pytest.mark.parametrize(
@@ -200,8 +236,14 @@ def test_subspace_field_with_a_pass_through_axis_stays_wrapped() -> None:
 
 
 def test_restrict_refuses_an_unsupported_type() -> None:
-    with pytest.raises(TypeError, match="Cannot restrict"):
+    with pytest.raises(RestrictionError, match="Cannot restrict"):
         restrict(np.eye(2), [0], [0], 2, 2)
+
+
+def test_restrict_refuses_a_transform_with_no_affine_reading() -> None:
+    # Never read as the identity, which would drop it.
+    with pytest.raises(RestrictionError, match="no affine reading"):
+        restrict(Projection(dropped=[1]), [0], [0], 2, 1)
 
 
 # ----------------------------------------------------------------------

@@ -1798,6 +1798,29 @@ def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
     _assert_fresh_copy(got, data)
 
 
+def test_reslice_through_a_split_sequence_inner_is_correct() -> None:
+    # Regression: a subspace whose inner is a sequence, split across axis
+    # groups, used to lose that inner, and the reslice sampled the grid.
+    inner = Sequence(
+        [
+            Scaling(scale=np.array([0.5, 0.75])),
+            Translation(translation=np.array([1.0, -0.5])),
+        ]
+    )
+    sub = SubspaceTransformation(
+        transformation=inner,
+        input_axes=np.array([0, 1]),
+        output_axes=np.array([0, 1]),
+    )
+    seq = Sequence([CartesianField(shape=(4, 5, 6)), sub])
+    opt = dict(order=1, bound="reflect", coeff=False)
+    with backend("numpy"):
+        data = np.random.default_rng(0).normal(size=(4, 5, 6))
+        got = sep.pull_separable(data, seq, **opt)
+        ref = pull(data, seq.compute().field, **opt)
+    assert np.allclose(got, ref)
+
+
 def test_backend_reports_memory_sharing() -> None:
     data = np.arange(6.0)
     assert backends.may_share_memory(data, data[::-1]) is True

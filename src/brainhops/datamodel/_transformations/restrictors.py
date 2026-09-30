@@ -21,6 +21,8 @@ from .concrete import (
     TransformationField,
     Translation,
 )
+from .errors import RestrictionError
+from .factor import _element_ndim, _read_pattern
 from .inverse import Inverse
 from .meta import SubspaceTransformation
 from .restrict import embed, embedder, restrict, restrictor
@@ -39,9 +41,7 @@ def _(
     # The affine family (`Affine`, `Linear`, `Rotation`), and any other
     # transformation read through its affine: the matrix sub-block. A
     # matrix-less transform is the identity. A transform with no affine
-    # reading is dropped as the identity too: the factor pass only
-    # restricts what its dependency reader could read, which refuses such
-    # a transform first.
+    # reading cannot be restricted, and is refused rather than dropped.
     return _affine_block(t, rows, cols)
 
 
@@ -184,12 +184,47 @@ def _(
 def _(
     t: Sequence, rows: tx.List[int], cols: tx.List[int], ni: int, no: int
 ) -> tx.Optional[Transformation]:
-    # A nested sub-chain (a subspace inner that composed only partially).
-    # One that holds a field couples the whole space and is kept whole.
-    # Otherwise it is read through its affine, like any transformation.
-    if _interpolates(t):
+    # A nested sub-chain (a subspace inner that composed only partially,
+    # or the forward of a lazy inverse). When the block covers all of it,
+    # it is kept whole, as the same object. Otherwise it is restricted
+    # member by member: the block is carried through the chain along each
+    # member's dependency pattern, and every member must keep it decoupled
+    # (no output that reads the block also reads an axis outside it), or
+    # the sequence is refused rather than cut unsoundly.
+    if len(rows) == no and len(cols) == ni:
         return t
-    return _affine_block(t, rows, cols)
+    pieces: tx.List[Transformation] = []
+    block, ndim = list(cols), ni
+    for member in t.transformations or []:
+        dims = _element_ndim(member, ndim)
+        if dims is None or dims[0] != ndim:
+            raise RestrictionError("Cannot read a member of the sequence")
+        m_ni, m_no = dims
+        pattern = _read_pattern(member, m_ni, m_no)
+        if pattern is None or pattern.shape != (m_no, m_ni):
+            raise RestrictionError("Cannot read a member of the sequence")
+        inside = np.zeros(m_ni, dtype=bool)
+        inside[block] = True
+        reads_block = pattern[:, inside].any(axis=1)
+        if pattern[np.ix_(reads_block, ~inside)].any():
+            raise RestrictionError(
+                "The block is coupled to other axes inside the sequence"
+            )
+        out_block = np.nonzero(reads_block)[0].tolist()
+        if block and out_block:
+            piece = restrict(member, out_block, block, m_ni, m_no)
+            if piece is not None:
+                pieces.append(piece)
+        block, ndim = out_block, m_no
+    if ndim != no or block != list(rows):
+        raise RestrictionError(
+            "The block is coupled to other axes inside the sequence"
+        )
+    if not pieces:
+        return None
+    if len(pieces) == 1:
+        return pieces[0]
+    return Sequence(transformations=pieces)
 
 
 # ----------------------------------------------------------------------
@@ -244,10 +279,15 @@ def _affine_block(
     t: Transformation, rows: tx.List[int], cols: tx.List[int]
 ) -> tx.Optional[Affine]:
     # The `(rows, cols)` sub-block of the affine matrix of `t`, with its
-    # translation column. `None` for a matrix-less (identity) transform,
-    # or for one with no affine reading (see the rule for `Transformation`).
+    # translation column. `None` for a matrix-less (identity) transform.
+    # One with no affine reading is refused.
     matrix = affine_matrix(t)
-    if matrix is None or matrix is UNREADABLE:
+    if matrix is UNREADABLE:
+        raise RestrictionError(
+            f"Cannot restrict a {type(t).__name__}, which has no affine "
+            "reading"
+        )
+    if matrix is None:
         return None
     n_in = matrix.shape[1] - 1
     return Affine(matrix=matrix[np.ix_(rows, list(cols) + [n_in])])
