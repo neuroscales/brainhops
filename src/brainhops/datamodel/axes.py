@@ -151,6 +151,16 @@ class Axis(DataModelBase, polymorphic=True):
         compatible with both `Axis(name="x")` and `Axis(name="y")`, which
         are not compatible with each other.
 
+        !!! example
+            ```pycon
+            >>> Axis(name="x").compatible_with(Axis(name="x", unit="mm"))
+            True
+            >>> Axis(name="x").compatible_with(Axis(name="y"))
+            False
+            >>> SpaceAxis(unit="mm").compatible_with(Axis(unit="micrometer"))
+            False
+            ```
+
         Parameters
         ----------
         other : Axis
@@ -165,16 +175,6 @@ class Axis(DataModelBase, polymorphic=True):
         ------
         TypeError
             If `other` is not an [`Axis`][].
-
-        !!! example
-            ```pycon
-            >>> Axis(name="x").compatible_with(Axis(name="x", unit="mm"))
-            True
-            >>> Axis(name="x").compatible_with(Axis(name="y"))
-            False
-            >>> SpaceAxis(unit="mm").compatible_with(Axis(unit="micrometer"))
-            False
-            ```
         """
         if not isinstance(other, Axis):
             raise TypeError(
@@ -196,6 +196,16 @@ class Axis(DataModelBase, polymorphic=True):
         [`SpaceAxis`][]. Merging with the unknown `Axis()` returns an
         axis equal to the other side.
 
+        !!! example
+            ```pycon
+            >>> Axis(name="x").merge_with(SpaceAxis(unit="micrometer"))
+            SpaceAxis(name='x', unit='micrometer')
+            >>> Axis(name="x").merge_with(Axis(name="y"))
+            Traceback (most recent call last):
+              ...
+            ValueError: Cannot merge axes that disagree on name: 'x' != 'y'.
+            ```
+
         Parameters
         ----------
         other : Axis
@@ -214,16 +224,6 @@ class Axis(DataModelBase, polymorphic=True):
             If a field is set on both sides to different values, or if
             neither class derives from the other, so that no class can
             hold what both sides know.
-
-        !!! example
-            ```pycon
-            >>> Axis(name="x").merge_with(SpaceAxis(unit="micrometer"))
-            SpaceAxis(name='x', unit='micrometer')
-            >>> Axis(name="x").merge_with(Axis(name="y"))
-            Traceback (most recent call last):
-              ...
-            ValueError: Cannot merge axes that disagree on name: 'x' != 'y'.
-            ```
         """
         if not isinstance(other, Axis):
             raise TypeError(

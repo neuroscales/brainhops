@@ -227,15 +227,6 @@ class AxisSequence(tx.Sequence[AXIS]):
         type. A name gives the one explicit axis that has it. The axis at
         a *position* in the space is [`at`][] that position.
 
-        Raises
-        ------
-        KeyError
-            If no explicit axis has the name.
-        ValueError
-            If more than one explicit axis has the name.
-        IndexError, TypeError
-            As `list` indexing does.
-
         !!! example
             ```pycon
             >>> x, t = Axis(name="x"), TimeAxis(name="t")
@@ -244,6 +235,15 @@ class AxisSequence(tx.Sequence[AXIS]):
             >>> AxisList([x, ..., t])[2] is t
             True
             ```
+
+        Raises
+        ------
+        KeyError
+            If no explicit axis has the name.
+        ValueError
+            If more than one explicit axis has the name.
+        IndexError, TypeError
+            As `list` indexing does.
         """
         if isinstance(key, str):
             return self._entry(self._entry_named(key))
@@ -273,6 +273,20 @@ class AxisSequence(tx.Sequence[AXIS]):
         compared. A name stands for `Axis(name=...)`, so it matches the
         axes with that name, whatever their class. `...` matches nothing.
 
+        !!! example
+            ```pycon
+            >>> x, t = SpaceAxis(name="x"), TimeAxis(name="t", unit="s")
+            >>> axes = AxisList([x, ..., t])
+            >>> axes.index("t"), axes.index(SpaceAxis())
+            (2, 0)
+            >>> axes.index(Axis(unit="second")), axes.index(Axis())
+            (2, 0)
+            >>> axes.index("y")
+            Traceback (most recent call last):
+              ...
+            ValueError: Axis(name='y') is not in list
+            ```
+
         Parameters
         ----------
         query : Axis or str
@@ -294,20 +308,6 @@ class AxisSequence(tx.Sequence[AXIS]):
             If no entry matches.
         TypeError
             If `query` is neither an `Axis` nor a string.
-
-        !!! example
-            ```pycon
-            >>> x, t = SpaceAxis(name="x"), TimeAxis(name="t", unit="s")
-            >>> axes = AxisList([x, ..., t])
-            >>> axes.index("t"), axes.index(SpaceAxis())
-            (2, 0)
-            >>> axes.index(Axis(unit="second")), axes.index(Axis())
-            (2, 0)
-            >>> axes.index("y")
-            Traceback (most recent call last):
-              ...
-            ValueError: Axis(name='y') is not in list
-            ```
         """
         if isinstance(query, str):
             query = Axis(name=query)
@@ -372,6 +372,14 @@ class AxisSequence(tx.Sequence[AXIS]):
         as needed to reach `ndim` axes. Use it once the number of axes is
         known, for instance from the shape of the data.
 
+        !!! example
+            ```pycon
+            >>> AxisList([Axis(name="x"), ...]).expand(3)
+            [Axis(name='x'), Axis(), Axis()]
+            >>> AxisList([...]).expand(2)
+            [Axis(), Axis()]
+            ```
+
         Parameters
         ----------
         ndim : int
@@ -390,14 +398,6 @@ class AxisSequence(tx.Sequence[AXIS]):
             list, or differs from the number of axes of a closed one.
         TypeError
             If `ndim` is not an integer.
-
-        !!! example
-            ```pycon
-            >>> AxisList([Axis(name="x"), ...]).expand(3)
-            [Axis(name='x'), Axis(), Axis()]
-            >>> AxisList([...]).expand(2)
-            [Axis(), Axis()]
-            ```
         """
         ndim = _as_int(ndim, "ndim")
         prefix, suffix = self._split()
@@ -432,6 +432,15 @@ class AxisSequence(tx.Sequence[AXIS]):
 
         The axes are listed in the order of `refs`.
 
+        !!! example
+            ```pycon
+            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
+            >>> AxisList([x, y, z]).restrict(["z", 0])
+            [Axis(name='z'), Axis(name='x')]
+            >>> AxisList([x, ...]).restrict([0, 1])
+            [Axis(name='x'), Axis()]
+            ```
+
         Parameters
         ----------
         refs : iterable of int or str
@@ -454,15 +463,6 @@ class AxisSequence(tx.Sequence[AXIS]):
         TypeError
             If a reference is neither an integer nor a string, or if
             `refs` is a string rather than a list of references.
-
-        !!! example
-            ```pycon
-            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-            >>> AxisList([x, y, z]).restrict(["z", 0])
-            [Axis(name='z'), Axis(name='x')]
-            >>> AxisList([x, ...]).restrict([0, 1])
-            [Axis(name='x'), Axis()]
-            ```
         """
         positions = []
         for ref in _as_list(refs, "refs"):
@@ -489,6 +489,15 @@ class AxisSequence(tx.Sequence[AXIS]):
         The positions are absolute positions in the larger space, which
         does not exist yet, so they cannot be names.
 
+        !!! example
+            ```pycon
+            >>> x = Axis(name="x")
+            >>> AxisList([x]).embed([1])
+            [Axis(), Axis(name='x'), Ellipsis]
+            >>> AxisList([x]).embed([1], ndim=3)
+            [Axis(), Axis(name='x'), Axis()]
+            ```
+
         Parameters
         ----------
         positions : iterable of int
@@ -511,15 +520,6 @@ class AxisSequence(tx.Sequence[AXIS]):
             `len(positions)` axes.
         TypeError
             If a position or `ndim` is not an integer.
-
-        !!! example
-            ```pycon
-            >>> x = Axis(name="x")
-            >>> AxisList([x]).embed([1])
-            [Axis(), Axis(name='x'), Ellipsis]
-            >>> AxisList([x]).embed([1], ndim=3)
-            [Axis(), Axis(name='x'), Axis()]
-            ```
         """
         positions = [
             _as_int(p, "positions") for p in _as_list(positions, "positions")
@@ -569,6 +569,15 @@ class AxisSequence(tx.Sequence[AXIS]):
         any axis, and `[...]` matches every list. The relation is
         symmetric, but not transitive.
 
+        !!! example
+            ```pycon
+            >>> x, t = SpaceAxis(name="x"), TimeAxis()
+            >>> AxisList([x, ...]).compatible_with([x, Axis(), t])
+            True
+            >>> AxisList([..., t]).compatible_with([x])
+            False
+            ```
+
         Parameters
         ----------
         other : AxisSequence, or list or tuple of Axis
@@ -584,15 +593,6 @@ class AxisSequence(tx.Sequence[AXIS]):
         ------
         TypeError
             If `other` is not a list or a tuple.
-
-        !!! example
-            ```pycon
-            >>> x, t = SpaceAxis(name="x"), TimeAxis()
-            >>> AxisList([x, ...]).compatible_with([x, Axis(), t])
-            True
-            >>> AxisList([..., t]).compatible_with([x])
-            False
-            ```
         """
         if not isinstance(other, (list, tuple)):
             raise TypeError(
@@ -1104,6 +1104,14 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         `SpatialCoordinateSystem3D`. Use it once the number of axes is
         known, for instance from the shape of the data.
 
+        !!! example
+            ```pycon
+            >>> CoordinateSystem(axes=[Axis(name="x"), ...]).expand(4)
+            CoordinateSystem(axes=[Axis(name='x'), Axis(), Axis(), Axis()])
+            >>> CoordinateSystem().expand(2)
+            CoordinateSystem2D(axes=(Axis(), Axis()))
+            ```
+
         Parameters
         ----------
         ndim : int
@@ -1122,14 +1130,6 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             system, or differs from the number of axes of a closed one.
         TypeError
             If `ndim` is not an integer.
-
-        !!! example
-            ```pycon
-            >>> CoordinateSystem(axes=[Axis(name="x"), ...]).expand(4)
-            CoordinateSystem(axes=[Axis(name='x'), Axis(), Axis(), Axis()])
-            >>> CoordinateSystem().expand(2)
-            CoordinateSystem2D(axes=(Axis(), Axis()))
-            ```
         """
         expanded = self.axes.expand(ndim)
         if not self.axes.is_open:
@@ -1154,6 +1154,15 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         restricted axes, which is a [`CoordinateSystem2D`][], an
         [`RASCoordinateSystem`][], ... when the axes select one.
 
+        !!! example
+            ```pycon
+            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
+            >>> CoordinateSystem(axes=[x, y, z]).restrict(["z", 0])
+            CoordinateSystem2D(axes=(Axis(name='z'), Axis(name='x')))
+            >>> CoordinateSystem(axes=[x, ...]).restrict([0])
+            CoordinateSystem(axes=[Axis(name='x')])
+            ```
+
         Parameters
         ----------
         refs : iterable of int or str
@@ -1170,15 +1179,6 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             As
             [`AxisSequence.restrict`][brainhops.datamodel.systems.AxisSequence.restrict]
             does.
-
-        !!! example
-            ```pycon
-            >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-            >>> CoordinateSystem(axes=[x, y, z]).restrict(["z", 0])
-            CoordinateSystem2D(axes=(Axis(name='z'), Axis(name='x')))
-            >>> CoordinateSystem(axes=[x, ...]).restrict([0])
-            CoordinateSystem(axes=[Axis(name='x')])
-            ```
         """
         return CoordinateSystem(axes=self.axes.restrict(refs))
 
@@ -1198,6 +1198,15 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         `CoordinateSystem(axes=...)` builds from the embedded axes -- a
         plain, open `CoordinateSystem` when `ndim` is not given, and the
         closed system the axes select when it is.
+
+        !!! example
+            ```pycon
+            >>> x = Axis(name="x")
+            >>> CoordinateSystem(axes=[x]).embed([1])
+            CoordinateSystem(axes=[Axis(), Axis(name='x'), Ellipsis])
+            >>> CoordinateSystem(axes=[x]).embed([1], ndim=4)
+            CoordinateSystem(axes=[Axis(), Axis(name='x'), Axis(), Axis()])
+            ```
 
         Parameters
         ----------
@@ -1220,15 +1229,6 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             As
             [`AxisSequence.embed`][brainhops.datamodel.systems.AxisSequence.embed]
             does.
-
-        !!! example
-            ```pycon
-            >>> x = Axis(name="x")
-            >>> CoordinateSystem(axes=[x]).embed([1])
-            CoordinateSystem(axes=[Axis(), Axis(name='x'), Ellipsis])
-            >>> CoordinateSystem(axes=[x]).embed([1], ndim=4)
-            CoordinateSystem(axes=[Axis(), Axis(name='x'), Axis(), Axis()])
-            ```
         """
         return CoordinateSystem(axes=self.axes.embed(positions, ndim=ndim))
 
@@ -1248,6 +1248,19 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         pairwise compatible. Unlike `==`, an unknown `Axis()` matches
         any axis. The relation is symmetric, but not transitive.
 
+        !!! example
+            ```pycon
+            >>> x, t = SpaceAxis(name="x"), TimeAxis()
+            >>> CoordinateSystem(axes=[x, ...]).compatible_with(
+            ...     CoordinateSystem(axes=[x, Axis(), t])
+            ... )
+            True
+            >>> CoordinateSystem(axes=[..., t]).compatible_with(
+            ...     CoordinateSystem(axes=[x])
+            ... )
+            False
+            ```
+
         Parameters
         ----------
         other : CoordinateSystem or None
@@ -1262,19 +1275,6 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         ------
         TypeError
             If `other` is neither a [`CoordinateSystem`][] nor `None`.
-
-        !!! example
-            ```pycon
-            >>> x, t = SpaceAxis(name="x"), TimeAxis()
-            >>> CoordinateSystem(axes=[x, ...]).compatible_with(
-            ...     CoordinateSystem(axes=[x, Axis(), t])
-            ... )
-            True
-            >>> CoordinateSystem(axes=[..., t]).compatible_with(
-            ...     CoordinateSystem(axes=[x])
-            ... )
-            False
-            ```
         """
         if other is not None and not isinstance(other, CoordinateSystem):
             raise TypeError(
