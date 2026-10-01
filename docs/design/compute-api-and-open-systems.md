@@ -79,6 +79,12 @@ it already does.*
 > group `A_i`, and `chain_i` is `t` restricted to that group. When `t` does
 > not split into two or more groups, `t` itself is returned.
 
+*If option 1 of A.8 is adopted, the normal form becomes
+`[grid?, SubspaceTransformation(blocks)]`: one block per axis group, with
+reordering absorbed into each block's `output_axes`, so `Π` disappears.
+Restriction to whole blocks is then structural. The contract below is
+unchanged otherwise.*
+
 **Changes from what #104 does today:**
 
 - **No composition inside `factor`.** Today the factor pass composes each
@@ -327,10 +333,9 @@ spec (`ome/ngff-spec`, tag `0.6`, `index.md`). Checked against it:
     `create ∘ drop ≠ id`.
   - Today, `~Projection(dropped=[2])` is treated as an inverse, which is
     wrong for any point not at `0` on that axis.
-  - Proposed fix: `inverse()` raises (or returns a non-cancelling lazy
-    inverse) when anything is dropped. It keeps the swap only for a
-    projection that creates without dropping, whose left inverse is the
-    drop.
+  - **Decided: `inverse()` raises when anything is dropped.** It keeps
+    the swap only for a projection that creates without dropping, whose
+    left inverse is the drop.
   - The cancellation rule in A.4 must be one-sided accordingly: a drop
     after a create of the same axes cancels, and the reverse order does
     not.
@@ -339,11 +344,24 @@ spec (`ome/ngff-spec`, tag `0.6`, `index.md`). Checked against it:
 
 - **Spec (0.6):** `mapAxis` is strictly a permutation. The array has one
   entry per axis, and each input index appears exactly once.
-- **Our reader** (`io/transformations/zarr/_map.py`) also accepts a
-  strictly increasing *subset* and reads it as a dropping `Projection`.
-  That form was allowed in earlier drafts, but in 0.6 it is invalid. It
-  should be refused, or read with a warning. The writer must never emit
-  it; `projectAxis` is the 0.6 spelling.
+- **History.**
+  - In 0.6.dev1, `mapAxis` was an object mapping output axis *names* to
+    input axis names. It could drop axes (`{"x": "b"}`, "projection
+    down") and duplicate them (`{"z": "b", "y": "b", "x": "a"}`,
+    "projection up").
+  - From 0.6.dev2 onwards (dev2, dev3, dev4, rc0 and 0.6), it is an
+    integer array that MUST be a permutation.
+  - The integer form was never allowed to be a subset. The name-object
+    form was allowed to drop and duplicate, but `abczarr`'s 0.6 model
+    (`mapAxis: List[int]`) cannot parse it.
+- **Our reader** (`io/transformations/zarr/_map.py`) accepts a strictly
+  increasing integer *subset* and reads it as a dropping `Projection`.
+  That form was never valid in any version. **Decided:** following the
+  rule "be liberal with formerly valid forms, strict with forms that were
+  never valid", the reader raises on it. The writer only ever emits
+  permutations; `projectAxis` is the 0.6 spelling of a drop. Accepting
+  the dev1 name-object form would first need `abczarr` to parse it (out
+  of scope here).
 
 #### `byDimension`, the missing meta transformation
 
@@ -362,24 +380,61 @@ spec (`ome/ngff-spec`, tag `0.6`, `index.md`). Checked against it:
   `byDimension` whose other children are identities. The reverse does not
   hold: a `byDimension` with several non-identity children, unused inputs
   or reordered outputs is not a `SubspaceTransformation`.
-- **Proposal: add `ByDimension(children)`**, where each child is a
-  `(transformation, input_axes, output_axes)` triple, with the spec's
-  constraint that the children's `output_axes` partition the output
-  axes. It is needed to read and write 0.6 faithfully, and it is exactly
-  the object the factor pass is building:
-  - **`factor`'s normal form becomes `[grid?, ByDimension(...)]`** instead
-    of `[grid?, F_1, …, F_m, Π?]`. Each axis group is one child.
-    Reordering is absorbed into the children's `output_axes`, so the
-    trailing `Π` disappears, and the reslice executor reads the groups
-    straight off the children.
-  - **Restriction becomes structural on a `ByDimension`.** A block made
-    of whole children is decoupled by construction, so `restrict`
-    returns those children without reading a single value.
-  - **`SubspaceTransformation`** stays, as the common one-child-plus-
-    pass-through case, and gains a conversion to `ByDimension`. **Open
-    question:** keep it as a class, or make it a constructor that returns
-    a `ByDimension`? Keeping both widens the API surface; merging them
-    changes an existing public class.
+- **History.** In every 0.6 version, `byDimension` is a *product* of
+  children that together cover every output axis exactly once, with no
+  implicit pass-through:
+  - dev1: children addressed by axis *name* (`input`/`output`);
+  - dev2: `input_axes`/`output_axes`, still by name;
+  - 0.6: `inputAxes`/`outputAxes`, by index.
+
+  `SubspaceTransformation`'s one-block-plus-in-order-pass-through
+  semantics therefore does not come from any version of the spec. It is
+  our own extension.
+- **Can a `byDimension` be a sequence of `SubspaceTransformation`s?**
+  Only partly. When every child is square (as many input as output axes),
+  the product equals
+
+      [P, Sub(t_1, o_1, o_1), …, Sub(t_m, o_m, o_m)]
+
+  where `P` is a permutation (plus a projection dropping unread inputs)
+  that moves each child's input axes to that child's output positions.
+  The subspaces then act on disjoint axes in place, so they commute.
+  The limits:
+  - A child that changes the number of axes cannot act in place, so this
+    form cannot represent it.
+  - Writing the sequence back as a `byDimension` means recognizing the
+    pattern, which is fragile.
+  - It is exactly the `[F_1, …, F_m, Π]` chain that #104's factor pass
+    juggles, with the composition gates that come with it.
+- **Options.**
+  - **(1) Generalize `SubspaceTransformation` into the product
+    (recommended).** It keeps your name, gives one class instead of two,
+    and becomes the factor normal form and the reader/writer target:
+    - It holds a list of blocks `(transformation, input_axes,
+      output_axes)`, with the spec's semantics: blocks may read any input
+      axes in any order, and an input axis no block reads is dropped.
+    - It **keeps our pass-through extension**: output axes that no block
+      writes are fed, in order, from input axes that no block reads. This
+      is what lets a subspace act on `x, y, z` of a space whose other
+      axes are unknown (open systems, Part B), which the spec's
+      "every output covered" rule cannot express.
+    - Today's single-block call, `SubspaceTransformation(t, input_axes,
+      output_axes)`, stays valid and means one block plus pass-through.
+    - The writer closes the systems (`expand`) and emits a `byDimension`
+      with explicit identity children for the passed-through axes. The
+      reader maps a `byDimension` to blocks with nothing passed through.
+    - **To settle:** the exact pass-through rule when the number of
+      uncovered inputs and outputs differ. My proposal: the surplus
+      uncovered *inputs* are dropped (as in the spec), and surplus
+      uncovered *outputs* are an error, raised as soon as both counts are
+      known.
+  - **(2) Keep `SubspaceTransformation` as it is, and add a separate
+    `ByDimension`.** Two classes with overlapping meaning, and a larger
+    API surface.
+  - **(3) No product class.** Read a `byDimension` into the sequence
+    above. It is limited to square children, round-trips poorly, and
+    keeps the factor normal form as a gated chain.
+
 - **Other 0.6 types are already covered:** `identity`, `scale`,
   `translation`, `affine`, `rotation`, `sequence`, `bijection`,
   `displacements` and `coordinates`. 0.6 has no `inverseOf`, so our lazy
@@ -402,12 +457,8 @@ interface.
 - **`t.restrict(input_axes, output_axes)`** is the same expression, with
   the guarantee that the block is closed. When it is not, it raises
   `RestrictionError`.
-  - **Open question: when it raises.** Either eagerly, when `restrict` is
-    called, which reads values for an affine-family `t`, unlike
-    `inverse()`, which reads nothing; or lazily, at `compute`, when a
-    commutation cannot proceed. I lean towards lazily, so that
-    `restrict`, like `inverse`, only builds an expression, while
-    `compute` decides and raises.
+  - **Decided: it raises lazily**, at `compute`, when a commutation
+    cannot proceed. Like `inverse`, `restrict` only builds an expression.
 
 ---
 
@@ -578,14 +629,15 @@ just the one that crashes:
 9. `t.project(I, O)` (always defined; the section at `0` on a coupled
    block) and `t.restrict(I, O)` (raises on a coupled block) are separate
    methods.
+10. `restrict` raises lazily, at `compute`. Like `inverse`, it only
+    builds an expression.
+11. `Projection.inverse()` raises when the projection drops axes.
+12. A subset integer `mapAxis`, never valid in any 0.6 version, is
+    refused on read.
 
 ## Open questions
 
-1. A.8: keep `SubspaceTransformation` as a class next to the new
-   `ByDimension`, or make it a constructor that returns a `ByDimension`?
-2. A.8: should `restrict` raise eagerly (when called) or lazily (at
-   `compute`)?
-3. A.8: `Projection.inverse()` when axes are dropped. Raise, or return a
-   lazy inverse that never cancels?
-4. A.8: a subset `mapAxis` (invalid in 0.6). Refuse on read, or read it
-   with a warning?
+1. A.8: generalize `SubspaceTransformation` into the multi-block product
+   (option 1, recommended)? If so, confirm the pass-through rule
+   (surplus uncovered inputs dropped, surplus uncovered outputs an
+   error).
