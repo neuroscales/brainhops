@@ -121,7 +121,7 @@ All classical linear group can be extended with the translation group
 # | VolumePreservingAffine              |        |         | det =±1   |
 # | SpecialAffine                       | SAff   | SL  ⋉ T | det = 1   |
 # | ConformalEuclidean                  | Sim    | CO  ⋉ T | det ≠ 0   |
-# | SpecialConformal                    | Sim+   | CO+ ⋉ T | det > 0   |
+# | SpecialConformalEuclidean           | Sim+   | CO+ ⋉ T | det > 0   |
 # | Euclidean                           | E      | O   ⋉ T | det =±1   |
 # | SpecialEuclidean                    | SE     | SO  ⋉ T | det = 1   |
 # | Dilation                            |        | ℝ*  ⋉ T | det ≠ 0   |
