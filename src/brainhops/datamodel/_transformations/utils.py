@@ -3,7 +3,7 @@ import numpy as np
 import typing_extensions as tx
 
 # api
-from brainhops.datamodel.systems import _compatible, _ndim_of
+from brainhops.datamodel.systems import AxisList
 
 # internals
 from .errors import ConversionError
@@ -23,9 +23,9 @@ def get_ndim(
     `default` is returned when neither system is closed: a missing or an
     open system says nothing about the number of axes.
     """
-    ndim = _ndim_of(t.input)
+    ndim = AxisList.of(t.input).ndim
     if ndim is None:
-        ndim = _ndim_of(t.output)
+        ndim = AxisList.of(t.output).ndim
     return default if ndim is None else ndim
 
 
@@ -49,8 +49,9 @@ def systems_disagree(
     boundary line up -- the composers, and the two-argument simplifiers.
     [`adapt`][] is what removes a disagreement.
     """
-    if _ndim_of(source) is None or _ndim_of(target) is None:
-        return not _compatible(source, target)
+    source_axes, target_axes = AxisList.of(source), AxisList.of(target)
+    if source_axes.is_open or target_axes.is_open:
+        return not source_axes.compatible_with(target_axes)
     return source != target
 
 
@@ -153,9 +154,9 @@ def axis_counts(
                 else:
                     ni = len(field.shape) - 1
     if ni is None:
-        ni = _ndim_of(getattr(t, "_input", None))
+        ni = AxisList.of(getattr(t, "_input", None)).ndim
     if no is None:
-        no = _ndim_of(getattr(t, "_output", None))
+        no = AxisList.of(getattr(t, "_output", None)).ndim
     return ni, no
 
 

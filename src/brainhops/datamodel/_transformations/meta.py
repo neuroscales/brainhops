@@ -12,10 +12,9 @@ from brainhops._core.typing import npvector
 # datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import (
-    _expand_of,
+    AxisList,
+    CoordinateSystem,
     _is_unknown,
-    _ndim_of,
-    _split,
 )
 
 # internals
@@ -26,10 +25,6 @@ from .modes import ModeLike
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
 from .utils import axis_list
-
-# typing
-if tx.TYPE_CHECKING:
-    from brainhops.datamodel.systems import CoordinateSystem
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
@@ -110,12 +105,12 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     # --- properties ---------------------------------------------------
 
     @smartproperty(missing=_is_unknown)
-    def input(self) -> tx.Optional["CoordinateSystem"]:
+    def input(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "input", None)
         return _subsystem(system, self.input_axes, full=self._input)
 
     @smartproperty(missing=_is_unknown)
-    def output(self) -> tx.Optional["CoordinateSystem"]:
+    def output(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
 
@@ -195,7 +190,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     # --- properties ---------------------------------------------------
 
     @smartproperty(missing=_is_unknown)
-    def input(self) -> tx.Optional["CoordinateSystem"]:
+    def input(self) -> tx.Optional[CoordinateSystem]:
         # A side that says nothing about the system defers to the other.
         if self.forward is not None and not _is_unknown(self.forward.input):
             return self.forward.input
@@ -204,7 +199,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return None
 
     @smartproperty(missing=_is_unknown)
-    def output(self) -> tx.Optional["CoordinateSystem"]:
+    def output(self) -> tx.Optional[CoordinateSystem]:
         if self.forward is not None and not _is_unknown(self.forward.output):
             return self.forward.output
         if self.backward is not None:
@@ -248,10 +243,10 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 def _subsystem(
-    system: tx.Optional["CoordinateSystem"] = None,
+    system: tx.Optional[CoordinateSystem] = None,
     index: tx.Optional[tx.Sequence[Integral]] = None,
-    full: tx.Optional["CoordinateSystem"] = None,
-) -> tx.Optional["CoordinateSystem"]:
+    full: tx.Optional[CoordinateSystem] = None,
+) -> tx.Optional[CoordinateSystem]:
     """Build the full-space system a subspace transform presents.
 
     `system` is the inner transform's own (subspace) coordinate system,
@@ -272,8 +267,7 @@ def _subsystem(
         return full
     if index is None or system is None:
         return system
-    prefix, suffix = _split(system)
-    if suffix is not None and not prefix and not suffix:
+    if AxisList.of(system) == [...]:
         return system
     embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None
@@ -308,7 +302,7 @@ def _close_subspace(
     """
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
-    own_in, own_out = _ndim_of(t.input), _ndim_of(t.output)
+    own_in, own_out = AxisList.of(t.input).ndim, AxisList.of(t.output).ndim
     n_in = own_in if own_in is not None else n_in
     n_out = own_out if own_out is not None else n_out
     if n_in is None and n_out is not None:
@@ -323,12 +317,15 @@ def _close_subspace(
                 f"A subspace transform that acts on the axes {axes} cannot "
                 f"act in the space of {count} axes its neighbour states."
             )
+    # A missing system expands as `CoordinateSystem()`, which says nothing.
     changes = {}
     try:
         if own_in is None:
-            changes["input"] = _expand_of(t.input, n_in)
+            system = CoordinateSystem() if t.input is None else t.input
+            changes["input"] = system.expand(n_in)
         if own_out is None:
-            changes["output"] = _expand_of(t.output, n_out)
+            system = CoordinateSystem() if t.output is None else t.output
+            changes["output"] = system.expand(n_out)
     except ValueError as error:
         raise CompositionError(
             f"The systems of a subspace transform do not fit the space its "

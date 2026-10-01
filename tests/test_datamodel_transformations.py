@@ -685,7 +685,7 @@ def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
     )
     system = subspace.input
     assert system.axes == [Axis(name="x"), Axis(name="y"), ...]
-    assert [system.axis(i).name for i in (0, 1)] == ["x", "y"]
+    assert system.axes.names == ("x", "y", ...)
 
 
 def test_subspace_declared_endpoint_is_returned_as_is() -> None:

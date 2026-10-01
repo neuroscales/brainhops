@@ -125,7 +125,7 @@ from bagof.dispatchers import Function, Super
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import CoordinateSystem, _compatible
+from brainhops.datamodel.systems import AxisList
 
 # typing
 if tx.TYPE_CHECKING:
@@ -492,8 +492,10 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
     #   of the matrix or the field).
     # `space` holds only unknown axes, so only the numbers of axes can
     # clash with it.
-    space = CoordinateSystem().expand(family.ndim)
-    return all(_compatible(e, space) for e in (x.input, x.output))
+    space = AxisList([...]).expand(family.ndim)
+    return all(
+        AxisList.of(e).compatible_with(space) for e in (x.input, x.output)
+    )
 
 
 # --- Public helpers ---------------------------------------------------

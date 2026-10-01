@@ -464,7 +464,7 @@ def test_the_discrete_check_reads_an_open_derived_system() -> None:
         output_axes=np.array([1, 2]),
     )
     assert sub.input.ndim is None
-    assert sub.input.axis(1) is discrete
+    assert sub.input.axes[1] is discrete
     coords = CoordinatesField(field=np.zeros((3, 4, 5, 3)))
     with pytest.raises(CompositionError, match="discrete axis 'c'"):
         compose(sub, coords)

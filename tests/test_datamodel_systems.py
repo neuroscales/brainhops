@@ -5,7 +5,6 @@ embed them."""
 import pytest
 import typing_extensions as tx
 
-from brainhops.datamodel import systems as S
 from brainhops.datamodel.axes import (
     A,
     Axis,
@@ -15,6 +14,7 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.systems import (
     ArrayCoordinateSystem,
+    AxisList,
     CoordinateSystem,
     CoordinateSystem2D,
     CoordinateSystem3D,
@@ -41,6 +41,9 @@ OPEN_LAYOUTS = {
     "end": [X, T, ...],
 }
 
+# The same two axes, closed or with `...` anywhere.
+ANY_LAYOUTS = {"closed": [X, T], **OPEN_LAYOUTS}
+
 # Every fixed-dimension class, with the number of axes it holds.
 FIXED_CLASSES = [
     (CoordinateSystem2D, 2),
@@ -62,6 +65,12 @@ def unknown_axes(request: pytest.FixtureRequest) -> tx.Optional[list]:
 @pytest.fixture(params=list(OPEN_LAYOUTS), ids=list(OPEN_LAYOUTS))
 def layout(request: pytest.FixtureRequest) -> str:
     """Where `...` sits in an open system."""
+    return request.param
+
+
+@pytest.fixture(params=list(ANY_LAYOUTS), ids=list(ANY_LAYOUTS))
+def any_layout(request: pytest.FixtureRequest) -> str:
+    """A closed list of `X` and `T`, or `...` somewhere among them."""
     return request.param
 
 
@@ -131,7 +140,7 @@ def test_ndim_of_an_unknown_system(unknown_axes: tx.Optional[list]) -> None:
 
 
 def test_ndim_of_a_missing_system() -> None:
-    assert S._ndim_of(None) is None
+    assert AxisList.of(None).ndim is None
 
 
 # ----------------------------------------------------------------------
@@ -151,7 +160,8 @@ def test_equality_stays_structural(layout: str) -> None:
     assert CS(axes=axes) == CS(axes=list(axes))
     assert CS(axes=axes) != CS(axes=[...])
     assert CS(axes=axes) != CS(name="s", axes=axes)
-    assert CS(axes=axes) != SpatialCoordinateSystem(axes=axes)
+    spatial = [SpatialAxis(), ...]
+    assert CS(axes=spatial) != SpatialCoordinateSystem(axes=spatial)
     # Compatible, but not equal: equality does not expand `...`.
     assert CS(axes=[X, ...]) != CS(axes=[X, Axis()])
 
@@ -190,102 +200,312 @@ def test_systems_stay_unhashable() -> None:
         hash(CS())
 
 
+def test_the_hand_written_equality_is_the_one_of_every_subclass() -> None:
+    # Magic writes a field-wise `__eq__` into a subclass that does not
+    # define its own, unless `eq=False` is inherited. That one would tell
+    # `axes=None` from `axes=[...]`.
+    class Mine(CoordinateSystem):
+        pass
+
+    for cls in (CS, SpatialCoordinateSystem, ArrayCoordinateSystem, Mine):
+        assert cls.__eq__ is CS.__eq__
+        assert cls(axes=None) == cls(axes=[...])
+    assert RASCoordinateSystem.__eq__ is CS.__eq__
+
+
 # ----------------------------------------------------------------------
-#   POSITION AND AXIS
+#   AXIS LIST
 # ----------------------------------------------------------------------
 
 
-def test_position_of_a_name_in_a_closed_system() -> None:
-    system = CS(axes=[X, Y, T])
-    assert [system.position(n) for n in ("x", "y", "t")] == [0, 1, 2]
+def test_axes_are_stored_as_an_axis_list(layout: str) -> None:
+    for given in (OPEN_LAYOUTS[layout], tuple(OPEN_LAYOUTS[layout])):
+        axes = CS(axes=given).axes
+        assert type(axes) is AxisList
+        assert axes == OPEN_LAYOUTS[layout]
+    assert type(SpatialCoordinateSystem(axes=[...]).axes) is AxisList
 
 
-@pytest.mark.parametrize(
-    "layout, x, t",
-    [("start", -2, -1), ("middle", 0, -1), ("end", 0, 1)],
-)
-def test_position_of_a_name_in_an_open_system(
-    layout: str, x: int, t: int
-) -> None:
-    # A name after `...` resolves to a negative position, because its
-    # distance from the start is unknown.
-    system = CS(axes=OPEN_LAYOUTS[layout])
-    assert system.position("x") == x
-    assert system.position("t") == t
-    assert system.axis(system.position("x")) is X
-    assert system.axis(system.position("t")) is T
+def test_the_axes_are_converted_to_the_type_of_the_field() -> None:
+    # A list is converted item by item, as a tuple always was.
+    for sequence in (list, tuple):
+        given = sequence([SpatialAxis(name="x"), ...])
+        assert SpatialCoordinateSystem(axes=given).axes == list(given)
+        with pytest.raises(TypeError):
+            SpatialCoordinateSystem(axes=sequence([TimeAxis(), ...]))
+    assert CS(axes=["x", ...]).axes == [Axis(name="x"), ...]
+    # An axis of the right type is kept as it is.
+    assert CS(axes=[X, ...]).axes[0] is X
 
 
-@pytest.mark.parametrize(
-    "axes", [[X, Y], [X, ..., Y], [..., X, Y], [X, Y, ...]]
-)
-def test_position_of_a_missing_name(axes: list) -> None:
-    with pytest.raises(ValueError, match="no axis of the system"):
-        CS(axes=axes).position("z")
+def test_an_axis_list_is_a_plain_list(any_layout: str) -> None:
+    entries = ANY_LAYOUTS[any_layout]
+    axes = AxisList(entries)
+    assert isinstance(axes, list)
+    assert axes == entries
+    assert repr(axes) == repr(entries)
+    assert type(axes[1:]) is AxisList and axes[1:] == entries[1:]
 
 
-@pytest.mark.parametrize(
-    "axes", [[X, Axis(name="x")], [X, ..., Axis(name="x")], [..., X, X]]
-)
-def test_position_of_a_duplicated_name(axes: list) -> None:
-    with pytest.raises(ValueError, match="2 axes"):
-        CS(axes=axes).position("x")
+def test_axis_list_of_a_system(any_layout: str) -> None:
+    system = CS(axes=ANY_LAYOUTS[any_layout])
+    axes = AxisList.of(system)
+    assert type(axes) is AxisList and axes == ANY_LAYOUTS[any_layout]
+    # A new list: changing it leaves the system as it is.
+    axes.append(Z)
+    assert system.axes == ANY_LAYOUTS[any_layout]
 
 
-def test_position_of_a_name_in_an_unknown_system(
+def test_axis_list_of_an_unknown_system(
     unknown_axes: tx.Optional[list],
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
-        with pytest.raises(ValueError, match="without a system that names"):
-            S._position_in(system, "x")
-    with pytest.raises(ValueError, match="without a system that names"):
-        CS(axes=unknown_axes).position("x")
+        assert AxisList.of(system) == [...]
+        assert type(AxisList.of(system)) is AxisList
+    # The system keeps what was given.
+    assert CS(axes=unknown_axes).axes == unknown_axes
 
 
-def test_position_of_an_index_in_a_closed_system() -> None:
-    system = CS(axes=[X, Y, Z])
-    assert [system.position(i) for i in range(3)] == [0, 1, 2]
-    assert [system.position(i) for i in (-3, -2, -1)] == [0, 1, 2]
+def test_axis_list_of_a_fixed_dimension_system() -> None:
+    axes = AxisList.of(RASCoordinateSystem())
+    assert type(axes) is AxisList
+    assert axes == list(RASCoordinateSystem().axes)
+    assert axes.ndim == 3
+
+
+@pytest.mark.parametrize("other", [[X], (X,), "x", 0])
+def test_axis_list_of_refuses_a_non_system(other: object) -> None:
+    with pytest.raises(TypeError, match="CoordinateSystem or None"):
+        AxisList.of(other)  # type: ignore[arg-type]
+
+
+def test_is_open_and_ndim(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    assert axes.is_open is (any_layout != "closed")
+    assert axes.ndim == (2 if any_layout == "closed" else None)
+    assert AxisList([...]).is_open and AxisList([...]).ndim is None
+    assert not AxisList([]).is_open and AxisList([]).ndim == 0
+
+
+def test_more_than_one_ellipsis_describes_no_axes() -> None:
+    axes = AxisList([X, ..., ...])
+    for read in (
+        lambda: axes.ndim,
+        lambda: axes.is_open,
+        lambda: axes.restrict([0]),
+        lambda: axes.expand(3),
+    ):
+        with pytest.raises(ValueError, match="at most one"):
+            read()
+
+
+# ----------------------------------------------------------------------
+#   NAMES, ENTRIES AND INDEX
+# ----------------------------------------------------------------------
+
+
+def test_names(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    assert axes.names == tuple(... if a is ... else a.name for a in axes)
+    assert AxisList([Axis(), ...]).names == (None, ...)
+    assert AxisList([]).names == ()
+
+
+def test_an_axis_by_its_name(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    assert axes["x"] is X and axes["t"] is T
+    assert axes["t"] is axes[axes.index("t")]
+
+
+def test_a_missing_name(any_layout: str) -> None:
+    # A name never matches one of the axes that `...` stands for.
+    with pytest.raises(KeyError, match="'y'"):
+        AxisList(ANY_LAYOUTS[any_layout])["y"]
+    with pytest.raises(KeyError):
+        AxisList([...])["x"]
+
+
+def test_a_shared_name_is_ambiguous(any_layout: str) -> None:
+    axes = AxisList([*ANY_LAYOUTS[any_layout], Axis(name="x")])
+    with pytest.raises(ValueError, match="2 axes"):
+        axes["x"]
+    # `index` and `in` find the first one, as for any list.
+    assert axes.index("x") == ANY_LAYOUTS[any_layout].index(X)
+    assert "x" in axes
+
+
+def test_a_name_is_in_the_list(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    assert "x" in axes and "t" in axes
+    assert "y" not in axes
+    assert "x" not in AxisList([...])
+
+
+def test_anything_else_is_in_the_list_as_an_entry(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    assert X in axes and T in axes and Y not in axes
+    assert (... in axes) is (any_layout != "closed")
+
+
+def test_an_integer_indexes_the_entries(any_layout: str) -> None:
+    entries = ANY_LAYOUTS[any_layout]
+    axes = AxisList(entries)
+    for i in range(-len(entries), len(entries)):
+        assert axes[i] is entries[i]
+    with pytest.raises(IndexError):
+        axes[len(entries)]
+
+
+def test_entries_and_axes_differ_in_an_open_list() -> None:
+    # In `[x, ..., t]`, entry 2 is `t`, which is the last axis, and the
+    # axis at position 2 is one of the axes that `...` stands for.
+    axes = AxisList([X, ..., T])
+    assert len(axes) == 3 and axes.ndim is None
+    assert axes[2] is T and axes.index("t") == 2
+    assert axes.restrict([2]) == [Axis()]
+    assert axes.restrict([-1]) == [T]
+    # Walking the entries walks `...`, not the axes it stands for.
+    assert [axes[i] for i in range(len(axes))] == [X, ..., T]
+
+
+def test_index_of_a_name(any_layout: str) -> None:
+    entries = ANY_LAYOUTS[any_layout]
+    axes = AxisList(entries)
+    assert axes.index("x") == entries.index(X)
+    assert axes.index("t") == entries.index(T)
+
+
+def test_index_of_an_axis(any_layout: str) -> None:
+    entries = ANY_LAYOUTS[any_layout]
+    axes = AxisList(entries)
+    # An axis matches itself, and a query that sets fewer fields.
+    assert axes.index(T) == entries.index(T)
+    assert axes.index(TimeAxis()) == entries.index(T)
+    assert axes.index(Axis(unit="second")) == entries.index(T)
+    assert axes.index(Axis(name="x")) == entries.index(X)
+    # The empty query matches the first axis.
+    assert axes.index(Axis()) == (1 if any_layout == "start" else 0)
+
+
+def test_index_compares_only_the_fields_the_query_sets() -> None:
+    axes = AxisList([Axis(), Axis(name="x"), Axis(name="x", unit="mm")])
+    assert axes.index("x") == 1
+    assert axes.index(Axis(name="x", unit="mm")) == 2
+    # An unset field of the entry does not match a field the query sets.
+    assert axes.index(Axis(unit="mm")) == 2
+
+
+def test_index_asks_for_the_class_of_the_query() -> None:
+    plain = Axis(name="x", unit="mm", type="space")
+    spatial = SpatialAxis(name="x")
+    axes = AxisList([plain, spatial])
+    # A plain `Axis` query matches any axis; a `SpatialAxis` query only a
+    # `SpatialAxis` (or a subclass), whatever the fields of the others.
+    assert axes.index(Axis(name="x")) == 0
+    assert axes.index(SpatialAxis(name="x")) == 1
+    assert AxisList([R]).index(SpatialAxis()) == 0
+    with pytest.raises(ValueError):
+        AxisList([plain]).index(SpatialAxis())
+
+
+def test_index_never_matches_ellipsis(unknown_axes: tx.Optional[list]) -> None:
+    for system in (CS(axes=unknown_axes), None):
+        axes = AxisList.of(system)
+        for query in (Axis(), "x", TimeAxis()):
+            with pytest.raises(ValueError, match="is not in list"):
+                axes.index(query)
+
+
+def test_index_of_a_missing_axis(any_layout: str) -> None:
+    axes = AxisList(ANY_LAYOUTS[any_layout])
+    with pytest.raises(ValueError, match=r"Axis\(name='y'\) is not in list"):
+        axes.index("y")
+    with pytest.raises(ValueError):
+        axes.index(SpatialAxis())
+
+
+def test_index_between_start_and_stop() -> None:
+    axes = AxisList([X, ..., X, T])
+    assert axes.index("x") == 0
+    assert axes.index("x", 1) == 2
+    assert axes.index("x", -2) == 2
+    assert axes.index("t", 0, 4) == 3
+    with pytest.raises(ValueError):
+        axes.index("t", 0, 3)
+    with pytest.raises(ValueError):
+        axes.index("x", 3)
+
+
+@pytest.mark.parametrize("query", [0, None, b"x", ["x"]])
+def test_index_refuses_other_queries(query: object) -> None:
+    with pytest.raises(TypeError):
+        AxisList([X, Y]).index(query)  # type: ignore[arg-type]
+
+
+# ----------------------------------------------------------------------
+#   POSITIONS (private helpers)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "layout, expected",
+    [
+        ("closed", [0, 1]),
+        ("start", [None, -2, -1]),
+        ("middle", [0, None, -1]),
+        ("end", [0, 1, None]),
+    ],
+)
+def test_the_position_of_an_entry(layout: str, expected: list) -> None:
+    # An entry after `...` is counted from the end; any other entry is its
+    # own position. `...` is no axis, and has no position.
+    axes = AxisList(ANY_LAYOUTS[layout])
+    for entry, position in enumerate(expected):
+        if position is None:
+            with pytest.raises(ValueError):
+                axes._position_of_entry(entry)
+        else:
+            assert axes._position_of_entry(entry) == position
+            assert axes._position_of_entry(entry - len(axes)) == position
+            assert axes._axis_at(position) is axes[entry]
+
+
+def test_a_position_in_a_closed_list() -> None:
+    axes = AxisList([X, Y, Z])
+    assert [axes._position(i) for i in range(3)] == [0, 1, 2]
+    assert [axes._position(i) for i in (-3, -2, -1)] == [0, 1, 2]
     for i in (3, -4, 100):
         with pytest.raises(IndexError, match="out of range"):
-            system.position(i)
+            axes._position(i)
     with pytest.raises(IndexError):
-        CS(axes=[]).position(0)
+        AxisList([])._position(0)
 
 
-def test_position_of_an_index_in_an_open_system(layout: str) -> None:
+def test_a_position_in_an_open_list(layout: str) -> None:
     # `...` stands for any number of axes, so every position is valid, and
     # is returned as given: never clamped, never normalized.
-    system = CS(axes=OPEN_LAYOUTS[layout])
+    axes = AxisList(OPEN_LAYOUTS[layout])
     for i in (0, 1, 2, 5, 100, -1, -2, -3, -100):
-        assert system.position(i) == i
+        assert axes._position(i) == i
 
 
-def test_position_of_an_index_in_an_unknown_system(
+def test_a_position_in_an_unknown_system(
     unknown_axes: tx.Optional[list],
 ) -> None:
-    for i in (0, 3, -1):
-        assert CS(axes=unknown_axes).position(i) == i
-        assert S._position_in(None, i) == i
+    for system in (CS(axes=unknown_axes), None):
+        for i in (0, 3, -1):
+            assert AxisList.of(system)._position(i) == i
 
 
-def test_position_accepts_numpy_integers() -> None:
+def test_a_position_may_be_a_numpy_integer() -> None:
     np = pytest.importorskip("numpy")
-    assert CS(axes=[X, Y]).position(np.int64(-1)) == 1
+    assert AxisList([X, Y])._position(np.int64(-1)) == 1
 
 
 @pytest.mark.parametrize("ref", [True, 1.0, None, b"x", ["x"]])
-def test_position_refuses_other_references(ref: object) -> None:
+def test_a_position_is_an_integer(ref: object) -> None:
     with pytest.raises(TypeError):
-        CS(axes=[X, Y]).position(ref)  # type: ignore[arg-type]
-
-
-def test_axis_of_a_closed_system() -> None:
-    system = CS(axes=[X, Y, T])
-    assert system.axis(0) is X and system.axis(-1) is T
-    assert system.axis("y") is Y
-    with pytest.raises(IndexError):
-        system.axis(3)
+        AxisList([X, Y])._position(ref)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -297,19 +517,24 @@ def test_axis_of_a_closed_system() -> None:
         ("end", {0: X, 1: T}),
     ],
 )
-def test_axis_of_an_open_system(layout: str, known: dict) -> None:
+def test_the_axis_at_a_position_of_an_open_list(
+    layout: str, known: dict
+) -> None:
     # A non-negative position reads the part before `...`, a negative one
     # the part after it; any other position is unknown.
-    system = CS(axes=OPEN_LAYOUTS[layout])
+    axes = AxisList(OPEN_LAYOUTS[layout])
     for position in range(-5, 5):
         expected = known.get(position, Axis())
-        assert system.axis(position) == expected
+        assert axes._axis_at(position) == expected
+        assert axes.restrict([position]) == [expected]
 
 
-def test_axis_of_an_unknown_system(unknown_axes: tx.Optional[list]) -> None:
-    for position in (0, 2, -1):
-        assert CS(axes=unknown_axes).axis(position) == Axis()
-        assert S._axis_in(None, position) == Axis()
+def test_the_axis_at_a_position_of_an_unknown_system(
+    unknown_axes: tx.Optional[list],
+) -> None:
+    for system in (CS(axes=unknown_axes), None):
+        for position in (0, 2, -1):
+            assert AxisList.of(system)._axis_at(position) == Axis()
 
 
 # ----------------------------------------------------------------------
@@ -360,7 +585,7 @@ def test_expand_a_closed_system_to_its_size_is_itself() -> None:
 
 @pytest.mark.parametrize("ndim", [0, 1, 3])
 def test_expand_a_closed_system_to_another_size(ndim: int) -> None:
-    with pytest.raises(ValueError, match="closed system of 2 axes"):
+    with pytest.raises(ValueError, match="closed list of 2 axes"):
         CS(axes=[X, Y]).expand(ndim)
 
 
@@ -376,7 +601,7 @@ def test_expand_refuses_a_non_integer(ndim: object) -> None:
 
 
 # ----------------------------------------------------------------------
-#   TAKE
+#   RESTRICT
 # ----------------------------------------------------------------------
 
 
@@ -423,15 +648,19 @@ def test_restrict_refuses_a_string() -> None:
         CS(axes=[X, Y]).restrict("x")  # type: ignore[arg-type]
 
 
-def test_restrict_raises_as_position_does() -> None:
-    with pytest.raises(IndexError):
+def test_restrict_refuses_an_unknown_reference() -> None:
+    with pytest.raises(IndexError, match="out of range"):
         CS(axes=[X, Y]).restrict([2])
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError, match="'y'"):
         CS(axes=[X, ...]).restrict(["y"])
+    with pytest.raises(ValueError, match="2 axes"):
+        CS(axes=[X, ..., X]).restrict(["x"])
+    with pytest.raises(TypeError):
+        CS(axes=[X, Y]).restrict([1.0])
 
 
 # ----------------------------------------------------------------------
-#   PLACE
+#   EMBED
 # ----------------------------------------------------------------------
 
 
@@ -458,9 +687,10 @@ def test_embed_keeps_the_positions_restrict_reads() -> None:
     # The embedded system reads back, at each known position, the axis that
     # was embedded there: the composers check discrete axes this way.
     embedded = CS(axes=[X, Axis(name="c", discrete=True)]).embed([0, 3])
-    assert embedded.axis(3).discrete is True
-    assert embedded.axis(1) == Axis()
-    assert embedded.axis(7) == Axis()
+    axes = AxisList.of(embedded)
+    assert axes._axis_at(3).discrete is True
+    assert axes._axis_at(1) == Axis()
+    assert axes._axis_at(7) == Axis()
 
 
 def test_embed_an_open_system(layout: str) -> None:
@@ -487,9 +717,9 @@ def test_embed_nothing_with_a_known_size() -> None:
 
 
 def test_embed_refuses_a_count_mismatch() -> None:
-    with pytest.raises(ValueError, match="system of 2 axes at 1"):
+    with pytest.raises(ValueError, match="list of 2 axes at 1"):
         CS(axes=[X, Y]).embed([0])
-    with pytest.raises(ValueError, match="system of 2 axes at 3"):
+    with pytest.raises(ValueError, match="list of 2 axes at 3"):
         CS(axes=[X, Y]).embed([0, 1, 2])
     with pytest.raises(ValueError, match="2 explicit axes at 1"):
         CS(axes=[X, ..., Y]).embed([0])
@@ -512,7 +742,7 @@ def test_embed_refuses_a_size_that_is_too_small() -> None:
 
 
 # ----------------------------------------------------------------------
-#   COMPATIBLE
+#   COMPATIBLE WITH
 # ----------------------------------------------------------------------
 
 
@@ -575,7 +805,7 @@ def test_an_unknown_system_is_compatible_with_every_system(
         assert unknown.compatible_with(CS(axes=axes))
         assert CS(axes=axes).compatible_with(unknown)
         assert CS(axes=axes).compatible_with(None)
-        assert S._compatible(None, CS(axes=axes))
+        assert AxisList.of(None).compatible_with(AxisList.of(CS(axes=axes)))
 
 
 def test_compatible_ras_with_time() -> None:

@@ -6,7 +6,7 @@ from bagof.magic import replace
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import _ndim_of
+from brainhops.datamodel.systems import AxisList
 
 # locals
 from .base import Transformation
@@ -258,8 +258,8 @@ def _(t: SubspaceTransformation) -> Affine:
     # and columns of the acted-on axes. Every other axis passes through as
     # the identity, mapping each input pass-through axis to the output
     # pass-through axis in the same position in the ordering.
-    n_in = _ndim_of(t.input)
-    n_out = _ndim_of(t.output)
+    n_in = AxisList.of(t.input).ndim
+    n_out = AxisList.of(t.output).ndim
     if n_in is None or n_out is None:
         raise ConversionError(
             "The axis count of this subspace transformation is unknown, so "

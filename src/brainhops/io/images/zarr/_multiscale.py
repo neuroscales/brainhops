@@ -16,7 +16,7 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import CoordinateSystem, _axes_of
+from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
@@ -421,7 +421,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             # number of axes of the data. The axes `...` stands for are
             # unknown, and are written as any axis with no description is.
             try:
-                return _axes_of(CoordinateSystem(axes=axes).expand(ndim))
+                return AxisList(axes).expand(ndim)
             except ValueError as error:
                 raise WriterError(
                     f"Cannot store the axes {axes} under data of {ndim} "

@@ -58,11 +58,8 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import (
     ArrayCoordinateSystem,
+    AxisList,
     CoordinateSystem,
-    _axes_of,
-    _compatible,
-    _expand_of,
-    _ndim_of,
 )
 from brainhops.datamodel.units import Unit
 
@@ -165,8 +162,12 @@ def bridge(
         adaptation is needed.
     """
     # --- special cases ------------------------------------------------
-    if _ndim_of(source) is None or _ndim_of(target) is None:
-        if _compatible(source, target):
+    # Only two closed systems can be bridged. A missing system, or one whose
+    # axes are `None`, is open too: it reads as `[...]`.
+    source_axes = AxisList.of(source)
+    target_axes = AxisList.of(target)
+    if source_axes.is_open or target_axes.is_open:
+        if source_axes.compatible_with(target_axes):
             return Identity(input=source, output=target)
         _cannot_bridge_report(source, target)
     if source == target:
@@ -190,8 +191,6 @@ def bridge(
         )
 
     # --- matching -----------------------------------------------------
-    source_axes = _axes_of(source)
-    target_axes = _axes_of(target)
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -443,11 +442,11 @@ def _unmatched_report(
 ) -> tx.NoReturn:
     matched_source = {i for i in match if i is not None}
     unmatched_target = [
-        axis for axis, i in zip(_axes_of(target), match) if i is None
+        axis for axis, i in zip(AxisList.of(target), match) if i is None
     ]
     unmatched_source = [
         axis
-        for i, axis in enumerate(_axes_of(source))
+        for i, axis in enumerate(AxisList.of(source))
         if i not in matched_source
     ]
 
@@ -475,7 +474,7 @@ def _cannot_bridge_report(
 ) -> tx.NoReturn:
     source_name = getattr(source, "name", None) or "the source system"
     target_name = getattr(target, "name", None) or "the target system"
-    which = "the source" if _ndim_of(source) is None else "the target"
+    which = "the source" if AxisList.of(source).is_open else "the target"
     raise AdaptationError(
         f"Cannot bridge {source_name} to {target_name}: {which} system is "
         f"open (its axes hold `...`), and the axes it states do not match "
@@ -590,7 +589,7 @@ def adapt(
     # Only two closed systems can be told to differ in their number of
     # axes. An open one that disagrees with its neighbour is refused by the
     # bridge below.
-    n_source, n_target = _ndim_of(source), _ndim_of(target)
+    n_source, n_target = AxisList.of(source).ndim, AxisList.of(target).ndim
     if n_source is not None and n_target is not None and n_source != n_target:
         # One transform acts on a subset of the other's axes. Embed the
         # smaller one in the fuller space, trying the fuller input side of
@@ -706,11 +705,11 @@ def embed(
     # the fuller system has and the subset does not.
     sub_input = transform.input
     sub_output = transform.output
-    if any(_ndim_of(s) is None for s in (full, sub_input, sub_output)):
+    full_axes = AxisList.of(full)
+    in_axes = AxisList.of(sub_input)
+    out_axes = AxisList.of(sub_output)
+    if any(axes.is_open for axes in (full_axes, in_axes, out_axes)):
         return None
-    full_axes = _axes_of(full)
-    in_axes = _axes_of(sub_input)
-    out_axes = _axes_of(sub_output)
     if len(in_axes) != len(out_axes):
         return None
     if len(out_axes if side == "output" else in_axes) >= len(full_axes):
@@ -1065,11 +1064,10 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     and its clearing reads the input side.
     """
     if isinstance(t, CartesianField) and t.shape is not None:
-        system = t.output if at_output else t.input
-        if _ndim_of(system) is None:
+        axes = AxisList.of(t.output if at_output else t.input)
+        if axes.is_open:
             # The grid's shape gives the number of axes of an open system.
-            system = _expand_of(system, len(t.shape))
-        axes = _axes_of(system)
+            axes = axes.expand(len(t.shape))
         extents: tx.Dict[tx.Any, int] = {}
         for axis, size in zip(axes, t.shape):
             name = axis.name

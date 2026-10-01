@@ -19,7 +19,7 @@ from bagof.magic import replace
 # core
 from brainhops._core.bsplines import pull_field
 from brainhops.backends import get_array_backend
-from brainhops.datamodel.systems import _axis_in
+from brainhops.datamodel.systems import AxisList
 
 # internals
 from .base import Transformation
@@ -423,8 +423,9 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
         if _interpolates(To.transformation):
             # Positional access reads the axes the system states, even an
             # open one, and an unknown `Axis()` anywhere else.
+            axes = AxisList.of(To.input)
             for i in in_axes:
-                axis = _axis_in(To.input, i)
+                axis = axes._axis_at(i)
                 if getattr(axis, "discrete", None):
                     raise CompositionError(
                         "Cannot apply an interpolating transform along the "
