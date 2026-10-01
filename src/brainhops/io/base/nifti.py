@@ -5,7 +5,6 @@ __all__ = ["NiftiParser"]
 
 # stdlib
 from io import BytesIO
-from math import log10
 
 # dependencies
 import nibabel as nb
@@ -28,7 +27,13 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.datamodel.units import SampleUnit
+from brainhops.datamodel.units import (
+    SampleUnit,
+    is_physicalunit,
+    is_spaceunit,
+    is_timeunit,
+)
+from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -138,35 +143,6 @@ _NIFTI_XFORM_CODE_BY_NAME = {
 
 _QFORM_NAME = "qform"
 """The name the reader gives the rigid voxel-to-RAS affine of the qform."""
-
-_NIFTI_SPACE_UNITS = {
-    "meter": "meter",
-    "millimeter": "mm",
-    "micrometer": "micron",
-    "micron": "micron",
-}
-"""The NIfTI spatial-unit label for a space unit's name."""
-
-_NIFTI_TIME_UNITS = {
-    "second": "sec",
-    "millisecond": "msec",
-    "microsecond": "usec",
-}
-"""The NIfTI time-unit label for a time unit's name."""
-
-_NIFTI_SPACE_UNIT_METERS = {
-    "meter": 1.0,
-    "mm": 1e-3,
-    "micron": 1e-6,
-}
-"""
-The size in meters of each spatial unit NIfTI can store.
-
-NIfTI records a spatial unit as one of `meter`, `mm` or `micron`. A unit
-outside that set is written by converting it to the nearest of these three
-and scaling the affine, so the stored geometry keeps the same physical
-size.
-"""
 
 _RAS_FROM_ORIENTATION = {
     "left-to-right": (0, 1.0),
@@ -827,52 +803,19 @@ def _sform_and_qform(
     return sform, scode, getattr(preferred, "output", None)
 
 
-def _nifti_space_label(name: str, unit: tx.Any) -> tx.Optional[str]:
-    """
-    The NIfTI spatial label a unit is stored under, or `None`.
-
-    A unit NIfTI can store directly returns its own label. A spatial unit
-    outside NIfTI's set returns the label of the nearest of NIfTI's three
-    spatial units, measured in log space. A unit that is not spatial, or
-    whose size is unknown, returns `None`.
-    """
-    if name in _NIFTI_SPACE_UNITS:
-        return _NIFTI_SPACE_UNITS[name]
-    meters = getattr(unit, "scale", None)
-    if getattr(unit, "type", None) != "space":
-        return None
-    if not isinstance(meters, (int, float)) or meters <= 0:
-        return None
-    label, _ = min(
-        _NIFTI_SPACE_UNIT_METERS.items(),
-        key=lambda item: abs(log10(meters) - log10(item[1])),
-    )
-    return label
-
-
 def _space_unit_meters(
     system: tx.Optional[CoordinateSystem],
 ) -> tx.Optional[float]:
     """
     The size in meters of a world space's first spatial unit, or `None`.
 
-    A NIfTI spatial label carried directly on an axis resolves to its own
-    size in meters. Any other spatial unit resolves to its `scale`, which
-    the unit reports in meters. A space with no usable spatial unit returns
-    `None`.
+    A space with no physical spatial unit -- every axis unspecified, or
+    counting samples -- returns `None`.
     """
     for axis in getattr(system, "axes", None) or ():
         unit = getattr(axis, "unit", None)
-        name = getattr(unit, "name", None)
-        if not isinstance(name, str):
-            continue
-        for label, meters in _NIFTI_SPACE_UNIT_METERS.items():
-            if _NIFTI_SPACE_UNITS.get(name) == label:
-                return meters
-        if getattr(unit, "type", None) == "space":
-            meters = getattr(unit, "scale", None)
-            if isinstance(meters, (int, float)) and meters > 0:
-                return meters
+        if is_physicalunit(unit) and is_spaceunit(unit):
+            return float(unit.scale)
     return None
 
 
@@ -882,27 +825,26 @@ def _xyzt_labels(
     """
     The NIfTI spatial and temporal labels for a world space.
 
-    The first spatial axis that carries a usable unit gives the spatial
-    label, and the first temporal axis that carries a representable unit
-    gives the temporal label. An axis with no usable unit leaves the label
-    "unknown". The labels are read from one world space, the preferred
-    transformation's output, so a different edge does not change them.
+    The first axis with a physical spatial unit gives the spatial label,
+    and the first with a physical temporal unit gives the temporal label;
+    both go through [`unit_to_nifti`][brainhops.io.base._nifti_units.
+    unit_to_nifti], whose policies apply. A spatial unit NIfTI cannot store
+    is given the nearest label it can (the affine is rescaled to match, see
+    [`_unit_scale`][]). An axis whose unit is unspecified, or counts
+    samples, says nothing about either label, which stays `"unknown"`. The
+    labels are read from one world space, the preferred transformation's
+    output, so a different edge does not change them.
     """
-    space = "unknown"
-    time = "unknown"
+    space = time = None
     for axis in getattr(system, "axes", None) or ():
         unit = getattr(axis, "unit", None)
-        name = getattr(unit, "name", None)
-        if not isinstance(name, str):
+        if not is_physicalunit(unit):
             continue
-        if space == "unknown":
-            label = _nifti_space_label(name, unit)
-            if label is not None:
-                space = label
-                continue
-        if time == "unknown" and name in _NIFTI_TIME_UNITS:
-            time = _NIFTI_TIME_UNITS[name]
-    return space, time
+        if space is None and is_spaceunit(unit):
+            space = unit_to_nifti(unit, "space", nearest=True)
+        elif time is None and is_timeunit(unit):
+            time = unit_to_nifti(unit, "time")
+    return space or "unknown", time or "unknown"
 
 
 def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
@@ -915,12 +857,13 @@ def _unit_scale(system: tx.Optional[CoordinateSystem], label: str) -> float:
     space whose unit is unknown, or a label NIfTI cannot store, leaves the
     factor at `1`.
     """
-    if label not in _NIFTI_SPACE_UNIT_METERS:
+    stored = nifti_unit_meters(label)
+    if stored is None:
         return 1.0
     meters = _space_unit_meters(system)
     if meters is None:
         return 1.0
-    return meters / _NIFTI_SPACE_UNIT_METERS[label]
+    return meters / stored
 
 
 def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:

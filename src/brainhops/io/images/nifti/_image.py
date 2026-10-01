@@ -9,8 +9,9 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
-from brainhops.datamodel.units import SampleUnit, Unit
+from brainhops.datamodel.units import SampleUnit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._nifti_units import nifti_to_unit
 from brainhops.io.base.nifti import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
@@ -121,36 +122,6 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
         )
 
 
-def _header_unit(
-    label: tx.Optional[str], fallback: tx.Optional[Unit]
-) -> tx.Optional[Unit]:
-    """The unit a NIfTI header declares for an axis type, or `fallback`.
-
-    `get_xyzt_units()` answers `"unknown"` when the header declares no unit,
-    and [`Unit`][] is liberal by design: it takes any name and yields a
-    *nameless* unit for one it does not recognise. Such a unit says "a unit
-    called nothing" where the header meant "no unit" -- and, being neither a
-    `SpaceUnit` nor a `TimeUnit`, it fits no typed axis. So a label the unit
-    registry does not know reads as unset here.
-
-    This is the same convention the writer applies in reverse: `_xyzt_labels`
-    writes `"unknown"` for an axis whose unit carries no name.
-    """
-    if not label:
-        return fallback
-    try:
-        unit = Unit(label)
-    except Exception:  # noqa: BLE001
-        # `Unit` is liberal about names, but `_parse_unit_name` can still
-        # raise on one it half-recognises (`"micron"`, as NIfTI spells
-        # NIFTI_UNITS_MICRON, is one). A label this reader cannot resolve
-        # leaves the unit unspecified, which is the honest answer: it must
-        # never be quietly replaced by the millimetre default above, since
-        # that would rescale the image by a factor of a thousand.
-        return fallback
-    return unit if isinstance(getattr(unit, "name", None), str) else fallback
-
-
 def _nifti_to_transformations(
     header: nb.Nifti1Header,
 ) -> tx.List[Transformation]:
@@ -184,18 +155,15 @@ def _nifti_to_transformations(
     # --- preliminaries ------------------------------------------------
 
     axes = _nifti_to_axes(header)
-    units = {}
-    units["space"], units["time"] = header.get_xyzt_units()
-    # A NIfTI that declares no spatial unit is read as millimetres. The
-    # format calls the field "unknown", but every reader in the ecosystem
-    # -- FSL, SPM, FreeSurfer, AFNI, ITK and the viewers -- treats the
-    # affine as millimetres, and a header that means metres or microns says
-    # so. So a silent header is filled in here, and a declared one is never
-    # overridden. The temporal unit is left alone: it is not needed to place
-    # an image in space, and `pixdim[4]` is less consistently seconds than
-    # the spatial units are millimetres.
-    if units["space"] in (None, "", "unknown"):
-        units["space"] = "mm"
+    # The header's units, through the one NIfTI <-> brainhops converter.
+    # An unknown spatial unit reads as millimetres (the ecosystem's
+    # convention), an unknown temporal one as unspecified; see
+    # `brainhops.io.base._nifti_units` for every policy.
+    space, time = header.get_xyzt_units()
+    units = {
+        "space": nifti_to_unit(space, "space"),
+        "time": nifti_to_unit(time, "time"),
+    }
     orientation = {
         "x": "left-to-right",
         "y": "posterior-to-anterior",
@@ -220,12 +188,11 @@ def _nifti_to_transformations(
     voxel_space = CoordinateSystem(name="voxel", axes=voxel_axes)
 
     # >> Physical space
-    # Built from the axes as read, not from the sampled ones above: the
-    # fallback for an axis type the header says nothing about is that axis's
-    # own unit, and a physical space must not inherit "sample" from the voxel
-    # space -- a silent header leaves its unit unspecified.
+    # Built from the axes as read, not from the sampled ones above, so it
+    # never inherits "sample" from the voxel space: a spatial or temporal
+    # axis takes the header's unit, and any other axis keeps its own.
     phys_axes = [
-        replace(axis, unit=_header_unit(units.get(axis.type), axis.unit))
+        replace(axis, unit=units[axis.type]) if axis.type in units else axis
         for axis in named_axes
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
