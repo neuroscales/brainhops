@@ -8,7 +8,7 @@ from bagof.magic import replace
 
 # api
 from brainhops._core.properties import smartproperty
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import CoordinateSystem, _is_unknown
 
 # internals
 from . import registries
@@ -137,13 +137,13 @@ class Sequence(SequenceMixin, Transformation):
 
     transformations = smartproperty("transformations")
 
-    @smartproperty
+    @smartproperty(fallback_when=_is_unknown)
     def input(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[0].input
         return None
 
-    @smartproperty
+    @smartproperty(fallback_when=_is_unknown)
     def output(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[-1].output
@@ -254,9 +254,10 @@ class Sequence(SequenceMixin, Transformation):
         inp, out = self.input, self.output
         flattened = []
         for i, t in enumerate(self.transformations):
-            if i == 0 and t.input is None and inp is not None:
+            first, last = i == 0, i == len(self) - 1
+            if first and _is_unknown(t.input) and not _is_unknown(inp):
                 t = t.to(input=inp)
-            elif i == len(self) - 1 and t.output is None and out is not None:
+            elif last and _is_unknown(t.output) and not _is_unknown(out):
                 t = t.to(output=out)
             if isinstance(t, Sequence):
                 # A `Geometry` child contributes its grid followed by its
@@ -402,7 +403,7 @@ def _compute_sequence(
         # Propagate the sequence's own endpoints onto its first and last
         # elements, but only when it carries any, so the identity link is
         # preserved in the common case of an endpoint-less composition.
-        if seq.input is not None or seq.output is not None:
+        if not (_is_unknown(seq.input) and _is_unknown(seq.output)):
             seq = seq._flattened()
 
         # --- 2. simplify ---
@@ -600,9 +601,9 @@ def _normalize_inverse(t: Transformation) -> Transformation:
         return Identity(input=t.input, output=t.output)
     inv = t.forward.inverse()
     kwargs = {}
-    if t.input is not None:
+    if not _is_unknown(t.input):
         kwargs["input"] = t.input
-    if t.output is not None:
+    if not _is_unknown(t.output):
         kwargs["output"] = t.output
     return inv.to(**kwargs) if kwargs else inv
 

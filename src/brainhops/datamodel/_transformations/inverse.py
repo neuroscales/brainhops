@@ -16,6 +16,7 @@ from brainhops._ext.invfield import inverse as inverse_disp
 # api
 from brainhops.backends import backend, get_array_backend
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
+from brainhops.datamodel.systems import _is_unknown
 
 # internals
 from .base import Transformation
@@ -118,11 +119,11 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
     # swapped. An endpoint declared on the wrapper still wins -- that is
     # what `smartproperty` does -- so an explicit override is honoured.
 
-    @smartproperty
+    @smartproperty(fallback_when=_is_unknown)
     def input(self) -> tx.Optional["CoordinateSystem"]:
         return self.forward.output if self.forward is not None else None
 
-    @smartproperty
+    @smartproperty(fallback_when=_is_unknown)
     def output(self) -> tx.Optional["CoordinateSystem"]:
         return self.forward.input if self.forward is not None else None
 
@@ -137,8 +138,8 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         forward = self.forward
         if forward is None:
             return Identity(input=self.input, output=self.output)
-        new_input = self.output or forward.input
-        new_output = self.input or forward.output
+        new_input = forward.input if _is_unknown(self.output) else self.output
+        new_output = forward.output if _is_unknown(self.input) else self.input
         if new_input is not forward.input or new_output is not forward.output:
             forward = forward.to(input=new_input, output=new_output)
         if compute:
@@ -204,9 +205,9 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
             # Compute an explicit inverse, and edit its spaces.
             resolved = forward.inverse()
             edits = {}
-            if self.input:
+            if not _is_unknown(self.input):
                 edits["input"] = self.input
-            if self.output:
+            if not _is_unknown(self.output):
                 edits["output"] = self.output
             return resolved.to(**edits)
 

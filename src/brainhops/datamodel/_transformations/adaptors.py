@@ -56,7 +56,14 @@ import typing_extensions as tx
 # api
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientation import Orientation
-from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
+from brainhops.datamodel.systems import (
+    ArrayCoordinateSystem,
+    CoordinateSystem,
+    _axes_of,
+    _compatible,
+    _expand_of,
+    _ndim_of,
+)
 from brainhops.datamodel.units import Unit
 
 # internals
@@ -114,10 +121,15 @@ def bridge(
     [`Translation`][] that shifts the origin by one less than the axis
     extent.
 
-    When either system is unspecified, or carries no axes, the two are
-    assumed compatible and the identity is returned. When an axis that
-    must be matched has no correspondence, an [`AdaptationError`][]
-    names the two systems and the unmatched axes.
+    A bridge is built between two closed systems. When either system is
+    missing or open (its axes hold `...`, or are `None`), it states only
+    some of its axes. The identity is returned when the two are
+    [`compatible`][brainhops.datamodel.systems.CoordinateSystem.compatible],
+    so that what is not known is never a reason to refuse. Otherwise the
+    bridge would have to reorder, rescale, or flip axes that the open
+    system does not describe, so an [`AdaptationError`][] is raised rather
+    than a guess. When an axis that must be matched has no correspondence,
+    an [`AdaptationError`][] names the two systems and the unmatched axes.
 
     Parameters
     ----------
@@ -153,15 +165,15 @@ def bridge(
         adaptation is needed.
     """
     # --- special cases ------------------------------------------------
-    if source is None or target is None:
-        return Identity(input=source, output=target)
-    if source.axes is None or target.axes is None:
-        return Identity(input=source, output=target)
+    if _ndim_of(source) is None or _ndim_of(target) is None:
+        if _compatible(source, target):
+            return Identity(input=source, output=target)
+        _open_report(source, target)
     if source == target:
         return Identity(input=source, output=target)
 
     # --- dimensionality check -----------------------------------------
-    if len(source.axes) != len(target.axes):
+    if source.ndim != target.ndim:
         source_name = source.name or "the source system"
         target_name = target.name or "the target system"
         raise AdaptationError(
@@ -178,8 +190,8 @@ def bridge(
         )
 
     # --- matching -----------------------------------------------------
-    source_axes = list(source.axes)
-    target_axes = list(target.axes)
+    source_axes = _axes_of(source)
+    target_axes = _axes_of(target)
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -431,10 +443,12 @@ def _unmatched_report(
 ) -> tx.NoReturn:
     matched_source = {i for i in match if i is not None}
     unmatched_target = [
-        target.axes[j] for j, i in enumerate(match) if i is None
+        axis for axis, i in zip(_axes_of(target), match) if i is None
     ]
     unmatched_source = [
-        axis for i, axis in enumerate(source.axes) if i not in matched_source
+        axis
+        for i, axis in enumerate(_axes_of(source))
+        if i not in matched_source
     ]
 
     def names(axes: tx.List[Axis]) -> str:
@@ -452,6 +466,22 @@ def _unmatched_report(
         f"Cannot bridge {source_name} to {target_name}: {reason}. "
         f"Adaptation reorders, rescales, and flips matched axes, and "
         f"does not change the number of axes."
+    )
+
+
+def _open_report(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+) -> tx.NoReturn:
+    source_name = getattr(source, "name", None) or "the source system"
+    target_name = getattr(target, "name", None) or "the target system"
+    which = "the source" if _ndim_of(source) is None else "the target"
+    raise AdaptationError(
+        f"Cannot bridge {source_name} to {target_name}: {which} system is "
+        f"open (its axes hold `...`), and the axes it states do not match "
+        f"the other system's. A bridge would have to reorder, rescale, or "
+        f"flip axes that the open system does not describe. Declare the "
+        f"full systems, or close the open one with CoordinateSystem.expand."
     )
 
 
@@ -557,7 +587,11 @@ def adapt(
     seq_output = second.output
 
     # --- dimensionality mismatch: build the embedding -----------------
-    if len(source.axes) != len(target.axes):
+    # Only two closed systems can be told to differ in their number of
+    # axes. An open one that disagrees with its neighbour is refused by the
+    # bridge below.
+    n_source, n_target = _ndim_of(source), _ndim_of(target)
+    if n_source is not None and n_target is not None and n_source != n_target:
         # One transform acts on a subset of the other's axes. Embed the
         # smaller one in the fuller space, trying the fuller input side of
         # `second` first and then the fuller output side of `first`.
@@ -668,17 +702,15 @@ def embed(
     # --- special cases ------------------------------------------------
     if isinstance(transform, CartesianField):
         return None
-    if full is None or full.axes is None:
-        return None
+    # Each system must be closed: the embedding is read off the axes that
+    # the fuller system has and the subset does not.
     sub_input = transform.input
     sub_output = transform.output
-    if sub_input is None or sub_input.axes is None:
+    if any(_ndim_of(s) is None for s in (full, sub_input, sub_output)):
         return None
-    if sub_output is None or sub_output.axes is None:
-        return None
-    full_axes = list(full.axes)
-    in_axes = list(sub_input.axes)
-    out_axes = list(sub_output.axes)
+    full_axes = _axes_of(full)
+    in_axes = _axes_of(sub_input)
+    out_axes = _axes_of(sub_output)
     if len(in_axes) != len(out_axes):
         return None
     if len(out_axes if side == "output" else in_axes) >= len(full_axes):
@@ -1034,7 +1066,10 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     """
     if isinstance(t, CartesianField) and t.shape is not None:
         system = t.output if at_output else t.input
-        axes = list(system.axes) if system is not None else []
+        if _ndim_of(system) is None:
+            # The grid's shape gives the number of axes of an open system.
+            system = _expand_of(system, len(t.shape))
+        axes = _axes_of(system)
         extents: tx.Dict[tx.Any, int] = {}
         for axis, size in zip(axes, t.shape):
             name = axis.name

@@ -92,6 +92,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
+    fallback_when: tx.Optional[_IsUnset] = None,
 ) -> tx.Callable[[_Getter], property]:
     """Decorator factory (with options)."""
 
@@ -105,6 +106,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
+    fallback_when: tx.Optional[_IsUnset] = None,
 ) -> tx.Callable[[_Getter], property]:
     """Functional decorator factory."""
 
@@ -118,6 +120,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
+    fallback_when: tx.Optional[_IsUnset] = None,
 ) -> property:
     """
     Functional decorator.
@@ -153,6 +156,12 @@ def smartproperty(
         otherwise shadow the reader for the object's whole life.
     cache : bool, default=False
         Whether to cache the computed value for future access.
+    fallback_when : callable, optional
+        A predicate on the stored value. When it holds, the getter computes
+        the value, as it does when nothing was supplied, but the stored
+        value is kept as given. This is for a value that has a second
+        spelling of "nothing is known", such as a coordinate system with no
+        known axis, which must read exactly as `None` does.
 
     Returns
     -------
@@ -168,6 +177,7 @@ def smartproperty(
     doc=None,
     empty_as_unset=False,
     cache=False,
+    fallback_when=None,
 ):
 
     if fget is None:
@@ -182,6 +192,7 @@ def smartproperty(
                 doc,
                 empty_as_unset=empty_as_unset,
                 cache=cache,
+                fallback_when=fallback_when,
             )
 
         return decorate
@@ -193,7 +204,18 @@ def smartproperty(
         name = fget.__name__
 
     is_unset = _make_is_unset(empty_as_unset)
-    fget = _make_fget(name, fget, is_unset, set=fset is not False, cache=cache)
+    # The getter falls back on a computed value in more cases than the
+    # setter normalizes to `None`: `fallback_when` never changes what is
+    # stored.
+    reads_unset = is_unset
+    if fallback_when is not None:
+
+        def reads_unset(value: tx.Any) -> bool:
+            return is_unset(value) or bool(fallback_when(value))
+
+    fget = _make_fget(
+        name, fget, reads_unset, set=fset is not False, cache=cache
+    )
 
     if not callable(fset):
         fset = _make_fset(

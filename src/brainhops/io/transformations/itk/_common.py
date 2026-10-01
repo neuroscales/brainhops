@@ -165,12 +165,12 @@ class ITKBlockBase(ITKStruct, _xforms.Sequence, polymorphic=False):
     a warp block's chain decodes its warp data.
     """
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, fallback_when=_systems._is_unknown)
     def input(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The anatomical space the block maps from."""
         return _make_system(self.ndim_input)
 
-    @smartproperty(cache=True)
+    @smartproperty(cache=True, fallback_when=_systems._is_unknown)
     def output(self) -> tx.Optional[_systems.CoordinateSystem]:
         """The anatomical space the block maps to."""
         return _make_system(self.ndim_output)

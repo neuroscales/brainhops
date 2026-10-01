@@ -721,15 +721,10 @@ def test_reindex_split_across_groups() -> None:
     assert np.allclose(_normal_form_field(nf), _field(seq))
 
 
-# ----------------------------------------------------------------------
-#   FALLBACKS (unfactored)
-# ----------------------------------------------------------------------
-
-
-def _uncomposable_left() -> list:
+def _systemless_subspace_then_linear() -> list:
     # A group's pieces are a system-less subspace (the restricted sequence
-    # inner) followed by an affine (the restricted `Linear`): the subspace
-    # cannot be embedded, so the group cannot be composed.
+    # inner) followed by an affine (the restricted `Linear`). The subspace
+    # states no axis count of its own; the affine next to it does.
     linear = np.array(
         [
             [0.8, 0.4, 0.0, 0.3],
@@ -755,12 +750,16 @@ def _uncomposable_left() -> list:
 
 
 @pytest.mark.parametrize("form", ["reindex", "permutation"])
-def test_group_whose_pieces_cannot_compose_is_left_unfactored(
+def test_group_of_systemless_subspace_and_affine_pieces_is_factored(
     form: str,
 ) -> None:
     # `compute(factor=True)` used to raise a `ConversionError` here, where
-    # `compute()` succeeds. The reindex `in [1, 2, 3] -> out [2, 3, 1]` is
-    # the permutation `[0, 3, 1, 2]`; both forms hit it.
+    # `compute()` succeeds, and then left the chain unfactored: the
+    # restricted subspace piece states no axis count, so it could not be
+    # embedded next to the affine piece. The affine states the count of the
+    # space the two share, which closes the subspace, so the group now
+    # composes. The reindex `in [1, 2, 3] -> out [2, 3, 1]` is the
+    # permutation `[0, 3, 1, 2]`; both forms hit it.
     if form == "reindex":
         head = SubspaceTransformation(
             transformation=None,
@@ -770,9 +769,14 @@ def test_group_whose_pieces_cannot_compose_is_left_unfactored(
     else:
         head = Permutation(permutation=np.array([0, 3, 1, 2]))
     grid = CartesianField(shape=(3, 3, 5, 4))
-    seq = Sequence([grid, head, *_uncomposable_left()])
-    assert fac.factor_sequence(seq) is seq
+    seq = Sequence([grid, head, *_systemless_subspace_then_linear()])
+    assert fac.factor_sequence(seq) is not seq
     assert np.allclose(_field(seq.compute(factor=True)), _field(seq))
+
+
+# ----------------------------------------------------------------------
+#   FALLBACKS (unfactored)
+# ----------------------------------------------------------------------
 
 
 def test_uncomposable_affine_then_subspace_is_left_unfactored() -> None:

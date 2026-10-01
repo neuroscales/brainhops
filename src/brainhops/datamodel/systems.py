@@ -488,6 +488,14 @@ def _axes_of(system: tx.Optional[CoordinateSystem]) -> tx.List[tx.Any]:
     return [...] if axes is None else list(axes)
 
 
+def _expand_of(
+    system: tx.Optional[CoordinateSystem], ndim: int
+) -> CoordinateSystem:
+    # `CoordinateSystem.expand`, for a system that may be missing, which is
+    # read as `CoordinateSystem()`.
+    return (CoordinateSystem() if system is None else system).expand(ndim)
+
+
 def _split(
     system: tx.Optional[CoordinateSystem],
 ) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:

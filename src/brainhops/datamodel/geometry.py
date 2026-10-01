@@ -13,7 +13,13 @@ from brainhops.datamodel.base import DataModelBase
 
 # internals
 from .axes import Axis
-from .systems import CoordinateSystem
+from .systems import (
+    CoordinateSystem,
+    _axes_of,
+    _expand_of,
+    _is_unknown,
+    _ndim_of,
+)
 from .transformations import (
     Affine,
     CartesianField,
@@ -181,9 +187,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
         # geometry's own input and output are propagated onto the grid and
         # the transformation, matching `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
-        if grid.input is None and self.input is not None:
+        if _is_unknown(grid.input) and not _is_unknown(self.input):
             grid = grid.to(input=self.input)
-        if transformation.output is None and self.output is not None:
+        if _is_unknown(transformation.output) and not _is_unknown(self.output):
             transformation = transformation.to(output=self.output)
         if isinstance(transformation, Sequence):
             flat_seq = transformation._flattened()
@@ -238,8 +244,13 @@ def _index2transform(
     nb_output_dims = sum(1 for idx in index if not isinstance(idx, int))
     nb_input_dims = len(shape)
 
-    # Compute output axes
-    input_axes = getattr(system, "axes", None)
+    # Compute output axes. An open system is closed to the number of axes
+    # of the array; one that states no axis at all gives none.
+    input_axes = _axes_of(system)
+    if _ndim_of(system) is None:
+        explicit = any(axis is not ... for axis in input_axes)
+        input_axes = _axes_of(_expand_of(system, nb_input_dims))
+        input_axes = input_axes if explicit else None
     output_axes = None
     if input_axes:
         output_axes = []
