@@ -16,8 +16,19 @@ class DataModelBase(
     convert=True,
     mapping=False,
     repr=HIDE_IF_NONE,
+    pin_discriminant="pin+narrow",
 ):
-    """Base class for all data models."""
+    """Base class for all data models.
+
+    A polymorphic data model class is built from the arguments its `on=`
+    constraint matches, and refuses the ones it does not
+    (`pin_discriminant="pin+narrow"`): `OrientedAxis(orientation=None)`
+    and `AnatomicalAxis(orientation=<not anatomical>)` raise rather than
+    build an axis that contradicts its own class. A field a class writes
+    out itself keeps its own type (bagof leaves it as written), which is
+    why the discriminants that subclasses declare are typed narrowly
+    (`Literal["space"]`, `Narrow[str]`) where they are declared.
+    """
 
     # We use this base class to set options that we want to propagate to
     # all classes in the hierarchy.

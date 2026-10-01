@@ -210,7 +210,6 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
 class AnatomicalAxis(
     OrientedSpaceAxis,
     on={"orientation": _is_anatomical},
-    pin_discriminant="keep+narrow",
 ):
     """An axis that carries an anatomical orientation.
 
