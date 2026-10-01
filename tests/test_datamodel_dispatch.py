@@ -120,6 +120,9 @@ def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
         lambda: ax.SpaceAxis(type="time"),
         lambda: ax.ChannelAxis(type="space"),
         lambda: ax.LeftToRightAxis(orientation=RightToLeft()),
+        # An anatomical orientation makes a spatial axis.
+        lambda: ax.Axis(type="time", orientation=LeftToRight()),
+        lambda: ax.Axis(type="channel", orientation=LeftToRight()),
     ],
 )
 def test_contradicting_axes_are_refused(build: tx.Callable) -> None:

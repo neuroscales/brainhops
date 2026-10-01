@@ -51,11 +51,6 @@ from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
 # --- Dispatch helpers -------------------------------------------------
 
 
-def _is_space_or_unset(type: tx.Optional[str]) -> bool:
-    """Whether an axis type is spatial, or not stated at all."""
-    return type is None or type == "space"
-
-
 def _is_not_none(obj: tx.Any) -> bool:
     """Whether `obj` is not `None`."""
     return obj is not None
@@ -203,14 +198,15 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
 
 
 # An anatomical orientation says that the axis runs through space, so a
-# generic `Axis(orientation=R)` -- which names no type -- is read as a
+# generic `Axis(orientation=R())` -- which names no type -- is read as a
 # spatial axis. That is a step the class statement cannot express (the
 # classes it registers with all ask for `type="space"`), so it is
-# registered with the root by hand. An anatomical axis whose unit is the
-# sample is a spatial axis of a voxel grid that points in that direction.
-@Axis.register_polymorph(
-    on={"type": _is_space_or_unset, "orientation": _is_anatomical}
-)
+# registered with the root by hand, on the orientation alone: an axis of
+# another type with an anatomical orientation is a contradiction, and
+# building it as an anatomical axis refuses it. An anatomical axis whose
+# unit is the sample is a spatial axis of a voxel grid that points in
+# that direction.
+@Axis.register_polymorph(on={"orientation": _is_anatomical})
 class AnatomicalAxis(
     OrientedSpaceAxis,
     on={"orientation": _is_anatomical},
