@@ -30,6 +30,7 @@ __all__ = [
 ]
 # dependencies
 import typing_extensions as tx
+from bagof.magic import fields
 
 # core
 from brainhops._core.typing import HiddenConst
@@ -53,6 +54,18 @@ class Axis(DataModelBase):
 
     An axis names its type, such as `"space"` or `"time"`, and may carry
     a unit, an orientation, and whether it is discrete.
+
+    Each field that is `None` is unknown. A plain `Axis()`, whose fields
+    are all `None`, is an axis about which nothing is known. It is the
+    placeholder that fills a position no description covers. An instance
+    of a subclass that sets a field, such as a [`SpatialAxis`][], whose
+    type is `"space"` and whose unit defaults to millimetres, is not
+    unknown.
+
+    Equality (`==`) is strict: two axes are equal when they are of the
+    same class and every field is equal. [`compatible`][]
+    is the looser question of whether two descriptions could be of the
+    same axis.
     """
 
     name: tx.Optional[str] = None
@@ -60,6 +73,147 @@ class Axis(DataModelBase):
     unit: tx.Optional[Unit] = None
     discrete: tx.Optional[bool] = None
     orientation: tx.Optional[Orientation] = None
+
+    def compatible(self, other: "Axis") -> bool:
+        """Whether `self` and `other` could describe the same axis.
+
+        Two axes are compatible when every field that is set (not `None`)
+        on both of them is equal. A field that is `None` on either side
+        is unknown there, and matches anything. In particular, the
+        unknown `Axis()` is compatible with every axis.
+
+        The relation is symmetric, but it is not transitive: `Axis()` is
+        compatible with both `Axis(name="x")` and `Axis(name="y")`, which
+        are not compatible with each other.
+
+        Parameters
+        ----------
+        other : Axis
+            The axis to compare with.
+
+        Returns
+        -------
+        bool
+            Whether no field is known on both sides with different values.
+
+        Raises
+        ------
+        TypeError
+            If `other` is not an [`Axis`][].
+
+        !!! example
+            ```pycon
+            >>> Axis(name="x").compatible(Axis(name="x", unit="mm"))
+            True
+            >>> Axis(name="x").compatible(Axis(name="y"))
+            False
+            >>> SpatialAxis().compatible(Axis(unit="micrometer"))
+            False
+            ```
+        """
+        if not isinstance(other, Axis):
+            raise TypeError(
+                f"An axis is compatible only with another Axis, not with "
+                f"{type(other).__name__}."
+            )
+        return not _conflicts(self, other)
+
+    def merge(self, other: "Axis") -> "Axis":
+        """Combine what `self` and `other` know about the same axis.
+
+        Each field of the result is the value set on either side, or
+        `None` if neither side sets it. The two axes must be
+        [`compatible`][]: a field that both set must be set
+        to the same value.
+
+        The result is an instance of the more derived of the two classes,
+        so merging an [`Axis`][] with a [`SpatialAxis`][] gives a
+        [`SpatialAxis`][]. Merging with the unknown `Axis()` returns an
+        axis equal to the other side.
+
+        Parameters
+        ----------
+        other : Axis
+            The other description of the same axis.
+
+        Returns
+        -------
+        Axis
+            A new axis that carries every field known on either side.
+
+        Raises
+        ------
+        TypeError
+            If `other` is not an [`Axis`][].
+        ValueError
+            If a field is set on both sides to different values, or if
+            neither class derives from the other, so that no class can
+            hold what both sides know.
+
+        !!! example
+            ```pycon
+            >>> Axis(name="x").merge(SpatialAxis(unit="micrometer"))
+            SpatialAxis(name='x', unit='micrometer')
+            >>> Axis(name="x").merge(Axis(name="y"))
+            Traceback (most recent call last):
+              ...
+            ValueError: Cannot merge axes that disagree on name: 'x' != 'y'.
+            ```
+        """
+        if not isinstance(other, Axis):
+            raise TypeError(
+                f"An axis merges only with another Axis, not with "
+                f"{type(other).__name__}."
+            )
+        conflicts = _conflicts(self, other)
+        if conflicts:
+            name, mine, theirs = conflicts[0]
+            raise ValueError(
+                f"Cannot merge axes that disagree on {name}: "
+                f"{mine!r} != {theirs!r}."
+            )
+        if isinstance(other, type(self)):
+            cls = type(other)
+        elif isinstance(self, type(other)):
+            cls = type(self)
+        else:
+            raise ValueError(
+                f"Cannot merge a {type(self).__name__} with a "
+                f"{type(other).__name__}: neither class derives from the "
+                f"other, so no class holds what both describe."
+            )
+        kwargs = {}
+        for field in fields(cls):
+            if not (field.init and field.kw):
+                # A constant of the class, such as the type of a
+                # `SpatialAxis`. No conflict was found, so it already
+                # agrees with the value on the other side, if any.
+                continue
+            value = getattr(self, field.name, None)
+            if value is None:
+                value = getattr(other, field.name, None)
+            kwargs[field.public_name] = value
+        return cls(**kwargs)
+
+
+def _field_names(axis: Axis) -> tx.List[str]:
+    return [field.name for field in fields(type(axis))]
+
+
+def _conflicts(
+    first: Axis, second: Axis
+) -> tx.List[tx.Tuple[str, tx.Any, tx.Any]]:
+    # The fields set on both axes to different values, as
+    # `(name, first value, second value)`.
+    names = _field_names(first)
+    names += [name for name in _field_names(second) if name not in names]
+    conflicts = []
+    for name in names:
+        mine = getattr(first, name, None)
+        theirs = getattr(second, name, None)
+        if mine is not None and theirs is not None and mine != theirs:
+            conflicts.append((name, mine, theirs))
+    return conflicts
 
 
 class SpatialAxis(Axis):
