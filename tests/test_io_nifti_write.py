@@ -581,7 +581,7 @@ def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: A
     """
     from brainhops.datamodel import axes as _axes
 
-    ars = CoordinateSystem(name=None, axes=[_axes.A, _axes.R, _axes.S])
+    ars = CoordinateSystem(name=None, axes=[_axes.A(), _axes.R(), _axes.S()])
     affine = Affine(
         matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
         input=VoxelCoordinateSystem(),
@@ -627,3 +627,30 @@ def test_a_keyword_override_wins_over_the_object_and_like(tmp_path) -> None:  # 
     header = nb.load(str(target)).header
     assert header.get_data_dtype() == np.dtype("int16")
     assert int(header["intent_code"]) == 2001
+
+
+def test_nifti_axes_are_copies_of_the_module_templates() -> None:
+    """A system read from a header never holds the shared axis templates."""
+    from brainhops.io.base.nifti import _NIFTI_AXES, _nifti_to_axes
+
+    header = nb.Nifti1Image(np.zeros((2, 3, 4, 5)), np.eye(4)).header
+    for axis, template in zip(_nifti_to_axes(header), _NIFTI_AXES):
+        assert axis == template
+        assert axis is not template
+
+
+@pytest.mark.parametrize(
+    "shape, intent",
+    [((2, 3, 4), None), ((2, 3, 4, 5), None), ((2, 3, 4, 1, 3), 1006)],
+)
+def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
+    """The axes read from a header are voxel axes: they count samples."""
+    from brainhops.datamodel.units import SampleUnit
+    from brainhops.io.base.nifti import _nifti_to_axes
+
+    image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
+    if intent:
+        image.header.set_intent(intent)
+    axes = _nifti_to_axes(image.header)
+    assert len(axes) == len(shape)
+    assert all(isinstance(axis.unit, SampleUnit) for axis in axes)

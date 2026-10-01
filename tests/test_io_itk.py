@@ -716,3 +716,22 @@ def test_similarity_3d_composes_the_expected_affine() -> None:
     np.testing.assert_allclose(
         matrix[:, 3], center + translation - linear @ center
     )
+
+
+@pytest.mark.parametrize("ndim", [1, 2, 3, 4])
+def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
+    # ITK places everything in LPS millimetres. The oriented axes leave
+    # their unit unspecified, so every dimension states it.
+    from brainhops.datamodel.units import Unit
+    from brainhops.io.transformations.itk._systems import _make_system
+
+    system = _make_system(ndim)
+    assert len(system.axes) == ndim
+    assert all(axis.unit is Unit("mm") for axis in system.axes)
+    expected = [
+        "right-to-left",
+        "anterior-to-posterior",
+        "inferior-to-superior",
+    ]
+    values = [getattr(axis.orientation, "value", None) for axis in system.axes]
+    assert values[:3] == expected[:ndim]

@@ -147,11 +147,13 @@ def test_fold_affine_into_field_matches_inorder_reference(
 
 
 def _full4(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+    return CoordinateSystem(
+        name=name, axes=[R(), A(), S(), TimeAxis(name="t")]
+    )
 
 
 def _sub3(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S])
+    return CoordinateSystem(name=name, axes=[R(), A(), S()])
 
 
 # A non-trivial 3D affine with shear and a shift, so a dropped or misplaced

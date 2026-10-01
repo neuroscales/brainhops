@@ -18,7 +18,7 @@ from brainhops.datamodel.axes import (  # noqa: E402
     L,
     P,
     S,
-    SpatialAxis,
+    SpaceAxis,
 )
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.systems import (  # noqa: E402
@@ -49,7 +49,7 @@ def _affine(output: tx.Optional[CS]) -> Affine:
 
 
 @pytest.mark.parametrize(
-    "axes", [[L, P, S, ...], [..., L, P, S], [L, ..., P, S]]
+    "axes", [[L(), P(), S(), ...], [..., L(), P(), S()], [L(), ..., P(), S()]]
 )
 def test_nifti_closes_an_open_world_space_from_the_matrix(axes: list) -> None:
     # Wherever `...` sits, the 3-row matrix closes it to the three LPS
@@ -72,7 +72,7 @@ def test_nifti_reads_an_unknown_world_space_as_unoriented(
 
 def test_nifti_refuses_a_world_space_larger_than_the_matrix() -> None:
     with pytest.raises(WriterError, match="states more axes"):
-        _voxel_to_ras(_affine(CS(axes=[L, P, S, Axis(name="t"), ...])))
+        _voxel_to_ras(_affine(CS(axes=[L(), P(), S(), Axis(name="t"), ...])))
 
 
 def test_nifti_writes_an_open_world_space_as_its_closed_form(
@@ -80,8 +80,8 @@ def test_nifti_writes_an_open_world_space_as_its_closed_form(
 ) -> None:
     data = np.zeros((3, 4, 5), dtype="float32")
     for name, output in (
-        ("open.nii", CS(axes=[L, P, ...])),
-        ("closed.nii", CS(axes=[L, P, Axis()])),
+        ("open.nii", CS(axes=[L(), P(), ...])),
+        ("closed.nii", CS(axes=[L(), P(), Axis()])),
     ):
         NiftiImage(data=data, transformations=[_affine(output)]).save(
             tmp_path / name
@@ -145,8 +145,8 @@ def _voxel_axes(path: str) -> list:
 @pytest.mark.parametrize(
     "axes",
     [
-        [SpatialAxis(name="x"), ...],
-        [..., SpatialAxis(name="x")],
+        [SpaceAxis(name="x"), ...],
+        [..., SpaceAxis(name="x")],
     ],
 )
 def test_zarr_closes_open_axes_from_the_data(
@@ -165,13 +165,13 @@ def test_zarr_closes_open_axes_from_the_data(
 
 
 def test_zarr_refuses_more_axes_than_the_data_has(tmp_path) -> None:  # noqa: ANN001
-    axes = [SpatialAxis(name=n) for n in "xyzt"] + [...]
+    axes = [SpaceAxis(name=n) for n in "xyzt"] + [...]
     with pytest.raises(WriterError, match="4 explicit axes to 3"):
         _pyramid(axes).save(str(tmp_path / "bad.zarr"))
 
 
 def test_zarr_round_trip_keeps_closed_systems(tmp_path) -> None:  # noqa: ANN001
-    axes = [SpatialAxis(name=n) for n in "xyz"]
+    axes = [SpaceAxis(name=n) for n in "xyz"]
     _pyramid(axes).save(str(tmp_path / "a.zarr"))
     first = io.images.load(str(tmp_path / "a.zarr"))
     first.save(str(tmp_path / "b.zarr"))

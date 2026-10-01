@@ -14,7 +14,7 @@ from brainhops.datamodel._transformations.errors import RestrictionError
 from brainhops.datamodel._transformations.registries import INVERSE_CACHE
 from brainhops.datamodel._transformations.restrict import embed, restrict
 from brainhops.datamodel._transformations.utils import axis_counts
-from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -328,7 +328,7 @@ def test_embed_refuses_a_transform_that_contradicts_its_axes() -> None:
 
 def _system(n: int) -> CoordinateSystem:
     return CoordinateSystem(
-        axes=[SpatialAxis(name=f"a{i}", unit=None) for i in range(n)]
+        axes=[SpaceAxis(name=f"a{i}", unit="sample") for i in range(n)]
     )
 
 

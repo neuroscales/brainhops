@@ -25,7 +25,7 @@ from brainhops.datamodel._transformations.utils import (
     get_ndim,
     systems_disagree,
 )
-from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis
+from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.geometry import _index2transform
 from brainhops.datamodel.systems import (
@@ -388,7 +388,7 @@ def test_bridge_between_compatible_systems_is_the_identity(
         (CS(axes=[Y, X, Z]), CS(axes=[..., Y])),
         # RAS to LPS is a flip of the known axes, but the bridge would also
         # have to carry the axes that `...` stands for.
-        (CS(axes=[R, A, S, ...]), LPSCoordinateSystem()),
+        (CS(axes=[R(), A(), S(), ...]), LPSCoordinateSystem()),
     ],
 )
 def test_bridge_refuses_to_move_axes_it_cannot_see(
@@ -412,7 +412,7 @@ def test_adapt_across_an_open_compatible_boundary_adds_nothing() -> None:
 
 
 def test_adapt_across_an_open_incompatible_boundary_raises() -> None:
-    first = Affine(matrix=np.eye(3, 4), output=CS(axes=[R, A, S, ...]))
+    first = Affine(matrix=np.eye(3, 4), output=CS(axes=[R(), A(), S(), ...]))
     second = Affine(matrix=np.eye(3, 4), input=LPSCoordinateSystem())
     with pytest.raises(AdaptationError, match="open"):
         adapt(first, second)
@@ -424,10 +424,10 @@ def test_embed_needs_closed_systems(unknown: tx.Optional[CS]) -> None:
         input=RASCoordinateSystem(),
         output=RASCoordinateSystem(),
     )
-    open_full = CS(axes=[R, A, S, ...])
+    open_full = CS(axes=[R(), A(), S(), ...])
     assert embed(inner, full=open_full, side="input") is None
     assert embed(inner, full=unknown, side="input") is None
-    full = CS(axes=[R, A, S, Axis(name="t", type="time")])
+    full = CS(axes=[R(), A(), S(), Axis(name="t", type="time")])
     assert embed(inner, full=full, side="input") is not None
 
 
@@ -454,7 +454,7 @@ def test_the_discrete_check_reads_an_open_derived_system() -> None:
     # one from its inner field's system. The check still finds the
     # discrete axis at the position the inner axis is placed at.
     discrete = Axis(name="c", discrete=True)
-    inner_system = CS(axes=[discrete, SpatialAxis(name="y")])
+    inner_system = CS(axes=[discrete, SpaceAxis(name="y")])
     field = DisplacementField(
         field=np.zeros((4, 5, 2)), input=inner_system, output=inner_system
     )

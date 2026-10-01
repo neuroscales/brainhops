@@ -17,7 +17,7 @@ from brainhops.backends import backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import separable as sep
-from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis, TimeAxis
+from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -38,12 +38,12 @@ from brainhops.datamodel.transformations import (
 # ----------------------------------------------------------------------
 
 
-def _sp(name: str) -> SpatialAxis:
-    return SpatialAxis(name=name, unit=None)
+def _sp(name: str) -> SpaceAxis:
+    return SpaceAxis(name=name, unit="sample")
 
 
 def _time(name: str = "t", discrete: object = None) -> Axis:
-    return Axis(name=name, type="time", unit=None, discrete=discrete)
+    return Axis(name=name, type="time", unit="sample", discrete=discrete)
 
 
 def _components(els: list, shape: tuple) -> object:
@@ -700,7 +700,7 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     world4 = CoordinateSystem(
-        name="world4", axes=[R, A, S, TimeAxis(name="t")]
+        name="world4", axes=[R(), A(), S(), TimeAxis(name="t")]
     )
     vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
     with backend("numpy"):
@@ -1061,7 +1061,7 @@ def _demonstration_image() -> tuple:
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     world4 = CoordinateSystem(
-        name="world4", axes=[R, A, S, TimeAxis(name="t")]
+        name="world4", axes=[R(), A(), S(), TimeAxis(name="t")]
     )
     vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
     rng = np.random.default_rng(0)

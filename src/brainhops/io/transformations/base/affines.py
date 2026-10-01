@@ -13,13 +13,13 @@ class VoxelToRAS(_xforms.Affine):
     """Affine transformation from voxel space to RAS space."""
 
     _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.RASmm()
 
 
 class RASToVoxel(_xforms.Affine):
     """Affine transformation from RAS space to voxel space."""
 
-    _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.RASmm()
     _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
 
     # The two halves of the pair map the same spaces in opposite
@@ -32,13 +32,13 @@ class VoxelToLPS(_xforms.Affine):
     """Affine transformation from voxel space to LPS space."""
 
     _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.LPSmm()
 
 
 class LPSToVoxel(_xforms.Affine):
     """Affine transformation from LPS space to voxel space."""
 
-    _input: _systems.CoordinateSystem = _systems.LPSCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.LPSmm()
     _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
 
     _reverseof: tx.ClassVar[type] = VoxelToLPS

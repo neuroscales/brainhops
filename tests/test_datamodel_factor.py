@@ -16,7 +16,7 @@ import pytest
 import brainhops._ext.invfield as invfield
 from brainhops.datamodel._transformations import factor as fac
 from brainhops.datamodel._transformations import sequence as seqmod
-from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -634,7 +634,7 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
 # monolithic `compute()` can embed their subspaces; the normal form's
 # trailing permutation is applied by hand (see above).
 _XYZ = CoordinateSystem(
-    name="voxel", axes=[SpatialAxis(name=n, unit=None) for n in "xyz"]
+    name="voxel", axes=[SpaceAxis(name=n, unit="sample") for n in "xyz"]
 )
 _SHAPE = (4, 5, 6)
 

@@ -90,11 +90,10 @@ class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
     `ITKStruct(type=..., ...)` -- which is what a parser does for every
     block it reads -- dispatches to the right subtype from the `type`
     field alone, and a `type` no block claims falls back to a bare
-    `ITKStruct`. The intermediate bases below opt out with
-    `polymorphic=False` so that a block registers with `ITKStruct`
-    itself rather than with whichever family base it happens to inherit
-    from, keeping the whole table reachable from the one door the parsers
-    knock on.
+    `ITKStruct`. A block registers with every polymorphic class above it
+    -- `ITKStruct` and the intermediate family bases alike -- so the whole
+    table is reachable from the one door the parsers knock on, and each
+    family base reaches its own blocks.
     """
 
     type: ITKTransformClass
@@ -153,7 +152,7 @@ class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
 # ----------------------------------------------------------------------
 
 
-class ITKBlockBase(ITKStruct, _xforms.Sequence, polymorphic=False):
+class ITKBlockBase(ITKStruct, _xforms.Sequence):
     """What every ITK block shares: its endpoints and its inverse.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world
@@ -180,7 +179,7 @@ class ITKBlockBase(ITKStruct, _xforms.Sequence, polymorphic=False):
         return _inverse_chain(self, compute=compute, **kwargs)
 
 
-class ITKAffineBase(ITKBlockBase, polymorphic=False):
+class ITKAffineBase(ITKBlockBase):
     """An ITK block that encodes an affine-like transformation.
 
     ITK does not store an affine-like block as a single matrix. It stores
@@ -268,7 +267,7 @@ class ITKAffineBase(ITKBlockBase, polymorphic=False):
         return tuple(child for child in chain if child is not None)
 
 
-class ITKDisplacementBase(ITKBlockBase, polymorphic=False):
+class ITKDisplacementBase(ITKBlockBase):
     """An ITK block that encodes a dense or spline-based warp.
 
     The warp lives on its own voxel grid, whose geometry the fixed

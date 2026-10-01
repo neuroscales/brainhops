@@ -90,6 +90,27 @@ class InterpolationOrder(IntEnum):
     fourier = -2
 
 
+class AxisType(StrEnum):
+    """Axis types for coordinate systems and transformations.
+
+    The following axis types are supported:
+
+    | Name          | Value           | Description             |
+    |---------------|-----------------|-------------------------|
+    | `space`       | `"space"`       | Spatial axis.           |
+    | `time`        | `"time"`        | Temporal axis.          |
+    | `channel`     | `"channel"`     | Channel axis.           |
+    | `displacement`| `"displacement"`| Displacement axis.     |
+    | `coordinate`  | `"coordinate"`  | Coordinate axis.       |
+    """
+
+    space = "space"
+    time = "time"
+    channel = "channel"
+    displacement = "displacement"
+    coordinate = "coordinate"
+
+
 class OrientationType(StrEnum):
     """
     Orientation types for coordinate systems and transformations.

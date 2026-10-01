@@ -18,7 +18,7 @@ from brainhops.datamodel.axes import (
     ChannelAxis,
     CoordinateAxis,
     DisplacementAxis,
-    SpatialAxis,
+    SpaceAxis,
     TimeAxis,
 )
 from brainhops.datamodel.transformations import (
@@ -361,7 +361,7 @@ def test_reader_selects_a_level_by_target_resolution() -> None:
 
 
 def test_to_axis_maps_each_ome_type() -> None:
-    assert isinstance(_to_axis({"type": "space"}), SpatialAxis)
+    assert isinstance(_to_axis({"type": "space"}), SpaceAxis)
     assert isinstance(_to_axis({"type": "time"}), TimeAxis)
     assert isinstance(_to_axis({"type": "channel"}), ChannelAxis)
     assert isinstance(_to_axis({"type": "displacement"}), DisplacementAxis)
