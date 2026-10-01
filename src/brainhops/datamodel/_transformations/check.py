@@ -125,7 +125,7 @@ from bagof.dispatchers import Function, Super
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import AxisList
+from brainhops.datamodel.systems import AxisList, _axes_or_unknown
 
 # typing
 if tx.TYPE_CHECKING:
@@ -494,7 +494,7 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
     # clash with it.
     space = AxisList([...]).expand(family.ndim)
     return all(
-        AxisList.of(e).compatible_with(space) for e in (x.input, x.output)
+        _axes_or_unknown(e).compatible_with(space) for e in (x.input, x.output)
     )
 
 

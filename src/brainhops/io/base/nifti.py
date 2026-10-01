@@ -20,7 +20,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.systems import AxisList, CoordinateSystem
+from brainhops.datamodel.systems import (
+    CoordinateSystem,
+    _axes_or_unknown,
+)
 from brainhops.datamodel.transformations import (
     Affine,
     ConversionError,
@@ -691,7 +694,7 @@ def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
     """
     # An axis about which nothing is known, including the `...` of a
     # missing space, carries no orientation.
-    axes = AxisList.of(system)[:3]
+    axes = _axes_or_unknown(system)[:3]
     mapping = []
     for axis in axes:
         value = getattr(getattr(axis, "orientation", None), "value", None)
@@ -846,7 +849,7 @@ def _space_unit_meters(
     Only the axes the space states can carry a unit, so the `...` of an open
     space reads as it would once closed: as axes with no unit.
     """
-    for axis in AxisList.of(system):
+    for axis in _axes_or_unknown(system):
         unit = getattr(axis, "unit", None)
         if is_physicalunit(unit) and is_spaceunit(unit):
             return float(unit.scale)
@@ -871,7 +874,7 @@ def _xyzt_labels(
     """
     space = time = None
     # The `...` of an open space carries no unit, as it would once closed.
-    for axis in AxisList.of(system):
+    for axis in _axes_or_unknown(system):
         unit = getattr(axis, "unit", None)
         if not is_physicalunit(unit):
             continue

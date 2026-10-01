@@ -37,7 +37,7 @@ from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 # api
 from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import AxisList
+from brainhops.datamodel.systems import _axes_or_unknown
 
 # locals
 from .base import Transformation
@@ -365,7 +365,7 @@ def _discrete_axis(
     ):
         # Positional access reads the axes an open system states, and an
         # unknown axis, which is not discrete, anywhere else.
-        axes = AxisList.of(system)
+        axes = _axes_or_unknown(system)
         for a in axis_index:
             if axes.ndim is not None and a >= axes.ndim:
                 continue

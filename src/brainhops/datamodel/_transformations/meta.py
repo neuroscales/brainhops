@@ -12,8 +12,8 @@ from brainhops._core.typing import npvector
 # datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import (
-    AxisList,
     CoordinateSystem,
+    _axes_or_unknown,
     _is_informative,
 )
 
@@ -267,7 +267,7 @@ def _subsystem(
         return full
     if index is None or system is None:
         return system
-    if AxisList.of(system) == [...]:
+    if list(system.axes) == [...]:
         return system
     embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None
@@ -302,7 +302,10 @@ def _close_subspace(
     """
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
-    own_in, own_out = AxisList.of(t.input).ndim, AxisList.of(t.output).ndim
+    own_in, own_out = (
+        _axes_or_unknown(t.input).ndim,
+        _axes_or_unknown(t.output).ndim,
+    )
     n_in = own_in if own_in is not None else n_in
     n_out = own_out if own_out is not None else n_out
     if n_in is None and n_out is not None:

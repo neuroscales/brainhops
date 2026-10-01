@@ -209,60 +209,6 @@ class AxisSequence(tx.Sequence[AXIS]):
         # `tuple.__getitem__` in an `AxisTuple`.
         ...
 
-    @classmethod
-    def of(cls, system: tx.Optional["CoordinateSystem"]) -> tx.Self:
-        """The axes of a coordinate system that may be missing.
-
-        This is the one way to read the axes of a system whatever it is:
-
-        * a missing system (`None`) says nothing about its axes, and
-          reads as `[...]`;
-        * any other system reads as its axes, whether its class stores
-          them as an `AxisList` or, for a fixed number of axes, as an
-          `AxisTuple`.
-
-        The result is of the class this is called on. Called on
-        `AxisSequence`, whose container does not matter, it is an
-        `AxisTuple`.
-
-        Parameters
-        ----------
-        system : CoordinateSystem or None
-            The system whose axes are read.
-
-        Returns
-        -------
-        AxisSequence
-            A new sequence. Changing it does not change the system.
-
-        Raises
-        ------
-        TypeError
-            If `system` is neither a
-            [`CoordinateSystem`][brainhops.datamodel.systems.CoordinateSystem]
-            nor `None`.
-
-        !!! example
-            ```pycon
-            >>> AxisList.of(None), AxisList.of(CoordinateSystem())
-            ([Ellipsis], [Ellipsis])
-            >>> AxisList.of(RASCoordinateSystem()).ndim
-            3
-            ```
-        """
-        if cls is AxisSequence:
-            return AxisTuple.of(system)
-        if system is None:
-            return cls([...])
-        if isinstance(system, CoordinateSystem):
-            return cls(system.axes)
-        raise TypeError(
-            f"Expected a CoordinateSystem or None, not a "
-            f"{type(system).__name__}."
-        )
-
-    # --- entries ------------------------------------------------------
-
     @tx.overload
     def __getitem__(self, key: tx.SupportsIndex) -> AXIS: ...
 
@@ -1054,10 +1000,9 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
           spelling of unknown axes: `axes=None` is refused.
 
         A list or a tuple given as `axes` is stored as an [`AxisList`][].
-        [`AxisList.of`][] reads the axes of any system, or of a missing
-        one (`None`), as an [`AxisList`][], with `[...]` for a missing
-        system. An axis is read by its name as `system.axes["x"]`, and
-        found by [`index`][brainhops.datamodel.systems.AxisSequence.index].
+        An axis is read by its name as `system.axes["x"]`, at a position
+        as `system.axes.at(i)`, and found by
+        [`index`][brainhops.datamodel.systems.AxisSequence.index].
 
         Classes with a fixed number of axes, such as
         [`CoordinateSystem3D`][], are always closed. They store their
@@ -1126,7 +1071,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         whose axes hold `...`, has an unknown number of axes, and its
         `ndim` is `None`. This is
         [`AxisSequence.ndim`][brainhops.datamodel.systems.AxisSequence.ndim]
-        read through [`AxisList.of`][].
+        of its axes.
 
         !!! example
             ```pycon
@@ -1138,7 +1083,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             True
             ```
         """
-        return AxisList.of(self).ndim
+        return self.axes.ndim
 
     # --- operations ---------------------------------------------------
 
@@ -1186,16 +1131,12 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             CoordinateSystem2D(axes=(Axis(), Axis()))
             ```
         """
-        axes = AxisList.of(self)
-        expanded = axes.expand(ndim)
-        if not axes.is_open:
+        expanded = self.axes.expand(ndim)
+        if not self.axes.is_open:
             return self
-        # A plain list, which the field converts item by item (and which
-        # the class dispatches on, once converted). An `AxisList` would be
-        # taken as it is, unknown `Axis()` and all, because a union -- the
-        # field is optional -- does not look inside an instance of one of
-        # its members.
-        return replace(self, axes=list(expanded))
+        # The class converts the closed axes item by item, and dispatches
+        # on them once converted.
+        return replace(self, axes=expanded)
 
     def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]
@@ -1239,8 +1180,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             CoordinateSystem(axes=[Axis(name='x')])
             ```
         """
-        # A plain list, as in `expand`.
-        return CoordinateSystem(axes=list(AxisList.of(self).restrict(refs)))
+        return CoordinateSystem(axes=self.axes.restrict(refs))
 
     def embed(
         self,
@@ -1290,10 +1230,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             CoordinateSystem(axes=[Axis(), Axis(name='x'), Axis(), Axis()])
             ```
         """
-        # A plain list, as in `expand`.
-        return CoordinateSystem(
-            axes=list(AxisList.of(self).embed(positions, ndim=ndim))
-        )
+        return CoordinateSystem(axes=self.axes.embed(positions, ndim=ndim))
 
     def compatible_with(self, other: tx.Optional["CoordinateSystem"]) -> bool:
         """Whether `self` and `other` could describe the same space.
@@ -1344,7 +1281,19 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
                 f"A coordinate system is compatible only with another "
                 f"CoordinateSystem or None, not with {type(other).__name__}."
             )
-        return AxisList.of(self).compatible_with(AxisList.of(other))
+        return self.axes.compatible_with(_axes_or_unknown(other))
+
+
+def _axes_or_unknown(
+    system: tx.Optional[CoordinateSystem],
+) -> AxisSequence:
+    """The axes of `system`, or `[...]` when the system is missing.
+
+    A missing system (`None`), such as an undeclared endpoint of a
+    transformation, says nothing about its axes, which read as `[...]`.
+    Where a system cannot be missing, read `system.axes` instead.
+    """
+    return AxisList([...]) if system is None else system.axes
 
 
 def _is_informative(system: tx.Optional[CoordinateSystem]) -> bool:

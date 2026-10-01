@@ -185,7 +185,6 @@ def test_fixed_dimension_classes_store_a_tuple(cls: type, ndim: int) -> None:
         axes = cls(axes=given(cls().axes)).axes
         assert type(axes) is AxisTuple and len(axes) == ndim
         assert isinstance(axes, tuple) and axes.ndim == ndim
-    assert AxisList.of(cls()) == list(axes)
 
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
@@ -218,7 +217,7 @@ def test_ndim_of_an_unknown_system(unknown_axes: tx.Sequence) -> None:
 
 
 def test_ndim_of_a_missing_system() -> None:
-    assert AxisList.of(None).ndim is None
+    assert _systems._axes_or_unknown(None).ndim is None
 
 
 # ----------------------------------------------------------------------
@@ -375,34 +374,33 @@ def test_an_axis_list_is_a_plain_list(any_layout: str) -> None:
     assert type(axes[1:]) is AxisList and axes[1:] == entries[1:]
 
 
-def test_axis_list_of_a_system(any_layout: str) -> None:
+def test_the_axes_of_a_system(any_layout: str) -> None:
+    # A closed system of two axes is a `CoordinateSystem2D`, which stores
+    # them as an `AxisTuple`; an open one stores an `AxisList`.
     system = CS(axes=ANY_LAYOUTS[any_layout])
-    axes = AxisList.of(system)
-    assert type(axes) is AxisList and axes == ANY_LAYOUTS[any_layout]
-    # A new list: changing it leaves the system as it is. (A closed system
-    # of two axes is a `CoordinateSystem2D`, which stores them as a tuple.)
+    closed = any_layout == "closed"
+    assert type(system.axes) is (AxisTuple if closed else AxisList)
+    assert list(system.axes) == ANY_LAYOUTS[any_layout]
+    # A copy, which a standard constructor makes, leaves the system as it
+    # is.
+    axes = AxisList(system.axes)
     axes.append(Z)
     assert list(system.axes) == ANY_LAYOUTS[any_layout]
-    assert AxisList.of(system) == ANY_LAYOUTS[any_layout]
 
 
-def test_axis_list_of_an_unknown_system(unknown_axes: tx.Sequence) -> None:
-    for system in (CS(axes=unknown_axes), None):
-        assert AxisList.of(system) == [...]
-        assert type(AxisList.of(system)) is AxisList
+def test_the_axes_of_a_missing_system_are_unknown() -> None:
+    # Only a missing endpoint (`None`) has no `axes` to read, and reads as
+    # `[...]`; any system reads as its own axes.
+    assert _systems._axes_or_unknown(None) == [...]
+    assert type(_systems._axes_or_unknown(None)) is AxisList
+    for system in (CS(), CS(axes=[X, ...]), RASCoordinateSystem()):
+        assert _systems._axes_or_unknown(system) is system.axes
 
 
-def test_axis_list_of_a_fixed_dimension_system() -> None:
-    axes = AxisList.of(RASCoordinateSystem())
-    assert type(axes) is AxisList
-    assert axes == list(RASCoordinateSystem().axes)
-    assert axes.ndim == 3
-
-
-@pytest.mark.parametrize("other", [[X], (X,), "x", 0])
-def test_axis_list_of_refuses_a_non_system(other: object) -> None:
-    with pytest.raises(TypeError, match="CoordinateSystem or None"):
-        AxisList.of(other)  # type: ignore[arg-type]
+def test_the_axes_of_a_fixed_dimension_system() -> None:
+    axes = RASCoordinateSystem().axes
+    assert type(axes) is AxisTuple and axes.ndim == 3
+    assert AxisList(axes) == list(axes)
 
 
 def test_is_open_and_ndim(any_layout: str) -> None:
@@ -539,7 +537,7 @@ def test_index_asks_for_the_class_of_the_query() -> None:
 
 def test_index_never_matches_ellipsis(unknown_axes: tx.Sequence) -> None:
     for system in (CS(axes=unknown_axes), None):
-        axes = AxisList.of(system)
+        axes = _systems._axes_or_unknown(system)
         for query in (Axis(), "x", TimeAxis()):
             with pytest.raises(ValueError, match="is not in list"):
                 axes.index(query)
@@ -623,7 +621,7 @@ def test_a_position_in_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for i in (0, 3, -1):
-            assert AxisList.of(system)._position(i) == i
+            assert _systems._axes_or_unknown(system)._position(i) == i
 
 
 def test_a_position_may_be_a_numpy_integer() -> None:
@@ -663,7 +661,7 @@ def test_the_axis_at_a_position_of_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for position in (0, 2, -1):
-            assert AxisList.of(system).at(position) == Axis()
+            assert _systems._axes_or_unknown(system).at(position) == Axis()
 
 
 # ----------------------------------------------------------------------
@@ -824,7 +822,7 @@ def test_embed_keeps_the_positions_restrict_reads() -> None:
     # The embedded system reads back, at each known position, the axis that
     # was embedded there: the composers check discrete axes this way.
     embedded = CS(axes=[X, Axis(name="c", discrete=True)]).embed([0, 3])
-    axes = AxisList.of(embedded)
+    axes = embedded.axes
     assert axes.at(3).discrete is True
     assert axes.at(1) == Axis()
     assert axes.at(7) == Axis()
@@ -942,7 +940,7 @@ def test_an_unknown_system_is_compatible_with_every_system(
         assert unknown.compatible_with(CS(axes=axes))
         assert CS(axes=axes).compatible_with(unknown)
         assert CS(axes=axes).compatible_with(None)
-        assert AxisList.of(None).compatible_with(AxisList.of(CS(axes=axes)))
+        assert AxisList([...]).compatible_with(CS(axes=axes).axes)
 
 
 def test_compatible_ras_with_time() -> None:
@@ -1283,15 +1281,6 @@ def test_the_containers_compare_as_their_builtins() -> None:
     assert AxisTuple([X, Y]) == (X, Y)
     assert repr(AxisTuple([X, Y])) == repr((X, Y))
     assert repr(AxisList([X, ...])) == repr([X, ...])
-
-
-def test_axis_sequence_of_gives_an_axis_tuple() -> None:
-    # Where the container does not matter, the immutable one is read.
-    for system in (None, CS(axes=[X, ...]), RASCoordinateSystem()):
-        axes = AxisSequence.of(system)
-        assert type(axes) is AxisTuple
-        assert list(axes) == list(AxisList.of(system))
-    assert type(AxisTuple.of(CS())) is AxisTuple
 
 
 def test_every_system_stores_an_axis_sequence() -> None:

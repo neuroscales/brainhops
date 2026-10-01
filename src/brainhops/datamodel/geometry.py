@@ -13,7 +13,12 @@ from brainhops.datamodel.base import DataModelBase
 
 # internals
 from .axes import Axis
-from .systems import AxisList, CoordinateSystem, _is_informative
+from .systems import (
+    AxisSequence,
+    CoordinateSystem,
+    _axes_or_unknown,
+    _is_informative,
+)
 from .transformations import (
     Affine,
     CartesianField,
@@ -242,7 +247,7 @@ def _index2transform(
 
     # Compute output axes. An open system is closed to the number of axes
     # of the array; one that states no axis at all gives none.
-    input_axes: tx.Optional[AxisList] = AxisList.of(system)
+    input_axes: tx.Optional[AxisSequence] = _axes_or_unknown(system)
     if input_axes == [...]:
         input_axes = None
     elif input_axes.is_open:
