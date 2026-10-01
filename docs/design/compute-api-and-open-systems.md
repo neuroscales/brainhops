@@ -1,6 +1,7 @@
 # Design: the compute API and open coordinate systems
 
-**Status:** proposal, for review. Nothing here is implemented yet.
+**Status:** proposal, under review; the first round of decisions is
+recorded under [Decisions](#decisions). Nothing here is implemented yet.
 
 This document proposes two connected changes:
 
@@ -44,9 +45,10 @@ Passing tests is not enough.
   returns its input (the same object), and every leaf it does not rewrite
   keeps its identity. This is what lets a transform and its lazy inverse
   keep cancelling.
-- **Extension by registration.** Each operation is a `bagof.dispatchers`
-  Function with a decorator (`@simplifier`, `@restrictor`, …), so a new
-  transformation class plugs in without editing the operation itself.
+- **Per-type rules by registration.** Each operation is a
+  `bagof.dispatchers` Function with a private decorator (`@simplifier`,
+  `@restrictor`, …), so supporting another of the library's classes means
+  registering one rule, not editing the operation itself.
 
 ### A.2 `simplify(t, policy="analytic")`
 
@@ -142,10 +144,10 @@ It is no longer hidden inside `factor`.
   be shown to be decoupled raises.
   - Restricting an `Affine` reads its sub-block, i.e. its values, so
     checking the off-block zeros costs nothing extra.
-  - Under `"analytic"`, an `Affine` block cannot be restricted. **Open
-    question:** should `restrict` take a `policy` argument, or always be
-    allowed to read the values it is cutting out? I lean towards no policy
-    argument: restricting is inherently a read of the block.
+  - **Decided: `restrict` takes no `policy` argument.** Cutting out a
+    block is inherently a read of that block, so `restrict` may always
+    read the values it extracts, and the off-block zeros that make the
+    extraction exact.
 - **The result carries restricted systems.**
   - `input` is `t.input` restricted to `input_axes`, and `output` is
     `t.output` restricted to `output_axes`.
@@ -156,6 +158,43 @@ It is no longer hidden inside `factor`.
   inner for a subspace**, so object identity is kept.
 - **Duality with `SubspaceTransformation`:**
   `restrict(SubspaceTransformation(t, a, b), a, b) is t`.
+
+#### Relation to `Projection`
+
+`Projection` does not wrap a transformation. It is a map of its own that
+drops axes (`dropped`), or, inverted, an embedding that creates axes
+(`created`). The composition that matches a restriction is therefore
+
+    π_O ∘ t ∘ ι_I
+
+where `ι_I` embeds the input axes `I` into the full input space and `π_O`
+drops every output axis outside `O`. On a decoupled block, this
+composition *is* `restrict(t, I, O)`. `restrict` still earns its place:
+
+- **Its precondition is exactly what makes the composition well defined.**
+  `ι_I` has to give the axes it creates *some* value, and the model does
+  not say which.
+  - On a decoupled block, the outputs in `O` never read those axes, so the
+    value does not matter.
+  - On a coupled block, the composition is a *slice* of `t` at an
+    arbitrary point. That is a different operation, and silently returning
+    it would be a bad surprise. `restrict` checks decoupling and raises
+    instead.
+- **Cheaper type, no materialization, identity kept.**
+  - No `Projection` composers exist, and the subspace/affine composers
+    would turn a `Scaling` into a dense `Affine`.
+  - Composing would read a lazy inverse's parameters.
+  - Composing returns new objects, which breaks cancellation by object
+    identity.
+- **One rule per type.** Getting the same through composition would need a
+  composer for every `(Projection, T)` pair and every `(T, Projection⁻¹)`
+  pair. That is twice as many registrations, each restating the
+  restriction.
+
+So the projection composition is how `restrict` is *specified*, and
+`restrict` is how it is *computed*. The docstring states the identity
+`restrict(t, I, O) == compute(π_O ∘ t ∘ ι_I)` for decoupled blocks, and a
+test checks it numerically.
 
 ### A.5 No separate `embed`
 
@@ -214,12 +253,11 @@ A single pass, with no fixpoint loop:
 ### A.7 What stays internal
 
 - **`compose` and `convert`.** Their public faces are `compute` and
-  `Transformation.to`. **Open question:** do we export the registration
-  decorators (`@composer`, `@converter`, `@simplifier`, `@restrictor`) so
-  that third-party transformation classes can plug in? I think they
-  should be public, gathered in one place (e.g. a `transformations.extend`
-  namespace), because a modular library needs public extension points.
-  But that is a separate commitment.
+  `Transformation.to`.
+- **The registration decorators** (`@composer`, `@converter`,
+  `@simplifier`, `@restrictor`). **Decided: they stay private.**
+  Registration is how the library's own transformation classes plug in.
+  It is not a public extension point.
 - **Bridging and adaptation.**
 
 ---
@@ -250,25 +288,32 @@ so. `None` throws away the positions we do know, and the
 - `CoordinateSystem.axes` is a list whose items are `Axis` instances, plus
   **at most one `...` (`Ellipsis`)**, which stands for *zero or more axes
   about which nothing is known*.
-- **`axes=None` is equivalent to `axes=[...]`.** **Open question:** should
-  `None` be canonicalized to `[...]` on construction (one representation,
-  simplest equality), or kept as an accepted spelling and read through an
-  accessor? I lean towards canonicalizing, but it changes the repr and
-  serialization of every system built without axes.
+- **`axes=None` is equivalent to `axes=[...]`**, and a transformation
+  endpoint `input=None`/`output=None` is equivalent to a system with
+  `axes=[...]`. **Decided: no normalization for now.** `None` stays an
+  accepted spelling and is stored as given. Every place that interprets
+  axes must treat the two spellings identically:
+  - All readers go through one accessor, which returns `[...]` for a
+    `None` system or `None` axes. No code inspects `system.axes` or
+    `t.input` for `None` on its own.
+  - Equality and compatibility of systems treat `None` and `[...]` as the
+    same.
+  - A test parametrizes the open-system cases over both spellings, so the
+    two cannot drift apart.
 - **A system with `...` is *open*; one without is *closed*.**
   - `ndim` is `None` for an open system.
   - `min_ndim` counts its explicit axes.
 - **Fixed-dimension classes cannot be open.** `CoordinateSystem2D`/`3D`
   and their subclasses reject `...`.
-- **Where `...` may appear.** The subspace case only needs it at the
-  *end*, because subspace positions are absolute, counted from 0. Allowing
-  it anywhere, as numpy does, also expresses things like
-  `[..., TimeAxis()]` ("the last axis is time"). **Open question:**
-  trailing only (simpler, covers every current need), or anywhere
-  (numpy-like, more expressive, needs negative-index rules)? I lean
-  towards *anywhere*, with positional access defined as follows:
-  - `system.axes[i]` resolves when `i` falls in the explicit prefix, or
-    `-i` in the explicit suffix;
+- **Where `...` may appear. Decided: anywhere, at most once**, as in
+  numpy. This expresses things like `[..., TimeAxis()]` ("the last axis is
+  time"), as well as the subspace case, which needs a trailing `...`
+  because subspace positions are absolute, counted from 0. Positional
+  access goes through the accessor:
+  - a non-negative index resolves when it falls in the explicit prefix
+    (before `...`);
+  - a negative index resolves when it falls in the explicit suffix (after
+    `...`);
   - any other index of an open system resolves to an unknown `Axis()`;
   - an index past the end of a closed system is an error.
 
@@ -317,10 +362,14 @@ just the one that crashes:
   working on the known positions.
 - `utils.axis_counts`, and the `separable`/`factor` readers: `ndim is
   None` means unknown, never a guess.
-- **I/O writers** (NGFF/OME-Zarr, NIfTI): an open system cannot be
-  serialized as such. The writer either requires a closed system (and
-  raises), or closes it from the data shape. Which one depends on the
-  format.
+- **I/O writers** (NGFF/OME-Zarr, NIfTI). No format can store `...`.
+  **Decided: writers close an open system from the data shape.**
+  - They expand `...` to as many axes as the data has, beyond the explicit
+    ones.
+  - The expanded axes are filled the way the format fills an axis it
+    knows nothing about.
+  - A closed system whose length disagrees with the data still raises, as
+    it does today.
 
 ---
 
@@ -344,10 +393,12 @@ just the one that crashes:
    - Checked by the parity sweep, the idempotence test, and the reslice
      timings.
 
-## Open questions (summary)
+## Decisions
 
-1. `restrict`: no `policy` argument (always reads the block it cuts out)?
-2. Export the registration decorators as public extension points?
-3. Canonicalize `axes=None` to `[...]`?
-4. `...` trailing only, or anywhere?
-5. Writers: should an open system raise, or be closed from the data shape?
+1. `restrict` takes no `policy` argument.
+2. The registration decorators stay private.
+3. `axes=None` (and `input`/`output=None`) is not normalized to `[...]`,
+   but every reader, equality and compatibility treats the two spellings
+   identically, through one accessor.
+4. `...` may appear anywhere, at most once.
+5. Writers close an open system from the data shape.
