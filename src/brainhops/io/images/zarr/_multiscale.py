@@ -16,7 +16,7 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import CoordinateSystem, _axes_of
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
@@ -88,8 +88,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         tx.Optional[tx.List[Axis]],
         tx.Doc(
             "The axes to store a pyramid under, in the brainhops order, "
-            "when it is built from scratch. A pyramid read from a store "
-            "leaves this unset and takes its axes from `ome`."
+            "when it is built from scratch. As in a coordinate system, a "
+            "single `...` may stand for the axes about which nothing is "
+            "known; it is closed to the number of axes of the data when "
+            "the pyramid is written. A pyramid read from a store leaves "
+            "this unset and takes its axes from `ome`."
         ),
     ] = None
 
@@ -412,8 +415,20 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # explicit `axes` (a from-scratch pyramid) is used first. A pyramid
         # read from a store has none, so its axes are derived from `ome`. A
         # pyramid with neither falls back to a default axis list.
-        if self.axes and len(self.axes) == ndim:
-            return list(self.axes)
+        axes = self.axes
+        if axes and any(axis is ... for axis in axes):
+            # OME-Zarr cannot store `...`: an open list is closed to the
+            # number of axes of the data. The axes `...` stands for are
+            # unknown, and are written as any axis with no description is.
+            try:
+                return _axes_of(CoordinateSystem(axes=axes).expand(ndim))
+            except ValueError as error:
+                raise WriterError(
+                    f"Cannot store the axes {axes} under data of {ndim} "
+                    f"dimensions: {error}"
+                ) from error
+        if axes and len(axes) == ndim:
+            return list(axes)
         if self.ome is not None:
             store_axes = multiscale_axes(self.ome)
             if len(store_axes) == ndim:
