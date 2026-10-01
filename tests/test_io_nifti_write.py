@@ -637,3 +637,20 @@ def test_nifti_axes_are_copies_of_the_module_templates() -> None:
     for axis, template in zip(_nifti_to_axes(header), _NIFTI_AXES):
         assert axis == template
         assert axis is not template
+
+
+@pytest.mark.parametrize(
+    "shape, intent",
+    [((2, 3, 4), None), ((2, 3, 4, 5), None), ((2, 3, 4, 1, 3), 1006)],
+)
+def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
+    """The axes read from a header are voxel axes: they count samples."""
+    from brainhops.datamodel.units import SampleUnit
+    from brainhops.io.base.nifti import _nifti_to_axes
+
+    image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
+    if intent:
+        image.header.set_intent(intent)
+    axes = _nifti_to_axes(image.header)
+    assert len(axes) == len(shape)
+    assert all(isinstance(axis.unit, SampleUnit) for axis in axes)

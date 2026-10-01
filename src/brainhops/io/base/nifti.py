@@ -28,7 +28,6 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import (
-    SampleUnit,
     is_physicalunit,
     is_spaceunit,
     is_timeunit,
@@ -49,26 +48,32 @@ from brainhops.io.base.parsers import (
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
 
+# The axes of a NIfTI array, by position. They are the axes of its voxel
+# space, so they count samples (`SampleUnit`): reversing one shifts its
+# origin by one less than its extent. A reader that builds a physical space
+# from them gives them its own unit.
+_SAMPLE = "sample"
 _NIFTI_AXES = [
-    Axis("x", "space"),
-    Axis("y", "space"),
-    Axis("z", "space"),
-    Axis("t", "time"),
-    Axis("c", "channel"),
-    Axis("dim5"),
-    Axis("dim6"),
+    Axis("x", "space", unit=_SAMPLE),
+    Axis("y", "space", unit=_SAMPLE),
+    Axis("z", "space", unit=_SAMPLE),
+    Axis("t", "time", unit=_SAMPLE),
+    Axis("c", "channel", unit=_SAMPLE),
+    Axis("dim5", unit=_SAMPLE),
+    Axis("dim6", unit=_SAMPLE),
 ]
 _FLAT_AXES = {
-    0: Axis("n"),  # number of points / vertices / triangles / ...
-    1: Axis("x"),
-    2: Axis("y"),
-    3: Axis("z"),
+    # number of points / vertices / triangles / ...
+    0: Axis("n", unit=_SAMPLE),
+    1: Axis("x", unit=_SAMPLE),
+    2: Axis("y", unit=_SAMPLE),
+    3: Axis("z", unit=_SAMPLE),
 }
-_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel")}
-_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time")}
-_AXES_DISP = {4: Axis("c", "displacement")}
+_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_SAMPLE)}
+_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_SAMPLE)}
+_AXES_DISP = {4: Axis("c", "displacement", unit=_SAMPLE)}
 _NIFTI_SPECIFIC_AXES = {
-    1004: {5: Axis("k", "channel")},  # GENMATRIX
+    1004: {5: Axis("k", "channel", unit=_SAMPLE)},  # GENMATRIX
     1006: _AXES_DISP,  # DISPVECT
     1008: _FLAT_AXES_CHANNEL,  # POINTSET
     1009: _FLAT_AXES_CHANNEL,  # TRIANGLE
@@ -320,16 +325,13 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         if self.header is None:
             return None
 
-        # Drop irrelevant axes, as specified by the intent code.
+        # Drop irrelevant axes, as specified by the intent code. The axes
+        # already count samples, as the axes of a voxel space do.
         axes = [
             axis
             for axis in _nifti_to_axes(self.header)
             if axis.name is not None
         ]
-
-        # A voxel space indexes an array, so its coordinates count samples
-        # (`SampleUnit`); `None` would say only that the unit is unknown.
-        axes = [replace(axis, unit=SampleUnit()) for axis in axes]
         return CoordinateSystem(axes=axes, name="voxel")
 
     @system.setter
@@ -585,7 +587,8 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     to change the names and types of the axes, if necessary.
 
     Axes that are deemed irrelevant by the intent code are given a name
-    of `None`.
+    of `None`. Every axis is an axis of the voxel space, so its unit is
+    the sample.
     """
 
     ndim = len(header.get_data_shape())

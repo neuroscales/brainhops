@@ -9,7 +9,6 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
-from brainhops.datamodel.units import SampleUnit
 from brainhops.io.base._base import register_format
 from brainhops.io.base._nifti_units import nifti_to_unit
 from brainhops.io.base.nifti import (
@@ -180,20 +179,15 @@ def _nifti_to_transformations(
     named_axes = [axis for axis in axes if axis.name is not None]
 
     # >> Voxel space
-    # A voxel space indexes an array: its coordinates count samples, which is
-    # what `SampleUnit` says and what the adaptor reads to know that reversing
-    # such an axis shifts the origin by one less than its extent. `None` would
-    # only mean the unit is unspecified.
-    voxel_axes = [replace(axis, unit=SampleUnit()) for axis in named_axes]
-    voxel_space = CoordinateSystem(name="voxel", axes=voxel_axes)
+    # `_nifti_to_axes` gives the axes of the voxel space: they count samples.
+    voxel_space = CoordinateSystem(name="voxel", axes=named_axes)
 
     # >> Physical space
-    # Built from the axes as read, not from the sampled ones above, so it
-    # never inherits "sample" from the voxel space: a spatial or temporal
-    # axis takes the header's unit, and any other axis keeps its own.
+    # The same axes, measured in the header's units. An axis of another
+    # type (a channel, a vector component) has no physical unit: its unit
+    # is left unspecified rather than inherit "sample" from the voxel space.
     phys_axes = [
-        replace(axis, unit=units[axis.type]) if axis.type in units else axis
-        for axis in named_axes
+        replace(axis, unit=units.get(axis.type)) for axis in named_axes
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
 
