@@ -801,28 +801,7 @@ class CoordinateSystem(DataModelBase, eq=False):
     name: tx.Optional[str] = None
     axes: tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]] = None
 
-    # The number of axes every instance of the class has, or `None` when
-    # it is not fixed. Classes with a fixed number of axes are closed.
-    _FIXED_NDIM = None
-
     # --- validation ---------------------------------------------------
-
-    def __pre_init__(self, arguments: tx.Any) -> None:
-        # A fixed-dimension class is refused an open list before its
-        # conversion to a fixed-length tuple, which would otherwise fail
-        # with a message that does not say why.
-        ndim = type(self)._FIXED_NDIM
-        if ndim is None:
-            return
-        axes = arguments.get("axes")
-        if axes is None or (
-            isinstance(axes, (list, tuple)) and any(a is ... for a in axes)
-        ):
-            raise ValueError(
-                f"A {type(self).__name__} has exactly {ndim} axes, so its "
-                f"axes cannot be left open. Give {ndim} axes, not None or "
-                f"a list that holds `...`."
-            )
 
     def __post_init__(self) -> None:
         if self.axes is not None and sum(a is ... for a in self.axes) > 1:
@@ -1070,14 +1049,12 @@ class CoordinateSystem2D(CoordinateSystem):
     """A coordinate systems with exactly two dimensions."""
 
     axes: _2Axes = (Axis(), Axis())
-    _FIXED_NDIM = 2
 
 
 class CoordinateSystem3D(CoordinateSystem):
     """A coordinate system with exactly three dimensions."""
 
     axes: _3Axes = (Axis(), Axis(), Axis())
-    _FIXED_NDIM = 3
 
 
 # ----------------------------------------------------------------------

@@ -95,19 +95,39 @@ def test_at_most_one_ellipsis(axes: list) -> None:
 
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
-@pytest.mark.parametrize("where", ["None", "start", "middle", "end"])
+@pytest.mark.parametrize(
+    "where, error, match",
+    [
+        # The type of the field, a tuple of `ndim` axes, refuses them: it
+        # is not optional, it has a fixed length, and `...` is no axis.
+        ("None", TypeError, "could not convert None"),
+        ("start", ValueError, "Expected iterable of length"),
+        ("middle", ValueError, "Expected iterable of length"),
+        ("end", ValueError, "Expected iterable of length"),
+        ("instead of an axis", TypeError, "could not convert Ellipsis"),
+    ],
+)
 def test_fixed_dimension_classes_refuse_an_open_system(
-    cls: type, ndim: int, where: str
+    cls: type, ndim: int, where: str, error: type, match: str
 ) -> None:
-    explicit = [Axis()] * ndim
+    explicit = list(cls().axes)
     axes = {
         "None": None,
         "start": [..., *explicit],
         "middle": [explicit[0], ..., *explicit[1:]],
         "end": [*explicit, ...],
+        "instead of an axis": [*explicit[:-1], ...],
     }[where]
-    with pytest.raises(ValueError, match=f"exactly {ndim} axes"):
+    with pytest.raises(error, match=match):
         cls(axes=axes)
+
+
+@pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
+def test_fixed_dimension_classes_store_a_tuple(cls: type, ndim: int) -> None:
+    # Their axes are a tuple of `ndim` axes, which `AxisList.of` reads.
+    axes = cls(axes=list(cls().axes)).axes
+    assert type(axes) is tuple and len(axes) == ndim
+    assert AxisList.of(cls()) == list(axes)
 
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
