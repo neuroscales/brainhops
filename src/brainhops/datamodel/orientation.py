@@ -67,7 +67,7 @@ def singleton(cls: _T) -> _T:
     return cls
 
 
-class Orientation(DataModelBase, doc=True, polymorphic=True):
+class Orientation(DataModelBase, polymorphic=True):
     """Describes the orientation of an axis or a space.
 
     An orientation has a `type`, drawn from [`OrientationType`][], that

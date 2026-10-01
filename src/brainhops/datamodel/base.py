@@ -16,6 +16,7 @@ class DataModelBase(
     convert=True,
     mapping=False,
     repr=HIDE_IF_NONE,
+    doc=True,
     pin_discriminant="pin+narrow",
 ):
     """Base class for all data models.
