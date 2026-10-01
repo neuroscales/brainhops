@@ -15,11 +15,12 @@ from brainhops.datamodel.axes import (
     SpatialAxis,
     vector_axis,
 )
-from brainhops.datamodel.orientation import RightToLeft
+from brainhops.datamodel.orientation import LeftToRight, RightToLeft
 from brainhops.datamodel.systems import (
     CoordinateSystem3D,
     SpatialCoordinateSystem3D,
 )
+from brainhops.datamodel.units import SpaceUnit
 
 
 def _messages(error: BaseException) -> list:
@@ -113,6 +114,14 @@ def test_generic_axes_are_read_as_spatial_axes() -> None:
     )
     assert all(type(axis) is SpatialAxis for axis in system.axes)
     assert [axis.name for axis in system.axes] == ["x", "y", "z"]
+    # A generic axis leaves its unit unset, so the spatial default holds.
+    assert all(axis.unit == SpaceUnit("millimeter") for axis in system.axes)
+
+
+def test_an_axis_with_the_same_orientation_is_read_as_oriented() -> None:
+    # The generic axis has no name: the oriented axis keeps its own.
+    axis = LeftToRightAxis.from_other(Axis(orientation=LeftToRight()))
+    assert axis == LeftToRightAxis()
 
 
 def test_an_axis_with_another_orientation_is_not_read_as_oriented() -> None:

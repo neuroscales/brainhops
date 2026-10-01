@@ -36,6 +36,11 @@ class _FixedKind(_Kinded):
     kind: Const[str] = "fixed"
 
 
+class _Refixed(_FixedKind):
+    # A subclass may fix the field its own way: it is still a _FixedKind.
+    kind: Const[str] = "refixed"
+
+
 class _Holder(DataModelBase):
     child: tx.Optional[_Child] = None
     fixed: tx.Optional[_FixedKind] = None
@@ -146,3 +151,51 @@ def test_a_field_keeps_the_reason_a_value_was_refused() -> None:
     match = "_StrictHolder.fixed: .*always 'fixed'"
     with pytest.raises(ConversionError, match=match):
         _StrictHolder(fixed=_Kinded(kind="other"))
+
+
+def test_from_instance_leaves_defaults_in_place_of_unset_attributes() -> None:
+    class _Defaulted(_Plain):
+        y: tx.Optional[int] = 3
+
+    # `y` is unset (None) on the parent: the child's default stays.
+    assert _Defaulted.from_instance(_Plain(x=1)).y == 3
+
+
+def test_from_dict_keeps_an_explicit_none() -> None:
+    class _Defaulted(_Plain):
+        y: tx.Optional[int] = 3
+
+    assert _Defaulted.from_dict({"y": None}).y is None
+
+
+def test_from_instance_skips_the_fixed_check_for_an_instance() -> None:
+    obj = _FixedKind.from_instance(_Refixed(x=1))
+    assert type(obj) is _FixedKind
+    assert (obj.kind, obj.x) == ("fixed", 1)
+
+
+def test_a_fixed_field_is_checked_before_the_instance_is_built() -> None:
+    # `x` cannot be converted either, but the contradiction is what the
+    # source got wrong first.
+    with pytest.raises(ValueError, match="always 'fixed'"):
+        _FixedKind.from_dict({"kind": "other", "x": "not a number"})
+
+
+def test_a_fixed_value_that_cannot_be_converted_says_so() -> None:
+    with pytest.raises(ValueError, match="could not be converted") as info:
+        _FixedKind.from_dict({"kind": 5})
+    assert isinstance(info.value.__cause__, ConversionError)
+
+
+def test_from_dict_ignores_a_key_that_matches_no_field() -> None:
+    assert _Plain.from_dict({"x": 1, "nmae": 2}).x == 1
+
+
+def test_from_other_refuses_a_key_that_matches_no_field() -> None:
+    with pytest.raises(TypeError, match="no field named 'nmae'"):
+        _Plain.from_other({"x": 1, "nmae": 2})
+
+
+def test_converter_refuses_a_key_that_matches_no_field() -> None:
+    with pytest.raises(ConversionError, match="no field named 'nmae'"):
+        get_converter(_Plain)({"x": 1, "nmae": 2})
