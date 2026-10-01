@@ -49,6 +49,7 @@ from bagof.magic import ClassVar, Magic, MetaMagic
 
 # core
 from brainhops._core.enum import StrEnum
+from brainhops._core.typing import is_instance_or_subclass
 
 
 def _make_enum(name: str, d: tx.Dict[str, tx.Tuple]) -> StrEnum:
@@ -487,13 +488,9 @@ class Year(TimeUnit):
     name: ClassVar[TimeUnitName] = TimeUnitName.year
 
 
-def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit]]) -> bool:
-    """Whether `unit` is a unit of time."""
-    if isinstance(unit, Unit):
-        return isinstance(unit, TimeUnit)
-    if isinstance(unit, type) and issubclass(unit, Unit):
-        return issubclass(unit, TimeUnit)
-    return False
+def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is a unit of time (an instance or a class)."""
+    return is_instance_or_subclass(unit, TimeUnit)
 
 
 # ----------------------------------------------------------------------
@@ -605,9 +602,7 @@ Sample = SampleUnit
 
 def is_sampleunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
     """Whether `unit` is the sample unit, i.e. the axis is an array axis."""
-    if isinstance(unit, type):
-        return issubclass(unit, SampleUnit)
-    return isinstance(unit, SampleUnit)
+    return is_instance_or_subclass(unit, SampleUnit)
 
 
 def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
@@ -619,26 +614,15 @@ def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
     measure anything -- so a conversion factor to another physical unit
     exists exactly when this is true of both.
     """
-    if unit is None or is_sampleunit(unit):
+    if not is_instance_or_subclass(unit, Unit) or is_sampleunit(unit):
         return False
-    if isinstance(unit, type):
-        # A class is physical when it is a concrete, named unit: `Meter`
-        # is, the abstract `Unit` and `SpaceUnit` are not.
-        return issubclass(unit, Unit) and isinstance(
-            getattr(unit, "name", None), str
-        )
-    # A `Unit` built from a name it does not recognise carries no name, so
-    # it measures nothing either -- `Unit` is liberal on purpose, and this
-    # is where that liberality stops being taken for a unit.
-    return isinstance(unit, Unit) and isinstance(
-        getattr(unit, "name", None), str
-    )
+    # A unit measures something when it has a name. A class has one when
+    # it is a concrete unit (`Meter`, not the abstract `Unit` or
+    # `SpaceUnit`); an instance has none when `Unit` -- liberal on purpose
+    # -- was built from a name it does not recognise.
+    return isinstance(getattr(unit, "name", None), str)
 
 
-def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit]]) -> bool:
-    """Whether `unit` is a unit of space (a length)."""
-    if isinstance(unit, Unit):
-        return isinstance(unit, SpaceUnit)
-    if isinstance(unit, type) and issubclass(unit, Unit):
-        return issubclass(unit, SpaceUnit)
-    return False
+def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is a unit of space, a length (an instance or a class)."""
+    return is_instance_or_subclass(unit, SpaceUnit)

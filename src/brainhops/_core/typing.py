@@ -19,6 +19,7 @@ __all__ = [
     "npt",
     "cpt",
     "dkt",
+    "is_instance_or_subclass",
 ]
 # externals
 import typing_extensions as tx
@@ -32,6 +33,19 @@ from bagof.hints.numpy import dtype, ndarray
 from bagof.magic import Frozen, NoInit, NoRepr
 
 T = tx.TypeVar("T")
+
+
+def is_instance_or_subclass(
+    obj: tx.Any, cls: tx.Union[type, tx.Tuple[type, ...]]
+) -> bool:
+    """Whether `obj` is an instance of `cls`, or a class that subclasses it.
+
+    `False` for anything else, such as `None` or a class outside `cls`.
+    """
+    if isinstance(obj, type):
+        return issubclass(obj, cls)
+    return isinstance(obj, cls)
+
 
 Deactivated = tx.ClassVar
 """
