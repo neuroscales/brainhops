@@ -163,6 +163,7 @@ class SingleScaleImage(Image):
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
+        copy: bool = False,
     ) -> tx.Self:
         """
         Apply transformations to current data and return new image.
@@ -193,13 +194,23 @@ class SingleScaleImage(Image):
             If True, the input image is assumed to already contain spline
             coefficients. If False, the input image is prefiltered
             before interpolation.
+        copy : bool
+            Whether the output data must be a fresh array. As with
+            `torch.Tensor.to`, when `False` the output data may share
+            memory with the input data: a reslice that only gathers (a
+            flip, a permutation, or a unit-step slice, such as a reslice
+            onto the image's own grid) can return a view of it. When
+            `True` the output data never shares memory with the input
+            data. A dask array is never copied: it is immutable, and
+            writing into the output rebinds the output's own graph, never
+            the input's, so the lazy output is returned as is.
 
         Returns
         -------
         Image
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff)
+        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
 
         # Guess geometry of output image
         if geometry is None:
@@ -218,10 +229,11 @@ class SingleScaleImage(Image):
         )
 
         # Compute voxel-to-voxel transformation and apply it to the data.
-        # The transformation is factored into independent per-axis groups,
+        # The transformation is computed into its axis-group normal form
+        # (`compute(factor=True)`), and each group is applied on its own,
         # so an axis that is only rescaled, flipped, or permuted is handled
-        # cheaply and only the coupled group keeps the N-dimensional pull.
-        # The factoring is imported lazily to avoid an import cycle.
+        # cheaply and only a coupled group keeps the N-dimensional pull.
+        # The executor is imported lazily to avoid an import cycle.
         from ._transformations.separable import pull_separable
 
         transformation = (
@@ -395,6 +407,7 @@ class MultiScaleImage(Image):
         order: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
+        copy: bool = False,
     ) -> tx.Self:
         """
         Apply transformations to current data and return new image
@@ -431,13 +444,23 @@ class MultiScaleImage(Image):
             If True, the input image is assumed to already contain spline
             coefficients. If False, the input image is prefiltered
             before interpolation.
+        copy : bool
+            Whether the output data must be a fresh array. As with
+            `torch.Tensor.to`, when `False` the output data may share
+            memory with the input data: a reslice that only gathers (a
+            flip, a permutation, or a unit-step slice, such as a reslice
+            onto the image's own grid) can return a view of it. When
+            `True` the output data never shares memory with the input
+            data. A dask array is never copied: it is immutable, and
+            writing into the output rebinds the output's own graph, never
+            the input's, so the lazy output is returned as is.
 
         Returns
         -------
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff)
+        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),

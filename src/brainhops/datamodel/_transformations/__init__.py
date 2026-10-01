@@ -58,6 +58,7 @@ from . import adaptors as _adaptors  # noqa: F401, F403
 from . import checkers as _checkers  # noqa: F401, F403
 from . import composers as _composers  # noqa: F401, F403
 from . import converters as _converters  # noqa: F401, F403
+from . import restrictors as _restrictors  # noqa: F401, F403
 from . import simplifiers as _simplifiers  # noqa: F401, F403
 
 # Import public symbols into the package namespace

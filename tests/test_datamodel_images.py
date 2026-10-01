@@ -243,3 +243,36 @@ def test_reslice_selects_the_multiscale_level_that_matches_the_target() -> (
 
     assert np.allclose(auto, by_coarse)
     assert not np.allclose(auto, by_fine)
+
+
+def _pyramid() -> MultiScaleImage:
+    model_to_world = Affine(
+        matrix=np.eye(4)[:-1],
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+    return MultiScaleImage(images=[_image()], transformations=[model_to_world])
+
+
+def test_multiscale_reslice_without_copy_may_share_the_level_data() -> None:
+    pyramid = _pyramid()
+
+    resliced = pyramid.reslice(copy=False)
+
+    # Onto its own grid the reslice only gathers, and the selected level is
+    # handed over without a copy, so the result is a view of its data.
+    assert np.shares_memory(resliced.data, pyramid.images[0].data)
+
+
+def test_multiscale_reslice_with_copy_is_fresh() -> None:
+    pyramid = _pyramid()
+    level0 = pyramid.images[0].data
+    before = level0.copy()
+
+    resliced = pyramid.reslice(copy=True)
+
+    assert np.array_equal(resliced.data, level0)
+    assert resliced.data is not level0
+    assert not np.shares_memory(resliced.data, level0)
+    resliced.data[...] = -1
+    assert np.array_equal(level0, before)

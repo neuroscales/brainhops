@@ -262,8 +262,23 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
+def _check_square(To: tx.Union[Linear, Affine]) -> None:
+    # A displacement field maps a space onto itself, so it cannot absorb a
+    # matrix that changes the number of axes. The pair is refused, and the
+    # compose pass keeps the two side by side.
+    rows, cols = To.matrix.shape
+    if isinstance(To, Affine):
+        cols -= 1
+    if rows != cols:
+        raise CompositionError(
+            "Cannot fold a matrix that changes the number of axes into a "
+            "displacement field."
+        )
+
+
 @composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
@@ -280,6 +295,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 
 @composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field

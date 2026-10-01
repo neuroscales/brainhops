@@ -14,6 +14,7 @@ from brainhops.datamodel import kinds
 from brainhops.datamodel.axes import Axis
 
 # internals
+from . import registries
 from .base import Transformation
 from .modes import ModeLike
 from .simplify import SimplifyLike
@@ -40,7 +41,16 @@ class MetaTransformation(Transformation):
         mode: ModeLike = True,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
+        if factor:
+            # A wrapper asked to factor is handed to the sequence engine as a
+            # one-element sequence, which runs the factor pass. The engine
+            # never passes `factor` back to a leaf's `compute`, so there is
+            # no recursion.
+            return registries.SEQUENCE([self]).compute(
+                mode, simplify=simplify, factor=True
+            )
         # A meta transformation holds no parameter of its own to fuse, so
         # computing it is simplifying it: the registered simplifier for its
         # type recurses into what it wraps, gated by `simplify`. `mode`
@@ -194,6 +204,28 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return None
 
     # --- methods ------------------------------------------------------
+
+    def compute(
+        self,
+        mode: ModeLike = True,
+        *,
+        simplify: SimplifyLike = "analytic",
+        factor: bool = False,
+    ) -> tx.Self:
+        if not factor:
+            return super().compute(mode, simplify=simplify)
+        # A `Bijection` is a container over its two sides; it forwards
+        # `factor` to both, each of which factors independently.
+        forward, backward = self.forward, self.backward
+        if forward is not None:
+            forward = forward.compute(mode, simplify=simplify, factor=True)
+        if backward is not None:
+            backward = backward.compute(mode, simplify=simplify, factor=True)
+        if forward is self.forward and backward is self.backward:
+            # Unchanged: keep object identity so an adjacent `Inverse` of
+            # this bijection still cancels.
+            return self
+        return self.to(forward=forward, backward=backward)
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         obj = self.to(
