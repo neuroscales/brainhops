@@ -188,14 +188,14 @@ def test_a_fixed_value_that_cannot_be_converted_says_so() -> None:
 
 
 def test_from_dict_ignores_a_key_that_matches_no_field() -> None:
-    assert _Plain.from_dict({"x": 1, "nmae": 2}).x == 1
+    assert _Plain.from_dict({"x": 1, "naem": 2}).x == 1
 
 
 def test_from_other_refuses_a_key_that_matches_no_field() -> None:
-    with pytest.raises(TypeError, match="no field named 'nmae'"):
-        _Plain.from_other({"x": 1, "nmae": 2})
+    with pytest.raises(TypeError, match="no field named 'naem'"):
+        _Plain.from_other({"x": 1, "naem": 2})
 
 
 def test_converter_refuses_a_key_that_matches_no_field() -> None:
-    with pytest.raises(ConversionError, match="no field named 'nmae'"):
-        get_converter(_Plain)({"x": 1, "nmae": 2})
+    with pytest.raises(ConversionError, match="no field named 'naem'"):
+        get_converter(_Plain)({"x": 1, "naem": 2})
