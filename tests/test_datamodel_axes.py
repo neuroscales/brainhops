@@ -92,8 +92,8 @@ def test_repeated_vector_axes_are_refused() -> None:
 def test_axes_that_agree_on_every_shared_field_are_compatible(
     first: Axis, second: Axis
 ) -> None:
-    assert first.compatible(second)
-    assert second.compatible(first)
+    assert first.compatible_with(second)
+    assert second.compatible_with(first)
 
 
 @pytest.mark.parametrize(
@@ -110,20 +110,20 @@ def test_axes_that_agree_on_every_shared_field_are_compatible(
 def test_axes_that_disagree_on_a_shared_field_are_not_compatible(
     first: Axis, second: Axis
 ) -> None:
-    assert not first.compatible(second)
-    assert not second.compatible(first)
+    assert not first.compatible_with(second)
+    assert not second.compatible_with(first)
 
 
 def test_compatibility_is_not_transitive() -> None:
     x, y = Axis(name="x"), Axis(name="y")
-    assert Axis().compatible(x) and Axis().compatible(y)
-    assert not x.compatible(y)
+    assert Axis().compatible_with(x) and Axis().compatible_with(y)
+    assert not x.compatible_with(y)
 
 
 @pytest.mark.parametrize("other", [None, ..., "x", {"name": "x"}])
 def test_compatible_refuses_a_non_axis(other: object) -> None:
     with pytest.raises(TypeError):
-        Axis().compatible(other)  # type: ignore[arg-type]
+        Axis().compatible_with(other)  # type: ignore[arg-type]
 
 
 def test_an_axis_with_defaults_is_not_unknown() -> None:
@@ -132,12 +132,12 @@ def test_an_axis_with_defaults_is_not_unknown() -> None:
     # with an axis of another type or unit.
     assert SpatialAxis() != Axis()
     assert SpatialAxis(unit=None) != Axis()
-    assert not SpatialAxis().compatible(Axis(type="time"))
-    assert not SpatialAxis().compatible(Axis(unit="micrometer"))
+    assert not SpatialAxis().compatible_with(Axis(type="time"))
+    assert not SpatialAxis().compatible_with(Axis(unit="micrometer"))
 
 
 def test_merge_combines_the_known_fields() -> None:
-    merged = Axis(name="x", discrete=False).merge(Axis(unit="mm"))
+    merged = Axis(name="x", discrete=False).merge_with(Axis(unit="mm"))
     assert merged == Axis(name="x", unit="mm", discrete=False)
 
 
@@ -145,15 +145,15 @@ def test_merge_combines_the_known_fields() -> None:
     "axis", [Axis(name="x"), SpatialAxis(), LeftToRightAxis(name="x")]
 )
 def test_merge_with_the_unknown_axis_is_the_other_axis(axis: Axis) -> None:
-    assert Axis().merge(axis) == axis
-    assert axis.merge(Axis()) == axis
+    assert Axis().merge_with(axis) == axis
+    assert axis.merge_with(Axis()) == axis
 
 
 def test_merge_keeps_the_more_derived_class() -> None:
-    merged = Axis(name="x").merge(SpatialAxis(unit="micrometer"))
+    merged = Axis(name="x").merge_with(SpatialAxis(unit="micrometer"))
     assert type(merged) is SpatialAxis
     assert merged == SpatialAxis(name="x", unit="micrometer")
-    merged = LeftToRightAxis().merge(Axis(type="space", discrete=False))
+    merged = LeftToRightAxis().merge_with(Axis(type="space", discrete=False))
     assert type(merged) is LeftToRightAxis
     assert merged.discrete is False
 
@@ -161,12 +161,12 @@ def test_merge_keeps_the_more_derived_class() -> None:
 def test_merge_is_symmetric_on_compatible_axes() -> None:
     a = Axis(name="x", discrete=True)
     b = SpatialAxis(unit="micrometer")
-    assert a.merge(b) == b.merge(a)
+    assert a.merge_with(b) == b.merge_with(a)
 
 
 def test_merge_does_not_change_its_operands() -> None:
     a, b = Axis(name="x"), Axis(unit="mm")
-    a.merge(b)
+    a.merge_with(b)
     assert a == Axis(name="x") and b == Axis(unit="mm")
 
 
@@ -183,7 +183,7 @@ def test_merge_refuses_a_conflict(
     first: Axis, second: Axis, field: str
 ) -> None:
     with pytest.raises(ValueError, match=field):
-        first.merge(second)
+        first.merge_with(second)
 
 
 def test_merge_refuses_unrelated_classes() -> None:
@@ -194,9 +194,9 @@ def test_merge_refuses_unrelated_classes() -> None:
         """Another one, unrelated to the first."""
 
     with pytest.raises(ValueError, match="neither class derives"):
-        FirstAxis(name="x").merge(SecondAxis(name="x"))
+        FirstAxis(name="x").merge_with(SecondAxis(name="x"))
 
 
 def test_merge_refuses_a_non_axis() -> None:
     with pytest.raises(TypeError):
-        Axis().merge(...)  # type: ignore[arg-type]
+        Axis().merge_with(...)  # type: ignore[arg-type]

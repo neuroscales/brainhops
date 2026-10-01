@@ -42,7 +42,7 @@ def systems_disagree(
     hold `...`, or are `None`) disagrees with its neighbour only when the
     axes it does state cannot match the neighbour's, i.e. when the two are
     not
-    [`compatible`][brainhops.datamodel.systems.CoordinateSystem.compatible]:
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]:
     not knowing is never a reason to refuse.
 
     This is the precondition of everything that assumes the two ends of a

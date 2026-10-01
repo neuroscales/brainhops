@@ -137,13 +137,13 @@ class Sequence(SequenceMixin, Transformation):
 
     transformations = smartproperty("transformations")
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def input(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[0].input
         return None
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def output(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[-1].output
@@ -254,10 +254,10 @@ class Sequence(SequenceMixin, Transformation):
         inp, out = self.input, self.output
         flattened = []
         for i, t in enumerate(self.transformations):
-            first, last = i == 0, i == len(self) - 1
-            if first and _is_unknown(t.input) and not _is_unknown(inp):
+            is_first, is_last = i == 0, i == len(self) - 1
+            if is_first and _is_unknown(t.input) and not _is_unknown(inp):
                 t = t.to(input=inp)
-            elif last and _is_unknown(t.output) and not _is_unknown(out):
+            elif is_last and _is_unknown(t.output) and not _is_unknown(out):
                 t = t.to(output=out)
             if isinstance(t, Sequence):
                 # A `Geometry` child contributes its grid followed by its

@@ -119,11 +119,11 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
     # swapped. An endpoint declared on the wrapper still wins -- that is
     # what `smartproperty` does -- so an explicit override is honoured.
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def input(self) -> tx.Optional["CoordinateSystem"]:
         return self.forward.output if self.forward is not None else None
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def output(self) -> tx.Optional["CoordinateSystem"]:
         return self.forward.input if self.forward is not None else None
 

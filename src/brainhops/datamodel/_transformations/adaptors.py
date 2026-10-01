@@ -124,7 +124,7 @@ def bridge(
     A bridge is built between two closed systems. When either system is
     missing or open (its axes hold `...`, or are `None`), it states only
     some of its axes. The identity is returned when the two are
-    [`compatible`][brainhops.datamodel.systems.CoordinateSystem.compatible],
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
     so that what is not known is never a reason to refuse. Otherwise the
     bridge would have to reorder, rescale, or flip axes that the open
     system does not describe, so an [`AdaptationError`][] is raised rather
@@ -168,7 +168,7 @@ def bridge(
     if _ndim_of(source) is None or _ndim_of(target) is None:
         if _compatible(source, target):
             return Identity(input=source, output=target)
-        _open_report(source, target)
+        _cannot_bridge_report(source, target)
     if source == target:
         return Identity(input=source, output=target)
 
@@ -469,7 +469,7 @@ def _unmatched_report(
     )
 
 
-def _open_report(
+def _cannot_bridge_report(
     source: tx.Optional[CoordinateSystem],
     target: tx.Optional[CoordinateSystem],
 ) -> tx.NoReturn:

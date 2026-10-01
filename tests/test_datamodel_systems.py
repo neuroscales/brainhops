@@ -1,6 +1,6 @@
 """Tests for coordinate systems: open systems (`...`), positional and
 named access to their axes, and the operations that close, restrict and
-place them."""
+embed them."""
 
 import pytest
 import typing_extensions as tx
@@ -380,11 +380,11 @@ def test_expand_refuses_a_non_integer(ndim: object) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_take_from_a_closed_system() -> None:
+def test_restrict_from_a_closed_system() -> None:
     system = CS(name="s", axes=[X, Y, T])
-    assert system.take([2, 0]) == CS(axes=[T, X])
-    assert system.take(["t", -2]) == CS(axes=[T, Y])
-    assert system.take([]) == CS(axes=[])
+    assert system.restrict([2, 0]) == CS(axes=[T, X])
+    assert system.restrict(["t", -2]) == CS(axes=[T, Y])
+    assert system.restrict([]) == CS(axes=[])
 
 
 @pytest.mark.parametrize(
@@ -395,37 +395,39 @@ def test_take_from_a_closed_system() -> None:
         ("end", [1, 0, 2], [T, X, Axis()]),
     ],
 )
-def test_take_from_an_open_system(
+def test_restrict_from_an_open_system(
     layout: str, refs: list, expected: list
 ) -> None:
     system = CS(axes=OPEN_LAYOUTS[layout])
-    taken = system.take(refs)
-    assert taken == CS(axes=expected)
-    assert taken.ndim == len(refs)
-    assert system.take(["t", "x"]) == CS(axes=[T, X])
+    restricted = system.restrict(refs)
+    assert restricted == CS(axes=expected)
+    assert restricted.ndim == len(refs)
+    assert system.restrict(["t", "x"]) == CS(axes=[T, X])
 
 
-def test_take_from_an_unknown_system(unknown_axes: tx.Optional[list]) -> None:
-    taken = CS(axes=unknown_axes).take([0, 3])
-    assert taken == CS(axes=[Axis(), Axis()])
+def test_restrict_from_an_unknown_system(
+    unknown_axes: tx.Optional[list],
+) -> None:
+    restricted = CS(axes=unknown_axes).restrict([0, 3])
+    assert restricted == CS(axes=[Axis(), Axis()])
 
 
-def test_take_refuses_a_repeated_axis() -> None:
+def test_restrict_refuses_a_repeated_axis() -> None:
     for refs in ([0, 0], [0, -2], ["x", 0]):
         with pytest.raises(ValueError, match="more than once"):
-            CS(axes=[X, Y]).take(refs)
+            CS(axes=[X, Y]).restrict(refs)
 
 
-def test_take_refuses_a_string() -> None:
+def test_restrict_refuses_a_string() -> None:
     with pytest.raises(TypeError, match="single string"):
-        CS(axes=[X, Y]).take("x")  # type: ignore[arg-type]
+        CS(axes=[X, Y]).restrict("x")  # type: ignore[arg-type]
 
 
-def test_take_raises_as_position_does() -> None:
+def test_restrict_raises_as_position_does() -> None:
     with pytest.raises(IndexError):
-        CS(axes=[X, Y]).take([2])
+        CS(axes=[X, Y]).restrict([2])
     with pytest.raises(ValueError):
-        CS(axes=[X, ...]).take(["y"])
+        CS(axes=[X, ...]).restrict(["y"])
 
 
 # ----------------------------------------------------------------------
@@ -433,80 +435,80 @@ def test_take_raises_as_position_does() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_place_with_an_unknown_size() -> None:
-    placed = CS(name="s", axes=[X, Y]).place([2, 0])
-    assert placed == CS(axes=[Y, Axis(), X, ...])
-    assert placed.ndim is None
+def test_embed_with_an_unknown_size() -> None:
+    embedded = CS(name="s", axes=[X, Y]).embed([2, 0])
+    assert embedded == CS(axes=[Y, Axis(), X, ...])
+    assert embedded.ndim is None
 
 
-def test_place_with_a_known_size() -> None:
-    placed = CS(axes=[X, Y]).place([2, 0], ndim=4)
-    assert placed == CS(axes=[Y, Axis(), X, Axis()])
-    assert placed.ndim == 4
+def test_embed_with_a_known_size() -> None:
+    embedded = CS(axes=[X, Y]).embed([2, 0], ndim=4)
+    assert embedded == CS(axes=[Y, Axis(), X, Axis()])
+    assert embedded.ndim == 4
 
 
-def test_place_is_the_inverse_of_take() -> None:
+def test_embed_is_the_inverse_of_restrict() -> None:
     system = CS(axes=[X, Y, T])
     positions = [4, 1, 2]
-    assert system.place(positions).take(positions) == system
-    assert system.place(positions, ndim=6).take(positions) == system
+    assert system.embed(positions).restrict(positions) == system
+    assert system.embed(positions, ndim=6).restrict(positions) == system
 
 
-def test_place_keeps_the_positions_take_reads() -> None:
-    # The placed system reads back, at each known position, the axis that
-    # was placed there: the composers check discrete axes this way.
-    placed = CS(axes=[X, Axis(name="c", discrete=True)]).place([0, 3])
-    assert placed.axis(3).discrete is True
-    assert placed.axis(1) == Axis()
-    assert placed.axis(7) == Axis()
+def test_embed_keeps_the_positions_restrict_reads() -> None:
+    # The embedded system reads back, at each known position, the axis that
+    # was embedded there: the composers check discrete axes this way.
+    embedded = CS(axes=[X, Axis(name="c", discrete=True)]).embed([0, 3])
+    assert embedded.axis(3).discrete is True
+    assert embedded.axis(1) == Axis()
+    assert embedded.axis(7) == Axis()
 
 
-def test_place_an_open_system(layout: str) -> None:
+def test_embed_an_open_system(layout: str) -> None:
     # An open system is first closed to one axis per position: wherever
     # `...` sits, two positions close it to `[X, T]`.
     system = CS(axes=OPEN_LAYOUTS[layout])
-    assert system.place([2, 0], ndim=3) == CS(axes=[T, Axis(), X])
-    assert system.place([2, 0]) == CS(axes=[T, Axis(), X, ...])
+    assert system.embed([2, 0], ndim=3) == CS(axes=[T, Axis(), X])
+    assert system.embed([2, 0]) == CS(axes=[T, Axis(), X, ...])
 
 
-def test_place_an_open_system_with_room_for_unknown_axes() -> None:
-    placed = CS(axes=[X, ...]).place([1, 0, 3], ndim=4)
-    assert placed == CS(axes=[Axis(), X, Axis(), Axis()])
+def test_embed_an_open_system_with_room_for_unknown_axes() -> None:
+    embedded = CS(axes=[X, ...]).embed([1, 0, 3], ndim=4)
+    assert embedded == CS(axes=[Axis(), X, Axis(), Axis()])
 
 
-def test_place_an_unknown_system(unknown_axes: tx.Optional[list]) -> None:
-    placed = CS(axes=unknown_axes).place([1])
-    assert placed == CS(axes=[Axis(), Axis(), ...])
-    assert CS(axes=unknown_axes).place([]) == CS(axes=[...])
+def test_embed_an_unknown_system(unknown_axes: tx.Optional[list]) -> None:
+    embedded = CS(axes=unknown_axes).embed([1])
+    assert embedded == CS(axes=[Axis(), Axis(), ...])
+    assert CS(axes=unknown_axes).embed([]) == CS(axes=[...])
 
 
-def test_place_nothing_with_a_known_size() -> None:
-    assert CS(axes=[]).place([], ndim=2) == CS(axes=[Axis(), Axis()])
+def test_embed_nothing_with_a_known_size() -> None:
+    assert CS(axes=[]).embed([], ndim=2) == CS(axes=[Axis(), Axis()])
 
 
-def test_place_refuses_a_count_mismatch() -> None:
+def test_embed_refuses_a_count_mismatch() -> None:
     with pytest.raises(ValueError, match="system of 2 axes at 1"):
-        CS(axes=[X, Y]).place([0])
+        CS(axes=[X, Y]).embed([0])
     with pytest.raises(ValueError, match="system of 2 axes at 3"):
-        CS(axes=[X, Y]).place([0, 1, 2])
+        CS(axes=[X, Y]).embed([0, 1, 2])
     with pytest.raises(ValueError, match="2 explicit axes at 1"):
-        CS(axes=[X, ..., Y]).place([0])
+        CS(axes=[X, ..., Y]).embed([0])
 
 
-def test_place_refuses_bad_positions() -> None:
+def test_embed_refuses_bad_positions() -> None:
     with pytest.raises(ValueError, match="negative"):
-        CS(axes=[X]).place([-1])
+        CS(axes=[X]).embed([-1])
     with pytest.raises(ValueError, match="more than once"):
-        CS(axes=[X, Y]).place([1, 1])
+        CS(axes=[X, Y]).embed([1, 1])
     with pytest.raises(TypeError):
-        CS(axes=[X]).place(["x"])  # type: ignore[list-item]
+        CS(axes=[X]).embed(["x"])  # type: ignore[list-item]
     with pytest.raises(TypeError):
-        CS(axes=[X]).place(0)  # type: ignore[arg-type]
+        CS(axes=[X]).embed(0)  # type: ignore[arg-type]
 
 
-def test_place_refuses_a_size_that_is_too_small() -> None:
+def test_embed_refuses_a_size_that_is_too_small() -> None:
     with pytest.raises(ValueError, match="position 2 of a space of 2"):
-        CS(axes=[X]).place([2], ndim=2)
+        CS(axes=[X]).embed([2], ndim=2)
 
 
 # ----------------------------------------------------------------------
@@ -515,11 +517,11 @@ def test_place_refuses_a_size_that_is_too_small() -> None:
 
 
 def test_compatible_closed_systems() -> None:
-    assert CS(axes=[X, Y]).compatible(CS(axes=[X, Y]))
-    assert CS(axes=[X, Axis()]).compatible(CS(axes=[Axis(), Y]))
-    assert not CS(axes=[X, Y]).compatible(CS(axes=[Y, X]))
-    assert not CS(axes=[X, Y]).compatible(CS(axes=[X, Y, Z]))
-    assert CS(axes=[]).compatible(CS(axes=[]))
+    assert CS(axes=[X, Y]).compatible_with(CS(axes=[X, Y]))
+    assert CS(axes=[X, Axis()]).compatible_with(CS(axes=[Axis(), Y]))
+    assert not CS(axes=[X, Y]).compatible_with(CS(axes=[Y, X]))
+    assert not CS(axes=[X, Y]).compatible_with(CS(axes=[X, Y, Z]))
+    assert CS(axes=[]).compatible_with(CS(axes=[]))
 
 
 @pytest.mark.parametrize(
@@ -543,8 +545,8 @@ def test_compatible_open_and_closed(
     layout: str, closed: list, ok: bool
 ) -> None:
     system = CS(axes=OPEN_LAYOUTS[layout])
-    assert system.compatible(CS(axes=closed)) is ok
-    assert CS(axes=closed).compatible(system) is ok
+    assert system.compatible_with(CS(axes=closed)) is ok
+    assert CS(axes=closed).compatible_with(system) is ok
 
 
 @pytest.mark.parametrize(
@@ -561,8 +563,8 @@ def test_compatible_open_and_closed(
     ],
 )
 def test_compatible_open_systems(first: list, second: list, ok: bool) -> None:
-    assert CS(axes=first).compatible(CS(axes=second)) is ok
-    assert CS(axes=second).compatible(CS(axes=first)) is ok
+    assert CS(axes=first).compatible_with(CS(axes=second)) is ok
+    assert CS(axes=second).compatible_with(CS(axes=first)) is ok
 
 
 def test_an_unknown_system_is_compatible_with_every_system(
@@ -570,9 +572,9 @@ def test_an_unknown_system_is_compatible_with_every_system(
 ) -> None:
     unknown = CS(axes=unknown_axes)
     for axes in (None, [...], [], [X], [X, ...], [..., T], [X, Y, Z]):
-        assert unknown.compatible(CS(axes=axes))
-        assert CS(axes=axes).compatible(unknown)
-        assert CS(axes=axes).compatible(None)
+        assert unknown.compatible_with(CS(axes=axes))
+        assert CS(axes=axes).compatible_with(unknown)
+        assert CS(axes=axes).compatible_with(None)
         assert S._compatible(None, CS(axes=axes))
 
 
@@ -580,14 +582,14 @@ def test_compatible_ras_with_time() -> None:
     # The example of the design: `[RAS axes, ...]` is compatible with a
     # closed RAS and time system.
     ras = list(RASCoordinateSystem().axes)
-    assert CS(axes=[*ras, ...]).compatible(CS(axes=[*ras, TimeAxis()]))
-    assert CS(axes=[*ras, ...]).compatible(RASCoordinateSystem())
+    assert CS(axes=[*ras, ...]).compatible_with(CS(axes=[*ras, TimeAxis()]))
+    assert CS(axes=[*ras, ...]).compatible_with(RASCoordinateSystem())
 
 
 def test_compatible_ignores_the_names_of_the_systems() -> None:
-    assert CS(name="a", axes=[X]).compatible(CS(name="b", axes=[X]))
+    assert CS(name="a", axes=[X]).compatible_with(CS(name="b", axes=[X]))
 
 
 def test_compatible_refuses_a_non_system() -> None:
     with pytest.raises(TypeError):
-        CS().compatible([X])  # type: ignore[arg-type]
+        CS().compatible_with([X])  # type: ignore[arg-type]

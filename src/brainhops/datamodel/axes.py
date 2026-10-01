@@ -63,7 +63,7 @@ class Axis(DataModelBase):
     unknown.
 
     Equality (`==`) is strict: two axes are equal when they are of the
-    same class and every field is equal. [`compatible`][]
+    same class and every field is equal. [`compatible_with`][]
     is the looser question of whether two descriptions could be of the
     same axis.
     """
@@ -74,7 +74,7 @@ class Axis(DataModelBase):
     discrete: tx.Optional[bool] = None
     orientation: tx.Optional[Orientation] = None
 
-    def compatible(self, other: "Axis") -> bool:
+    def compatible_with(self, other: "Axis") -> bool:
         """Whether `self` and `other` could describe the same axis.
 
         Two axes are compatible when every field that is set (not `None`)
@@ -103,11 +103,11 @@ class Axis(DataModelBase):
 
         !!! example
             ```pycon
-            >>> Axis(name="x").compatible(Axis(name="x", unit="mm"))
+            >>> Axis(name="x").compatible_with(Axis(name="x", unit="mm"))
             True
-            >>> Axis(name="x").compatible(Axis(name="y"))
+            >>> Axis(name="x").compatible_with(Axis(name="y"))
             False
-            >>> SpatialAxis().compatible(Axis(unit="micrometer"))
+            >>> SpatialAxis().compatible_with(Axis(unit="micrometer"))
             False
             ```
         """
@@ -118,12 +118,12 @@ class Axis(DataModelBase):
             )
         return not _conflicts(self, other)
 
-    def merge(self, other: "Axis") -> "Axis":
+    def merge_with(self, other: "Axis") -> "Axis":
         """Combine what `self` and `other` know about the same axis.
 
         Each field of the result is the value set on either side, or
         `None` if neither side sets it. The two axes must be
-        [`compatible`][]: a field that both set must be set
+        [`compatible_with`][]: a field that both set must be set
         to the same value.
 
         The result is an instance of the more derived of the two classes,
@@ -152,9 +152,9 @@ class Axis(DataModelBase):
 
         !!! example
             ```pycon
-            >>> Axis(name="x").merge(SpatialAxis(unit="micrometer"))
+            >>> Axis(name="x").merge_with(SpatialAxis(unit="micrometer"))
             SpatialAxis(name='x', unit='micrometer')
-            >>> Axis(name="x").merge(Axis(name="y"))
+            >>> Axis(name="x").merge_with(Axis(name="y"))
             Traceback (most recent call last):
               ...
             ValueError: Cannot merge axes that disagree on name: 'x' != 'y'.

@@ -337,11 +337,11 @@ def test_a_known_endpoint_is_propagated_onto_an_unknown_one(
     assert seq._flattened().transformations[0].input == _xyz()
 
 
-def test_smartproperty_fallback_keeps_the_stored_value() -> None:
+def test_smartproperty_missing_keeps_the_stored_value() -> None:
     class Box(DataModelBase):
         _value: tx.Optional[CS] = None
 
-        @smartproperty(fallback_when=lambda v: v == None)  # noqa: E711
+        @smartproperty(missing=lambda v: v == None)  # noqa: E711
         def value(self) -> CS:
             return _xyz()
 

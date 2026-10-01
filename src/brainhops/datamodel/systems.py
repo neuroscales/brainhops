@@ -70,7 +70,7 @@ class CoordinateSystem(DataModelBase, eq=False):
         * `[Axis(name="x"), ...]` says that the first axis is `x`.
         * `axes=None` means the same as `axes=[...]`: nothing is known.
           It is stored as given, but every method, equality and
-          [`compatible`][] treat the two spellings identically.
+          [`compatible_with`][] treat the two spellings identically.
 
         The `...` entry is never counted as an axis. Classes with a fixed
         number of axes, such as [`CoordinateSystem3D`][], are always
@@ -81,7 +81,7 @@ class CoordinateSystem(DataModelBase, eq=False):
         same name, and have equal axes, where `axes=None` equals
         `axes=[...]`. A plain `CoordinateSystem` with no name and no known
         axis, which says nothing at all, also equals `None`, the missing
-        endpoint of a transformation. [`compatible`][] is the looser
+        endpoint of a transformation. [`compatible_with`][] is the looser
         question of whether two systems could describe the same space.
     """
 
@@ -307,7 +307,7 @@ class CoordinateSystem(DataModelBase, eq=False):
         fill = [Axis() for _ in range(ndim - explicit)]
         return replace(self, axes=prefix + fill + suffix)
 
-    def take(
+    def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]
     ) -> "CoordinateSystem":
         """The system of the axes at some positions of this system.
@@ -340,9 +340,9 @@ class CoordinateSystem(DataModelBase, eq=False):
         !!! example
             ```pycon
             >>> x, y, z = Axis(name="x"), Axis(name="y"), Axis(name="z")
-            >>> CoordinateSystem(axes=[x, y, z]).take(["z", 0])
+            >>> CoordinateSystem(axes=[x, y, z]).restrict(["z", 0])
             CoordinateSystem(axes=[Axis(name='z'), Axis(name='x')])
-            >>> CoordinateSystem(axes=[x, ...]).take([0, 1])
+            >>> CoordinateSystem(axes=[x, ...]).restrict([0, 1])
             CoordinateSystem(axes=[Axis(name='x'), Axis()])
             ```
         """
@@ -351,15 +351,15 @@ class CoordinateSystem(DataModelBase, eq=False):
         _check_unique(positions, "refs")
         return CoordinateSystem(axes=[self.axis(p) for p in positions])
 
-    def place(
+    def embed(
         self,
         positions: tx.Iterable[int],
         ndim: tx.Optional[int] = None,
     ) -> "CoordinateSystem":
         """The system of a larger space in which this system's axes sit.
 
-        This is the inverse of [`take`][]: axis `j` of this system is
-        placed at `positions[j]` of the result, and every other position
+        This is the inverse of [`restrict`][]: axis `j` of this system is
+        embedded at `positions[j]` of the result, and every other position
         holds an unknown `Axis()`. An open system is first closed to
         `len(positions)` axes, as by [`expand`][].
 
@@ -373,7 +373,7 @@ class CoordinateSystem(DataModelBase, eq=False):
         ndim : int, optional
             The number of axes of the larger space. When it is not given,
             the number is unknown, and the result ends with `...` after
-            the last placed axis.
+            the last embedded axis.
 
         Returns
         -------
@@ -393,9 +393,9 @@ class CoordinateSystem(DataModelBase, eq=False):
         !!! example
             ```pycon
             >>> x = Axis(name="x")
-            >>> CoordinateSystem(axes=[x]).place([1])
+            >>> CoordinateSystem(axes=[x]).embed([1])
             CoordinateSystem(axes=[Axis(), Axis(name='x'), Ellipsis])
-            >>> CoordinateSystem(axes=[x]).place([1], ndim=3)
+            >>> CoordinateSystem(axes=[x]).embed([1], ndim=3)
             CoordinateSystem(axes=[Axis(), Axis(name='x'), Axis()])
             ```
         """
@@ -414,7 +414,7 @@ class CoordinateSystem(DataModelBase, eq=False):
             count > len(positions)
         ):
             raise ValueError(
-                f"Cannot place a system of {count}"
+                f"Cannot embed a system of {count}"
                 f"{'' if suffix is None else ' explicit'} axes at "
                 f"{len(positions)} positions."
             )
@@ -424,7 +424,7 @@ class CoordinateSystem(DataModelBase, eq=False):
             ndim = _as_int(ndim, "ndim")
             if ndim < size:
                 raise ValueError(
-                    f"Cannot place an axis at position {size - 1} of a "
+                    f"Cannot embed an axis at position {size - 1} of a "
                     f"space of {ndim} axes."
                 )
             size = ndim
@@ -435,12 +435,12 @@ class CoordinateSystem(DataModelBase, eq=False):
             full.append(...)
         return CoordinateSystem(axes=full)
 
-    def compatible(self, other: tx.Optional["CoordinateSystem"]) -> bool:
+    def compatible_with(self, other: tx.Optional["CoordinateSystem"]) -> bool:
         """Whether `self` and `other` could describe the same space.
 
         Two systems are compatible when some choice of the axes that each
         `...` stands for makes them match axis by axis, each pair being
-        [`Axis.compatible`][brainhops.datamodel.axes.Axis.compatible].
+        [`Axis.compatible_with`][brainhops.datamodel.axes.Axis.compatible_with].
         Only the axes are compared, not the names of the systems. `None`
         is read as a system about which nothing is known, which is
         compatible with every system.
@@ -462,11 +462,11 @@ class CoordinateSystem(DataModelBase, eq=False):
         !!! example
             ```pycon
             >>> x, t = SpatialAxis(name="x"), TimeAxis()
-            >>> CoordinateSystem(axes=[x, ...]).compatible(
+            >>> CoordinateSystem(axes=[x, ...]).compatible_with(
             ...     CoordinateSystem(axes=[x, Axis(), t])
             ... )
             True
-            >>> CoordinateSystem(axes=[..., t]).compatible(
+            >>> CoordinateSystem(axes=[..., t]).compatible_with(
             ...     CoordinateSystem(axes=[x])
             ... )
             False
@@ -589,7 +589,7 @@ def _compatible(
     first: tx.Optional[CoordinateSystem],
     second: tx.Optional[CoordinateSystem],
 ) -> bool:
-    # `CoordinateSystem.compatible`, for systems that may be missing.
+    # `CoordinateSystem.compatible_with`, for systems that may be missing.
     p1, s1 = _split(first)
     p2, s2 = _split(second)
     if s1 is None and s2 is None:
@@ -617,7 +617,7 @@ def _compatible(
 
 
 def _pairwise(first: tx.List[Axis], second: tx.List[Axis]) -> bool:
-    return all(a.compatible(b) for a, b in zip(first, second))
+    return all(a.compatible_with(b) for a, b in zip(first, second))
 
 
 def _name(axis: tx.Any) -> tx.Optional[str]:

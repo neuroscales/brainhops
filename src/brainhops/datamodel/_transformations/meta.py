@@ -109,12 +109,12 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- properties ---------------------------------------------------
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def input(self) -> tx.Optional["CoordinateSystem"]:
         system = getattr(self.transformation, "input", None)
         return _subsystem(system, self.input_axes, full=self._input)
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def output(self) -> tx.Optional["CoordinateSystem"]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
@@ -194,7 +194,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- properties ---------------------------------------------------
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def input(self) -> tx.Optional["CoordinateSystem"]:
         # A side that says nothing about the system defers to the other.
         if self.forward is not None and not _is_unknown(self.forward.input):
@@ -203,7 +203,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
             return self.backward.output
         return None
 
-    @smartproperty(fallback_when=_is_unknown)
+    @smartproperty(missing=_is_unknown)
     def output(self) -> tx.Optional["CoordinateSystem"]:
         if self.forward is not None and not _is_unknown(self.forward.output):
             return self.forward.output
@@ -260,12 +260,12 @@ def _subsystem(
 
     When a declared endpoint (`full`) is available, it is returned as is.
     Otherwise the full-space system is derived by
-    [`CoordinateSystem.place`][brainhops.datamodel.systems.CoordinateSystem.place]:
+    [`CoordinateSystem.embed`][brainhops.datamodel.systems.CoordinateSystem.embed]:
     the inner system's axis `j` sits at position `index[j]`, every other
     position before the last one holds an unknown [`Axis`][], and the
     system ends with `...`. The positions are known, but the number of
     axes of the full space is not, so the derived system is open. An
-    inner system that states no axis has nothing to place, and is
+    inner system that states no axis has nothing to embed, and is
     returned as is.
     """
     if not _is_unknown(full):
@@ -275,9 +275,9 @@ def _subsystem(
     prefix, suffix = _split(system)
     if suffix is not None and not prefix and not suffix:
         return system
-    placed = system.place([int(i) for i in index])
+    embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None
-    return replace(placed, name=name)
+    return replace(embedded, name=name)
 
 
 def _close_subspace(
