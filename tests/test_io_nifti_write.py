@@ -581,7 +581,7 @@ def test_the_flip_handles_an_arbitrary_orientation(tmp_path) -> None:  # noqa: A
     """
     from brainhops.datamodel import axes as _axes
 
-    ars = CoordinateSystem(name=None, axes=[_axes.A, _axes.R, _axes.S])
+    ars = CoordinateSystem(name=None, axes=[_axes.A(), _axes.R(), _axes.S()])
     affine = Affine(
         matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3],
         input=VoxelCoordinateSystem(),

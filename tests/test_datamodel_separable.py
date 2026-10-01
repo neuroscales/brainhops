@@ -700,7 +700,7 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     world4 = CoordinateSystem(
-        name="world4", axes=[R, A, S, TimeAxis(name="t")]
+        name="world4", axes=[R(), A(), S(), TimeAxis(name="t")]
     )
     vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
     with backend("numpy"):
@@ -1061,7 +1061,7 @@ def _demonstration_image() -> tuple:
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
     vox4 = CoordinateSystem(name="voxel4", axes=[xax, yax, zax, _time()])
     world4 = CoordinateSystem(
-        name="world4", axes=[R, A, S, TimeAxis(name="t")]
+        name="world4", axes=[R(), A(), S(), TimeAxis(name="t")]
     )
     vox3 = CoordinateSystem(name="vox3", axes=[xax, yax, zax])
     rng = np.random.default_rng(0)

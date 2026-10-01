@@ -9,27 +9,21 @@ __all__ = [
     "CoordinateAxis",
     "R",
     "LR",
-    "rightToLeftAxis",
     "RightToLeftAxis",
     "L",
     "RL",
-    "leftToRightAxis",
     "LeftToRightAxis",
     "A",
     "PA",
-    "anteriorToPosteriorAxis",
     "AnteriorToPosteriorAxis",
     "P",
     "AP",
-    "posteriorToAnteriorAxis",
     "PosteriorToAnteriorAxis",
     "S",
     "IS",
-    "inferiorToSuperiorAxis",
     "InferiorToSuperiorAxis",
     "I",
     "SI",
-    "superiorToInferiorAxis",
     "SuperiorToInferiorAxis",
     "vector_axis",
     "AxisError",
@@ -330,30 +324,28 @@ AxisIS: tx.TypeAlias = InferiorToSuperiorAxis
 AxisSI: tx.TypeAlias = SuperiorToInferiorAxis
 
 
-R = LR = leftToRightAxis = LeftToRightAxis()
-"""Canonical instance of a left-to-right anatomical axis."""
+# Short names. These are the classes, not instances: an axis is mutable,
+# so a module-level instance would be shared by every system that took it.
+# Build one where it is needed -- `R()`, `R(unit="mm")`, `R(name="x")` --
+# and test with `isinstance(axis, R)`.
 
-L = RL = rightToLeftAxis = RightToLeftAxis()
-"""Canonical instance of a right-to-left anatomical axis."""
+R = LR = LeftToRightAxis
+"""A left-to-right anatomical axis (coordinates increase toward the right)."""
 
-A = PA = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
-"""Canonical instance of a posterior-to-anterior anatomical axis."""
+L = RL = RightToLeftAxis
+"""A right-to-left anatomical axis (coordinates increase toward the left)."""
 
-P = AP = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
-"""Canonical instance of an anterior-to-posterior anatomical axis."""
+A = PA = PosteriorToAnteriorAxis
+"""A posterior-to-anterior anatomical axis (increasing toward the front)."""
 
-S = IS = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
-"""Canonical instance of an inferior-to-superior anatomical axis."""
+P = AP = AnteriorToPosteriorAxis
+"""An anterior-to-posterior anatomical axis (increasing toward the back)."""
 
-I = SI = superiorToInferiorAxis = SuperiorToInferiorAxis()
-"""Canonical instance of a superior-to-inferior anatomical axis."""
+S = IS = InferiorToSuperiorAxis
+"""An inferior-to-superior anatomical axis (increasing toward the top)."""
 
-# Rx = leftToRightAxis = LeftToRightAxis(name="x")
-# Lx = rightToLeftAxis = RightToLeftAxis(name="x")
-# Ay = posteriorToAnteriorAxis = PosteriorToAnteriorAxis(name="y")
-# Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
-# Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
-# Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")
+I = SI = SuperiorToInferiorAxis
+"""A superior-to-inferior anatomical axis (increasing toward the bottom)."""
 
 
 # --- IO helpers --------------------------------------------------------

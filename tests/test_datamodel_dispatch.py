@@ -129,7 +129,7 @@ def test_a_singleton_orientation_cannot_be_given_another_value() -> None:
         LeftToRight(value="right-to-left")
     # ... and the singleton was not changed on the way.
     assert LeftToRight().value == "left-to-right"
-    assert ax.R.orientation.value == "left-to-right"
+    assert ax.R().orientation.value == "left-to-right"
 
 
 def test_a_singleton_orientation_cannot_be_subclassed() -> None:
@@ -159,7 +159,7 @@ def _plain(n: int, unit: object = None) -> list:
 
 
 def _oriented(code: str, unit: object = None) -> list:
-    return [type(getattr(ax, letter))(unit=unit) for letter in code]
+    return [getattr(ax, letter)(unit=unit) for letter in code]
 
 
 @pytest.mark.parametrize(
@@ -292,7 +292,7 @@ def test_array_systems_count_samples_by_default(name: str) -> None:
 
 
 def test_ras_dispatch_follows_the_orientations() -> None:
-    assert type(cs.CoordinateSystem(axes=[ax.R, ax.A, ax.S])) is (
+    assert type(cs.CoordinateSystem(axes=[ax.R(), ax.A(), ax.S()])) is (
         cs.RASCoordinateSystem
     )
     # A system that is not RAS-oriented is not read as one, even in mm.
@@ -344,36 +344,63 @@ def test_no_system_is_ambiguous() -> None:
 
 
 # ----------------------------------------------------------------------
-#   CANONICAL AXES NEVER LEAK INTO SYSTEMS
+#   NO SHARED AXIS INSTANCES
 # ----------------------------------------------------------------------
 
-_CANONICAL = (ax.R, ax.L, ax.A, ax.P, ax.S, ax.I)
+_SHORT = {
+    "R": ax.LeftToRightAxis,
+    "LR": ax.LeftToRightAxis,
+    "L": ax.RightToLeftAxis,
+    "RL": ax.RightToLeftAxis,
+    "A": ax.PosteriorToAnteriorAxis,
+    "PA": ax.PosteriorToAnteriorAxis,
+    "P": ax.AnteriorToPosteriorAxis,
+    "AP": ax.AnteriorToPosteriorAxis,
+    "S": ax.InferiorToSuperiorAxis,
+    "IS": ax.InferiorToSuperiorAxis,
+    "I": ax.SuperiorToInferiorAxis,
+    "SI": ax.SuperiorToInferiorAxis,
+}
+
+
+@pytest.mark.parametrize("short, cls", _SHORT.items())
+def test_short_axis_names_are_classes(short: str, cls: type) -> None:
+    # `axes.R` is the class, not a shared instance: each call builds a new
+    # axis, and `isinstance(axis, R)` reads as it should.
+    assert getattr(ax, short) is cls
+    first, second = cls(), cls(unit="mm")
+    assert first is not second
+    assert isinstance(first, getattr(ax, short))
+
+
+def test_the_axes_module_holds_no_axis_instance() -> None:
+    assert not [
+        name for name, value in vars(ax).items() if isinstance(value, ax.Axis)
+    ]
 
 
 @pytest.mark.parametrize(
     "name", [name for name in cs.__all__ if name != "PhysicalCoordinateSystem"]
 )
-def test_default_systems_do_not_hold_the_canonical_axes(name: str) -> None:
-    # The module-level `R`, `A`, `S`, ... are mutable, so a default system
-    # must hold axes of its own: changing one of them leaves the canonical
-    # axes untouched.
+def test_two_default_systems_share_no_axis_with_another_class(
+    name: str,
+) -> None:
+    # A default system holds axes of its own class's making: no axis
+    # object is shared with the default of another system class.
     system = getattr(cs, name)()
-    names = [axis.name for axis in _CANONICAL]
-    for axis in system.axes or ():
-        assert all(axis is not canonical for canonical in _CANONICAL)
-        before = axis.name
-        try:
-            axis.name = "changed"
-            assert [axis.name for axis in _CANONICAL] == names
-        finally:
-            axis.name = before
+    mine = {id(axis) for axis in system.axes or ()}
+    for other in cs.__all__:
+        if other in (name, "PhysicalCoordinateSystem"):
+            continue
+        theirs = getattr(cs, other)().axes or ()
+        assert not mine & {id(axis) for axis in theirs}
 
 
 def test_the_singleton_orientations_are_frozen() -> None:
     # Every axis that points left-to-right holds the one `LeftToRight`, so
     # it cannot be changed through any of them.
     with pytest.raises(AttributeError):
-        ax.R.orientation.value = "right-to-left"
+        ax.R().orientation.value = "right-to-left"
     with pytest.raises(AttributeError):
         cs.RASmm().axes[0].orientation.value = "right-to-left"
     assert LeftToRight().value == "left-to-right"

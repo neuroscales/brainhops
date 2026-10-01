@@ -3,16 +3,14 @@ from brainhops.datamodel import axes as _axes
 from brainhops.datamodel import systems as _systems
 
 # ITK places everything in LPS millimetres. The oriented axes of
-# `brainhops.datamodel.axes` leave their unit unspecified, so the unit is
-# given here, on axes built for each system rather than on the shared
-# module-level ones.
+# `brainhops.datamodel.axes` leave their unit unspecified, so it is given
+# here.
 _MM = "mm"
 
 
 def _lps_axes(ndim: int) -> tuple:
     """The first `ndim` axes of LPS millimetres, and spatial ones after."""
-    lps = (_axes.RightToLeftAxis, _axes.AnteriorToPosteriorAxis)
-    lps += (_axes.InferiorToSuperiorAxis,)
+    lps = (_axes.L, _axes.P, _axes.S)
     axes = tuple(axis(unit=_MM) for axis in lps[:ndim])
     extra = max(0, ndim - len(lps))
     return axes + tuple(_axes.SpaceAxis(unit=_MM) for _ in range(extra))

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from bagof.magic import replace
 
 from brainhops.datamodel._transformations.adaptors import (
     adapt,
@@ -1453,9 +1452,9 @@ def test_embed_refuses_a_cartesian_field() -> None:
 
 def _discrete_ras_time(name: str) -> CoordinateSystem:
     # A 4D system whose third spatial axis is discrete.
-    discrete_s = replace(S, discrete=True)
+    discrete_s = S(discrete=True)
     return CoordinateSystem(
-        name=name, axes=[R, A, discrete_s, TimeAxis(name="t")]
+        name=name, axes=[R(), A(), discrete_s, TimeAxis(name="t")]
     )
 
 
@@ -1630,7 +1629,7 @@ def _embedded_matrix(spatial: list, unit: str) -> np.ndarray:
         axes=[
             RightToLeftAxis(name="x"),
             PosteriorToAnteriorAxis(name="y"),
-            replace(S, name="z"),
+            S(name="z"),
         ]
     )
     transform = Scaling(scale=np.ones(3), input=sub, output=sub)
