@@ -998,6 +998,14 @@ def test_a_closed_list_still_selects_its_class() -> None:
         (CS, [X, ...], 4, CS),
         (CS, [*_ras(MM), ...], 3, RASmm),
         (CS, [..., *_ras()], 3, RASCoordinateSystem),
+        # The unknown axes are read as the spatial axes the class declares.
+        (
+            SpatialCoordinateSystem,
+            [SpaceAxis(), ...],
+            3,
+            (SpatialCoordinateSystem3D),
+        ),
+        (SpatialCoordinateSystem, [...], 2, SpatialCoordinateSystem2D),
         (
             ArrayCoordinateSystem,
             [Axis(unit=SAMPLE), ...],
@@ -1016,6 +1024,14 @@ def test_expand_selects_the_class_of_the_closed_system(
     assert type(expanded) is closed
     assert type(cls(axes=list(expanded.axes))) is closed
     assert expanded.name == system.name
+
+
+def test_an_axis_list_given_to_expand_is_converted_item_by_item() -> None:
+    # Regression: `expand` handed the class an `AxisList`, which the
+    # optional field takes as it is, so the unknown `Axis()` were not read
+    # as spatial axes, and the closed system was not dispatched.
+    expanded = SpatialCoordinateSystem(axes=[SpaceAxis(), ...]).expand(3)
+    assert all(type(axis) is SpaceAxis for axis in expanded.axes)
 
 
 def test_restrict_and_embed_build_what_their_axes_select() -> None:

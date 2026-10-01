@@ -1010,7 +1010,10 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         included, are kept: the result is of this class, or of the
         subclass that the closed axes select from it (an
         `ArrayCoordinateSystem` closed to two axes is an
-        `ArrayCoordinateSystem2D`). Use it once the number of axes is
+        `ArrayCoordinateSystem2D`). Each unknown `Axis()` is first read as
+        the type of axis the class declares, so a `SpatialCoordinateSystem`
+        closed to three axes has three spatial axes, and is a
+        `SpatialCoordinateSystem3D`. Use it once the number of axes is
         known, for instance from the shape of the data.
 
         Parameters
@@ -1042,7 +1045,14 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         """
         axes = AxisList.of(self)
         expanded = axes.expand(ndim)
-        return self if not axes.is_open else replace(self, axes=expanded)
+        if not axes.is_open:
+            return self
+        # A plain list, which the field converts item by item (and which
+        # the class dispatches on, once converted). An `AxisList` would be
+        # taken as it is, unknown `Axis()` and all, because a union -- the
+        # field is optional -- does not look inside an instance of one of
+        # its members.
+        return replace(self, axes=list(expanded))
 
     def restrict(
         self, refs: tx.Iterable[tx.Union[int, str]]
@@ -1086,7 +1096,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
             CoordinateSystem(axes=[Axis(name='x')])
             ```
         """
-        return CoordinateSystem(axes=AxisList.of(self).restrict(refs))
+        # A plain list, as in `expand`.
+        return CoordinateSystem(axes=list(AxisList.of(self).restrict(refs)))
 
     def embed(
         self,
@@ -1135,8 +1146,9 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
             CoordinateSystem(axes=[Axis(), Axis(name='x'), Axis(), Axis()])
             ```
         """
+        # A plain list, as in `expand`.
         return CoordinateSystem(
-            axes=AxisList.of(self).embed(positions, ndim=ndim)
+            axes=list(AxisList.of(self).embed(positions, ndim=ndim))
         )
 
     def compatible_with(self, other: tx.Optional["CoordinateSystem"]) -> bool:
