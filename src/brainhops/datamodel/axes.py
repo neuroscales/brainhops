@@ -1,15 +1,38 @@
 """Axes of a coordinate system, such as a spatial or a time axis."""
 
 __all__ = [
-    "Axis", "SpaceAxis", "TimeAxis",
-    "ChannelAxis", "DisplacementAxis", "CoordinateAxis",
-    "R", "LR", "rightToLeftAxis", "RightToLeftAxis",
-    "L", "RL", "leftToRightAxis", "LeftToRightAxis",
-    "A", "PA", "anteriorToPosteriorAxis", "AnteriorToPosteriorAxis",
-    "P", "AP", "posteriorToAnteriorAxis", "PosteriorToAnteriorAxis",
-    "S", "IS", "inferiorToSuperiorAxis", "InferiorToSuperiorAxis",
-    "I", "SI", "superiorToInferiorAxis", "SuperiorToInferiorAxis",
-    "vector_axis", "AxisError",
+    "Axis",
+    "SpaceAxis",
+    "TimeAxis",
+    "ChannelAxis",
+    "DisplacementAxis",
+    "CoordinateAxis",
+    "R",
+    "LR",
+    "rightToLeftAxis",
+    "RightToLeftAxis",
+    "L",
+    "RL",
+    "leftToRightAxis",
+    "LeftToRightAxis",
+    "A",
+    "PA",
+    "anteriorToPosteriorAxis",
+    "AnteriorToPosteriorAxis",
+    "P",
+    "AP",
+    "posteriorToAnteriorAxis",
+    "PosteriorToAnteriorAxis",
+    "S",
+    "IS",
+    "inferiorToSuperiorAxis",
+    "InferiorToSuperiorAxis",
+    "I",
+    "SI",
+    "superiorToInferiorAxis",
+    "SuperiorToInferiorAxis",
+    "vector_axis",
+    "AxisError",
 ]
 # dependencies
 import typing_extensions as tx
@@ -32,6 +55,7 @@ from .orientation import (
 from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
 
 # --- Dispatch helpers -------------------------------------------------
+
 
 def _is_space_unit(unit: tx.Optional[Unit]) -> bool:
     """Whether `unit` is a unit of space, unspecified, or the sample.
@@ -59,9 +83,7 @@ def _is_anatomical(orientation: tx.Optional[Orientation]) -> bool:
     return getattr(orientation, "type", None) == "anatomical"
 
 
-def _has_value(
-    value: str
-) -> tx.Callable[[tx.Optional[Orientation]], bool]:
+def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
     """
     Whether `orientation` is an anatomical orientation with the given value.
     """
@@ -69,10 +91,12 @@ def _has_value(
     if not isinstance(value, AnatomicalOrientationValue):
         try:
             value = AnatomicalOrientationValue(value)
-        except ValueError: ...
+        except ValueError:
+            ...
         try:
             value = AnatomicalOrientationValue[value]
-        except KeyError: ...
+        except KeyError:
+            ...
 
     def _check(orientation: tx.Optional[Orientation]) -> bool:
         return getattr(orientation, "value", None) == value
@@ -172,15 +196,13 @@ class OrientedAxis(Axis, on={"orientation": _is_not_none}):
 
 
 class OrientedTimeAxis(
-    TimeAxis, OrientedAxis,
-    on={"orientation": _is_not_none, "type": "time"}
+    TimeAxis, OrientedAxis, on={"orientation": _is_not_none, "type": "time"}
 ):
     """A time axis that carries an orientation."""
 
 
 class OrientedSpaceAxis(
-    SpaceAxis, OrientedAxis,
-    on={"orientation": _is_not_none, "type": "space"}
+    SpaceAxis, OrientedAxis, on={"orientation": _is_not_none, "type": "space"}
 ):
     """A spatial axis that carries an orientation."""
 
@@ -281,7 +303,7 @@ I = SI = superiorToInferiorAxis = SuperiorToInferiorAxis()
 # Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")
 
 
-# --- IO helpes --------------------------------------------------------
+# --- IO helpers --------------------------------------------------------
 
 
 class AxisError(ValueError):

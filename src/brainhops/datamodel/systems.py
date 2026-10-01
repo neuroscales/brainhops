@@ -165,7 +165,8 @@ class ArrayCoordinateSystem2D(CoordinateSystem2D, ArrayCoordinateSystem):
 
 
 ArrayCoordinateSystem.register_polymorph(
-    ArrayCoordinateSystem2D, on={"axes": _is2d})
+    ArrayCoordinateSystem2D, on={"axes": _is2d}
+)
 
 
 class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
@@ -175,7 +176,8 @@ class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
 
 
 ArrayCoordinateSystem.register_polymorph(
-    ArrayCoordinateSystem3D, on={"axes": _is3d})
+    ArrayCoordinateSystem3D, on={"axes": _is3d}
+)
 
 
 class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
@@ -184,7 +186,8 @@ class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
 
 
 CArrayCoordinateSystem.register_polymorph(
-    CArrayCoordinateSystem2D, on={"axes": _is2d})
+    CArrayCoordinateSystem2D, on={"axes": _is2d}
+)
 
 
 class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
@@ -193,7 +196,8 @@ class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
 
 
 CArrayCoordinateSystem.register_polymorph(
-    CArrayCoordinateSystem3D, on={"axes": _is3d})
+    CArrayCoordinateSystem3D, on={"axes": _is3d}
+)
 
 
 class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
@@ -202,7 +206,8 @@ class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
 
 
 FArrayCoordinateSystem.register_polymorph(
-    FArrayCoordinateSystem2D, on={"axes": _is2d})
+    FArrayCoordinateSystem2D, on={"axes": _is2d}
+)
 
 
 class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
@@ -211,7 +216,8 @@ class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
 
 
 FArrayCoordinateSystem.register_polymorph(
-    FArrayCoordinateSystem3D, on={"axes": _is3d})
+    FArrayCoordinateSystem3D, on={"axes": _is3d}
+)
 
 
 # ----------------------------------------------------------------------
@@ -220,9 +226,7 @@ FArrayCoordinateSystem.register_polymorph(
 
 
 def _is_spatial(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return axes is not None and all(
-        axis.type == "space" for axis in axes
-    )
+    return axes is not None and all(axis.type == "space" for axis in axes)
 
 
 def _is_spatial_2d(axes: tx.Optional[tx.List[Axis]]) -> bool:
@@ -250,7 +254,8 @@ class SpatialCoordinateSystem2D(
 
 
 SpatialCoordinateSystem.register_polymorph(
-    SpatialCoordinateSystem2D, on={"axes": _is_spatial_2d})
+    SpatialCoordinateSystem2D, on={"axes": _is_spatial_2d}
+)
 
 
 class SpatialCoordinateSystem3D(
@@ -266,7 +271,8 @@ class SpatialCoordinateSystem3D(
 
 
 SpatialCoordinateSystem.register_polymorph(
-    SpatialCoordinateSystem3D, on={"axes": _is_spatial_3d})
+    SpatialCoordinateSystem3D, on={"axes": _is_spatial_3d}
+)
 
 
 class PixelCoordinateSystem(
@@ -374,8 +380,10 @@ class RASCoordinateSystem(
 
     name: str = "RAS"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
-        _axes.R, _axes.A, _axes.S)
-
+        _axes.R,
+        _axes.A,
+        _axes.S,
+    )
 
 
 class LPSCoordinateSystem(
@@ -390,7 +398,10 @@ class LPSCoordinateSystem(
 
     name: str = "LPS"
     axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
-        _axes.L, _axes.P, _axes.S)
+        _axes.L,
+        _axes.P,
+        _axes.S,
+    )
 
 
 class RSACoordinateSystem(
@@ -405,7 +416,10 @@ class RSACoordinateSystem(
 
     name: str = "RSA"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
-        _axes.LR, _axes.IS, _axes.PA)
+        _axes.LR,
+        _axes.IS,
+        _axes.PA,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -510,7 +524,10 @@ class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     """
 
     name: str = "fRSA"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA,
+    axes: tx.Tuple[
+        _axes.AxisLR,
+        _axes.AxisIS,
+        _axes.AxisPA,
     ] = (
         _axes.AxisLR(name="x"),
         _axes.AxisIS(name="y"),

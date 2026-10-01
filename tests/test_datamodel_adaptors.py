@@ -200,9 +200,7 @@ def _oriented_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[
-            SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)
-        ],
+        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
     )
 
 
@@ -753,9 +751,7 @@ def test_type_group_count_mismatch_raises() -> None:
 def test_shared_name_across_different_types_is_not_matched() -> None:
     # A spatial axis and a time axis that happen to share a name must not be
     # matched: a definite type conflict overrides the shared name.
-    source = CoordinateSystem(
-        name="s", axes=[SpaceAxis(name="t", unit=None)]
-    )
+    source = CoordinateSystem(name="s", axes=[SpaceAxis(name="t", unit=None)])
     target = CoordinateSystem(name="t", axes=[TimeAxis(name="t", unit=None)])
     with pytest.raises(AdaptationError):
         bridge(source, target)
@@ -799,9 +795,7 @@ def _oriented_named_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[
-            SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)
-        ],
+        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
     )
 
 

@@ -54,7 +54,6 @@ def singleton(cls: tx.Type) -> tx.Callable[..., tx.Self]:
     cls.__new__ = __new__
     cls.__init___subclasses__ = __init_subclasses__
 
-
     return cls
 
 
