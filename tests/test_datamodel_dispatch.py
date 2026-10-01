@@ -8,6 +8,7 @@ and that no call is ambiguous.
 
 import pytest
 import typing_extensions as tx
+from bagof.converters import ConversionError
 from bagof.magic import PolymorphError
 
 from brainhops.datamodel import axes as ax
@@ -19,7 +20,7 @@ from brainhops.datamodel.orientation import (
     Orientation,
     RightToLeft,
 )
-from brainhops.datamodel.units import SampleUnit
+from brainhops.datamodel.units import MilliMeter, SampleUnit, Second
 
 # ----------------------------------------------------------------------
 #   AXES
@@ -114,13 +115,17 @@ def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
         lambda: ax.SpaceAxis(unit="s"),
         lambda: ax.Axis(type="time", unit="mm"),
         lambda: ax.TimeAxis(unit="mm"),
+        lambda: ax.SpaceAxis(unit=Second()),
+        lambda: ax.TimeAxis(unit=MilliMeter()),
         lambda: ax.SpaceAxis(type="time"),
         lambda: ax.ChannelAxis(type="space"),
         lambda: ax.LeftToRightAxis(orientation=RightToLeft()),
     ],
 )
 def test_contradicting_axes_are_refused(build: tx.Callable) -> None:
-    with pytest.raises(ValueError):
+    # A unit of the wrong kind fails the conversion of the field (a
+    # `ConversionError`); a contradicting discriminant fails as a value.
+    with pytest.raises((ValueError, ConversionError)):
         build()
 
 

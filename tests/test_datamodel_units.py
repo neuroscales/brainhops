@@ -102,3 +102,30 @@ def test_an_unknown_prefixed_name_does_not_raise() -> None:
     # character. It is not a name this registry knows, so it is a unit of
     # nothing rather than an error.
     assert not is_physicalunit(Unit("micron"))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: units.SpaceUnit("s"),
+        lambda: units.SpaceUnit(units.Second()),
+        lambda: units.TimeUnit("mm"),
+        lambda: SampleUnit("mm"),
+        lambda: SampleUnit(units.Second()),
+        lambda: units.Second("mm"),
+    ],
+)
+def test_a_unit_class_only_builds_its_own_units(build: object) -> None:
+    # `SpaceUnit("s")` returned a second, and `SampleUnit(anything)` the
+    # sample, so a field typed `SpaceUnit` or `SampleUnit` held whatever it
+    # was given.
+    with pytest.raises(ValueError, match="is not a"):
+        build()
+
+
+def test_a_unit_class_builds_its_own_units() -> None:
+    assert units.SpaceUnit("mm") is units.MilliMeter()
+    assert units.SpaceUnit(units.MilliMeter()) is units.MilliMeter()
+    assert units.TimeUnit("ms") is units.MilliSecond()
+    assert SampleUnit("sample") is SampleUnit()
+    assert units.Meter("metre") is units.Meter()

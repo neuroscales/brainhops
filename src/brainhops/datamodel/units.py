@@ -220,6 +220,18 @@ def siunit(globals: dict) -> tx.Callable[[type], type]:
     return decorator
 
 
+def _lookup_unit(name: tx.Any) -> tx.Optional["Unit"]:
+    """The registered unit a name stands for, or `None`."""
+    if not name or not isinstance(name, str):
+        return None
+    prefix, base = _parse_unit_name(name)
+    cls_name = str(base).capitalize()
+    if prefix:
+        cls_name = str(prefix).capitalize() + cls_name
+    kls = globals().get(cls_name)
+    return _REGISTERED_UNITS.get(kls)
+
+
 # ----------------------------------------------------------------------
 #   BASE CLASSES
 # ----------------------------------------------------------------------
@@ -240,18 +252,22 @@ class Unit(
     type: ClassVar[tx.Literal["time", "space"]]
 
     def __new__(cls, *args, **kwargs) -> tx.Self:
-        if cls in _REGISTERED_UNITS:
-            return _REGISTERED_UNITS[cls]
+        # A unit is built from a name or from another unit, and the result
+        # is always an instance of the class asked for: `SpaceUnit("s")`
+        # and `SampleUnit(Second())` are refused rather than handed back a
+        # second, or the sample. That is what makes a field typed
+        # `SpaceUnit` (whose converter calls `SpaceUnit(value)`) hold a
+        # unit of space and nothing else.
         name = kwargs.get("name", args[0] if args else None)
-        if name:
-            prefix, base = _parse_unit_name(name)
-            cls_name = str(base).capitalize()
-            if prefix:
-                cls_name = str(prefix).capitalize() + cls_name
-            if cls_name in globals():
-                kls = globals()[cls_name]
-                if kls in _REGISTERED_UNITS:
-                    return _REGISTERED_UNITS[kls]
+        found = name if isinstance(name, Unit) else _lookup_unit(name)
+        if found is not None:
+            if not isinstance(found, cls):
+                raise ValueError(f"{found!r} is not a {cls.__name__}.")
+            return found
+        if cls in _REGISTERED_UNITS:
+            if name:
+                raise ValueError(f"{name!r} is not a {cls.__name__}.")
+            return _REGISTERED_UNITS[cls]
         return super().__new__(cls)
 
     def __init__(self, *args, **kwargs) -> None:

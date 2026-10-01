@@ -13,6 +13,7 @@ from brainhops.datamodel.axes import (
     DisplacementAxis,
     LeftToRightAxis,
     SpaceAxis,
+    TimeAxis,
     vector_axis,
 )
 from brainhops.datamodel.orientation import (
@@ -140,13 +141,25 @@ def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
 
 def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
     # A spatial axis measured in seconds is a contradiction. It is refused
-    # wherever it is written -- not quietly built as a generic `Axis`.
-    with pytest.raises(ValueError, match="SpaceAxis.unit"):
-        Axis(name="x", type="space", unit="s")
-    with pytest.raises(ValueError, match="SpaceAxis.unit"):
-        SpaceAxis(name="x", unit="s")
-    with pytest.raises(ValueError, match="TimeAxis.unit"):
-        Axis(name="t", type="time", unit="mm")
+    # wherever it is written -- not quietly built as a generic `Axis`, and
+    # not quietly read as the sample either (a second instance used to
+    # fall through the `Union[SpaceUnit, SampleUnit]` to `SampleUnit`).
+    from brainhops.datamodel.units import Second, Unit
+
+    for build in (
+        lambda: Axis(name="x", type="space", unit="s"),
+        lambda: SpaceAxis(name="x", unit="s"),
+        lambda: SpaceAxis(name="x", unit=Unit("s")),
+        lambda: SpaceAxis(name="x", unit=Second()),
+    ):
+        with pytest.raises(ConversionError, match="SpaceAxis.unit"):
+            build()
+    for build in (
+        lambda: Axis(name="t", type="time", unit="mm"),
+        lambda: TimeAxis(name="t", unit=Unit("mm")),
+    ):
+        with pytest.raises(ConversionError, match="TimeAxis.unit"):
+            build()
 
 
 def test_a_sibling_axis_is_read_field_by_field() -> None:

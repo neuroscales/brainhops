@@ -32,8 +32,6 @@ __all__ = [
 import typing_extensions as tx
 
 # core
-from bagof.magic import Validate
-
 from brainhops._core.typing import NoRepr
 
 # locals
@@ -51,39 +49,6 @@ from .orientation import (
 from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
 
 # --- Dispatch helpers -------------------------------------------------
-
-
-def _unit_of(
-    kind: tx.Type[Unit], what: str
-) -> tx.Callable[[tx.Optional[Unit]], tx.Optional[Unit]]:
-    """A validator that accepts a unit of `kind`, the sample, or `None`.
-
-    A spatial axis sampled on a grid measures its coordinates in samples
-    (see [`SampleUnit`][]), so the sample unit belongs on a `SpaceAxis` as
-    much as a millimetre does -- it says the axis indexes an array rather
-    than that it stopped being spatial. A unit of another kind (a second on
-    a spatial axis) contradicts the axis and is refused.
-
-    The unit is *not* what an axis is selected on: `Axis(type="space",
-    unit="s")` is a spatial axis with the wrong unit, so it builds a
-    `SpaceAxis`, which refuses it, rather than quietly falling back to a
-    generic `Axis`.
-    """
-
-    def check(unit: tx.Optional[Unit]) -> tx.Optional[Unit]:
-        if unit is None or isinstance(unit, (kind, SampleUnit)):
-            return unit
-        raise ValueError(
-            f"a {what} axis is measured in a unit of {what}, in samples, or "
-            f"in an unspecified unit, not in {unit!r}."
-        )
-
-    check.__name__ = check.__qualname__ = f"_is_{what}_unit"
-    return check
-
-
-_is_space_unit = _unit_of(SpaceUnit, "space")
-_is_time_unit = _unit_of(TimeUnit, "time")
 
 
 def _is_space_or_unset(type: tx.Optional[str]) -> bool:
@@ -171,12 +136,13 @@ class SpaceAxis(Axis, on={"type": "space"}):
     """An axis that measures a spatial dimension.
 
     Its unit is a unit of space, the sample (the axis indexes an array), or
-    unspecified (`None`, the default). Any other unit is refused.
+    unspecified (`None`, the default). Any other unit is refused by the
+    type of the field. The unit is not what an axis is selected on, so
+    `Axis(type="space", unit="s")` builds a `SpaceAxis`, which refuses the
+    second, rather than quietly falling back to a generic `Axis`.
     """
 
-    unit: tx.Annotated[
-        tx.Optional[tx.Union[SpaceUnit, SampleUnit]], Validate(_is_space_unit)
-    ] = None
+    unit: tx.Optional[tx.Union[SpaceUnit, SampleUnit]] = None
     type: NoRepr[tx.Literal["space"]] = "space"
 
 
@@ -187,9 +153,7 @@ class TimeAxis(Axis, on={"type": "time"}):
     unspecified (`None`, the default). Any other unit is refused.
     """
 
-    unit: tx.Annotated[
-        tx.Optional[tx.Union[TimeUnit, SampleUnit]], Validate(_is_time_unit)
-    ] = None
+    unit: tx.Optional[tx.Union[TimeUnit, SampleUnit]] = None
     type: NoRepr[tx.Literal["time"]] = "time"
 
 
