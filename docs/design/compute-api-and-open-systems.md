@@ -212,14 +212,8 @@ then composes what is left.
 
 These are additions, not blockers.
 
-1. **The meaning of created axes.** `ι_I` must give the axes it creates
-   *some* value. Today's model does not say which. Two options:
-   - Declare it, e.g. created axes are `0`, or a `fill` field on
-     `Projection`.
-   - Leave it undefined, in which case a sandwich is only meaningful on
-     closed blocks.
-
-   This matters only for coupled blocks. See the open question below.
+1. **The meaning of created axes.** Settled by the spec: created axes
+   are `0` (A.8).
 2. **A third kind of simplification rule**, next to leaf rules and pair
    collapses: a pair *rewrite* (2 → 2). Every commutation moves a
    projection one step towards the input side, so the rewriting always
@@ -242,17 +236,8 @@ These are additions, not blockers.
   is `t` itself when the block covers everything.
 - `restrict(SubspaceTransformation(t, a, b), a, b)` reduces to `t`
   (through `SubspaceTransformation`'s commutation rule).
-- **Open question: coupled blocks.** On a coupled block, the sandwich
-  does not reduce by commutation, and its value depends on what `ι`
-  creates. Should computing it:
-  - (a) give the section of `t` at the declared created value (needs
-    item 1), or
-  - (b) raise?
-
-  I lean towards (b) for `restrict`, since a section at an arbitrary
-  point is a surprising thing to get back from a "restriction". The plain
-  projection composition `π_O @ t @ ι_I` stays available to anyone who
-  wants the section.
+- **Coupled blocks** are resolved in A.8: `t.project(I, O)` gives the
+  section at `0`, and `t.restrict(I, O)` raises.
 
 The factor pass uses `restrict` exactly this way. Its partition only
 yields decoupled blocks, which reduce fully.
@@ -313,6 +298,116 @@ A single pass, with no fixpoint loop:
   Registration is how the library's own transformation classes plug in.
   It is not a public extension point.
 - **Bridging and adaptation.**
+
+---
+
+### A.8 Alignment with OME-NGFF 0.6
+
+The meta transformations follow the OME-NGFF 0.6 coordinate-transformation
+spec (`ome/ngff-spec`, tag `0.6`, `index.md`). Checked against it:
+
+#### `projectAxis` and `Projection`
+
+- **Spec:** `droppedInputs` lists indices of the *input* vector to drop.
+  `createdOutputs` lists indices of the *output* vector where axes are
+  added. "The value added to the coordinate vector defaults to zero."
+  `projectAxis` "is not invertible in general if a dimension is dropped".
+  When the dropped axis is discrete, it "MAY be applied along the dropped
+  dimension by iterating over all possible values".
+- **Our `Projection(dropped, created)`** has the same structure under
+  shorter names.
+- **This settles the created-value question in A.4: created axes are
+  `0`.** That is what the spec says, so it is what `Projection` means. No
+  `fill` field is needed, and the coupled-block section in A.4 is
+  well defined: it is the section of `t` at `0`.
+- **Correctness issue, independent of this design:**
+  `Projection.inverse()` swaps `dropped` and `created`, but a projection
+  that drops axes has no inverse.
+  - Creating at `0` is only a *right* inverse: `drop ∘ create = id`, while
+    `create ∘ drop ≠ id`.
+  - Today, `~Projection(dropped=[2])` is treated as an inverse, which is
+    wrong for any point not at `0` on that axis.
+  - Proposed fix: `inverse()` raises (or returns a non-cancelling lazy
+    inverse) when anything is dropped. It keeps the swap only for a
+    projection that creates without dropping, whose left inverse is the
+    drop.
+  - The cancellation rule in A.4 must be one-sided accordingly: a drop
+    after a create of the same axes cancels, and the reverse order does
+    not.
+
+#### `mapAxis` and `Permutation`
+
+- **Spec (0.6):** `mapAxis` is strictly a permutation. The array has one
+  entry per axis, and each input index appears exactly once.
+- **Our reader** (`io/transformations/zarr/_map.py`) also accepts a
+  strictly increasing *subset* and reads it as a dropping `Projection`.
+  That form was allowed in earlier drafts, but in 0.6 it is invalid. It
+  should be refused, or read with a warning. The writer must never emit
+  it; `projectAxis` is the 0.6 spelling.
+
+#### `byDimension`, the missing meta transformation
+
+- **Spec:** a `byDimension` holds a list of children, each with
+  `inputAxes`, `outputAxes` and a `transformation`.
+  - "Every axis index in the parent byDimension's `output` coordinate
+    system MUST appear in exactly one child transformation's
+    `outputAxes`."
+  - Children may read any input axes, in any order, and need not use all
+    of them. For example, `byDimension2` maps a 4-D input to a 3-D output,
+    reads input axes `[3, 2]` into outputs `[1, 2]`, and never reads
+    input `0`.
+  - There is no implicit pass-through.
+- **We have no equivalent.** `SubspaceTransformation` is a *single* child
+  with an implicit in-order pass-through of every other axis. It equals a
+  `byDimension` whose other children are identities. The reverse does not
+  hold: a `byDimension` with several non-identity children, unused inputs
+  or reordered outputs is not a `SubspaceTransformation`.
+- **Proposal: add `ByDimension(children)`**, where each child is a
+  `(transformation, input_axes, output_axes)` triple, with the spec's
+  constraint that the children's `output_axes` partition the output
+  axes. It is needed to read and write 0.6 faithfully, and it is exactly
+  the object the factor pass is building:
+  - **`factor`'s normal form becomes `[grid?, ByDimension(...)]`** instead
+    of `[grid?, F_1, …, F_m, Π?]`. Each axis group is one child.
+    Reordering is absorbed into the children's `output_axes`, so the
+    trailing `Π` disappears, and the reslice executor reads the groups
+    straight off the children.
+  - **Restriction becomes structural on a `ByDimension`.** A block made
+    of whole children is decoupled by construction, so `restrict`
+    returns those children without reading a single value.
+  - **`SubspaceTransformation`** stays, as the common one-child-plus-
+    pass-through case, and gains a conversion to `ByDimension`. **Open
+    question:** keep it as a class, or make it a constructor that returns
+    a `ByDimension`? Keeping both widens the API surface; merging them
+    changes an existing public class.
+- **Other 0.6 types are already covered:** `identity`, `scale`,
+  `translation`, `affine`, `rotation`, `sequence`, `bijection`,
+  `displacements` and `coordinates`. 0.6 has no `inverseOf`, so our lazy
+  `Inverse` is internal, and writers must emit it either as the closed-form
+  inverse or inside a `bijection`.
+
+#### `restrict` and `project`
+
+The two behaviours in A.4 become two methods with distinct contracts. A
+boolean flag that changes the meaning of the result would be a worse
+interface.
+
+- **`t.project(input_axes, output_axes)`** is the lazy
+  `π_O @ t @ ι_I`, with `ι_I` creating axes at `0` as the spec defines.
+  It is always defined.
+  - On a closed block, it reduces by commutation.
+  - On a coupled block, it is the section of `t` with the other inputs at
+    `0`, computed by composition.
+  - The name follows the spec's `projectAxis`.
+- **`t.restrict(input_axes, output_axes)`** is the same expression, with
+  the guarantee that the block is closed. When it is not, it raises
+  `RestrictionError`.
+  - **Open question: when it raises.** Either eagerly, when `restrict` is
+    called, which reads values for an affine-family `t`, unlike
+    `inverse()`, which reads nothing; or lazily, at `compute`, when a
+    commutation cannot proceed. I lean towards lazily, so that
+    `restrict`, like `inverse`, only builds an expression, while
+    `compute` decides and raises.
 
 ---
 
@@ -479,10 +574,18 @@ just the one that crashes:
    composition `π_O @ t @ ι_I`, reduced by `compute` through analytic
    rewrite rules. Missing composers or simplifiers are added, not worked
    around.
+8. Created axes are `0`, as the OME-NGFF 0.6 `projectAxis` spec defines.
+9. `t.project(I, O)` (always defined; the section at `0` on a coupled
+   block) and `t.restrict(I, O)` (raises on a coupled block) are separate
+   methods.
 
 ## Open questions
 
-1. A.4: computing a restriction over a coupled block. Should it give the
-   section at the projection's declared created value, or raise?
-2. A.4: should `Projection` declare the value of created axes (e.g. `0`,
-   or a `fill` field), or leave it undefined?
+1. A.8: keep `SubspaceTransformation` as a class next to the new
+   `ByDimension`, or make it a constructor that returns a `ByDimension`?
+2. A.8: should `restrict` raise eagerly (when called) or lazily (at
+   `compute`)?
+3. A.8: `Projection.inverse()` when axes are dropped. Raise, or return a
+   lazy inverse that never cancels?
+4. A.8: a subset `mapAxis` (invalid in 0.6). Refuse on read, or read it
+   with a warning?
