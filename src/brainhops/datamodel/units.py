@@ -36,6 +36,8 @@ __all__ = [
     "SampleUnit",
     "is_sampleunit",
     "is_physicalunit",
+    "is_spaceunit",
+    "is_timeunit",
 ]
 
 # stdlib
@@ -155,7 +157,7 @@ def _parse_unit_name(
             if base_name in UnitSIName.__members__:
                 return PrefixName[prefix], UnitSIName[base_name]
     for _, *prefixes in PREFIX_SI.values():
-        for *_, suffixes in UNITS_SI.values():
+        for _, *suffixes in UNITS_SI.values():
             for prefix in prefixes:
                 for suffix in suffixes:
                     if name == prefix + suffix:
@@ -601,20 +603,24 @@ def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
     measure anything -- so a conversion factor to another physical unit
     exists exactly when this is true of both.
     """
-    if unit is None:
-        return False
-    if is_sampleunit(unit):
+    if unit is None or is_sampleunit(unit):
         return False
     if isinstance(unit, type):
-        return issubclass(unit, Unit) and getattr(unit, "name", None)
+        # A class is physical when it is a concrete, named unit: `Meter`
+        # is, the abstract `Unit` and `SpaceUnit` are not.
+        return issubclass(unit, Unit) and isinstance(
+            getattr(unit, "name", None), str
+        )
     # A `Unit` built from a name it does not recognise carries no name, so
     # it measures nothing either -- `Unit` is liberal on purpose, and this
     # is where that liberality stops being taken for a unit.
-    return isinstance(unit, Unit) and getattr(unit, "name", None) is not None
+    return isinstance(unit, Unit) and isinstance(
+        getattr(unit, "name", None), str
+    )
 
 
 def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit]]) -> bool:
-    """Whether `unit` is a unit of time."""
+    """Whether `unit` is a unit of space (a length)."""
     if isinstance(unit, Unit):
         return isinstance(unit, SpaceUnit)
     if isinstance(unit, type) and issubclass(unit, Unit):
