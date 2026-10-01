@@ -12,6 +12,7 @@ from brainhops._core.typing import npvector
 # datamodel
 from brainhops.datamodel import kinds
 from brainhops.datamodel.axes import Axis
+from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
 from .base import Transformation
@@ -238,8 +239,15 @@ def _subsystem(
     for j, i in enumerate(index):
         if j < len(axes):
             new_axes[i] = axes[j]
-    return replace(
-        system,
-        axes=new_axes,
-        name=f"subspace({system.name})" if system.name else None,
-    )
+    name = f"subspace({system.name})" if system.name else None
+    if len(new_axes) == len(axes):
+        # Same number of axes, so whatever concrete system class the inner
+        # one is -- an arity-specific `CoordinateSystem3D`, a typed
+        # `VoxelCoordinateSystem` -- still fits, and `replace` keeps it.
+        return replace(system, axes=new_axes, name=name)
+    # The full space has more axes than the inner one, and the positions no
+    # inner axis lands on are plain placeholders. Neither the arity-specific
+    # class (its `axes` field is a fixed-length tuple) nor a typed one (its
+    # axes must all be spatial) can hold that, so the system is rebuilt from
+    # the polymorphic root, which re-dispatches on the new axis count.
+    return CoordinateSystem(axes=new_axes, name=name)

@@ -18,8 +18,8 @@ class FSLCoordinateSystem(SpatialCoordinateSystem3D):
     """
 
     name: str = "fsl"
-    axes: tx.Tuple[_axes.SpatialAxis, _axes.SpatialAxis, _axes.SpatialAxis] = (
-        _axes.SpatialAxis(name="x", unit="mm"),
-        _axes.SpatialAxis(name="y", unit="mm"),
-        _axes.SpatialAxis(name="z", unit="mm"),
+    axes: tx.Tuple[_axes.SpaceAxis, _axes.SpaceAxis, _axes.SpaceAxis] = (
+        _axes.SpaceAxis(name="x", unit="mm"),
+        _axes.SpaceAxis(name="y", unit="mm"),
+        _axes.SpaceAxis(name="z", unit="mm"),
     )

@@ -13,7 +13,7 @@ def _make_system(ndim: int) -> _systems.SpatialCoordinateSystem:
         # ITK works in LPS, and the named system is the one that the
         # format-independent affines (`LPSToVoxel`, `VoxelToLPS`) use, so
         # an affine block and a warp block name the same space.
-        return _systems.LPSCoordinateSystem()
+        return _systems.LPSmm()
     else:
         return _systems.SpatialCoordinateSystem(
             axes=(_axes.L, _axes.P, _axes.S)[:ndim]

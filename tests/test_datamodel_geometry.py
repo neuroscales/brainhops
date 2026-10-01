@@ -11,7 +11,7 @@ import pytest
 
 from brainhops.backends import backend
 from brainhops.datamodel._transformations import separable as sep
-from brainhops.datamodel.axes import SpatialAxis
+from brainhops.datamodel.axes import SpaceAxis
 from brainhops.datamodel.geometry import Geometry, _index2transform
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import (
@@ -186,7 +186,7 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     # would read the wrong voxels.
     system = CoordinateSystem(
         name="voxel",
-        axes=[SpatialAxis(name=name, unit=None) for name in "xyz"],
+        axes=[SpaceAxis(name=name, unit=None) for name in "xyz"],
     )
     data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     img = SingleScaleImage(

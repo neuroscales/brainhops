@@ -11,6 +11,7 @@ from math import log10
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import replace
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
@@ -27,6 +28,7 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+from brainhops.datamodel.units import SampleUnit
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -349,6 +351,9 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             if axis.name is not None
         ]
 
+        # A voxel space indexes an array, so its coordinates count samples
+        # (`SampleUnit`); `None` would say only that the unit is unknown.
+        axes = [replace(axis, unit=SampleUnit()) for axis in axes]
         return CoordinateSystem(axes=axes, name="voxel")
 
     @system.setter

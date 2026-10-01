@@ -33,6 +33,9 @@ __all__ = [
     "Mile",
     "Angstrom",
     "Parsec",
+    "SampleUnit",
+    "is_sampleunit",
+    "is_physicalunit",
 ]
 
 # stdlib
@@ -466,6 +469,15 @@ class Year(TimeUnit):
     name: ClassVar[TimeUnitName] = TimeUnitName.year
 
 
+def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit]]) -> bool:
+    """Whether `unit` is a unit of time."""
+    if isinstance(unit, Unit):
+        return isinstance(unit, TimeUnit)
+    if isinstance(unit, type) and issubclass(unit, Unit):
+        return issubclass(unit, TimeUnit)
+    return False
+
+
 # ----------------------------------------------------------------------
 #   SPACE UNITS
 # ----------------------------------------------------------------------
@@ -535,3 +547,77 @@ class Parsec(SpaceUnit):
     3.09e16 meters."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.parsec
+
+
+
+# ----------------------------------------------------------------------
+#   SAMPLES
+# ----------------------------------------------------------------------
+
+
+@register
+class SampleUnit(Unit):
+    """The sample: coordinates count samples rather than measure a quantity.
+
+    An axis whose unit is the sample is an *array* axis -- its coordinates
+    are sample positions, so they run `0` to `N-1` over a finite number of
+    samples, and reversing it shifts the origin by one less than its extent
+    rather than flipping a sign about it. This is the convention OME-Zarr
+    writes down by giving such an axis no unit at all, and the scale
+    transformation is what converts the samples to a physical unit.
+
+    !!! note
+
+        This is deliberately distinct from `unit=None`, which means the
+        unit is *unspecified* -- nothing is claimed either way, and no
+        conversion and no origin shift follow from it. It is also distinct
+        from a dimensionless physical unit, which would be a real,
+        convertible unit; `SampleUnit` is not a unit of anything, carries
+        no `type` and no meaningful `scale`, and never takes part in a
+        conversion. See [`is_sampleunit`][].
+    """
+
+    name: ClassVar[str] = "sample"
+
+
+# `Unit` resolves a name by capitalizing it and looking the result up in
+# this module, so `Unit("sample")` finds the class under this alias and
+# returns its singleton.
+Sample = SampleUnit
+
+
+def is_sampleunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is the sample unit, i.e. the axis is an array axis."""
+    if isinstance(unit, type):
+        return issubclass(unit, SampleUnit)
+    return isinstance(unit, SampleUnit)
+
+
+def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` measures a physical quantity.
+
+    True for a real unit such as a millimetre or a second. False for
+    `None`, which leaves the unit *unspecified*, and false for
+    [`SampleUnit`][], which says the coordinates count samples rather than
+    measure anything -- so a conversion factor to another physical unit
+    exists exactly when this is true of both.
+    """
+    if unit is None:
+        return False
+    if is_sampleunit(unit):
+        return False
+    if isinstance(unit, type):
+        return issubclass(unit, Unit) and getattr(unit, "name", None)
+    # A `Unit` built from a name it does not recognise carries no name, so
+    # it measures nothing either -- `Unit` is liberal on purpose, and this
+    # is where that liberality stops being taken for a unit.
+    return isinstance(unit, Unit) and getattr(unit, "name", None) is not None
+
+
+def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit]]) -> bool:
+    """Whether `unit` is a unit of time."""
+    if isinstance(unit, Unit):
+        return isinstance(unit, SpaceUnit)
+    if isinstance(unit, type) and issubclass(unit, Unit):
+        return issubclass(unit, SpaceUnit)
+    return False

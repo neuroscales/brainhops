@@ -14,7 +14,7 @@ from brainhops._core.bsplines import pull, spline_matrix
 from brainhops.backends import backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel._transformations import separable as sep
-from brainhops.datamodel.axes import A, Axis, R, S, SpatialAxis, TimeAxis
+from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis, TimeAxis
 from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
@@ -35,8 +35,8 @@ from brainhops.datamodel.transformations import (
 # ----------------------------------------------------------------------
 
 
-def _sp(name: str) -> SpatialAxis:
-    return SpatialAxis(name=name, unit=None)
+def _sp(name: str) -> SpaceAxis:
+    return SpaceAxis(name=name, unit=None)
 
 
 def _time(name: str = "t", discrete: object = None) -> Axis:

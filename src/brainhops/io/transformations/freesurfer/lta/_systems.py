@@ -19,9 +19,9 @@ from ._struct import LTAStruct
 
 # type hints
 _3SpatialAxes = tx.Tuple[
-    _axes.SpatialAxis,
-    _axes.SpatialAxis,
-    _axes.SpatialAxis,
+    _axes.SpaceAxis,
+    _axes.SpaceAxis,
+    _axes.SpaceAxis,
 ]
 
 
@@ -35,7 +35,7 @@ def _make_axes(
     else:
         orientation = (None,) * 3
     return tuple(
-        _axes.SpatialAxis(name=name, unit=unit, orientation=orient)
+        _axes.SpaceAxis(name=name, unit=unit, orientation=orient)
         for name, orient in zip(names, orientation)
     )
 

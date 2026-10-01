@@ -871,7 +871,7 @@ class AnglePreserving(Transformation):
     """
     A transformation that preserves angles.
 
-    If the map is smooth, this means `(Df).T @ (Df) = λ(x) I ; λ(x) > 0`.
+    If the map is smooth, this means `(Df).T @ (Df) = λ(x) I`.
 
     alias: Conformal
 
@@ -1124,7 +1124,10 @@ class SpecialAffine(
     "ConformalEuclideanGroup",
     "ConformalEuclideanMap",
     "ConformalEuclideanTransformation",
+    "Similarity",
+    "Similitude",
     "AffineSimilarity",
+    "AffineSimilitude",
 )
 class ConformalEuclidean(InvertibleAffine, ConformalDiffeomorphism):
     """
@@ -1134,6 +1137,10 @@ class ConformalEuclidean(InvertibleAffine, ConformalDiffeomorphism):
     components.
 
     symbol: Sim = CO ⋉ T
+
+    alias: Similarity, Similitude
+
+    wiki: https://en.wikipedia.org/wiki/Similarity_(geometry)#In_Euclidean_space
     """
 
     SYMBOL = "Sim"
@@ -1151,10 +1158,12 @@ class ConformalEuclidean(InvertibleAffine, ConformalDiffeomorphism):
     "ConformalSpecialEuclideanMap",
     "ConformalSpecialEuclideanGroup",
     "ConformalSpecialEuclideanTransformation",
-    "Similitude",
-    "SimilitudeTransformation",
+    "DirectSimilarity",
+    "DirectSimilitude",
+    "DirectAffineSimilarity",
+    "DirectAffineSimilitude",
 )
-class SpecialConformal(ConformalEuclidean, PositiveAffine):
+class SpecialConformalEuclidean(ConformalEuclidean, PositiveAffine):
     """
     An affine transformation that preserves angles and orientation.
 
@@ -1163,7 +1172,9 @@ class SpecialConformal(ConformalEuclidean, PositiveAffine):
 
     symbol: Sim+ = CO+ ⋉ T
 
-    alias: Similitude
+    alias: DirectSimilarity, DirectSimilitude
+
+    wiki: https://en.wikipedia.org/wiki/Similarity_(geometry)#In_Euclidean_space
     """
 
     SYMBOL = "Sim+"
@@ -1194,7 +1205,7 @@ class Euclidean(ConformalEuclidean, VolumePreservingAffine):
     "Rigid",
     "RigidTransformation",
 )
-class SpecialEuclidean(SpecialConformal, Euclidean, SpecialAffine):
+class SpecialEuclidean(SpecialConformalEuclidean, Euclidean, SpecialAffine):
     """
     A euclidean transformation with determinant +1
 
@@ -1236,7 +1247,7 @@ class Dilation(ConformalEuclidean):
 @simplyconnected
 @nonembeddable
 @public
-class PositiveDilation(Dilation, SpecialConformal):
+class PositiveDilation(Dilation, SpecialConformalEuclidean):
     """
     A dilation with a positive scaling factor.
 
@@ -1370,7 +1381,7 @@ class ConformalOrthogonal(InvertibleLinear, ConformalEuclidean):
     "ConformalSpecialOrthogonalTransformation",
 )
 class SpecialConformalOrthogonal(
-    ConformalOrthogonal, PositiveLinear, SpecialConformal
+    ConformalOrthogonal, PositiveLinear, SpecialConformalEuclidean
 ):
     """
     A linear transformation that preserves angles and orientation (CO+)
@@ -1729,7 +1740,7 @@ class PositiveMultiplicative(
     (`InvertibleMultiplicative`) and not merely a subset of ℝ
     (`Multiplicative`), which it reaches through it.
 
-    symbol: ℝ+ = {c I : c ∈ ℝ+}
+    symbol: ℝ+ = {c I : c ∈ ℝ+*}
 
     alias: PositiveHomothety
 

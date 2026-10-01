@@ -57,7 +57,7 @@ import typing_extensions as tx
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
-from brainhops.datamodel.units import Unit
+from brainhops.datamodel.units import Unit, is_sampleunit
 
 # internals
 from .base import Transformation
@@ -900,13 +900,20 @@ _UnitLike = tx.Union[Axis, Unit, None]
 
 def _unit(unit: _UnitLike) -> tx.Optional[Unit]:
     """
-    Unwrap an [`Axis`][] into its unit.
+    Unwrap an [`Axis`][] into its *physical* unit.
 
     An axis with no unit, or a unit that is not a [`Unit`][] instance, is
-    reported as `None`.
+    reported as `None`. So is an axis measured in samples: a sample is not
+    a physical quantity, so it has no scale to convert and no kind to
+    match, and the conversion rules below read it as "no unit" -- which is
+    why a sample axis matched to a millimetre axis is refused rather than
+    silently scaled. Whether an axis *is* sampled is a different question,
+    asked by [`_is_array_side`][].
     """
     if isinstance(unit, Axis):
         unit = unit.unit
+    if is_sampleunit(unit):
+        return None
     if isinstance(unit, Unit):
         return unit
     return None
@@ -981,13 +988,16 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     Three signals mark an array-index axis. Its system is an array
     coordinate system, such as a voxel grid, even one whose axes are
     named and oriented and carry a length unit. Or the axis is discrete.
-    Or the axis carries no unit, so its samples are plain indices.
+    Or the axis is measured in samples, which is what [`SampleUnit`][]
+    states -- and only what it states: an axis whose unit is `None` has an
+    *unspecified* unit, which says nothing about whether it indexes an
+    array, so it is not read as one.
     """
     if isinstance(system, ArrayCoordinateSystem):
         return True
     if axis.discrete:
         return True
-    return axis.unit is None
+    return is_sampleunit(axis.unit)
 
 
 def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:

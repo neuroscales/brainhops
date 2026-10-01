@@ -2,6 +2,7 @@
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
+from bagof.magic import replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -12,12 +13,13 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import (
     Axis,
     ChannelAxis,
-    SpatialAxis,
+    SpaceAxis,
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.units import SampleUnit
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.base.zarr import (
@@ -251,7 +253,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
                 axes = _axisorder.permute(axes, perm)
             return CoordinateSystem(name=name, axes=axes)
 
-        voxel_system = CoordinateSystem(name="voxel", axes=canonical_axes)
+        # A voxel space indexes an array, so its coordinates count samples.
+        voxel_system = CoordinateSystem(
+            name="voxel",
+            axes=[replace(axis, unit=SampleUnit()) for axis in canonical_axes],
+        )
         intrinsic_system = system(intrinsic_name(multiscale))
         systems = {name: system(name) for name in declared}
 
@@ -426,7 +432,7 @@ def _default_canonical_axes(ndim: int) -> tx.List[Axis]:
     # The axes to assume when none are recorded, in the brainhops order:
     # the spatial axes x, y, z first, then time, then channel.
     spatial = [
-        SpatialAxis(name=name) for name in ("x", "y", "z")[: min(3, ndim)]
+        SpaceAxis(name=name) for name in ("x", "y", "z")[: min(3, ndim)]
     ]
     trailing = [TimeAxis(name="t"), ChannelAxis(name="c")]
     extra = ndim - len(spatial)
