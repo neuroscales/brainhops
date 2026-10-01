@@ -40,6 +40,24 @@ def _make_axes(
     )
 
 
+def _name(struct: LTAStruct.VolumeInfo) -> tx.Dict[str, str]:
+    """The name a volume gives its system, as keyword arguments.
+
+    The file name of the volume, or else the role of the volume in the
+    transform (`"src"` or `"dst"`). A volume with neither -- a bare
+    `VolumeInfo` with no file name -- gives nothing, and the system keeps
+    the name of its class.
+    """
+    name = struct.filename or getattr(struct, "NAME", None)
+    return {"name": name} if name else {}
+
+
+# A voxel space counts samples; the scaled and physical spaces are in
+# millimetres.
+_SAMPLE = "sample"
+_MM = "mm"
+
+
 class LTACoordinateSystem(
     _systems.SpatialCoordinateSystem3D,
     reverse=False,  # We want `struct` to be the last field.
@@ -71,8 +89,8 @@ class LTACoordinateSystem(
 class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (unscaled) of a volume (source or destination)."""
 
-    name: str = "voxel"
-    axes: _3SpatialAxes = _make_axes(("i", "j", "k"))
+    name: tx.Optional[str] = "voxel"
+    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_SAMPLE)
     struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
@@ -83,8 +101,10 @@ class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     ) -> tx.Self:
         """Build the voxel system of the volume described by `struct`."""
         return cls(
-            name=struct.filename or struct.NAME,
-            axes=_make_axes(names, orientation=_get_orient(struct)),
+            **_name(struct),
+            axes=_make_axes(
+                names, unit=_SAMPLE, orientation=_get_orient(struct)
+            ),
             struct=struct,
         )
 
@@ -92,8 +112,8 @@ class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
 class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (scaled) of a volume (source or destination)."""
 
-    name: str = "scaled"
-    axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit="mm")
+    name: tx.Optional[str] = "scaled"
+    axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
     struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
@@ -105,9 +125,8 @@ class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
         """Build the scaled voxel system of the volume described by
         `struct`."""
         return cls(
-            name=struct.filename or struct.NAME,
-            units="mm",
-            axes=_make_axes(names, orientation=_get_orient(struct)),
+            **_name(struct),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
             struct=struct,
         )
 
@@ -119,8 +138,8 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     the origin is at the center of the volume rather than the corner.
     """
 
-    name: str = "physical"
-    axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit="mm")
+    name: tx.Optional[str] = "physical"
+    axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
     struct: tx.Optional[LTAStruct.VolumeInfo] = None
 
     @classmethod
@@ -131,8 +150,7 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
     ) -> tx.Self:
         """Build the physical system of the volume described by `struct`."""
         return cls(
-            name=struct.filename or struct.NAME,
-            units="mm",
-            axes=_make_axes(names, orientation=_get_orient(struct)),
+            **_name(struct),
+            axes=_make_axes(names, unit=_MM, orientation=_get_orient(struct)),
             struct=struct,
         )
