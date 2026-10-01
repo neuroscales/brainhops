@@ -38,6 +38,8 @@ __all__ = [
 import typing_extensions as tx
 
 # core
+from bagof.magic import Validate
+
 from brainhops._core.typing import NoRepr
 
 # locals
@@ -57,20 +59,42 @@ from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
 # --- Dispatch helpers -------------------------------------------------
 
 
-def _is_space_unit(unit: tx.Optional[Unit]) -> bool:
-    """Whether `unit` is a unit of space, unspecified, or the sample.
+def _unit_of(
+    kind: tx.Type[Unit], what: str
+) -> tx.Callable[[tx.Optional[Unit]], tx.Optional[Unit]]:
+    """A validator that accepts a unit of `kind`, the sample, or `None`.
 
     A spatial axis sampled on a grid measures its coordinates in samples
     (see [`SampleUnit`][]), so the sample unit belongs on a `SpaceAxis` as
     much as a millimetre does -- it says the axis indexes an array rather
-    than that it stopped being spatial.
+    than that it stopped being spatial. A unit of another kind (a second on
+    a spatial axis) contradicts the axis and is refused.
+
+    The unit is *not* what an axis is selected on: `Axis(type="space",
+    unit="s")` is a spatial axis with the wrong unit, so it builds a
+    `SpaceAxis`, which refuses it, rather than quietly falling back to a
+    generic `Axis`.
     """
-    return unit is None or isinstance(unit, (SpaceUnit, SampleUnit))
+
+    def check(unit: tx.Optional[Unit]) -> tx.Optional[Unit]:
+        if unit is None or isinstance(unit, (kind, SampleUnit)):
+            return unit
+        raise ValueError(
+            f"a {what} axis is measured in a unit of {what}, in samples, or "
+            f"in an unspecified unit, not in {unit!r}."
+        )
+
+    check.__name__ = check.__qualname__ = f"_is_{what}_unit"
+    return check
 
 
-def _is_time_unit(unit: tx.Optional[Unit]) -> bool:
-    """Whether `unit` is a unit of time, unspecified, or the sample."""
-    return unit is None or isinstance(unit, (TimeUnit, SampleUnit))
+_is_space_unit = _unit_of(SpaceUnit, "space")
+_is_time_unit = _unit_of(TimeUnit, "time")
+
+
+def _is_space_or_unset(type: tx.Optional[str]) -> bool:
+    """Whether an axis type is spatial, or not stated at all."""
+    return type is None or type == "space"
 
 
 def _is_not_none(obj: tx.Any) -> bool:
@@ -149,17 +173,29 @@ class Axis(DataModelBase, polymorphic=True):
             raise TypeError("`...` is not an axis")
 
 
-class SpaceAxis(Axis, on={"type": "space", "unit": _is_space_unit}):
-    """An axis that measures a spatial dimension."""
+class SpaceAxis(Axis, on={"type": "space"}):
+    """An axis that measures a spatial dimension.
 
-    unit: tx.Optional[tx.Union[SpaceUnit, SampleUnit]] = None
+    Its unit is a unit of space, the sample (the axis indexes an array), or
+    unspecified (`None`, the default). Any other unit is refused.
+    """
+
+    unit: tx.Annotated[
+        tx.Optional[tx.Union[SpaceUnit, SampleUnit]], Validate(_is_space_unit)
+    ] = None
     type: NoRepr[tx.Literal["space"]] = "space"
 
 
-class TimeAxis(Axis, on={"type": "time", "unit": _is_time_unit}):
-    """An axis that measures time."""
+class TimeAxis(Axis, on={"type": "time"}):
+    """An axis that measures time.
 
-    unit: tx.Optional[tx.Union[TimeUnit, SampleUnit]] = None
+    Its unit is a unit of time, the sample (the axis indexes an array), or
+    unspecified (`None`, the default). Any other unit is refused.
+    """
+
+    unit: tx.Annotated[
+        tx.Optional[tx.Union[TimeUnit, SampleUnit]], Validate(_is_time_unit)
+    ] = None
     type: NoRepr[tx.Literal["time"]] = "time"
 
 
@@ -195,23 +231,40 @@ class OrientedAxis(Axis, on={"orientation": _is_not_none}):
     """An axis that carries an orientation."""
 
 
-class OrientedTimeAxis(
-    TimeAxis, OrientedAxis, on={"orientation": _is_not_none, "type": "time"}
-):
+# The two classes below inherit from two registered classes, so bagof
+# selects them on what both parents stand for -- a time (or spatial) axis
+# that carries an orientation -- with no `on=` of their own.
+
+
+class OrientedTimeAxis(TimeAxis, OrientedAxis):
     """A time axis that carries an orientation."""
 
 
-class OrientedSpaceAxis(
-    SpaceAxis, OrientedAxis, on={"orientation": _is_not_none, "type": "space"}
-):
+class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
     """A spatial axis that carries an orientation."""
 
 
-class AnatomicalAxis(OrientedSpaceAxis, on={"orientation": _is_anatomical}):
-    """An axis that carries an anatomical orientation."""
+# An anatomical orientation says that the axis runs through space, so a
+# generic `Axis(orientation=R)` -- which names no type -- is read as a
+# spatial axis. That is a step the class statement cannot express (the
+# classes it registers with all ask for `type="space"`), so it is
+# registered with the root by hand. An anatomical axis whose unit is the
+# sample is a spatial axis of a voxel grid that points in that direction.
+@Axis.register_polymorph(
+    on={"type": _is_space_or_unset, "orientation": _is_anatomical}
+)
+class AnatomicalAxis(
+    OrientedSpaceAxis,
+    on={"orientation": _is_anatomical},
+    pin_discriminant="keep+narrow",
+):
+    """An axis that carries an anatomical orientation.
 
-
-Axis.register_polymorph(AnatomicalAxis, on={"orientation": _is_anatomical})
+    `Axis(orientation=...)` with an anatomical orientation builds one of
+    these even when it names no type: an anatomical direction is a
+    direction in space. Its unit may still be the sample, for a voxel axis
+    that points in that direction.
+    """
 
 
 class LeftToRightAxis(

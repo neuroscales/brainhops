@@ -24,6 +24,7 @@ __all__ = [
 ]
 # dependencies
 import typing_extensions as tx
+from bagof.magic import Narrow
 
 # core
 from brainhops._core.typing import NoRepr
@@ -32,10 +33,15 @@ from brainhops._core.typing import NoRepr
 from .base import DataModelBase
 from .enums import OrientationType
 
+_T = tx.TypeVar("_T", bound=type)
 
-def singleton(cls: tx.Type) -> tx.Callable[..., tx.Self]:
+
+def singleton(cls: _T) -> _T:
     """
     Make a class a singleton, so that only one instance of it can exist.
+
+    Calling the class again returns that instance. A singleton cannot be
+    subclassed: a subclass would be a second kind of the one thing.
     """
 
     registry = {}
@@ -48,11 +54,13 @@ def singleton(cls: tx.Type) -> tx.Callable[..., tx.Self]:
             registry[cls] = obj = __orig__new__(cls, *args, **kwargs)
         return obj
 
-    def __init_subclasses__(cls: tx.Type[tx.Self], *args, **kwargs) -> None:
-        raise TypeError(f"Cannot subclass singleton class {cls.__name__}")
+    def __init_subclass__(sub: type, **kwargs) -> None:
+        raise TypeError(
+            f"{cls.__name__} is a singleton: it cannot be subclassed."
+        )
 
     cls.__new__ = __new__
-    cls.__init___subclasses__ = __init_subclasses__
+    cls.__init_subclass__ = classmethod(__init_subclass__)
 
     return cls
 
@@ -73,7 +81,7 @@ class Orientation(DataModelBase, doc=True, polymorphic=True):
 class AnatomicalOrientation(Orientation, on={"type": "anatomical"}):
     """An orientation in the anatomical frame of reference."""
 
-    type: NoRepr[OrientationType] = OrientationType.anatomical
+    type: NoRepr[Narrow[OrientationType]] = OrientationType.anatomical
 
 
 @singleton
@@ -81,7 +89,7 @@ class LeftToRight(AnatomicalOrientation, on={"value": "left-to-right"}):
     """The anatomical orientation in which coordinates increase from the
     left of the subject toward the right."""
 
-    value: NoRepr[str] = "left-to-right"
+    value: NoRepr[Narrow[str]] = "left-to-right"
 
 
 @singleton
@@ -89,7 +97,7 @@ class RightToLeft(AnatomicalOrientation, on={"value": "right-to-left"}):
     """The anatomical orientation in which coordinates increase from the
     right of the subject toward the left."""
 
-    value: NoRepr[str] = "right-to-left"
+    value: NoRepr[Narrow[str]] = "right-to-left"
 
 
 @singleton
@@ -99,7 +107,7 @@ class AnteriorToPosterior(
     """The anatomical orientation in which coordinates increase from the
     front of the subject toward the back."""
 
-    value: NoRepr[str] = "anterior-to-posterior"
+    value: NoRepr[Narrow[str]] = "anterior-to-posterior"
 
 
 @singleton
@@ -109,7 +117,7 @@ class PosteriorToAnterior(
     """The anatomical orientation in which coordinates increase from the
     back of the subject toward the front."""
 
-    value: NoRepr[str] = "posterior-to-anterior"
+    value: NoRepr[Narrow[str]] = "posterior-to-anterior"
 
 
 @singleton
@@ -119,7 +127,7 @@ class InferiorToSuperior(
     """The anatomical orientation in which coordinates increase from the
     bottom of the subject toward the top."""
 
-    value: NoRepr[str] = "inferior-to-superior"
+    value: NoRepr[Narrow[str]] = "inferior-to-superior"
 
 
 @singleton
@@ -129,7 +137,7 @@ class SuperiorToInferior(
     """The anatomical orientation in which coordinates increase from the
     top of the subject toward the bottom."""
 
-    value: NoRepr[str] = "superior-to-inferior"
+    value: NoRepr[Narrow[str]] = "superior-to-inferior"
 
 
 R = LR = leftToRight = LeftToRight()

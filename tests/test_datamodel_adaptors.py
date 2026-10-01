@@ -759,13 +759,14 @@ def test_shared_name_across_different_types_is_not_matched() -> None:
 
 def test_shared_unit_across_different_types_is_not_matched() -> None:
     # Two axes measured in the same kind of unit but of different types must
-    # not be matched by that shared unit.
+    # not be matched by that shared unit. (A time axis can no longer carry a
+    # length unit, so the other type is one that does not constrain it.)
     source = CoordinateSystem(
         name="s", axes=[SpaceAxis(name="a", unit="millimeter")]
     )
     target = CoordinateSystem(
         name="t",
-        axes=[Axis(name="b", type="time", unit="millimeter")],
+        axes=[Axis(name="b", type="channel", unit="millimeter")],
     )
     with pytest.raises(AdaptationError):
         bridge(source, target)

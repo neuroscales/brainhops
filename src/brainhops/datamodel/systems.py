@@ -1,4 +1,26 @@
-"""Coordinate systems, from unitless arrays to anatomical spaces."""
+"""Coordinate systems, from unitless arrays to anatomical spaces.
+
+Calling [`CoordinateSystem`][] builds the most specific system its axes
+describe -- the dispatch is bagof's polymorphism, driven by the `on=`
+constraint of each class:
+
+| The axes are...                               | ...so the system is        |
+| --------------------------------------------- | -------------------------- |
+| two or three of anything                      | `CoordinateSystem2D`/`3D`  |
+| all spatial                                   | `SpatialCoordinateSystem*` |
+| two or three, all measured in samples         | `ArrayCoordinateSystem*`   |
+| spatial *and* measured in samples             | `Pixel`/`VoxelCoordinate…` |
+| oriented right, anterior, superior (in order) | `RASCoordinateSystem`      |
+| ... and in a physical unit                    | `RASmm`                    |
+
+and likewise for LPS and RSA. A class that inherits from two dispatch
+targets -- `SpatialCoordinateSystem3D` from `CoordinateSystem3D` and
+`SpatialCoordinateSystem` -- is selected on what both stand for, with no
+constraint of its own. The C- and F-ordered variants cannot be told apart
+from the axes (the memory order is not written on them), so they are
+reached only from their own ordered base: `FVoxelCoordinateSystem(axes=<RAS
+axes>)` builds an `FRASCoordinateSystem`.
+"""
 
 __all__ = [
     "CoordinateSystem",
@@ -43,20 +65,90 @@ import typing_extensions as tx
 from . import axes as _axes
 from .axes import Axis, SpaceAxis
 from .base import DataModelBase
-from .units import is_physicalunit
+from .units import is_physicalunit, is_sampleunit
 
 _2Axes = tx.Tuple[Axis, Axis]
 _3Axes = tx.Tuple[Axis, Axis, Axis]
 _2SpatialAxes = tx.Tuple[SpaceAxis, SpaceAxis]
 _3SpatialAxes = tx.Tuple[SpaceAxis, SpaceAxis, SpaceAxis]
 
-
-def _is2d(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return axes is not None and len(axes) == 2
+_SAMPLE = "sample"
 
 
-def _is3d(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return axes is not None and len(axes) == 3
+# ----------------------------------------------------------------------
+#   DISPATCH PREDICATES
+# ----------------------------------------------------------------------
+
+
+def _ndim(n: int) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+    def check(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
+        return axes is not None and len(axes) == n
+
+    check.__name__ = check.__qualname__ = f"_is{n}d"
+    return check
+
+
+_is2d = _ndim(2)
+_is3d = _ndim(3)
+
+
+def _all(
+    test: tx.Callable[[Axis], bool], name: str
+) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+    """Whether there are axes and every one of them passes `test`."""
+
+    def check(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
+        return bool(axes) and all(test(axis) for axis in axes)
+
+    check.__name__ = check.__qualname__ = name
+    return check
+
+
+_is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
+_is_array = _all(lambda axis: is_sampleunit(axis.unit), "_is_array")
+_is_physical = _all(lambda axis: is_physicalunit(axis.unit), "_is_physical")
+
+
+def _both(
+    *tests: tx.Callable[[tx.Any], bool],
+) -> tx.Callable[[tx.Any], bool]:
+    def check(axes: tx.Any) -> bool:
+        return all(test(axes) for test in tests)
+
+    check.__name__ = check.__qualname__ = "_and_".join(
+        test.__name__.lstrip("_") for test in tests
+    )
+    check.__name__ = check.__qualname__ = "_" + check.__name__
+    return check
+
+
+def _is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
+    """Whether the axes point, in order, the way the letters of `code` say.
+
+    `code` is spelled with the letters of [`brainhops.datamodel.axes`][]:
+    `"RAS"` is a left-to-right, a posterior-to-anterior and an
+    inferior-to-superior axis, in that order. Only the orientations are
+    compared; the names and units of the axes are free.
+    """
+    expected = tuple(
+        getattr(_axes, letter).orientation.value for letter in code
+    )
+
+    def check(axes: tx.Optional[tx.Sequence[Axis]]) -> bool:
+        if axes is None or len(axes) != len(expected):
+            return False
+        return all(
+            getattr(getattr(axis, "orientation", None), "value", None) == value
+            for axis, value in zip(axes, expected)
+        )
+
+    check.__name__ = check.__qualname__ = f"_is_{code}"
+    return check
+
+
+# ----------------------------------------------------------------------
+#   GENERIC COORDINATE SYSTEMS
+# ----------------------------------------------------------------------
 
 
 class CoordinateSystem(DataModelBase, polymorphic=True):
@@ -90,44 +182,43 @@ class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
 # ----------------------------------------------------------------------
 
 
-def _is_physical(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    """Whether every axis measures a physical quantity."""
-    if not axes:
-        return False
-    return all(is_physicalunit(getattr(axis, "unit", None)) for axis in axes)
-
-
 class PhysicalCoordinateSystem(CoordinateSystem):
     """A coordinate system whose coordinates measure physical quantities.
 
-    Every axis carries a unit, and a *meaningful* one: not `None`, which
-    leaves the unit unspecified, and not [`SampleUnit`][], which says the
-    coordinates count samples of an array. A system that declares itself
-    physical therefore always has a conversion factor to another physical
-    system of the same kind, and reversing one of its axes is a sign flip
-    rather than the origin shift a sampled axis needs.
+    It has at least one axis, and every axis carries a unit, and a
+    *meaningful* one: not `None`, which leaves the unit unspecified, and
+    not [`SampleUnit`][], which says the coordinates count samples of an
+    array. A system that declares itself physical therefore always has a
+    conversion factor to another physical system of the same kind, and
+    reversing one of its axes is a sign flip rather than the origin shift
+    a sampled axis needs.
 
-    Like [`ArrayCoordinateSystem`][], this is a base to inherit
-    deliberately rather than a dispatch target. Physical-ness is
-    orthogonal to the arity and the axis types the `on=` predicates select
-    on, so making it a target would need one class per combination; the
+    This is a base to inherit deliberately rather than a dispatch target:
+    a physical spatial system is selected as a spatial one, and the
     concrete systems that are physical by construction -- [`RASmm`][],
-    [`LPSmm`][], [`RSAmm`][] -- compose it in.
+    [`LPSmm`][], [`RSAmm`][] -- compose it in. Their own constraint is
+    what dispatch selects them on; this class checks every instance, so
+    building one directly with an unspecified or sampled axis is refused
+    too.
     """
 
     def __post_init__(self) -> None:
-        # `Validate(_is_physical)` would be the natural spelling, but in
-        # bagof 0.2.1 such a field stores the predicate's *result* rather
-        # than the value it checked, so the check is written out here.
-        for axis in self.axes or ():
+        name = type(self).__name__
+        if not self.axes:
+            raise ValueError(
+                f"{name} is a physical coordinate system, so it must have "
+                f"axes, and every one of them must carry a physical unit. "
+                f"It was given {self.axes!r}."
+            )
+        for axis in self.axes:
             if is_physicalunit(getattr(axis, "unit", None)):
                 continue
             raise ValueError(
-                f"{type(self).__name__} is a physical coordinate system, so "
-                f"every one of its axes must carry a unit that measures "
-                f"something. The axis {axis.name or axis.type!r} carries "
-                f"{axis.unit!r}: `None` leaves the unit unspecified, and "
-                f"`'sample'` says the axis indexes an array."
+                f"{name} is a physical coordinate system, so every one of "
+                f"its axes must carry a unit that measures something. The "
+                f"axis {axis.name or axis.type!r} carries {axis.unit!r}: "
+                f"`None` leaves the unit unspecified, and `'sample'` says "
+                f"the axis indexes an array."
             )
 
 
@@ -137,87 +228,102 @@ class PhysicalCoordinateSystem(CoordinateSystem):
 
 
 class ArrayCoordinateSystem(CoordinateSystem):
-    """A coordinate system for a unitless, multidimensional array.
+    """A coordinate system for a multidimensional array.
 
-    By default, the array is assumed C-ordered: the first axis is the
-    slowest changing in memory, and the last axis is the fastest changing.
+    Its coordinates count samples, so the axes it builds by default carry
+    the sample unit (see [`SampleUnit`][]). By default, the array is
+    assumed C-ordered: the first axis is the slowest changing in memory,
+    and the last axis is the fastest changing.
+
+    It is a base rather than a dispatch target: calling it with two or
+    three axes builds the matching fixed-arity class, and a system of two
+    or three sampled axes is selected as one of those from
+    [`CoordinateSystem`][] too.
     """
 
     name: tx.Optional[str] = "array"
 
 
 class CArrayCoordinateSystem(ArrayCoordinateSystem):
-    """A coordinate system for a unitless, C-ordered multidimensional array."""
+    """A coordinate system for a C-ordered multidimensional array."""
 
     name: tx.Optional[str] = "carray"
 
 
 class FArrayCoordinateSystem(ArrayCoordinateSystem):
-    """A coordinate system for a unitless, F-ordered multidimensional array."""
+    """A coordinate system for an F-ordered multidimensional array."""
 
     name: tx.Optional[str] = "farray"
 
 
-class ArrayCoordinateSystem2D(CoordinateSystem2D, ArrayCoordinateSystem):
-    """A coordinate system for a unitless array with two dimensions."""
-
-    axes: tx.Optional[_2Axes] = (Axis("dim0"), Axis("dim1"))
+def _dim(i: int) -> Axis:
+    return Axis(f"dim{i}", unit=_SAMPLE)
 
 
-ArrayCoordinateSystem.register_polymorph(
-    ArrayCoordinateSystem2D, on={"axes": _is2d}
-)
+# `ArrayCoordinateSystem` is not a dispatch target, so a class statement
+# cannot say that `ArrayCoordinateSystem(axes=[a, b])` is two-dimensional
+# without also claiming every two-dimensional system of sampled axes
+# from `CoordinateSystem2D` -- which `on=` does too, so both are said.
+@ArrayCoordinateSystem.register_polymorph(axes=_is2d)
+class ArrayCoordinateSystem2D(
+    CoordinateSystem2D,
+    ArrayCoordinateSystem,
+    on={"axes": _both(_is2d, _is_array)},
+):
+    """A coordinate system for an array with two dimensions."""
+
+    axes: tx.Optional[_2Axes] = (_dim(0), _dim(1))
 
 
-class ArrayCoordinateSystem3D(CoordinateSystem3D, ArrayCoordinateSystem):
-    """A coordinate system for a unitless array with three dimensions."""
+@ArrayCoordinateSystem.register_polymorph(axes=_is3d)
+class ArrayCoordinateSystem3D(
+    CoordinateSystem3D,
+    ArrayCoordinateSystem,
+    on={"axes": _both(_is3d, _is_array)},
+):
+    """A coordinate system for an array with three dimensions."""
 
-    axes: tx.Optional[_3Axes] = (Axis("dim0"), Axis("dim1"), Axis("dim2"))
-
-
-ArrayCoordinateSystem.register_polymorph(
-    ArrayCoordinateSystem3D, on={"axes": _is3d}
-)
-
-
-class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
-    """A coordinate system for a unitless, C-ordered array with two
-    dimensions."""
+    axes: tx.Optional[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
-CArrayCoordinateSystem.register_polymorph(
-    CArrayCoordinateSystem2D, on={"axes": _is2d}
-)
+# The memory order is not written on the axes, so nothing selects a C- or
+# F-ordered class but its own ordered base: `on=None` keeps them out of
+# the dispatch of every class above, and the decorator registers them
+# with that one base.
+@CArrayCoordinateSystem.register_polymorph(axes=_is2d)
+class CArrayCoordinateSystem2D(
+    CoordinateSystem2D, CArrayCoordinateSystem, on=None
+):
+    """A coordinate system for a C-ordered array with two dimensions."""
+
+    axes: tx.Optional[_2Axes] = (_dim(0), _dim(1))
 
 
-class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
-    """A coordinate system for a unitless, C-ordered array with three
-    dimensions."""
+@CArrayCoordinateSystem.register_polymorph(axes=_is3d)
+class CArrayCoordinateSystem3D(
+    CoordinateSystem3D, CArrayCoordinateSystem, on=None
+):
+    """A coordinate system for a C-ordered array with three dimensions."""
+
+    axes: tx.Optional[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
-CArrayCoordinateSystem.register_polymorph(
-    CArrayCoordinateSystem3D, on={"axes": _is3d}
-)
+@FArrayCoordinateSystem.register_polymorph(axes=_is2d)
+class FArrayCoordinateSystem2D(
+    CoordinateSystem2D, FArrayCoordinateSystem, on=None
+):
+    """A coordinate system for an F-ordered array with two dimensions."""
+
+    axes: tx.Optional[_2Axes] = (_dim(0), _dim(1))
 
 
-class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
-    """A coordinate system for a unitless, F-ordered array with two
-    dimensions."""
+@FArrayCoordinateSystem.register_polymorph(axes=_is3d)
+class FArrayCoordinateSystem3D(
+    CoordinateSystem3D, FArrayCoordinateSystem, on=None
+):
+    """A coordinate system for an F-ordered array with three dimensions."""
 
-
-FArrayCoordinateSystem.register_polymorph(
-    FArrayCoordinateSystem2D, on={"axes": _is2d}
-)
-
-
-class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
-    """A coordinate system for a unitless, F-ordered array with three
-    dimensions."""
-
-
-FArrayCoordinateSystem.register_polymorph(
-    FArrayCoordinateSystem3D, on={"axes": _is3d}
-)
+    axes: tx.Optional[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
 # ----------------------------------------------------------------------
@@ -225,41 +331,25 @@ FArrayCoordinateSystem.register_polymorph(
 # ----------------------------------------------------------------------
 
 
-def _is_spatial(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return axes is not None and all(axis.type == "space" for axis in axes)
-
-
-def _is_spatial_2d(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return _is_spatial(axes) and len(axes) == 2
-
-
-def _is_spatial_3d(axes: tx.Optional[tx.List[Axis]]) -> bool:
-    return _is_spatial(axes) and len(axes) == 3
-
-
-class SpatialCoordinateSystem(
-    CoordinateSystem, on={"axes": _is_spatial}, priority=1
-):
+class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
     """A coordinate system, whose axes have spatial meaning."""
 
     axes: tx.Optional[tx.List[SpaceAxis]] = None
 
 
+# A spatial system of sampled axes is both spatial and an array, and the
+# spatial reading wins: the pixel and voxel systems below are spatial
+# systems, and are reached through them.
 class SpatialCoordinateSystem2D(
-    CoordinateSystem2D, SpatialCoordinateSystem, on={"axes": _is_spatial_2d}
+    CoordinateSystem2D, SpatialCoordinateSystem, on={}, priority=1
 ):
     """A 2D coordinate system, whose axes have spatial meaning."""
 
     axes: tx.Optional[_2SpatialAxes] = (SpaceAxis(), SpaceAxis())
 
 
-SpatialCoordinateSystem.register_polymorph(
-    SpatialCoordinateSystem2D, on={"axes": _is_spatial_2d}
-)
-
-
 class SpatialCoordinateSystem3D(
-    CoordinateSystem3D, SpatialCoordinateSystem, on={"axes": _is_spatial_3d}
+    CoordinateSystem3D, SpatialCoordinateSystem, on={}, priority=1
 ):
     """A 3D coordinate system, whose axes have spatial meaning."""
 
@@ -270,106 +360,83 @@ class SpatialCoordinateSystem3D(
     )
 
 
-SpatialCoordinateSystem.register_polymorph(
-    SpatialCoordinateSystem3D, on={"axes": _is_spatial_3d}
-)
+def _space(name: str) -> SpaceAxis:
+    return SpaceAxis(name=name, unit=_SAMPLE)
 
 
 class PixelCoordinateSystem(
     SpatialCoordinateSystem2D, ArrayCoordinateSystem2D
 ):
-    """A coordinate system for (unitless) 2D pixel grids."""
+    """A coordinate system for 2D pixel grids."""
 
     name: tx.Optional[str] = "pixel"
-    axes: tx.Optional[_2SpatialAxes] = (
-        SpaceAxis(name="dim0"),
-        SpaceAxis(name="dim1"),
-    )
+    axes: tx.Optional[_2SpatialAxes] = (_space("dim0"), _space("dim1"))
 
 
 class VoxelCoordinateSystem(
     SpatialCoordinateSystem3D, ArrayCoordinateSystem3D
 ):
-    """A coordinate system for (unitless) 3D voxel grids."""
+    """A coordinate system for 3D voxel grids."""
 
     name: tx.Optional[str] = "voxel"
     axes: tx.Optional[_3SpatialAxes] = (
-        SpaceAxis(name="dim0"),
-        SpaceAxis(name="dim1"),
-        SpaceAxis(name="dim2"),
+        _space("dim0"),
+        _space("dim1"),
+        _space("dim2"),
     )
 
 
-class CPixelCoordinateSystem(PixelCoordinateSystem, CArrayCoordinateSystem2D):
-    """A coordinate system for (unitless) C-ordered 2D pixel grids."""
+@CArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+class CPixelCoordinateSystem(
+    PixelCoordinateSystem, CArrayCoordinateSystem2D, on=None
+):
+    """A coordinate system for C-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "cpixel"
-    axes: tx.Optional[_2SpatialAxes] = (
-        SpaceAxis(name="j"),
-        SpaceAxis(name="i"),
-    )
+    axes: tx.Optional[_2SpatialAxes] = (_space("j"), _space("i"))
 
 
-class FPixelCoordinateSystem(PixelCoordinateSystem, FArrayCoordinateSystem2D):
-    """A coordinate system for (unitless) F-ordered 2D pixel grids."""
+@FArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+class FPixelCoordinateSystem(
+    PixelCoordinateSystem, FArrayCoordinateSystem2D, on=None
+):
+    """A coordinate system for F-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "fpixel"
-    axes: tx.Optional[_2SpatialAxes] = (
-        SpaceAxis(name="i"),
-        SpaceAxis(name="j"),
-    )
+    axes: tx.Optional[_2SpatialAxes] = (_space("i"), _space("j"))
 
 
+@CArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
 class CVoxelCoordinateSystem(
-    SpatialCoordinateSystem3D, CArrayCoordinateSystem3D
+    SpatialCoordinateSystem3D, CArrayCoordinateSystem3D, on=None
 ):
-    """A coordinate system for (unitless) C-ordered 3D voxel grids."""
+    """A coordinate system for C-ordered 3D voxel grids."""
 
     name: tx.Optional[str] = "cvoxel"
-    axes: tx.Optional[_3SpatialAxes] = (
-        SpaceAxis(name="k"),
-        SpaceAxis(name="j"),
-        SpaceAxis(name="i"),
-    )
+    axes: tx.Optional[_3SpatialAxes] = (_space("k"), _space("j"), _space("i"))
 
 
+@FArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
 class FVoxelCoordinateSystem(
-    SpatialCoordinateSystem3D, FArrayCoordinateSystem3D
+    SpatialCoordinateSystem3D, FArrayCoordinateSystem3D, on=None
 ):
-    """A coordinate system for (unitless) F-ordered 3D voxel grids."""
+    """A coordinate system for F-ordered 3D voxel grids."""
 
     name: tx.Optional[str] = "fvoxel"
-    axes: tx.Optional[_3SpatialAxes] = (
-        SpaceAxis(name="i"),
-        SpaceAxis(name="j"),
-        SpaceAxis(name="k"),
-    )
+    axes: tx.Optional[_3SpatialAxes] = (_space("i"), _space("j"), _space("k"))
 
 
 # ----------------------------------------------------------------------
 #   ANATOMICAL COORDINATE SYSTEMS
 # ----------------------------------------------------------------------
-
-
-def _is_anat(orientation: tx.Optional[str]) -> bool:
-
-    def check(axes: tx.Optional[tx.List[Axis]]) -> bool:
-        if axes is None:
-            return False
-        if len(axes) != len(orientation):
-            return False
-        for axis, ref in zip(axes, orientation):
-            orient = getattr(axis.orientation, "value", None)
-            ref = getattr(_axes, ref.value.upper()).orientation.value
-            if orient != ref:
-                return False
-        return True
-
-    return check
+# An anatomical system fixes a direction per axis and says nothing about
+# the metric: an array can be RAS-oriented and indexed in samples. They
+# take precedence over the pixel and voxel systems, which say less about a
+# system of oriented, sampled axes than the orientation does.
 
 
 class RASCoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("RAS")}
+    SpatialCoordinateSystem3D, on={"axes": _is_anat("RAS")}, priority=2
 ):
     """The RAS anatomical coordinate system.
 
@@ -378,7 +445,7 @@ class RASCoordinateSystem(
     and by many other neuroimaging formats.
     """
 
-    name: str = "RAS"
+    name: tx.Optional[str] = "RAS"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
         _axes.R,
         _axes.A,
@@ -387,7 +454,7 @@ class RASCoordinateSystem(
 
 
 class LPSCoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("LPS")}
+    SpatialCoordinateSystem3D, on={"axes": _is_anat("LPS")}, priority=2
 ):
     """The LPS anatomical coordinate system.
 
@@ -396,7 +463,7 @@ class LPSCoordinateSystem(
     therefore also by ANTs, 3D Slicer, and other ITK-based tools.
     """
 
-    name: str = "LPS"
+    name: tx.Optional[str] = "LPS"
     axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
         _axes.L,
         _axes.P,
@@ -405,7 +472,7 @@ class LPSCoordinateSystem(
 
 
 class RSACoordinateSystem(
-    SpatialCoordinateSystem3D, on={"axes": _is_anat("RSA")}
+    SpatialCoordinateSystem3D, on={"axes": _is_anat("RSA")}, priority=2
 ):
     """The RSA anatomical coordinate system.
 
@@ -414,7 +481,7 @@ class RSACoordinateSystem(
     FreeSurfer LTA files.
     """
 
-    name: str = "RSA"
+    name: tx.Optional[str] = "RSA"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
         _axes.LR,
         _axes.IS,
@@ -425,176 +492,182 @@ class RSACoordinateSystem(
 # ----------------------------------------------------------------------
 #   PHYSICAL ANATOMICAL SPACES
 # ----------------------------------------------------------------------
-# The anatomical systems above fix a direction per axis and say nothing
-# about the metric, because the two are independent: an array can be
-# RAS-oriented and indexed in samples. These shorthands are the physical
-# ones -- the millimetre spaces that nearly every file format means when it
-# writes an anatomical affine -- and they inherit
-# [`PhysicalCoordinateSystem`][], so an axis of theirs can never be left
-# without a unit.
+# These shorthands are the physical anatomical systems -- the millimetre
+# spaces that nearly every file format means when it writes an anatomical
+# affine -- and they inherit [`PhysicalCoordinateSystem`][], so an axis of
+# theirs can never be left without a unit. Each is selected on its own
+# orientation *and* a physical unit on every axis: the orientation is what
+# its anatomical parent already checks, and checking it again keeps
+# `PhysicalCoordinateSystem(axes=<LPS axes in mm>)` from reaching `RASmm`.
 
 
-class RASmm(RASCoordinateSystem, PhysicalCoordinateSystem):
+def _mm(axis: tx.Type[Axis]) -> Axis:
+    return axis(unit="mm")
+
+
+class RASmm(
+    RASCoordinateSystem,
+    PhysicalCoordinateSystem,
+    on={"axes": _both(_is_anat("RAS"), _is_physical)},
+):
     """[`RASCoordinateSystem`][] in millimetres."""
 
-    name: str = "RAS"
+    name: tx.Optional[str] = "RAS"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
-        _axes.AxisLR(unit="mm"),
-        _axes.AxisPA(unit="mm"),
-        _axes.AxisIS(unit="mm"),
+        _mm(_axes.AxisLR),
+        _mm(_axes.AxisPA),
+        _mm(_axes.AxisIS),
     )
 
 
-RASCoordinateSystem.register_polymorph(RASmm, on={"axes": _is_physical})
-
-
-class LPSmm(LPSCoordinateSystem, PhysicalCoordinateSystem):
+class LPSmm(
+    LPSCoordinateSystem,
+    PhysicalCoordinateSystem,
+    on={"axes": _both(_is_anat("LPS"), _is_physical)},
+):
     """[`LPSCoordinateSystem`][] in millimetres."""
 
-    name: str = "LPS"
+    name: tx.Optional[str] = "LPS"
     axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
-        _axes.AxisRL(unit="mm"),
-        _axes.AxisAP(unit="mm"),
-        _axes.AxisIS(unit="mm"),
+        _mm(_axes.AxisRL),
+        _mm(_axes.AxisAP),
+        _mm(_axes.AxisIS),
     )
 
 
-LPSCoordinateSystem.register_polymorph(LPSmm, on={"axes": _is_physical})
-
-
-class RSAmm(RSACoordinateSystem, PhysicalCoordinateSystem):
+class RSAmm(
+    RSACoordinateSystem,
+    PhysicalCoordinateSystem,
+    on={"axes": _both(_is_anat("RSA"), _is_physical)},
+):
     """[`RSACoordinateSystem`][] in millimetres."""
 
-    name: str = "RSA"
+    name: tx.Optional[str] = "RSA"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
-        _axes.AxisLR(unit="mm"),
-        _axes.AxisIS(unit="mm"),
-        _axes.AxisPA(unit="mm"),
+        _mm(_axes.AxisLR),
+        _mm(_axes.AxisIS),
+        _mm(_axes.AxisPA),
     )
 
 
-RSACoordinateSystem.register_polymorph(RSAmm, on={"axes": _is_physical})
+# ----------------------------------------------------------------------
+#   ANATOMICAL VOXEL SPACES
+# ----------------------------------------------------------------------
+# An F-ordered grid lists its axes x, y, z; a C-ordered one lists them z,
+# y, x. So an F-ordered RAS grid has axes that point R, A, S, and a
+# C-ordered one has axes that point S, A, R -- which is what each is
+# selected on, from its ordered voxel base. Like that base, they stay out
+# of the dispatch of every other class (`on=None`): the C-ordered ones
+# list their axes in an order their anatomical parent does not select.
 
 
-class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
+def _sampled(axis: tx.Type[Axis], name: str) -> Axis:
+    return axis(name=name, unit=_SAMPLE)
+
+
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RAS"))
+class FRASCoordinateSystem(
+    RASCoordinateSystem, FVoxelCoordinateSystem, on=None
+):
     """Combines [`RASCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
     already point in RAS order.
     """
 
-    name: str = "fRAS"
+    name: tx.Optional[str] = "fRAS"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
-        _axes.AxisLR(name="x"),
-        _axes.AxisPA(name="y"),
-        _axes.AxisIS(name="z"),
+        _sampled(_axes.AxisLR, "x"),
+        _sampled(_axes.AxisPA, "y"),
+        _sampled(_axes.AxisIS, "z"),
     )
 
 
-FVoxelCoordinateSystem.register_polymorph(
-    FRASCoordinateSystem, on={"axes": _is_anat("RAS")}
-)
-
-
-class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("LPS"))
+class FLPSCoordinateSystem(
+    LPSCoordinateSystem, FVoxelCoordinateSystem, on=None
+):
     """Combines [`LPSCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
     already point in LPS order.
     """
 
-    name: str = "fLPS"
+    name: tx.Optional[str] = "fLPS"
     axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
-        _axes.AxisRL(name="x"),
-        _axes.AxisAP(name="y"),
-        _axes.AxisIS(name="z"),
+        _sampled(_axes.AxisRL, "x"),
+        _sampled(_axes.AxisAP, "y"),
+        _sampled(_axes.AxisIS, "z"),
     )
 
 
-FVoxelCoordinateSystem.register_polymorph(
-    FLPSCoordinateSystem, on={"axes": _is_anat("LPS")}
-)
-
-
-class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
+@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RSA"))
+class FRSACoordinateSystem(
+    RSACoordinateSystem, FVoxelCoordinateSystem, on=None
+):
     """Combines [`RSACoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
     already point in RSA order.
     """
 
-    name: str = "fRSA"
-    axes: tx.Tuple[
-        _axes.AxisLR,
-        _axes.AxisIS,
-        _axes.AxisPA,
-    ] = (
-        _axes.AxisLR(name="x"),
-        _axes.AxisIS(name="y"),
-        _axes.AxisPA(name="z"),
+    name: tx.Optional[str] = "fRSA"
+    axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+        _sampled(_axes.AxisLR, "x"),
+        _sampled(_axes.AxisIS, "y"),
+        _sampled(_axes.AxisPA, "z"),
     )
 
 
-FVoxelCoordinateSystem.register_polymorph(
-    FRSACoordinateSystem, on={"axes": _is_anat("RSA")}
-)
-
-
-class CRASCoordinateSystem(RASCoordinateSystem, CVoxelCoordinateSystem):
+@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("SAR"))
+class CRASCoordinateSystem(
+    RASCoordinateSystem, CVoxelCoordinateSystem, on=None
+):
     """Combines [`RASCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
 
     This coordinate system describes a C-ordered voxel grid whose axes
     already point in RAS order.
     """
 
-    name: str = "cRAS"
+    name: tx.Optional[str] = "cRAS"
     axes: tx.Tuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR] = (
-        _axes.AxisIS(name="z"),
-        _axes.AxisPA(name="y"),
-        _axes.AxisLR(name="x"),
+        _sampled(_axes.AxisIS, "z"),
+        _sampled(_axes.AxisPA, "y"),
+        _sampled(_axes.AxisLR, "x"),
     )
 
 
-CVoxelCoordinateSystem.register_polymorph(
-    CRASCoordinateSystem, on={"axes": _is_anat("RAS")}
-)
-
-
-class CLPSCoordinateSystem(LPSCoordinateSystem, CVoxelCoordinateSystem):
+@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("SPL"))
+class CLPSCoordinateSystem(
+    LPSCoordinateSystem, CVoxelCoordinateSystem, on=None
+):
     """Combines [`LPSCoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
 
     This coordinate system describes a C-ordered voxel grid whose axes
     already point in LPS order.
     """
 
-    name: str = "cLPS"
+    name: tx.Optional[str] = "cLPS"
     axes: tx.Tuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL] = (
-        _axes.AxisIS(name="z"),
-        _axes.AxisAP(name="y"),
-        _axes.AxisRL(name="x"),
+        _sampled(_axes.AxisIS, "z"),
+        _sampled(_axes.AxisAP, "y"),
+        _sampled(_axes.AxisRL, "x"),
     )
 
 
-CVoxelCoordinateSystem.register_polymorph(
-    CLPSCoordinateSystem, on={"axes": _is_anat("LPS")}
-)
-
-
-class CRSACoordinateSystem(RSACoordinateSystem, CVoxelCoordinateSystem):
+@CVoxelCoordinateSystem.register_polymorph(axes=_is_anat("ASR"))
+class CRSACoordinateSystem(
+    RSACoordinateSystem, CVoxelCoordinateSystem, on=None
+):
     """Combines [`RSACoordinateSystem`][] with [`CVoxelCoordinateSystem`][].
 
     This coordinate system describes a C-ordered voxel grid whose axes
     already point in RSA order.
     """
 
-    name: str = "cRSA"
+    name: tx.Optional[str] = "cRSA"
     axes: tx.Tuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR] = (
-        _axes.AxisPA(name="z"),
-        _axes.AxisIS(name="y"),
-        _axes.AxisLR(name="x"),
+        _sampled(_axes.AxisPA, "z"),
+        _sampled(_axes.AxisIS, "y"),
+        _sampled(_axes.AxisLR, "x"),
     )
-
-
-CVoxelCoordinateSystem.register_polymorph(
-    CRSACoordinateSystem, on={"axes": _is_anat("RSA")}
-)

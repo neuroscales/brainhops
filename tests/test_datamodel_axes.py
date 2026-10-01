@@ -139,11 +139,14 @@ def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
 
 
 def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
-    # `Axis(type="space", unit="s")` selects no spatial subclass (a second
-    # is not a unit of space), so it stays a generic axis -- and reading it
-    # as a `SpaceAxis` must refuse the unit `SpaceAxis` is selected against.
-    with pytest.raises(ValueError, match="SpaceAxis.unit cannot be"):
-        SpaceAxis.from_other(Axis(name="x", type="space", unit="s"))
+    # A spatial axis measured in seconds is a contradiction. It is refused
+    # wherever it is written -- not quietly built as a generic `Axis`.
+    with pytest.raises(ValueError, match="SpaceAxis.unit"):
+        Axis(name="x", type="space", unit="s")
+    with pytest.raises(ValueError, match="SpaceAxis.unit"):
+        SpaceAxis(name="x", unit="s")
+    with pytest.raises(ValueError, match="TimeAxis.unit"):
+        Axis(name="t", type="time", unit="mm")
 
 
 def test_a_sibling_axis_is_read_field_by_field() -> None:
