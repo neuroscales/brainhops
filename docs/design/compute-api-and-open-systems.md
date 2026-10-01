@@ -423,11 +423,9 @@ spec (`ome/ngff-spec`, tag `0.6`, `index.md`). Checked against it:
     - The writer closes the systems (`expand`) and emits a `byDimension`
       with explicit identity children for the passed-through axes. The
       reader maps a `byDimension` to blocks with nothing passed through.
-    - **To settle:** the exact pass-through rule when the number of
-      uncovered inputs and outputs differ. My proposal: the surplus
-      uncovered *inputs* are dropped (as in the spec), and surplus
-      uncovered *outputs* are an error, raised as soon as both counts are
-      known.
+    - **Decided: option 1.** The pass-through rule is in A.9: it is
+      decided by axis *names* where they exist, and never by guessing
+      which positional axes to drop.
   - **(2) Keep `SubspaceTransformation` as it is, and add a separate
     `ByDimension`.** Two classes with overlapping meaning, and a larger
     API surface.
@@ -459,6 +457,58 @@ interface.
   `RestrictionError`.
   - **Decided: it raises lazily**, at `compute`, when a commutation
     cannot proceed. Like `inverse`, `restrict` only builds an expression.
+
+### A.9 Axis references: positions or names
+
+OME-NGFF 0.6 refers to axes by integer position, and it can, because an
+OME transformation always sits between coordinate systems that list
+*every* axis. Brainhops has no such guarantee. Systems may be missing, or
+open (Part B). A positional reference into a space of unknown width is
+therefore often a guess, and the pass-through rule is where it hurts. If
+a block leaves two inputs and one output uncovered, which input is
+dropped?
+
+**Proposal: wherever brainhops takes an axis reference, it accepts a
+position (`int`) or a name (`str`).** This covers a block's
+`input_axes`/`output_axes`, `Permutation`, `Projection`, and the axes of
+`t.restrict`/`t.project`.
+
+- **References are stored as given and resolved lazily**, against the
+  coordinate system on the relevant side, when the transformation is
+  computed, applied or written.
+  - A name resolves when that system has exactly one axis with that name.
+    An open system may hold it among its explicit axes.
+  - Otherwise it raises: unknown or ambiguous name, or no system.
+  - Names survive reordering and bridging, which positions do not.
+- **Writers resolve everything to positions**, because OME 0.6 only has
+  positions. A writer closes the systems first (`expand`).
+- **Mapping-type transformations also accept a name mapping**, as the
+  0.6.dev1 `mapAxis` did:
+  - `Permutation({"x": "j", "y": "i"})`;
+  - `Projection` that drops `["c"]`.
+
+  A mapping that duplicates an axis (dev1's "projection up",
+  `{"z": "b", "y": "b"}`) is neither a permutation nor a projection. It
+  stays out of scope unless we add a dedicated type.
+
+**Pass-through rule of the multi-block `SubspaceTransformation`**, with
+no guessing:
+
+1. **Every output written by a block:** inputs that no block reads are
+   dropped. This is the spec's own semantics, and it is explicit by
+   construction.
+2. **Some outputs unwritten, and the axes are named:** each unwritten
+   output is fed from the unread input *with the same name*.
+   - An unread input with no same-named output is dropped.
+   - An unwritten output with no same-named input raises.
+3. **Some outputs unwritten, and the axes are not named:** positional
+   in-order pairing applies only when the number of unread inputs equals
+   the number of unwritten outputs. Otherwise it raises and asks for
+   names (or explicit blocks). It never picks axes to drop.
+
+An open system's unknown `...` axes on both sides pass through one to
+one. This is the case a subspace acting on `x, y, z` of an unknown space
+needs, and no axis is ever dropped from inside `...`.
 
 ---
 
@@ -634,10 +684,14 @@ just the one that crashes:
 11. `Projection.inverse()` raises when the projection drops axes.
 12. A subset integer `mapAxis`, never valid in any 0.6 version, is
     refused on read.
+13. `SubspaceTransformation` becomes the multi-block product (A.8,
+    option 1), keeping its name and the pass-through extension.
 
 ## Open questions
 
-1. A.8: generalize `SubspaceTransformation` into the multi-block product
-   (option 1, recommended)? If so, confirm the pass-through rule
-   (surplus uncovered inputs dropped, surplus uncovered outputs an
-   error).
+1. A.9: accept axis names wherever an axis position is accepted, stored as
+   given and resolved lazily against the systems? Is the pass-through rule
+   (by name; positional only when unambiguous; otherwise raise) right?
+2. A.9: should name-mapping forms for `Permutation`/`Projection`
+   (`{"x": "j"}`) be added now, or only once a reader needs them? Reading
+   0.6.dev1's name-object `mapAxis` would also need `abczarr` to parse it.
