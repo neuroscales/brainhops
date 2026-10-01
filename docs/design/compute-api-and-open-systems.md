@@ -1,8 +1,7 @@
 # Design: the compute API and open coordinate systems
 
-**Status:** proposal, under review; decisions so far are recorded under
-[Decisions](#decisions), remaining questions under
-[Open questions](#open-questions). Nothing here is implemented yet.
+**Status:** agreed design; decisions are recorded under
+[Decisions](#decisions). Part B is being implemented first, then Part A.
 
 This document proposes two connected changes:
 
@@ -480,10 +479,23 @@ position (`int`) or a name (`str`).** This covers a block's
     An open system may hold it among its explicit axes.
   - Otherwise it raises: unknown or ambiguous name, or no system.
   - Names survive reordering and bridging, which positions do not.
+- **Validation against the transformation's own systems. Decided:** when
+  a transformation carries an input or output system, every axis
+  reference on that side is checked against it, whether the reference is
+  a name or a position.
+  - A name must exist, and be unique.
+  - A position must be within range of a closed system, or fall in the
+    explicit part or inside `...` of an open one.
+
+  The check runs when the transformation is built, and again when a system
+  is attached or replaced (e.g. through `.to(input=...)`). A reference is
+  only left unchecked while there is no system to check it against.
+  Resolution goes through one `CoordinateSystem` method that maps a
+  reference to a position (Part B).
 - **Writers resolve everything to positions**, because OME 0.6 only has
   positions. A writer closes the systems first (`expand`).
 - **Mapping-type transformations also accept a name mapping**, as the
-  0.6.dev1 `mapAxis` did:
+  0.6.dev1 `mapAxis` did. **Decided: added now**, in the operation-API PR:
   - `Permutation({"x": "j", "y": "i"})`;
   - `Projection` that drops `["c"]`.
 
@@ -635,9 +647,9 @@ just the one that crashes:
 
 ## Sequencing
 
-1. **Merge #104 as it is.** Its helpers (`factor_sequence`, `restrict`,
-   `embed`, the restrictors) are not exported, so merging commits to
-   nothing public. PR 2 replaces them.
+1. **#104 merged as it was** (done). Its helpers (`factor_sequence`,
+   `restrict`, `embed`, the restrictors) are not exported, so merging
+   committed to nothing public. PR 2 replaces them.
 2. **PR 1, against main: open coordinate systems (Part B).**
    - `...` semantics, `CoordinateSystem.ndim`, `Axis.compatible`/`merge`,
      and `CoordinateSystem.expand`/`take`/`place`/`compatible`.
@@ -686,12 +698,11 @@ just the one that crashes:
     refused on read.
 13. `SubspaceTransformation` becomes the multi-block product (A.8,
     option 1), keeping its name and the pass-through extension.
+14. Axis references may be positions or names everywhere (A.9), with the
+    pass-through rule as written. A transformation that carries systems
+    validates its references against them, whether names or positions.
+15. Name mappings for `Permutation`/`Projection` are added now.
 
 ## Open questions
 
-1. A.9: accept axis names wherever an axis position is accepted, stored as
-   given and resolved lazily against the systems? Is the pass-through rule
-   (by name; positional only when unambiguous; otherwise raise) right?
-2. A.9: should name-mapping forms for `Permutation`/`Projection`
-   (`{"x": "j"}`) be added now, or only once a reader needs them? Reading
-   0.6.dev1's name-object `mapAxis` would also need `abczarr` to parse it.
+None at the moment.
