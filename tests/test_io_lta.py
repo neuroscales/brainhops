@@ -83,3 +83,13 @@ def test_an_lta_transform_reads_its_systems_from_its_volumes(
         "src.nii",
         "dst.nii",
     )
+
+
+def test_lta_systems_do_not_hold_the_canonical_axes() -> None:
+    from brainhops.datamodel import axes as _axes
+
+    canonical = (_axes.R, _axes.L, _axes.A, _axes.P, _axes.S, _axes.I)
+    for cls, _ in _SYSTEMS:
+        for system in (cls(), cls.from_struct(LTAStruct.SrcVolumeInfo())):
+            for axis in system.axes:
+                assert all(axis is not c for c in canonical)

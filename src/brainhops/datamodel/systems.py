@@ -430,7 +430,10 @@ class FVoxelCoordinateSystem(
 #   ANATOMICAL COORDINATE SYSTEMS
 # ----------------------------------------------------------------------
 # An anatomical system fixes a direction per axis and says nothing about
-# the metric: an array can be RAS-oriented and indexed in samples. They
+# the metric: an array can be RAS-oriented and indexed in samples. Their
+# default axes are built here rather than taken from the module-level
+# `R`, `A`, `S`, ...: those are mutable, and a system must never hand them
+# out. They
 # take precedence over the pixel and voxel systems, which say less about a
 # system of oriented, sampled axes than the orientation does.
 
@@ -447,9 +450,9 @@ class RASCoordinateSystem(
 
     name: tx.Optional[str] = "RAS"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
-        _axes.R,
-        _axes.A,
-        _axes.S,
+        _axes.AxisLR(),
+        _axes.AxisPA(),
+        _axes.AxisIS(),
     )
 
 
@@ -465,9 +468,9 @@ class LPSCoordinateSystem(
 
     name: tx.Optional[str] = "LPS"
     axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
-        _axes.L,
-        _axes.P,
-        _axes.S,
+        _axes.AxisRL(),
+        _axes.AxisAP(),
+        _axes.AxisIS(),
     )
 
 
@@ -483,9 +486,9 @@ class RSACoordinateSystem(
 
     name: tx.Optional[str] = "RSA"
     axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
-        _axes.LR,
-        _axes.IS,
-        _axes.PA,
+        _axes.AxisLR(),
+        _axes.AxisIS(),
+        _axes.AxisPA(),
     )
 
 

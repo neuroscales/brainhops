@@ -625,7 +625,10 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
         axes_map = _NIFTI_SPECIFIC_AXES[intent]
         axes = [axes_map.get(i, axis) for i, axis in enumerate(axes)]
 
-    return axes
+    # The tables above are module-level templates: hand out copies, so a
+    # system built from them never holds -- and never changes -- the
+    # shared ones.
+    return [replace(axis) for axis in axes]
 
 
 # ----------------------------------------------------------------------

@@ -341,3 +341,39 @@ def test_no_system_is_ambiguous() -> None:
             except (TypeError, ValueError):
                 # A fixed-arity or oriented class refuses foreign axes.
                 pass
+
+
+# ----------------------------------------------------------------------
+#   CANONICAL AXES NEVER LEAK INTO SYSTEMS
+# ----------------------------------------------------------------------
+
+_CANONICAL = (ax.R, ax.L, ax.A, ax.P, ax.S, ax.I)
+
+
+@pytest.mark.parametrize(
+    "name", [name for name in cs.__all__ if name != "PhysicalCoordinateSystem"]
+)
+def test_default_systems_do_not_hold_the_canonical_axes(name: str) -> None:
+    # The module-level `R`, `A`, `S`, ... are mutable, so a default system
+    # must hold axes of its own: changing one of them leaves the canonical
+    # axes untouched.
+    system = getattr(cs, name)()
+    names = [axis.name for axis in _CANONICAL]
+    for axis in system.axes or ():
+        assert all(axis is not canonical for canonical in _CANONICAL)
+        before = axis.name
+        try:
+            axis.name = "changed"
+            assert [axis.name for axis in _CANONICAL] == names
+        finally:
+            axis.name = before
+
+
+def test_the_singleton_orientations_are_frozen() -> None:
+    # Every axis that points left-to-right holds the one `LeftToRight`, so
+    # it cannot be changed through any of them.
+    with pytest.raises(AttributeError):
+        ax.R.orientation.value = "right-to-left"
+    with pytest.raises(AttributeError):
+        cs.RASmm().axes[0].orientation.value = "right-to-left"
+    assert LeftToRight().value == "left-to-right"

@@ -41,7 +41,9 @@ def singleton(cls: _T) -> _T:
     Make a class a singleton, so that only one instance of it can exist.
 
     Calling the class again returns that instance. A singleton cannot be
-    subclassed: a subclass would be a second kind of the one thing.
+    subclassed: a subclass would be a second kind of the one thing. The
+    classes below are also frozen, since every axis that points their way
+    holds the one instance: changing it would turn them all.
     """
 
     registry = {}
@@ -85,7 +87,9 @@ class AnatomicalOrientation(Orientation, on={"type": "anatomical"}):
 
 
 @singleton
-class LeftToRight(AnatomicalOrientation, on={"value": "left-to-right"}):
+class LeftToRight(
+    AnatomicalOrientation, on={"value": "left-to-right"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     left of the subject toward the right."""
 
@@ -93,7 +97,9 @@ class LeftToRight(AnatomicalOrientation, on={"value": "left-to-right"}):
 
 
 @singleton
-class RightToLeft(AnatomicalOrientation, on={"value": "right-to-left"}):
+class RightToLeft(
+    AnatomicalOrientation, on={"value": "right-to-left"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     right of the subject toward the left."""
 
@@ -102,7 +108,7 @@ class RightToLeft(AnatomicalOrientation, on={"value": "right-to-left"}):
 
 @singleton
 class AnteriorToPosterior(
-    AnatomicalOrientation, on={"value": "anterior-to-posterior"}
+    AnatomicalOrientation, on={"value": "anterior-to-posterior"}, frozen=True
 ):
     """The anatomical orientation in which coordinates increase from the
     front of the subject toward the back."""
@@ -112,7 +118,7 @@ class AnteriorToPosterior(
 
 @singleton
 class PosteriorToAnterior(
-    AnatomicalOrientation, on={"value": "posterior-to-anterior"}
+    AnatomicalOrientation, on={"value": "posterior-to-anterior"}, frozen=True
 ):
     """The anatomical orientation in which coordinates increase from the
     back of the subject toward the front."""
@@ -122,7 +128,7 @@ class PosteriorToAnterior(
 
 @singleton
 class InferiorToSuperior(
-    AnatomicalOrientation, on={"value": "inferior-to-superior"}
+    AnatomicalOrientation, on={"value": "inferior-to-superior"}, frozen=True
 ):
     """The anatomical orientation in which coordinates increase from the
     bottom of the subject toward the top."""
@@ -132,7 +138,7 @@ class InferiorToSuperior(
 
 @singleton
 class SuperiorToInferior(
-    AnatomicalOrientation, on={"value": "superior-to-inferior"}
+    AnatomicalOrientation, on={"value": "superior-to-inferior"}, frozen=True
 ):
     """The anatomical orientation in which coordinates increase from the
     top of the subject toward the bottom."""
