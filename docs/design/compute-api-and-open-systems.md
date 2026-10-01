@@ -1,13 +1,14 @@
 # Design: the compute API and open coordinate systems
 
-**Status:** proposal, under review; the first round of decisions is
-recorded under [Decisions](#decisions). Nothing here is implemented yet.
+**Status:** proposal, under review; decisions so far are recorded under
+[Decisions](#decisions), remaining questions under
+[Open questions](#open-questions). Nothing here is implemented yet.
 
 This document proposes two connected changes:
 
 1. **Part A.** A small, public set of operations (`compute`, `simplify`,
-   `factor`, `restrict`) with precise contracts. `compute` becomes a single
-   pass built from the other three.
+   `factor`, and `restrict` as a lazy method like `inverse`) with precise
+   contracts. `compute` becomes a single pass.
 2. **Part B.** *Open* coordinate systems: `CoordinateSystem.axes` may contain
    `...`, meaning "an unknown number of axes that we know nothing about".
    `None` means the same thing as `[...]`.
@@ -28,9 +29,10 @@ Passing tests is not enough.
     without composing anything.
   - `factor` rewrites it into independent axis groups without composing
     anything.
-  - `restrict` cuts out one block of axes.
-  - `compute` is the only operation that composes. It is built from the
-    other three.
+  - `t.restrict(...)`, like `t.inverse()`, only *describes* a
+    transformation lazily. Here it is a projection composition, which
+    `compute` reduces.
+  - `compute` is the only operation that composes.
 - **Every operation returns a transformation equivalent to its input**, or
   raises. None of them silently drops a piece, changes a value, or returns
   an approximation.
@@ -47,8 +49,12 @@ Passing tests is not enough.
   keep cancelling.
 - **Per-type rules by registration.** Each operation is a
   `bagof.dispatchers` Function with a private decorator (`@simplifier`,
-  `@restrictor`, …), so supporting another of the library's classes means
+  `@composer`, …), so supporting another of the library's classes means
   registering one rule, not editing the operation itself.
+- **A missing rule is something to add, never a design constraint.** When
+  an expression does not reduce well today because a composer or
+  simplifier is not registered, the fix is to register it, not to route
+  around it.
 
 ### A.2 `simplify(t, policy="analytic")`
 
@@ -118,101 +124,149 @@ it already does.*
 resampling reads every value anyway. This makes the value-reading visible.
 It is no longer hidden inside `factor`.
 
-### A.4 `restrict(t, input_axes, output_axes)` (new public operation)
+### A.4 Restriction: a lazy projection composition
 
-> Return the transformation `t` performs from its input axes `input_axes`
-> to its output axes `output_axes`, as a transformation over those axes
-> alone. This is only defined when that block is *decoupled*: no output in
-> `output_axes` reads an input outside `input_axes`, and no other output
-> reads an input in `input_axes`. A block that is not decoupled raises
-> `RestrictionError`; it never gives an approximation.
+*Revised after review. The first draft made `restrict` a free-standing
+operation with its own per-type rules. It also argued that composition
+could not deliver the cheap types and laziness. That argument was wrong:
+it described the composers that happen to be registered today, not
+anything the approach requires.*
 
-**Changes from #104 today:**
+#### Decoupled and coupled blocks
 
-- **Keyword names** match `SubspaceTransformation`: `input_axes` and
-  `output_axes`, instead of `rows` and `cols`.
-- **No `ni`/`no` arguments.**
-  - Restriction never needs the total number of axes. Every rule indexes
-    into what `t` already holds: matrix rows and columns, scale entries,
-    permutation entries, or a subspace's absolute axis positions.
-  - An `Identity` restricts to an `Identity`.
-  - With open systems (Part B), the restricted systems are well defined
-    even when the full count is unknown.
-- **Decoupling is checked, not assumed.** Today the factor pass guarantees
-  it, but a public function has to protect itself. The check reuses the
-  dependency-pattern reader under the call's policy. A block that cannot
-  be shown to be decoupled raises.
-  - Restricting an `Affine` reads its sub-block, i.e. its values, so
-    checking the off-block zeros costs nothing extra.
-  - **Decided: `restrict` takes no `policy` argument.** Cutting out a
-    block is inherently a read of that block, so `restrict` may always
-    read the values it extracts, and the off-block zeros that make the
-    extraction exact.
-- **The result carries restricted systems.**
-  - `input` is `t.input` restricted to `input_axes`, and `output` is
-    `t.output` restricted to `output_axes`.
-  - Adjacent pieces of a chain therefore agree by construction. Element
-    *k*'s output, restricted to a group, is exactly element *k+1*'s input
-    restricted to the same group.
-- **A block that covers everything `t` acts on returns `t` itself, or its
-  inner for a subspace**, so object identity is kept.
-- **Duality with `SubspaceTransformation`:**
-  `restrict(SubspaceTransformation(t, a, b), a, b) is t`.
+A transformation `t` maps input axes to output axes. Its *dependency
+pattern* says which outputs read which inputs. Take a set of input axes
+`I` and a set of output axes `O`.
 
-#### Relation to `Projection`
+- **`O` is *closed over* `I`** when every output in `O` reads only inputs
+  in `I`. This is exactly what a restriction needs. The outputs in `O` are
+  then a function of the inputs in `I` alone, whatever values the other
+  inputs take.
+- **The block `(I, O)` is *decoupled*** when, in addition, no output
+  outside `O` reads an input in `I`. Then `t` is a direct product of a map
+  `I → O` and a map on the rest. This stronger condition is what the
+  factor pass needs, because both parts must be restrictable.
+- **A block that is not closed is *coupled*.**
 
-`Projection` does not wrap a transformation. It is a map of its own that
-drops axes (`dropped`), or, inverted, an embedding that creates axes
-(`created`). The composition that matches a restriction is therefore
+For an affine matrix `M`, closure is `M[O, ∁I] = 0`. Decoupling adds
+`M[∁O, I] = 0`.
 
-    π_O ∘ t ∘ ι_I
+Example: a rotation in the `x`–`y` plane that leaves `z` alone.
+- `({x, y}, {x, y})` is decoupled.
+- `({z}, {z})` is decoupled.
+- `({x}, {x})` is coupled, because output `x` reads input `y`.
 
-where `ι_I` embeds the input axes `I` into the full input space and `π_O`
-drops every output axis outside `O`. On a decoupled block, this
-composition *is* `restrict(t, I, O)`. `restrict` still earns its place:
+Another example: `(x, y) → (x, x + y)`.
+- `({x}, {x})` is closed but not decoupled, because output `y` reads `x`.
+  Its restriction is the identity on `x`, and that is well defined.
 
-- **Its precondition is exactly what makes the composition well defined.**
-  `ι_I` has to give the axes it creates *some* value, and the model does
-  not say which.
-  - On a decoupled block, the outputs in `O` never read those axes, so the
-    value does not matter.
-  - On a coupled block, the composition is a *slice* of `t` at an
-    arbitrary point. That is a different operation, and silently returning
-    it would be a bad surprise. `restrict` checks decoupling and raises
-    instead.
-- **Cheaper type, no materialization, identity kept.**
-  - No `Projection` composers exist, and the subspace/affine composers
-    would turn a `Scaling` into a dense `Affine`.
-  - Composing would read a lazy inverse's parameters.
-  - Composing returns new objects, which breaks cancellation by object
-    identity.
-- **One rule per type.** Getting the same through composition would need a
-  composer for every `(Projection, T)` pair and every `(T, Projection⁻¹)`
-  pair. That is twice as many registrations, each restating the
-  restriction.
+The earlier draft required decoupling for `restrict`. Closure is enough.
 
-So the projection composition is how `restrict` is *specified*, and
-`restrict` is how it is *computed*. The docstring states the identity
-`restrict(t, I, O) == compute(π_O ∘ t ∘ ι_I)` for decoupled blocks, and a
-test checks it numerically.
+#### Definition
+
+Following the pattern of `t.inverse()`, which returns the lazy
+`Inverse(t)` and leaves the work to `compute`:
+
+> `t.restrict(input_axes, output_axes)` returns the lazy composition
+> `π_O @ t @ ι_I`, where `ι_I` is a `Projection` that creates the input
+> axes outside `I`, and `π_O` is a `Projection` that drops the output
+> axes outside `O`. Nothing is evaluated until `compute`.
+
+- **No new transformation type.** A restriction is an ordinary sequence
+  of projections around `t`, so every rule that reduces it also applies to
+  projections that users write themselves.
+- **The keyword names match `SubspaceTransformation`** (`input_axes`,
+  `output_axes`). No axis counts are needed: the projections index into
+  `t`'s own axes, and open systems (Part B) describe unknown widths.
+
+#### Reduction: rewrites, not composition
+
+Reducing the sandwich is *analytic simplification*, run under
+`compute(mode=False, simplify="analytic")`. It uses two kinds of
+cost-free rewrite.
+
+- **Commutation.** `π ∘ T → T' ∘ π'`, where `T'` is `T` cut down to the
+  axes `π` keeps, and `π'` drops the corresponding input axes. The rule
+  applies when the kept outputs are closed over some set of inputs.
+  Repeating it moves the projection towards the input side, one element
+  at a time.
+- **Cancellation.** `π ∘ ι → Identity` when one exactly undoes the other.
+  More generally, a drop followed by a create reduces to a single
+  projection.
+
+These rewrites never compose anything, which is what gives the
+properties we want:
+
+- **Type is kept.** `π ∘ Scaling` commutes to a smaller `Scaling`. It is
+  not folded into an `Affine`, because nothing is folded.
+- **Lazy inverses stay lazy.** `π ∘ Inverse(f)` commutes through `f`'s own
+  rule (over the swapped axes) and re-inverts lazily.
+- **Identity is kept.** When `I` and `O` cover all of `t`'s axes, both
+  projections are identities, simplify drops them, and the result is `t`
+  itself.
+
+Under a mode that composes, `compute` reduces the sandwich the same way,
+then composes what is left.
+
+#### What has to be added
+
+These are additions, not blockers.
+
+1. **The meaning of created axes.** `ι_I` must give the axes it creates
+   *some* value. Today's model does not say which. Two options:
+   - Declare it, e.g. created axes are `0`, or a `fill` field on
+     `Projection`.
+   - Leave it undefined, in which case a sandwich is only meaningful on
+     closed blocks.
+
+   This matters only for coupled blocks. See the open question below.
+2. **A third kind of simplification rule**, next to leaf rules and pair
+   collapses: a pair *rewrite* (2 → 2). Every commutation moves a
+   projection one step towards the input side, so the rewriting always
+   terminates.
+3. **One commutation rule per type.** These replace #104's `restrictors`
+   one for one, so the number of registered rules does not grow.
+4. **`Projection` with coordinate systems.** Which axes are dropped and
+   created must be readable from, and written to, systems, including open
+   ones (Part B).
+5. **Composers for `Projection`**, so that a sandwich that does not fully
+   reduce can still be composed, e.g. with an `Affine` under a mode that
+   admits both.
+
+#### Contract
+
+- `t.restrict(I, O).compute()` is equivalent to `t` read from `I` to `O`,
+  whenever `O` is closed over `I`.
+- Under `mode=False, simplify="analytic"`, the result composes nothing.
+  It has the cheapest type the rules know, keeps lazy inverses lazy, and
+  is `t` itself when the block covers everything.
+- `restrict(SubspaceTransformation(t, a, b), a, b)` reduces to `t`
+  (through `SubspaceTransformation`'s commutation rule).
+- **Open question: coupled blocks.** On a coupled block, the sandwich
+  does not reduce by commutation, and its value depends on what `ι`
+  creates. Should computing it:
+  - (a) give the section of `t` at the declared created value (needs
+    item 1), or
+  - (b) raise?
+
+  I lean towards (b) for `restrict`, since a section at an arbitrary
+  point is a surprising thing to get back from a "restriction". The plain
+  projection composition `π_O @ t @ ι_I` stays available to anyone who
+  wants the section.
+
+The factor pass uses `restrict` exactly this way. Its partition only
+yields decoupled blocks, which reduce fully.
 
 ### A.5 No separate `embed`
 
-#104 introduced `embed` as the inverse of `restrict`. The embedding
-already exists: it is `SubspaceTransformation(t, input_axes, output_axes)`.
-Lowering that embedding to a plain `Affine` is the job of `convert`/
-`simplify`, and it needs only one thing: knowing how many axes the full
-space has. Part B makes "we don't know" representable. With it:
+#104 introduced `embed` as a function. It is not needed:
+- **Subspace embedding** (act on some axes, pass the rest through) is
+  `SubspaceTransformation(t, input_axes, output_axes)`.
+- **Adding axes** is `Projection(created=...)`.
 
-- the subspace's derived systems no longer claim a wrong count;
-- the `Subspace → Affine` converter raises "axis count unknown" instead of
-  building a matrix that is too small;
-- `factor` no longer needs `embed` at all, because it sets explicit
-  systems on its factors (A.3) and leaves pieces uncomposed when they
-  cannot be lowered.
-
-So `embed` and its `ni`/`no` arguments are removed, which shrinks the API
-surface.
+Lowering either to a plain `Affine` is the job of `convert`/`simplify`,
+and needs the full axis count, which open systems (Part B) can state, or
+say is unknown. `embed` and its `ni`/`no` arguments are removed.
 
 ### A.6 `compute(t, mode=True, *, simplify="analytic", factor=False)`
 
@@ -255,7 +309,7 @@ A single pass, with no fixpoint loop:
 - **`compose` and `convert`.** Their public faces are `compute` and
   `Transformation.to`.
 - **The registration decorators** (`@composer`, `@converter`,
-  `@simplifier`, `@restrictor`). **Decided: they stay private.**
+  `@simplifier`). **Decided: they stay private.**
   Registration is how the library's own transformation classes plug in.
   It is not a public extension point.
 - **Bridging and adaptation.**
@@ -301,10 +355,13 @@ so. `None` throws away the positions we do know, and the
   - A test parametrizes the open-system cases over both spellings, so the
     two cannot drift apart.
 - **A system with `...` is *open*; one without is *closed*.**
-  - `ndim` is `None` for an open system.
-  - `min_ndim` counts its explicit axes.
+  - **`CoordinateSystem.ndim`** (new property) is the number of axes of a
+    closed system, and `None` for an open one, including `axes=None`.
+  - The count of *explicit* axes never includes the `...` entry, even
+    though `...` is an item of the `axes` list.
 - **Fixed-dimension classes cannot be open.** `CoordinateSystem2D`/`3D`
-  and their subclasses reject `...`.
+  and their subclasses reject `...` (and `None`) at validation. Their
+  `ndim` is always their fixed count.
 - **Where `...` may appear. Decided: anywhere, at most once**, as in
   numpy. This expresses things like `[..., TimeAxis()]` ("the last axis is
   time"), as well as the subspace case, which needs a trailing `...`
@@ -322,9 +379,16 @@ so. `None` throws away the positions we do know, and the
 These are small, documented methods on `CoordinateSystem`. They replace
 the ad-hoc list manipulation currently scattered across modules.
 
+- **`expand(ndim)`:** the closed system obtained by replacing `...` with
+  as many `Axis()` as needed to reach `ndim` axes.
+  - It raises if `ndim` is less than the number of explicit axes.
+  - On a closed system, it returns the system itself when `ndim` matches,
+    and raises otherwise.
+  - Writers (B.5) and anything that learns the true width from data use
+    it.
 - **`take(positions)`:** the system restricted to those positions, in
-  order. Positions that resolve into `...` become `Axis()`. `restrict`
-  uses this (A.4).
+  order. Positions that resolve into `...` become `Axis()`. Projections
+  use this to describe the systems on either side (A.4).
 - **`place(positions, ndim=None)`:** the inverse of `take`. It is the
   full-space system in which this system's axes sit at `positions`.
   - Gaps are filled with `Axis()`.
@@ -376,17 +440,22 @@ just the one that crashes:
 ## Sequencing
 
 1. **Merge #104 as it is.** Its helpers (`factor_sequence`, `restrict`,
-   `embed`) are not exported, so merging commits to nothing public.
+   `embed`, the restrictors) are not exported, so merging commits to
+   nothing public. PR 2 replaces them.
 2. **PR 1, against main: open coordinate systems (Part B).**
-   - `...` semantics, `Axis.compatible`/`merge`, and
-     `CoordinateSystem.take`/`place`/`compatible`.
+   - `...` semantics, `CoordinateSystem.ndim`, `Axis.compatible`/`merge`,
+     and `CoordinateSystem.expand`/`take`/`place`/`compatible`.
    - All the consumers listed in B.5.
    - `_subsystem` becomes `place(…, ndim=None)`, which fixes the
      `Subspace → Affine` crash.
 3. **PR 2: the operation API (Part A).**
-   - `factor` and `restrict` become public with the contracts above, and
-     `embed` is removed.
-   - `factor` becomes a pure rewrite, and `restrict` carries systems.
+   - `Projection` gains coordinate systems and a defined meaning for
+     created axes (or explicitly none; see the open question in A.4).
+   - Pair-rewrite simplification rules, with commutation rules per type
+     and projection cancellation. These replace #104's restrictors.
+   - `Transformation.restrict` returns the lazy projection composition,
+     and `embed` is removed.
+   - `factor` becomes a public, pure rewrite built on `restrict`.
    - Factors declare their full-space systems.
    - `compute` becomes a single pass.
    - Reslice asks for `simplify="numeric"`.
@@ -395,10 +464,25 @@ just the one that crashes:
 
 ## Decisions
 
-1. `restrict` takes no `policy` argument.
+1. Restriction takes no `policy` argument. (Now moot: restriction is
+   `t.restrict(I, O)`, and policy belongs to `compute`/`simplify`.)
 2. The registration decorators stay private.
 3. `axes=None` (and `input`/`output=None`) is not normalized to `[...]`,
    but every reader, equality and compatibility treats the two spellings
    identically, through one accessor.
 4. `...` may appear anywhere, at most once.
-5. Writers close an open system from the data shape.
+5. Writers close an open system from the data shape (`expand`).
+6. `CoordinateSystem.ndim` is `None` for an open system. Fixed-dimension
+   classes reject `...`, and `...` never counts towards the number of
+   explicit axes.
+7. Restriction follows `inverse`: `t.restrict(I, O)` returns the lazy
+   composition `π_O @ t @ ι_I`, reduced by `compute` through analytic
+   rewrite rules. Missing composers or simplifiers are added, not worked
+   around.
+
+## Open questions
+
+1. A.4: computing a restriction over a coupled block. Should it give the
+   section at the projection's declared created value, or raise?
+2. A.4: should `Projection` declare the value of created axes (e.g. `0`,
+   or a `fill` field), or leave it undefined?
