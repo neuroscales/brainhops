@@ -23,8 +23,8 @@ axes>)` builds an `FRASCoordinateSystem`.
 
 Every row of the table says something about *all* the axes, so only a
 closed system is dispatched. An open system -- one whose axes hold `...`
-([`AxisList`][]), or are `None` -- does not know all its axes, so it is
-built as the class it was called as: `CoordinateSystem(axes=[x, ...])` is
+([`AxisList`][]) -- does not know all its axes, so it is built as the
+class it was called as: `CoordinateSystem(axes=[x, ...])` is
 not two-dimensional, and `CoordinateSystem(axes=[R(), A(), S(), ...])` is
 not an `RASCoordinateSystem`. [`CoordinateSystem.expand`][] closes it,
 and the closed system is dispatched like any other.
@@ -168,10 +168,10 @@ class AxisList(list, tx.Generic[AXIS]):
     [`CoordinateSystem`][brainhops.datamodel.systems.CoordinateSystem]
     whose number of axes is not fixed by its class are stored as an
     `AxisList`: a list or a tuple given to the system is converted to
-    one, item by item, to the type of axis the class declares. The
-    system, or its axes, may also be `None`, which means the same as
-    `[...]`. [`of`][brainhops.datamodel.systems.AxisList.of] reads the
-    axes of any system, or of none, as an `AxisList`.
+    one, item by item, to the type of axis the class declares. Its
+    default, `[...]`, says nothing about the axes; `axes=None` is
+    refused. [`of`][brainhops.datamodel.systems.AxisList.of] reads the
+    axes of any system, or of a missing one, as an `AxisList`.
 
     The type parameter is the type of the items:
     `AxisList[Union[Axis, EllipsisType]]` may be open, and
@@ -200,13 +200,11 @@ class AxisList(list, tx.Generic[AXIS]):
 
         This is the one way to read the axes of a system whatever it is:
 
-        * a missing system (`None`) and a system whose `axes` are `None`
-          say nothing about their axes, and both read as `[...]`;
+        * a missing system (`None`) says nothing about its axes, and
+          reads as `[...]`;
         * any other system reads as its axes, whether its class stores
           them as an `AxisList` or, for a fixed number of axes, as a
           tuple.
-
-        The system is left as it is: its `axes` keep what was given.
 
         Parameters
         ----------
@@ -234,15 +232,13 @@ class AxisList(list, tx.Generic[AXIS]):
             ```
         """
         if system is None:
-            axes = None
-        elif isinstance(system, CoordinateSystem):
-            axes = system.axes
-        else:
-            raise TypeError(
-                f"Expected a CoordinateSystem or None, not a "
-                f"{type(system).__name__}."
-            )
-        return cls([...] if axes is None else axes)
+            return cls([...])
+        if isinstance(system, CoordinateSystem):
+            return cls(system.axes)
+        raise TypeError(
+            f"Expected a CoordinateSystem or None, not a "
+            f"{type(system).__name__}."
+        )
 
     # --- entries ------------------------------------------------------
 
@@ -796,7 +792,7 @@ def _check_unique(positions: tx.List[int], what: str) -> None:
 # ----------------------------------------------------------------------
 # Every predicate below says something about *all* the axes of a system:
 # how many there are, or what each one is. An open system (one whose
-# axes hold `...`, or are `None`) does not know all its axes -- `...`
+# axes hold `...`) does not know all its axes -- `...`
 # may stand for none, or for axes of any kind -- so no predicate holds
 # of it, and calling a class with open axes builds that class itself:
 # `CoordinateSystem(axes=[SpaceAxis(), ...])` is a `CoordinateSystem`,
@@ -892,7 +888,7 @@ def _is_anat(code: str) -> tx.Callable[[tx.Optional[tx.Sequence[Axis]]], bool]:
 # ----------------------------------------------------------------------
 
 
-class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
+class CoordinateSystem(DataModelBase, polymorphic=True):
     """A coordinate system defines the meaning of coordinates in a space.
 
     It describes each axis in the system (name, unit and/or other properties),
@@ -908,20 +904,19 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         * `[..., TimeAxis()]` says that the last axis is time, and nothing
           about the others.
         * `[Axis(name="x"), ...]` says that the first axis is `x`.
-        * `axes=None` means the same as `axes=[...]`: nothing is known.
-          It is stored as given, but every method, equality and
-          [`compatible_with`][] treat the two spellings identically.
+        * `[...]`, the default, says nothing at all. It is the one
+          spelling of unknown axes: `axes=None` is refused.
 
         A list or a tuple given as `axes` is stored as an [`AxisList`][].
         [`AxisList.of`][] reads the axes of any system, or of a missing
-        one, as an [`AxisList`][], with `[...]` for `None`. An axis is
-        read by its name as `AxisList.of(system)["x"]`, and found by
-        [`index`][brainhops.datamodel.systems.AxisList.index].
+        one (`None`), as an [`AxisList`][], with `[...]` for a missing
+        system. An axis is read by its name as `system.axes["x"]`, and
+        found by [`index`][brainhops.datamodel.systems.AxisList.index].
 
         Classes with a fixed number of axes, such as
         [`CoordinateSystem3D`][], are always closed. They store their
         axes as a tuple, whose type fixes the number of axes and the
-        class of each one, so they reject `...` and `axes=None`.
+        class of each one, so they reject `...`.
 
         Calling a class builds the most specific system its axes
         describe (see the module), and only a closed system is
@@ -932,46 +927,47 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         open system with [`expand`][] dispatches it again.
 
     !!! note "Equality"
-        Two systems are equal when they are of the same class, have the
-        same name, and have equal axes, where `axes=None` equals
-        `axes=[...]`. A plain `CoordinateSystem` with no name and no known
-        axis, which says nothing at all, also equals `None`, the missing
-        endpoint of a transformation. [`compatible_with`][] is the looser
-        question of whether two systems could describe the same space.
+        Equality is field by field: two systems are equal when they are
+        of the same class, have the same name, and have equal axes. A
+        system is never equal to `None`, not even a plain
+        `CoordinateSystem()` that says nothing at all; whether a system
+        tells anything, as a missing endpoint of a transformation does
+        not, is what [`_is_informative`][] answers.
+        [`compatible_with`][] is the looser question of whether two
+        systems could describe the same space.
     """
-
-    # `eq=False`: the hand-written `__eq__` below must also be the one of
-    # every subclass. With the default `eq=True`, Magic writes a field-wise
-    # `__eq__` into each subclass that does not define its own, which
-    # would shadow this one and tell `axes=None` from `axes=[...]`.
 
     name: tx.Optional[str] = None
     """The name of the coordinate system."""
 
-    axes: tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]] = None
-    """The axes of the coordinate system, in order."""
+    axes: AxisList[tx.Union[Axis, _Ellipsis]] = [...]
+    """The axes of the coordinate system, in order. `[...]`, the default,
+    says nothing about them."""
 
     # --- validation ---------------------------------------------------
 
+    def __pre_init__(self, arguments: tx.Any) -> None:
+        # The converter would refuse `None` too, but with a message about
+        # iterables: say what to write instead.
+        if arguments.get("axes", ...) is not None:
+            return
+        name = type(self).__name__
+        if isinstance(self, (CoordinateSystem2D, CoordinateSystem3D)):
+            raise TypeError(
+                f"{name}.axes cannot be None: a {name} has a fixed number "
+                f"of axes, and lists every one of them."
+            )
+        raise TypeError(
+            f"{name}.axes cannot be None: use `[...]` for axes about which "
+            f"nothing is known."
+        )
+
     def __post_init__(self) -> None:
-        if self.axes is not None and sum(a is ... for a in self.axes) > 1:
+        if sum(a is ... for a in self.axes) > 1:
             raise ValueError(
                 "The axes of a coordinate system hold at most one `...`, "
                 "which stands for all the axes about which nothing is known."
             )
-
-    # --- equality -----------------------------------------------------
-
-    def __eq__(self, other: tx.Any) -> bool:
-        if other is None:
-            return _is_unknown(self)
-        if type(other) is not type(self):
-            return NotImplemented
-        for field in fields(type(self)):
-            if field.eq and field.name != "axes":
-                if getattr(self, field.name) != getattr(other, field.name):
-                    return False
-        return AxisList.of(self) == AxisList.of(other)
 
     # --- properties ---------------------------------------------------
 
@@ -980,8 +976,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         """The number of axes, or `None` when the system is open.
 
         A closed system has exactly `len(axes)` axes. An open system,
-        whose axes hold `...` or are `None`, has an unknown number of
-        axes, and its `ndim` is `None`. This is
+        whose axes hold `...`, has an unknown number of axes, and its
+        `ndim` is `None`. This is
         [`AxisList.ndim`][brainhops.datamodel.systems.AxisList.ndim]
         read through [`AxisList.of`][].
 
@@ -1203,16 +1199,22 @@ class CoordinateSystem(DataModelBase, polymorphic=True, eq=False):
         return AxisList.of(self).compatible_with(AxisList.of(other))
 
 
-def _is_unknown(system: tx.Optional[CoordinateSystem]) -> bool:
-    # Whether `system` says nothing at all: it is missing, or it is a plain
-    # `CoordinateSystem` with no name whose axes are `None` or `[...]`.
-    # Such a system equals `None`.
+def _is_informative(system: tx.Optional[CoordinateSystem]) -> bool:
+    """Whether `system` tells anything about a space.
+
+    A missing system (`None`) tells nothing, and neither does a plain,
+    unnamed `CoordinateSystem` whose axes are `[...]`: an endpoint of a
+    transformation that is either one is read as undeclared, and is
+    derived, propagated or replaced as a missing one is. Any other
+    system -- one with a name, an axis, or a class of its own -- tells
+    something. This is not equality: no system equals `None`.
+    """
     if system is None:
-        return True
-    return (
+        return False
+    return not (
         type(system) is CoordinateSystem
         and system.name is None
-        and AxisList.of(system) == [...]
+        and list(system.axes) == [...]
     )
 
 
@@ -1252,22 +1254,25 @@ class PhysicalCoordinateSystem(CoordinateSystem):
     building one directly with an unspecified or sampled axis is refused
     too.
 
-    A physical system is always closed. Its axes may not be `None`, nor
-    hold `...`: `...` is not an axis without a unit, but it stands for
-    axes about which nothing is known -- their units included -- and a
-    physical system vouches for the unit of every axis it has. Such a
-    system is refused with its own message, which says to close it
-    first. (`None` and `[...]` are the same system, so both are refused.)
+    A physical system is always closed. Its axes may not hold `...`:
+    `...` is not an axis without a unit, but it stands for axes about
+    which nothing is known -- their units included -- and a physical
+    system vouches for the unit of every axis it has. Such a system is
+    refused with its own message, which says to close it first.
+    `PhysicalCoordinateSystem()`, whose axes default to `[...]`, states
+    no axis at all, and is refused as a system without axes.
     """
 
     def __post_init__(self) -> None:
         super().__post_init__()
         name = type(self).__name__
-        if not self.axes:
+        if all(axis is ... for axis in self.axes):
+            # No axis at all, or only `[...]` (the default), which states
+            # none.
             raise ValueError(
                 f"{name} is a physical coordinate system, so it must have "
                 f"axes, and every one of them must carry a physical unit. "
-                f"It was given {self.axes!r}."
+                f"It was given {list(self.axes)!r}."
             )
         if any(axis is ... for axis in self.axes):
             # `...` is not an axis without a unit: it stands for axes about
@@ -1405,7 +1410,7 @@ class FArrayCoordinateSystem3D(
 class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
     """A coordinate system, whose axes have spatial meaning."""
 
-    axes: tx.Optional[AxisList[tx.Union[SpaceAxis, _Ellipsis]]] = None
+    axes: AxisList[tx.Union[SpaceAxis, _Ellipsis]] = [...]
 
 
 # A spatial system of sampled axes is both spatial and an array, and the

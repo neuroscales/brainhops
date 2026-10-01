@@ -13,7 +13,7 @@ from brainhops.datamodel.base import DataModelBase
 
 # internals
 from .axes import Axis
-from .systems import AxisList, CoordinateSystem, _is_unknown
+from .systems import AxisList, CoordinateSystem, _is_informative
 from .transformations import (
     Affine,
     CartesianField,
@@ -181,9 +181,11 @@ class Geometry(_GeometryFields, ImmutableSequence):
         # geometry's own input and output are propagated onto the grid and
         # the transformation, matching `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
-        if _is_unknown(grid.input) and not _is_unknown(self.input):
+        if not _is_informative(grid.input) and _is_informative(self.input):
             grid = grid.to(input=self.input)
-        if _is_unknown(transformation.output) and not _is_unknown(self.output):
+        if not _is_informative(transformation.output) and _is_informative(
+            self.output
+        ):
             transformation = transformation.to(output=self.output)
         if isinstance(transformation, Sequence):
             flat_seq = transformation._flattened()

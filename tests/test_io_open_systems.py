@@ -59,7 +59,7 @@ def test_nifti_closes_an_open_world_space_from_the_matrix(axes: list) -> None:
     assert np.allclose(closed, LPS_FLIP @ np.diag([2.0, 3.0, 4.0, 1.0]))
 
 
-@pytest.mark.parametrize("output", [None, CS(axes=None), CS(axes=[...])])
+@pytest.mark.parametrize("output", [None, CS(), CS(axes=[...])])
 def test_nifti_reads_an_unknown_world_space_as_unoriented(
     output: tx.Optional[CS],
 ) -> None:

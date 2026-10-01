@@ -410,12 +410,14 @@ def test_two_default_systems_share_no_axis_with_another_class(
     # A default system holds axes of its own class's making: no axis
     # object is shared with the default of another system class.
     system = getattr(cs, name)()
-    mine = {id(axis) for axis in system.axes or ()}
+    # (`...`, which an open system defaults to, is no axis but the one
+    # `Ellipsis`.)
+    mine = {id(axis) for axis in system.axes if axis is not ...}
     for other in _DEFAULT_SYSTEMS:
         if other == name:
             continue
-        theirs = getattr(cs, other)().axes or ()
-        assert not mine & {id(axis) for axis in theirs}
+        theirs = getattr(cs, other)().axes
+        assert not mine & {id(axis) for axis in theirs if axis is not ...}
 
 
 def test_the_singleton_orientations_are_frozen() -> None:

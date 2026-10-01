@@ -39,7 +39,7 @@ def systems_disagree(
     `source` is where one transform leaves its coordinates and `target` is
     where the next one expects to find them. Two closed systems disagree
     when they are not equal. A system that is missing or open (its axes
-    hold `...`, or are `None`) disagrees with its neighbour only when the
+    hold `...`) disagrees with its neighbour only when the
     axes it does state cannot match the neighbour's, i.e. when the two are
     not
     [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]:

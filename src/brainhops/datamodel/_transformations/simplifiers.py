@@ -41,7 +41,7 @@ from bagof.magic import replace
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import _is_unknown
+from brainhops.datamodel.systems import _is_informative
 
 # internals
 from .base import Transformation
@@ -275,8 +275,10 @@ def _(
     first: Identity, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
     return Identity(
-        input=second.input if _is_unknown(first.input) else first.input,
-        output=first.output if _is_unknown(second.output) else second.output,
+        input=first.input if _is_informative(first.input) else second.input,
+        output=second.output
+        if _is_informative(second.output)
+        else first.output,
     )
 
 
@@ -284,7 +286,7 @@ def _(
 def _(
     first: Identity, second: Transformation, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if _is_unknown(first.input) or first.input == second.input:
+    if not _is_informative(first.input) or first.input == second.input:
         return second
     return replace(second, input=first.input)
 
@@ -293,7 +295,7 @@ def _(
 def _(
     first: Transformation, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if _is_unknown(second.output) or second.output == first.output:
+    if not _is_informative(second.output) or second.output == first.output:
         return first
     return replace(first, output=second.output)
 
@@ -419,9 +421,9 @@ def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
     # replaces it. Only the declared ones are read, so a derived endpoint
     # stays derived.
     edits = {}
-    if not _is_unknown(like._input):
+    if _is_informative(like._input):
         edits["input"] = like._input
-    if not _is_unknown(like._output):
+    if _is_informative(like._output):
         edits["output"] = like._output
     return t.to(**edits) if edits else t
 

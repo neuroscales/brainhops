@@ -1,9 +1,9 @@
 """Tests for the readers of coordinate systems once systems may be open.
 
-An open system (its axes hold `...`, or are `None`) states only some of
-its axes. Every reader treats `axes=None`, `axes=[...]` and a missing
-endpoint alike, counts axes only when a system is closed, and never
-guesses what `...` stands for.
+An open system (its axes hold `...`) states only some of its axes.
+Every reader treats a plain `CoordinateSystem()` (whose axes default to
+`[...]`) and a missing endpoint alike, counts axes only when a system is
+closed, and never guesses what `...` stands for.
 """
 
 import numpy as np
@@ -32,6 +32,7 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     LPSCoordinateSystem,
     RASCoordinateSystem,
+    _is_informative,
 )
 from brainhops.datamodel.transformations import (
     AdaptationError,
@@ -56,7 +57,7 @@ X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
 # The ways of saying "nothing is known about this system".
 UNKNOWN = {
     "missing": None,
-    "axes=None": CS(axes=None),
+    "default": CS(),
     "axes=[...]": CS(axes=[...]),
 }
 
@@ -67,10 +68,11 @@ def unknown(request: pytest.FixtureRequest) -> tx.Optional[CS]:
     return UNKNOWN[request.param]
 
 
-@pytest.fixture(params=["axes=None", "axes=[...]"])
-def unknown_axes(request: pytest.FixtureRequest) -> tx.Optional[list]:
-    """The axes of a system about which nothing is known, both spellings."""
-    return None if request.param == "axes=None" else [...]
+@pytest.fixture(params=["[...]", "(...,)"])
+def unknown_axes(request: pytest.FixtureRequest) -> tx.Sequence:
+    """The axes of a system about which nothing is known, as a list or a
+    tuple."""
+    return [...] if request.param == "[...]" else (...,)
 
 
 def _xyz() -> CS:
@@ -181,7 +183,7 @@ def test_a_subspace_with_an_unknown_inner_system(
     # its spelling, the subspace knows nothing of its full space, refuses
     # to guess its size, and is closed by a neighbour that knows it.
     sub = _scale_x(unknown)
-    assert sub.input == None  # noqa: E711
+    assert not _is_informative(sub.input)
     with pytest.raises(ConversionError, match="axis count"):
         sub.to(Affine)
     shift = Translation(translation=np.array([1.0, 2.0, 3.0]))
@@ -190,7 +192,7 @@ def test_a_subspace_with_an_unknown_inner_system(
 
 
 def test_a_declared_unknown_system_derives_like_a_missing_one(
-    unknown_axes: tx.Optional[list],
+    unknown_axes: tx.Sequence,
 ) -> None:
     # A declared system that says nothing is read as no declaration, so the
     # subspace derives its full-space system from its inner system.
@@ -202,7 +204,7 @@ def test_a_declared_unknown_system_derives_like_a_missing_one(
     )
     assert sub.input == CS(axes=[Axis(), X, ...])
     # It is still stored as given.
-    assert sub._input.axes == unknown_axes
+    assert sub._input.axes == [...]
 
 
 # ----------------------------------------------------------------------
@@ -210,11 +212,9 @@ def test_a_declared_unknown_system_derives_like_a_missing_one(
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "axes", [None, [...], [X, ...], [..., X], [X, ..., Z]]
-)
+@pytest.mark.parametrize("axes", [[...], [X, ...], [..., X], [X, ..., Z]])
 def test_subspace_to_affine_refuses_an_open_declared_system(
-    axes: tx.Optional[list],
+    axes: list,
 ) -> None:
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0])),
@@ -280,7 +280,7 @@ def test_a_family_dimension_is_contradicted_only_by_known_axes(
 
 
 # ----------------------------------------------------------------------
-#   ENDPOINTS: None, axes=None AND axes=[...] READ ALIKE
+#   ENDPOINTS: None AND CoordinateSystem() READ ALIKE
 # ----------------------------------------------------------------------
 
 
@@ -337,11 +337,11 @@ def test_a_known_endpoint_is_propagated_onto_an_unknown_one(
     assert seq._flattened().transformations[0].input == _xyz()
 
 
-def test_smartproperty_missing_keeps_the_stored_value() -> None:
+def test_smartproperty_informative_keeps_the_stored_value() -> None:
     class Box(DataModelBase):
         _value: tx.Optional[CS] = None
 
-        @smartproperty(missing=lambda v: v == None)  # noqa: E711
+        @smartproperty(informative=_is_informative)
         def value(self) -> CS:
             return _xyz()
 
@@ -436,7 +436,6 @@ def test_grid_extents_close_an_open_grid_system_from_its_shape() -> None:
     for axes, expected in (
         ([i, ...], {"i": 3}),
         ([..., k], {"k": 5}),
-        (None, {}),
         ([...], {}),
     ):
         system = CS(axes=axes)

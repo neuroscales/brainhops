@@ -92,7 +92,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
-    missing: tx.Optional[_IsUnset] = None,
+    informative: tx.Optional[_IsUnset] = None,
 ) -> tx.Callable[[_Getter], property]:
     """Decorator factory (with options)."""
 
@@ -106,7 +106,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
-    missing: tx.Optional[_IsUnset] = None,
+    informative: tx.Optional[_IsUnset] = None,
 ) -> tx.Callable[[_Getter], property]:
     """Functional decorator factory."""
 
@@ -120,7 +120,7 @@ def smartproperty(
     *,
     empty_as_unset: bool = False,
     cache: bool = False,
-    missing: tx.Optional[_IsUnset] = None,
+    informative: tx.Optional[_IsUnset] = None,
 ) -> property:
     """
     Functional decorator.
@@ -156,14 +156,15 @@ def smartproperty(
         otherwise shadow the reader for the object's whole life.
     cache : bool, default=False
         Whether to cache the computed value for future access.
-    missing : callable, optional
-        A predicate on the stored value that says whether it is missing,
-        in addition to `None` (and to an empty container, with
-        `empty_as_unset`). When it holds, the getter computes the value,
-        as it does when nothing was supplied, but the stored value is
-        kept as given. This is for a value that has a second spelling of
-        "nothing is known", such as a coordinate system with no known
-        axis, which must read exactly as `None` does.
+    informative : callable, optional
+        A predicate on the stored value that says whether it tells
+        anything. A value for which it is false is read as no value, as
+        `None` is (and an empty container, with `empty_as_unset`): the
+        getter computes the value, as it does when nothing was supplied,
+        but the stored value is kept as given. This is for a value that
+        can be given and still tell nothing, such as a plain coordinate
+        system with no known axis, which must read exactly as `None`
+        does.
 
     Returns
     -------
@@ -179,7 +180,7 @@ def smartproperty(
     doc=None,
     empty_as_unset=False,
     cache=False,
-    missing=None,
+    informative=None,
 ):
 
     if fget is None:
@@ -194,7 +195,7 @@ def smartproperty(
                 doc,
                 empty_as_unset=empty_as_unset,
                 cache=cache,
-                missing=missing,
+                informative=informative,
             )
 
         return decorate
@@ -207,13 +208,13 @@ def smartproperty(
 
     is_unset = _make_is_unset(empty_as_unset)
     # The getter falls back on a computed value in more cases than the
-    # setter normalizes to `None`: a value that is `missing` is still
-    # stored as given.
+    # setter normalizes to `None`: a value that is not `informative` is
+    # still stored as given.
     reads_unset = is_unset
-    if missing is not None:
+    if informative is not None:
 
         def reads_unset(value: tx.Any) -> bool:
-            return is_unset(value) or bool(missing(value))
+            return is_unset(value) or not informative(value)
 
     fget = _make_fget(
         name, fget, reads_unset, set=fset is not False, cache=cache

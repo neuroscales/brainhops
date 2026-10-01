@@ -119,8 +119,8 @@ def bridge(
     extent.
 
     A bridge is built between two closed systems. When either system is
-    missing or open (its axes hold `...`, or are `None`), it states only
-    some of its axes. The identity is returned when the two are
+    missing or open (its axes hold `...`), it states only some of its
+    axes. The identity is returned when the two are
     [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
     so that what is not known is never a reason to refuse. Otherwise the
     bridge would have to reorder, rescale, or flip axes that the open
@@ -162,8 +162,8 @@ def bridge(
         adaptation is needed.
     """
     # --- special cases ------------------------------------------------
-    # Only two closed systems can be bridged. A missing system, or one whose
-    # axes are `None`, is open too: it reads as `[...]`.
+    # Only two closed systems can be bridged. A missing system is open too:
+    # it reads as `[...]`.
     source_axes = AxisList.of(source)
     target_axes = AxisList.of(target)
     if source_axes.is_open or target_axes.is_open:
