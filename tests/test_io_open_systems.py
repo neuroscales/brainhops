@@ -180,3 +180,18 @@ def test_zarr_round_trip_keeps_closed_systems(tmp_path) -> None:  # noqa: ANN001
         for t, u in zip(a.transformations, b.transformations):
             assert t.input == u.input and t.output == u.output
             assert t.input.ndim == 3 and t.output.ndim == 3
+
+
+def test_the_pyramid_axes_are_an_axis_list() -> None:
+    from brainhops.datamodel.systems import AxisList
+
+    for given in ([SpaceAxis(name="x"), ...], (SpaceAxis(name="x"), ...)):
+        axes = _pyramid(given).axes
+        assert type(axes) is AxisList and axes.is_open
+        assert axes["x"] == SpaceAxis(name="x")
+    # `None` is not `[...]`: it leaves the axes unset, to be read from
+    # the store.
+    assert _pyramid(None).axes is None
+    written = _pyramid(None)._write_axes(3)
+    assert [axis.name for axis in written] == ["x", "y", "z"]
+    assert _pyramid([...])._write_axes(2) == [Axis(), Axis()]
