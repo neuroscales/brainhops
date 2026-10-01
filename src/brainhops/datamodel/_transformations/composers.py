@@ -425,7 +425,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
             # open one, and an unknown `Axis()` anywhere else.
             axes = AxisList.of(To.input)
             for i in in_axes:
-                axis = axes._axis_at(i)
+                axis = axes.at(i)
                 if getattr(axis, "discrete", None):
                     raise CompositionError(
                         "Cannot apply an interpolating transform along the "

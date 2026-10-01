@@ -369,7 +369,7 @@ def _discrete_axis(
         for a in axis_index:
             if axes.ndim is not None and a >= axes.ndim:
                 continue
-            axis = axes._axis_at(a)
+            axis = axes.at(a)
             if getattr(axis, "discrete", None):
                 discrete = True
                 name = getattr(axis, "name", None) or getattr(

@@ -31,6 +31,8 @@ and the closed system is dispatched like any other.
 """
 
 __all__ = [
+    "AxisSequence",
+    "AxisTuple",
     "AxisList",
     "CoordinateSystem",
     "CoordinateSystem2D",
@@ -68,6 +70,7 @@ __all__ = [
     "RSAmm",
 ]
 # stdlib
+import abc
 import sys
 from numbers import Integral
 
@@ -85,53 +88,64 @@ _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
 
 AXIS = tx.TypeVar("AXIS")
-# The type of the items of an `AxisList`.
+# The type of the items of an `AxisSequence`, and of an `AxisList`.
 
-_2Axes = tx.Tuple[Axis, Axis]
-_3Axes = tx.Tuple[Axis, Axis, Axis]
-_2SpatialAxes = tx.Tuple[SpaceAxis, SpaceAxis]
-_3SpatialAxes = tx.Tuple[SpaceAxis, SpaceAxis, SpaceAxis]
+AXES = tx.TypeVarTuple("AXES")
+# The type of each item of an `AxisTuple`, in order.
 
 _SAMPLE = "sample"
 
 
-class AxisList(list, tx.Generic[AXIS]):
+class AxisSequence(tx.Sequence[AXIS]):
     """The axes of a coordinate system, which may leave some unknown.
 
-    An `AxisList` is a `list` of [`Axis`][brainhops.datamodel.axes.Axis]
-    that may hold one `...` (`Ellipsis`), anywhere in the list. `...`
-    stands for *zero or more axes about which nothing is known*.
+    An `AxisSequence` is a sequence of
+    [`Axis`][brainhops.datamodel.axes.Axis] that may hold one `...`
+    (`Ellipsis`), anywhere in it. `...` stands for *zero or more axes
+    about which nothing is known*.
 
-    * A list that holds `...` is *open*: its number of axes is unknown.
-    * A list without it is *closed*: it lists every axis.
-    * `...` is an entry of the list, but never counts as an axis.
-    * A list that holds `...` more than once describes no axes: every
-      method that reads the axes raises a `ValueError` on it. A
-      coordinate system refuses such a list when it is built.
+    * A sequence that holds `...` is *open*: its number of axes is
+      unknown.
+    * A sequence without it is *closed*: it lists every axis.
+    * `...` is an entry of the sequence, but never counts as an axis.
+    * A sequence that holds `...` more than once describes no axes:
+      every method that reads the axes raises a `ValueError` on it. A
+      coordinate system refuses such a sequence when it is built.
 
     `[..., TimeAxis()]` says that the last axis is time, and nothing
     about the others. `[Axis(name="x"), ...]` says that the first axis
     is `x`. `[...]` says nothing at all.
 
-    !!! note "Entries and axes"
-        An `AxisList` is the `list` it stores. `len()`, iteration,
-        equality, `repr`, indexing with an integer or a slice (which
-        gives an `AxisList`), and [`index`][] are about its *entries*,
-        `...` included.
+    This is the read-only base of two containers, which share all of its
+    API, and whose methods that build a new sequence (a slice,
+    [`expand`][], [`restrict`][], [`embed`][]) build one of their own
+    type:
 
-        [`ndim`][] counts the *axes* the list describes, and
-        [`expand`][], [`restrict`][], [`embed`][] and
+    * [`AxisList`][brainhops.datamodel.systems.AxisList], a `list`, is
+      mutable. A coordinate system whose number of axes is not fixed by
+      its class stores its axes as one.
+    * [`AxisTuple`][brainhops.datamodel.systems.AxisTuple], a `tuple`,
+      is immutable. A coordinate system with a fixed number of axes,
+      such as an `RASCoordinateSystem`, stores its axes as one.
+
+    !!! note "Entries and axes"
+        `len()`, iteration, equality, `repr`, `[i]` (an integer or a
+        slice) and [`index`][] are about the *entries* of the sequence,
+        `...` included, as in the `list` or `tuple` it is.
+
+        [`ndim`][] counts the *axes* the sequence describes, and
+        [`at`][], [`expand`][], [`restrict`][], [`embed`][] and
         [`compatible_with`][] place them in the space, where `...` stands
         for as many axes as needed. A position in the space is counted
         from the first axis when it is non-negative, and from the last
         one when it is negative.
 
-        In a closed list, the entries are the axes, in order. In an open
-        list, they are not: in `[x, ..., t]`, entry 2 is `t`, which is
-        the last axis, and the axis at position 2 is one of the axes that
-        `...` stands for, which has no entry. So
-        `for i in range(len(axes)): axes[i]` walks the entries, not the
-        axes.
+        In a closed sequence, the entries are the axes, in order. In an
+        open one, they are not: in `[x, ..., t]`, entry 2 (`axes[2]`) is
+        `t`, which is the last axis, and the axis at position 2
+        (`axes.at(2)`) is one of the axes that `...` stands for, which
+        has no entry. So `for i in range(len(axes)): axes[i]` walks the
+        entries, not the axes.
 
     !!! note "Finding an axis"
         [`index`][] finds the first entry that matches a query, as
@@ -162,20 +176,7 @@ class AxisList(list, tx.Generic[AXIS]):
         There is no `keys()`, `values()`, `items()`, `update()` or
         `pop()` by name: an axis may be unnamed, a name may be shared,
         and `...` has no name, so a mapping view would misrepresent the
-        list, and changing an axis by its name would be a trap.
-
-    The axes of a
-    [`CoordinateSystem`][brainhops.datamodel.systems.CoordinateSystem]
-    whose number of axes is not fixed by its class are stored as an
-    `AxisList`: a list or a tuple given to the system is converted to
-    one, item by item, to the type of axis the class declares. Its
-    default, `[...]`, says nothing about the axes; `axes=None` is
-    refused. [`of`][brainhops.datamodel.systems.AxisList.of] reads the
-    axes of any system, or of a missing one, as an `AxisList`.
-
-    The type parameter is the type of the items:
-    `AxisList[Union[Axis, EllipsisType]]` may be open, and
-    `AxisList[Axis]` is closed.
+        sequence, and changing an axis by its name would be a trap.
 
     !!! example
         ```pycon
@@ -187,12 +188,26 @@ class AxisList(list, tx.Generic[AXIS]):
         (2, 2, True)
         >>> "x" in axes, axes.names
         (True, ('x', Ellipsis, 't'))
+        >>> axes[2] is t, axes.at(2), axes.at(-1) is t
+        (True, Axis(), True)
         >>> axes.expand(4)[1:]
         [Axis(), Axis(), TimeAxis(name='t')]
         >>> axes.restrict([-1, 0, 1])[1:]
         [Axis(name='x'), Axis()]
         ```
+
+    The type parameter is the type of the items:
+    `AxisSequence[Union[Axis, EllipsisType]]` may be open, and
+    `AxisSequence[Axis]` is closed.
     """
+
+    __slots__ = ()
+
+    @abc.abstractmethod
+    def _entry(self, key: tx.Any) -> tx.Any:
+        # The builtin storage, read: `list.__getitem__` in an `AxisList`,
+        # `tuple.__getitem__` in an `AxisTuple`.
+        ...
 
     @classmethod
     def of(cls, system: tx.Optional["CoordinateSystem"]) -> tx.Self:
@@ -203,8 +218,12 @@ class AxisList(list, tx.Generic[AXIS]):
         * a missing system (`None`) says nothing about its axes, and
           reads as `[...]`;
         * any other system reads as its axes, whether its class stores
-          them as an `AxisList` or, for a fixed number of axes, as a
-          tuple.
+          them as an `AxisList` or, for a fixed number of axes, as an
+          `AxisTuple`.
+
+        The result is of the class this is called on. Called on
+        `AxisSequence`, whose container does not matter, it is an
+        `AxisTuple`.
 
         Parameters
         ----------
@@ -213,8 +232,8 @@ class AxisList(list, tx.Generic[AXIS]):
 
         Returns
         -------
-        AxisList
-            A new list. Changing it does not change the system.
+        AxisSequence
+            A new sequence. Changing it does not change the system.
 
         Raises
         ------
@@ -231,6 +250,8 @@ class AxisList(list, tx.Generic[AXIS]):
             3
             ```
         """
+        if cls is AxisSequence:
+            return AxisTuple.of(system)
         if system is None:
             return cls([...])
         if isinstance(system, CoordinateSystem):
@@ -255,9 +276,10 @@ class AxisList(list, tx.Generic[AXIS]):
         """An entry (`int`), some entries (`slice`), or the axis with a
         name (`str`).
 
-        An integer or a slice indexes the *entries* of the list, as in
-        any `list`, and a slice gives an `AxisList`. A name gives the one
-        explicit axis that has it.
+        An integer or a slice indexes the *entries* of the sequence, as
+        in any `list` or `tuple`, and a slice gives a sequence of the same
+        type. A name gives the one explicit axis that has it. The axis at
+        a *position* in the space is [`at`][] that position.
 
         Raises
         ------
@@ -278,17 +300,17 @@ class AxisList(list, tx.Generic[AXIS]):
             ```
         """
         if isinstance(key, str):
-            return list.__getitem__(self, self._entry_named(key))
+            return self._entry(self._entry_named(key))
         if isinstance(key, slice):
-            return type(self)(list.__getitem__(self, key))
-        return list.__getitem__(self, key)
+            return type(self)(self._entry(key))
+        return self._entry(key)
 
     def __contains__(self, item: object) -> bool:
         """Whether an explicit axis has a name (`str`), or whether an
         entry equals `item` (anything else, as in any `list`)."""
         if isinstance(item, str):
             return bool(self._entries_named(item))
-        return list.__contains__(self, item)
+        return any(entry is item or entry == item for entry in self)
 
     def index(
         self,
@@ -504,7 +526,7 @@ class AxisList(list, tx.Generic[AXIS]):
             else:
                 positions.append(self._position(ref))
         _check_unique(positions, "refs")
-        return type(self)(self._axis_at(p) for p in positions)
+        return type(self)([self.at(p) for p in positions])
 
     def embed(
         self,
@@ -603,9 +625,9 @@ class AxisList(list, tx.Generic[AXIS]):
 
         Parameters
         ----------
-        other : AxisList, or list or tuple of Axis
+        other : AxisSequence, or list or tuple of Axis
             The axes to compare with. A plain list or tuple is read as
-            an `AxisList`.
+            an axis sequence.
 
         Returns
         -------
@@ -632,7 +654,7 @@ class AxisList(list, tx.Generic[AXIS]):
                 f"axes, not with {type(other).__name__}."
             )
         p1, s1 = self._split()
-        p2, s2 = AxisList(other)._split()
+        p2, s2 = _split(other)
         if s1 is None and s2 is None:
             return len(p1) == len(p2) and _pairwise(p1, p2)
         if s1 is None:
@@ -662,19 +684,7 @@ class AxisList(list, tx.Generic[AXIS]):
     # non-negative, and from the last one when it is negative.
 
     def _split(self) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-        # The explicit axes before and after `...`. The second list is
-        # `None` for a closed list, whose axes are then all in the first.
-        entries = list(self)
-        ellipses = [i for i, axis in enumerate(entries) if axis is ...]
-        if not ellipses:
-            return entries, None
-        if len(ellipses) > 1:
-            raise ValueError(
-                "A list of axes holds at most one `...`, which stands for "
-                "all the axes about which nothing is known."
-            )
-        i = ellipses[0]
-        return entries[:i], entries[i + 1 :]
+        return _split(self)
 
     def _position(self, position: int) -> int:
         # Check a position against the list, and normalize it. In a closed
@@ -709,10 +719,49 @@ class AxisList(list, tx.Generic[AXIS]):
         after = ... in entries[:entry]
         return entry - len(entries) if after else entry
 
-    def _axis_at(self, position: int) -> Axis:
-        # The axis at a position, checked as by `_position`: an explicit
-        # axis, or a new unknown `Axis()` for a position among the axes
-        # that `...` stands for, which has no entry.
+    def at(self, position: int) -> Axis:
+        """The axis at a position in the space.
+
+        Where `axes[i]` reads *entry* `i` of the sequence, `axes.at(i)`
+        reads the axis at *position* `i` of the space it describes:
+        counted from the first axis when `i` is non-negative, and from
+        the last one when it is negative.
+
+        * In a closed sequence, the two are the same, and a position lies
+          in `[-ndim, ndim)`.
+        * In an open sequence, every position is valid, because `...`
+          stands for any number of axes. A non-negative position reads
+          the explicit axes before `...`, and a negative one the explicit
+          axes after it. Any other position falls among the axes that
+          `...` stands for, and gives a new, unknown `Axis()`.
+
+        !!! example
+            ```pycon
+            >>> x, t = Axis(name="x"), TimeAxis(name="t")
+            >>> axes = AxisList([x, ..., t])
+            >>> axes.at(0) is x, axes.at(-1) is t, axes.at(1)
+            (True, True, Axis())
+            >>> axes[2] is t, axes.at(2)
+            (True, Axis())
+            ```
+
+        Parameters
+        ----------
+        position : int
+            The position of the axis in the space.
+
+        Returns
+        -------
+        Axis
+            The explicit axis at that position, or a new `Axis()`.
+
+        Raises
+        ------
+        IndexError
+            If the sequence is closed, and the position lies outside it.
+        TypeError
+            If the position is not an integer.
+        """
         position = self._position(position)
         prefix, suffix = self._split()
         if suffix is None or 0 <= position < len(prefix):
@@ -736,6 +785,103 @@ class AxisList(list, tx.Generic[AXIS]):
                 f"of the list have that name."
             )
         return entries[0]
+
+
+class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
+    """An immutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
+
+    It is a `tuple`, with all the API of an `AxisSequence`: indexing by
+    name, [`at`][], [`expand`][] and so on. A slice, and every method that
+    builds a new sequence, gives an `AxisTuple`.
+
+    A coordinate system with a fixed number of axes, such as an
+    `RASCoordinateSystem`, stores its axes as one, so they are closed.
+    The type parameters are the type of each item, in order, and fix the
+    number of items: `AxisTuple[SpaceAxis, SpaceAxis]` is two spatial
+    axes. A field of that type converts what it is given item by item,
+    each to the type of its position, and refuses a wrong number of
+    items, `None`, or `...` (which is not an axis). A bare `AxisTuple`
+    holds any number of items, `...` included.
+
+    !!! example
+        ```pycon
+        >>> axes = RASCoordinateSystem().axes
+        >>> type(axes).__name__, axes.ndim, axes.names[0]
+        ('AxisTuple', 3, 'left-to-right')
+        >>> axes["left-to-right"] is axes[0] is axes.at(-3)
+        True
+        ```
+    """
+
+    # The `tuple` comes first, for its storage, but its own reading of an
+    # item or of a name is not the one this class means.
+    __getitem__ = AxisSequence.__getitem__
+    __contains__ = AxisSequence.__contains__
+    index = AxisSequence.index
+    _entry = tuple.__getitem__
+
+
+class AxisList(AxisSequence[AXIS], list):
+    """A mutable [`AxisSequence`][brainhops.datamodel.systems.AxisSequence].
+
+    It is a `list`, with all the API of an `AxisSequence`: indexing by
+    name, [`at`][], [`expand`][] and so on. A slice, and every method that
+    builds a new sequence, gives an `AxisList`.
+
+    A coordinate system whose number of axes is not fixed by its class
+    stores its axes as one: a list or a tuple given to the system is
+    converted to one, item by item, to the type of axis the class
+    declares. Its default, `[...]`, says nothing about the axes;
+    `axes=None` is refused.
+
+    The type parameter is the type of the items:
+    `AxisList[Union[Axis, EllipsisType]]` may be open, and
+    `AxisList[Axis]` is closed.
+
+    !!! example
+        ```pycon
+        >>> axes = CoordinateSystem(axes=[Axis(name="x"), ...]).axes
+        >>> type(axes).__name__, axes.is_open, axes["x"]
+        ('AxisList', True, Axis(name='x'))
+        >>> axes.append(TimeAxis(name="t"))
+        >>> axes.at(-1)
+        TimeAxis(name='t')
+        ```
+    """
+
+    # `AxisSequence` comes first, for its reading of an item or of a name.
+    # The rest is the `list`'s: `collections.abc.Sequence`, between the
+    # two in the method resolution order, would otherwise answer with its
+    # generic mixins (and its abstract `__len__`).
+    __len__ = list.__len__
+    __iter__ = list.__iter__
+    __reversed__ = list.__reversed__
+    count = list.count
+    _entry = list.__getitem__
+
+
+_2Axes = AxisTuple[Axis, Axis]
+_3Axes = AxisTuple[Axis, Axis, Axis]
+_2SpatialAxes = AxisTuple[SpaceAxis, SpaceAxis]
+_3SpatialAxes = AxisTuple[SpaceAxis, SpaceAxis, SpaceAxis]
+
+
+def _split(
+    entries: tx.Iterable[tx.Any],
+) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
+    # The explicit axes before and after `...`. The second list is `None`
+    # for a closed sequence, whose axes are then all in the first.
+    entries = list(entries)
+    ellipses = [i for i, axis in enumerate(entries) if axis is ...]
+    if not ellipses:
+        return entries, None
+    if len(ellipses) > 1:
+        raise ValueError(
+            "A list of axes holds at most one `...`, which stands for "
+            "all the axes about which nothing is known."
+        )
+    i = ellipses[0]
+    return entries[:i], entries[i + 1 :]
 
 
 def _matches(candidate: tx.Any, query: Axis) -> bool:
@@ -911,17 +1057,18 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         [`AxisList.of`][] reads the axes of any system, or of a missing
         one (`None`), as an [`AxisList`][], with `[...]` for a missing
         system. An axis is read by its name as `system.axes["x"]`, and
-        found by [`index`][brainhops.datamodel.systems.AxisList.index].
+        found by [`index`][brainhops.datamodel.systems.AxisSequence.index].
 
         Classes with a fixed number of axes, such as
         [`CoordinateSystem3D`][], are always closed. They store their
-        axes as a tuple, whose type fixes the number of axes and the
-        class of each one, so they reject `...`.
+        axes as an [`AxisTuple`][], whose type fixes the number of axes
+        and the class of each one, so they reject `...`. It has the API
+        of an [`AxisList`][], but is immutable.
 
         Calling a class builds the most specific system its axes
         describe (see the module), and only a closed system is
         dispatched: `CoordinateSystem(axes=[x, y])` is a
-        [`CoordinateSystem2D`][], whose axes are a tuple, but
+        [`CoordinateSystem2D`][], whose axes are an `AxisTuple`, but
         `CoordinateSystem(axes=[x, ...])` -- whose `...` may stand for
         no axis, or for many -- stays a `CoordinateSystem`. Closing an
         open system with [`expand`][] dispatches it again.
@@ -978,7 +1125,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         A closed system has exactly `len(axes)` axes. An open system,
         whose axes hold `...`, has an unknown number of axes, and its
         `ndim` is `None`. This is
-        [`AxisList.ndim`][brainhops.datamodel.systems.AxisList.ndim]
+        [`AxisSequence.ndim`][brainhops.datamodel.systems.AxisSequence.ndim]
         read through [`AxisList.of`][].
 
         !!! example
@@ -999,7 +1146,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         """The closed system of `ndim` axes that this system describes.
 
         The axes are expanded by
-        [`AxisList.expand`][brainhops.datamodel.systems.AxisList.expand]:
+        [`AxisSequence.expand`][brainhops.datamodel.systems.AxisSequence.expand]:
         in an open system, `...` is replaced with as many unknown
         `Axis()` as needed to reach `ndim` axes. The class is called
         again with the closed axes, and the other fields, the name
@@ -1056,7 +1203,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         """The system of the axes at some positions of this system.
 
         The axes are restricted by
-        [`AxisList.restrict`][brainhops.datamodel.systems.AxisList.restrict]:
+        [`AxisSequence.restrict`][brainhops.datamodel.systems.AxisSequence.restrict]:
         a reference is a position in the space or a name, and a position
         of an open system that falls among the axes that `...` stands
         for gives an unknown `Axis()`. The axes are listed in the order
@@ -1080,7 +1227,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         ------
         ValueError, IndexError, TypeError
             As
-            [`AxisList.restrict`][brainhops.datamodel.systems.AxisList.restrict]
+            [`AxisSequence.restrict`][brainhops.datamodel.systems.AxisSequence.restrict]
             does.
 
         !!! example
@@ -1103,7 +1250,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         """The system of a larger space in which this system's axes sit.
 
         This is the inverse of [`restrict`][]. The axes are embedded by
-        [`AxisList.embed`][brainhops.datamodel.systems.AxisList.embed]:
+        [`AxisSequence.embed`][brainhops.datamodel.systems.AxisSequence.embed]:
         axis `j` of this system sits at `positions[j]` of the result,
         and every other position holds an unknown `Axis()`. The result
         describes a different space, so the class and the name of this
@@ -1130,7 +1277,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         Raises
         ------
         ValueError, TypeError
-            As [`AxisList.embed`][brainhops.datamodel.systems.AxisList.embed]
+            As
+            [`AxisSequence.embed`][brainhops.datamodel.systems.AxisSequence.embed]
             does.
 
         !!! example
@@ -1151,7 +1299,7 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         """Whether `self` and `other` could describe the same space.
 
         Two systems are compatible when their axes are
-        [`AxisList.compatible_with`][brainhops.datamodel.systems.AxisList.compatible_with]
+        [`AxisSequence.compatible_with`][brainhops.datamodel.systems.AxisSequence.compatible_with]
         each other: some choice of the axes that each `...` stands for
         makes them match axis by axis, each pair being
         [`Axis.compatible_with`][brainhops.datamodel.axes.Axis.compatible_with].
@@ -1523,7 +1671,7 @@ class RASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "RAS"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
         _axes.R(),
         _axes.A(),
         _axes.S(),
@@ -1541,7 +1689,7 @@ class LPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "LPS"
-    axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
         _axes.L(),
         _axes.P(),
         _axes.S(),
@@ -1559,7 +1707,7 @@ class RSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "RSA"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
         _axes.R(),
         _axes.S(),
         _axes.A(),
@@ -1590,7 +1738,7 @@ class RASmm(
     """[`RASCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RAS"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
         _mm(_axes.AxisLR),
         _mm(_axes.AxisPA),
         _mm(_axes.AxisIS),
@@ -1605,7 +1753,7 @@ class LPSmm(
     """[`LPSCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "LPS"
-    axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
         _mm(_axes.AxisRL),
         _mm(_axes.AxisAP),
         _mm(_axes.AxisIS),
@@ -1620,7 +1768,7 @@ class RSAmm(
     """[`RSACoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RSA"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
         _mm(_axes.AxisLR),
         _mm(_axes.AxisIS),
         _mm(_axes.AxisPA),
@@ -1653,7 +1801,7 @@ class FRASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "fRAS"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
         _sampled(_axes.AxisLR, "x"),
         _sampled(_axes.AxisPA, "y"),
         _sampled(_axes.AxisIS, "z"),
@@ -1671,7 +1819,7 @@ class FLPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "fLPS"
-    axes: tx.Tuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
         _sampled(_axes.AxisRL, "x"),
         _sampled(_axes.AxisAP, "y"),
         _sampled(_axes.AxisIS, "z"),
@@ -1689,7 +1837,7 @@ class FRSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "fRSA"
-    axes: tx.Tuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
         _sampled(_axes.AxisLR, "x"),
         _sampled(_axes.AxisIS, "y"),
         _sampled(_axes.AxisPA, "z"),
@@ -1707,7 +1855,7 @@ class CRASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRAS"
-    axes: tx.Tuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR] = (
+    axes: AxisTuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisPA, "y"),
         _sampled(_axes.AxisLR, "x"),
@@ -1725,7 +1873,7 @@ class CLPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cLPS"
-    axes: tx.Tuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL] = (
+    axes: AxisTuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisAP, "y"),
         _sampled(_axes.AxisRL, "x"),
@@ -1743,7 +1891,7 @@ class CRSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRSA"
-    axes: tx.Tuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR] = (
+    axes: AxisTuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR] = (
         _sampled(_axes.AxisPA, "z"),
         _sampled(_axes.AxisIS, "y"),
         _sampled(_axes.AxisLR, "x"),

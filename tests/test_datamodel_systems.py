@@ -2,6 +2,8 @@
 named access to their axes, and the operations that close, restrict and
 embed them."""
 
+import collections.abc
+
 import pytest
 import typing_extensions as tx
 from bagof.converters import ConversionError
@@ -23,6 +25,8 @@ from brainhops.datamodel.systems import (
     ArrayCoordinateSystem2D,
     ArrayCoordinateSystem3D,
     AxisList,
+    AxisSequence,
+    AxisTuple,
     CoordinateSystem,
     CoordinateSystem2D,
     CoordinateSystem3D,
@@ -175,9 +179,12 @@ def test_fixed_dimension_classes_refuse_an_open_system(
 
 @pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
 def test_fixed_dimension_classes_store_a_tuple(cls: type, ndim: int) -> None:
-    # Their axes are a tuple of `ndim` axes, which `AxisList.of` reads.
-    axes = cls(axes=list(cls().axes)).axes
-    assert type(axes) is tuple and len(axes) == ndim
+    # Their axes are an `AxisTuple` of `ndim` axes, which is a tuple, with
+    # the API of every axis sequence.
+    for given in (list, tuple, AxisList, AxisTuple):
+        axes = cls(axes=given(cls().axes)).axes
+        assert type(axes) is AxisTuple and len(axes) == ndim
+        assert isinstance(axes, tuple) and axes.ndim == ndim
     assert AxisList.of(cls()) == list(axes)
 
 
@@ -589,7 +596,7 @@ def test_the_position_of_an_entry(layout: str, expected: list) -> None:
         else:
             assert axes._position_of_entry(entry) == position
             assert axes._position_of_entry(entry - len(axes)) == position
-            assert axes._axis_at(position) is axes[entry]
+            assert axes.at(position) is axes[entry]
 
 
 def test_a_position_in_a_closed_list() -> None:
@@ -647,7 +654,7 @@ def test_the_axis_at_a_position_of_an_open_list(
     axes = AxisList(OPEN_LAYOUTS[layout])
     for position in range(-5, 5):
         expected = known.get(position, Axis())
-        assert axes._axis_at(position) == expected
+        assert axes.at(position) == expected
         assert axes.restrict([position]) == [expected]
 
 
@@ -656,7 +663,7 @@ def test_the_axis_at_a_position_of_an_unknown_system(
 ) -> None:
     for system in (CS(axes=unknown_axes), None):
         for position in (0, 2, -1):
-            assert AxisList.of(system)._axis_at(position) == Axis()
+            assert AxisList.of(system).at(position) == Axis()
 
 
 # ----------------------------------------------------------------------
@@ -818,9 +825,9 @@ def test_embed_keeps_the_positions_restrict_reads() -> None:
     # was embedded there: the composers check discrete axes this way.
     embedded = CS(axes=[X, Axis(name="c", discrete=True)]).embed([0, 3])
     axes = AxisList.of(embedded)
-    assert axes._axis_at(3).discrete is True
-    assert axes._axis_at(1) == Axis()
-    assert axes._axis_at(7) == Axis()
+    assert axes.at(3).discrete is True
+    assert axes.at(1) == Axis()
+    assert axes.at(7) == Axis()
 
 
 def test_embed_an_open_system(layout: str) -> None:
@@ -1172,3 +1179,166 @@ def test_an_open_system_in_millimetres_closes_to_a_physical_one() -> None:
     # The axes `...` closes to carry no unit, so no physical system holds
     # them.
     assert type(CS(axes=[R(unit=MM), ...]).expand(3)) is CoordinateSystem3D
+
+
+# ----------------------------------------------------------------------
+#   AXIS CONTAINERS
+# ----------------------------------------------------------------------
+# `AxisSequence` is the read-only base; `AxisTuple` (a tuple) and
+# `AxisList` (a list) share all of its API.
+
+CONTAINERS = [AxisList, AxisTuple]
+
+
+def test_the_hierarchy_of_the_axis_containers() -> None:
+    assert issubclass(AxisSequence, collections.abc.Sequence)
+    assert not issubclass(AxisSequence, (list, tuple))
+    assert issubclass(AxisList, AxisSequence) and issubclass(AxisList, list)
+    assert issubclass(AxisTuple, AxisSequence)
+    assert issubclass(AxisTuple, tuple)
+    assert not issubclass(AxisList, tuple)
+    assert not issubclass(AxisTuple, list)
+    # `AxisSequence` is abstract: it says what a sequence of axes reads,
+    # not how it stores them.
+    with pytest.raises(TypeError):
+        AxisSequence()  # type: ignore[abstract]
+
+
+@pytest.mark.parametrize("cls", CONTAINERS, ids=lambda c: c.__name__)
+def test_the_axis_sequence_reads_win_over_the_builtins(cls: type) -> None:
+    # An item, a name and a query are read as `AxisSequence` reads them,
+    # whichever of it and the builtin comes first in the bases.
+    for name in ("__getitem__", "__contains__", "index"):
+        assert getattr(cls, name) is getattr(AxisSequence, name)
+    # Everything else is the builtin's, not the generic mixins of
+    # `collections.abc.Sequence`.
+    builtin = list if cls is AxisList else tuple
+    for name in ("__len__", "__iter__", "count", "__eq__", "__repr__"):
+        assert getattr(cls, name) is getattr(builtin, name)
+
+
+@pytest.mark.parametrize("cls", CONTAINERS, ids=lambda c: c.__name__)
+def test_the_shared_api(cls: type) -> None:
+    axes = cls([X, ..., T])
+    assert axes["x"] is X and "t" in axes and "y" not in axes
+    assert X in axes and ... in axes
+    assert axes.index("t") == 2 and axes.index(TimeAxis()) == 2
+    assert axes.names == ("x", ..., "t")
+    assert axes.ndim is None and axes.is_open
+    assert axes[2] is T and axes.at(-1) is T and axes.at(2) == Axis()
+    assert axes.compatible_with([X, Y, T])
+    assert axes.compatible_with(AxisTuple([X, Y, T]))
+    assert len(axes) == 3 and list(axes) == [X, ..., T]
+    assert list(reversed(axes)) == [T, ..., X]
+
+
+@pytest.mark.parametrize("cls", CONTAINERS, ids=lambda c: c.__name__)
+def test_a_derived_sequence_is_of_the_same_type(cls: type) -> None:
+    axes = cls([X, ..., T])
+    for derived in (
+        axes[1:],
+        axes.expand(3),
+        axes.restrict([0, -1]),
+        axes.embed([2, 0]),
+        axes.embed([2, 0], ndim=4),
+    ):
+        assert type(derived) is cls
+    assert list(axes.expand(3)) == [X, Axis(), T]
+
+
+@pytest.mark.parametrize("cls", CONTAINERS, ids=lambda c: c.__name__)
+def test_at_is_the_axis_at_a_position(cls: type) -> None:
+    closed = cls([X, Y, Z])
+    assert [closed.at(i) for i in range(-3, 3)] == [X, Y, Z, X, Y, Z]
+    for i in (3, -4):
+        with pytest.raises(IndexError, match="out of range"):
+            closed.at(i)
+    with pytest.raises(TypeError):
+        closed.at("x")  # type: ignore[arg-type]
+    # Entries and positions differ in an open sequence.
+    open_ = cls([X, ..., T])
+    assert open_[2] is T
+    assert open_.at(2) == Axis() and open_.at(-1) is T
+
+
+def test_an_axis_tuple_is_immutable() -> None:
+    axes = AxisTuple([X, Y])
+    with pytest.raises(TypeError):
+        axes[0] = Z  # type: ignore[index]
+    assert not hasattr(axes, "append")
+    # A fixed-dimension system's axes are one.
+    with pytest.raises(TypeError):
+        RASCoordinateSystem().axes[0] = R()  # type: ignore[index]
+
+
+def test_an_axis_list_is_mutable() -> None:
+    axes = AxisList([X, ...])
+    axes.append(T)
+    axes[0] = Y
+    assert axes == [Y, ..., T] and axes.at(-1) is T
+
+
+def test_the_containers_compare_as_their_builtins() -> None:
+    assert AxisList([X, Y]) == [X, Y]
+    assert AxisTuple([X, Y]) == (X, Y)
+    assert repr(AxisTuple([X, Y])) == repr((X, Y))
+    assert repr(AxisList([X, ...])) == repr([X, ...])
+
+
+def test_axis_sequence_of_gives_an_axis_tuple() -> None:
+    # Where the container does not matter, the immutable one is read.
+    for system in (None, CS(axes=[X, ...]), RASCoordinateSystem()):
+        axes = AxisSequence.of(system)
+        assert type(axes) is AxisTuple
+        assert list(axes) == list(AxisList.of(system))
+    assert type(AxisTuple.of(CS())) is AxisTuple
+
+
+def test_every_system_stores_an_axis_sequence() -> None:
+    for cls in SYSTEM_CLASSES:
+        if cls is PhysicalCoordinateSystem:
+            continue
+        axes = cls().axes
+        assert isinstance(axes, AxisSequence)
+        fixed = issubclass(cls, (CoordinateSystem2D, CoordinateSystem3D))
+        assert type(axes) is (AxisTuple if fixed else AxisList)
+    # An open-capable class stores a tuple it is given as an `AxisList`.
+    assert type(CS(axes=AxisTuple([X, ...])).axes) is AxisList
+
+
+@pytest.mark.parametrize(
+    "axes, error, match",
+    [
+        (None, TypeError, "lists every one of them"),
+        ([SpaceAxis(), SpaceAxis()], ConversionError, "length 3, got 2"),
+        (
+            [SpaceAxis(), SpaceAxis(), SpaceAxis(), SpaceAxis()],
+            ConversionError,
+            "length 3, got 4",
+        ),
+        ([SpaceAxis(), SpaceAxis(), ...], ConversionError, "not an axis"),
+        (
+            [SpaceAxis(), SpaceAxis(), TimeAxis()],
+            ConversionError,
+            "always 'space'",
+        ),
+    ],
+    ids=["none", "too-short", "too-long", "ellipsis", "wrong-kind"],
+)
+def test_a_fixed_axis_tuple_field_refuses(
+    axes: tx.Optional[list], error: type, match: str
+) -> None:
+    with pytest.raises(error, match=match):
+        SpatialCoordinateSystem3D(axes=axes)
+
+
+def test_a_fixed_axis_tuple_field_converts_each_position() -> None:
+    system = SpatialCoordinateSystem3D(
+        axes=AxisTuple([Axis(name="x"), {"name": "y"}, "z"])
+    )
+    assert type(system.axes) is AxisTuple
+    assert [type(axis) for axis in system.axes] == [SpaceAxis] * 3
+    assert system.axes.names == ("x", "y", "z")
+    # Each position to its own type.
+    ras = RASCoordinateSystem(axes=[Axis(name="r"), Axis(), Axis()])
+    assert [type(axis) for axis in ras.axes] == [R, A, S]

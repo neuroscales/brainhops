@@ -266,9 +266,18 @@ def test_intermediate_systems_reach_their_subclasses(
     assert type(base(axes=axes)) is expected
 
 
-@pytest.mark.parametrize(
-    "name", [name for name in cs.__all__ if name != "PhysicalCoordinateSystem"]
-)
+# Every system class with a default, which `cs.__all__` lists among the
+# other names it exports (the axis containers).
+_DEFAULT_SYSTEMS = [
+    name
+    for name in cs.__all__
+    if isinstance(getattr(cs, name), type)
+    and issubclass(getattr(cs, name), cs.CoordinateSystem)
+    and name != "PhysicalCoordinateSystem"
+]
+
+
+@pytest.mark.parametrize("name", _DEFAULT_SYSTEMS)
 def test_every_system_builds_itself_by_default(name: str) -> None:
     # No class is ambiguous with another when it is built from its own
     # defaults: it is what it says it is.
@@ -390,17 +399,6 @@ def test_the_axes_module_holds_no_axis_instance() -> None:
     assert not [
         name for name, value in vars(ax).items() if isinstance(value, ax.Axis)
     ]
-
-
-# Every system class with a default, which `cs.__all__` lists among the
-# other names it exports (such as `AxisList`).
-_DEFAULT_SYSTEMS = [
-    name
-    for name in cs.__all__
-    if isinstance(getattr(cs, name), type)
-    and issubclass(getattr(cs, name), cs.CoordinateSystem)
-    and name != "PhysicalCoordinateSystem"
-]
 
 
 @pytest.mark.parametrize("name", _DEFAULT_SYSTEMS)
