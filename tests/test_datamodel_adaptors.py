@@ -25,6 +25,7 @@ from brainhops.datamodel.axes import (
     A,
     Axis,
     LeftToRightAxis,
+    PosteriorToAnteriorAxis,
     R,
     RightToLeftAxis,
     S,
@@ -46,6 +47,7 @@ from brainhops.datamodel.systems import (
     FRASCoordinateSystem,
     FVoxelCoordinateSystem,
     LPSmm,
+    RASCoordinateSystem,
     RASmm,
     VoxelCoordinateSystem,
 )
@@ -177,17 +179,34 @@ def test_unit_difference_is_a_scaling() -> None:
     np.testing.assert_allclose(result.scale, [1000.0])
 
 
-def test_unit_present_on_one_side_only_raises() -> None:
+def test_an_unspecified_unit_is_compatible_with_any_unit() -> None:
     # The source axis carries a millimetre unit; the target is the same
-    # oriented axis with its unit left unspecified, so the two match on
-    # orientation and the missing unit is what raises.
+    # oriented axis with its unit left unspecified. What is not known is
+    # never a reason to refuse, so they match at a ratio of one.
     source = CoordinateSystem(name="mm", axes=[LeftToRightAxis(unit="mm")])
     target = CoordinateSystem(
-        name="index",
+        name="unspecified",
         axes=[SpaceAxis(name="x", unit=None, orientation=LeftToRight())],
     )
-    with pytest.raises(AdaptationError):
-        bridge(source, target)
+    assert is_identity(bridge(source, target), compute=True)
+    assert is_identity(bridge(target, source), compute=True)
+
+
+def test_an_unspecified_anatomical_system_bridges_to_millimetres() -> None:
+    assert is_identity(bridge(RASCoordinateSystem(), RASmm()), compute=True)
+    result = bridge(LPSmm(), RASCoordinateSystem())
+    assert isinstance(result, Scaling)
+    np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
+
+
+def test_a_sample_matched_to_a_physical_unit_raises() -> None:
+    sampled = CoordinateSystem(
+        axes=[SpaceAxis(name="x", unit="sample", orientation=LeftToRight())]
+    )
+    world = CoordinateSystem(axes=[LeftToRightAxis(name="x", unit="mm")])
+    for source, target in ((sampled, world), (world, sampled)):
+        with pytest.raises(AdaptationError, match="sampled.*millimeter"):
+            bridge(source, target)
 
 
 # ----------------------------------------------------------------------
@@ -206,8 +225,8 @@ def _oriented_index_system(
 
 def test_world_flip_carries_no_offset() -> None:
     # Between world systems a reversed axis is a pure sign flip. The
-    # standard oriented axes carry a millimetre unit, so both sides are
-    # world systems.
+    # standard oriented axes do not count samples (their unit is
+    # unspecified), so neither side is an array-index system.
     source = CoordinateSystem(name="R", axes=[LeftToRightAxis()])
     target = CoordinateSystem(name="L", axes=[RightToLeftAxis()])
     result = bridge(source, target)
@@ -1592,3 +1611,45 @@ def test_adapt_backward_embedding_composes_like_the_flat_sequence() -> None:
     np.testing.assert_allclose(
         _composed_homogeneous(flat), _composed_homogeneous(nested), atol=1e-12
     )
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: A REBUILT VOXEL SUBSPACE IS STILL ARRAY-INDEX
+# ----------------------------------------------------------------------
+
+
+def _embedded_matrix(spatial: list, unit: str) -> np.ndarray:
+    # A spatial transform on the first three axes of a 4D system whose
+    # own x axis points the other way: embedding it bridges the spatial
+    # subset of the 4D system into its own frame, which reverses x. The
+    # 4D system is a plain one, built from `spatial` axes and a time axis,
+    # the way `embed` rebuilds systems -- so nothing but the units of the
+    # axes says whether they index an array.
+    full = CoordinateSystem(axes=[*spatial, TimeAxis(name="t", unit=unit)])
+    sub = CoordinateSystem(
+        axes=[
+            RightToLeftAxis(name="x"),
+            PosteriorToAnteriorAxis(name="y"),
+            replace(S, name="z"),
+        ]
+    )
+    transform = Scaling(scale=np.ones(3), input=sub, output=sub)
+    wrapped = embed(
+        transform, full=full, side="input", extents={"x": 4, "y": 5, "z": 6}
+    )
+    return np.asarray(wrapped.compute().to(Affine).homogeneous_matrix)
+
+
+def test_embedding_in_voxel_axes_keeps_the_extent_offset() -> None:
+    # The axes of a voxel system count samples, so a subset rebuilt from
+    # them is still read as array-index, and reversing x maps index i to
+    # 3 - i rather than to -i.
+    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "sample")
+    np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
+    np.testing.assert_array_equal(matrix[:4, 4], [3, 0, 0, 0])
+
+
+def test_embedding_in_world_axes_is_a_pure_sign_flip() -> None:
+    matrix = _embedded_matrix(list(RASmm().axes), "s")
+    np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
+    np.testing.assert_array_equal(matrix[:4, 4], [0, 0, 0, 0])
