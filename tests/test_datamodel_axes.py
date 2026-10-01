@@ -1,14 +1,41 @@
-"""Tests for the vector-axis classification of a field's axes."""
+"""Tests for axes, and for the vector-axis classification of a field's
+axes."""
+
+import re
 
 import pytest
+from bagof.converters import ConversionError
 
 from brainhops.datamodel.axes import (
     Axis,
     AxisError,
     CoordinateAxis,
     DisplacementAxis,
+    LeftToRightAxis,
+    SpatialAxis,
     vector_axis,
 )
+from brainhops.datamodel.orientation import LeftToRight, RightToLeft
+from brainhops.datamodel.systems import (
+    CoordinateSystem3D,
+    SpatialCoordinateSystem3D,
+)
+from brainhops.datamodel.units import SpaceUnit
+
+
+def _messages(error: BaseException) -> list:
+    # Every message in the chain of causes of `error`, including the
+    # failed branches that a union keeps in `causes`.
+    seen, todo, out = set(), [error], []
+    while todo:
+        e = todo.pop()
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
+        out.append(str(e))
+        todo.append(e.__cause__)
+        todo.extend(getattr(e, "causes", None) or ())
+    return out
 
 
 def test_displacement_axis_has_a_fixed_type() -> None:
@@ -62,3 +89,46 @@ def test_repeated_vector_axes_are_refused() -> None:
     ]
     with pytest.raises(AxisError):
         vector_axis(axes)
+
+
+def test_ellipsis_is_not_an_axis() -> None:
+    with pytest.raises(TypeError, match=re.escape("`...` is not an axis")):
+        Axis(...)
+    with pytest.raises(TypeError, match=re.escape("`...` is not an axis")):
+        SpatialAxis(name=...)
+
+
+def test_a_fixed_dimension_system_refuses_ellipsis_as_an_axis() -> None:
+    # Regression: the `...` was taken as the name of a third axis, and
+    # refused with a message about strings.
+    with pytest.raises(ConversionError) as info:
+        CoordinateSystem3D(axes=[Axis(), Axis(), ...])
+    assert any("`...` is not an axis" in m for m in _messages(info.value))
+
+
+def test_generic_axes_are_read_as_spatial_axes() -> None:
+    # Regression: each generic `Axis` was taken as the name of a
+    # `SpatialAxis`, so the system could not be built.
+    system = SpatialCoordinateSystem3D(
+        axes=[Axis(name="x"), Axis(name="y"), {"name": "z"}]
+    )
+    assert all(type(axis) is SpatialAxis for axis in system.axes)
+    assert [axis.name for axis in system.axes] == ["x", "y", "z"]
+    # A generic axis leaves its unit unset, so the spatial default holds.
+    assert all(axis.unit == SpaceUnit("millimeter") for axis in system.axes)
+
+
+def test_an_axis_with_the_same_orientation_is_read_as_oriented() -> None:
+    # The generic axis has no name: the oriented axis keeps its own.
+    axis = LeftToRightAxis.from_other(Axis(orientation=LeftToRight()))
+    assert axis == LeftToRightAxis()
+
+
+def test_an_axis_with_another_orientation_is_not_read_as_oriented() -> None:
+    with pytest.raises(ValueError, match="always LeftToRight"):
+        LeftToRightAxis.from_other(Axis(name="x", orientation=RightToLeft()))
+
+
+def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
+    with pytest.raises(ValueError, match="always 'space'"):
+        SpatialAxis.from_other(Axis(name="t", type="time"))

@@ -61,6 +61,14 @@ class Axis(DataModelBase):
     discrete: tx.Optional[bool] = None
     orientation: tx.Optional[Orientation] = None
 
+    def __pre_init__(self, arguments: tx.Any) -> None:
+        # `...` is not a placeholder for an axis: a coordinate system
+        # with a fixed number of dimensions lists every one of them. As
+        # the first positional argument it would otherwise be read as
+        # the axis name, and refused with a message about strings.
+        if arguments.name is Ellipsis:
+            raise TypeError("`...` is not an axis")
+
 
 class SpatialAxis(Axis):
     """An axis that measures a spatial dimension."""
