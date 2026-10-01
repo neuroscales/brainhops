@@ -52,9 +52,9 @@ class LTATransformation(
         if getattr(self, "_input", None) is not None:
             return self._input
         if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
-            return _systems.RASCoordinateSystem()
+            return _systems.RASmm()
         elif self.struct.type == LTAType.LINEAR_RSA_TO_RSA:
-            return _systems.RSACoordinateSystem()
+            return _systems.RSAmm()
         elif self.struct.type == LTAType.LINEAR_VOX_TO_VOX:
             return LTAVoxelSystem.from_struct(self.struct.src)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
@@ -71,9 +71,9 @@ class LTATransformation(
         if getattr(self, "_output", None) is not None:
             return self._output
         if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
-            return _systems.RASCoordinateSystem()
+            return _systems.RASmm()
         elif self.struct.type == LTAType.LINEAR_RSA_TO_RSA:
-            return _systems.RSACoordinateSystem()
+            return _systems.RSAmm()
         elif self.struct.type == LTAType.LINEAR_VOX_TO_VOX:
             return LTAVoxelSystem.from_struct(self.struct.dst)
         elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
@@ -294,14 +294,14 @@ class LTATransformationRASToRAS(LTATransformation):
         """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
-        return _systems.RASCoordinateSystem()
+        return _systems.RASmm()
 
     @property
     def output(self) -> LTACoordinateSystem:
         """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
-        return _systems.RASCoordinateSystem()
+        return _systems.RASmm()
 
     @property
     def matrix(self) -> np.ndarray:

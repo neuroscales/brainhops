@@ -8,4 +8,4 @@ class RASCoordinatesField(_xforms.CoordinatesField):
     """Field of RAS coordinates."""
 
     _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.RASmm()

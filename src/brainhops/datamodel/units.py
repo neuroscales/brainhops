@@ -33,6 +33,11 @@ __all__ = [
     "Mile",
     "Angstrom",
     "Parsec",
+    "SampleUnit",
+    "is_sampleunit",
+    "is_physicalunit",
+    "is_spaceunit",
+    "is_timeunit",
 ]
 
 # stdlib
@@ -44,6 +49,7 @@ from bagof.magic import ClassVar, Magic, MetaMagic
 
 # core
 from brainhops._core.enum import StrEnum
+from brainhops._core.typing import is_instance_or_subclass
 
 
 def _make_enum(name: str, d: tx.Dict[str, tx.Tuple]) -> StrEnum:
@@ -152,7 +158,7 @@ def _parse_unit_name(
             if base_name in UnitSIName.__members__:
                 return PrefixName[prefix], UnitSIName[base_name]
     for _, *prefixes in PREFIX_SI.values():
-        for *_, suffixes in UNITS_SI.values():
+        for _, *suffixes in UNITS_SI.values():
             for prefix in prefixes:
                 for suffix in suffixes:
                     if name == prefix + suffix:
@@ -215,6 +221,18 @@ def siunit(globals: dict) -> tx.Callable[[type], type]:
     return decorator
 
 
+def _lookup_unit(name: tx.Any) -> tx.Optional["Unit"]:
+    """The registered unit a name stands for, or `None`."""
+    if not name or not isinstance(name, str):
+        return None
+    prefix, base = _parse_unit_name(name)
+    cls_name = str(base).capitalize()
+    if prefix:
+        cls_name = str(prefix).capitalize() + cls_name
+    kls = globals().get(cls_name)
+    return _REGISTERED_UNITS.get(kls)
+
+
 # ----------------------------------------------------------------------
 #   BASE CLASSES
 # ----------------------------------------------------------------------
@@ -235,18 +253,22 @@ class Unit(
     type: ClassVar[tx.Literal["time", "space"]]
 
     def __new__(cls, *args, **kwargs) -> tx.Self:
-        if cls in _REGISTERED_UNITS:
-            return _REGISTERED_UNITS[cls]
+        # A unit is built from a name or from another unit, and the result
+        # is always an instance of the class asked for: `SpaceUnit("s")`
+        # and `SampleUnit(Second())` are refused rather than handed back a
+        # second, or the sample. That is what makes a field typed
+        # `SpaceUnit` (whose converter calls `SpaceUnit(value)`) hold a
+        # unit of space and nothing else.
         name = kwargs.get("name", args[0] if args else None)
-        if name:
-            prefix, base = _parse_unit_name(name)
-            cls_name = str(base).capitalize()
-            if prefix:
-                cls_name = str(prefix).capitalize() + cls_name
-            if cls_name in globals():
-                kls = globals()[cls_name]
-                if kls in _REGISTERED_UNITS:
-                    return _REGISTERED_UNITS[kls]
+        found = name if isinstance(name, Unit) else _lookup_unit(name)
+        if found is not None:
+            if not isinstance(found, cls):
+                raise ValueError(f"{found!r} is not a {cls.__name__}.")
+            return found
+        if cls in _REGISTERED_UNITS:
+            if name:
+                raise ValueError(f"{name!r} is not a {cls.__name__}.")
+            return _REGISTERED_UNITS[cls]
         return super().__new__(cls)
 
     def __init__(self, *args, **kwargs) -> None:
@@ -466,6 +488,11 @@ class Year(TimeUnit):
     name: ClassVar[TimeUnitName] = TimeUnitName.year
 
 
+def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is a unit of time (an instance or a class)."""
+    return is_instance_or_subclass(unit, TimeUnit)
+
+
 # ----------------------------------------------------------------------
 #   SPACE UNITS
 # ----------------------------------------------------------------------
@@ -535,3 +562,67 @@ class Parsec(SpaceUnit):
     3.09e16 meters."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.parsec
+
+
+# ----------------------------------------------------------------------
+#   SAMPLES
+# ----------------------------------------------------------------------
+
+
+@register
+class SampleUnit(Unit):
+    """The sample: coordinates count samples rather than measure a quantity.
+
+    An axis whose unit is the sample is an *array* axis -- its coordinates
+    are sample positions, so they run `0` to `N-1` over a finite number of
+    samples, and reversing it shifts the origin by one less than its extent
+    rather than flipping a sign about it. This is the convention OME-Zarr
+    writes down by giving such an axis no unit at all, and the scale
+    transformation is what converts the samples to a physical unit.
+
+    !!! note
+
+        This is deliberately distinct from `unit=None`, which means the
+        unit is *unspecified* -- nothing is claimed either way, and no
+        conversion and no origin shift follow from it. It is also distinct
+        from a dimensionless physical unit, which would be a real,
+        convertible unit; `SampleUnit` is not a unit of anything, carries
+        no `type` and no meaningful `scale`, and never takes part in a
+        conversion. See [`is_sampleunit`][].
+    """
+
+    name: ClassVar[str] = "sample"
+
+
+# `Unit` resolves a name by capitalizing it and looking the result up in
+# this module, so `Unit("sample")` finds the class under this alias and
+# returns its singleton.
+Sample = SampleUnit
+
+
+def is_sampleunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is the sample unit, i.e. the axis is an array axis."""
+    return is_instance_or_subclass(unit, SampleUnit)
+
+
+def is_physicalunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` measures a physical quantity.
+
+    True for a real unit such as a millimetre or a second. False for
+    `None`, which leaves the unit *unspecified*, and false for
+    [`SampleUnit`][], which says the coordinates count samples rather than
+    measure anything -- so a conversion factor to another physical unit
+    exists exactly when this is true of both.
+    """
+    if not is_instance_or_subclass(unit, Unit) or is_sampleunit(unit):
+        return False
+    # A unit measures something when it has a name. A class has one when
+    # it is a concrete unit (`Meter`, not the abstract `Unit` or
+    # `SpaceUnit`); an instance has none when `Unit` -- liberal on purpose
+    # -- was built from a name it does not recognise.
+    return isinstance(getattr(unit, "name", None), str)
+
+
+def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
+    """Whether `unit` is a unit of space, a length (an instance or a class)."""
+    return is_instance_or_subclass(unit, SpaceUnit)

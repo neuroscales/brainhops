@@ -11,8 +11,10 @@ dependencies = [
     "bagof-dispatchers >= 0.3.1",
     "bagof-hints >= 0.1",
     # 0.2 parameterises a polymorphic class (`Inverse[Affine]`), which the
-    # typed inverses declare; 0.1 raises on it.
-    "bagof-magic >= 0.2.1",
+    # typed inverses declare; 0.1 raises on it. 0.3 registers a subclass
+    # with every polymorphic level above it and conjoins the constraints
+    # it inherits, which the axes and coordinate systems rely on.
+    "bagof-magic >= 0.3.dev0",
     "bagof-paths >= 0.2",
 ]
 dynamic = ["version"]

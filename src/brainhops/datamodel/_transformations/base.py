@@ -3,6 +3,7 @@ import typing_extensions as tx
 
 # api
 from brainhops._core.properties import smartproperty
+from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
@@ -259,9 +260,7 @@ class Transformation(DataModelBase, reverse=True):
         # or stand in for the result.
         if error is True:
             raise failure
-        if isinstance(error, Exception) or (
-            isinstance(error, type) and issubclass(error, Exception)
-        ):
+        if is_instance_or_subclass(error, Exception):
             raise error from failure
         return error
 

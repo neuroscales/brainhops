@@ -2,40 +2,41 @@
 
 __all__ = [
     "Axis",
-    "SpatialAxis",
+    "SpaceAxis",
     "TimeAxis",
     "ChannelAxis",
     "DisplacementAxis",
     "CoordinateAxis",
-    "AxisError",
-    "vector_axis",
     "R",
-    "rightToLeftAxis",
+    "LR",
     "RightToLeftAxis",
     "L",
-    "leftToRightAxis",
+    "RL",
     "LeftToRightAxis",
     "A",
-    "anteriorToPosteriorAxis",
+    "PA",
     "AnteriorToPosteriorAxis",
     "P",
-    "posteriorToAnteriorAxis",
+    "AP",
     "PosteriorToAnteriorAxis",
     "S",
-    "inferiorToSuperiorAxis",
+    "IS",
     "InferiorToSuperiorAxis",
     "I",
-    "superiorToInferiorAxis",
+    "SI",
     "SuperiorToInferiorAxis",
+    "vector_axis",
+    "AxisError",
 ]
 # dependencies
 import typing_extensions as tx
 
 # core
-from brainhops._core.typing import HiddenConst
+from brainhops._core.typing import NoRepr
 
 # locals
 from .base import DataModelBase
+from .enums import AnatomicalOrientationValue, AxisType
 from .orientation import (
     AnteriorToPosterior,
     InferiorToSuperior,
@@ -45,10 +46,46 @@ from .orientation import (
     RightToLeft,
     SuperiorToInferior,
 )
-from .units import SpaceUnit, TimeUnit, Unit
+from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
+
+# --- Dispatch helpers -------------------------------------------------
 
 
-class Axis(DataModelBase):
+def _is_not_none(obj: tx.Any) -> bool:
+    """Whether `obj` is not `None`."""
+    return obj is not None
+
+
+def _is_anatomical(orientation: tx.Optional[Orientation]) -> bool:
+    """Whether `orientation` is an anatomical orientation."""
+    return getattr(orientation, "type", None) == "anatomical"
+
+
+def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
+    """
+    Whether `orientation` is an anatomical orientation with the given value.
+    """
+
+    if not isinstance(value, AnatomicalOrientationValue):
+        try:
+            value = AnatomicalOrientationValue(value)
+        except ValueError:
+            ...
+        try:
+            value = AnatomicalOrientationValue[value]
+        except KeyError:
+            ...
+
+    def _check(orientation: tx.Optional[Orientation]) -> bool:
+        return getattr(orientation, "value", None) == value
+
+    return _check
+
+
+# --- API --------------------------------------------------------------
+
+
+class Axis(DataModelBase, polymorphic=True):
     """One axis of a coordinate system or of a grid.
 
     An axis names its type, such as `"space"` or `"time"`, and may carry
@@ -56,10 +93,30 @@ class Axis(DataModelBase):
     """
 
     name: tx.Optional[str] = None
-    type: tx.Optional[str] = None
+    """The name of the axis, such as `"x"` or `"y"`."""
+
+    type: tx.Optional[tx.Union[AxisType, str]] = None
+    """The type of the axis, such as `"space"` or `"time"`."""
+
     unit: tx.Optional[Unit] = None
+    """The unit in which coordinates are measured along the axis."""
+
     discrete: tx.Optional[bool] = None
+    """
+    Whether the axis is discrete, as opposed to continuous.
+
+    Here discrete means that the axis has no particular order, and
+    therefore does not come with a continuous coordinates system.
+    """
+
     orientation: tx.Optional[Orientation] = None
+    """
+    The orientation of the axis, if it has one.
+
+    This is useful to indicate that the direction of coordinates along
+    the axis has a particular meaning, such as `"left-to-right"` for an
+    anatomical axis.
+    """
 
     def __pre_init__(self, arguments: tx.Any) -> None:
         # `...` is not a placeholder for an axis: a coordinate system
@@ -70,27 +127,38 @@ class Axis(DataModelBase):
             raise TypeError("`...` is not an axis")
 
 
-class SpatialAxis(Axis):
-    """An axis that measures a spatial dimension."""
+class SpaceAxis(Axis, on={"type": "space"}):
+    """An axis that measures a spatial dimension.
 
-    unit: tx.Optional[SpaceUnit] = SpaceUnit("millimeter")
-    type: HiddenConst[str] = "space"
+    Its unit is a unit of space, the sample (the axis indexes an array), or
+    unspecified (`None`, the default). Any other unit is refused by the
+    type of the field. The unit is not what an axis is selected on, so
+    `Axis(type="space", unit="s")` builds a `SpaceAxis`, which refuses the
+    second, rather than quietly falling back to a generic `Axis`.
+    """
+
+    unit: tx.Optional[tx.Union[SpaceUnit, SampleUnit]] = None
+    type: NoRepr[tx.Literal["space"]] = "space"
 
 
-class TimeAxis(Axis):
-    """An axis that measures time."""
+class TimeAxis(Axis, on={"type": "time"}):
+    """An axis that measures time.
 
-    unit: tx.Optional[TimeUnit] = TimeUnit("second")
-    type: HiddenConst[str] = "time"
+    Its unit is a unit of time, the sample (the axis indexes an array), or
+    unspecified (`None`, the default). Any other unit is refused.
+    """
+
+    unit: tx.Optional[tx.Union[TimeUnit, SampleUnit]] = None
+    type: NoRepr[tx.Literal["time"]] = "time"
 
 
-class ChannelAxis(Axis):
+class ChannelAxis(Axis, on={"type": "channel"}):
     """An axis that enumerates channels, such as color or feature channels."""
 
-    type: HiddenConst[str] = "channel"
+    type: NoRepr[tx.Literal["channel"]] = "channel"
 
 
-class DisplacementAxis(Axis):
+class DisplacementAxis(Axis, on={"type": "displacement"}):
     """An axis that carries the components of a displacement vector.
 
     A field of displacements names its spatial axes together with exactly
@@ -98,10 +166,10 @@ class DisplacementAxis(Axis):
     components stored at each grid point.
     """
 
-    type: HiddenConst[str] = "displacement"
+    type: NoRepr[tx.Literal["displacement"]] = "displacement"
 
 
-class CoordinateAxis(Axis):
+class CoordinateAxis(Axis, on={"type": "coordinate"}):
     """An axis that carries the components of a coordinate vector.
 
     A field of coordinates names its spatial axes together with exactly
@@ -109,7 +177,137 @@ class CoordinateAxis(Axis):
     stored at each grid point.
     """
 
-    type: HiddenConst[str] = "coordinate"
+    type: NoRepr[tx.Literal["coordinate"]] = "coordinate"
+
+
+class OrientedAxis(Axis, on={"orientation": _is_not_none}):
+    """An axis that carries an orientation."""
+
+
+# The two classes below inherit from two registered classes, so bagof
+# selects them on what both parents stand for -- a time (or spatial) axis
+# that carries an orientation -- with no `on=` of their own.
+
+
+class OrientedTimeAxis(TimeAxis, OrientedAxis):
+    """A time axis that carries an orientation."""
+
+
+class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
+    """A spatial axis that carries an orientation."""
+
+
+# An anatomical orientation says that the axis runs through space, so a
+# generic `Axis(orientation=R())` -- which names no type -- is read as a
+# spatial axis. That is a step the class statement cannot express (the
+# classes it registers with all ask for `type="space"`), so it is
+# registered with the root by hand, on the orientation alone: an axis of
+# another type with an anatomical orientation is a contradiction, and
+# building it as an anatomical axis refuses it. An anatomical axis whose
+# unit is the sample is a spatial axis of a voxel grid that points in
+# that direction.
+@Axis.register_polymorph(on={"orientation": _is_anatomical})
+class AnatomicalAxis(
+    OrientedSpaceAxis,
+    on={"orientation": _is_anatomical},
+):
+    """An axis that carries an anatomical orientation.
+
+    `Axis(orientation=...)` with an anatomical orientation builds one of
+    these even when it names no type: an anatomical direction is a
+    direction in space. Its unit may still be the sample, for a voxel axis
+    that points in that direction.
+    """
+
+
+class LeftToRightAxis(
+    AnatomicalAxis, on={"orientation": _has_value("left-to-right")}
+):
+    """A spatial axis oriented from left to right."""
+
+    name: str = "left-to-right"
+    orientation: NoRepr[LeftToRight] = LeftToRight()
+
+
+class RightToLeftAxis(
+    AnatomicalAxis, on={"orientation": _has_value("right-to-left")}
+):
+    """A spatial axis oriented from right to left."""
+
+    name: str = "right-to-left"
+    orientation: NoRepr[RightToLeft] = RightToLeft()
+
+
+class AnteriorToPosteriorAxis(
+    AnatomicalAxis, on={"orientation": _has_value("anterior-to-posterior")}
+):
+    """A spatial axis oriented from anterior to posterior."""
+
+    name: str = "anterior-to-posterior"
+    orientation: NoRepr[AnteriorToPosterior] = AnteriorToPosterior()
+
+
+class PosteriorToAnteriorAxis(
+    AnatomicalAxis, on={"orientation": _has_value("posterior-to-anterior")}
+):
+    """A spatial axis oriented from posterior to anterior."""
+
+    name: str = "posterior-to-anterior"
+    orientation: NoRepr[PosteriorToAnterior] = PosteriorToAnterior()
+
+
+class InferiorToSuperiorAxis(
+    AnatomicalAxis, on={"orientation": _has_value("inferior-to-superior")}
+):
+    """A spatial axis oriented from inferior to superior."""
+
+    name: str = "inferior-to-superior"
+    orientation: NoRepr[InferiorToSuperior] = InferiorToSuperior()
+
+
+class SuperiorToInferiorAxis(
+    AnatomicalAxis, on={"orientation": _has_value("superior-to-inferior")}
+):
+    """A spatial axis oriented from superior to inferior."""
+
+    name: str = "superior-to-inferior"
+    orientation: NoRepr[SuperiorToInferior] = SuperiorToInferior()
+
+
+# Aliases
+AxisLR: tx.TypeAlias = LeftToRightAxis
+AxisRL: tx.TypeAlias = RightToLeftAxis
+AxisAP: tx.TypeAlias = AnteriorToPosteriorAxis
+AxisPA: tx.TypeAlias = PosteriorToAnteriorAxis
+AxisIS: tx.TypeAlias = InferiorToSuperiorAxis
+AxisSI: tx.TypeAlias = SuperiorToInferiorAxis
+
+
+# Short names. These are the classes, not instances: an axis is mutable,
+# so a module-level instance would be shared by every system that took it.
+# Build one where it is needed -- `R()`, `R(unit="mm")`, `R(name="x")` --
+# and test with `isinstance(axis, R)`.
+
+R = LR = LeftToRightAxis
+"""A left-to-right anatomical axis (coordinates increase toward the right)."""
+
+L = RL = RightToLeftAxis
+"""A right-to-left anatomical axis (coordinates increase toward the left)."""
+
+A = PA = PosteriorToAnteriorAxis
+"""A posterior-to-anterior anatomical axis (increasing toward the front)."""
+
+P = AP = AnteriorToPosteriorAxis
+"""An anterior-to-posterior anatomical axis (increasing toward the back)."""
+
+S = IS = InferiorToSuperiorAxis
+"""An inferior-to-superior anatomical axis (increasing toward the top)."""
+
+I = SI = SuperiorToInferiorAxis
+"""A superior-to-inferior anatomical axis (increasing toward the bottom)."""
+
+
+# --- IO helpers --------------------------------------------------------
 
 
 class AxisError(ValueError):
@@ -169,60 +367,3 @@ def vector_axis(
         "the vector components cannot be identified. A field must carry "
         "exactly one axis of type displacement or coordinate."
     )
-
-
-class LeftToRightAxis(SpatialAxis):
-    """A spatial axis oriented from left to right."""
-
-    name: str = "left-to-right"
-    orientation: HiddenConst[LeftToRight] = LeftToRight()
-
-
-class RightToLeftAxis(SpatialAxis):
-    """A spatial axis oriented from right to left."""
-
-    name: str = "right-to-left"
-    orientation: HiddenConst[RightToLeft] = RightToLeft()
-
-
-class AnteriorToPosteriorAxis(SpatialAxis):
-    """A spatial axis oriented from anterior to posterior."""
-
-    name: str = "anterior-to-posterior"
-    orientation: HiddenConst[AnteriorToPosterior] = AnteriorToPosterior()
-
-
-class PosteriorToAnteriorAxis(SpatialAxis):
-    """A spatial axis oriented from posterior to anterior."""
-
-    name: str = "posterior-to-anterior"
-    orientation: HiddenConst[PosteriorToAnterior] = PosteriorToAnterior()
-
-
-class InferiorToSuperiorAxis(SpatialAxis):
-    """A spatial axis oriented from inferior to superior."""
-
-    name: str = "inferior-to-superior"
-    orientation: HiddenConst[InferiorToSuperior] = InferiorToSuperior()
-
-
-class SuperiorToInferiorAxis(SpatialAxis):
-    """A spatial axis oriented from superior to inferior."""
-
-    name: str = "superior-to-inferior"
-    orientation: HiddenConst[SuperiorToInferior] = SuperiorToInferior()
-
-
-R = leftToRightAxis = LeftToRightAxis()
-L = rightToLeftAxis = RightToLeftAxis()
-A = posteriorToAnteriorAxis = PosteriorToAnteriorAxis()
-P = anteriorToPosteriorAxis = AnteriorToPosteriorAxis()
-S = inferiorToSuperiorAxis = InferiorToSuperiorAxis()
-I = superiorToInferiorAxis = SuperiorToInferiorAxis()
-
-# Rx = leftToRightAxis = LeftToRightAxis(name="x")
-# Lx = rightToLeftAxis = RightToLeftAxis(name="x")
-# Ay = posteriorToAnteriorAxis = PosteriorToAnteriorAxis(name="y")
-# Py = anteriorToPosteriorAxis = AnteriorToPosteriorAxis(name="y")
-# Sz = inferiorToSuperiorAxis = InferiorToSuperiorAxis(name="z")
-# Iz = superiorToInferiorAxis = SuperiorToInferiorAxis(name="z")

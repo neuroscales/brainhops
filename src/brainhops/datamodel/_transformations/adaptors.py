@@ -57,7 +57,7 @@ import typing_extensions as tx
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
-from brainhops.datamodel.units import Unit
+from brainhops.datamodel.units import Unit, is_physicalunit, is_sampleunit
 
 # internals
 from .base import Transformation
@@ -900,16 +900,27 @@ _UnitLike = tx.Union[Axis, Unit, None]
 
 def _unit(unit: _UnitLike) -> tx.Optional[Unit]:
     """
-    Unwrap an [`Axis`][] into its unit.
+    Unwrap an [`Axis`][] into its *physical* unit.
 
     An axis with no unit, or a unit that is not a [`Unit`][] instance, is
-    reported as `None`.
+    reported as `None`. So is an axis measured in samples: a sample is not
+    a physical quantity, so it has no scale to convert and no kind to
+    match. Whether an axis *is* sampled is a different question, asked by
+    [`_is_array_side`][]; [`_unit_ratio`][] asks it too, to refuse a
+    sample matched to a physical unit.
     """
     if isinstance(unit, Axis):
         unit = unit.unit
-    if isinstance(unit, Unit):
+    if is_physicalunit(unit):
         return unit
     return None
+
+
+def _is_sampled(unit: _UnitLike) -> bool:
+    """Whether an axis (or a unit) counts samples."""
+    if isinstance(unit, Axis):
+        unit = unit.unit
+    return is_sampleunit(unit)
 
 
 def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
@@ -917,25 +928,40 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
     The factor that converts a value measured in the source axis's unit
     to the target axis's unit.
 
-    Two axes that carry no unit, or the same unit, have a ratio of one.
+    An unspecified unit (`None`) is compatible with any unit, at a ratio
+    of one: what is not known is never a reason to refuse. Two axes in the
+    same unit, or two axes that both count samples, have a ratio of one
+    too.
 
-    An axis with a unit matched to an axis without one has no defined
-    ratio, which is reported as a failure.
+    An axis that counts samples matched to an axis in a physical unit has
+    no ratio: the factor between them is the size of a sample, which is
+    what a scaling transformation says, not what the axes say. Two
+    physical units of different kinds (a length and a duration) have no
+    ratio either. Both are reported as a failure.
     """
-    source_unit = _unit(source)
-    target_unit = _unit(target)
-    if source_unit is None and target_unit is None:
+    source_sampled, target_sampled = _is_sampled(source), _is_sampled(target)
+    source_unit, target_unit = _unit(source), _unit(target)
+    if source_sampled and target_sampled:
         return 1.0
-    if source_unit is None or target_unit is None:
+    if source_sampled or target_sampled:
+        physical = target_unit if source_sampled else source_unit
+        if physical is None:
+            return 1.0
         raise AdaptationError(
-            "One axis carries a unit and the axis it matches does not, so "
-            "no conversion factor exists between them. Give both axes a "
-            "unit, or neither."
+            f"One axis is sampled (its unit is 'sample') and the axis it "
+            f"matches is in {physical.name}, so no conversion factor exists "
+            f"between them: the size of a sample in {physical.name} is what "
+            f"a scaling transformation states, not the axes. Map the "
+            f"samples to {physical.name} with a transformation, or give "
+            f"both axes the same kind of unit."
         )
+    if source_unit is None or target_unit is None:
+        return 1.0
     if source_unit.type != target_unit.type:
         raise AdaptationError(
-            "Two matched axes are measured in units of different kinds, "
-            "so no conversion factor exists between them."
+            f"Two matched axes are measured in units of different kinds "
+            f"({source_unit.name} and {target_unit.name}), so no conversion "
+            f"factor exists between them."
         )
     # The ratio between two SI-prefixed units is a power of ten, so it is
     # computed from the difference of the two base-ten scale exponents. A
@@ -981,13 +1007,16 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     Three signals mark an array-index axis. Its system is an array
     coordinate system, such as a voxel grid, even one whose axes are
     named and oriented and carry a length unit. Or the axis is discrete.
-    Or the axis carries no unit, so its samples are plain indices.
+    Or the axis is measured in samples, which is what [`SampleUnit`][]
+    states -- and only what it states: an axis whose unit is `None` has an
+    *unspecified* unit, which says nothing about whether it indexes an
+    array, so it is not read as one.
     """
     if isinstance(system, ArrayCoordinateSystem):
         return True
     if axis.discrete:
         return True
-    return axis.unit is None
+    return is_sampleunit(axis.unit)
 
 
 def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:

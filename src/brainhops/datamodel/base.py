@@ -3,6 +3,7 @@
 __all__ = ["DataModelBase", "DataModelConverter"]
 
 # externals
+import re
 from collections.abc import Mapping
 
 import typing_extensions as tx
@@ -15,8 +16,20 @@ class DataModelBase(
     convert=True,
     mapping=False,
     repr=HIDE_IF_NONE,
+    doc=True,
+    pin_discriminant="pin+narrow",
 ):
-    """Base class for all data models."""
+    """Base class for all data models.
+
+    A polymorphic data model class is built from the arguments its `on=`
+    constraint matches, and refuses the ones it does not
+    (`pin_discriminant="pin+narrow"`): `OrientedAxis(orientation=None)`
+    and `AnatomicalAxis(orientation=<not anatomical>)` raise rather than
+    build an axis that contradicts its own class. A field a class writes
+    out itself keeps its own type (bagof leaves it as written), which is
+    why the discriminants that subclasses declare are typed narrowly
+    (`Literal["space"]`, `Narrow[str]`) where they are declared.
+    """
 
     # We use this base class to set options that we want to propagate to
     # all classes in the hierarchy.
@@ -69,12 +82,21 @@ class DataModelBase(
         # An instance of this class (or of a subclass) is one already:
         # whatever it fixes, it fixes the way this class allows.
         check_fixed = not isinstance(other, cls)
+        # A polymorphic class fixes the fields it is selected on too, even
+        # though they are passed to its constructor -- `on=` is what a
+        # `LeftToRightAxis` says about its orientation.
+        selected_on = _selected_on(cls) if check_fixed else {}
 
         def read(field: tx.Any) -> tx.Any:
             if not field.init and not check_fixed:
                 return _ABSENT
             value = getattr(other, field.name, None)
-            return _ABSENT if value is None else value
+            if value is None:
+                return _ABSENT
+            specs = selected_on.get(field.name)
+            if specs and field.init:
+                _check_selected_on(cls, field, value, specs)
+            return value
 
         return _build(cls, read, args, kwargs)
 
@@ -86,9 +108,13 @@ class DataModelBase(
         or an arguments to be passed to the constructor.
 
         A similar class is this class or one of its parents within the
-        data model. Any other object, including an instance of a parent
-        that is not a data model (such as a plain `object`), is passed
-        to the constructor.
+        data model, or another member of a polymorphic family this class
+        belongs to: calling a polymorphic class such as `Axis` builds the
+        subclass its arguments select, so a "generic" axis is usually an
+        instance of a sibling (a `RightToLeftAxis`, a `TimeAxis`) rather
+        than of a parent. Any other object, including an instance of a
+        parent that is not a data model (such as a plain `object`), is
+        passed to the constructor.
 
         Unlike [`from_dict`][brainhops.datamodel.base.DataModelBase.from_dict],
         a dictionary with a key that matches no field of this class is
@@ -101,6 +127,8 @@ class DataModelBase(
         elif isinstance(other, cls):
             return cls.from_instance(other, *args, **kwargs)
         elif isinstance(other, DataModelBase) and issubclass(cls, type(other)):
+            return cls.from_instance(other, *args, **kwargs)
+        elif isinstance(other, DataModelBase) and _same_family(cls, other):
             return cls.from_instance(other, *args, **kwargs)
         else:
             return cls(other, *args, **kwargs)
@@ -179,6 +207,86 @@ def _check_fixed(
             f"{field.public_name} is {value!r} cannot be read as a "
             f"{cls.__name__}."
         )
+
+
+# Where bagof records the `on=` constraints a polymorphic subclass was
+# registered with: `(owner(s), specs, priority, ...)`. bagof has no public
+# accessor for them yet; without it, nothing is read and only the fields
+# that cannot be passed to the constructor are checked.
+_REGISTRATION = "__magic_registration__"
+
+
+def _is_polymorphic(cls: type) -> bool:
+    """Whether calling `cls` builds the subclass its arguments select."""
+    options = cls.__dict__.get("__magic_options__")
+    return bool(getattr(options, "polymorphic", False))
+
+
+def _same_family(cls: type, other: tx.Any) -> bool:
+    """Whether `other` belongs to a polymorphic family that `cls` is in."""
+    return any(
+        isinstance(other, base)
+        for base in cls.__mro__
+        if base is not DataModelBase
+        and issubclass(base, DataModelBase)
+        and _is_polymorphic(base)
+    )
+
+
+def _selected_on(cls: type) -> tx.Dict[str, tx.List[tx.Any]]:
+    """The `on=` constraints of `cls` and its parents, by field name."""
+    out: tx.Dict[str, tx.List[tx.Any]] = {}
+    for base in cls.__mro__:
+        registration = base.__dict__.get(_REGISTRATION)
+        try:
+            specs = registration[1]
+        except (TypeError, IndexError, KeyError):
+            continue
+        for spec in specs:
+            name = getattr(spec, "name", None)
+            if name is not None and callable(getattr(spec, "matches", None)):
+                out.setdefault(name, []).append(spec)
+    return out
+
+
+def _matches(spec: tx.Any, value: tx.Any) -> bool:
+    try:
+        return bool(spec.matches(value))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _check_selected_on(
+    cls: type, field: tx.Any, value: tx.Any, specs: tx.Sequence[tx.Any]
+) -> None:
+    """Refuse `value` unless `cls` is what it would be selected for.
+
+    This is the counterpart of [`_check_fixed`][] for a field that a
+    polymorphic class is selected on: such a field must be passed to the
+    constructor, so it cannot be a fixed one, but it is just as fixed.
+    """
+    failed = next((s for s in specs if not _matches(s, value)), None)
+    if failed is None:
+        return
+    where = f"{cls.__name__}.{field.public_name}"
+    expected = getattr(failed, "value", _NO_DEFAULT)
+    if expected is _NO_DEFAULT:
+        default = _fixed_value(field)
+        if default is not None and all(_matches(s, default) for s in specs):
+            expected = default
+    if expected is not _NO_DEFAULT:
+        raise ValueError(
+            f"{where} is always {expected!r}, so a value whose "
+            f"{field.public_name} is {value!r} cannot be read as a "
+            f"{cls.__name__}."
+        )
+    # A predicate is written `<function name at 0x...>`: keep its name.
+    text = re.sub(r"<function (\S+) at 0x[0-9a-f]+>", r"\1", failed.text)
+    raise ValueError(
+        f"{where} cannot be {value!r}: a {cls.__name__} is what "
+        f"{field.public_name}={text} selects, so this value cannot be read "
+        f"as one."
+    )
 
 
 def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:

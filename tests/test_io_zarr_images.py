@@ -16,7 +16,7 @@ import typing_extensions as tx
 import brainhops.io.images as images
 from brainhops.datamodel.axes import (
     ChannelAxis,
-    SpatialAxis,
+    SpaceAxis,
     TimeAxis,
 )
 from brainhops.datamodel.images import SingleScaleImage
@@ -64,11 +64,11 @@ def _world_matrix(transformation: tx.Any) -> np.ndarray:
     return np.asarray(transformation.compute().to(Affine).matrix)
 
 
-def _spatial_axes() -> tx.List[SpatialAxis]:
+def _spatial_axes() -> tx.List[SpaceAxis]:
     return [
-        SpatialAxis(name="x"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="z"),
+        SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="z"),
     ]
 
 
@@ -79,9 +79,9 @@ def test_seam_maps_storage_order_to_canonical_and_back() -> None:
     stored = [
         TimeAxis(name="t"),
         ChannelAxis(name="c"),
-        SpatialAxis(name="z"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="x"),
+        SpaceAxis(name="z"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="x"),
     ]
     to_canon = _axisorder.to_canonical(stored)
     canonical = _axisorder.permute(stored, to_canon)
@@ -95,8 +95,8 @@ def test_seam_maps_storage_order_to_canonical_and_back() -> None:
 def test_seam_round_trips_any_permutation() -> None:
     stored = [
         ChannelAxis(name="c"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="x"),
     ]
     perm = _axisorder.to_canonical(stored)
     canonical = _axisorder.permute(stored, perm)
@@ -232,9 +232,9 @@ def _stored_axis_names(path: str) -> tx.List[str]:
 
 def test_multiscale_stores_axes_in_ome_order(tmp_path: Path) -> None:
     axes = [
-        SpatialAxis(name="x"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="z"),
+        SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="z"),
         TimeAxis(name="t"),
         ChannelAxis(name="c"),
     ]
@@ -659,9 +659,9 @@ def _displacement_field() -> OmeZarrImage:
     from brainhops.datamodel.axes import DisplacementAxis
 
     axes = [
-        SpatialAxis(name="x"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="z"),
+        SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="z"),
         DisplacementAxis(name="v"),
     ]
     data = np.zeros((2, 3, 4, 3), dtype="float32")
@@ -679,9 +679,9 @@ def test_vector_axis_is_grouped_with_the_channel_position() -> None:
     from brainhops.datamodel.axes import DisplacementAxis
 
     axes = [
-        SpatialAxis(name="x"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="z"),
+        SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="z"),
         DisplacementAxis(name="v"),
     ]
     stored = _axisorder.permute(axes, _axisorder.to_storage(axes))
@@ -760,9 +760,9 @@ def test_write_version_falls_back_to_the_source_version(
 
 def test_read_pyramid_derives_axes_from_ome(tmp_path: Path) -> None:
     axes = [
-        SpatialAxis(name="x"),
-        SpatialAxis(name="y"),
-        SpatialAxis(name="z"),
+        SpaceAxis(name="x"),
+        SpaceAxis(name="y"),
+        SpaceAxis(name="z"),
         TimeAxis(name="t"),
         ChannelAxis(name="c"),
     ]

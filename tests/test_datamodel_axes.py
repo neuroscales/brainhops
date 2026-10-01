@@ -12,15 +12,19 @@ from brainhops.datamodel.axes import (
     CoordinateAxis,
     DisplacementAxis,
     LeftToRightAxis,
-    SpatialAxis,
+    SpaceAxis,
+    TimeAxis,
     vector_axis,
 )
-from brainhops.datamodel.orientation import LeftToRight, RightToLeft
+from brainhops.datamodel.orientation import (
+    LeftToRight,
+    Orientation,
+    RightToLeft,
+)
 from brainhops.datamodel.systems import (
     CoordinateSystem3D,
     SpatialCoordinateSystem3D,
 )
-from brainhops.datamodel.units import SpaceUnit
 
 
 def _messages(error: BaseException) -> list:
@@ -95,7 +99,7 @@ def test_ellipsis_is_not_an_axis() -> None:
     with pytest.raises(TypeError, match=re.escape("`...` is not an axis")):
         Axis(...)
     with pytest.raises(TypeError, match=re.escape("`...` is not an axis")):
-        SpatialAxis(name=...)
+        SpaceAxis(name=...)
 
 
 def test_a_fixed_dimension_system_refuses_ellipsis_as_an_axis() -> None:
@@ -108,14 +112,15 @@ def test_a_fixed_dimension_system_refuses_ellipsis_as_an_axis() -> None:
 
 def test_generic_axes_are_read_as_spatial_axes() -> None:
     # Regression: each generic `Axis` was taken as the name of a
-    # `SpatialAxis`, so the system could not be built.
+    # `SpaceAxis`, so the system could not be built.
     system = SpatialCoordinateSystem3D(
         axes=[Axis(name="x"), Axis(name="y"), {"name": "z"}]
     )
-    assert all(type(axis) is SpatialAxis for axis in system.axes)
+    assert all(type(axis) is SpaceAxis for axis in system.axes)
     assert [axis.name for axis in system.axes] == ["x", "y", "z"]
-    # A generic axis leaves its unit unset, so the spatial default holds.
-    assert all(axis.unit == SpaceUnit("millimeter") for axis in system.axes)
+    # A generic axis leaves its unit unset, so the spatial default holds:
+    # a spatial axis claims no unit unless it is given one.
+    assert all(axis.unit is None for axis in system.axes)
 
 
 def test_an_axis_with_the_same_orientation_is_read_as_oriented() -> None:
@@ -131,4 +136,41 @@ def test_an_axis_with_another_orientation_is_not_read_as_oriented() -> None:
 
 def test_an_axis_of_another_type_is_not_read_as_spatial() -> None:
     with pytest.raises(ValueError, match="always 'space'"):
-        SpatialAxis.from_other(Axis(name="t", type="time"))
+        SpaceAxis.from_other(Axis(name="t", type="time"))
+
+
+def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
+    # A spatial axis measured in seconds is a contradiction. It is refused
+    # wherever it is written -- not quietly built as a generic `Axis`, and
+    # not quietly read as the sample either (a second instance used to
+    # fall through the `Union[SpaceUnit, SampleUnit]` to `SampleUnit`).
+    from brainhops.datamodel.units import Second, Unit
+
+    for build in (
+        lambda: Axis(name="x", type="space", unit="s"),
+        lambda: SpaceAxis(name="x", unit="s"),
+        lambda: SpaceAxis(name="x", unit=Unit("s")),
+        lambda: SpaceAxis(name="x", unit=Second()),
+    ):
+        with pytest.raises(ConversionError, match="SpaceAxis.unit"):
+            build()
+    for build in (
+        lambda: Axis(name="t", type="time", unit="mm"),
+        lambda: TimeAxis(name="t", unit=Unit("mm")),
+    ):
+        with pytest.raises(ConversionError, match="TimeAxis.unit"):
+            build()
+
+
+def test_a_sibling_axis_is_read_field_by_field() -> None:
+    # Calling `Axis` builds the subclass its arguments select, so an axis
+    # that only carries an orientation is an `OrientedAxis` -- a sibling of
+    # `SpaceAxis`, not a parent. It is still read field by field, rather
+    # than taken as the name of the new axis.
+    orientation = Orientation(value="toward-the-light")
+    axis = Axis(name="x", orientation=orientation, unit="mm")
+    assert not isinstance(axis, SpaceAxis)
+    read = SpaceAxis.from_other(axis)
+    assert isinstance(read, SpaceAxis)
+    assert (read.name, read.unit) == ("x", axis.unit)
+    assert read.orientation == orientation
