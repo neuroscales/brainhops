@@ -262,8 +262,23 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
+def _check_square(To: tx.Union[Linear, Affine]) -> None:
+    # A displacement field maps a space onto itself, so it cannot absorb a
+    # matrix that changes the number of axes. The pair is refused, and the
+    # compose pass keeps the two side by side.
+    rows, cols = To.matrix.shape
+    if isinstance(To, Affine):
+        cols -= 1
+    if rows != cols:
+        raise CompositionError(
+            "Cannot fold a matrix that changes the number of axes into a "
+            "displacement field."
+        )
+
+
 @composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
@@ -280,6 +295,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 
 @composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
@@ -393,38 +409,50 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     in_axes = [int(i) for i in To.input_axes]
     out_axes = [int(i) for i in To.output_axes]
     if To.transformation is None:
-        return replace(Ti, output=To.output)
-    if _interpolates(To.transformation) and (
-        To.input is not None and To.input.axes is not None
-    ):
-        for i in in_axes:
-            axis = To.input.axes[i]
-            if getattr(axis, "discrete", None):
-                raise CompositionError(
-                    "Cannot apply an interpolating transform along the "
-                    "discrete axis {!r}. A field is sampled between grid "
-                    "points, which a discrete axis does not allow.".format(
-                        getattr(axis, "name", None)
-                        or getattr(axis, "type", None)
+        # A missing inner is the identity. With matching axis vectors the
+        # whole transform is the identity, so the field is only relabelled.
+        # Otherwise it is a pure axis reindex, assembled below exactly like
+        # a transform with an inner (and like the subspace-to-affine
+        # reduction), with the acted-on components taken as they are.
+        if in_axes == out_axes:
+            return replace(Ti, output=To.output)
+        acted = x[..., in_axes]
+    else:
+        if _interpolates(To.transformation) and (
+            To.input is not None and To.input.axes is not None
+        ):
+            for i in in_axes:
+                axis = To.input.axes[i]
+                if getattr(axis, "discrete", None):
+                    raise CompositionError(
+                        "Cannot apply an interpolating transform along the "
+                        "discrete axis {!r}. A field is sampled between grid "
+                        "points, which a discrete axis does not allow.".format(
+                            getattr(axis, "name", None)
+                            or getattr(axis, "type", None)
+                        )
                     )
-                )
-    domain = CoordinatesField(
-        field=x[..., in_axes], order=Ti.order, bound=Ti.bound, coeff=False
-    )
-    result = Sequence(transformations=[domain, To.transformation]).compute()
-    if isinstance(result, DisplacementField):
-        result = result.to(CoordinatesField)
-    if not isinstance(result, CoordinatesField):
-        raise CompositionError(
-            "The inner transform of a subspace transform did not reduce to "
-            "a field of coordinates, so it cannot be applied to a field."
+        domain = CoordinatesField(
+            field=x[..., in_axes], order=Ti.order, bound=Ti.bound, coeff=False
         )
-    result = result.to(coeff=False)
+        result = Sequence(
+            transformations=[domain, To.transformation]
+        ).compute()
+        if isinstance(result, DisplacementField):
+            result = result.to(CoordinatesField)
+        if not isinstance(result, CoordinatesField):
+            raise CompositionError(
+                "The inner transform of a subspace transform did not reduce "
+                "to a field of coordinates, so it cannot be applied to a "
+                "field."
+            )
+        acted = result.to(coeff=False).field
 
     # Reassemble the full field. The acted-on components take their new
-    # values from the inner result, and each pass-through component is
-    # copied straight from the input, matched to its output position in
-    # order, exactly as the subspace-to-affine reduction matches them.
+    # values from the inner result (or as they are, for a missing inner),
+    # and each pass-through component is copied straight from the input,
+    # matched to its output position in order, exactly as the
+    # subspace-to-affine reduction matches them.
     n = x.shape[-1]
     acted_in = set(in_axes)
     acted_out = set(out_axes)
@@ -432,7 +460,7 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
     passthrough_out = [o for o in range(n) if o not in acted_out]
     columns: tx.List[tx.Any] = [None] * n
     for k, o in enumerate(out_axes):
-        columns[o] = result.field[..., k]
+        columns[o] = acted[..., k]
     for o, i in zip(passthrough_out, passthrough_in):
         columns[o] = x[..., i]
     y = ba.stack(columns, axis=-1)

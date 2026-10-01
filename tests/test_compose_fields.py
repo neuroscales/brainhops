@@ -39,6 +39,7 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     InverseDisplacementField,
+    Linear,
     Sequence,
     SubspaceTransformation,
     Transformation,
@@ -254,6 +255,75 @@ def test_subspace_disp_matches_affine_reduction() -> None:
     np.testing.assert_allclose(
         np.asarray(got.field), np.asarray(ref.field), atol=1e-12
     )
+
+
+def _empty_subspace_3d(input_axes, output_axes) -> SubspaceTransformation:  # noqa: ANN001
+    # A subspace transform with no inner (the identity) over a 3D space.
+    return SubspaceTransformation(
+        transformation=None,
+        input_axes=np.asarray(input_axes, dtype=int),
+        output_axes=np.asarray(output_axes, dtype=int),
+        input=_sub3("in"),
+        output=_sub3("out"),
+    )
+
+
+def _coords_3d() -> CoordinatesField:
+    # A small grid whose three components hold distinct values, so any
+    # swapped or dropped component shows up plainly.
+    field = np.stack(
+        [
+            np.full((2, 3, 4), 1.0) + np.arange(4),
+            np.full((2, 3, 4), 10.0) + np.arange(4),
+            np.full((2, 3, 4), 100.0) + np.arange(4),
+        ],
+        axis=-1,
+    )
+    return CoordinatesField(field=field, output=_sub3("in"))
+
+
+def test_empty_subspace_coords_reindexes_like_the_affine_reduction() -> None:
+    # C1. An inner-less subspace with swapped axis vectors is a pure axis
+    # reindex: applied to a field it must match its affine reduction, not
+    # just relabel the field.
+    To = _empty_subspace_3d([0, 1], [1, 0])
+    Ti = _coords_3d()
+    got = compose(To, Ti)
+    ref = compose(To.to(Affine), Ti)
+    assert isinstance(got, CoordinatesField)
+    np.testing.assert_array_equal(np.asarray(got.field), np.asarray(ref.field))
+    x = np.asarray(Ti.field)
+    np.testing.assert_array_equal(np.asarray(got.field), x[..., [1, 0, 2]])
+    assert got.output == _sub3("out")
+
+
+def test_empty_subspace_disp_reindexes_like_the_affine_reduction() -> None:
+    # C2. The same reindex applied to a displacement field matches the
+    # affine reduction folded into that displacement field.
+    rng = np.random.default_rng(3)
+    Ti = DisplacementField(
+        field=rng.standard_normal((2, 3, 4, 3)) * 0.1, output=_sub3("in")
+    )
+    To = _empty_subspace_3d([0, 1], [1, 0])
+    got = compose(To, Ti)
+    ref = compose(To.to(Affine), Ti)
+    assert isinstance(got, DisplacementField)
+    np.testing.assert_allclose(
+        np.asarray(got.field), np.asarray(ref.field), atol=1e-12
+    )
+
+
+def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
+    # C1. With matching axis vectors an inner-less subspace is the identity,
+    # so the field comes back unchanged, only relabelled.
+    To = _empty_subspace_3d([0, 1], [0, 1])
+    Ti = _coords_3d()
+    got = compose(To, Ti)
+    assert isinstance(got, CoordinatesField)
+    np.testing.assert_array_equal(np.asarray(got.field), np.asarray(Ti.field))
+    assert got.output == _sub3("out")
+    assert got.order == Ti.order
+    assert got.bound == Ti.bound
 
 
 def test_subspace_compose_subspace_matches_into_one_wrapper() -> None:
@@ -651,3 +721,27 @@ def test_dispatch_order_and_terminal_composition_error(
     with pytest.raises(CompositionError):
         compose(a, b)
     assert calls == ["specific"]
+
+
+@pytest.mark.parametrize("rows", [1, 2])
+@pytest.mark.parametrize("affine", [True, False])
+def test_matrix_that_changes_axes_is_not_folded_into_a_displacement(
+    rows: int, affine: bool
+) -> None:
+    # A displacement field maps a space onto itself, so a matrix that
+    # changes the number of axes cannot be folded into it. The composer
+    # refuses the pair, and a sequence keeps the two side by side rather
+    # than failing to broadcast or returning a field of the wrong width.
+    rng = np.random.default_rng(0)
+    field = DisplacementField(field=rng.normal(size=(4, 5, 3, 3)) * 0.3)
+    if affine:
+        matrix = Affine(matrix=np.eye(rows, 4))
+    else:
+        matrix = Linear(matrix=np.eye(rows, 3))
+    with pytest.raises(CompositionError):
+        compose(matrix, field)
+    result = Sequence([field, matrix]).compute()
+    assert [type(t) for t in result.transformations] == [
+        DisplacementField,
+        type(matrix),
+    ]

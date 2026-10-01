@@ -109,6 +109,7 @@ class Transformation(DataModelBase, reverse=True):
         mode: ModeLike = True,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         """
         Compute the transformation, if it is not already fully defined.
@@ -129,6 +130,13 @@ class Transformation(DataModelBase, reverse=True):
             * `"analytic"` (the default) looks at the type structure only;
             * `"numeric"` looks at the numeric values of the transformation;
             * `False`/`"none"`/`None` disables simplification.
+        factor : bool, default=False
+            Whether to rewrite the transformation into its axis-group
+            normal form, splitting it into independent factors that each
+            act on a group of axes that transform together. Off by default,
+            so a plain `compute()` result is unchanged. Nothing is ever
+            composed across axis groups; `mode` still decides whether the
+            restricted pieces inside a group compose.
         """
         # `compute()` has no meaningful default: every family implements it
         # with the behaviour that fits its type -- `ConcreteTransformation`
