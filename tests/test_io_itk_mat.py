@@ -177,6 +177,31 @@ def test_a_composite_keeps_every_block_in_application_order() -> None:
     np.testing.assert_allclose(np.asarray(shift.parameters), translation)
 
 
+def test_a_plain_list_reads_the_transform_at_position() -> None:
+    """Without a composite pair, each pair is its own transform: the
+    first is read by default, with a warning, and `position=` picks
+    another one."""
+    from brainhops.io.base.parsers import ParserContentError
+
+    parameters, fixed = _parameters(3)
+    translation = [10.0, 20.0, 30.0]
+    content = b"".join(
+        [
+            _variable("AffineTransform_double_3_3", parameters),
+            _variable("fixed", fixed),
+            _variable("TranslationTransform_double_3_3", translation),
+            _variable("fixed", []),
+        ]
+    )
+    with pytest.warns(UserWarning, match="holds 2 transforms"):
+        (affine,) = MatTransform.from_bytes(content).transformations
+    np.testing.assert_allclose(_affine(affine), _expected(3))
+    (shift,) = MatTransform.from_bytes(content, position=1).transformations
+    np.testing.assert_allclose(np.asarray(shift.parameters), translation)
+    with pytest.raises(ParserContentError, match="no transform 2"):
+        MatTransform.from_bytes(content, position=2)
+
+
 def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
     """`MatlabTransformIO::Read` takes the variable after the parameters
     as the fixed parameters whatever its name, and accepts VNL's row-wise

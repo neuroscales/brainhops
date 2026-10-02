@@ -102,6 +102,7 @@ class H5TransformParser(
         h5file: h5py.File,
         keep_open: bool = False,
         load: bool = True,
+        position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
         """
@@ -117,6 +118,11 @@ class H5TransformParser(
         keep_open : bool, optional
             If True, keep the HDF5 file open after loading.
             If False, close the file after loading.
+        position : int, optional
+            Which top-level transform of the file to read: the
+            composite, if the file starts with a `CompositeTransform`
+            header, else one of its blocks. By default, the first one,
+            with a warning if the file holds several.
 
         Returns
         -------
@@ -141,7 +147,7 @@ class H5TransformParser(
         # ITK names the groups after their position, `0`, `1`, ...,
         # and reads them by number; h5py lists them by name, which
         # would put `10` before `2`.
-        for position, node in enumerate(sorted(nodes, key=_node_number)):
+        for index, node in enumerate(sorted(nodes, key=_node_number)):
             # Parse transform type
             xtype = _readstr(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
@@ -151,7 +157,7 @@ class H5TransformParser(
             if xtype == "CompositeTransform":
                 # A composite header has no parameters of its own: its
                 # queue is the blocks that follow it.
-                composites.append(position)
+                composites.append(index)
                 continue
 
             # Read transform parameters
@@ -199,7 +205,7 @@ class H5TransformParser(
                 )
             )
 
-        obj.transformations = _application_order(blocks, composites)
+        obj.transformations = _application_order(blocks, composites, position)
 
         if not keep_open:
             h5file.close()

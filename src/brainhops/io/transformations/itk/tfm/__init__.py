@@ -46,10 +46,13 @@ to `T0(T1(x))`. A brainhops
 transformations in the order they apply, so the reader lists the blocks
 of a composite in reverse file order, `[T1, T0]`.
 
-A file with several blocks but no `CompositeTransform` header is a plain
-list, which ITK does not compose (SimpleITK reads only its first block);
-its blocks are kept in file order. A `CompositeTransform` that is not the
-first block is refused, as ITK never writes one there.
+A file with several blocks but no `CompositeTransform` header is a list
+of separate transforms, which ITK does not compose. The reader loads one
+of them: the first, as SimpleITK's `ReadTransform` does, with a warning
+that the file holds several, or the one at `position=`
+(`TfmTransform.from_file(path, position=1)`). A composite file holds a
+single transform, the composite, at position 0. A `CompositeTransform`
+that is not the first block is refused, as ITK never writes one there.
 
 ## Approximate specification
 

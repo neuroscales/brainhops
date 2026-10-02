@@ -1,5 +1,6 @@
 # stdlib
 import math
+from warnings import warn
 
 # dependencies
 import numpy as np
@@ -882,9 +883,12 @@ class ItkBSplineStruct(
 
 
 def _application_order(
-    blocks: tx.List[tx.Any], composites: tx.List[int]
+    blocks: tx.List[tx.Any],
+    composites: tx.List[int],
+    position: tx.Optional[int] = None,
 ) -> tx.List[tx.Any]:
-    """The blocks of an ITK file, in the order they apply to points.
+    """The blocks of the transform that an ITK file is read as, in the
+    order they apply to points.
 
     `blocks` are the blocks of the file in file order, without the
     `CompositeTransform` header, and `composites` the positions (in the
@@ -901,24 +905,51 @@ def _application_order(
     transformations in the order they apply, so the blocks of a
     composite file are reversed.
 
-    A file without a `CompositeTransform` header is a plain list of
-    transforms, which ITK does not compose (SimpleITK reads only its
-    first one): its blocks are kept in file order.
+    The top-level transforms of a file are:
+
+    * the composite, if the file starts with a `CompositeTransform`
+      header: it is then the file's only top-level transform;
+    * otherwise each block, as ITK reads a file without a composite
+      header as a list of unrelated transforms.
+
+    `position` selects one of them. By default, the first one is read,
+    as SimpleITK's `ReadTransform` does, with a warning if the file
+    holds several.
 
     Raises
     ------
     ParserContentError
-        If a `CompositeTransform` header is not the first block. ITK
-        only writes one there, and refuses to write it anywhere else.
+        If a `CompositeTransform` header is not the first block (ITK
+        only writes one there, and refuses to write it anywhere else),
+        or if the file has no top-level transform `position`.
     """
-    if not composites:
-        return list(blocks)
-    if list(composites) != [0]:
+    if composites:
+        if list(composites) != [0]:
+            raise ParserContentError(
+                "ITK only writes a CompositeTransform as the first block "
+                "of a file, and it cannot be nested."
+            )
+        transforms = [list(reversed(blocks))]
+    else:
+        transforms = [[block] for block in blocks]
+
+    if position is None:
+        if len(transforms) > 1:
+            warn(
+                f"This ITK file holds {len(transforms)} transforms and no "
+                f"composite, so only the first one is read. Pass "
+                f"`position=` to read another one.",
+                stacklevel=2,
+            )
+        position = 0
+    if not transforms and position == 0:
+        return []
+    if not 0 <= position < len(transforms):
         raise ParserContentError(
-            "ITK only writes a CompositeTransform as the first block of "
-            "a file, and it cannot be nested."
+            f"This ITK file has {len(transforms)} transform(s), so it has "
+            f"no transform {position}."
         )
-    return list(reversed(blocks))
+    return transforms[position]
 
 
 def _inverse_chain(

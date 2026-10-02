@@ -48,9 +48,13 @@ back to front (`CompositeTransform::TransformPoint`): a file
 [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
 transformations in the order they apply, so the reader lists the blocks
 of a composite in reverse file order: `[T1, T0]`. A file with several
-blocks but no `CompositeTransform` header is a plain list, which ITK
-does not compose; its blocks are kept in file order. Composites cannot
-be nested: ITK only writes a `CompositeTransform` as the first block.
+blocks but no `CompositeTransform` header is a list of separate
+transforms, which ITK does not compose. The reader loads one of them:
+the first, as SimpleITK's `ReadTransform` does, with a warning that the
+file holds several, or the one at `position=`
+(`H5Transform.from_file(path, position=1)`). A composite file holds a
+single transform, the composite, at position 0. Composites cannot be
+nested: ITK only writes a `CompositeTransform` as the first block.
 
 ## Approximate specification
 

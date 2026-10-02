@@ -145,7 +145,12 @@ class MatTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+    def from_bytes(
+        cls,
+        content: bytes,
+        position: tx.Optional[int] = None,
+        **kwargs,
+    ) -> tx.Self:
         """Build the transform chain from the bytes of an ITK MATLAB
         transform file.
 
@@ -154,6 +159,11 @@ class MatTransformParser(
         `fixed`. Like ITK's own reader, this one reads the variables in
         pairs, takes the second of each pair as the fixed parameters
         whatever its name, and refuses anything but column vectors.
+
+        `position` selects which top-level transform of the file to
+        read: the composite, if the file starts with a
+        `CompositeTransform` header, else one of its blocks. By default,
+        the first one, with a warning if the file holds several.
         """
         variables = list(_read_variables(bytes(content)))
         if len(variables) % 2:
@@ -199,7 +209,7 @@ class MatTransformParser(
             )
 
         obj = cls()
-        obj.transformations = _application_order(blocks, composites)
+        obj.transformations = _application_order(blocks, composites, position)
         return obj
 
     # --- to -----------------------------------------------------------

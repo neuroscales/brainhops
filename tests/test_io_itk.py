@@ -1,4 +1,5 @@
 # stdlib
+import warnings
 from pathlib import Path
 
 # dependencies
@@ -831,15 +832,55 @@ def test_single_block_files_are_unchanged(tmp_path, ext: str) -> None:  # noqa: 
 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))
-def test_a_plain_list_of_blocks_keeps_file_order(tmp_path, ext: str) -> None:  # noqa: ANN001
-    """Without a `CompositeTransform` header, ITK returns a list that it
-    does not compose: the blocks stay in file order."""
+def test_a_plain_list_reads_its_first_transform(tmp_path, ext: str) -> None:  # noqa: ANN001
+    """Without a `CompositeTransform` header, each block is its own
+    transform, and only the first one is read, as SimpleITK's
+    `ReadTransform` does, with a warning."""
     path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
-    transform = io.transformations.load(path)
-    assert [block.type for block in transform] == [
-        itk.ItkTransformClass.TranslationTransform,
-        itk.ItkTransformClass.ScaleTransform,
+    with pytest.warns(UserWarning, match="holds 2 transforms"):
+        (block,) = io.transformations.load(path)
+    assert block.type == itk.ItkTransformClass.TranslationTransform
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_plain_list_reads_the_given_position(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        first = io.transformations.load(path, position=0)
+        (block,) = io.transformations.load(path, position=1)
+    assert [b.type for b in first] == [
+        itk.ItkTransformClass.TranslationTransform
     ]
+    assert block.type == itk.ItkTransformClass.ScaleTransform
+    np.testing.assert_allclose(_apply(block, POINTS), POINTS * SCALE)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_position_out_of_range_is_refused(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import ParserContentError
+
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    with pytest.raises(ParserContentError, match="no transform 2"):
+        format.from_file(path, position=2)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_composite_file_holds_one_transform(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import ParserContentError
+
+    path = WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE)
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        transform = format.from_file(path, position=0)
+    assert [block.type for block in transform] == [
+        itk.ItkTransformClass.ScaleTransform,
+        itk.ItkTransformClass.TranslationTransform,
+    ]
+    with pytest.raises(ParserContentError, match="has 1 transform"):
+        format.from_file(path, position=1)
 
 
 @pytest.mark.parametrize("ext", sorted(WRITERS))

@@ -80,9 +80,25 @@ class TfmTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+    def from_lines(
+        cls,
+        lines: tx.Iterable[str],
+        position: tx.Optional[int] = None,
+        **kwargs,
+    ) -> tx.Self:
         """Build the transform chain from an iterable over lines of a
-        `.tfm` file."""
+        `.tfm` file.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            Lines of the file.
+        position : int, optional
+            Which top-level transform of the file to read: the
+            composite, if the file starts with a `CompositeTransform`
+            header, else one of its blocks. By default, the first one,
+            with a warning if the file holds several.
+        """
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
@@ -90,7 +106,7 @@ class TfmTransformParser(
         obj = cls()
         blocks = []
         composites = []
-        position = 0
+        index = 0
 
         while True:
             if not lines.peek():
@@ -128,11 +144,11 @@ class TfmTransformParser(
             else:
                 fixed_parameters = []
 
-            position += 1
+            index += 1
             if transform_type == "CompositeTransform":
                 # A composite header has no parameters of its own: its
                 # queue is the blocks that follow it.
-                composites.append(position - 1)
+                composites.append(index - 1)
                 continue
 
             transform_type = ItkTransformClass(transform_type)
@@ -148,7 +164,7 @@ class TfmTransformParser(
                 )
             )
 
-        obj.transformations = _application_order(blocks, composites)
+        obj.transformations = _application_order(blocks, composites, position)
         return obj
 
 

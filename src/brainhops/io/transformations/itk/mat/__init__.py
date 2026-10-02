@@ -165,8 +165,12 @@ above are those of ANTs: LPS millimetres, and fixed to moving.
   in: that file reads as `Sequence([T1, T0])`, and
   `antsApplyTransforms -t <prefix>Composite.h5` is the same as
   `-t T1 -t T0`. A file that holds several blocks but no
-  `CompositeTransform` header is a plain list, which ITK does not
-  compose; its blocks are kept in file order. The `.mat` writer writes a
+  `CompositeTransform` header is a list of separate transforms, which
+  ITK does not compose. The reader loads one of them: the first, as
+  SimpleITK's `ReadTransform` does, with a warning that the file holds
+  several, or the one at `position=`
+  (`MatTransform.from_file(path, position=1)`). A composite file holds a
+  single transform, the composite, at position 0. The `.mat` writer writes a
   single block, as ANTs does, and refuses chains.
 """
 
