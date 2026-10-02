@@ -6,6 +6,7 @@ __all__ = [
     "base",
     "load",
     "mrtrix",
+    "nrrd",
     "sniff",
 ]
 
@@ -18,7 +19,7 @@ from brainhops._core.dependencies import (
 )
 from brainhops.io.base._dispatch import register_missing_format
 
-from . import base, mrtrix
+from . import base, mrtrix, nrrd
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 
 # Formats must be imported for them to register themselves: the registry
