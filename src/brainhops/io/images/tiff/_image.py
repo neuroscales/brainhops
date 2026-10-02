@@ -22,7 +22,6 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base import tiff as backend
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
@@ -36,6 +35,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.base import _utils_raster as raster
+from brainhops.io.images.tiff import _utils as backend
 
 # ----------------------------------------------------------------------
 #   CONSTANTS

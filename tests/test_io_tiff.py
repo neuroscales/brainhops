@@ -23,7 +23,6 @@ from brainhops.datamodel.images import (  # noqa: E402
     SingleScaleImage,
 )
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
-from brainhops.io.base import tiff as backend  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserNotImplementedError,
@@ -36,6 +35,7 @@ from brainhops.io.images.tiff import (  # noqa: E402
     TiffMultiScaleImage,
 )
 from brainhops.io.images.tiff import _image as tiff_image  # noqa: E402
+from brainhops.io.images.tiff import _utils as backend  # noqa: E402
 
 RNG = np.random.default_rng(0)
 GREY = RNG.integers(0, 2**16, (7, 12), dtype=np.uint16)  # rows, columns

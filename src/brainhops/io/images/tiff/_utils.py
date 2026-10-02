@@ -305,7 +305,7 @@ class TiffMetadata(tx.NamedTuple):
 
     tags: tx.Dict[str, tx.Any]
     """The tags of interest of the first page, by name
-    ([`TAGS_OF_INTEREST`][brainhops.io.base.tiff.TAGS_OF_INTEREST])."""
+    (`TAGS_OF_INTEREST`)."""
 
 
 def tags_of_interest(page: tx.Any) -> tx.Dict[str, tx.Any]:
@@ -513,7 +513,7 @@ def ome_scales(
     ----------
     pixels : Element
         The `Pixels` element (see
-        [`ome_image`][brainhops.io.base.tiff.ome_image]).
+        `ome_image`).
     names : Collection[str]
         The names of the axes of the series: sizes are given only for
         these.
