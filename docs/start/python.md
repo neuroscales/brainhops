@@ -90,9 +90,9 @@ affine a NIfTI file holds. Build that format explicitly when it is what
 you mean:
 
 ```python
-from brainhops.io.transformations.nifti import NiftiVoxelToRas
+from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-NiftiVoxelToRas.from_other(affine).save("affine.nii")
+NiftiVoxelToRAS.from_other(affine).save("affine.nii")
 ```
 
 An LTA file says which coordinate systems its affine maps between, so a

@@ -27,7 +27,7 @@ from bagof.paths import Path  # noqa: E402
 import brainhops.io as io  # noqa: E402
 from brainhops.io.base import nifti as nifti_base  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
-from brainhops.io.transformations.nifti import NiftiVoxelToRas  # noqa: E402
+from brainhops.io.transformations.nifti import NiftiVoxelToRAS  # noqa: E402
 
 AFFINE = np.array(
     [
@@ -118,7 +118,7 @@ def test_an_image_is_read_from_a_remote_path(remote, ext: str) -> None:  # noqa:
 def test_an_affine_is_read_from_a_remote_path(remote, ext: str) -> None:  # noqa: ANN001
     url = f"https://host/dir/affine{ext}"
     remote.store[url] = _encode(ext)
-    affine = NiftiVoxelToRas.load(remote(url))
+    affine = NiftiVoxelToRAS.load(remote(url))
     assert np.allclose(affine.matrix, AFFINE[:3])
 
 
@@ -309,7 +309,7 @@ def test_concrete_readers_read_a_memory_path(memory: str, ext: str) -> None:
     for file in (url, Path(url)):
         image = NiftiImage.load(file)
         assert np.array_equal(np.asarray(image.data), DATA)
-        affine = NiftiVoxelToRas.load(file)
+        affine = NiftiVoxelToRAS.load(file)
         assert np.allclose(affine.matrix, AFFINE[:3])
 
 

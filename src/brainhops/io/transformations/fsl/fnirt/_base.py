@@ -18,7 +18,7 @@ from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
-from .._fields import RasToWarpField, WarpFieldToRas
+from .._fields import RASToWarpField, WarpFieldToRAS
 from .._formats import FslTransformationFormat
 from .._repr import stored_repr
 
@@ -505,11 +505,11 @@ def _warp_chain(
     grid_to_ras[:3, 3] = grid_to_ras_off
 
     return (
-        RasToWarpField(matrix=ras_to_grid[:-1]),
+        RASToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
             field=prescaled, order=order, bound=bound, coeff=coeff
         ),
-        WarpFieldToRas(matrix=grid_to_ras[:-1]),
+        WarpFieldToRAS(matrix=grid_to_ras[:-1]),
     )
 
 

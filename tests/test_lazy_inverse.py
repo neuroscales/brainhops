@@ -47,10 +47,10 @@ from brainhops.datamodel.transformations import (
     is_identity,
 )
 from brainhops.io.transformations.base.affines import (
-    LpsToVoxel,
-    RasToVoxel,
-    VoxelToLps,
-    VoxelToRas,
+    LPSToVoxel,
+    RASToVoxel,
+    VoxelToLPS,
+    VoxelToRAS,
 )
 
 
@@ -775,17 +775,17 @@ def test_inverse_comes_from_the_most_derived_paired_base() -> None:
 #   PAIRED TRANSFORMATION TYPES
 # ----------------------------------------------------------------------
 #
-# `VoxelToLps` and `LpsToVoxel` map the same two spaces in opposite
+# `VoxelToLPS` and `LPSToVoxel` map the same two spaces in opposite
 # directions, and each one's name states which. Inverting one must
 # therefore land on the other, on every path, or the result carries the
 # right endpoints under a name that says the opposite.
 
 
 PAIRS = [
-    (VoxelToRas, RasToVoxel, VoxelCoordinateSystem, RASCoordinateSystem),
-    (RasToVoxel, VoxelToRas, RASCoordinateSystem, VoxelCoordinateSystem),
-    (VoxelToLps, LpsToVoxel, VoxelCoordinateSystem, LPSCoordinateSystem),
-    (LpsToVoxel, VoxelToLps, LPSCoordinateSystem, VoxelCoordinateSystem),
+    (VoxelToRAS, RASToVoxel, VoxelCoordinateSystem, RASCoordinateSystem),
+    (RASToVoxel, VoxelToRAS, RASCoordinateSystem, VoxelCoordinateSystem),
+    (VoxelToLPS, LPSToVoxel, VoxelCoordinateSystem, LPSCoordinateSystem),
+    (LPSToVoxel, VoxelToLPS, LPSCoordinateSystem, VoxelCoordinateSystem),
 ]
 
 
@@ -862,24 +862,24 @@ def test_a_pair_is_declared_once_and_resolved_both_ways() -> None:
     # Only the half defined second can name the other -- the first
     # cannot name a class that does not exist yet -- so the declaration
     # sits there alone and the hook points both halves at each other.
-    assert VoxelToLps._reverseof is None
-    assert LpsToVoxel._reverseof is VoxelToLps
-    assert VoxelToLps._reverse_type is LpsToVoxel
-    assert LpsToVoxel._reverse_type is VoxelToLps
+    assert VoxelToLPS._reverseof is None
+    assert LPSToVoxel._reverseof is VoxelToLPS
+    assert VoxelToLPS._reverse_type is LPSToVoxel
+    assert LPSToVoxel._reverse_type is VoxelToLPS
 
 
 def test_a_refinement_inherits_the_pairing_of_its_base() -> None:
     # A reader's refinement of a paired type reverses to that type's
     # opposite half, and does not steal the pairing from its base: the
     # hook only reads a `_reverseof` declared in the class's own body.
-    class MyVoxelToLPS(VoxelToLps):
+    class MyVoxelToLPS(VoxelToLPS):
         pass
 
-    assert MyVoxelToLPS._reverse_type is LpsToVoxel
-    assert LpsToVoxel._reverse_type is VoxelToLps
+    assert MyVoxelToLPS._reverse_type is LPSToVoxel
+    assert LPSToVoxel._reverse_type is VoxelToLPS
 
     inv = MyVoxelToLPS(matrix=np.diag([2.0, 4.0, 8.0, 1.0])[:3])
-    assert type(inv.inverse().compute()) is LpsToVoxel
+    assert type(inv.inverse().compute()) is LPSToVoxel
 
 
 def test_an_unpaired_pinned_type_keeps_its_own_class() -> None:

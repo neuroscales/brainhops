@@ -21,7 +21,7 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.datamodel.enums import BoundaryCondition
-from brainhops.io.transformations.base.affines import LpsToVoxel, VoxelToLps
+from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
 from ._systems import _make_system
@@ -378,10 +378,10 @@ class ItkDisplacementBase(ItkBlockBase):
     # --- slots --------------------------------------------------------
 
     @smartproperty(cache=True)
-    def lps2voxel(self) -> LpsToVoxel:
+    def lps2voxel(self) -> LPSToVoxel:
         """The affine from LPS world coordinates to warp-grid voxels."""
         vox2lps, _ = self._grid
-        return LpsToVoxel(matrix=_affines.inv(vox2lps))
+        return LPSToVoxel(matrix=_affines.inv(vox2lps))
 
     @smartproperty(cache=True)
     def displacement(self) -> _xforms.DisplacementField:
@@ -397,10 +397,10 @@ class ItkDisplacementBase(ItkBlockBase):
         )
 
     @smartproperty(cache=True)
-    def voxel2lps(self) -> VoxelToLps:
+    def voxel2lps(self) -> VoxelToLPS:
         """The affine from warp-grid voxels back to LPS world."""
         vox2lps, _ = self._grid
-        return VoxelToLps(matrix=vox2lps)
+        return VoxelToLPS(matrix=vox2lps)
 
     # --- sequence -----------------------------------------------------
 

@@ -17,7 +17,7 @@ __all__ = [
     "LtaTransformation",
     "LtaTransformationVoxToVox",
     "LtaTransformationPhysToPhys",
-    "LtaTransformationRasToRas",
+    "LtaTransformationRASToRAS",
 ]
 
 from ._enums import LtaMatrixType, LtaType, LtaValidity
@@ -31,6 +31,6 @@ from ._systems import (
 from ._xforms import (
     LtaTransformation,
     LtaTransformationPhysToPhys,
-    LtaTransformationRasToRas,
+    LtaTransformationRASToRAS,
     LtaTransformationVoxToVox,
 )

@@ -525,8 +525,8 @@ class _FileBasedModelMixin:
         the specific data model a format refines, its declarations of a
         field shadow the specific ones:
 
-        - `NiftiVoxelToRas`, `NiftiRasToVoxel` and
-          `NiftiRasCoordinatesField` lose their voxel and RAS endpoint
+        - `NiftiVoxelToRAS`, `NiftiRASToVoxel` and
+          `NiftiRASCoordinatesField` lose their voxel and RAS endpoint
           defaults.
         - The ITK formats no longer take their chain as their first
           positional argument.
