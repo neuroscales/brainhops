@@ -1,5 +1,7 @@
 """Tests for units: the three-state predicates, and parsing unit names."""
 
+import math
+
 import pytest
 
 from brainhops.datamodel import units
@@ -129,3 +131,70 @@ def test_a_unit_class_builds_its_own_units() -> None:
     assert units.TimeUnit("ms") is units.MilliSecond()
     assert SampleUnit("sample") is SampleUnit()
     assert units.Meter("metre") is units.Meter()
+
+
+# ----------------------------------------------------------------------
+#   scale / log10_scale (issue #257)
+# ----------------------------------------------------------------------
+
+KNOWN_SCALES = [
+    # Time, in seconds.
+    (units.Minute, "minute", 60.0),
+    (units.Hour, "hour", 3600.0),
+    (units.Day, "day", 86400.0),
+    (units.Week, "week", 604800.0),
+    (units.Year, "year", 52 * 604800.0),
+    # Space, in meters.
+    (units.Inch, "inch", 0.0254),
+    (units.Foot, "foot", 0.3048),
+    (units.Yard, "yard", 0.9144),
+    (units.Mile, "mile", 1609.344),
+    (units.Angstrom, "angstrom", 1e-10),
+    (units.Parsec, "parsec", 3.085677581491367e16),
+]
+
+
+@pytest.mark.parametrize("cls, name, scale", KNOWN_SCALES)
+def test_known_units_have_their_scale(
+    cls: type, name: str, scale: float
+) -> None:
+    unit = Unit(name)
+    assert unit is cls()
+    assert isinstance(unit, units.KnownUnit)
+    assert isinstance(unit.scale, float)
+    assert unit.scale == pytest.approx(scale, rel=1e-15)
+    assert cls.scale == unit.scale
+    assert unit.log10_scale == pytest.approx(math.log10(scale))
+    assert unit.prefix is None
+
+
+def test_every_registered_known_unit_has_a_table_scale() -> None:
+    for cls in units._REGISTERED_UNITS:
+        if issubclass(cls, units.KnownUnit):
+            assert cls().scale == float(units.UNITS[cls.name][0])
+            assert cls().scale != 1.0
+
+
+@pytest.mark.parametrize(
+    "name, scale, log10_scale",
+    [
+        ("meter", 1.0, 0),
+        ("millimeter", 1e-3, -3),
+        ("micrometer", 1e-6, -6),
+        ("kilometer", 1e3, 3),
+        ("second", 1.0, 0),
+        ("millisecond", 1e-3, -3),
+    ],
+)
+def test_si_units_have_their_scale(
+    name: str, scale: float, log10_scale: int
+) -> None:
+    unit = Unit(name)
+    assert unit.log10_scale == log10_scale
+    assert unit.scale == pytest.approx(scale, rel=1e-15)
+
+
+def test_known_unit_symbols() -> None:
+    assert Unit("inch").symbol == '"'
+    assert Unit("min").symbol == "min"
+    assert Unit("ft") is units.Foot()

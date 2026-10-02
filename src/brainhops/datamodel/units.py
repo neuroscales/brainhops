@@ -390,7 +390,7 @@ class _MetaKnownUnit(MetaMagic):
 
     @property
     def scale(cls) -> float:
-        return UNITS[cls.name][0]
+        return float(UNITS[cls.name][0])
 
     @property
     def log10_scale(cls) -> float:
@@ -400,8 +400,10 @@ class _MetaKnownUnit(MetaMagic):
 class KnownUnit(Unit, metaclass=_MetaKnownUnit):
     """A named unit with no SI prefix, such as `inch` or `hour`.
 
-    A unit of this kind has a fixed scale relative to its base unit, and
-    is not one of the SI-prefixed units generated for [`UnitSI`][].
+    A unit of this kind has a fixed scale relative to the SI base unit of
+    its kind (`0.0254` for the inch, in meters; `3600.0` for the hour, in
+    seconds), read from the `UNITS` table, and is not one of the
+    SI-prefixed units generated for [`UnitSI`][].
     """
 
     @property
@@ -416,7 +418,7 @@ class KnownUnit(Unit, metaclass=_MetaKnownUnit):
 
     @property
     def scale(self) -> float:
-        """The unit's scale relative to the base unit of its kind."""
+        """The unit's scale relative to the SI base unit of its kind."""
         return type(self).scale
 
     @property
@@ -454,35 +456,35 @@ class Second(TimeUnitSI):
 
 
 @register
-class Minute(TimeUnit):
+class Minute(KnownUnit, TimeUnit):
     """The minute, equal to 60 seconds."""
 
     name: ClassVar[TimeUnitName] = TimeUnitName.minute
 
 
 @register
-class Hour(TimeUnit):
+class Hour(KnownUnit, TimeUnit):
     """The hour, equal to 60 minutes."""
 
     name: ClassVar[TimeUnitName] = TimeUnitName.hour
 
 
 @register
-class Day(TimeUnit):
+class Day(KnownUnit, TimeUnit):
     """The day, equal to 24 hours."""
 
     name: ClassVar[TimeUnitName] = TimeUnitName.day
 
 
 @register
-class Week(TimeUnit):
+class Week(KnownUnit, TimeUnit):
     """The week, equal to 7 days."""
 
     name: ClassVar[TimeUnitName] = TimeUnitName.week
 
 
 @register
-class Year(TimeUnit):
+class Year(KnownUnit, TimeUnit):
     """The year, equal to 52 weeks."""
 
     name: ClassVar[TimeUnitName] = TimeUnitName.year
@@ -522,42 +524,42 @@ class Meter(SpaceUnitSI):
 
 
 @register
-class Inch(SpaceUnit):
+class Inch(KnownUnit, SpaceUnit):
     """The inch, equal to 0.0254 meters."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.inch
 
 
 @register
-class Foot(SpaceUnit):
+class Foot(KnownUnit, SpaceUnit):
     """The foot, equal to 12 inches."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.foot
 
 
 @register
-class Yard(SpaceUnit):
+class Yard(KnownUnit, SpaceUnit):
     """The yard, equal to 3 feet."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.yard
 
 
 @register
-class Mile(SpaceUnit):
+class Mile(KnownUnit, SpaceUnit):
     """The mile, equal to 1760 yards."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.mile
 
 
 @register
-class Angstrom(SpaceUnit):
+class Angstrom(KnownUnit, SpaceUnit):
     """The angstrom, equal to 1e-10 meters."""
 
     name: ClassVar[SpaceUnitName] = SpaceUnitName.angstrom
 
 
 @register
-class Parsec(SpaceUnit):
+class Parsec(KnownUnit, SpaceUnit):
     """The parsec, a unit of astronomical distance equal to about
     3.09e16 meters."""
 

@@ -1652,3 +1652,31 @@ def test_embedding_in_world_axes_is_a_pure_sign_flip() -> None:
     matrix = _embedded_matrix(list(RASmm().axes), "s")
     np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
     np.testing.assert_array_equal(matrix[:4, 4], [0, 0, 0, 0])
+
+
+@pytest.mark.parametrize(
+    "src, dst, kind, factor",
+    [
+        # Issue #257: the non-SI units convert by their true scale.
+        ("inch", "millimeter", "space", 25.4),
+        ("millimeter", "inch", "space", 1 / 25.4),
+        ("foot", "meter", "space", 0.3048),
+        ("yard", "foot", "space", 3.0),
+        ("mile", "kilometer", "space", 1.609344),
+        ("angstrom", "nanometer", "space", 0.1),
+        ("minute", "second", "time", 60.0),
+        ("hour", "second", "time", 3600.0),
+        ("hour", "minute", "time", 60.0),
+        ("day", "hour", "time", 24.0),
+        ("second", "millisecond", "time", 1000.0),
+    ],
+)
+def test_non_si_unit_difference_is_a_scaling(
+    src: str, dst: str, kind: str, factor: float
+) -> None:
+    Ax = SpaceAxis if kind == "space" else TimeAxis
+    source = CoordinateSystem(name="a", axes=[Ax(name="x", unit=src)])
+    target = CoordinateSystem(name="b", axes=[Ax(name="x", unit=dst)])
+    result = bridge(source, target)
+    assert isinstance(result, Scaling)
+    np.testing.assert_allclose(result.scale, [factor], rtol=1e-12)
