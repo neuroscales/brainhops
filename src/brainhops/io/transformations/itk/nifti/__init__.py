@@ -67,25 +67,33 @@ NIfTI has no field that says which frame the vector values live in, so
 the header alone cannot always tell. The readers here are honest about
 that:
 
-| Header                         | Read as, without a hint                  |
-| ------------------------------ | ---------------------------------------- |
-| `VECTOR` (1007), ITK's layout  | ambiguous: `AmbiguousFormatError`        |
-| `DISPVECT` (1006)              | a RAS NIfTI reader                       |
-| no intent (0)                  | a RAS NIfTI reader (SPM's convention)    |
+| Header                             | Read as, without a hint            |
+| ---------------------------------- | ---------------------------------- |
+| `VECTOR` (1007), ITK's layout      | ambiguous: `AmbiguousFormatError`  |
+| `VECTOR` (1007), named `"Mapping"` | RAS coordinates (SPM12, brainhops) |
+| `DISPVECT` (1006)                  | RAS displacements                  |
+| no intent (0)                      | RAS coordinates                    |
+
+The RAS readers are `NiftiRASCoordinatesField` and
+`NiftiRASDisplacementField`, in [`brainhops.io.transformations.nifti`][].
 
 - `VECTOR` is exactly what ITK writes, but it is a generic code that any
   software may use, and ITK itself does not treat its vectors as
   spatial by default. So the ITK displacement reader and the RAS reader
   claim it with equal confidence, and loading such a file without more
   evidence raises `AmbiguousFormatError` rather than guessing a frame.
+- The intent name is that evidence when it is `"Mapping"`: SPM12 names
+  its `y_` deformations so, and so does brainhops' RAS coordinates
+  writer, while ITK's `NiftiImageIO` never writes an intent name (and
+  ANTs writes through it). The ITK reader does not claim such a file.
 - An explicit hint decides: `load(path, hint="itk")` (or `"ants"`) reads
   the file as an ITK displacement field, whatever its intent code, and
   `hint="itk.coordinates"` as an ITK coordinates field. Calling the class
   directly, `ITKNiftiDisplacementField.from_file(path)`, does the same.
-- `DISPVECT` and no intent stay with the RAS readers, which is also what
-  ITK 5.4 and later assumes of a `DISPVECT` file. Read with a hint, a
-  three-component `DISPVECT` file has its RAS vectors converted to LPS,
-  as ITK does.
+- `DISPVECT` and no intent stay with the RAS readers. A `DISPVECT` file
+  holds RAS displacements, which is also what ITK 5.4 and later assumes
+  of one. Read with a hint, a three-component `DISPVECT` file has its
+  RAS vectors converted to LPS, as ITK does.
 - ITK and ANTs only ever write *displacements*. A field of absolute LPS
   coordinates is never claimed from the file's content, because nothing
   in a NIfTI header separates it from a displacement field.

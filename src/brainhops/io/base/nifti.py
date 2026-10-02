@@ -152,7 +152,9 @@ _NIFTI_INTENT_NAME_MAPPING = "Mapping"
 The intent name SPM gives a field of coordinates (`y_` files).
 
 brainhops writes it next to `VECTOR` on a field of RAS coordinates, so
-the file says what its vectors are, not only that they are vectors.
+the file says what its vectors are, not only that they are vectors. ITK's
+`NiftiImageIO` never writes an intent name, so neither ITK nor ANTs
+files carry it, and it also tells such a map from an ITK (LPS) field.
 """
 
 
@@ -222,6 +224,16 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
         if isinstance(header, nb.Nifti1Image):
             header = header.header
         return int(header["intent_code"])
+    except Exception:
+        return None
+
+
+def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
+    """The intent name of a NIfTI header, or `None` if unreadable."""
+    try:
+        if isinstance(header, nb.Nifti1Image):
+            header = header.header
+        return str(header.get_intent()[2])
     except Exception:
         return None
 
