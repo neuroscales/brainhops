@@ -36,6 +36,7 @@ nav = [
         "api/io/base/arrays.md",
         "api/io/base/freesurfer.md",
         "api/io/base/mgh.md",
+        "api/io/base/mrtrix.md",
         "api/io/base/zarr.md",
       ]},
       {"images" = [
@@ -43,6 +44,7 @@ nav = [
         "api/io/images/base.md",
         "api/io/images/nifti.md",
         {"freesurfer.mgh" = "api/io/images/mgh.md"},
+        "api/io/images/mrtrix.md",
         "api/io/images/zarr.md",
       ]},
       {"transformations" = [
