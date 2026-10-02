@@ -40,8 +40,8 @@ format. This memo uses the names in the first column.
 | **vertex** | a point with coordinates in the native space | vertex | vertex / position | position / point | point | vertex / pointset entry |
 | **cell** | a group of `k` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = k`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
 | **cell width** `k` | number of vertices in a cell | `link_width` | — | — | cell size | 3 |
-| **simplex / polygon** | cell is a convex hull (tet) or an ordered loop (quad) | not distinguished (see §2) | — | — | cell type (`VTK_TETRA` vs `VTK_QUAD`) | — |
-| **oriented** | vertex order inside a cell is meaningful | `directed` | — | — | — | winding |
+| **kind** (simplex / polygon) | cell is a convex hull (tet) or an ordered loop (quad) | not distinguished (see §2) | — | — | cell type (`VTK_TETRA` vs `VTK_QUAD`) | — |
+| **directed** | vertex order inside a cell is meaningful | `directed` | — | — | — | winding |
 | **piece** | a list of vertices (and their cells) that belongs to one object | fragment | fragment (mesh octree node) | one streamline | — | — |
 | **object** | a logical entity: one streamline, one neuron, one surface | object | segment / annotation | streamline | — | one mesh |
 | **id** | the object a piece belongs to | object id | segment id / annotation id | streamline index | — | — |
@@ -122,18 +122,25 @@ that `SurfaceMesh` can be used where a function needs "a surface".
 Every single-scale class is vertices plus cells of a fixed width `k`.
 Two flags say what a cell is:
 
-- `cell_kind`: `"simplex"` (the convex hull of its vertices: point,
+- `kind`: `"simplex"` (the convex hull of its vertices: point,
   edge, triangle, tetrahedron) or `"polygon"` (a closed loop through its
   vertices, in order: triangle, quad). The two only differ for `k >= 4`,
   which is what separates a quad from a tetrahedron.
-- `oriented`: whether the order of a cell's vertices carries meaning
-  (a directed edge, the winding of a face, the handedness of a tet) or
-  is arbitrary.
+- `directed` (the zarr-vectors name): whether the order of a cell's
+  vertices carries meaning or is arbitrary. For an edge it is the
+  direction (parent → child); for a face, its winding (which side the
+  normal points to); for a tetrahedron, its handedness, i.e. the sign
+  of its signed volume `det[v1 − v0, v2 − v0, v3 − v0] / 6`. A directed
+  `VolumeMeshes` promises that every tet has positive signed volume in
+  native space (the convention VTK, Gmsh and most finite-element codes
+  assume), which is what makes folding visible after a deformation (a
+  tet whose volume turns negative) and gives the boundary triangles an
+  outward winding.
 
 This lets one implementation of cropping, attributes and topology
 bookkeeping serve every type. A subclass only says how its cells are
 stored (implicit for points and polylines, explicit for the rest), and
-fixes `k` and `cell_kind`.
+fixes `k` and `kind`.
 
 Parametric shapes (neuroglancer `AXIS_ALIGNED_BOUNDING_BOX`,
 `ELLIPSOID`) are **out of scope** for this memo: they are not closed
@@ -179,7 +186,7 @@ aliases; the field itself is called `cells` because a tetrahedron's
 |---|---|---|
 | `Points` | one point (one piece per vertex by default) | implicit, `k = 1` |
 | `Polylines` | one polyline run; the order of its members is the line | implicit edges `i → i+1` inside the piece |
-| `Skeletons` | one connected component / stored fragment | `cells: (M, 2)`, usually `oriented` (parent → child) |
+| `Skeletons` | one connected component / stored fragment | `cells: (M, 2)`, usually `directed` (parent → child) |
 | `SurfaceMeshes` | one connected component / stored fragment | `cells: (M, 3)` or `(M, 4)`, polygons |
 | `VolumeMeshes` | one connected component / stored fragment | `cells: (M, 4)`, simplices |
 
@@ -522,7 +529,7 @@ field-of-view box) later; that is not required here.
 class MultiScaleVectors(Vectors, Generic[T]):
     # finest first
     levels: List[T] = ()
-    kind: Literal["geometric", "sparse"] = "geometric"
+    reduction: Literal["geometric", "sparse"] = "geometric"
     # pyramid -> world, as MultiScaleImage
     transformations: List[Transformation] = ()
 ```
@@ -549,7 +556,8 @@ behave as for `MultiScaleImage`.
 | **geometric** | zarr-vectors coarsening (`bin_ratio`, metavertices); neuroglancer multilod mesh LODs | a simplified version of *every* object | per-axis bin size (zarr-vectors `base_bin_shape × reduction_factor^l`; neuroglancer `lod_scales × lod_scale_multiplier`) |
 | **sparse** | neuroglancer annotation `spatial` levels; zarr-vectors `object_sparsity < 1` | a *subset* of the objects, at full precision | none; carries `sparsity` (fraction kept) instead |
 
-A pyramid has **one** kind, stated by `kind`; levels of both kinds are
+A pyramid has **one** kind of level, stated by `reduction` (not `kind`,
+which is the cell kind of §2); levels of both kinds are
 never mixed. This matters for selection: `_nearest_resolution_index`
 falls back to the finest level as soon as any resolution is `None`, so a
 mixed list would always select level 0.
@@ -692,8 +700,8 @@ a version and keep the spec-to-model mapping in one module.
    differs from `img[3:7]` by half a voxel. Should `__getitem__` warn
    once when every bound is an integer and the native space is a voxel
    space? Proposed: no warning, docstring only.
-6. **How a quad is told apart from a tet.** Proposed: `cell_kind`
-   (`"simplex"` / `"polygon"`) plus `oriented`, rather than one
+6. **How a quad is told apart from a tet.** Agreed: `kind`
+   (`"simplex"` / `"polygon"`) plus `directed`, rather than one
    "ordered" flag (§2, and the PR discussion). zarr-vectors has
    `directed` but nothing that separates a width-4 quad from a width-4
    tet, so the zarr-vectors reader needs `geometry_types` or our own
