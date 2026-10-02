@@ -13,8 +13,8 @@ These tests pin that, and pin that nothing else changed: each format
 still loads, rebuilds through `to(...)`, inverts, computes to the same
 result as the plain sequence of its transformations, and -- where it has
 a writer, which only the ITK NIfTI fields do -- round-trips through a
-file. An ITK file's list of blocks is
-not fixed-structure, and stays editable.
+file. The fields of an X5 file are fixed-structure too. An ITK file's
+list of blocks is not fixed-structure, and stays editable.
 """
 
 from pathlib import Path
@@ -40,6 +40,14 @@ from brainhops.io.transformations.itk.nifti import (  # noqa: E402
 from brainhops.io.transformations.spm.y import (  # noqa: E402
     SpmCoordinatesField,
 )
+
+try:  # X5 needs h5py
+    from brainhops.io.transformations.x5 import (
+        X5CoordinatesField,
+        X5DisplacementField,
+    )
+except ImportError:  # pragma: no cover
+    X5CoordinatesField = X5DisplacementField = None
 
 DATA = Path(__file__).parent / "data"
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
@@ -95,6 +103,16 @@ def _itk_nifti(cls: type, tmp_path: Path) -> xforms.Sequence:
     return cls.from_file(_write_vector(tmp_path / "warp.nii.gz", _vectors()))
 
 
+def _x5(cls: type) -> xforms.Sequence:
+    # An X5 field holds RAS displacements or coordinates, one 3-vector
+    # per voxel of a 3-D grid.
+    vectors = _vectors()[:, :, :, 0].astype("float64")
+    if cls is X5CoordinatesField:
+        ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
+        vectors = vectors + ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
+    return cls.from_ras(vectors, VOX2RAS)
+
+
 def _itk_block(name: str) -> xforms.Sequence:
     if name.endswith(".h5"):
         pytest.importorskip("h5py")
@@ -126,6 +144,15 @@ FORMATS = {
         lambda _: _itk_block("itk_bspline3d.tfm"),
     ),
 }
+if X5DisplacementField is not None:
+    FORMATS["x5-displacement"] = (
+        X5DisplacementField,
+        lambda _: _x5(X5DisplacementField),
+    )
+    FORMATS["x5-coordinates"] = (
+        X5CoordinatesField,
+        lambda _: _x5(X5CoordinatesField),
+    )
 
 
 @pytest.fixture(params=sorted(FORMATS))
@@ -144,13 +171,13 @@ def _points(name: str) -> np.ndarray:
     structure of the chain. The FNIRT fixtures and the ITK blocks are
     sampled on a fixed grid of world points.
     """
-    if not name.startswith(("spm", "itk-nifti")):
+    if not name.startswith(("spm", "itk-nifti", "x5")):
         grids = np.meshgrid(*[np.linspace(-20.0, 20.0, 3)] * 3, indexing="ij")
         return np.stack(grids, -1)
     axes = [np.linspace(0.5, size - 1.5, 3) for size in SHAPE]
     ijk = np.stack(np.meshgrid(*axes, indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
-    if name == "spm":
+    if not name.startswith("itk"):
         return ras
     return ras * np.array([-1.0, -1.0, 1.0])  # ITK maps LPS
 

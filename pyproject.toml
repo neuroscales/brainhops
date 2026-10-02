@@ -30,7 +30,9 @@ cupy = ["cupy"]
 backends = ["brainhops[dask]", "brainhops[cupy]"]
 
 # io
-itk = ["h5py"]
+hdf5 = ["h5py"]
+itk = ["brainhops[hdf5]"]
+x5 = ["brainhops[hdf5]"]
 nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
@@ -55,7 +57,12 @@ zarr = [
 zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
-io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
+io = [
+    "brainhops[itk]",
+    "brainhops[x5]",
+    "brainhops[nibabel]",
+    "brainhops[zarr]",
+]
 
 # test
 test = [
@@ -63,6 +70,7 @@ test = [
     "pytest-cov",
     "brainhops[dask]",
     "brainhops[itk]",
+    "brainhops[x5]",
     "brainhops[nibabel]",
     "brainhops[zarr]"
 ]
