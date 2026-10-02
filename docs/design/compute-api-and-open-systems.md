@@ -1,16 +1,19 @@
 # Design: the compute API and open coordinate systems
 
-**Status:** agreed design; decisions are recorded under
-[Decisions](#decisions). Part B is being implemented first, then Part A.
+**Status:** Part B is implemented and merged (#112, with #115). Part A is
+an agreed design that is not implemented yet. Decisions are recorded under
+[Decisions](#decisions).
 
-This document proposes two connected changes:
+This document covers two connected changes:
 
-1. **Part A.** A small, public set of operations (`compute`, `simplify`,
-   `factor`, and `restrict` as a lazy method like `inverse`) with precise
-   contracts. `compute` becomes a single pass.
-2. **Part B.** *Open* coordinate systems: `CoordinateSystem.axes` may contain
-   `...`, meaning "an unknown number of axes that we know nothing about".
-   `None` means the same thing as `[...]`.
+1. **Part A (to do).** A small, public set of operations (`compute`,
+   `simplify`, `factor`, and `restrict`/`project` as lazy methods like
+   `inverse`) with precise contracts. `compute` becomes a single pass.
+2. **Part B (done).** *Open* coordinate systems: `CoordinateSystem.axes` may
+   contain `...`, meaning "zero or more axes that we know nothing about".
+   Part B describes what was built, which differs in places from the first
+   proposal. In particular, `axes=None` reads as `[...]`, but a `None`
+   *system* is not the same as a system with `axes=[...]`.
 
 The guiding rule for both: an operation that becomes public must have a
 contract that makes sense on its own, can be documented in a few
@@ -109,8 +112,8 @@ unchanged otherwise.*
     remaining axes carry the grid system's axes.
   - With the chain's end systems known, `factor` builds these systems and
     sets them on each `F_i`. A factor therefore never relies on
-    `SubspaceTransformation` deriving a full-space system from its inner
-    (see B.1).
+    `SubspaceTransformation` deriving a full-space system from its inner,
+    which gives an open system (B.1, B.3).
 - **Name.** `factor` is the verb that matches `simplify` and `restrict`.
   The module `factor.py` would be renamed (e.g. to `factoring.py`) so the
   function and the module do not share a name. The `factor=` keyword of
@@ -227,7 +230,10 @@ These are additions, not blockers.
    one for one, so the number of registered rules does not grow.
 4. **`Projection` with coordinate systems.** Which axes are dropped and
    created must be readable from, and written to, systems, including open
-   ones (Part B).
+   ones. Part B provides the system side: `CoordinateSystem.restrict`
+   gives the system that remains after a drop, and
+   `CoordinateSystem.embed` the one after a create (B.3). `Projection`
+   itself is unchanged by Part B.
 5. **Composers for `Projection`**, so that a sandwich that does not fully
    reduce can still be composed, e.g. with an `Affine` under a mode that
    admits both.
@@ -257,6 +263,10 @@ yields decoupled blocks, which reduce fully.
 Lowering either to a plain `Affine` is the job of `convert`/`simplify`,
 and needs the full axis count, which open systems (Part B) can state, or
 say is unknown. `embed` and its `ni`/`no` arguments are removed.
+
+This is #104's transformation-level `embed` function. It is unrelated to
+`CoordinateSystem.embed` and `AxisSequence.embed` (B.2, B.3), which place a
+system's axes in a larger space and stay.
 
 ### A.6 `compute(t, mode=True, *, simplify="analytic", factor=False)`
 
@@ -475,8 +485,9 @@ position (`int`) or a name (`str`).** This covers a block's
 - **References are stored as given and resolved lazily**, against the
   coordinate system on the relevant side, when the transformation is
   computed, applied or written.
-  - A name resolves when that system has exactly one axis with that name.
-    An open system may hold it among its explicit axes.
+  - A name resolves when that system has exactly one axis with that name
+    (`axes["x"]`). An open system may hold it among its explicit axes. It
+    never matches one of the axes that `...` stands for.
   - Otherwise it raises: unknown or ambiguous name, or no system.
   - Names survive reordering and bridging, which positions do not.
 - **Validation against the transformation's own systems. Decided:** when
@@ -484,14 +495,20 @@ position (`int`) or a name (`str`).** This covers a block's
   reference on that side is checked against it, whether the reference is
   a name or a position.
   - A name must exist, and be unique.
-  - A position must be within range of a closed system, or fall in the
-    explicit part or inside `...` of an open one.
+  - A position must be within range of a closed system. In an open one,
+    every position is valid: it falls in the explicit part or inside `...`
+    (`axes.at(position)`, B.2).
+  - A transformation *carries* a system when the endpoint is not `None`,
+    including an explicit open one such as `CoordinateSystem()`, which is
+    kept as given (B.3). Such a system checks only the axes it states.
 
   The check runs when the transformation is built, and again when a system
   is attached or replaced (e.g. through `.to(input=...)`). A reference is
   only left unchecked while there is no system to check it against.
-  Resolution goes through one `CoordinateSystem` method that maps a
-  reference to a position (Part B).
+  Resolution needs one public function that maps a reference to a
+  position, which Part B only partly provides: `AxisSequence.restrict`
+  accepts positions or names, but its name-to-position step is private
+  (see Open questions).
 - **Writers resolve everything to positions**, because OME 0.6 only has
   positions. A writer closes the systems first (`expand`).
 - **Mapping-type transformations also accept a name mapping**, as the
@@ -526,183 +543,380 @@ needs, and no axis is ever dropped from inside `...`.
 
 ## Part B. Open coordinate systems (`...`)
 
+*Implemented in #112 (open systems, axis containers, physical systems,
+memory order) and #115 (sample units). The sections below describe the
+code on `main`.*
+
 ### B.1 The problem
 
 A `SubspaceTransformation` that declares no full-space systems derives
-them from its inner system (`meta._subsystem`). That function places the
-inner axes at their positions, fills the gaps with `Axis()`, and stops at
-`max(axes) + 1`. The *positions* are right, but the *count* is invented.
-This causes two problems:
+them from its inner system (`meta._subsystem`). The old code placed the
+inner axes at their positions, filled the gaps with `Axis()`, and stopped
+at `max(axes) + 1`. The *positions* were right, but the *count* was
+invented. This caused two problems:
 
-- **On main:** `Sub(Scaling([2], input=CS([x]), output=CS([x])), axes=[0])`
-  inside a 3-D chain reports a 1-axis system. `to(Affine)` then builds a
-  1×2 matrix, and composition raises a matmul `ValueError`.
+- **On main, before Part B:**
+  `Sub(Scaling([2], input=CS([x]), output=CS([x])), axes=[0])` inside a 3-D
+  chain reported a 1-axis system. `to(Affine)` then built a 1×2 matrix, and
+  composition raised a matmul `ValueError`.
 - **In #104:** restricted pieces with systems produced factors whose
   systems were too short. This broke composition and the reslice planner,
   and silently skipped the discrete-axis check.
 
-The count is genuinely unknown, and nothing in the current types can say
-so. `None` throws away the positions we do know, and the
-`composers.py` discrete-axis check relies on them.
+The count is genuinely unknown, and no type could say so. `None` throws
+away the positions that are known, and the `composers.py` discrete-axis
+check relies on them. Now `_subsystem` returns a declared system as is, and
+otherwise derives an open one with `CoordinateSystem.embed` (B.3).
 
-### B.2 Semantics
+### B.2 Axis containers
 
-- `CoordinateSystem.axes` is a list whose items are `Axis` instances, plus
-  **at most one `...` (`Ellipsis`)**, which stands for *zero or more axes
-  about which nothing is known*.
-- **`axes=None` is equivalent to `axes=[...]`**, and a transformation
-  endpoint `input=None`/`output=None` is equivalent to a system with
-  `axes=[...]`. **Decided: no normalization for now.** `None` stays an
-  accepted spelling and is stored as given. Every place that interprets
-  axes must treat the two spellings identically:
-  - All readers go through one accessor, which returns `[...]` for a
-    `None` system or `None` axes. No code inspects `system.axes` or
-    `t.input` for `None` on its own.
-  - Equality and compatibility of systems treat `None` and `[...]` as the
-    same.
-  - A test parametrizes the open-system cases over both spellings, so the
-    two cannot drift apart.
-- **A system with `...` is *open*; one without is *closed*.**
-  - **`CoordinateSystem.ndim`** (new property) is the number of axes of a
-    closed system, and `None` for an open one, including `axes=None`.
-  - The count of *explicit* axes never includes the `...` entry, even
-    though `...` is an item of the `axes` list.
-- **Fixed-dimension classes cannot be open.** `CoordinateSystem2D`/`3D`
-  and their subclasses reject `...` (and `None`) at validation. Their
-  `ndim` is always their fixed count.
-- **Where `...` may appear. Decided: anywhere, at most once**, as in
-  numpy. This expresses things like `[..., TimeAxis()]` ("the last axis is
-  time"), as well as the subspace case, which needs a trailing `...`
-  because subspace positions are absolute, counted from 0. Positional
-  access goes through the accessor:
-  - a non-negative index resolves when it falls in the explicit prefix
-    (before `...`);
-  - a negative index resolves when it falls in the explicit suffix (after
-    `...`);
-  - any other index of an open system resolves to an unknown `Axis()`;
-  - an index past the end of a closed system is an error.
+The axes of a system are stored in one of three related types, all in
+`brainhops.datamodel.systems`.
 
-### B.3 Operations on systems
+- **`AxisSequence(collections.abc.Sequence)`** is the shared read-only API.
+  It holds `Axis` items and at most one `...`, anywhere. `...` stands for
+  *zero or more axes about which nothing is known*, and never counts as an
+  axis. A sequence with two `...` describes no axes: every method that
+  reads the axes raises `ValueError`.
+  - **`is_open`** is true when it holds `...`. **`ndim`** is the number of
+    axes, or `None` when it is open. The empty sequence is closed, with
+    `ndim == 0`.
+  - **`index(Axis | str)`** is `list.index` with a looser test. An entry
+    matches when it is an instance of the query's class and has every field
+    that the query sets, with the same value. A name stands for
+    `Axis(name=...)`. `...` matches nothing.
+  - **`["name"]`**, **`"name" in`** and **`names`** read explicit axes by
+    name. A name never matches one of the axes that `...` stands for. A
+    missing name raises `KeyError`, a shared one `ValueError`. There is no
+    `keys()`, `values()`, `items()`, `update()` or `pop()`.
+  - **`at(position)`**: the axis at a *position* in the space.
+  - **`expand(ndim)`**, **`restrict(refs)`**, **`embed(positions, ndim)`**
+    and **`compatible_with(other)`**: see B.3.
+- **`AxisTuple(tuple, AxisSequence)`** is immutable and typed per position:
+  `AxisTuple[SpaceAxis, SpaceAxis]` is two spatial axes. A field of that
+  type converts each item to the type of its position, and refuses a wrong
+  number of items or `...`. Fixed-dimension systems store it.
+- **`AxisList(AxisSequence, list)`** is mutable. Systems whose number of
+  axes is not fixed (the open-capable ones) store it.
 
-These are small, documented methods on `CoordinateSystem`. They replace
-the ad-hoc list manipulation currently scattered across modules.
+Slices and every method that builds a sequence return the sequence's own
+type. A plain list or tuple given as `axes` is converted.
 
-- **`expand(ndim)`:** the closed system obtained by replacing `...` with
-  as many `Axis()` as needed to reach `ndim` axes.
-  - It raises if `ndim` is less than the number of explicit axes.
-  - On a closed system, it returns the system itself when `ndim` matches,
-    and raises otherwise.
-  - Writers (B.5) and anything that learns the true width from data use
-    it.
-- **`take(positions)`:** the system restricted to those positions, in
-  order. Positions that resolve into `...` become `Axis()`. Projections
-  use this to describe the systems on either side (A.4).
-- **`place(positions, ndim=None)`:** the inverse of `take`. It is the
-  full-space system in which this system's axes sit at `positions`.
+**Entries and positions are different things.**
+`len()`, iteration, `==`, `repr`, `[i]` and `index` are about *entries*,
+`...` included, as in any list. `ndim`, `at`, `expand`, `restrict`,
+`embed` and `compatible_with` are about *positions in the space*: a
+non-negative position counts from the first axis, and a negative one from
+the last. In a closed sequence the two coincide. In `[x, ..., t]`, entry 2
+is `t`, but position 2 is one of the axes `...` stands for.
+
+**`at(position)`** reads the axis at a position:
+
+- in a closed sequence, the position must lie in `[-ndim, ndim)`, else
+  `IndexError`;
+- in an open one, every position is valid. A non-negative position in the
+  explicit prefix, or a negative one in the explicit suffix, gives that
+  axis, and any other position gives a new unknown `Axis()`.
+
+There is no `AxisList.of` and no public `position` method. The `AxisList`
+and `AxisTuple` constructors are the standard `list` and `tuple` ones, and
+the position-to-entry arithmetic is private.
+
+### B.3 Coordinate systems
+
+#### The `axes` field
+
+- **`CoordinateSystem.axes` is not optional.** `axes=None` is not "no axes".
+  It reads as not giving them, so the class's default takes its place:
+  `[...]` for an open-capable class, and the class's own default axes for a
+  fixed-dimension one. The system stores that default, never `None`:
+  `CoordinateSystem(axes=None)` and `CoordinateSystem3D(axes=None)` are
+  `CoordinateSystem()` and `CoordinateSystem3D()`.
+- **Equality is plain field-wise**: same class, and equal fields.
+  `CS() == CS(axes=None) == CS(axes=[...])`, and no system equals `None`.
+  There is no second spelling to keep in sync, and no accessor for it.
+- **Which classes are open-capable.** `CoordinateSystem`,
+  `SpatialCoordinateSystem`, `PhysicalCoordinateSystem` and
+  `ArrayCoordinateSystem` (with its C- and F-ordered bases) store an
+  `AxisList` and accept `...`. A `SpatialCoordinateSystem` can hold only
+  spatial axes and `...`.
+- **Fixed-dimension classes cannot be open.** `CoordinateSystem2D`/`3D` and
+  every subclass (spatial, array, pixel, voxel, RAS, ...) store an
+  `AxisTuple` and refuse `...`. Their `ndim` is always their fixed count.
+- **`...` may appear anywhere, at most once**, as in numpy. This expresses
+  `[..., TimeAxis()]` ("the last axis is time"), and the subspace case,
+  which needs a trailing `...` because subspace positions are absolute,
+  counted from 0.
+- **`CoordinateSystem.ndim`** is the `ndim` of the axes: the number of axes
+  of a closed system, and `None` for an open one.
+
+#### A `None` system is not an open system
+
+`CoordinateSystem(axes=[...])` and `axes=None` are the same, but a
+transformation endpoint `input=None`/`output=None` is **not** the same as
+`input=CoordinateSystem(axes=[...])`.
+
+- A **`None` endpoint** is no system. It *defers* to its context or is
+  *derived*: a subspace derives it from its inner transformation, an
+  `Inverse` takes it from its forward, a `Sequence` from its members, a
+  `Bijection` from either side, `Geometry` propagates onto it.
+- An **explicit system is always kept** as given, even `CoordinateSystem()`.
+  It does not defer.
+- Code that needs the axes of a possibly missing endpoint reads them with
+  `_axes_or_unknown(system)`, which maps `None` to `[...]` and nothing
+  else.
+
+An earlier iteration treated an endpoint that "says nothing" as `None`
+(`_says_nothing`). It was reverted: it silently discarded systems the
+user had set.
+
+#### Dispatch
+
+Calling `CoordinateSystem(...)` builds the most specific class its axes
+describe (bagof polymorphism). Every predicate on the axes (how many, or
+what each one is) says something about *all* of them. **An open axis list
+matches no such predicate**, so an open system is built as the class it was
+called as: `CoordinateSystem(axes=[x, ...])` is not two-dimensional, and
+`[R(), A(), S(), ...]` is not an `RASCoordinateSystem`.
+**`expand` re-dispatches** the closed result, so
+`CoordinateSystem().expand(2)` is a `CoordinateSystem2D`. A predicate on
+another field, `order`, still applies (B.5).
+
+#### Operations
+
+These are methods of `CoordinateSystem`, and of `AxisSequence` for the
+axes alone. A system's version calls the axes' version and builds a system
+from the result. They replace the ad-hoc list manipulation that was
+scattered across modules. (The first proposal named them `take`, `place`
+and `compatible`.)
+
+- **`expand(ndim)`:** the closed system obtained by replacing `...` with as
+  many unknown `Axis()` as needed to reach `ndim` axes.
+  - It raises `ValueError` if `ndim` is less than the number of explicit
+    axes, and, on a closed system, if it differs from the axis count.
+  - A closed system is returned as itself. An open one is rebuilt through
+    its class, with its other fields kept, so the result may be a subclass
+    (see Dispatch).
+  - Writers (B.6) and anything that learns the true width from data use it.
+- **`restrict(refs)`:** the system of the axes at some positions or names, in
+  the order of `refs`. A position that falls inside `...` gives an unknown
+  `Axis()`. A position past the end of a closed system raises, and so does
+  a repeated axis. The result describes a different space, so the class and
+  name are not carried over: it is what `CoordinateSystem(axes=...)` builds
+  from the restricted axes. Projections use this to describe the system
+  after a drop (A.4).
+- **`embed(positions, ndim=None)`:** the inverse of `restrict`. It is the
+  system in which this system's axes sit at `positions` (non-negative,
+  absolute, so never names).
   - Gaps are filled with `Axis()`.
-  - With `ndim=None`, the result ends with `...`, because the count is
+  - With `ndim=None` the result ends with `...`, because the count is
     unknown.
-  - This replaces `meta._subsystem`'s padding.
-- **`compatible(other)`:** whether some expansion of the `...` makes the
-  two systems match axis by axis, under `Axis.compatible`. Equality stays
-  strict and structural.
+  - This is what `_subsystem` uses.
+- **`compatible_with(other)`:** whether some choice of the axes that each
+  `...` stands for makes the two match axis by axis, under
+  `Axis.compatible_with`. Names of the systems are not compared. `None` is
+  compatible with every system. Equality stays strict.
 
-### B.4 The `Axis` class
+### B.4 Axes, and units
 
 - **`Axis()`, with every field `None`, is "an axis about which nothing is
-  known".** It is already the placeholder; we make that official.
-- **`Axis.compatible(other)`:** every field set on both sides must be
-  equal. A `None` field matches anything. This lets
-  `[RAS axes, ...]` be compatible with a closed 4-D RAS+time system.
-- **`Axis.merge(other)`:** combines what both sides know, and raises if
-  they conflict. It is used when two descriptions of the same axis meet,
-  e.g. a subspace's derived system against a declared neighbour.
-- **Subclasses with defaults** (`SpatialAxis` defaults to millimetres) are
-  *not* unknown. Only plain `Axis()` is.
+  known".** It is the placeholder that fills any position no description
+  covers. Subclasses that set a field (`SpaceAxis` sets the type) are not
+  unknown. Only a plain `Axis()` is.
+- **`Axis.compatible_with(other)`:** every field set on both sides must be
+  equal. A `None` field matches anything. The relation is symmetric but not
+  transitive. It lets `[RAS axes, ...]` be compatible with a closed 4-D
+  RAS+time system. (The first proposal named it `compatible`.)
+- **`Axis.merge_with(other)`:** combines what both sides know, as an
+  instance of the more derived class, and raises `ValueError` if they
+  conflict. It is implemented but has **no consumer yet**.
+- **`axes.R`, `L`, `A`, `P`, `S`, `I` are classes, not instances.** An axis
+  is mutable, so a module-level instance would be shared by every system
+  that took it. Build one where needed (`R()`, `R(unit="mm")`) and test with
+  `isinstance`. `R` is the left-to-right axis, `A` posterior-to-anterior,
+  `S` inferior-to-superior, and `L`, `P`, `I` their opposites.
+- **Units (#115).**
+  - `Unit("sample")` (`SampleUnit`) marks an *array* axis: its coordinates
+    count samples. `unit=None` means *unspecified*: nothing is claimed.
+    These are three different things: a sample, a physical unit, and no
+    claim.
+  - Each unit class refuses the other kinds: `SpaceUnit("s")` and
+    `SampleUnit("mm")` raise. `SpaceAxis.unit` accepts a space unit, the
+    sample or `None`, and `TimeAxis.unit` a time unit, the sample or `None`.
+  - `is_sampleunit` and `is_physicalunit` ask the two questions.
+    `is_physicalunit(None)` is false.
+  - The bridge never converts between a sample and a physical unit, since
+    the size of a sample is not known.
 
-### B.5 Consumers that must handle open systems
+### B.5 Physical systems and memory order
 
-Every reader of an axis count or position is updated in the same PR, not
-just the one that crashes:
+- **`PhysicalCoordinateSystem`** has axes measured in a physical unit or in
+  an unspecified one (`None`), never in samples. It accepts open axes and
+  `None` units, since neither claims anything non-physical, and refuses the
+  sample unit. Voxel, pixel and array systems are not physical: their axes
+  count samples. It is a base to inherit, not a dispatch target.
+- **`RASmm`, `LPSmm` and `RSAmm`** are mm-only. They are dispatched only
+  when every axis is in mm, and built by name they refuse any other unit,
+  including `None`. RAS axes in another unit, or with no unit, build an
+  `RASCoordinateSystem`.
+- **`order: Optional[Literal["C", "F"]]` is declared on `CoordinateSystem`**,
+  because bagof-magic registers a subclass only with polymorphic classes
+  that have the field. Only array systems keep a non-None order, and any
+  other system refuses one.
+  - It selects the C- and F-ordered classes from every class above them:
+    `CoordinateSystem(axes=<RAS axes>, order="F")` is an
+    `FRASCoordinateSystem`.
+  - A system the axes and the order do not make an array of
+    (`RASmm(order="F")`) raises.
+  - The memory order is not written on the axes, which is why it is a field
+    of the system.
 
-- `converters.py`, `Subspace → Affine`: an open system raises
-  `ConversionError("axis count unknown")`.
-- `adaptors.py`, the bridging checks (`len(source.axes) !=
-  len(target.axes)`): compare using `compatible`. A bridge that would need
-  to reorder axes it cannot see raises `AdaptationError`.
-- `composers.py`, the discrete-axis check: positional access (B.2) keeps
-  working on the known positions.
-- `utils.axis_counts`, and the `separable`/`factor` readers: `ndim is
-  None` means unknown, never a guess.
-- **I/O writers** (NGFF/OME-Zarr, NIfTI). No format can store `...`.
-  **Decided: writers close an open system from the data shape.**
-  - They expand `...` to as many axes as the data has, beyond the explicit
-    ones.
-  - The expanded axes are filled the way the format fills an axis it
-    knows nothing about.
-  - A closed system whose length disagrees with the data still raises, as
-    it does today.
+### B.6 Consumers
+
+Every reader of an axis count or position was updated in the same change:
+
+- `converters.py`, `Subspace → Affine`: a missing or open system raises
+  `ConversionError` ("axis count unknown").
+- `adaptors.py` and `utils.systems_disagree`: two systems disagree when they
+  are not equal (both closed) or not `compatible_with` (either open). An
+  open system compatible with its neighbour bridges as the identity, and an
+  incompatible one raises `AdaptationError`: a bridge would have to
+  reorder axes it cannot see. Embedding a smaller transform in a fuller
+  space needs closed systems.
+- `composers.py`, the discrete-axis check: `at(position)` reads the known
+  positions of an open system, and an unknown `Axis()` is not discrete.
+- **`meta._close_subspace`**: a composer closes an open subspace system from
+  its neighbour. A subspace passes every axis it does not act on through, so
+  a count on one side gives the count on the other. The open systems are
+  closed with `expand`. A count the subspace cannot fit raises
+  `CompositionError`. The composers that fold a subspace into an affine use
+  it.
+- `utils.axis_counts`, `get_ndim`, and the `separable`/`factor` readers:
+  `ndim is None` means unknown, never a guess.
+- **I/O writers** (NIfTI, OME-Zarr): no format can store `...`, so writers
+  close an open system from the data shape with `expand`. The axes `...`
+  stood for are written as any axis the format knows nothing about. A
+  system that states more axes than the data has raises `WriterError`, and
+  a closed system whose length disagrees with the data raises, as before.
+
+### B.7 Smaller changes
+
+- **`smartproperty` and `lazyproperty` have a single `unset=` option.** It
+  says when a stored value reads as "not set", so that the getter computes
+  it instead: `None` (the default), `"empty"` (an empty list, tuple, dict or
+  set), a predicate `(value) -> bool`, or a tuple of them. The setter stores
+  the value as given, whatever `unset` says. This replaced the earlier pair
+  of options.
+
+### Considered and rejected
+
+- **Normalizing a `None` system to `CoordinateSystem(axes=[...])`.** A `None`
+  system defers; an explicit one is kept (B.3). Treating them alike
+  silently dropped what the user set. Only the `axes` field reads `None` as
+  the default.
+- **An accessor and a "both spellings" test** to keep `axes=None` and
+  `axes=[...]` aligned. The field now stores one spelling, and plain
+  equality is enough.
+- **A plain `list` plus free functions** (`take`, `place`) for axes. The
+  containers carry the operations, and the system methods are thin wrappers.
+- **Module-level axis instances** (`R = RightAxis()`). Shared mutable state.
+- **Open fixed-dimension systems.** The count is part of the class, so they
+  refuse `...`.
 
 ---
 
 ## Sequencing
 
-1. **#104 merged as it was** (done). Its helpers (`factor_sequence`,
-   `restrict`, `embed`, the restrictors) are not exported, so merging
-   committed to nothing public. PR 2 replaces them.
-2. **PR 1, against main: open coordinate systems (Part B).**
-   - `...` semantics, `CoordinateSystem.ndim`, `Axis.compatible`/`merge`,
-     and `CoordinateSystem.expand`/`take`/`place`/`compatible`.
-   - All the consumers listed in B.5.
-   - `_subsystem` becomes `place(…, ndim=None)`, which fixes the
+1. **#104 merged as it was.** Its helpers (`factor_sequence`, `restrict`,
+   `embed`, the restrictors) are not exported, so merging committed to
+   nothing public. PR 2 replaces them.
+2. **#112 merged: open coordinate systems (Part B).**
+   - `...` semantics, `AxisSequence`/`AxisTuple`/`AxisList`,
+     `CoordinateSystem.ndim`/`expand`/`restrict`/`embed`/`compatible_with`,
+     `Axis.compatible_with`/`merge_with`.
+   - All the consumers listed in B.6, including `_close_subspace`.
+   - `_subsystem` embeds with `ndim=None`, which fixes the
      `Subspace → Affine` crash.
-3. **PR 2: the operation API (Part A).**
-   - `Projection` gains coordinate systems and a defined meaning for
-     created axes (or explicitly none; see the open question in A.4).
+   - Physical systems, `order`, and the `unset=` option (B.5, B.7).
+3. **#115 merged: sample units (B.4)**, with bagof-magic 0.3 dispatch.
+4. **PR 2, still to do: the operation API (Part A).**
+   - `Projection` gains coordinate systems (using `CoordinateSystem.restrict`
+     and `embed`) and a defined meaning for created axes (`0`, A.8).
    - Pair-rewrite simplification rules, with commutation rules per type
      and projection cancellation. These replace #104's restrictors.
-   - `Transformation.restrict` returns the lazy projection composition,
-     and `embed` is removed.
+   - `Transformation.restrict` and `project` return the lazy projection
+     composition, and the transformation-level `embed` is removed.
    - `factor` becomes a public, pure rewrite built on `restrict`.
    - Factors declare their full-space systems.
    - `compute` becomes a single pass.
    - Reslice asks for `simplify="numeric"`.
+   - The multi-block `SubspaceTransformation` and axis references by name
+     (A.8, A.9), including a public reference-to-position function.
    - Checked by the parity sweep, the idempotence test, and the reslice
      timings.
 
 ## Decisions
 
+**Part A (agreed, to do)**
+
 1. Restriction takes no `policy` argument. (Now moot: restriction is
    `t.restrict(I, O)`, and policy belongs to `compute`/`simplify`.)
 2. The registration decorators stay private.
-3. `axes=None` (and `input`/`output=None`) is not normalized to `[...]`,
-   but every reader, equality and compatibility treats the two spellings
-   identically, through one accessor.
-4. `...` may appear anywhere, at most once.
-5. Writers close an open system from the data shape (`expand`).
-6. `CoordinateSystem.ndim` is `None` for an open system. Fixed-dimension
-   classes reject `...`, and `...` never counts towards the number of
-   explicit axes.
-7. Restriction follows `inverse`: `t.restrict(I, O)` returns the lazy
+3. Restriction follows `inverse`: `t.restrict(I, O)` returns the lazy
    composition `π_O @ t @ ι_I`, reduced by `compute` through analytic
    rewrite rules. Missing composers or simplifiers are added, not worked
    around.
-8. Created axes are `0`, as the OME-NGFF 0.6 `projectAxis` spec defines.
-9. `t.project(I, O)` (always defined; the section at `0` on a coupled
+4. Created axes are `0`, as the OME-NGFF 0.6 `projectAxis` spec defines.
+5. `t.project(I, O)` (always defined; the section at `0` on a coupled
    block) and `t.restrict(I, O)` (raises on a coupled block) are separate
    methods.
-10. `restrict` raises lazily, at `compute`. Like `inverse`, it only
-    builds an expression.
-11. `Projection.inverse()` raises when the projection drops axes.
-12. A subset integer `mapAxis`, never valid in any 0.6 version, is
-    refused on read.
-13. `SubspaceTransformation` becomes the multi-block product (A.8,
-    option 1), keeping its name and the pass-through extension.
-14. Axis references may be positions or names everywhere (A.9), with the
+6. `restrict` raises lazily, at `compute`. Like `inverse`, it only builds an
+   expression.
+7. `Projection.inverse()` raises when the projection drops axes.
+8. A subset integer `mapAxis`, never valid in any 0.6 version, is refused on
+   read.
+9. `SubspaceTransformation` becomes the multi-block product (A.8,
+   option 1), keeping its name and the pass-through extension.
+10. Axis references may be positions or names everywhere (A.9), with the
     pass-through rule as written. A transformation that carries systems
     validates its references against them, whether names or positions.
-15. Name mappings for `Permutation`/`Projection` are added now.
+11. Name mappings for `Permutation`/`Projection` are added now.
+
+**Part B (implemented)**
+
+12. `CoordinateSystem.axes` is never `None`. `axes=None` reads as the
+    class's default (`[...]`, or the fixed axes). Equality is plain
+    field-wise.
+13. `system=None` is not `CoordinateSystem(axes=[...])`. A `None` endpoint
+    defers or is derived. An explicit system is always kept.
+14. `...` may appear anywhere, at most once. `ndim` is `None` for an open
+    system. Fixed-dimension classes reject `...`, and `...` never counts
+    towards the number of explicit axes.
+15. Axes are `AxisTuple` (immutable, per-position typed; fixed-dimension
+    systems) or `AxisList` (mutable; open-capable systems), sharing the
+    `AxisSequence` API. Entries (`[i]`) and positions (`at`) are distinct.
+16. An open axis list matches no dispatch predicate. `expand` re-dispatches.
+17. Writers close an open system from the data shape (`expand`).
+18. `Unit("sample")` marks array axes, and `None` is unspecified. Each unit
+    class refuses the other kinds.
+19. `PhysicalCoordinateSystem` accepts open axes and `None` units, and
+    refuses the sample. `RASmm`, `LPSmm` and `RSAmm` are mm-only.
+20. `order` is declared on `CoordinateSystem`. Only array systems keep one,
+    and it selects the C- and F-ordered classes.
+21. `axes.R`, `L`, `A`, `P`, `S`, `I` are classes.
+22. `smartproperty` and `lazyproperty` take one `unset=` option.
 
 ## Open questions
 
-None at the moment.
+Part B left two things for Part A:
+
+1. **A public reference-to-position function.** A.9 needs to resolve an
+   axis reference (a position or a name) to a position against a system.
+   `AxisSequence.restrict` does it internally, while `index` and `[name]`
+   give entries, which are positions only in a closed sequence (a name
+   after `...` is a negative position). Either PR 2 makes the internal step
+   public, or it resolves through `restrict`.
+2. **`Axis.merge_with` has no consumer.** It was meant for combining a
+   subspace's derived system with a declared neighbour. Today a declared
+   system wins and is never merged. PR 2 either uses it (e.g. when factors
+   declare full-space systems) or drops it.
