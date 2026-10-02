@@ -327,23 +327,23 @@ def test_an_image_round_trips_through_nifti(tmp_path, name: str) -> None:  # noq
 
 @needs_nibabel
 def test_a_nifti_affine_round_trips(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.transformations.nifti import NiftiVoxelToRas
+    from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-    affine = NiftiVoxelToRas(matrix=MATRIX)
+    affine = NiftiVoxelToRAS(matrix=MATRIX)
     io.save(affine, tmp_path / "affine.nii")
-    back = NiftiVoxelToRas.load(tmp_path / "affine.nii")
+    back = NiftiVoxelToRAS.load(tmp_path / "affine.nii")
     np.testing.assert_allclose(back.matrix, MATRIX)
 
 
 @needs_nibabel
 def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.transformations.nifti import NiftiRasCoordinatesField
+    from brainhops.io.transformations.nifti import NiftiRASCoordinatesField
 
     field = np.zeros((2, 3, 4, 3), dtype="float32")
     field[..., 0] = 1.0
-    io.save(NiftiRasCoordinatesField(field=field), tmp_path / "field.nii")
+    io.save(NiftiRASCoordinatesField(field=field), tmp_path / "field.nii")
     back = io.transformations.load(tmp_path / "field.nii")
-    assert isinstance(back, NiftiRasCoordinatesField)
+    assert isinstance(back, NiftiRASCoordinatesField)
     np.testing.assert_array_equal(np.asarray(back.field)[..., 0, :], field)
 
 
@@ -445,10 +445,10 @@ def test_a_general_transformation_is_not_given_a_nifti_meaning(
 
 @needs_nibabel
 def test_the_explicit_route_writes_a_general_affine(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.transformations.nifti import NiftiVoxelToRas
+    from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
-    NiftiVoxelToRas.from_other(Affine(MATRIX)).save(tmp_path / "affine.nii")
-    back = NiftiVoxelToRas.load(tmp_path / "affine.nii")
+    NiftiVoxelToRAS.from_other(Affine(MATRIX)).save(tmp_path / "affine.nii")
+    back = NiftiVoxelToRAS.load(tmp_path / "affine.nii")
     np.testing.assert_allclose(back.matrix, MATRIX)
 
 

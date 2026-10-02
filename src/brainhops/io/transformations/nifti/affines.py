@@ -17,7 +17,7 @@ from brainhops.io.base.nifti import (
 )
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base import AffineTransformationFormat
-from brainhops.io.transformations.base.affines import RasToVoxel, VoxelToRas
+from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
@@ -79,7 +79,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return image
 
 
-class NiftiRasToVoxel(RasToVoxel, _NiftiAffine):
+class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     """
     Affine transformation from RAS space to voxel space, derived from a
     NIfTI header.
@@ -90,7 +90,7 @@ class NiftiRasToVoxel(RasToVoxel, _NiftiAffine):
         indistinguishable by content -- same container, same extension,
         same confidence -- so registering both would make every `.nii`
         an ambiguity. Reach this one through
-        `NiftiVoxelToRas.inverse()`.
+        `NiftiVoxelToRAS.inverse()`.
     """
 
     @property
@@ -106,11 +106,11 @@ class NiftiRasToVoxel(RasToVoxel, _NiftiAffine):
     def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
-    def inverse(self) -> VoxelToRas:
+    def inverse(self) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
-            return NiftiVoxelToRas(image=self.image, header=self.header)
-        return super().inverse().to(VoxelToRas)
+            return NiftiVoxelToRAS(image=self.image, header=self.header)
+        return super().inverse().to(VoxelToRAS)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
         # This transformation maps RAS to voxel, so its inverse maps
@@ -119,7 +119,7 @@ class NiftiRasToVoxel(RasToVoxel, _NiftiAffine):
 
 
 @register_format
-class NiftiVoxelToRas(VoxelToRas, _NiftiAffine):
+class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     """
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.
@@ -140,11 +140,11 @@ class NiftiVoxelToRas(VoxelToRas, _NiftiAffine):
     def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
-    def inverse(self) -> RasToVoxel:
+    def inverse(self) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
-            return NiftiRasToVoxel(image=self.image, header=self.header)
-        return super().inverse().to(RasToVoxel)
+            return NiftiRASToVoxel(image=self.image, header=self.header)
+        return super().inverse().to(RASToVoxel)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
         return _voxel_to_ras(self)

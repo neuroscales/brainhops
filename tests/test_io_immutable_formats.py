@@ -269,7 +269,7 @@ def test_the_inverse_is_a_plain_sequence(loaded, request) -> None:  # noqa: ANN0
             pytest.mark.xfail(
                 raises=TypeError,
                 strict=True,
-                reason="NiftiRasToVoxel.inverse() takes no `compute` "
+                reason="NiftiRASToVoxel.inverse() takes no `compute` "
                 "argument; unrelated to immutability.",
             )
         )

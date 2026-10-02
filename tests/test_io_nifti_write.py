@@ -37,8 +37,8 @@ from brainhops.io.base.parsers import (  # noqa: E402
 )
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRasCoordinatesField,
-    NiftiVoxelToRas,
+    NiftiRASCoordinatesField,
+    NiftiVoxelToRAS,
 )
 
 # A rigid rotation, an anisotropic zoom and a translation, with no shear,
@@ -266,11 +266,11 @@ def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
     data = np.zeros((4, 5, 6), dtype="float32")
     source = _write_image(tmp_path, "source.nii", data)
 
-    affine = NiftiVoxelToRas.from_file(source)
+    affine = NiftiVoxelToRAS.from_file(source)
     target = tmp_path / "affine.nii"
     affine.save(target)
 
-    reloaded = NiftiVoxelToRas.from_file(target)
+    reloaded = NiftiVoxelToRAS.from_file(target)
     assert np.allclose(affine.matrix, reloaded.matrix)
     # The affine is written over a minimal placeholder volume, not the
     # full source data.
@@ -291,13 +291,13 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
     nb.save(img, str(source))
 
     loaded = io.transformations.load(source)
-    assert isinstance(loaded, NiftiRasCoordinatesField)
+    assert isinstance(loaded, NiftiRASCoordinatesField)
 
     target = tmp_path / "out.nii"
     loaded.save(target)
 
     reloaded = io.transformations.load(target)
-    assert isinstance(reloaded, NiftiRasCoordinatesField)
+    assert isinstance(reloaded, NiftiRASCoordinatesField)
     assert np.array_equal(np.asarray(reloaded.field), field)
     header = nb.load(str(target)).header
     assert int(header["intent_code"]) == 1007
@@ -311,14 +311,14 @@ def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
     """
     field = np.zeros((4, 5, 6, 3), dtype="float32")
     field[..., 0] = 1.0
-    source = NiftiRasCoordinatesField(field=field)
+    source = NiftiRASCoordinatesField(field=field)
 
     target = tmp_path / "field.nii"
     source.save(target)
 
     assert nb.load(str(target)).shape == (4, 5, 6, 1, 3)
     assert isinstance(
-        io.transformations.load(target), NiftiRasCoordinatesField
+        io.transformations.load(target), NiftiRASCoordinatesField
     )
 
 
@@ -367,7 +367,7 @@ def test_a_dask_field_is_not_coerced_to_numpy() -> None:
     da = pytest.importorskip("dask.array")
     field = da.zeros((4, 5, 6, 3), dtype="float32")
 
-    image = NiftiRasCoordinatesField(field=field)
+    image = NiftiRASCoordinatesField(field=field)
     nifti = image.to_nibabel()
 
     assert not isinstance(nifti.dataobj, np.ndarray)

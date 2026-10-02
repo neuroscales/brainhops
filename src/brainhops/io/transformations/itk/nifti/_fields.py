@@ -42,8 +42,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.transformations.base.affines import LpsToVoxel, VoxelToLps
-from brainhops.io.transformations.base.fields import LpsCoordinatesField
+from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
+from brainhops.io.transformations.base.fields import LPSCoordinatesField
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 # locals
@@ -422,7 +422,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         rotate = backend.asarray(lps2vox, dtype=vectors.dtype)
         field = backend.matmul(rotate, vectors[..., None])[..., 0]
         return (
-            LpsToVoxel(
+            LPSToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
             _xforms.DisplacementField(
@@ -432,7 +432,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 order=self.order,
                 bound=self.bound,
             ),
-            VoxelToLps(matrix=vox2lps, input=voxel, output=world),
+            VoxelToLPS(matrix=vox2lps, input=voxel, output=world),
         )
 
     @property
@@ -548,10 +548,10 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         ndim, vox2lps = self._grid()
         world, voxel = self._spaces(ndim)
         return (
-            LpsToVoxel(
+            LPSToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
-            LpsCoordinatesField(
+            LPSCoordinatesField(
                 field=self._lps_vectors(ndim), input=voxel, output=world
             ),
         )

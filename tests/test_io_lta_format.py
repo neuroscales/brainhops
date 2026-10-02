@@ -39,7 +39,7 @@ from brainhops.io.transformations.freesurfer.lta import (
     LtaStruct,
     LtaTransformation,
     LtaTransformationPhysToPhys,
-    LtaTransformationRasToRas,
+    LtaTransformationRASToRAS,
     LtaTransformationVoxToVox,
     LtaType,
     LtaValidity,
@@ -128,7 +128,7 @@ TYPE_IDS = ["vox", "ras", "physvox", "rsa"]
 VIEWS = [
     (LtaTransformationVoxToVox, LtaType.LINEAR_VOX_TO_VOX),
     (LtaTransformationPhysToPhys, LtaType.LINEAR_PHYSVOX_TO_PHYSVOX),
-    (LtaTransformationRasToRas, LtaType.LINEAR_RAS_TO_RAS),
+    (LtaTransformationRASToRAS, LtaType.LINEAR_RAS_TO_RAS),
 ]
 VIEW_IDS = ["vox", "phys", "ras"]
 
@@ -445,8 +445,8 @@ def test_a_view_round_trips(
     assert back.struct.type is written
     np.testing.assert_allclose(back.matrix, xform.matrix, atol=1e-12)
     np.testing.assert_allclose(
-        LtaTransformationRasToRas.load(tmp_path / "rebuilt.lta").matrix,
-        LtaTransformationRasToRas.load(file).matrix,
+        LtaTransformationRASToRAS.load(tmp_path / "rebuilt.lta").matrix,
+        LtaTransformationRASToRAS.load(file).matrix,
         atol=1e-12,
     )
 
@@ -455,7 +455,7 @@ def test_the_ras_view_of_a_ras_file_is_its_matrix(tmp_path) -> None:  # noqa: AN
     # Regression: the RAS-to-RAS view computed a physical-to-physical
     # matrix.
     file = _write(tmp_path, _struct(LtaType.LINEAR_RAS_TO_RAS))
-    xform = LtaTransformationRasToRas.load(file)
+    xform = LtaTransformationRASToRAS.load(file)
     np.testing.assert_allclose(xform.matrix, np.asarray(MATRIX)[:-1])
 
 
@@ -471,7 +471,7 @@ def test_the_ras_view_of_an_rsa_file_reorders_its_axes(tmp_path) -> None:  # noq
         src=SRC,
         dst=DST,
     )
-    xform = LtaTransformationRasToRas.load(_write(tmp_path, struct))
+    xform = LtaTransformationRASToRAS.load(_write(tmp_path, struct))
     np.testing.assert_allclose(xform.matrix[:, 3], [1.0, 3.0, 2.0])
     np.testing.assert_allclose(xform.matrix[:, :3], np.eye(3))
 
