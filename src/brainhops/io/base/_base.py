@@ -165,7 +165,9 @@ class FileBasedObject(FileParser):
         `file`, in any supported form, is its own."""
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
-        return sniff(file, cls._REGISTRY, "sniff", error, f"{file}", **kwargs)
+        return sniff(
+            file, cls._REGISTRY, "sniff", error, f"{file}", file=True, **kwargs
+        )
 
     @classmethod
     def sniff_file(
@@ -180,7 +182,13 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
-            file, cls._REGISTRY, "sniff_file", error, f"file: {file}", **kwargs
+            file,
+            cls._REGISTRY,
+            "sniff_file",
+            error,
+            f"file: {file}",
+            file=True,
+            **kwargs,
         )
 
     @classmethod
@@ -306,7 +314,9 @@ class FileBasedObject(FileParser):
             return cls.from_spec(other, **kwargs)
         if not cls._is_dispatcher():
             return super().load(other, **kwargs)
-        return parse(Source(other), cls._REGISTRY, "load", "sniff", **kwargs)
+        return parse(
+            Source(other, file=True), cls._REGISTRY, "load", "sniff", **kwargs
+        )
 
     @classmethod
     def from_spec(cls, spec: SourceSpec, **kwargs) -> tx.Self:
@@ -314,7 +324,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_spec(spec, **kwargs)
         return parse(
-            Source(spec.path),
+            Source(spec.path, file=True),
             cls._REGISTRY,
             "load",
             "sniff",
@@ -332,7 +342,11 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
         return parse(
-            Source(file), cls._REGISTRY, "from_file", "sniff_file", **kwargs
+            Source(file, file=True),
+            cls._REGISTRY,
+            "from_file",
+            "sniff_file",
+            **kwargs,
         )
 
     @classmethod

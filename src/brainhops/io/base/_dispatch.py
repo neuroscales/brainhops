@@ -23,7 +23,9 @@ from brainhops._core import path
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
+    ParserExistsError,
     SnifferContentError,
+    SnifferExistsError,
 )
 from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 
@@ -43,13 +45,22 @@ class Source:
     - Non-seekable streams (stdin, sockets, pipes) are read once into
       memory and re-wrapped in a fresh buffer for every attempt.
     - One-shot iterables of lines are materialized once into a list.
+
+    `file` says that the input is expected to be a file, so that a `str`
+    names a path rather than holding text. An `os.PathLike` always names
+    a path. The input itself is handed to parsers unchanged either way.
     """
 
-    def __init__(self, other: tx.Any) -> None:
+    def __init__(self, other: tx.Any, file: bool = False) -> None:
         self.other = other
         self.pos = None
         self.buffer = None
         self.factory = None
+        self.path = (
+            other
+            if isinstance(other, PathLike) or (file and isinstance(other, str))
+            else None
+        )
 
         if hasattr(other, "read"):
             if self._seekable(other):
@@ -94,6 +105,19 @@ class Source:
         if isinstance(self.other, list):
             return iter(self.other)
         return self.other
+
+    @property
+    def missing(self) -> tx.Optional[path.Path]:
+        """The path the input names, if it names a file that does not
+        exist."""
+        if self.path is None:
+            return None
+        filename = path.Path(self.path)
+        try:
+            exists = filename.exists()
+        except Exception:
+            return None  # cannot tell (a remote store, say): not missing
+        return None if exists else filename
 
     @property
     def name(self) -> tx.Optional[str]:
@@ -524,6 +548,10 @@ def _failure(
     Swallowing every exception and reporting a bare "cannot parse" hides
     real bugs inside the *correct* reader, so we report what each parser
     actually complained about, and chain the last one.
+
+    A path to a file that does not exist is reported as exactly that,
+    a `FileNotFoundError`, rather than as a list of parsers that each
+    failed to open it.
     """
     if not registry:
         return ParserContentError(
@@ -531,6 +559,12 @@ def _failure(
             f"register themselves on import -- is the format module "
             f"imported?"
         )
+    missing = source.missing
+    if missing is not None:
+        failure = ParserExistsError(f"No such file: {missing}")
+        if errors:
+            failure.__cause__ = errors[-1][2]
+        return failure
     if not errors:
         return ParserContentError(
             f"Cannot parse {source}: none of the "
@@ -556,6 +590,7 @@ def sniff(
     what: str = "input content",
     hints: tx.Iterable[str] = (),
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
+    file: bool = False,
     **kwargs,
 ) -> tx.Optional[type]:
     """
@@ -588,6 +623,8 @@ def sniff(
         If not False, raise instead of returning `None`.
     what : str
         How to describe the input in an error message.
+    file : bool
+        The input is expected to be a file, so a `str` names a path.
     **kwargs
         Parser-specific options.
 
@@ -595,6 +632,12 @@ def sniff(
     -------
     format : type | None
         The best-matching format, or `None` if no single one stands out.
+
+    Raises
+    ------
+    SnifferExistsError
+        If `error` is set, no single format stands out, and the input
+        names a file that does not exist. It is a `FileNotFoundError`.
     """
     requested_hints = _normalize_hints(hints, hint)
     allowed = {
@@ -602,14 +645,18 @@ def sniff(
         for subclass in registry
         if not requested_hints or format_hints(subclass) & requested_hints
     }
-    tiers = _candidates(
-        Source(content), registry, fn_sniff, allowed=allowed, **kwargs
-    )
+    source = Source(content, file=file)
+    tiers = _candidates(source, registry, fn_sniff, allowed=allowed, **kwargs)
 
     if tiers and len(tiers[0]) == 1:
         return tiers[0][0]
 
     if error:
+        missing = source.missing
+        if missing is not None:
+            if error is True:
+                error = SnifferExistsError
+            raise error(f"No such file: {missing}")
         if tiers:
             names = ", ".join(sorted(cls.__name__ for cls in tiers[0]))
             if error is True:
