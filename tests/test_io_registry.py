@@ -238,7 +238,7 @@ def test_indistinguishable_formats_raise_rather_than_guess(
     flip: returning one at random would silently give the wrong type."""
     _format(root, "Twin1", EXTENSIONS=(".t",), marker="T")
     _format(root, "Twin2", EXTENSIONS=(".t",), marker="T")
-    with pytest.raises(AmbiguousFormatError, match="Twin1, Twin2"):
+    with pytest.raises(AmbiguousFormatError, match=r"Twin1[^\n]*\n.*Twin2"):
         root.from_line("T hello")
 
 
@@ -385,5 +385,107 @@ def test_declaring_more_prefixes_does_not_buy_specificity(
         )
     target = tmp_path / "iy_sub.nii"
     target.write_text("content\n")
-    with pytest.raises(AmbiguousFormatError, match="Many, One"):
+    with pytest.raises(AmbiguousFormatError, match=r"Many[^\n]*\n.*One"):
         root.from_file(target)
+
+
+# ----------------------------------------------------------------------
+#   THE AMBIGUITY MESSAGE
+# ----------------------------------------------------------------------
+
+
+def _twins(root: type) -> tx.Tuple[type, type]:
+    """Two formats nothing tells apart, each with a hint of its own."""
+    first = _format(
+        root,
+        "Raw",
+        EXTENSIONS=(".t",),
+        marker="T",
+        HINTS=("raw",),
+        __doc__="A table of raw samples.\n\nMore detail.",
+    )
+    second = _format(
+        root,
+        "Cooked",
+        EXTENSIONS=(".t",),
+        marker="T",
+        HINTS=("cooked",),
+        __doc__="A table of calibrated samples.",
+    )
+    return first, second
+
+
+def test_the_ambiguity_message_gives_the_hint_that_selects_each_format(
+    root: type,
+) -> None:
+    _twins(root)
+    with pytest.raises(AmbiguousFormatError) as info:
+        root.from_line("T hello")
+    message = str(info.value)
+    assert 'Raw (A table of raw samples): hint="raw"' in message
+    assert 'Cooked (A table of calibrated samples): hint="cooked"' in message
+    assert "`load(path, hint=" in message
+
+
+@pytest.mark.parametrize("hint", ["raw", "cooked"])
+def test_the_hints_in_the_message_resolve_the_ambiguity(
+    root: type, hint: str
+) -> None:
+    """Following the advice of the message does choose that format."""
+    _twins(root)
+    with pytest.raises(AmbiguousFormatError, match=f'hint="{hint}"'):
+        root.from_line("T hello")
+    loaded = root.from_line("T hello", hint=hint)
+    assert loaded["format"] == hint.capitalize()
+
+
+def test_the_ambiguity_message_is_written_for_users(root: type) -> None:
+    """How to fix the formats is for their maintainers, not the user."""
+    _twins(root)
+    with pytest.raises(AmbiguousFormatError) as info:
+        root.from_line("T hello")
+    message = str(info.value)
+    assert "PRIORITY" not in message
+    assert "sniffer" not in message
+
+
+def test_a_format_no_hint_selects_is_read_with_its_own_load(
+    root: type,
+) -> None:
+    """
+    When every hint a format answers to is shared with the other, the
+    message points at the format's own `load` instead.
+    """
+    _format(root, "Plain", EXTENSIONS=(".t",), marker="T", HINTS=("t",))
+    _format(
+        root, "Fancy", EXTENSIONS=(".t",), marker="T", HINTS=("t", "fancy")
+    )
+    with pytest.raises(AmbiguousFormatError) as info:
+        root.from_line("T hello")
+    message = str(info.value)
+    assert "Plain: `Plain.load(path)`" in message
+    assert 'Fancy: hint="fancy"' in message
+
+
+def test_a_hint_that_only_settles_the_tie_is_offered(root: type) -> None:
+    """
+    A hint shared with a format that did not tie still settles the tie,
+    so it is offered.
+    """
+    _format(root, "Left", EXTENSIONS=(".t",), marker="T", HINTS=("side",))
+    _format(root, "Right", EXTENSIONS=(".t",), marker="T", HINTS=("r",))
+    _format(root, "Other", EXTENSIONS=(".o",), marker="O", HINTS=("side",))
+    with pytest.raises(AmbiguousFormatError) as info:
+        root.from_line("T hello")
+    assert 'Left: hint="side"' in str(info.value)
+    assert root.from_line("T hello", hint="side")["format"] == "Left"
+
+
+def test_sniff_reports_an_ambiguity_with_the_same_hints(root: type) -> None:
+    _twins(root)
+    assert root.sniff_line("T hello") is None
+    with pytest.raises(AmbiguousFormatError) as info:
+        root.sniff_line("T hello", error=True)
+    message = str(info.value)
+    assert 'hint="raw"' in message
+    assert 'hint="cooked"' in message

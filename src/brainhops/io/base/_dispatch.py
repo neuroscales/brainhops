@@ -10,6 +10,7 @@ a given file was read by a given parser.
 __all__ = ["Source", "parse", "sniff"]
 
 # stdlib
+import inspect
 from collections.abc import Iterable
 from io import BytesIO, StringIO
 from os import PathLike, fspath
@@ -397,13 +398,10 @@ def parse(
             if len(winners) == 1:
                 return True, winners[0][1]
             if len(winners) > 1:
-                names = sorted(cls.__name__ for cls, _ in winners)
                 raise AmbiguousFormatError(
-                    f"Cannot choose a parser for {source}: "
-                    f"{', '.join(names)} all read it, with equal "
-                    f"confidence and equal specificity, but build "
-                    f"different objects. Give one of them a sniffer that "
-                    f"tells them apart, or an explicit PRIORITY."
+                    _ambiguity_message(
+                        f"{source}", [cls for cls, _ in winners]
+                    )
                 )
         return False, None
 
@@ -611,17 +609,99 @@ def sniff(
 
     if error:
         if tiers:
-            names = ", ".join(sorted(cls.__name__ for cls in tiers[0]))
             if error is True:
                 error = AmbiguousFormatError
-            raise error(
-                f"Cannot identify {what}: {names} match it equally well."
-            )
+            raise error(_ambiguity_message(what, tiers[0]))
         if error is True:
             error = SnifferContentError
         raise error(f"Nothing to sniff in {what}")
 
     return None
+
+
+def _describe(cls: type) -> str:
+    """
+    What a format holds, in the words of its own docstring.
+
+    The first paragraph of the class's own docstring, on one line and
+    without its final full stop. A docstring inherited from a base class
+    describes the base, not this format, so it is not used.
+    """
+    doc = cls.__dict__.get("__doc__")
+    if not isinstance(doc, str) or not doc.strip():
+        return ""
+    paragraph = inspect.cleandoc(doc).split("\n\n", 1)[0]
+    return " ".join(paragraph.split()).rstrip(".")
+
+
+def _selecting_hint(
+    cls: type, candidates: tx.Sequence[type]
+) -> tx.Optional[str]:
+    """
+    The shortest hint that selects `cls` among the formats that tied.
+
+    A hint that none of the other tied formats answers to settles the
+    tie: every format that ranked above them has already failed on this
+    content, and every other one ranks below `cls`. The fewest dotted
+    parts win, then the shortest string, so the plainest word (`"itk"`
+    rather than `"itk.displacements"`) is the one offered.
+    """
+    taken = set()
+    for other in candidates:
+        if other is not cls:
+            taken |= format_hints(other)
+    found = sorted(
+        format_hints(cls) - taken,
+        key=lambda hint: (hint.count("."), len(hint), hint),
+    )
+    return found[0] if found else None
+
+
+def _ambiguity_message(subject: str, candidates: tx.Iterable[type]) -> str:
+    """
+    Tell a user which formats a file could be, and how to choose one.
+
+    Each candidate is named, described in its own words, and given the
+    `hint=` value that selects it -- or, when no hint can, the call to
+    its own `load`. The message ends with how to use either.
+
+    How to make the formats tell such content apart (a sniffer, or a
+    `PRIORITY`) is a question for whoever maintains them, and is left to
+    the docstring of `AmbiguousFormatError` rather than put to the user.
+    """
+    candidates = sorted(candidates, key=lambda cls: cls.__name__)
+    lines = [
+        f"Cannot tell which format {subject} is in: it can be read "
+        f"equally well as any of these {len(candidates)} formats, which "
+        f"would give different results."
+    ]
+    example = None
+    for cls in candidates:
+        line = f"  - {cls.__name__}"
+        about = _describe(cls)
+        if about:
+            line += f" ({about})"
+        hint = _selecting_hint(cls, candidates)
+        if hint is None:
+            line += f": `{cls.__name__}.load(path)`"
+        else:
+            line += f': hint="{hint}"'
+            if example is None:
+                example = hint
+        lines.append(line)
+    own_load = f"`{candidates[0].__name__}.load(path)`"
+    if example is not None:
+        lines.append(
+            f"Choose one by passing its hint to `load`, as in `load(path, "
+            f'hint="{example}")`. Each format can also read the file '
+            f"itself, as in {own_load}."
+        )
+    else:
+        lines.append(
+            f"Choose one by reading the file with that format's own "
+            f"`load`, as in {own_load}."
+        )
+    return "\n".join(lines)
 
 
 def _normalize_hints(
