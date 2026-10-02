@@ -1,3 +1,6 @@
+# dependencies
+from bagof.magic import KwOnly
+
 # internals
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -13,7 +16,7 @@ class RASToWarpField(_xforms.Affine):
     evaluated.
     """
 
-    _input: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
 
 class WarpFieldToRAS(_xforms.Affine):
@@ -24,4 +27,4 @@ class WarpFieldToRAS(_xforms.Affine):
     geometry of the moving image and the initial FLIRT affine.
     """
 
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()

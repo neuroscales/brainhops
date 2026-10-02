@@ -61,25 +61,25 @@ SUPPORTED = (
 # ----------------------------------------------------------------------
 #
 # ITK's own `BSplineTransform` is cubic. elastix's B-spline transforms
-# take their order from `BSplineTransformSplineOrder` (1, 2 or 3), so a
-# block is needed for each order. They differ from the ITK block only in
-# the order of the spline that evaluates the coefficients.
+# take their degree from `BSplineTransformSplineOrder` (1, 2 or 3), so a
+# block is needed for each degree. They differ from the ITK block only in
+# the degree of the spline that evaluates the coefficients.
 
 
 class _ElastixBSplineStruct(ItkBSplineStruct):
-    """A cubic elastix B-spline (the default order)."""
+    """A cubic elastix B-spline (the default degree)."""
 
 
 class _ElastixLinearBSplineStruct(_ElastixBSplineStruct):
-    """An elastix B-spline of order 1."""
+    """An elastix B-spline of degree 1."""
 
-    order: tx.ClassVar[int] = 1
+    degree: tx.ClassVar[int] = 1
 
 
 class _ElastixQuadraticBSplineStruct(_ElastixBSplineStruct):
-    """An elastix B-spline of order 2."""
+    """An elastix B-spline of degree 2."""
 
-    order: tx.ClassVar[int] = 2
+    degree: tx.ClassVar[int] = 2
 
 
 _BSPLINES = {
@@ -306,11 +306,11 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
         raise ParserNotImplementedError(
             "Cyclic elastix B-splines (UseCyclicTransform) are not supported."
         )
-    order = int(get_string(pmap, "BSplineTransformSplineOrder", "3"))
-    if order not in _BSPLINES:
+    degree = int(get_string(pmap, "BSplineTransformSplineOrder", "3"))
+    if degree not in _BSPLINES:
         raise ParserContentError(
-            f"Unsupported elastix B-spline order {order}: elastix only "
-            f"writes orders 1, 2 and 3."
+            f"Unsupported elastix B-spline degree {degree}: elastix only "
+            f"writes degrees 1, 2 and 3."
         )
     size = _vector(pmap, "GridSize", ndim)
     if size is None:
@@ -328,7 +328,7 @@ def _bspline(pmap: ParameterMap, ndim: int, params: np.ndarray) -> ItkStruct:
     # direction row by row.
     fixed = np.concatenate([size, origin, spacing, direction.ravel()])
     return _struct(
-        _ITKT.BSplineTransform, ndim, params, fixed, cls=_BSPLINES[order]
+        _ITKT.BSplineTransform, ndim, params, fixed, cls=_BSPLINES[degree]
     )
 
 
@@ -474,7 +474,7 @@ def _block_map(block: ItkStruct) -> tx.Optional[ParameterMap]:
             "GridSpacing": _floats(fixed[2 * ndim : 3 * ndim]),
             "GridOrigin": _floats(fixed[ndim : 2 * ndim]),
             "GridDirection": _column_major(direction),
-            "BSplineTransformSplineOrder": (int(block.order),),
+            "BSplineTransformSplineOrder": (int(block.degree),),
             "UseCyclicTransform": ("false",),
         }
     name = _ELASTIX_NAMES.get(block.type)

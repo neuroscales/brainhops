@@ -232,7 +232,7 @@ class M3zMorph(
         ras2node = RASToVoxel(matrix=np.linalg.inv(node2ras)[:3])
         options = dict(
             field=struct.positions,
-            order=InterpolationOrder.linear,
+            degree=InterpolationOrder.linear,
             bound=BoundaryCondition.nearest,
         )
         if struct.coordinates == GCAM_RAS:
