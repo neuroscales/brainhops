@@ -67,7 +67,9 @@ class M3zParser(
     """Reads and writes the raw content of a FreeSurfer morph file."""
 
     struct: tx.Optional[M3zStruct] = field(default=None, repr=False)
-    """The raw content of the file: every node and every tag."""
+    """The raw content of the file, every node and every tag (see
+    [`M3zStruct`][brainhops.io.transformations.freesurfer.m3z.M3zStruct]
+    for its members)."""
 
     # --- sniff --------------------------------------------------------
 
@@ -78,20 +80,13 @@ class M3zParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Score an open binary file: only its first bytes are read."""
+        """Score an open binary file from its first bytes only.
+
+        The base class reads the whole file, and a morph is large
+        (tens of megabytes) while its header is 24 bytes."""
         with preserve_position(file):
             head = file.read(_SNIFF_SIZE)
-        return cls.sniff_bytes(head, error=error, **kwargs)
-
-    @classmethod
-    def sniff_lines(
-        cls,
-        lines: tx.Iterable[str],
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        """Text is never a morph."""
-        return _reject(error, "Not binary content.")
+        return cls.sniff_content(head, error=error, **kwargs)
 
     @classmethod
     def sniff_bytes(
@@ -101,15 +96,17 @@ class M3zParser(
         **kwargs,
     ) -> float:
         """Score bytes, gzipped or not: a morph starts with the version
-        `1.0` (a big-endian float), then a positive shape and spacing."""
-        if not isinstance(content, (bytes, bytearray, memoryview)):
-            return _reject(error, "Not binary content.")
+        `1.0`, then a positive shape and spacing (see `read_header`)."""
         head = bytes(content)
         if is_gzip(head):
             head = _gunzip_head(head)
-        if read_header(head) is None:
-            return _reject(error, "Not a FreeSurfer morph (m3z) file.")
-        return Confidence.CERTAIN
+        if read_header(head) is not None:
+            return Confidence.CERTAIN
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error("Not a FreeSurfer morph (m3z) file.")
+        return Confidence.NO
 
     # --- from ---------------------------------------------------------
 
@@ -185,9 +182,12 @@ class M3zMorph(
     the first step and a
     [`RASCoordinatesField`][brainhops.io.transformations.base.fields.RASCoordinatesField].
 
-    The raw content -- original positions, GCA node indices, labels,
-    the linear transform, the file names of both volumes -- stays in
-    [`struct`][.struct].
+    The raw content -- the spacing, the geometries (and voxel-to-RAS
+    matrices) of both volumes, original positions, GCA node indices,
+    labels, the linear transform -- stays in [`struct`][.struct], an
+    [`M3zStruct`][brainhops.io.transformations.freesurfer.m3z.M3zStruct]
+    whose members can be queried, e.g. `morph.struct.spacing`,
+    `morph.struct.atlas_geometry.vox2ras` or `morph.struct.xform.matrix`.
 
     !!! note "What is written"
         A morph read from a file, whose chain has not been assigned, is
@@ -197,38 +197,6 @@ class M3zMorph(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
-
-    # --- properties ---------------------------------------------------
-
-    @property
-    def spacing(self) -> int:
-        """The distance between nodes, in atlas voxels."""
-        return 1 if self.struct is None else int(self.struct.spacing)
-
-    @property
-    def image_vox2ras(self) -> np.ndarray:
-        """The voxel-to-RAS matrix of the source image."""
-        return self.struct.image_geometry.vox2ras
-
-    @property
-    def atlas_vox2ras(self) -> np.ndarray:
-        """The voxel-to-RAS matrix of the atlas (target) volume."""
-        return self.struct.atlas_geometry.vox2ras
-
-    @property
-    def node_vox2ras(self) -> np.ndarray:
-        """The voxel-to-RAS matrix of the node grid.
-
-        Node `n` is atlas voxel `n * spacing` (`GCAMsampleMorph`).
-        """
-        scale = np.diag([float(self.spacing)] * 3 + [1.0])
-        return self.atlas_vox2ras @ scale
-
-    @property
-    def affine(self) -> tx.Optional[np.ndarray]:
-        """The `(4, 4)` linear transform the morph records, if any."""
-        xform = None if self.struct is None else self.struct.xform
-        return None if xform is None else xform.matrix
 
     # --- chain --------------------------------------------------------
 
@@ -258,7 +226,10 @@ class M3zMorph(
 
     def _build_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
         struct = self.struct
-        ras2node = RASToVoxel(matrix=np.linalg.inv(self.node_vox2ras)[:3])
+        # Node `n` is atlas voxel `n * spacing` (`GCAMsampleMorph`).
+        scale = np.diag([float(struct.spacing)] * 3 + [1.0])
+        node2ras = struct.atlas_geometry.vox2ras @ scale
+        ras2node = RASToVoxel(matrix=np.linalg.inv(node2ras)[:3])
         options = dict(
             field=struct.positions,
             order=InterpolationOrder.linear,
@@ -270,7 +241,7 @@ class M3zMorph(
         return (
             ras2node,
             _xforms.CoordinatesField(input=voxel, output=voxel, **options),
-            VoxelToRAS(matrix=self.image_vox2ras[:3]),
+            VoxelToRAS(matrix=struct.image_geometry.vox2ras[:3]),
         )
 
     # --- to -----------------------------------------------------------
@@ -398,17 +369,9 @@ class M3zMorph(
 
 
 def _gunzip_head(content: bytes) -> bytes:
-    """Decompress as much of a gzip stream as the bytes allow."""
+    """Decompress the start of a gzip stream, as far as `_SNIFF_SIZE`."""
     try:
-        return zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(content)
+        stream = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        return stream.decompress(content, _SNIFF_SIZE)
     except zlib.error:
         return b""
-
-
-def _reject(error: tx.Union[bool, tx.Type[Exception]], message: str) -> float:
-    """Return `Confidence.NO`, or raise if the caller asked for it."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error(message)
-    return Confidence.NO

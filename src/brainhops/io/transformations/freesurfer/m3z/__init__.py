@@ -20,7 +20,10 @@ The layout is that of `__m3zRead` and `__m3zWrite` in FreeSurfer's
 `utils/gcamorph.cpp`; MATLAB's `mris_read_m3z.m` and `surfa`
 (`surfa/io/fsio.py`, `surfa/io/utils.py`) agree with it. A `.m3z` file
 is gzipped, a `.m3d` file is not (FreeSurfer gzips a morph whose name
-contains `.m3z`). Every value is big-endian.
+contains `.m3z`). Every value is big-endian, whatever the machine that
+wrote it: FreeSurfer writes and reads through `znzwriteInt`,
+`znzwriteFloat`, `znzreadInt`, ... (`utils/fio.cpp`), which byte-swap
+on little-endian hosts.
 
 ### 1. Header
 
@@ -109,8 +112,16 @@ atlas RAS --(node vox2ras)^-1--> node voxels --positions--> source voxels
   condition is `nearest`, which matches inside the last half-cell where
   FreeSurfer clamps, and extends the field beyond it.
 
-`M3zMorph.struct` keeps the rest: the original positions, the GCA node
-indices, the labels, the linear transform, `exp_k` and the file names.
+`M3zMorph.struct`, an
+[`M3zStruct`][brainhops.io.transformations.freesurfer.m3z.M3zStruct],
+keeps the content of the file, whose members can be queried:
+
+```python
+morph.struct.spacing                  # distance between nodes
+morph.struct.atlas_geometry.vox2ras   # atlas voxel-to-RAS
+morph.struct.image_geometry.vox2ras   # source voxel-to-RAS
+morph.struct.xform.matrix             # the linear transform, if any
+```
 
 ## Writing
 

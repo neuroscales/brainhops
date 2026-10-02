@@ -65,6 +65,13 @@ MATRIX_STRLEN = 4 * 4 * 100
 _FNAME_LEN = 512
 """Length of the file name buffer of a volume geometry."""
 
+# Every value is big-endian, whatever the machine. `__m3zWrite` writes
+# through `znzwriteInt`/`znzwriteFloat`/`znzwriteLong` (FreeSurfer's
+# `utils/fio.cpp`), which byte-swap on little-endian hosts
+# (`#if (BYTE_ORDER == LITTLE_ENDIAN)`) and write as is on big-endian
+# ones; `__m3zRead` reads through `znzreadInt`/`znzreadFloat`, which
+# swap back the same way. A morph is therefore always big-endian.
+
 # version (float), width, height, depth, spacing (int), exp_k (float)
 _HEADER = _struct.Struct(">f4if")
 
@@ -207,57 +214,77 @@ class M3zXform(Magic, frozen=True, repr=HIDE_IF_NONE):
 
 class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
     """
-    The content of a morph file.
+    The content of a morph file, as `M3zMorph.struct` holds it.
 
     The node arrays are indexed by node `[x, y, z]`, the order in which
     FreeSurfer writes them (x slowest), which is the F order of the node
     grid: `positions[i, j, k]` is the node at column `i`, row `j` and
     slice `k`. Equality is identity, since the arrays are large.
+
+    Attributes
+    ----------
+    version : float
+        The file version, always `1.0`.
+    spacing : int
+        The distance between nodes, in atlas voxels: node `n` is atlas
+        voxel `n * spacing`.
+    exp_k : float
+        The exponent of the morph's area-preserving penalty.
+    original : (W, H, D, 3) float32 array
+        The node positions before the non-linear registration
+        (`origx, origy, origz`), in the units of `positions`.
+    positions : (W, H, D, 3) float32 array
+        The node positions (`x, y, z`), in source voxels (`GCAM_VOX`)
+        or source scanner RAS (`GCAM_RAS`).
+    index : (W, H, D, 3) int32 array
+        The GCA node each node maps to (`xn, yn, zn`).
+    image : M3zGeometry or None
+        The geometry of the source image (`TAG_GCAMORPH_GEOM`), or
+        `None` if the file has no such tag.
+    atlas : M3zGeometry or None
+        The geometry of the atlas, the target (`TAG_GCAMORPH_GEOM`), or
+        `None` if the file has no such tag.
+    type : int or None
+        `GCAM_VOX` or `GCAM_RAS` (`TAG_GCAMORPH_TYPE`), or `None` if the
+        file has no such tag, in which case positions are voxels.
+    labels : (W, H, D) int32 array or None
+        The label of each node (`TAG_GCAMORPH_LABELS`).
+    xform : M3zXform or None
+        The linear transform the morph records (`TAG_MGH_XFORM`); its
+        `(4, 4)` matrix is `xform.matrix`.
+    tags : tuple of int
+        The tags, in the order the file stores them.
+    trailing : bytes
+        Bytes that follow a tag FreeSurfer does not know, verbatim.
+    shape : (int, int, int)
+        Read-only: the shape of the node grid, `(W, H, D)`.
+    coordinates : int
+        Read-only: `GCAM_VOX` or `GCAM_RAS`, the units of the positions.
+    image_geometry : M3zGeometry
+        Read-only: `image`, or FreeSurfer's default geometry if `None`.
+        Its voxel-to-scanner-RAS matrix is `image_geometry.vox2ras`.
+    atlas_geometry : M3zGeometry
+        Read-only: `atlas`, or FreeSurfer's default geometry if `None`.
+        Its voxel-to-scanner-RAS matrix is `atlas_geometry.vox2ras`.
+    invalid : (W, H, D) bool array
+        Read-only: the nodes FreeSurfer marks invalid
+        (`GCAM_POSITION_INVALID`), whose positions and original
+        positions are all zero.
     """
 
     version: float = GCAM_VERSION
-    """The file version, always 1."""
-
     spacing: int = 1
-    """The distance between nodes, in voxels of the atlas."""
-
     exp_k: float = 20.0
-    """The exponent of the morph's area-preserving penalty."""
-
     original: tx.Optional[np.ndarray] = field(default=None, repr=False)
-    """`(W, H, D, 3)` float32: the node positions before the non-linear
-    registration (`origx, origy, origz`), in the units of `positions`."""
-
     positions: tx.Optional[np.ndarray] = field(default=None, repr=False)
-    """`(W, H, D, 3)` float32: the node positions (`x, y, z`), in source
-    voxels (`GCAM_VOX`) or source scanner RAS (`GCAM_RAS`)."""
-
     index: tx.Optional[np.ndarray] = field(default=None, repr=False)
-    """`(W, H, D, 3)` int32: the GCA node each node maps to (`xn, yn,
-    zn`)."""
-
     image: tx.Optional[M3zGeometry] = None
-    """The geometry of the source image (`TAG_GCAMORPH_GEOM`)."""
-
     atlas: tx.Optional[M3zGeometry] = None
-    """The geometry of the atlas, the target (`TAG_GCAMORPH_GEOM`)."""
-
     type: tx.Optional[int] = None
-    """`GCAM_VOX` or `GCAM_RAS` (`TAG_GCAMORPH_TYPE`), or `None` if the
-    file has no such tag, in which case positions are voxels."""
-
     labels: tx.Optional[np.ndarray] = field(default=None, repr=False)
-    """`(W, H, D)` int32: the label of each node
-    (`TAG_GCAMORPH_LABELS`)."""
-
     xform: tx.Optional[M3zXform] = None
-    """The linear transform the morph records (`TAG_MGH_XFORM`)."""
-
     tags: tx.Tuple[int, ...] = ()
-    """The tags, in the order the file stores them."""
-
     trailing: bytes = field(default=b"", repr=False)
-    """Bytes that follow a tag FreeSurfer does not know, verbatim."""
 
     @property
     def shape(self) -> _3Ints:
