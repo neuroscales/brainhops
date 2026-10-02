@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.magic import Magic, fields
 
 # core
-from brainhops._core.path import FileOrContentLike, Path, PathLike
+from brainhops._core.path import FileOrContentLike, Path, PathLike, exists
 from brainhops._core.peek import peekable_lines
 
 # io
@@ -16,7 +16,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
     TextFileParserWriter,
-    _exists,
 )
 
 # The first line of an LTA file, once comments are stripped: the type of
@@ -121,7 +120,7 @@ class LTAParser(Magic, TextFileParserWriter):
             # The one place a `str` may hold content rather than a path:
             # this is what `from_` always did. Multi-line content is too
             # long a name to look up, so it is content, not a missing file.
-            if not _exists(Path(other)):
+            if not exists(other):
                 return cls.from_text(other)
             other = Path(other)
         if isinstance(other, (PathLike, bytes, bytearray)) or hasattr(

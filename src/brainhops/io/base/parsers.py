@@ -2,7 +2,6 @@
 write itself, and the errors they raise."""
 
 # stdlib
-import errno
 from collections.abc import Iterable
 
 # dependencies
@@ -12,24 +11,6 @@ import typing_extensions as tx
 from brainhops._core import path, peek
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.specs import SourceSpec
-
-
-def _exists(filename: path.PathLike) -> bool:
-    """
-    Whether a file exists.
-
-    A name too long for the file system to look up names no file. Such
-    a "name" is usually file content handed over where a path was
-    expected, and is reported as a missing file rather than as an
-    `OSError` from deep inside `stat`.
-    """
-    try:
-        return filename.exists()
-    except OSError as e:
-        if e.errno == errno.ENAMETOOLONG:
-            return False
-        raise
-
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -343,7 +324,7 @@ class FileSniffer:
             filename = path.Path(filename)
 
         if isinstance(filename, path.PathLike):
-            if not _exists(filename):
+            if not path.exists(filename):
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -643,7 +624,7 @@ class FileParser(FileSniffer):
         if isinstance(filename, str):
             filename = path.Path(filename)
 
-        if not _exists(filename):
+        if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open(cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
