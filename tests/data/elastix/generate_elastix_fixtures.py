@@ -114,7 +114,7 @@ def transform_map(ndim: int, name: str, params: list, **extra) -> dict:
 
 
 def bspline_map(
-    ndim: int, order: int, seed: int, grid_size: tuple = (10, 11, 12)
+    ndim: int, degree: int, seed: int, grid_size: tuple = (10, 11, 12)
 ) -> dict:
     """A B-spline whose valid region covers the fixed grid.
 
@@ -146,7 +146,7 @@ def bspline_map(
         GridSpacing=fmt(grid_spacing),
         GridOrigin=fmt(grid_origin.round(6).tolist()),
         GridDirection=fmt(column_major(direction)),
-        BSplineTransformSplineOrder=str(order),
+        BSplineTransformSplineOrder=str(degree),
         UseCyclicTransform="false",
     )
 

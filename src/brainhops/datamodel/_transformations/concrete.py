@@ -19,6 +19,7 @@ from numbers import Integral, Real
 import typing_extensions as tx
 
 # core
+from brainhops._core.bsplines import refuse_order
 from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
 
 # api
@@ -156,7 +157,7 @@ class TransformationField(ConcreteTransformation):
     # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "degree", "bound", "coeff"
 
     # --- attributes ---------------------------------------------------
 
@@ -165,9 +166,9 @@ class TransformationField(ConcreteTransformation):
         tx.Doc("An array of shape `(*shape, ndim)`."),
     ] = None
 
-    order: tx.Annotated[
-        InterpolationOrder, tx.Doc("The spline interpolation order")
-    ] = InterpolationOrder.linear
+    degree: tx.Annotated[InterpolationOrder, tx.Doc("The spline degree")] = (
+        InterpolationOrder.linear
+    )
 
     bound: tx.Annotated[
         tx.Union[BoundaryCondition, float],
@@ -189,6 +190,14 @@ class TransformationField(ConcreteTransformation):
             """
         ),
     ] = False
+
+    # --- construction -------------------------------------------------
+
+    def __new__(cls, *args, **kwargs) -> tx.Self:
+        # `degree` was called `order` before #283; a field has no memory
+        # order of its own, so an integer `order` can only mean `degree`.
+        refuse_order(kwargs)
+        return super().__new__(cls)
 
 
 class DisplacementField(TransformationField):
@@ -222,7 +231,7 @@ class CartesianField(CoordinatesField):
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("shape",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "degree", "bound", "coeff"
 
     # --- attributes ---------------------------------------------------
 

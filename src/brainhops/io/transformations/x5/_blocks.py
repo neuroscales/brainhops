@@ -69,8 +69,8 @@ _DENSE_SUBTYPES = (None, "densefield", "dense")
 _BSPLINE_SUBTYPES = ("bspline", "b-spline")
 """`SubType` values of a field of B-spline coefficients."""
 
-_BSPLINE_ORDER = 3
-"""The order of an X5 B-spline: nitransforms evaluates only cubics."""
+_BSPLINE_DEGREE = 3
+"""The degree of an X5 B-spline: nitransforms evaluates only cubics."""
 
 _KINDS = ("space",) * _NDIM + ("vector",)
 
@@ -83,8 +83,8 @@ _KINDS = ("space",) * _NDIM + ("vector",)
 class _X5RASDisplacements(_xforms.ImmutableSequence):
     """A field of RAS displacements on a voxel grid, as a chain."""
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -99,7 +99,7 @@ class _X5RASDisplacements(_xforms.ImmutableSequence):
             transformations=ras_displacement_chain(
                 vectors,
                 vox2ras,
-                order=cls.order,
+                degree=cls.degree,
                 bound=cls.bound,
                 coeff=cls.coeff,
             )
@@ -159,7 +159,7 @@ class X5BSplineField(_X5RASDisplacements):
     | `voxel2ras`    | the knot grid back to RAS world                  |
     """
 
-    order: tx.ClassVar[int] = _BSPLINE_ORDER
+    degree: tx.ClassVar[int] = _BSPLINE_DEGREE
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.zeros
     coeff: tx.ClassVar[bool] = True
 
@@ -405,7 +405,7 @@ def transformation_to_nodes(
       `DisplacementField` and an affine) is one `nonlinear` node that
       stores `displacements`.
     - The same chain whose field holds cubic spline coefficients
-      (`coeff`, order 3, zero boundary), such as an
+      (`coeff`, degree 3, zero boundary), such as an
       [`X5BSplineField`][], is one `nonlinear` `bspline` node that
       stores `coefficients`.
     - A field of RAS coordinates (an [`X5CoordinatesField`][], an SPM
@@ -488,10 +488,10 @@ def _encode_bspline(
     _check_ras(xform, "B-spline field")
     what = "An X5 B-spline"
     field = chain[1]
-    if int(field.order) != _BSPLINE_ORDER:
+    if int(field.degree) != _BSPLINE_DEGREE:
         raise UnrepresentableTransformationError(
-            f"{what} is cubic, and this field is a spline of order "
-            f"{int(field.order)}."
+            f"{what} is cubic, and this field is a spline of degree "
+            f"{int(field.degree)}."
         )
     if not _is_zero_bound(field.bound):
         raise UnrepresentableTransformationError(

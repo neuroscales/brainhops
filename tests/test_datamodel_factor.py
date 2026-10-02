@@ -359,7 +359,7 @@ def _widened_chain() -> Sequence:
     embed[2, 3], embed[3, 3] = 1.0, 0.5
     rng = np.random.default_rng(0)
     warp = DisplacementField(
-        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, order=1, bound="reflect"
+        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, degree=1, bound="reflect"
     )
     sub = SubspaceTransformation(
         transformation=warp,

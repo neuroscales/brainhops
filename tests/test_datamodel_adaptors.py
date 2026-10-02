@@ -1331,7 +1331,7 @@ def _image_4d() -> SingleScaleImage:
 
 
 def _reference_4d(
-    image: SingleScaleImage, warp: Sequence, order: int
+    image: SingleScaleImage, warp: Sequence, degree: int
 ) -> np.ndarray:
     # The per-time-point 3D reference: reslice each spatial volume through
     # the 3D warp on the image's own grid.
@@ -1350,7 +1350,7 @@ def _reference_4d(
     ref = np.empty(shape)
     for t in range(shape[3]):
         ref[..., t] = pull(
-            data[..., t], coords3, order=order, bound="reflect", coeff=False
+            data[..., t], coords3, degree=degree, bound="reflect", coeff=False
         )
     return ref
 
@@ -1362,20 +1362,20 @@ def test_4d_reslice_through_a_3d_warp_field_matches_reference() -> None:
     # coordinate is carried through untouched.
     image = _image_4d()
     warp = _spatial_warp()
-    got = np.asarray(image(warp).reslice(image, order=1).data)
-    ref = _reference_4d(image, warp, order=1)
+    got = np.asarray(image(warp).reslice(image, degree=1).data)
+    ref = _reference_4d(image, warp, degree=1)
     np.testing.assert_allclose(got, ref, atol=1e-12)
 
 
-def test_4d_reslice_through_a_3d_warp_field_order3() -> None:
-    # T1, at a higher spline order. The tolerance is looser, because the
+def test_4d_reslice_through_a_3d_warp_field_degree3() -> None:
+    # T1, at a higher spline degree. The tolerance is looser, because the
     # boundary prefilter runs over the whole 4D array once here and per
     # volume in the reference.
     image = _image_4d()
     warp = _spatial_warp()
-    got = np.asarray(image(warp).reslice(image, order=3).data)
-    ref = _reference_4d(image, warp, order=3)
-    # The tolerance is loose because the order-3 prefilter runs over the
+    got = np.asarray(image(warp).reslice(image, degree=3).data)
+    ref = _reference_4d(image, warp, degree=3)
+    # The tolerance is loose because the degree-3 prefilter runs over the
     # whole 4D array once here and per volume in the reference, which couples
     # the boundary time points. The interior agrees far more closely.
     np.testing.assert_allclose(got, ref, rtol=5e-3, atol=5e-3)
@@ -1408,7 +1408,7 @@ def test_3d_affine_applied_to_a_4d_image_via_reslice() -> None:
         output=RASmm(),
     )
     warp_aff.matrix[:, 3] = [0.5, 0.0, 0.0]
-    out = image(warp_aff).reslice(image, order=1)
+    out = image(warp_aff).reslice(image, degree=1)
     assert np.asarray(out.data).shape == np.asarray(image.data).shape
 
 
@@ -1428,7 +1428,7 @@ def test_own_geometry_reslice_is_exact_and_never_inverts_a_field(
     image = _image_4d()
     warp = _spatial_warp()
     warped = image(warp)
-    got = np.asarray(warped.reslice(warped, order=1).data)
+    got = np.asarray(warped.reslice(warped, degree=1).data)
     np.testing.assert_array_equal(got, np.asarray(image.data))
 
 

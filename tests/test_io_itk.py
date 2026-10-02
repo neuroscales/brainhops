@@ -203,7 +203,7 @@ def test_versor_tolerates_a_rounded_unit_versor() -> None:
 
 def test_displacement_blocks_are_lps_to_lps_chains() -> None:
     pytest.importorskip("h5py")
-    for name, order, coeff in [
+    for name, degree, coeff in [
         ("itk_displacement3d.h5", 1, False),
         ("itk_bspline3d.h5", 3, True),
     ]:
@@ -214,7 +214,7 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
             block.displacement,
             block.voxel2lps,
         ]
-        assert block.order == order
+        assert block.degree == degree
         assert block.coeff == coeff
         assert block.displacement.field is block.field
         assert block.field.shape[-1] == 3
@@ -458,7 +458,7 @@ def test_warp_block_computes(name: str) -> None:
     )
     assert isinstance(result[-1], xforms.DisplacementField)
     assert np.asarray(result[-1].field).shape == np.asarray(block.field).shape
-    assert result[-1].order == block.order
+    assert result[-1].degree == block.degree
     assert result[-1].coeff == block.coeff
     assert result.input == block.input
     assert result.output == block.output

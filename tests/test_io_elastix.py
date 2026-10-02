@@ -304,12 +304,12 @@ def test_euler_center_and_order_are_read() -> None:
     assert zyx.compute_zyx is True
 
 
-@pytest.mark.parametrize("order", [1, 2, 3])
-def test_bspline_order(order: int) -> None:
-    name = "bspline3d" if order == 3 else f"bspline3d_order{order}"
+@pytest.mark.parametrize("degree", [1, 2, 3])
+def test_bspline_degree(degree: int) -> None:
+    name = "bspline3d" if degree == 3 else f"bspline3d_order{degree}"
     block = io.load(FILES[name])[0]
-    assert block.order == order
-    assert block.displacement.order == order
+    assert block.degree == degree
+    assert block.displacement.degree == degree
     assert block.displacement.coeff is True
 
 
