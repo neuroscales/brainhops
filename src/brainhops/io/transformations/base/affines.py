@@ -42,3 +42,18 @@ class LPSToVoxel(_xforms.Affine):
     _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
 
     _reverseof: tx.ClassVar[type] = VoxelToLPS
+
+
+class RASToRAS(_xforms.Affine):
+    """
+    Affine transformation from RAS space to RAS space.
+
+    A world-to-world affine, such as a registration result that maps
+    the world coordinates of one image to those of another. It is a
+    data model of its own, not a plain `Affine`, so that a plain affine,
+    whose endpoints may be anything, is never written to a format that
+    can only store a RAS-to-RAS matrix.
+    """
+
+    _input: _systems.CoordinateSystem = _systems.RASmm()
+    _output: _systems.CoordinateSystem = _systems.RASmm()

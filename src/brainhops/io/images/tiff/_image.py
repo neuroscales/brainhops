@@ -187,39 +187,6 @@ def _origin(
     return out
 
 
-def _level_transformation(
-    axes: tx.Sequence[Axis],
-    scales: tx.Mapping[str, tx.Tuple[float, tx.Any]],
-    factors: tx.Sequence[float],
-    origin: tx.Mapping[str, float],
-) -> Transformation:
-    """
-    The pixel-to-physical transformation of one level of a pyramid.
-
-    A level downsampled by `f` along an axis has pixels `f` times as large
-    as the base level's, and covers the same extent: the edges of the
-    first and last pixels coincide. So its pixel `i` is centred on the
-    base level's (fractional) pixel `f * i + (f - 1) / 2`, and lands at
-    `size * (f * i + (f - 1) / 2) + origin`.
-    """
-    level_scales = {}
-    translation = []
-    for axis, factor in zip(axes, factors):
-        size, unit = scales.get(axis.name, (1.0, None))
-        level_scales[axis.name] = (size * factor, unit)
-        translation.append(
-            size * (factor - 1) / 2 + origin.get(axis.name, 0.0)
-        )
-    scaling = raster.raster_transformations(axes, level_scales)[0]
-    if not any(translation):
-        return scaling
-    n = len(axes)
-    matrix = np.zeros((n, n + 1))
-    matrix[:, :-1] = np.diag(np.asarray(scaling.scale, dtype=float))
-    matrix[:, -1] = translation
-    return Affine(matrix=matrix, input=scaling.input, output=scaling.output)
-
-
 def _geometry(
     codes: str,
     base_shape: tx.Sequence[int],
@@ -251,7 +218,7 @@ def _geometry(
                 f"A pyramid level is downsampled along the non-spatial "
                 f"axis {axis.name!r}, which cannot be placed in space."
             )
-    return _level_transformation(
+    return raster.level_transformation(
         axes, scales, factors, _origin(axes, scales, metadata, origin)
     )
 

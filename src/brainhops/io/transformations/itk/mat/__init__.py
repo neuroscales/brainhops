@@ -42,6 +42,8 @@ the fixed parameters whatever its name; both must be column vectors. A
 file with several blocks repeats the pair, so the same name may appear
 more than once. A chain written from a `CompositeTransform` starts with a
 pair for the composite itself, which only points to the blocks after it.
+ITK applies the blocks of a composite last to first, so the reader lists
+them in reverse file order (see "Composite files" below).
 
 ### 2. Variable header
 
@@ -154,9 +156,22 @@ above are those of ANTs: LPS millimetres, and fixed to moving.
   transform: it is `io.load("file.mat").inverse()` (or `~`). ANTs does not
   invert a warp this way; it writes the inverse warp to its own file.
 - **Composite files.** Inside one ITK file holding a `CompositeTransform`
-  (`<prefix>Composite.h5`), ITK lists the blocks the other way round: it
-  applies the last block of the file first. That is why the writer does
-  not write chains.
+  (`<prefix>Composite.h5`), ITK lists the blocks the other way round from
+  `-t`: the file holds the header, then the transform queue front to
+  back, and `CompositeTransform::TransformPoint` applies the queue back
+  to front -- a file `[Composite, T0, T1]` maps `x` to `T0(T1(x))`. Every
+  ITK reader here (`.h5`, `.tfm` and `.mat`) therefore lists the blocks
+  of a composite in reverse file order, which is the order they apply
+  in: that file reads as `Sequence([T1, T0])`, and
+  `antsApplyTransforms -t <prefix>Composite.h5` is the same as
+  `-t T1 -t T0`. A file that holds several blocks but no
+  `CompositeTransform` header is a list of separate transforms, which
+  ITK does not compose. The reader loads one of them: the first, as
+  SimpleITK's `ReadTransform` does, with a warning that the file holds
+  several, or the one at `position=`
+  (`MatTransform.from_file(path, position=1)`). A composite file holds a
+  single transform, the composite, at position 0. The `.mat` writer writes a
+  single block, as ANTs does, and refuses chains.
 """
 
 __all__ = ["MatTransform", "MatTransformParser"]
