@@ -165,11 +165,13 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
         """
         return self._finest.compute(mode, simplify=simplify, factor=factor)
 
-    def inverse(self, compute: bool = False) -> tx.Self:
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         scales = self.scales or []
         return replace(
             self,
-            scales=[scale.inverse(compute) for scale in scales],
+            scales=[
+                scale.inverse(compute=compute, **kwargs) for scale in scales
+            ],
             input=self.output,
             output=self.input,
         )

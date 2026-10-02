@@ -2,9 +2,9 @@
 Regression tests: io affines accept the `inverse()` signature of
 `Transformation`.
 
-`Sequence.inverse` forwards `compute` (and any keyword) to every child,
-so an io affine whose override took no argument broke the inverse of
-any sequence that held it -- an SPM `y_` field among them.
+`Sequence.inverse` forwards `compute` and the options of `compute()` to
+every child, so an io affine whose override took no argument broke the
+inverse of any sequence that held it -- an SPM `y_` field among them.
 """
 
 import numpy as np
