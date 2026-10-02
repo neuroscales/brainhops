@@ -58,11 +58,17 @@ from .concrete import (
 )
 from .errors import ConversionError
 from .inverse import Inverse
-from .meta import Bijection, Projection, SubspaceTransformation
+from .meta import (
+    Bijection,
+    Projection,
+    SubspaceTransformation,
+    _same_axes,
+)
 from .multiscale import MultiscaleField
 from .sequence import Sequence, _unnest
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
+from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
 NUMERIC = SimplifyPolicy.numeric
@@ -400,29 +406,6 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     if isinstance(first, Inverse) and first.forward is second:
         return True
     return False
-
-
-def _same_axes(t: SubspaceTransformation) -> bool:
-    # Whether a subspace reads and writes the same axes, in the same
-    # order -- i.e. whether it embeds its inner transform without also
-    # reindexing the coordinates.
-    if t.input_axes is None and t.output_axes is None:
-        return True
-    if t.input_axes is None or t.output_axes is None:
-        return False
-    return list(t.input_axes) == list(t.output_axes)
-
-
-def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
-    # Carry the endpoints a wrapper declared onto the transform that
-    # replaces it. Only the declared ones are read, so a derived endpoint
-    # stays derived.
-    edits = {}
-    if like._input is not None:
-        edits["input"] = like._input
-    if like._output is not None:
-        edits["output"] = like._output
-    return t.to(**edits) if edits else t
 
 
 def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:

@@ -69,6 +69,23 @@ def boundary_disagrees(
     return systems_disagree(first.output, second.input)
 
 
+def with_endpoints(
+    t: "Transformation", like: "Transformation"
+) -> "Transformation":
+    """Carry the endpoints `like` declares onto `t`, which replaces it.
+
+    Only the *declared* endpoints are read, so an endpoint `like` derives
+    stays derived, and `t` is returned as is when `like` declares none --
+    the same object, so a lazy inverse that names it still cancels with it.
+    """
+    edits = {}
+    if like._input is not None:
+        edits["input"] = like._input
+    if like._output is not None:
+        edits["output"] = like._output
+    return t.to(**edits) if edits else t
+
+
 def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
     """A plain list of integer axis indices (empty for `None`).
 

@@ -240,6 +240,17 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return obj
 
 
+def _same_axes(t: SubspaceTransformation) -> bool:
+    # Whether a subspace reads and writes the same axes, in the same
+    # order -- i.e. whether it embeds its inner transform without also
+    # reindexing the coordinates.
+    if t.input_axes is None and t.output_axes is None:
+        return True
+    if t.input_axes is None or t.output_axes is None:
+        return False
+    return list(t.input_axes) == list(t.output_axes)
+
+
 def _subsystem(
     system: tx.Optional[CoordinateSystem] = None,
     index: tx.Optional[tx.Sequence[Integral]] = None,
