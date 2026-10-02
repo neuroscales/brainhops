@@ -33,7 +33,12 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 h5py = ["h5py"]
 itk = ["brainhops[h5py]"]
 x5 = ["brainhops[h5py]"]
+# MATLAB v7.3 (HDF5) .mat matrices; text, .npy, .npz and v4-v7 .mat need
+# only numpy and scipy.
+matrix = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
+pillow = ["pillow"]
+tiff = ["tifffile"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
@@ -61,6 +66,8 @@ zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
 io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]",
 ]
 
@@ -71,6 +78,8 @@ test = [
     "brainhops[dask]",
     "brainhops[h5py]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]"
 ]
 

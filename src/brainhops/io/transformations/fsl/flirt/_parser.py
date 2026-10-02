@@ -13,6 +13,7 @@ from brainhops._core.typing import ArrayLike
 from brainhops.datamodel.images import Image
 
 # io
+from brainhops.io.base.arrays import ArrayContainerError, read_text_rows
 from brainhops.io.base.nifti import _NiftiObject
 from brainhops.io.base.parsers import (
     Confidence,
@@ -108,21 +109,24 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
 
 
 def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:
-    """Read whitespace-separated float rows, skipping blank lines."""
+    """Read whitespace-separated float rows, skipping blank lines.
+
+    The parsing is shared with the other plain-matrix readers
+    (`brainhops.io.base.arrays`). FLIRT writes whitespace-separated
+    values and no comments, so only those are accepted here. A
+    non-numeric value makes the whole content unreadable (`[]`).
+    """
     if isinstance(lines, peekable_lines):
         lines = list(lines)
-    rows = []
+    text_lines = []
     for line in lines:
         if not isinstance(line, str):
             break
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rows.append([float(value) for value in line.split()])
-        except ValueError:
-            return []
-    return rows
+        text_lines.append(line)
+    try:
+        return read_text_rows(text_lines, comments=None, separators=r"\s+")
+    except ArrayContainerError:
+        return []
 
 
 def _looks_like_affine(rows: tx.List[tx.List[float]]) -> bool:
