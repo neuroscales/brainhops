@@ -261,13 +261,14 @@ def test_an_affine_round_trips_through_save(tmp_path) -> None:  # noqa: ANN001
 
 def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: ANN001
     """
-    A field is written with a displacement-vector intent code, so it is
-    read back as a field rather than as a plain image.
+    A field of coordinates is written with the `VECTOR` intent code, so
+    it is read back as a field of coordinates rather than as a plain
+    image -- or as displacements, which `DISPVECT` would claim.
     """
     field = np.zeros((4, 5, 6, 1, 3), dtype="float32")
     field[..., 0] = 1.0
     img = nb.Nifti1Image(field, np.eye(4))
-    img.header["intent_code"] = 1006
+    img.header["intent_code"] = 1007
     source = tmp_path / "field.nii"
     nb.save(img, str(source))
 
@@ -280,7 +281,9 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
     reloaded = io.transformations.load(target)
     assert isinstance(reloaded, NiftiRASCoordinatesField)
     assert np.array_equal(np.asarray(reloaded.field), field)
-    assert int(nb.load(str(target)).header["intent_code"]) == 1006
+    header = nb.load(str(target)).header
+    assert int(header["intent_code"]) == 1007
+    assert header.get_intent()[2] == "Mapping"
 
 
 def test_a_4d_field_is_written_5d(tmp_path) -> None:  # noqa: ANN001
