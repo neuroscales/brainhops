@@ -71,6 +71,30 @@ wrp = io.transformations.load("warp.nii.gz", hint="spmy")
         src = io.images.load("source.nii.gz")
         ```
 
+## Save data to files
+
+`save` writes an object in the format its file name calls for. An object
+read from a file can be written back, or written in another format that
+holds the same kind of object:
+
+```python
+img = io.images.load("source.nii.gz")
+io.save(img, "copy.nii.gz")  # -> NIfTI
+io.save(img, "copy.zarr")  # -> Zarr
+```
+
+An image computed in memory is written the same way, since NIfTI and Zarr
+both hold a plain image. `save` does not change what an object means to
+fit a format: a general `Affine` is not written as the voxel-to-RAS
+affine a NIfTI file holds. Build that format explicitly when it is what
+you mean:
+
+```python
+from brainhops.io.transformations.nifti import NiftiVoxelToRAS
+
+NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+```
+
 ## Images Are Transformed Arrays
 
 The source and destination images are `NiftiImage` objects, which
