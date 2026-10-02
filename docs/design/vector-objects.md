@@ -104,18 +104,28 @@ explicit cells) cells grouped by piece the same way.
 
 ```python
 class SingleScaleVectors(Vectors):
-    vertices: Optional[ArrayProtocol]          # (N, D) float, native coordinates
-    offsets: Optional[ArrayProtocol] = None    # (P + 1,) CSR pieces over vertices
-    ids: Optional[ArrayProtocol] = None        # (P,) object id of each piece
-    transformations: List[Transformation] = () # native -> world, last preferred
-    vertex_attributes: Dict[str, ArrayProtocol] = {}   # each (N, ...)
-    piece_attributes:  Dict[str, ArrayProtocol] = {}   # each (P, ...)
-    attribute_kinds:   Dict[str, AttributeKind] = {}   # see 4.4
+    # (N, D) float, native coordinates
+    vertices: Optional[ArrayProtocol]
+    # (P + 1,) CSR pieces over vertices
+    offsets: Optional[ArrayProtocol] = None
+    # (P,) object id of each piece
+    ids: Optional[ArrayProtocol] = None
+    # native -> world, last preferred
+    transformations: List[Transformation] = ()
+    # each (N, ...), (P, ...); kinds: see 4.4
+    vertex_attributes: Dict[str, ArrayProtocol] = {}
+    piece_attributes: Dict[str, ArrayProtocol] = {}
+    attribute_kinds: Dict[str, AttributeKind] = {}
 
-class _ExplicitCells(SingleScaleVectors):      # Skeleton, Mesh
-    cells: Optional[ArrayProtocol] = None      # (M, k) int, piece-local or global (below)
-    cell_offsets: Optional[ArrayProtocol] = None  # (P + 1,) CSR pieces over cells
-    cell_attributes: Dict[str, ArrayProtocol] = {}    # each (M, ...)
+
+# base of Skeleton and Mesh
+class _ExplicitCells(SingleScaleVectors):
+    # (M, k) int, indices into the global vertex array
+    cells: Optional[ArrayProtocol] = None
+    # (P + 1,) CSR pieces over cells
+    cell_offsets: Optional[ArrayProtocol] = None
+    # each (M, ...)
+    cell_attributes: Dict[str, ArrayProtocol] = {}
 ```
 
 | Class | A piece is | Cells |
@@ -202,8 +212,10 @@ alike. That refactor is a prerequisite and can land on its own.
 ### 3.3 World coordinates
 
 ```python
-v.world()                 # (N, D') vertices in the preferred world space
-v.world(space="RASmm")    # in the output space of another transformation in the list
+# (N, D') vertices in the preferred world space
+v.world()
+# in the output space of another transformation in the list
+v.world(space="RASmm")
 ```
 
 `world()` is `_apply_to_points(v.transformation, v.vertices)` (§1), so
@@ -219,8 +231,10 @@ another space is `v(T).world()`.
 ### 4.1 Same call, same convention as images
 
 ```python
-img2 = img(T)   # lazy; img2.transformation == T.inverse() @ img.transformation
-v2   = v(T)     # lazy; v2.transformation   == T.inverse() @ v.transformation
+# lazy; img2.transformation == T.inverse() @ img.transformation
+img2 = img(T)
+# lazy; v2.transformation == T.inverse() @ v.transformation
+v2 = v(T)
 ```
 
 `T` maps *new world → current world* (its output matches the current
@@ -411,9 +425,11 @@ field-of-view box) later; that is not required here.
 
 ```python
 class MultiScaleVectors(Vectors, Generic[T]):
-    levels: List[T] = ()                       # finest first
+    # finest first
+    levels: List[T] = ()
     kind: Literal["geometric", "sparse"] = "geometric"
-    transformations: List[Transformation] = () # pyramid -> world, as MultiScaleImage
+    # pyramid -> world, as MultiScaleImage
+    transformations: List[Transformation] = ()
 ```
 
 Each level is a single-scale object with its own transformations (level
@@ -484,7 +500,7 @@ nothing outside the region is read:
 1. map the region to a native-space box (§5.3), and to a range of
    chunks of the store's grid (zarr-vectors `chunk_shape` + grid origin;
    neuroglancer spatial index `grid_shape`/`chunk_size`; multilod octree
-   nodes `chunk_shape × 2^lod` from `grid_origin`);
+   nodes `chunk_shape × 2^level` from `grid_origin`);
 2. read only those chunks and assemble fragments into pieces using the
    object manifests and the cross-chunk strategy (zarr-vectors explicit
    cross-chunk links, or boundary deduplication by coordinate match);
@@ -509,7 +525,9 @@ reading the other chunks' vertices first. For neuroglancer meshes,
 
 ```python
 from brainhops.io import vectors
-v = vectors.load("tracts.trx")          # dispatch via FileBasedVectors registry
+
+# dispatch via FileBasedVectors registry
+v = vectors.load("tracts.trx")
 cls = vectors.sniff("brain.zv")
 vectors.save(v, "tracts.zv")
 ```
