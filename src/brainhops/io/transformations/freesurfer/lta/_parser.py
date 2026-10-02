@@ -5,17 +5,22 @@ from warnings import warn
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import Magic
-
-# externals
-from brainhops._core.path import Path, PathLike
+from bagof.magic import Magic, fields
 
 # core
+from brainhops._core.path import FileOrContentLike, Path, PathLike, exists
 from brainhops._core.peek import peekable_lines
 
-# typing
-_FileLike = tx.Union[tx.IO, PathLike, str]
-_FileOrContentLike = tx.Union[_FileLike, bytes, tx.Iterable[str]]
+# io
+from brainhops.io.base.parsers import (
+    Confidence,
+    SnifferContentError,
+    TextFileParserWriter,
+)
+
+# The first line of an LTA file, once comments are stripped: the type of
+# the transformation, as an integer.
+_FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 
 
 # ----------------------------------------------------------------------
@@ -23,12 +28,22 @@ _FileOrContentLike = tx.Union[_FileLike, bytes, tx.Iterable[str]]
 # ----------------------------------------------------------------------
 
 
-class LTAParser(Magic):
+class LTAParser(Magic, TextFileParserWriter):
     """Mixin that gives a class the ability to sniff, read and write itself
     in LTA format.
 
-    `LTAStruct` and the classes derived from it inherit their `sniff*`,
-    `from_*` and `to_*` methods from this class.
+    `LTAStruct` and the blocks it is made of inherit their `sniff*`,
+    `from_*` and `to_*` methods from this class. It follows the shared
+    parser contract of [`TextFileParserWriter`][]:
+    the front doors are `load`, `save`, `to_bytes` and `to_fileobj`, and
+    every format-specific step is implemented in `sniff_line`,
+    `from_lines` and `to_lines`.
+
+    A struct is read field by field, in declaration order: a field whose
+    type is itself an `LTAParser` reads its own block of lines, and any
+    other field reads one `key = value(s)` line (or one `value(s)` line,
+    in a block that has no keys). Comments (`# ...`) and blank lines are
+    skipped.
     """
 
     _HAS_KEYS = True
@@ -36,10 +51,53 @@ class LTAParser(Magic):
     # --- sniff --------------------------------------------------------
 
     @classmethod
-    def sniff(cls, other: _FileOrContentLike) -> bool:
+    def sniff_line(
+        cls,
+        line: str,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
         """
-        Return whether the content, in any supported form, looks like it
-        is in LTA format.
+        Score how likely a line is to be the first line of an LTA file.
+
+        The first line of an LTA file, once comments are stripped, is its
+        type: `type = <int>`.
+
+        Parameters
+        ----------
+        line : str
+            The first line that is not blank or a comment.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the line is not the first
+            line of an LTA file.
+
+        Returns
+        -------
+        float
+            Confidence that the line opens an LTA file, in `[0, 1]`.
+        """
+        if line and _FIRST_LINE.match(line.split("#", 1)[0].strip()):
+            return Confidence.LIKELY
+        if error:
+            if error is True:
+                error = SnifferContentError
+            raise error(
+                f'Not an LTA file: expected "type = <int>", got {line!r}'
+            )
+        return Confidence.NO
+
+    # --- from ---------------------------------------------------------
+
+    @classmethod
+    def from_(cls, other: FileOrContentLike) -> tx.Self:
+        """
+        Build an object from a file, or from its content.
+
+        !!! warning "Deprecated"
+            Use `load` for a file, a file object or bytes, and
+            `from_text` or `from_lines` for content held in memory.
+            Unlike `load`, `from_` reads a string that names no existing
+            file as LTA content.
 
         Parameters
         ----------
@@ -48,197 +106,33 @@ class LTAParser(Magic):
 
         Returns
         -------
-        bool
-            Whether the content looks like it is in LTA format.
-        """
-        if isinstance(other, str):
-            if Path(other).exists():
-                return cls.sniff_file(other)
-            return cls.sniff_text(other)
-        if isinstance(other, PathLike):
-            return cls.sniff_file(other)
-        if hasattr(other, "read"):
-            return cls.sniff_file(other)
-        if isinstance(other, bytes):
-            return cls.sniff_bytes(other)
-        # otherwise: assume it is an iterable of strings
-        return cls.sniff_lines(other)
-
-    @classmethod
-    def sniff_file(cls, fileobj: _FileLike) -> bool:
-        """
-        Return whether a file (path or file-like object) looks like it
-        is in LTA format.
-
-        Parameters
-        ----------
-        fileobj : str | PathLike | IO
-            Input file.
-
-        Returns
-        -------
-        bool
-            Whether the file looks like it is in LTA format.
-        """
-        if isinstance(fileobj, str):
-            return cls.sniff_file(Path(fileobj))
-        if isinstance(fileobj, PathLike):
-            return cls.sniff_text(fileobj.read_text())
-        # otherwise: assume it is a file-like object open in text mode
-        # TODO: ensure cursor is not moved by this operation
-        return cls.sniff_text(fileobj.read())
-
-    @classmethod
-    def sniff_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> bool:
-        """
-        Return whether bytes look like they are in LTA format.
-
-        Parameters
-        ----------
-        bytes : bytes
-            The byte content to inspect.
-        encoding : str
-            The encoding to use for decoding the input bytes.
-
-        Returns
-        -------
-        bool
-            Whether the content looks like it is in LTA format.
-        """
-        return cls.sniff_text(bytes.decode(encoding))
-
-    @classmethod
-    def sniff_text(cls, text: str) -> bool:
-        """
-        Return whether a string looks like it is in LTA format.
-
-        Parameters
-        ----------
-        text : str
-            The content to inspect.
-
-        Returns
-        -------
-        bool
-            Whether the content looks like it is in LTA format.
-        """
-        first_line = next(peekable_lines(text.splitlines()))
-        if first_line:
-            return cls.sniff_line(first_line)
-        return False
-
-    @classmethod
-    def sniff_line(cls, line: str) -> bool:
-        """
-        Return whether a single line looks like the first line of an
-        LTA file.
-
-        Parameters
-        ----------
-        line : str
-            The line to inspect.
-
-        Returns
-        -------
-        bool
-            Whether the line looks like the first line of an LTA file.
-        """
-        if re.match(r"^type\s*=\s*\d+$", line.strip()):
-            return True
-        return False
-
-    # --- from ---------------------------------------------------------
-
-    @classmethod
-    def from_(cls, other: _FileOrContentLike) -> tx.Self:
-        """
-        Build an object from a file (path, file-like object or iterable
-        of lines).
-
-        Parameters
-        ----------
-        other : str | PathLike | IO | Iterable[str]
-            Input file, or its content.
-
-        Returns
-        -------
         obj
             The parsed object.
         """
+        warn(
+            f"{cls.__name__}.from_() is deprecated: use load() for a file, "
+            f"a file object or bytes, and from_text() or from_lines() for "
+            f"content held in memory.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(other, str):
-            if Path(other).exists():
-                return cls.from_file(Path(other))
-            else:
+            # The one place a `str` may hold content rather than a path:
+            # this is what `from_` always did. Multi-line content is too
+            # long a name to look up, so it is content, not a missing file.
+            if not exists(other):
                 return cls.from_text(other)
-        if isinstance(other, PathLike) or hasattr(other, "read"):
-            return cls.from_file(other)
-        if isinstance(other, bytes):
-            return cls.from_bytes(other)
+            other = Path(other)
+        if isinstance(other, (PathLike, bytes, bytearray)) or hasattr(
+            other, "read"
+        ):
+            return cls.load(other)
         return cls.from_lines(other)
 
     @classmethod
-    def from_file(cls, fileobj: _FileLike) -> tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """
-        Build an object from a file (path or file-like object).
-
-        Parameters
-        ----------
-        fileobj : str | PathLike | IO
-            Input file.
-
-        Returns
-        -------
-        obj
-            The parsed object.
-        """
-        if isinstance(fileobj, str):
-            return cls.from_file(Path(fileobj))
-        if isinstance(fileobj, PathLike):
-            return cls.from_text(fileobj.read_text())
-        # otherwise: assume it is a file-like object open in text mode
-        # TODO: how do I know if it is a text or bytes IO?
-        return cls.from_lines(fileobj)
-
-    @classmethod
-    def from_text(cls, text: str) -> tx.Self:
-        """
-        Build an object from a string in LTA format.
-
-        Parameters
-        ----------
-        text : str
-            The content of an LTA file.
-
-        Returns
-        -------
-        obj
-            The parsed object.
-        """
-        return cls.from_lines(text.splitlines())
-
-    @classmethod
-    def from_bytes(cls, bytes: bytes, encoding: str = "utf-8") -> tx.Self:
-        """
-        Build an object from bytes in LTA format.
-
-        Parameters
-        ----------
-        bytes : bytes
-            The byte content of an LTA file.
-        encoding : str
-            The encoding to use for decoding the input bytes.
-
-        Returns
-        -------
-        obj
-            The parsed object.
-        """
-        return cls.from_text(bytes.decode(encoding))
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
-        """
-        Build an object from an iterable over lines on an LTA files.
+        Build an object from an iterable over lines of an LTA file.
 
         Parameters
         ----------
@@ -250,10 +144,15 @@ class LTAParser(Magic):
         obj
             The parsed object.
         """
+        if kwargs:
+            raise TypeError(
+                f"{cls.__name__}.from_lines() takes no options, but was "
+                f"given {', '.join(sorted(kwargs))}."
+            )
         obj = cls()
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
-        for field in cls.__struct_fields__.values():
+        for field in fields(cls):
             key = field.name if cls._HAS_KEYS else None
             parse = LTAFieldParser(key, field.type)
             setattr(obj, field.name, parse(lines))
@@ -261,70 +160,35 @@ class LTAParser(Magic):
 
     # --- to -----------------------------------------------------------
 
-    def to_file(self, fileobj: tx.Union[tx.IO, PathLike, str]) -> None:
-        """
-        Write the object to a file (path or file-like object).
-
-        Parameters
-        ----------
-        fileobj : str | PathLike | IO
-            Output file.
-
-        Returns
-        -------
-        None
-        """
-        if isinstance(fileobj, str):
-            return self.to_file(Path(fileobj))
-        if isinstance(fileobj, PathLike):
-            return fileobj.write_text(self.to_text())
-        # TODO: how do I know if it is a text or bytes IO?
-        fileobj.write(self.to_text())
-
-    def to_bytes(self, encoding: str = "utf-8") -> bytes:
-        """
-        Convert the object to bytes in LTA format.
-
-        Parameters
-        ----------
-        encoding : str
-            The encoding to use for the output bytes.
-
-        Returns
-        -------
-        bytes
-            The byte representation of the object in LTA format.
-        """
-        return self.to_text().encode(encoding)
-
-    def to_text(self) -> str:
-        """
-        Convert the object to a string in LTA format.
-
-        Returns
-        -------
-        str
-            The string representation of the object in LTA format.
-        """
-        return "\n".join(self.to_lines())
-
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """
         Convert the object to an iterable over lines of an LTA file.
 
-        Additional keyword arguments can be passed to the underlying
-        field formatter.
+        Additional keyword arguments are passed to the underlying field
+        formatter.
 
         Returns
         -------
         Iterator[str]
             An iterable over lines of an LTA file representing the object.
         """
-        for field in self.__struct_fields__.values():
+        for field in fields(type(self)):
             value = getattr(self, field.name)
             key = field.name if self._HAS_KEYS else None
             write = LTAFieldWriter(key, **kwargs)
             yield from write(value)
+
+    def to_text(self, **kwargs) -> str:
+        """
+        Convert the object to a string in LTA format, ending with a
+        newline.
+
+        Returns
+        -------
+        str
+            The string representation of the object in LTA format.
+        """
+        return super().to_text(**kwargs) + "\n"
 
 
 class VolumeInfoParser(LTAParser):
@@ -336,7 +200,9 @@ class VolumeInfoParser(LTAParser):
     """
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Optional[tx.Self]:
+    def from_lines(
+        cls, lines: tx.Iterable[str], **kwargs
+    ) -> tx.Optional[tx.Self]:
         """
         Build a volume-geometry block from an iterable over lines of an
         LTA file.
@@ -363,7 +229,7 @@ class VolumeInfoParser(LTAParser):
         if line != (f"{cls.NAME} volume info"):
             return None
         next(lines)  # consume line
-        return super().from_lines(lines)
+        return super().from_lines(lines, **kwargs)
 
     def to_lines(self, **kwargs) -> tx.Generator[str]:
         """
@@ -382,7 +248,7 @@ class MatrixParser(LTAParser):
     """
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str]) -> tx.Self:
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
         """
         Build the matrix block from an iterable over lines of an LTA
         file.
@@ -427,14 +293,19 @@ class MatrixParser(LTAParser):
         # Return object
         return cls(matrix=tuple(matrix))
 
-    def to_lines(self) -> tx.Iterator[str]:
+    def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Convert the matrix block to an iterable over lines of an LTA
-        file."""
+        file.
+
+        Entries are written at full double precision, so that a matrix
+        survives a round trip unchanged. FreeSurfer writes six decimals,
+        but reads either.
+        """
         dtype = self.dtype
-        fmt = "{:+.6f} {:+.6f}   " if dtype is complex else "{:+.6f}  "
+        fmt = "{:+.15e} {:+.15e}   " if dtype is complex else "{:+.15e}  "
         yield _write_values((int(self.matrix_type), *self.shape))
         for row in self.matrix:
-            yield _write_values(row, sep=0, fmt=fmt)
+            yield _write_values(row, sep=0, fmt=fmt).rstrip()
 
 
 # ----------------------------------------------------------------------
@@ -704,7 +575,7 @@ def _write_key(
     str
 
     """
-    return f"{key:9s} = {_write_values(value, sep, fmt)}"
+    return f"{key:9s} = {_write_values(value, sep, fmt)}".rstrip()
 
 
 def _write_values(

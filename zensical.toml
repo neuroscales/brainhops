@@ -47,6 +47,7 @@ nav = [
         "api/io/transformations/nifti.md",
         {"itk.tfm" = "api/io/transformations/itk-tfm.md"},
         {"itk.h5" = "api/io/transformations/itk-h5.md"},
+        {"itk.mat" = "api/io/transformations/itk-mat.md"},
         {"itk.nifti" = "api/io/transformations/itk-nifti.md"},
         {"freesurfer.lta" = "api/io/transformations/lta.md"},
         {"spm.y" = "api/io/transformations/spmy.md"},

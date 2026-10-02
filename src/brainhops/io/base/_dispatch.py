@@ -13,7 +13,9 @@ __all__ = ["Source", "parse", "sniff"]
 import inspect
 from collections.abc import Iterable
 from io import BytesIO, StringIO
-from os import PathLike, fspath
+from os import DirEntry, PathLike, sep
+from os.path import basename
+from urllib.parse import urlsplit
 
 # dependencies
 import typing_extensions as tx
@@ -128,21 +130,81 @@ class Source:
     @property
     def name(self) -> tx.Optional[str]:
         """The file name, if the input is a named file."""
-        other = self.path
-        if other is None:
-            other = getattr(self.other, "name", None)  # an open file
-        if isinstance(other, PathLike):
-            other = fspath(other)
-        if not isinstance(other, str):
+        if self.path is not None:
+            return _to_filename(self.path)
+        if isinstance(self.other, (str, bytes, bytearray, PathLike)):
+            # Content wrapped with `Source.content`: its text is not a
+            # file name, whatever it looks like.
             return None
-        # Trailing slashes matter for directory-based formats (.zarr)
-        return path.Path(other.rstrip("/")).name
+        return _to_filename(self.other)  # an open file, by its `.name`
 
     def __repr__(self) -> str:
         """Describe the source by its file name, or as plain content when
         it has none."""
         name = self.name
         return f"file {name!r}" if name else "input content"
+
+
+def _to_filename(other: tx.Any) -> tx.Optional[str]:
+    """
+    The base name of the file `other` names, or `None` if it names none.
+
+    A path names its file, and an open file object names the file it was
+    opened from. Content, and a stream with no name, name nothing.
+
+    The name is read from the text of the path, and storage is never
+    touched. `os.fspath` is not used: it raises on a remote path, and
+    downloads a cloud path to a local cache. Every path object we know of
+    gives its location, local or remote, as `str()`.
+
+    A URL names the file at the end of its path. A query and a fragment
+    are not part of that path, so `https://host/x.nii.gz?token=...` names
+    `x.nii.gz`, and the last link of an fsspec chain
+    (`simplecache::s3://...`) is the file.
+    """
+    if isinstance(other, DirEntry):
+        # A directory entry is a local path, but `str()` gives its repr.
+        text = other.path
+    elif isinstance(other, (str, path.PathLike)):
+        text = str(other)
+    else:
+        text = getattr(other, "name", None)
+        if not isinstance(text, str):
+            return None
+    return _base_name(text)
+
+
+def _base_name(text: str) -> str:
+    """The last component of a local path or of the path of a URL."""
+    if "::" in text and "://" in text:
+        # An fsspec chain: the last link is the file, the others are
+        # layers over it (caches, archives).
+        text = text.rsplit("::", 1)[-1]
+    if _has_scheme(text):
+        # The name is in the path of the URL, not in its query or
+        # fragment, which may hold slashes and dots of their own.
+        text = urlsplit(text).path
+        # Trailing slashes matter for directory-based formats (.zarr)
+        return text.rstrip("/").rsplit("/", 1)[-1]
+    return basename(text.rstrip("/" + sep))
+
+
+def _has_scheme(text: str) -> bool:
+    """
+    Whether `text` opens with a URL scheme (`s3:`, `https:`, `file:`).
+
+    A scheme is a letter followed by letters, digits, `+`, `-` or `.`,
+    and is at least two characters long here, so that a Windows drive
+    letter such as `C:` is not read as one.
+    """
+    scheme, colon, _ = text.partition(":")
+    return (
+        bool(colon)
+        and len(scheme) > 1
+        and scheme.isascii()
+        and scheme[0].isalpha()
+        and all(c.isalnum() or c in "+-." for c in scheme)
+    )
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
@@ -674,11 +736,23 @@ def _describe(cls: type) -> str:
     The first paragraph of the class's own docstring, on one line and
     without its final full stop. A docstring inherited from a base class
     describes the base, not this format, so it is not used.
+
+    A data model without a docstring of its own is given one that lists
+    its fields under an `Attributes` heading. A paragraph that opens with
+    a section heading, underlined with dashes, describes nothing, so no
+    description is given.
+
+    `bagof` writes that generated list into the class's own `__doc__`,
+    after the docstring the class was written with, so the two cannot be
+    told apart by where they live -- only by the heading.
     """
     doc = cls.__dict__.get("__doc__")
     if not isinstance(doc, str) or not doc.strip():
         return ""
     paragraph = inspect.cleandoc(doc).split("\n\n", 1)[0]
+    lines = paragraph.splitlines()
+    if len(lines) > 1 and set(lines[1].strip()) == {"-"}:
+        return ""
     return " ".join(paragraph.split()).rstrip(".")
 
 

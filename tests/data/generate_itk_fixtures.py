@@ -127,11 +127,40 @@ def write_euler3d(compute_zyx: bool, name: str) -> None:
     np.save(HERE / f"{name}_expected.npy", expected)
 
 
+def write_generic_affine(ndim: int) -> None:
+    """An affine in the binary MATLAB format ANTs writes its affines in.
+
+    `antsRegistration` writes every linear stage through
+    `itk::MatlabTransformIO`, as `<prefix>0GenericAffine.mat`: an
+    `AffineTransform` with a center of rotation. Every entry of the
+    matrix differs, and the center is away from the origin, so neither a
+    transposed matrix nor a dropped center can go unnoticed.
+
+    The expected array is the compact `(D, D + 1)` affine that ITK itself
+    describes, as for the Euler fixtures.
+    """
+    matrix = np.arange(1, ndim * ndim + 1, dtype=np.float64) / 10
+    matrix = matrix.reshape(ndim, ndim) + np.eye(ndim)
+    transform = sitk.AffineTransform(ndim)
+    transform.SetMatrix(matrix.ravel().tolist())
+    transform.SetTranslation([1.0, 2.0, 3.0][:ndim])
+    transform.SetCenter([4.0, 5.0, 6.0][:ndim])
+    name = f"itk_affine{ndim}d_0GenericAffine"
+    sitk.WriteTransform(transform, str(HERE / f"{name}.mat"))
+
+    expected = np.zeros((ndim, ndim + 1), dtype=np.float64)
+    expected[:, :ndim] = np.asarray(transform.GetMatrix()).reshape(ndim, ndim)
+    expected[:, ndim] = transform.TransformPoint([0.0] * ndim)
+    np.save(HERE / f"{name}_expected.npy", expected)
+
+
 def main() -> None:
     write_displacement_field()
     write_bspline()
     write_euler3d(compute_zyx=False, name="itk_euler3d")
     write_euler3d(compute_zyx=True, name="itk_euler3d_zyx")
+    write_generic_affine(3)
+    write_generic_affine(2)
 
 
 if __name__ == "__main__":

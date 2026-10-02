@@ -37,14 +37,24 @@ def _get_vox2ras(vol_info: LTAStruct.VolumeInfo) -> np.ndarray:
     return _get_phys2ras(vol_info) @ _get_vox2phys(vol_info)
 
 
+# RSA lists the axes of RAS in the order R, S, A (see `RSAmm`), so
+# swapping the last two spatial axes maps either one to the other. The
+# permutation is its own inverse.
+_RAS_RSA = [0, 2, 1, 3]
+
+
+def _rsa2ras(matrix: np.ndarray) -> np.ndarray:
+    """Express an RSA-to-RSA matrix as a RAS-to-RAS one."""
+    return matrix[_RAS_RSA, :][:, _RAS_RSA]
+
+
 def _get_ras2ras(lta: LTAStruct) -> np.ndarray:
     """Compute the ras2ras matrix from the LTA struct."""
     matrix = np.asarray(lta.affine.matrix, dtype=np.float64)
     if lta.type == LTAType.LINEAR_RAS_TO_RAS:
         return matrix
     if lta.type == LTAType.LINEAR_RSA_TO_RSA:
-        # RSA -> RAS = permute first two axes
-        return matrix[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
+        return _rsa2ras(matrix)
     if lta.src is None or lta.dst is None:
         raise ValueError(
             "cannot compute RAS-to-RAS matrix without src and dst volume info"
@@ -73,15 +83,11 @@ def _get_phys2phys(lta: LTAStruct) -> np.ndarray:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
         return dst_vox2phys @ matrix @ np.linalg.inv(src_vox2phys)
-    elif lta.type == LTAType.LINEAR_RAS_TO_RAS:
+    elif lta.type in (LTAType.LINEAR_RAS_TO_RAS, LTAType.LINEAR_RSA_TO_RSA):
         src_phys2ras = _get_phys2ras(lta.src)
         dst_phys2ras = _get_phys2ras(lta.dst)
-        return np.linalg.inv(dst_phys2ras) @ matrix @ src_phys2ras
-    elif lta.type == LTAType.LINEAR_RSA_TO_RSA:
-        # RAS -> RSA = permute first two axes
-        src_phys2rsa = _get_phys2ras(lta.src)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
-        dst_phys2rsa = _get_phys2ras(lta.dst)[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
-        return np.linalg.inv(dst_phys2rsa) @ matrix @ src_phys2rsa
+        ras2ras = _get_ras2ras(lta)
+        return np.linalg.inv(dst_phys2ras) @ ras2ras @ src_phys2ras
     raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
@@ -98,15 +104,10 @@ def _get_vox2vox(lta: LTAStruct) -> np.ndarray:
         src_vox2phys = _get_vox2phys(lta.src)
         dst_vox2phys = _get_vox2phys(lta.dst)
         return np.linalg.inv(dst_vox2phys) @ matrix @ src_vox2phys
-    if lta.type == LTAType.LINEAR_RAS_TO_RAS:
+    if lta.type in (LTAType.LINEAR_RAS_TO_RAS, LTAType.LINEAR_RSA_TO_RSA):
         src_vox2ras = _get_vox2ras(lta.src)
         dst_vox2ras = _get_vox2ras(lta.dst)
-        return np.linalg.inv(dst_vox2ras) @ matrix @ src_vox2ras
-    if lta.type == LTAType.LINEAR_RSA_TO_RSA:
-        # RSA -> RAS = permute first two axes
-        ras2ras = matrix[[1, 0, 2, 3], :][:, [1, 0, 2, 3]]
-        src_vox2ras = _get_vox2ras(lta.src)
-        dst_vox2ras = _get_vox2ras(lta.dst)
+        ras2ras = _get_ras2ras(lta)
         return np.linalg.inv(dst_vox2ras) @ ras2ras @ src_vox2ras
     raise AssertionError(f"unsupported LTA type: {lta.type}")
 

@@ -27,10 +27,11 @@ class CliError(Exception):
 class WritingUnavailable(CliError):
     """A resampled or composed object could not be written to disk.
 
-    The output format has no writer registered yet. The computation
-    itself succeeded, so this is distinct from a failure to compute. The
-    dedicated exit code lets a test tell "writing is not available" apart
-    from an ordinary error and skip cleanly.
+    No writable format is registered for the output file name, or none
+    of those that are can hold the object, or the one chosen cannot write
+    it. The computation itself succeeded, so this is distinct from a
+    failure to compute. The dedicated exit code lets a caller tell "the
+    result could not be written" apart from an ordinary error.
     """
 
     exit_code: int = 3
