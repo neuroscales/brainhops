@@ -65,6 +65,7 @@ nav = [
         {"itk.mat" = "api/io/transformations/itk-mat.md"},
         {"itk.nifti" = "api/io/transformations/itk-nifti.md"},
         {"x5" = "api/io/transformations/x5.md"},
+        {"elastix" = "api/io/transformations/elastix.md"},
         {"freesurfer.lta" = "api/io/transformations/lta.md"},
         {"spm.y" = "api/io/transformations/spmy.md"},
         "api/io/transformations/fsl.md",
