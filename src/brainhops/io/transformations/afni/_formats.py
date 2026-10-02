@@ -7,7 +7,7 @@ from brainhops.io.transformations.base import (
 )
 
 
-class AfniTransformationFormat(AfniFormat, TransformationFormat):
+class AfniTransformationFormat(TransformationFormat, AfniFormat):
     """A transformation stored in an AFNI format (hint `"afni"`)."""
 
 
