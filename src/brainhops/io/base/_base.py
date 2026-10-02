@@ -461,7 +461,7 @@ class WritableBinaryFileBasedObject(
 # ----------------------------------------------------------------------
 
 
-class _FileBasedModel:
+class _FileBasedModelMixin:
     """
     Gives a file-based data model a `from_other` that reads files.
 
@@ -475,6 +475,21 @@ class _FileBasedModel:
     It sits where the data models meet the file formats, ahead of the
     data model in the bases (`FileBasedImage`, `FileBasedTransformation`),
     so that the data models themselves never deal with files.
+
+    !!! note "Why this is not part of `FileBasedObject`"
+        To win, this `from_other` must come before
+        `DataModelBase.from_other` in the MRO, and `FileBasedObject`
+        comes after `DataModelBase` in the MRO of every file-based class.
+        Nor can it be moved ahead. A format's parser base declares
+        itself a data model first, as in
+        `NiftiParser(DataModelBase, BinaryFileParserWriter)` and
+        `ZarrParser(DataModelBase, FileParser)`. Its parser chain then
+        leads, through `FileParserWriter`, to `FileBasedObject`. Listing
+        `FileBasedObject` first in `FileBasedImage`'s bases therefore
+        makes the MRO of `NiftiImage` inconsistent: "Cannot create a
+        consistent method resolution order (MRO) for bases
+        DataModelBase, FileParserWriter, Image". A mixin that is not a
+        parser has no such constraint, and goes ahead of the data model.
 
     !!! note "Every string is a file"
         No file-based class takes a string as its first constructor

@@ -150,3 +150,26 @@ def test_an_instance_of_the_format_keeps_what_was_set_on_it(tmp_path) -> None:  
     copy = NiftiImage.from_other(image)
     assert copy is not image
     assert not np.asarray(copy.data).any()
+
+
+# ----------------------------------------------------------------------
+#   EVERY FILE-BASED CLASS READS FILES
+# ----------------------------------------------------------------------
+
+
+def _file_based_classes() -> list:
+    from brainhops.io.base import FileBasedObject
+
+    found = set(FileBasedObject._REGISTRY)
+    found |= {FileBasedImage, FileBasedTransformation}
+    return sorted(found, key=lambda cls: cls.__qualname__)
+
+
+@pytest.mark.parametrize(
+    "cls", _file_based_classes(), ids=lambda cls: cls.__qualname__
+)
+def test_every_file_based_class_reads_files_in_from_other(cls: type) -> None:
+    # The file branch must come before the data model's own `from_other`
+    # in the MRO of every format, whatever the order of its bases.
+    owner = next(base for base in cls.__mro__ if "from_other" in vars(base))
+    assert owner.__name__ == "_FileBasedModelMixin"

@@ -5,7 +5,7 @@ from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import (
     FileBasedObject,
     WritableFileBasedObject,
-    _FileBasedModel,
+    _FileBasedModelMixin,
     format_registry,
 )
 
@@ -14,7 +14,7 @@ from ._formats import TransformationFormat
 
 @format_registry
 class FileBasedTransformation(
-    _FileBasedModel, TransformationFormat, Transformation, FileBasedObject
+    _FileBasedModelMixin, TransformationFormat, Transformation, FileBasedObject
 ):
     """
     A transformation that is stored in a file.

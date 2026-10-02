@@ -8,7 +8,7 @@ from brainhops.datamodel.images import Image
 from brainhops.io.base._base import (
     FileBasedObject,
     WritableFileBasedObject,
-    _FileBasedModel,
+    _FileBasedModelMixin,
     format_registry,
 )
 from brainhops.io.base.specs import register_parser
@@ -16,7 +16,7 @@ from brainhops.io.base.specs import register_parser
 
 @register_parser(Image)
 @format_registry
-class FileBasedImage(_FileBasedModel, Image, FileBasedObject):
+class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
     """
     An image that is stored in a file.
 
