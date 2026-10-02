@@ -911,6 +911,51 @@ def split_voxel_to_scanner(
     return transform, tuple(float(v) for v in vox)
 
 
+def _writer_layout(
+    layout: tx.Optional[tx.Union[str, tx.Sequence[int]]],
+    source: tx.Optional[MrtrixHeader],
+    ndim: int,
+) -> tx.Tuple[int, ...]:
+    """
+    The layout a writer stores `ndim` axes in.
+
+    `layout` is spelled as MRtrix spells it (`"-0,-1,+2"`) or given as
+    signed one-based strides. By default, it is the layout of the
+    `source` header the object was read from, if it has as many axes,
+    else `+0,+1,+2,...`.
+    """
+    if layout is None:
+        if source is not None and len(source.layout) == ndim:
+            return tuple(source.layout)
+        return default_layout(ndim)
+    if isinstance(layout, str):
+        return parse_layout(layout, ndim)
+    return parse_layout(
+        ",".join(
+            ("+" if s > 0 else "-") + str(abs(int(s)) - 1) for s in layout
+        ),
+        ndim,
+    )
+
+
+def _merge_keyval(
+    source: tx.Optional[MrtrixHeader],
+    keyval: tx.Optional[tx.Mapping[str, tx.Optional[str]]],
+) -> "OrderedDict[str, str]":
+    """
+    The free-form keys a writer stores: those of the `source` header the
+    object was read from, updated with `keyval`, where a value of `None`
+    removes a key.
+    """
+    merged = OrderedDict(source.keyval if source is not None else {})
+    for key, value in (keyval or {}).items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
 # ----------------------------------------------------------------------
 #   PARSER
 # ----------------------------------------------------------------------
