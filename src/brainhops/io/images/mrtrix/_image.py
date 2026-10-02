@@ -20,9 +20,9 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.mrtrix import (
     MrtrixHeader,
     MrtrixParser,
-    default_layout,
+    _merge_keyval,
+    _writer_layout,
     dtype_to_mrtrix,
-    parse_layout,
     split_voxel_to_scanner,
     voxel_to_ras,
 )
@@ -103,9 +103,12 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
         Any MRtrix file can be read as an image. A 4D file whose last
         axis has three volumes may be a warp, so it is only a weak match,
-        as a NIfTI file of that shape is.
+        as a NIfTI file of that shape is; so is a 5D file of shape
+        `(X, Y, Z, 3, 4)`, the warps `mrregister -nl_warp_full` writes.
         """
         if header.ndim == 4 and header.dim[3] == 3:
+            return Confidence.WEAK
+        if header.ndim == 5 and header.dim[3:] == (3, 4):
             return Confidence.WEAK
         return Confidence.LIKELY
 
@@ -223,32 +226,13 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
         vox += extra[len(vox) :]
 
         # --- storage --------------------------------------------------
-        if layout is None:
-            if source is not None and len(source.layout) == ndim:
-                strides = source.layout
-            else:
-                strides = default_layout(ndim)
-        elif isinstance(layout, str):
-            strides = parse_layout(layout, ndim)
-        else:
-            strides = parse_layout(
-                ",".join(
-                    ("+" if s > 0 else "-") + str(abs(int(s)) - 1)
-                    for s in layout
-                ),
-                ndim,
-            )
+        strides = _writer_layout(layout, source, ndim)
         if datatype is None:
             datatype = getattr(data, "dtype", np.float32)
         datatype = dtype_to_mrtrix(datatype)
 
         # --- free-form keys -------------------------------------------
-        merged = dict(source.keyval) if source is not None else {}
-        for key, value in (keyval or {}).items():
-            if value is None:
-                merged.pop(key, None)
-            else:
-                merged[key] = value
+        merged = _merge_keyval(source, keyval)
 
         return MrtrixHeader(
             dim=shape,

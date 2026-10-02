@@ -62,6 +62,7 @@ nav = [
         {"x5" = "api/io/transformations/x5.md"},
         {"freesurfer.lta" = "api/io/transformations/lta.md"},
         {"spm.y" = "api/io/transformations/spmy.md"},
+        {"mrtrix" = "api/io/transformations/mrtrix.md"},
         "api/io/transformations/fsl.md",
         {"fsl.flirt" = "api/io/transformations/fsl-flirt.md"},
         {"fsl.fnirt" = "api/io/transformations/fsl-fnirt.md"},

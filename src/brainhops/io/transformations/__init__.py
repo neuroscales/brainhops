@@ -8,13 +8,14 @@ __all__ = [
     "itk",
     "load",
     "matrix",
+    "mrtrix",
     "sniff",
 ]
 
 # internals
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import base, freesurfer, itk, matrix
+from . import base, freesurfer, itk, matrix, mrtrix
 from .base import (
     FileBasedTransformation,
     WritableFileBasedTransformation,
