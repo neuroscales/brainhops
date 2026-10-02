@@ -641,7 +641,6 @@ def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
 
     `Affine`: the matrix is `(No, Ni + 1)`; `Linear`/`Rotation`: `(No, Ni)`.
     Reads only the shape, never a value; never called on an `Inverse`.
-    Shared with `separable._element_dims` so the two readings cannot drift.
     """
     matrix = getattr(t, "matrix", None)
     if matrix is None:

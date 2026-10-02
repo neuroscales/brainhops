@@ -12,12 +12,12 @@ from brainhops.datamodel.axes import (
     ChannelAxis,
     CoordinateAxis,
     DisplacementAxis,
-    SpatialAxis,
+    SpaceAxis,
     TimeAxis,
 )
 
 _AXIS_TYPES = {
-    "space": SpatialAxis,
+    "space": SpaceAxis,
     "time": TimeAxis,
     "channel": ChannelAxis,
     "displacement": DisplacementAxis,

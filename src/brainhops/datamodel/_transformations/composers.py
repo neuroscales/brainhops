@@ -19,6 +19,7 @@ from bagof.magic import replace
 # core
 from brainhops._core.bsplines import pull_field
 from brainhops.backends import get_array_backend
+from brainhops.datamodel.systems import _axes_or_unknown
 
 # internals
 from .base import Transformation
@@ -35,8 +36,9 @@ from .concrete import (
     Translation,
 )
 from .errors import CompositionError
-from .meta import SubspaceTransformation
+from .meta import SubspaceTransformation, _close_subspace
 from .sequence import Sequence, _interpolates
+from .utils import axis_counts
 
 # ----------------------------------------------------------------------
 #     SEQUENCE
@@ -262,8 +264,23 @@ def _(To: Permutation, Ti: DisplacementField) -> DisplacementField:
     ).to(coeff=coeff)
 
 
+def _check_square(To: tx.Union[Linear, Affine]) -> None:
+    # A displacement field maps a space onto itself, so it cannot absorb a
+    # matrix that changes the number of axes. The pair is refused, and the
+    # compose pass keeps the two side by side.
+    rows, cols = To.matrix.shape
+    if isinstance(To, Affine):
+        cols -= 1
+    if rows != cols:
+        raise CompositionError(
+            "Cannot fold a matrix that changes the number of axes into a "
+            "displacement field."
+        )
+
+
 @composer
 def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
@@ -280,6 +297,7 @@ def _(To: Linear, Ti: DisplacementField) -> DisplacementField:
 
 @composer
 def _(To: Affine, Ti: DisplacementField) -> DisplacementField:
+    _check_square(To)
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     grid = CartesianField(shape=Ti.field.shape[:-1]).field
@@ -402,11 +420,12 @@ def _(To: SubspaceTransformation, Ti: CoordinatesField) -> CoordinatesField:
             return replace(Ti, output=To.output)
         acted = x[..., in_axes]
     else:
-        if _interpolates(To.transformation) and (
-            To.input is not None and To.input.axes is not None
-        ):
+        if _interpolates(To.transformation):
+            # Positional access reads the axes the system states, even an
+            # open one, and an unknown `Axis()` anywhere else.
+            axes = _axes_or_unknown(To.input)
             for i in in_axes:
-                axis = To.input.axes[i]
+                axis = axes.at(i)
                 if getattr(axis, "discrete", None):
                     raise CompositionError(
                         "Cannot apply an interpolating transform along the "
@@ -471,6 +490,9 @@ def _(To: _AffineIsh, Ti: SubspaceTransformation) -> Affine:
             "affine; it stays a wrapper and is applied by composing it with a "
             "sampling domain."
         )
+    # The subspace's output space is the affine's input space, so a count
+    # the affine states closes a subspace whose systems leave it unknown.
+    Ti = _close_subspace(Ti, n_out=axis_counts(To)[0])
     return compose(To, Ti.to(Affine))
 
 
@@ -483,6 +505,7 @@ def _(To: SubspaceTransformation, Ti: _AffineIsh) -> Affine:
             "affine; it stays a wrapper and is applied by composing it with a "
             "sampling domain."
         )
+    To = _close_subspace(To, n_in=axis_counts(Ti)[1])
     return compose(To.to(Affine), Ti)
 
 

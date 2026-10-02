@@ -39,6 +39,7 @@ from brainhops.datamodel.transformations import (
     DisplacementField,
     Identity,
     InverseDisplacementField,
+    Linear,
     Sequence,
     SubspaceTransformation,
     Transformation,
@@ -146,11 +147,13 @@ def test_fold_affine_into_field_matches_inorder_reference(
 
 
 def _full4(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+    return CoordinateSystem(
+        name=name, axes=[R(), A(), S(), TimeAxis(name="t")]
+    )
 
 
 def _sub3(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S])
+    return CoordinateSystem(name=name, axes=[R(), A(), S()])
 
 
 # A non-trivial 3D affine with shear and a shift, so a dropped or misplaced
@@ -720,3 +723,27 @@ def test_dispatch_order_and_terminal_composition_error(
     with pytest.raises(CompositionError):
         compose(a, b)
     assert calls == ["specific"]
+
+
+@pytest.mark.parametrize("rows", [1, 2])
+@pytest.mark.parametrize("affine", [True, False])
+def test_matrix_that_changes_axes_is_not_folded_into_a_displacement(
+    rows: int, affine: bool
+) -> None:
+    # A displacement field maps a space onto itself, so a matrix that
+    # changes the number of axes cannot be folded into it. The composer
+    # refuses the pair, and a sequence keeps the two side by side rather
+    # than failing to broadcast or returning a field of the wrong width.
+    rng = np.random.default_rng(0)
+    field = DisplacementField(field=rng.normal(size=(4, 5, 3, 3)) * 0.3)
+    if affine:
+        matrix = Affine(matrix=np.eye(rows, 4))
+    else:
+        matrix = Linear(matrix=np.eye(rows, 3))
+    with pytest.raises(CompositionError):
+        compose(matrix, field)
+    result = Sequence([field, matrix]).compute()
+    assert [type(t) for t in result.transformations] == [
+        DisplacementField,
+        type(matrix),
+    ]

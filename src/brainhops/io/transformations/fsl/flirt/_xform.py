@@ -46,8 +46,8 @@ class FLIRTTransform(
     # `inverse()`) off that path.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
-    _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.RASmm()
+    _output: _systems.CoordinateSystem = _systems.RASmm()
 
     # `matrix` is computed on demand from the raw FLIRT matrix and the two
     # image geometries, so it is not a stored, constructor-taken field

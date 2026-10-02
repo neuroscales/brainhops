@@ -125,6 +125,7 @@ from bagof.dispatchers import Function, Super
 
 # datamodel
 from brainhops.datamodel import kinds
+from brainhops.datamodel.systems import AxisList, _axes_or_unknown
 
 # typing
 if tx.TYPE_CHECKING:
@@ -482,17 +483,19 @@ def is_family(x: Transformation, family: FamilyLike) -> bool:
         return True
     # An endpoint that does not say how many axes it has cannot contradict
     # the dimension, so it does not reject: the family asks for a dimension
-    # it can read, not for one it must be told.
+    # it can read, not for one it must be told. An open endpoint contradicts
+    # it only when it states more axes than the dimension allows.
     #
     # FIXME
     #   In many transforms, the ndim can be guessed from the content of the
     #   xform, even if the input/output spaces are not set (e.g. the shape
     #   of the matrix or the field).
-    for endpoint in (x.input, x.output):
-        axes = getattr(endpoint, "axes", None)
-        if axes is not None and len(axes) != family.ndim:
-            return False
-    return True
+    # `space` holds only unknown axes, so only the numbers of axes can
+    # clash with it.
+    space = AxisList([...]).expand(family.ndim)
+    return all(
+        _axes_or_unknown(e).compatible_with(space) for e in (x.input, x.output)
+    )
 
 
 # --- Public helpers ---------------------------------------------------

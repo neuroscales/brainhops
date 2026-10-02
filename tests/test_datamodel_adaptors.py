@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from bagof.magic import replace
 
 from brainhops.datamodel._transformations.adaptors import (
     adapt,
@@ -25,10 +24,11 @@ from brainhops.datamodel.axes import (
     A,
     Axis,
     LeftToRightAxis,
+    PosteriorToAnteriorAxis,
     R,
     RightToLeftAxis,
     S,
-    SpatialAxis,
+    SpaceAxis,
     TimeAxis,
 )
 from brainhops.datamodel.images import SingleScaleImage
@@ -45,8 +45,9 @@ from brainhops.datamodel.systems import (
     FLPSCoordinateSystem,
     FRASCoordinateSystem,
     FVoxelCoordinateSystem,
-    LPSCoordinateSystem,
+    LPSmm,
     RASCoordinateSystem,
+    RASmm,
     VoxelCoordinateSystem,
 )
 from brainhops.datamodel.transformations import (
@@ -66,6 +67,13 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
+from brainhops.datamodel.units import SampleUnit
+
+# The physical anatomical axes, in millimetres. `R`/`A`/`S` fix a direction
+# and leave the metric unspecified, which is a different thing -- an array
+# can be RAS-oriented -- so a world system that meets a millimetre
+# transform has to say which it is.
+Rmm, Amm, Smm = RASmm().axes
 
 data_dir = Path(__file__).parent / "data"
 
@@ -81,18 +89,18 @@ def _homogeneous(transformation: Transformation) -> np.ndarray:
 
 
 def test_equal_systems_need_no_bridge() -> None:
-    result = bridge(RASCoordinateSystem(), RASCoordinateSystem())
+    result = bridge(RASmm(), RASmm())
     assert isinstance(result, Identity)
 
 
 def test_ras_to_lps_is_a_sign_flip() -> None:
-    result = bridge(RASCoordinateSystem(), LPSCoordinateSystem())
+    result = bridge(RASmm(), LPSmm())
     assert isinstance(result, Scaling)
     np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
 
 
 def test_lps_to_ras_is_the_same_flip() -> None:
-    result = bridge(LPSCoordinateSystem(), RASCoordinateSystem())
+    result = bridge(LPSmm(), RASmm())
     assert isinstance(result, Scaling)
     np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
 
@@ -112,7 +120,7 @@ def test_fras_to_cras_is_a_reversal_permutation() -> None:
 @pytest.mark.parametrize(
     "source, target",
     [
-        (RASCoordinateSystem(), LPSCoordinateSystem()),
+        (RASmm(), LPSmm()),
         (FVoxelCoordinateSystem(), CVoxelCoordinateSystem()),
         (FRASCoordinateSystem(), CRASCoordinateSystem()),
     ],
@@ -134,15 +142,15 @@ def test_matches_by_orientation_when_names_differ() -> None:
     source = CoordinateSystem(
         name="named",
         axes=[
-            SpatialAxis(name="x", orientation=LeftToRight()),
-            SpatialAxis(name="y", orientation=PosteriorToAnterior()),
+            SpaceAxis(name="x", orientation=LeftToRight()),
+            SpaceAxis(name="y", orientation=PosteriorToAnterior()),
         ],
     )
     target = CoordinateSystem(
         name="oriented",
         axes=[
-            SpatialAxis(name="ap", orientation=PosteriorToAnterior()),
-            SpatialAxis(name="lr", orientation=LeftToRight()),
+            SpaceAxis(name="ap", orientation=PosteriorToAnterior()),
+            SpaceAxis(name="lr", orientation=LeftToRight()),
         ],
     )
     result = bridge(source, target)
@@ -159,10 +167,10 @@ def test_matches_by_orientation_when_names_differ() -> None:
 
 def test_unit_difference_is_a_scaling() -> None:
     source = CoordinateSystem(
-        name="mm", axes=[SpatialAxis(name="x", unit="millimeter")]
+        name="mm", axes=[SpaceAxis(name="x", unit="millimeter")]
     )
     target = CoordinateSystem(
-        name="um", axes=[SpatialAxis(name="x", unit="micrometer")]
+        name="um", axes=[SpaceAxis(name="x", unit="micrometer")]
     )
     result = bridge(source, target)
     assert isinstance(result, Scaling)
@@ -170,17 +178,34 @@ def test_unit_difference_is_a_scaling() -> None:
     np.testing.assert_allclose(result.scale, [1000.0])
 
 
-def test_unit_present_on_one_side_only_raises() -> None:
-    # The standard LeftToRightAxis carries a millimetre unit; the target is
-    # the same oriented axis stripped of its unit, so the two match on
-    # orientation and the missing unit is what raises.
-    source = CoordinateSystem(name="mm", axes=[LeftToRightAxis()])
+def test_an_unspecified_unit_is_compatible_with_any_unit() -> None:
+    # The source axis carries a millimetre unit; the target is the same
+    # oriented axis with its unit left unspecified. What is not known is
+    # never a reason to refuse, so they match at a ratio of one.
+    source = CoordinateSystem(name="mm", axes=[LeftToRightAxis(unit="mm")])
     target = CoordinateSystem(
-        name="index",
-        axes=[SpatialAxis(name="x", unit=None, orientation=LeftToRight())],
+        name="unspecified",
+        axes=[SpaceAxis(name="x", unit=None, orientation=LeftToRight())],
     )
-    with pytest.raises(AdaptationError):
-        bridge(source, target)
+    assert is_identity(bridge(source, target), compute=True)
+    assert is_identity(bridge(target, source), compute=True)
+
+
+def test_an_unspecified_anatomical_system_bridges_to_millimetres() -> None:
+    assert is_identity(bridge(RASCoordinateSystem(), RASmm()), compute=True)
+    result = bridge(LPSmm(), RASCoordinateSystem())
+    assert isinstance(result, Scaling)
+    np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
+
+
+def test_a_sample_matched_to_a_physical_unit_raises() -> None:
+    sampled = CoordinateSystem(
+        axes=[SpaceAxis(name="x", unit="sample", orientation=LeftToRight())]
+    )
+    world = CoordinateSystem(axes=[LeftToRightAxis(name="x", unit="mm")])
+    for source, target in ((sampled, world), (world, sampled)):
+        with pytest.raises(AdaptationError, match="sampled.*millimeter"):
+            bridge(source, target)
 
 
 # ----------------------------------------------------------------------
@@ -193,14 +218,14 @@ def _oriented_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpatialAxis(name="i", unit=None, orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
     )
 
 
 def test_world_flip_carries_no_offset() -> None:
     # Between world systems a reversed axis is a pure sign flip. The
-    # standard oriented axes carry a millimetre unit, so both sides are
-    # world systems.
+    # standard oriented axes do not count samples (their unit is
+    # unspecified), so neither side is an array-index system.
     source = CoordinateSystem(name="R", axes=[LeftToRightAxis()])
     target = CoordinateSystem(name="L", axes=[RightToLeftAxis()])
     result = bridge(source, target)
@@ -249,10 +274,10 @@ def test_array_index_flip_round_trips() -> None:
 
 def test_unmatched_axis_raises_by_default() -> None:
     source = CoordinateSystem(
-        name="ab", axes=[SpatialAxis(name="a"), SpatialAxis(name="b")]
+        name="ab", axes=[SpaceAxis(name="a"), SpaceAxis(name="b")]
     )
     target = CoordinateSystem(
-        name="cd", axes=[SpatialAxis(name="c"), SpatialAxis(name="d")]
+        name="cd", axes=[SpaceAxis(name="c"), SpaceAxis(name="d")]
     )
     with pytest.raises(AdaptationError):
         bridge(source, target)
@@ -260,10 +285,10 @@ def test_unmatched_axis_raises_by_default() -> None:
 
 def test_positional_fallback_is_opt_in_and_warns() -> None:
     source = CoordinateSystem(
-        name="ab", axes=[SpatialAxis(name="a"), SpatialAxis(name="b")]
+        name="ab", axes=[SpaceAxis(name="a"), SpaceAxis(name="b")]
     )
     target = CoordinateSystem(
-        name="cd", axes=[SpatialAxis(name="c"), SpatialAxis(name="d")]
+        name="cd", axes=[SpaceAxis(name="c"), SpaceAxis(name="d")]
     )
     with pytest.warns(UserWarning):
         result = bridge(source, target, allow_positional=True)
@@ -279,13 +304,13 @@ def test_positional_fallback_is_opt_in_and_warns() -> None:
 def test_adapt_returns_a_sequence_containing_both_transforms() -> None:
     first = Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     second = Affine(
         matrix=np.eye(3, 4),
-        input=LPSCoordinateSystem(),
-        output=LPSCoordinateSystem(),
+        input=LPSmm(),
+        output=LPSmm(),
     )
     result = adapt(first, second)
     assert isinstance(result, Sequence)
@@ -298,13 +323,13 @@ def test_adapt_returns_a_sequence_containing_both_transforms() -> None:
 def test_adapt_without_mismatch_inserts_no_bridge() -> None:
     first = Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     second = Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     result = adapt(first, second)
     assert list(result.transformations) == [first, second]
@@ -321,13 +346,13 @@ def test_sequence_composition_inserts_the_flip_bridge() -> None:
     second_matrix = rng.standard_normal((3, 4))
     first = Affine(
         matrix=first_matrix,
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     second = Affine(
         matrix=second_matrix,
-        input=LPSCoordinateSystem(),
-        output=LPSCoordinateSystem(),
+        input=LPSmm(),
+        output=LPSmm(),
     )
     result = Sequence([first, second]).compute()
 
@@ -348,13 +373,13 @@ def test_matching_systems_compose_without_a_bridge() -> None:
     second_matrix = rng.standard_normal((3, 4))
     first = Affine(
         matrix=first_matrix,
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     second = Affine(
         matrix=second_matrix,
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     result = Sequence([first, second]).compute()
 
@@ -373,18 +398,18 @@ def test_opposite_bridges_cancel_in_a_sequence() -> None:
     matrix = np.eye(3, 4)
     ras_to_lps = Affine(
         matrix=matrix,
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     lps = Affine(
         matrix=matrix,
-        input=LPSCoordinateSystem(),
-        output=LPSCoordinateSystem(),
+        input=LPSmm(),
+        output=LPSmm(),
     )
     lps_to_ras = Affine(
         matrix=matrix,
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     result = Sequence([ras_to_lps, lps, lps_to_ras]).compute()
     assert is_identity(result, compute=True)
@@ -456,7 +481,7 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
                 [0.0, 0.0, 1.5, 4.0],
             ]
         ),
-        output=LPSCoordinateSystem(),
+        output=LPSmm(),
     )
     image = ZarrImage.load(path, transformation=voxel_to_lps)
     voxel_to_world = image.transformation  # voxel -> LPS
@@ -487,16 +512,16 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
 def _ras_affine() -> Affine:
     return Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
 
 
 def _lps_affine() -> Affine:
     return Affine(
         matrix=np.eye(3, 4),
-        input=LPSCoordinateSystem(),
-        output=LPSCoordinateSystem(),
+        input=LPSmm(),
+        output=LPSmm(),
     )
 
 
@@ -545,9 +570,9 @@ def _xyz_index_system() -> CoordinateSystem:
     return CoordinateSystem(
         name="xyz",
         axes=[
-            SpatialAxis(name="x", unit=None),
-            SpatialAxis(name="y", unit=None),
-            SpatialAxis(name="z", unit=None),
+            SpaceAxis(name="x", unit=None),
+            SpaceAxis(name="y", unit=None),
+            SpaceAxis(name="z", unit=None),
         ],
     )
 
@@ -588,15 +613,15 @@ def test_same_type_group_pairs_by_position_even_when_oriented() -> None:
     oriented = CoordinateSystem(
         name="oriented",
         axes=[
-            SpatialAxis(name="a", unit=None, orientation=LeftToRight()),
-            SpatialAxis(name="b", unit=None),
+            SpaceAxis(name="a", unit=None, orientation=LeftToRight()),
+            SpaceAxis(name="b", unit=None),
         ],
     )
     plain = CoordinateSystem(
         name="plain",
         axes=[
-            SpatialAxis(name="c", unit=None),
-            SpatialAxis(name="d", unit=None),
+            SpaceAxis(name="c", unit=None),
+            SpaceAxis(name="d", unit=None),
         ],
     )
     first = Affine(matrix=np.eye(2, 3), input=oriented, output=oriented)
@@ -616,15 +641,15 @@ def test_same_type_group_pairs_by_position_when_united() -> None:
     source = CoordinateSystem(
         name="mm",
         axes=[
-            SpatialAxis(name="a", unit="millimeter"),
-            SpatialAxis(name="b", unit="millimeter"),
+            SpaceAxis(name="a", unit="millimeter"),
+            SpaceAxis(name="b", unit="millimeter"),
         ],
     )
     target = CoordinateSystem(
         name="um",
         axes=[
-            SpatialAxis(name="c", unit="micrometer"),
-            SpatialAxis(name="d", unit="micrometer"),
+            SpaceAxis(name="c", unit="micrometer"),
+            SpaceAxis(name="d", unit="micrometer"),
         ],
     )
     first = Affine(matrix=np.eye(2, 3), input=source, output=source)
@@ -647,13 +672,13 @@ def test_type_grouped_positional_keeps_each_type_to_its_own_group() -> None:
         name="s",
         axes=[
             TimeAxis(name="t", unit=None),
-            SpatialAxis(name="a", unit=None),
+            SpaceAxis(name="a", unit=None),
         ],
     )
     target = CoordinateSystem(
         name="t",
         axes=[
-            SpatialAxis(name="c", unit=None),
+            SpaceAxis(name="c", unit=None),
             TimeAxis(name="u", unit=None),
         ],
     )
@@ -679,9 +704,9 @@ def test_typeless_group_pairs_with_a_typed_group_of_equal_count() -> None:
     target = CoordinateSystem(
         name="voxel",
         axes=[
-            SpatialAxis(name="dim0", unit=None),
-            SpatialAxis(name="dim1", unit=None),
-            SpatialAxis(name="dim2", unit=None),
+            SpaceAxis(name="dim0", unit=None),
+            SpaceAxis(name="dim1", unit=None),
+            SpaceAxis(name="dim2", unit=None),
         ],
     )
     first = Affine(matrix=np.eye(3, 4), input=source, output=source)
@@ -702,7 +727,7 @@ def test_typeless_group_with_no_equal_count_typed_group_raises() -> None:
     )
     target = CoordinateSystem(
         name="mixed",
-        axes=[SpatialAxis(name="c", unit=None), TimeAxis(name="u", unit=None)],
+        axes=[SpaceAxis(name="c", unit=None), TimeAxis(name="u", unit=None)],
     )
     first = Affine(matrix=np.eye(2, 3), input=source, output=source)
     second = Affine(matrix=np.eye(2, 3), input=target, output=target)
@@ -717,15 +742,15 @@ def test_type_group_count_mismatch_raises() -> None:
     source = CoordinateSystem(
         name="s",
         axes=[
-            SpatialAxis(name="a", unit=None),
-            SpatialAxis(name="b", unit=None),
+            SpaceAxis(name="a", unit=None),
+            SpaceAxis(name="b", unit=None),
             TimeAxis(name="t", unit=None),
         ],
     )
     target = CoordinateSystem(
         name="t",
         axes=[
-            SpatialAxis(name="c", unit=None),
+            SpaceAxis(name="c", unit=None),
             TimeAxis(name="u", unit=None),
             TimeAxis(name="v", unit=None),
         ],
@@ -744,9 +769,7 @@ def test_type_group_count_mismatch_raises() -> None:
 def test_shared_name_across_different_types_is_not_matched() -> None:
     # A spatial axis and a time axis that happen to share a name must not be
     # matched: a definite type conflict overrides the shared name.
-    source = CoordinateSystem(
-        name="s", axes=[SpatialAxis(name="t", unit=None)]
-    )
+    source = CoordinateSystem(name="s", axes=[SpaceAxis(name="t", unit=None)])
     target = CoordinateSystem(name="t", axes=[TimeAxis(name="t", unit=None)])
     with pytest.raises(AdaptationError):
         bridge(source, target)
@@ -754,13 +777,14 @@ def test_shared_name_across_different_types_is_not_matched() -> None:
 
 def test_shared_unit_across_different_types_is_not_matched() -> None:
     # Two axes measured in the same kind of unit but of different types must
-    # not be matched by that shared unit.
+    # not be matched by that shared unit. (A time axis can no longer carry a
+    # length unit, so the other type is one that does not constrain it.)
     source = CoordinateSystem(
-        name="s", axes=[SpatialAxis(name="a", unit="millimeter")]
+        name="s", axes=[SpaceAxis(name="a", unit="millimeter")]
     )
     target = CoordinateSystem(
         name="t",
-        axes=[Axis(name="b", type="time", unit="millimeter")],
+        axes=[Axis(name="b", type="channel", unit="millimeter")],
     )
     with pytest.raises(AdaptationError):
         bridge(source, target)
@@ -770,10 +794,10 @@ def test_axes_match_by_unit_when_names_differ() -> None:
     # Two spatial axes with different names and no orientation are matched
     # by their shared kind of unit, and the unit ratio becomes the scaling.
     source = CoordinateSystem(
-        name="mm", axes=[SpatialAxis(name="a", unit="millimeter")]
+        name="mm", axes=[SpaceAxis(name="a", unit="millimeter")]
     )
     target = CoordinateSystem(
-        name="um", axes=[SpatialAxis(name="b", unit="micrometer")]
+        name="um", axes=[SpaceAxis(name="b", unit="micrometer")]
     )
     result = bridge(source, target)
     assert isinstance(result, Scaling)
@@ -790,7 +814,7 @@ def _oriented_named_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpatialAxis(name="i", unit=None, orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
     )
 
 
@@ -833,11 +857,11 @@ def test_non_collinear_axes_matched_by_name_are_rejected() -> None:
     # flip. The shared name must not force a spurious sign flip.
     source = CoordinateSystem(
         name="lr",
-        axes=[SpatialAxis(name="x", orientation=LeftToRight())],
+        axes=[SpaceAxis(name="x", orientation=LeftToRight())],
     )
     target = CoordinateSystem(
         name="ap",
-        axes=[SpatialAxis(name="x", orientation=PosteriorToAnterior())],
+        axes=[SpaceAxis(name="x", orientation=PosteriorToAnterior())],
     )
     with pytest.raises(AdaptationError):
         bridge(source, target)
@@ -854,7 +878,7 @@ def test_unit_ratio_round_trip_is_exact() -> None:
     # 1000.0000000000001).
     def _system(unit: str) -> CoordinateSystem:
         return CoordinateSystem(
-            name=unit, axes=[SpatialAxis(name="x", unit=unit)]
+            name=unit, axes=[SpaceAxis(name="x", unit=unit)]
         )
 
     pairs = [
@@ -900,7 +924,7 @@ def test_named_ras_lps_voxel_systems_are_array_index() -> None:
 def test_world_ras_lps_flip_stays_a_pure_sign_flip() -> None:
     # Plain RAS and LPS are world systems, so a flip between them carries
     # no offset even with an extent available.
-    result = bridge(RASCoordinateSystem(), LPSCoordinateSystem())
+    result = bridge(RASmm(), LPSmm())
     assert isinstance(result, Scaling)
     assert not isinstance(result, Translation)
     np.testing.assert_array_equal(result.scale, [-1.0, -1.0, 1.0])
@@ -913,7 +937,9 @@ def test_world_ras_lps_flip_stays_a_pure_sign_flip() -> None:
 
 def _ras_time_system(name: str) -> CoordinateSystem:
     """A 4D system with RAS spatial axes and a trailing time axis."""
-    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+    return CoordinateSystem(
+        name=name, axes=[Rmm, Amm, Smm, TimeAxis(name="t")]
+    )
 
 
 def _voxel_to_ras_time(matrix: np.ndarray) -> Affine:
@@ -927,7 +953,7 @@ def _voxel_to_ras_time(matrix: np.ndarray) -> Affine:
 
 def _lps_affine_3d(matrix: np.ndarray) -> Affine:
     """A 3D affine that acts in LPS, like an ITK or ANTs transform."""
-    lps = LPSCoordinateSystem()
+    lps = LPSmm()
     return Affine(matrix=matrix, input=lps, output=lps)
 
 
@@ -979,16 +1005,16 @@ def test_unnamed_unoriented_subset_transform_is_wrapped() -> None:
     full = CoordinateSystem(
         name="xyzt",
         axes=[
-            SpatialAxis(name="x"),
-            SpatialAxis(name="y"),
-            SpatialAxis(name="z"),
+            SpaceAxis(name="x"),
+            SpaceAxis(name="y"),
+            SpaceAxis(name="z"),
             TimeAxis(name="t"),
         ],
     )
     first = Affine(matrix=np.eye(4, 5), input=full, output=full)
     plain = CoordinateSystem(
         name="plain",
-        axes=[SpatialAxis(), SpatialAxis(), SpatialAxis()],
+        axes=[SpaceAxis(), SpaceAxis(), SpaceAxis()],
     )
     second = Affine(matrix=np.eye(3, 4), input=plain, output=plain)
     with pytest.warns(UserWarning):
@@ -1107,7 +1133,7 @@ def test_extra_spatial_axis_is_not_absorbed_and_raises() -> None:
     # adaptor raises rather than silently dropping the axis.
     four_spatial = CoordinateSystem(
         name="four-spatial",
-        axes=[R, A, S, SpatialAxis(name="extra")],
+        axes=[Rmm, Amm, Smm, SpaceAxis(name="extra", unit="mm")],
     )
     first = Affine(
         matrix=np.eye(4, 5), input=four_spatial, output=four_spatial
@@ -1121,7 +1147,7 @@ def test_bridge_refuses_a_dimensionality_mismatch() -> None:
     # A bridge reorders, rescales, and flips axes, and never adds or drops
     # one, so it refuses two systems of different sizes outright.
     with pytest.raises(AdaptationError):
-        bridge(_ras_time_system("4d"), LPSCoordinateSystem())
+        bridge(_ras_time_system("4d"), LPSmm())
 
 
 def test_backward_embedding_wraps_a_3d_transform_before_a_4d_one() -> None:
@@ -1168,7 +1194,7 @@ def test_extra_spatial_axis_is_not_absorbed_backward_and_raises() -> None:
     # the adaptor raises rather than inventing an axis.
     four_spatial = CoordinateSystem(
         name="four-spatial",
-        axes=[R, A, S, SpatialAxis(name="extra")],
+        axes=[Rmm, Amm, Smm, SpaceAxis(name="extra", unit="mm")],
     )
     first = _lps_affine_3d(np.eye(3, 4))
     second = Affine(
@@ -1267,11 +1293,13 @@ def test_is_identity_keeps_a_non_identity_subspace_non_identity() -> None:
 
 
 def _ras_time(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S, TimeAxis(name="t")])
+    return CoordinateSystem(
+        name=name, axes=[Rmm, Amm, Smm, TimeAxis(name="t")]
+    )
 
 
 def _spatial3(name: str) -> CoordinateSystem:
-    return CoordinateSystem(name=name, axes=[R, A, S])
+    return CoordinateSystem(name=name, axes=[Rmm, Amm, Smm])
 
 
 def _spatial_warp() -> Sequence:
@@ -1279,7 +1307,7 @@ def _spatial_warp() -> Sequence:
     # voxel -> world. The endpoints are RAS on both sides.
     rng = np.random.default_rng(1)
     voxel = _spatial3("warp-voxel")
-    world = RASCoordinateSystem()
+    world = RASmm()
     w2v = Affine(matrix=np.eye(3, 4), input=world, output=voxel)
     w2v.matrix[:, 3] = [-1.0, -2.0, -3.0]
     disp = rng.normal(size=(6, 7, 5, 3)) * 0.3
@@ -1313,7 +1341,7 @@ def _reference_4d(
     shape = data.shape
     v2w = np.asarray(image.transformation.matrix)
     voxel = _spatial3("ref-voxel")
-    world = RASCoordinateSystem()
+    world = RASmm()
     v2w3 = Affine(matrix=v2w[:3][:, [0, 1, 2, 4]], input=voxel, output=world)
     seq3 = Sequence(
         [CartesianField(shape=shape[:3]), v2w3, warp, v2w3.inverse()]
@@ -1376,8 +1404,8 @@ def test_3d_affine_applied_to_a_4d_image_via_reslice() -> None:
     image = _image_4d()
     warp_aff = Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     warp_aff.matrix[:, 3] = [0.5, 0.0, 0.0]
     out = image(warp_aff).reslice(image, order=1)
@@ -1424,9 +1452,9 @@ def test_embed_refuses_a_cartesian_field() -> None:
 
 def _discrete_ras_time(name: str) -> CoordinateSystem:
     # A 4D system whose third spatial axis is discrete.
-    discrete_s = replace(S, discrete=True)
+    discrete_s = S(discrete=True)
     return CoordinateSystem(
-        name=name, axes=[R, A, discrete_s, TimeAxis(name="t")]
+        name=name, axes=[R(), A(), discrete_s, TimeAxis(name="t")]
     )
 
 
@@ -1475,13 +1503,13 @@ def test_adapt_keeps_first_by_identity_for_a_bridge() -> None:
     # element of the result is the exact object passed in.
     first = Affine(
         matrix=np.eye(3, 4),
-        input=RASCoordinateSystem(),
-        output=RASCoordinateSystem(),
+        input=RASmm(),
+        output=RASmm(),
     )
     second = Affine(
         matrix=np.eye(3, 4),
-        input=LPSCoordinateSystem(),
-        output=LPSCoordinateSystem(),
+        input=LPSmm(),
+        output=LPSmm(),
     )
     result = adapt(first, second, allow_type_grouped_positional=True)
     assert result.transformations[0] is first
@@ -1582,3 +1610,45 @@ def test_adapt_backward_embedding_composes_like_the_flat_sequence() -> None:
     np.testing.assert_allclose(
         _composed_homogeneous(flat), _composed_homogeneous(nested), atol=1e-12
     )
+
+
+# ----------------------------------------------------------------------
+#   REGRESSION: A REBUILT VOXEL SUBSPACE IS STILL ARRAY-INDEX
+# ----------------------------------------------------------------------
+
+
+def _embedded_matrix(spatial: list, unit: str) -> np.ndarray:
+    # A spatial transform on the first three axes of a 4D system whose
+    # own x axis points the other way: embedding it bridges the spatial
+    # subset of the 4D system into its own frame, which reverses x. The
+    # 4D system is a plain one, built from `spatial` axes and a time axis,
+    # the way `embed` rebuilds systems -- so nothing but the units of the
+    # axes says whether they index an array.
+    full = CoordinateSystem(axes=[*spatial, TimeAxis(name="t", unit=unit)])
+    sub = CoordinateSystem(
+        axes=[
+            RightToLeftAxis(name="x"),
+            PosteriorToAnteriorAxis(name="y"),
+            S(name="z"),
+        ]
+    )
+    transform = Scaling(scale=np.ones(3), input=sub, output=sub)
+    wrapped = embed(
+        transform, full=full, side="input", extents={"x": 4, "y": 5, "z": 6}
+    )
+    return np.asarray(wrapped.compute().to(Affine).homogeneous_matrix)
+
+
+def test_embedding_in_voxel_axes_keeps_the_extent_offset() -> None:
+    # The axes of a voxel system count samples, so a subset rebuilt from
+    # them is still read as array-index, and reversing x maps index i to
+    # 3 - i rather than to -i.
+    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "sample")
+    np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
+    np.testing.assert_array_equal(matrix[:4, 4], [3, 0, 0, 0])
+
+
+def test_embedding_in_world_axes_is_a_pure_sign_flip() -> None:
+    matrix = _embedded_matrix(list(RASmm().axes), "s")
+    np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
+    np.testing.assert_array_equal(matrix[:4, 4], [0, 0, 0, 0])

@@ -24,16 +24,50 @@ __all__ = [
 ]
 # dependencies
 import typing_extensions as tx
+from bagof.magic import Narrow
 
 # core
-from brainhops._core.typing import HiddenConst
+from brainhops._core.typing import NoRepr
 
 # locals
 from .base import DataModelBase
 from .enums import OrientationType
 
+_T = tx.TypeVar("_T", bound=type)
 
-class Orientation(DataModelBase, doc=True):
+
+def singleton(cls: _T) -> _T:
+    """
+    Make a class a singleton, so that only one instance of it can exist.
+
+    Calling the class again returns that instance. A singleton cannot be
+    subclassed: a subclass would be a second kind of the one thing. The
+    classes below are also frozen, since every axis that points their way
+    holds the one instance: changing it would turn them all.
+    """
+
+    registry = {}
+
+    cls.__orig_new__ = __orig__new__ = cls.__new__
+
+    def __new__(cls: tx.Type[tx.Self], *args, **kwargs) -> tx.Self:
+        obj = registry.get(cls)
+        if obj is None:
+            registry[cls] = obj = __orig__new__(cls, *args, **kwargs)
+        return obj
+
+    def __init_subclass__(sub: type, **kwargs) -> None:
+        raise TypeError(
+            f"{cls.__name__} is a singleton: it cannot be subclassed."
+        )
+
+    cls.__new__ = __new__
+    cls.__init_subclass__ = classmethod(__init_subclass__)
+
+    return cls
+
+
+class Orientation(DataModelBase, polymorphic=True):
     """Describes the orientation of an axis or a space.
 
     An orientation has a `type`, drawn from [`OrientationType`][], that
@@ -42,72 +76,90 @@ class Orientation(DataModelBase, doc=True):
     `"left-to-right"` for an anatomical orientation.
     """
 
-    type: tx.Optional[OrientationType] = None
     value: tx.Optional[str] = None
+    type: tx.Optional[OrientationType] = None
 
 
-class AnatomicalOrientation(Orientation):
+class AnatomicalOrientation(Orientation, on={"type": "anatomical"}):
     """An orientation in the anatomical frame of reference."""
 
-    type: HiddenConst[OrientationType] = OrientationType.anatomical
+    type: NoRepr[Narrow[OrientationType]] = OrientationType.anatomical
 
 
-class LeftToRight(AnatomicalOrientation):
+@singleton
+class LeftToRight(
+    AnatomicalOrientation, on={"value": "left-to-right"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     left of the subject toward the right."""
 
-    value: HiddenConst[str] = "left-to-right"
+    value: NoRepr[Narrow[str]] = "left-to-right"
 
 
-class RightToLeft(AnatomicalOrientation):
+@singleton
+class RightToLeft(
+    AnatomicalOrientation, on={"value": "right-to-left"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     right of the subject toward the left."""
 
-    value: HiddenConst[str] = "right-to-left"
+    value: NoRepr[Narrow[str]] = "right-to-left"
 
 
-class AnteriorToPosterior(AnatomicalOrientation):
+@singleton
+class AnteriorToPosterior(
+    AnatomicalOrientation, on={"value": "anterior-to-posterior"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     front of the subject toward the back."""
 
-    value: HiddenConst[str] = "anterior-to-posterior"
+    value: NoRepr[Narrow[str]] = "anterior-to-posterior"
 
 
-class PosteriorToAnterior(AnatomicalOrientation):
+@singleton
+class PosteriorToAnterior(
+    AnatomicalOrientation, on={"value": "posterior-to-anterior"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     back of the subject toward the front."""
 
-    value: HiddenConst[str] = "posterior-to-anterior"
+    value: NoRepr[Narrow[str]] = "posterior-to-anterior"
 
 
-class InferiorToSuperior(AnatomicalOrientation):
+@singleton
+class InferiorToSuperior(
+    AnatomicalOrientation, on={"value": "inferior-to-superior"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     bottom of the subject toward the top."""
 
-    value: HiddenConst[str] = "inferior-to-superior"
+    value: NoRepr[Narrow[str]] = "inferior-to-superior"
 
 
-class SuperiorToInferior(AnatomicalOrientation):
+@singleton
+class SuperiorToInferior(
+    AnatomicalOrientation, on={"value": "superior-to-inferior"}, frozen=True
+):
     """The anatomical orientation in which coordinates increase from the
     top of the subject toward the bottom."""
 
-    value: HiddenConst[str] = "superior-to-inferior"
+    value: NoRepr[Narrow[str]] = "superior-to-inferior"
 
 
-R = leftToRight = LeftToRight()
+R = LR = leftToRight = LeftToRight()
 """Singleton left-to-right orientation."""
 
-L = rightToLeft = RightToLeft()
+L = RL = rightToLeft = RightToLeft()
 """Singleton right-to-left orientation."""
 
-A = posteriorToAnterior = PosteriorToAnterior()
+A = PA = posteriorToAnterior = PosteriorToAnterior()
 """Singleton posterior-to-anterior orientation."""
 
-P = anteriorToPosterior = AnteriorToPosterior()
+P = AP = anteriorToPosterior = AnteriorToPosterior()
 """Singleton anterior-to-posterior orientation."""
 
-I = superiorToInferior = SuperiorToInferior()
+I = SI = superiorToInferior = SuperiorToInferior()
 """Singleton superior-to-inferior orientation."""
 
-S = inferiorToSuperior = InferiorToSuperior()
+S = IS = inferiorToSuperior = InferiorToSuperior()
 """Singleton inferior-to-superior orientation."""

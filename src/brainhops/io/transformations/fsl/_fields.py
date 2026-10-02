@@ -13,7 +13,7 @@ class RASToWarpField(_xforms.Affine):
     evaluated.
     """
 
-    _input: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _input: _systems.CoordinateSystem = _systems.RASmm()
 
 
 class WarpFieldToRAS(_xforms.Affine):
@@ -24,4 +24,4 @@ class WarpFieldToRAS(_xforms.Affine):
     geometry of the moving image and the initial FLIRT affine.
     """
 
-    _output: _systems.CoordinateSystem = _systems.RASCoordinateSystem()
+    _output: _systems.CoordinateSystem = _systems.RASmm()

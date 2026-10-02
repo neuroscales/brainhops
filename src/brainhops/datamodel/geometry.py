@@ -13,7 +13,11 @@ from brainhops.datamodel.base import DataModelBase
 
 # internals
 from .axes import Axis
-from .systems import CoordinateSystem
+from .systems import (
+    AxisSequence,
+    CoordinateSystem,
+    _axes_or_unknown,
+)
 from .transformations import (
     Affine,
     CartesianField,
@@ -147,6 +151,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
         mode: tx.Optional[ModeLike] = None,
         *,
         simplify: SimplifyLike = "analytic",
+        factor: bool = False,
     ) -> tx.Self:
         """
         Compute the geometry by simplifying its transformation.
@@ -158,11 +163,13 @@ class Geometry(_GeometryFields, ImmutableSequence):
         transformation pair and the domain it defines is never lost.
         """
         # Every transformation exposes the same
-        # `compute(mode, *, simplify=...)`, so the voxel-to-world part is
-        # computed uniformly whether it is a sequence or a single leaf. The
-        # grid is kept as is, so the sampling domain is never lost.
+        # `compute(mode, *, simplify=..., factor=...)`, so the voxel-to-world
+        # part is computed uniformly whether it is a sequence or a single
+        # leaf. The grid is kept as is, so the sampling domain is never lost.
         flat = self._flattened()
-        transformation = flat.transformation.compute(mode, simplify=simplify)
+        transformation = flat.transformation.compute(
+            mode, simplify=simplify, factor=factor
+        )
         return Geometry(
             (flat.grid, transformation),
             input=self.input,
@@ -235,8 +242,13 @@ def _index2transform(
     nb_output_dims = sum(1 for idx in index if not isinstance(idx, int))
     nb_input_dims = len(shape)
 
-    # Compute output axes
-    input_axes = getattr(system, "axes", None)
+    # Compute output axes. An open system is closed to the number of axes
+    # of the array; one that states no axis at all gives none.
+    input_axes: tx.Optional[AxisSequence] = _axes_or_unknown(system)
+    if input_axes == [...]:
+        input_axes = None
+    elif input_axes.is_open:
+        input_axes = input_axes.expand(nb_input_dims)
     output_axes = None
     if input_axes:
         output_axes = []

@@ -56,8 +56,12 @@ import typing_extensions as tx
 # api
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientation import Orientation
-from brainhops.datamodel.systems import ArrayCoordinateSystem, CoordinateSystem
-from brainhops.datamodel.units import Unit
+from brainhops.datamodel.systems import (
+    ArrayCoordinateSystem,
+    CoordinateSystem,
+    _axes_or_unknown,
+)
+from brainhops.datamodel.units import Unit, is_physicalunit, is_sampleunit
 
 # internals
 from .base import Transformation
@@ -114,10 +118,15 @@ def bridge(
     [`Translation`][] that shifts the origin by one less than the axis
     extent.
 
-    When either system is unspecified, or carries no axes, the two are
-    assumed compatible and the identity is returned. When an axis that
-    must be matched has no correspondence, an [`AdaptationError`][]
-    names the two systems and the unmatched axes.
+    A bridge is built between two closed systems. When either system is
+    missing or open (its axes hold `...`), it states only some of its
+    axes. The identity is returned when the two are
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
+    so that what is not known is never a reason to refuse. Otherwise the
+    bridge would have to reorder, rescale, or flip axes that the open
+    system does not describe, so an [`AdaptationError`][] is raised rather
+    than a guess. When an axis that must be matched has no correspondence,
+    an [`AdaptationError`][] names the two systems and the unmatched axes.
 
     Parameters
     ----------
@@ -153,15 +162,19 @@ def bridge(
         adaptation is needed.
     """
     # --- special cases ------------------------------------------------
-    if source is None or target is None:
-        return Identity(input=source, output=target)
-    if source.axes is None or target.axes is None:
-        return Identity(input=source, output=target)
+    # Only two closed systems can be bridged. A missing system is open too:
+    # it reads as `[...]`.
+    source_axes = _axes_or_unknown(source)
+    target_axes = _axes_or_unknown(target)
+    if source_axes.is_open or target_axes.is_open:
+        if source_axes.compatible_with(target_axes):
+            return Identity(input=source, output=target)
+        _cannot_bridge_report(source, target)
     if source == target:
         return Identity(input=source, output=target)
 
     # --- dimensionality check -----------------------------------------
-    if len(source.axes) != len(target.axes):
+    if source.ndim != target.ndim:
         source_name = source.name or "the source system"
         target_name = target.name or "the target system"
         raise AdaptationError(
@@ -178,8 +191,6 @@ def bridge(
         )
 
     # --- matching -----------------------------------------------------
-    source_axes = list(source.axes)
-    target_axes = list(target.axes)
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -431,10 +442,12 @@ def _unmatched_report(
 ) -> tx.NoReturn:
     matched_source = {i for i in match if i is not None}
     unmatched_target = [
-        target.axes[j] for j, i in enumerate(match) if i is None
+        axis for axis, i in zip(_axes_or_unknown(target), match) if i is None
     ]
     unmatched_source = [
-        axis for i, axis in enumerate(source.axes) if i not in matched_source
+        axis
+        for i, axis in enumerate(_axes_or_unknown(source))
+        if i not in matched_source
     ]
 
     def names(axes: tx.List[Axis]) -> str:
@@ -452,6 +465,22 @@ def _unmatched_report(
         f"Cannot bridge {source_name} to {target_name}: {reason}. "
         f"Adaptation reorders, rescales, and flips matched axes, and "
         f"does not change the number of axes."
+    )
+
+
+def _cannot_bridge_report(
+    source: tx.Optional[CoordinateSystem],
+    target: tx.Optional[CoordinateSystem],
+) -> tx.NoReturn:
+    source_name = getattr(source, "name", None) or "the source system"
+    target_name = getattr(target, "name", None) or "the target system"
+    which = "the source" if _axes_or_unknown(source).is_open else "the target"
+    raise AdaptationError(
+        f"Cannot bridge {source_name} to {target_name}: {which} system is "
+        f"open (its axes hold `...`), and the axes it states do not match "
+        f"the other system's. A bridge would have to reorder, rescale, or "
+        f"flip axes that the open system does not describe. Declare the "
+        f"full systems, or close the open one with CoordinateSystem.expand."
     )
 
 
@@ -557,7 +586,14 @@ def adapt(
     seq_output = second.output
 
     # --- dimensionality mismatch: build the embedding -----------------
-    if len(source.axes) != len(target.axes):
+    # Only two closed systems can be told to differ in their number of
+    # axes. An open one that disagrees with its neighbour is refused by the
+    # bridge below.
+    n_source, n_target = (
+        _axes_or_unknown(source).ndim,
+        _axes_or_unknown(target).ndim,
+    )
+    if n_source is not None and n_target is not None and n_source != n_target:
         # One transform acts on a subset of the other's axes. Embed the
         # smaller one in the fuller space, trying the fuller input side of
         # `second` first and then the fuller output side of `first`.
@@ -668,17 +704,15 @@ def embed(
     # --- special cases ------------------------------------------------
     if isinstance(transform, CartesianField):
         return None
-    if full is None or full.axes is None:
-        return None
+    # Each system must be closed: the embedding is read off the axes that
+    # the fuller system has and the subset does not.
     sub_input = transform.input
     sub_output = transform.output
-    if sub_input is None or sub_input.axes is None:
+    full_axes = _axes_or_unknown(full)
+    in_axes = _axes_or_unknown(sub_input)
+    out_axes = _axes_or_unknown(sub_output)
+    if any(axes.is_open for axes in (full_axes, in_axes, out_axes)):
         return None
-    if sub_output is None or sub_output.axes is None:
-        return None
-    full_axes = list(full.axes)
-    in_axes = list(sub_input.axes)
-    out_axes = list(sub_output.axes)
     if len(in_axes) != len(out_axes):
         return None
     if len(out_axes if side == "output" else in_axes) >= len(full_axes):
@@ -900,16 +934,27 @@ _UnitLike = tx.Union[Axis, Unit, None]
 
 def _unit(unit: _UnitLike) -> tx.Optional[Unit]:
     """
-    Unwrap an [`Axis`][] into its unit.
+    Unwrap an [`Axis`][] into its *physical* unit.
 
     An axis with no unit, or a unit that is not a [`Unit`][] instance, is
-    reported as `None`.
+    reported as `None`. So is an axis measured in samples: a sample is not
+    a physical quantity, so it has no scale to convert and no kind to
+    match. Whether an axis *is* sampled is a different question, asked by
+    [`_is_array_side`][]; [`_unit_ratio`][] asks it too, to refuse a
+    sample matched to a physical unit.
     """
     if isinstance(unit, Axis):
         unit = unit.unit
-    if isinstance(unit, Unit):
+    if is_physicalunit(unit):
         return unit
     return None
+
+
+def _is_sampled(unit: _UnitLike) -> bool:
+    """Whether an axis (or a unit) counts samples."""
+    if isinstance(unit, Axis):
+        unit = unit.unit
+    return is_sampleunit(unit)
 
 
 def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
@@ -917,25 +962,40 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
     The factor that converts a value measured in the source axis's unit
     to the target axis's unit.
 
-    Two axes that carry no unit, or the same unit, have a ratio of one.
+    An unspecified unit (`None`) is compatible with any unit, at a ratio
+    of one: what is not known is never a reason to refuse. Two axes in the
+    same unit, or two axes that both count samples, have a ratio of one
+    too.
 
-    An axis with a unit matched to an axis without one has no defined
-    ratio, which is reported as a failure.
+    An axis that counts samples matched to an axis in a physical unit has
+    no ratio: the factor between them is the size of a sample, which is
+    what a scaling transformation says, not what the axes say. Two
+    physical units of different kinds (a length and a duration) have no
+    ratio either. Both are reported as a failure.
     """
-    source_unit = _unit(source)
-    target_unit = _unit(target)
-    if source_unit is None and target_unit is None:
+    source_sampled, target_sampled = _is_sampled(source), _is_sampled(target)
+    source_unit, target_unit = _unit(source), _unit(target)
+    if source_sampled and target_sampled:
         return 1.0
-    if source_unit is None or target_unit is None:
+    if source_sampled or target_sampled:
+        physical = target_unit if source_sampled else source_unit
+        if physical is None:
+            return 1.0
         raise AdaptationError(
-            "One axis carries a unit and the axis it matches does not, so "
-            "no conversion factor exists between them. Give both axes a "
-            "unit, or neither."
+            f"One axis is sampled (its unit is 'sample') and the axis it "
+            f"matches is in {physical.name}, so no conversion factor exists "
+            f"between them: the size of a sample in {physical.name} is what "
+            f"a scaling transformation states, not the axes. Map the "
+            f"samples to {physical.name} with a transformation, or give "
+            f"both axes the same kind of unit."
         )
+    if source_unit is None or target_unit is None:
+        return 1.0
     if source_unit.type != target_unit.type:
         raise AdaptationError(
-            "Two matched axes are measured in units of different kinds, "
-            "so no conversion factor exists between them."
+            f"Two matched axes are measured in units of different kinds "
+            f"({source_unit.name} and {target_unit.name}), so no conversion "
+            f"factor exists between them."
         )
     # The ratio between two SI-prefixed units is a power of ten, so it is
     # computed from the difference of the two base-ten scale exponents. A
@@ -981,13 +1041,16 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     Three signals mark an array-index axis. Its system is an array
     coordinate system, such as a voxel grid, even one whose axes are
     named and oriented and carry a length unit. Or the axis is discrete.
-    Or the axis carries no unit, so its samples are plain indices.
+    Or the axis is measured in samples, which is what [`SampleUnit`][]
+    states -- and only what it states: an axis whose unit is `None` has an
+    *unspecified* unit, which says nothing about whether it indexes an
+    array, so it is not read as one.
     """
     if isinstance(system, ArrayCoordinateSystem):
         return True
     if axis.discrete:
         return True
-    return axis.unit is None
+    return is_sampleunit(axis.unit)
 
 
 def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
@@ -1033,8 +1096,10 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
     and its clearing reads the input side.
     """
     if isinstance(t, CartesianField) and t.shape is not None:
-        system = t.output if at_output else t.input
-        axes = list(system.axes) if system is not None else []
+        axes = _axes_or_unknown(t.output if at_output else t.input)
+        if axes.is_open:
+            # The grid's shape gives the number of axes of an open system.
+            axes = axes.expand(len(t.shape))
         extents: tx.Dict[tx.Any, int] = {}
         for axis, size in zip(axes, t.shape):
             name = axis.name

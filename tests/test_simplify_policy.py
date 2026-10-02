@@ -576,8 +576,8 @@ def _reordered_pair() -> tuple:
     from brainhops.datamodel.axes import A, R, S
     from brainhops.datamodel.systems import CoordinateSystem
 
-    ras = CoordinateSystem(name="ras", axes=[R, A, S])
-    reordered = CoordinateSystem(name="reordered", axes=[S, R, A])
+    ras = CoordinateSystem(name="ras", axes=[R(), A(), S()])
+    reordered = CoordinateSystem(name="reordered", axes=[S(), R(), A()])
     return (
         Identity(input=ras, output=ras),
         Affine(matrix=np.eye(4)[:3], input=reordered, output=reordered),
@@ -619,7 +619,7 @@ def test_an_agreeing_boundary_still_collapses() -> None:
     from brainhops.datamodel.axes import A, R, S
     from brainhops.datamodel.systems import CoordinateSystem
 
-    ras = CoordinateSystem(name="ras", axes=[R, A, S])
+    ras = CoordinateSystem(name="ras", axes=[R(), A(), S()])
     pair = Sequence(
         transformations=[
             Identity(input=ras, output=ras),
