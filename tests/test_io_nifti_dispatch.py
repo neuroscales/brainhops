@@ -23,6 +23,7 @@ from brainhops.io.transformations.spm.y import (  # noqa: E402
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
+MAPPING = "Mapping"  # the intent name of a coordinates field
 NONE = 0  # NIFTI_INTENT_NONE
 
 
@@ -30,6 +31,9 @@ def _write(tmp_path, name: str, shape: tuple, intent: int):  # noqa: ANN001, ANN
     """Write a NIfTI file with a given shape and intent code."""
     img = nb.Nifti1Image(np.zeros(shape, "float32"), np.eye(4))
     img.header["intent_code"] = intent
+    if intent == VECTOR:
+        # A field of coordinates, named as SPM and brainhops name it.
+        img.header["intent_name"] = MAPPING
     target = tmp_path / name
     nb.save(img, str(target))
     return target

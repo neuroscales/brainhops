@@ -22,6 +22,7 @@ from brainhops.io.transformations.nifti import (  # noqa: E402
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
+MAPPING = "Mapping"  # the intent name of a coordinates field
 
 SHAPE = (4, 5, 6)
 """Grid shape: small, and no two axes of the same length."""
@@ -56,7 +57,8 @@ def _grid_points() -> np.ndarray:
 def _write(path, vectors: np.ndarray, intent: int):  # noqa: ANN001, ANN202
     """Write `(X, Y, Z, 3)` vectors in the `(X, Y, Z, 1, 3)` layout."""
     img = nb.Nifti1Image(vectors[:, :, :, None, :], VOX2RAS)
-    img.header.set_intent(intent)
+    # A field of coordinates is named as SPM and brainhops name it.
+    img.header.set_intent(intent, name=MAPPING if intent == VECTOR else "")
     nb.save(img, str(path))
     return path
 
@@ -230,7 +232,7 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
     code, _, name = header.get_intent()
     assert int(header["intent_code"]) == VECTOR
     assert code == "vector"
-    assert name == "Mapping"
+    assert name == MAPPING
 
     reloaded = io.transformations.load(target)
     assert type(reloaded) is NiftiRASCoordinatesField

@@ -268,7 +268,7 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
     field = np.zeros((4, 5, 6, 1, 3), dtype="float32")
     field[..., 0] = 1.0
     img = nb.Nifti1Image(field, np.eye(4))
-    img.header["intent_code"] = 1007
+    img.header.set_intent(1007, name="Mapping")
     source = tmp_path / "field.nii"
     nb.save(img, str(source))
 
