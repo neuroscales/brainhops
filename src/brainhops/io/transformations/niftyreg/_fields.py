@@ -32,6 +32,7 @@ from brainhops.io.base.nifti import (
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
+    _nifti_vector_field,
     _NiftiObject,
 )
 from brainhops.io.base.parsers import (
@@ -298,8 +299,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         backend = get_array_backend(data)
         data = backend.asarray(data)
         shape = tuple(int(d) for d in data.shape)
-        if len(shape) == 5 and shape[3] == 1:
-            data = data[:, :, :, 0, :]
+        data = _nifti_vector_field(data)
         if data.ndim != _NDIM + 1 or int(data.shape[-1]) != _NDIM:
             raise ParserContentError(
                 f"A three-dimensional NiftyReg field is stored as a "
