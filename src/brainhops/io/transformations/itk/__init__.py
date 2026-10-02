@@ -31,3 +31,11 @@ try:
     __all__ += ["h5"]
 except ImportError:  # h5py is optional
     pass
+
+# The NIfTI field readers need nibabel, which is optional too.
+try:
+    from . import nifti
+
+    __all__ += ["nifti"]
+except ImportError:  # nibabel is optional
+    pass
