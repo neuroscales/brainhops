@@ -22,7 +22,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
 from brainhops.io.transformations.fsl import FlirtTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
@@ -548,7 +548,23 @@ def test_constant_boundary_maps_to_grid_constant() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
+ARRAY_BACKENDS = [
+    "numpy",
+    pytest.param(
+        "dask",
+        marks=pytest.mark.skipif(
+            "dask" not in available_backends(),
+            reason="dask and dask-image are not installed",
+        ),
+    ),
+]
+"""The array backends a fold is checked on: both now prefilter exactly."""
+
+
+@pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
+def test_affine_folds_into_coefficient_field_warp_stays_correct(
+    array_backend: str,
+) -> None:
     """Folding the trailing affine into a coefficient field keeps the warp.
 
     An explicit ``compute()`` with no leading sampling domain folds the
@@ -557,18 +573,13 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
     the warp instead leads with a sampling grid, it is evaluated exactly and
     reproduces the fslpy reference across the field of view.
 
-    Pinned to the exact backend, from the load onwards: the interpolation
-    backend is chosen from the array, not from the ambient setting, so the
-    field has to be read as a numpy array to begin with. Folding converts
-    the field back to spline coefficients, and `dask_image` runs that
-    filter with `map_overlap`, which refuses an axis shorter than its
-    overlap depth -- "the overlapping depth 14 is larger than your array
-    6", and this coefficient grid has such an axis. Filtering whole axes
-    instead is precisely what dask exists to avoid on a real volume, so
-    the limitation is accepted and the fold is checked where the filter is
-    exact.
+    Checked on each backend from the load onwards: the interpolation
+    backend is chosen from the array, not from the ambient setting. Folding
+    converts the field back to spline coefficients, and this coefficient
+    grid has an axis of six samples, shorter than the prefilter's halo:
+    the dask prefilter merges such chunks rather than refusing them.
     """
-    with backend("numpy"):
+    with backend(array_backend):
         coef = io.transformations.load(
             fsl_dir / "coefficientfield.nii.gz",
             reference=_real_ref(),

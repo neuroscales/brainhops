@@ -298,7 +298,7 @@ def test_a_field_round_trips_with_its_intent_code(tmp_path) -> None:  # noqa: AN
 
     reloaded = io.transformations.load(target)
     assert isinstance(reloaded, NiftiRASCoordinatesField)
-    assert np.array_equal(np.asarray(reloaded.field), field)
+    assert np.array_equal(np.asarray(reloaded.field), field[:, :, :, 0])
     header = nb.load(str(target)).header
     assert int(header["intent_code"]) == 1007
     assert header.get_intent()[2] == "Mapping"

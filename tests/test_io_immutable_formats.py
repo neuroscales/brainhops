@@ -168,19 +168,29 @@ def loaded(request, tmp_path) -> tuple:  # noqa: ANN001
     return request.param, cls, load(tmp_path)
 
 
-def _points(name: str) -> np.ndarray:
-    """A few points in the space a format maps from, inside its grid.
+REGIONS = ["around", "before", "after"]
+"""Where the fields are sampled, relative to their grid; see `_points`."""
 
-    The fields written here are sampled strictly inside their grid: a
-    point outside an ITK NIfTI field does not map to the same place from
-    one run to the next, which is a sampling issue unrelated to the
-    structure of the chain. The FNIRT fixtures and the ITK blocks are
-    sampled on a fixed grid of world points.
+
+def _points(name: str, region: str = "around") -> np.ndarray:
+    """A few points in the space a format maps from, in and around its grid.
+
+    The fields written here are sampled outside of their grid as well as
+    inside it: `"around"` runs from before the start to past the end of
+    every axis, and `"before"` and `"after"` lie entirely beyond one end
+    of every axis -- the case that once sampled an empty crop of a dask
+    field and read whatever memory followed it. The FNIRT fixtures and
+    the ITK blocks are sampled on a fixed grid of world points.
     """
     if not name.startswith(("spm", "itk-nifti", "x5")):
         grids = np.meshgrid(*[np.linspace(-20.0, 20.0, 3)] * 3, indexing="ij")
         return np.stack(grids, -1)
-    axes = [np.linspace(0.5, size - 1.5, 3) for size in SHAPE]
+    if region == "before":
+        axes = [np.linspace(-10.0, -2.5, 3) for _ in SHAPE]
+    elif region == "after":
+        axes = [np.linspace(size + 1.5, size + 9.0, 3) for size in SHAPE]
+    else:
+        axes = [np.linspace(-4.0, size + 3.0, 5) for size in SHAPE]
     ijk = np.stack(np.meshgrid(*axes, indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
     if not name.startswith("itk"):
@@ -264,30 +274,16 @@ def test_the_flattened_chain_keeps_the_format(loaded) -> None:  # noqa: ANN001
     assert len(flat) == len(obj)
 
 
-def test_the_format_computes_like_its_plain_chain(loaded) -> None:  # noqa: ANN001
-    name, cls, obj = loaded
+@pytest.mark.parametrize("region", REGIONS)
+def test_the_format_computes_like_its_plain_chain(loaded, region) -> None:  # noqa: ANN001
+    name, _, obj = loaded
     plain = xforms.Sequence(
         list(obj.transformations), input=obj.input, output=obj.output
     )
     assert type(obj.compute()) is type(plain.compute())
-    if name == "spm":
-        # The RAS coordinates reader keeps the singleton axis of the
-        # `(X, Y, Z, 1, 3)` layout in its field, so the field read from
-        # the file cannot be sampled as it is. The chain is rebuilt with
-        # the squeezed values, which also exercises `to(...)` on it.
-        ras2voxel, field = obj.transformations
-        squeezed = xforms.CoordinatesField(
-            field=np.asarray(field.field)[:, :, :, 0],
-            input=field.input,
-            output=field.output,
-        )
-        obj = obj.to(transformations=[ras2voxel, squeezed])
-        assert isinstance(obj, cls)
-        plain = xforms.Sequence(
-            [ras2voxel, squeezed], input=obj.input, output=obj.output
-        )
-    points = _points(name)
+    points = _points(name, region)
     mapped = _apply(obj, points)
+    assert mapped.shape == points.shape
     assert np.all(np.isfinite(mapped))
     assert np.abs(mapped).max() < 1e4
     np.testing.assert_allclose(
@@ -304,17 +300,18 @@ def test_the_inverse_is_a_plain_sequence(loaded) -> None:  # noqa: ANN001
     assert inverse.output == obj.input
 
 
+@pytest.mark.parametrize("region", REGIONS)
 @pytest.mark.parametrize(
     "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
 )
-def test_an_itk_nifti_field_round_trips(tmp_path, cls) -> None:  # noqa: ANN001
+def test_an_itk_nifti_field_round_trips(tmp_path, cls, region) -> None:  # noqa: ANN001
     first = _itk_nifti(cls, tmp_path)
     out = tmp_path / "out.nii.gz"
     first.save(out)
     second = cls.from_file(out)
     assert isinstance(second.transformations, tuple)
     assert _kinds(second) == _kinds(first)
-    points = _points("itk-nifti")
+    points = _points("itk-nifti", region)
     np.testing.assert_allclose(
         _apply(second, points), _apply(first, points), rtol=1e-5, atol=1e-4
     )
