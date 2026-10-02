@@ -98,6 +98,40 @@ value outside its grid. nitransforms interpolates it with cubic splines
 and treats points outside the grid as not displaced, so the two can
 differ off the grid nodes.
 
+## B-splines
+
+A `nonlinear` node with `SubType = "bspline"` and `Representation =
+"coefficients"` is nitransforms' `BSplineFieldTransform`
+(`nonlinear.py`, `to_x5` / `from_x5`), and is read as an
+[`X5BSplineField`][]:
+
+- `Transform` holds the B-spline coefficients of a displacement in RAS
+  millimetres, one 3-vector per knot, `(X, Y, Z, 3)` (`DimensionKinds`
+  `("space", "space", "space", "vector")`);
+- `AdditionalParameters` is the voxel-to-RAS affine of the grid of
+  knots: knot `k` sits at voxel `k` of that grid;
+- `Domain` is the grid of the reference image, on which nitransforms'
+  `to_field` samples the field. The transform itself does not depend
+  on it.
+
+nitransforms maps a RAS point `x` to `x + sum_k c_k B3(i(x) - k)`
+(`nonlinear.py`, `_map_xyz`), where `i(x)` are the coordinates of `x`
+in the grid of knots, and `B3` is the tensor product of centred cubic
+B-splines (`interp/bspline.py`, `_cubic_bspline`); only knots that
+exist contribute, so coefficients beyond the grid are zero. The order
+is not stored: nitransforms evaluates cubics only. This is the chain
+RAS to knot voxel, a `DisplacementField` of coefficients (`coeff=True`,
+order 3, zero boundary) rotated into knot units, knot voxel to RAS --
+the same chain as a dense field of displacements, and the same
+knot-grid convention as an ITK `BSplineTransform`
+([`brainhops.io.transformations.itk`][]), whose fixed parameters place
+its coefficient grid in LPS.
+
+Any such chain whose input and output are `RASmm` is written as a
+`bspline` node, with the knot grid as its `Domain` when it was not read
+from a file (nitransforms requires a `Domain`, and has no other grid to
+give it).
+
 ## Chains
 
 A chain is stored by nitransforms (`manip.py`,
@@ -126,16 +160,15 @@ still read, and written back unchanged):
 - `ArrayLength > 1`: a stack of affines, one per volume of a series
   (nitransforms' `LinearTransformsMapping`), which the datamodel has no
   transformation for;
-- `SubType = "bspline"`: B-spline coefficients on a grid of knots whose
-  affine is in `AdditionalParameters` (nitransforms'
-  `BSplineFieldTransform`);
 - domains that are not regular 3-D cartesian grids (surfaces).
 
 These are refused when written: a transformation that does not map
-`RASmm` to `RASmm`, or that is neither an affine nor a dense field.
+`RASmm` to `RASmm`, or that is neither an affine, a dense field, nor a
+cubic B-spline with a zero boundary.
 """
 
 __all__ = [
+    "X5BSplineField",
     "X5CoordinatesField",
     "X5DisplacementField",
     "X5Domain",
@@ -145,6 +178,6 @@ __all__ = [
     "X5TransformParser",
 ]
 
-from ._blocks import X5CoordinatesField, X5DisplacementField
+from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
 from ._struct import X5Domain, X5Header, X5Node
 from ._xform import X5Transform, X5TransformParser

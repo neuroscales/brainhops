@@ -17,6 +17,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
+from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
@@ -331,6 +332,94 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
         rtol=1e-5,
         atol=1e-4,
     )
+
+
+def _outside_points(ndim: int, region: str) -> np.ndarray:
+    """
+    LPS points mostly outside of the field's grid, as `(*shape, ndim)`.
+
+    The grid spans `[-10, 2] x [14, 20] x [30, 50]` mm in LPS (its first
+    two axes in 2-D). `"before"` puts every point before the start of
+    every axis and `"after"` past its end; `"around"` spans `[-60, 60]` mm
+    on every axis, and `"centred"` is a 3x3x3 grid over `[-20, 20]` mm. Points
+    that all lie before an axis once made the sampler crop the field to
+    nothing and read whatever memory followed it.
+    """
+    corners = _grid_points(_vox2lps(ndim)).reshape(-1, ndim)
+    low, high = corners.min(axis=0), corners.max(axis=0)
+    if region == "before":
+        axes = [np.linspace(lo - 40.0, lo - 5.0, 3) for lo in low]
+    elif region == "after":
+        axes = [np.linspace(hi + 5.0, hi + 40.0, 3) for hi in high]
+    elif region == "around":
+        axes = [np.linspace(-60.0, 60.0, 5)] * ndim
+    else:
+        axes = [np.linspace(-20.0, 20.0, 3)] * ndim
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+
+
+def _clamped_voxels(points_lps: np.ndarray) -> np.ndarray:
+    """The voxel coordinates of LPS points, clamped to the grid."""
+    ndim = points_lps.shape[-1]
+    lps2vox = np.linalg.inv(_vox2lps(ndim))
+    voxels = points_lps @ lps2vox[:ndim, :ndim].T + lps2vox[:ndim, ndim]
+    return np.clip(voxels, 0, np.asarray(SHAPES[ndim]) - 1)
+
+
+@pytest.mark.parametrize(
+    "array_backend",
+    [
+        "numpy",
+        pytest.param(
+            "dask",
+            marks=pytest.mark.skipif(
+                "dask" not in available_backends(),
+                reason="dask and dask-image are not installed",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
+)
+@pytest.mark.parametrize("region", ["before", "after", "around", "centred"])
+def test_points_outside_the_grid_take_the_nearest_vector(
+    tmp_path,  # noqa: ANN001
+    ndim: int,
+    cls,  # noqa: ANN001
+    array_backend: str,
+    region: str,
+) -> None:
+    """
+    Outside of its grid, a field is extended with its nearest vector, as
+    ITK's `DisplacementFieldTransform` does -- and the same on every call.
+
+    The stored vectors are linear in the voxel index, so linear
+    interpolation with a `nearest` boundary samples them at the voxel
+    clamped to the grid.
+    """
+    points = _outside_points(ndim, region)
+    voxels = _clamped_voxels(points)
+    d = np.arange(ndim)
+    ramp = (d + 1.0) + 0.1 * (d + 1) * voxels
+    vox2lps = _vox2lps(ndim)
+    if cls is ItkNiftiCoordinatesField:
+        vectors = _grid_points(vox2lps) + _ramp(ndim)
+        world = voxels @ vox2lps[:ndim, :ndim].T + vox2lps[:ndim, ndim]
+        expected = world + ramp
+    else:
+        vectors = _ramp(ndim)
+        expected = points + ramp
+    path = _write(tmp_path / "field.nii.gz", vectors.astype("float32"))
+    with backend(array_backend):
+        field = cls.from_file(path)
+        source = xforms.CoordinatesField(field=points, output=field.input)
+        for _ in range(3):
+            sequence = xforms.Sequence([source, field])
+            out = sequence.compute().to(xforms.CoordinatesField).field
+            np.testing.assert_allclose(
+                np.asarray(out), expected, rtol=1e-5, atol=1e-4
+            )
 
 
 def test_a_dispvect_file_read_as_itk_coordinates_is_converted_to_lps(
