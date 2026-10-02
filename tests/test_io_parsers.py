@@ -165,6 +165,17 @@ def test_sniffing_a_missing_file_scores_zero(tmp_path) -> None:  # noqa: ANN001
     assert Greeting.sniff_file(tmp_path / "absent.greet") == Confidence.NO
 
 
+def test_a_name_too_long_to_look_up_is_a_missing_file() -> None:
+    """
+    Content handed over where a path was expected used to escape as an
+    `OSError: File name too long` from the file system.
+    """
+    content = "HELLO world\n" * 100
+    assert Greeting.sniff_file(content) == Confidence.NO
+    with pytest.raises(ParserExistsError):
+        Greeting.from_file(content)
+
+
 def test_writing_creates_a_file_that_did_not_exist(tmp_path) -> None:  # noqa: ANN001
     """`to_file` used to refuse to write unless the target already
     existed, and to raise even after writing successfully."""
