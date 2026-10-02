@@ -38,15 +38,15 @@ format. This memo uses the names in the first column.
 | Concept (this memo) | Meaning | zarr-vectors | neuroglancer | TRX / nibabel | VTK / meshio | trimesh / GIFTI |
 |---|---|---|---|---|---|---|
 | **vertex** | a point with coordinates in the native space | vertex | vertex / position | position / point | point | vertex / pointset entry |
-| **cell** | a group of `k` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = k`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
-| **cell width** `k` | number of vertices in a cell | `link_width` | — | — | cell size | 3 |
-| **kind** (simplex / polygon) | cell is a convex hull (tet) or an ordered loop (quad) | not distinguished (see §2) | — | — | cell type (`VTK_TETRA` vs `VTK_QUAD`) | — |
-| **directed** | vertex order inside a cell is meaningful | `directed` | — | — | — | winding |
-| **piece** | a list of vertices (and their cells) that belongs to one object | fragment | fragment (mesh octree node) | one streamline | — | — |
+| **element** | a group of `k` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = k`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
+| **element width** `k` | number of vertices in an element | `link_width` | — | — | cell size | 3 |
+| **kind** (simplex / polygon) | element is a convex hull (tet) or an ordered loop (quad) | not distinguished (see §2) | — | — | cell type (`VTK_TETRA` vs `VTK_QUAD`) | — |
+| **directed** | vertex order inside an element is meaningful | `directed` | — | — | — | winding |
+| **piece** | a list of vertices (and their elements) that belongs to one object | fragment | fragment (mesh octree node) | one streamline | — | — |
 | **object** | a logical entity: one streamline, one neuron, one surface | object | segment / annotation | streamline | — | one mesh |
 | **id** | the object a piece belongs to | object id | segment id / annotation id | streamline index | — | — |
 | **group** | a named set of objects | group | — | group | — | label |
-| **vertex / cell / piece attribute** | data attached to each vertex, cell or piece | vertex / link / fragment attribute | vertex attribute, annotation property | dpv / — / dps (dpg per group) | point_data / cell_data / field_data | vertex / face attributes |
+| **vertex / element / piece attribute** | data attached to each vertex, element or piece | vertex / link / fragment attribute | vertex attribute, annotation property | dpv / — / dps (dpg per group) | point_data / cell_data / field_data | vertex / face attributes |
 | **native space** | the coordinate system the vertices are stored in | level coordinates | model space (before `transform`) | RAS mm (TRX), voxmm (TRK) | — | `coords` |
 | **chunk** | a box of the native space, the unit of storage | chunk | chunk / octree node / spatial cell | — | — | — |
 | **level** | one resolution of a pyramid | level | level of detail / spatial index level | — | — | — |
@@ -101,13 +101,13 @@ vertices as a transformation would leak all of that.
 ```
 Vectors                          (abstract; ≈ Image)
 ├── SingleScaleVectors           (abstract; ≈ SingleScaleImage)
-│   ├── Points                   cells: implicit, one per vertex (k = 1)
-│   ├── Lines                    cells: edges (M, 2); lines / trees / graphs
-│   │   ├── Polylines            cells: implicit edges i → i+1 inside a piece
+│   ├── Points                   elements: implicit, one per vertex (k = 1)
+│   ├── Lines                    elements: edges (M, 2); lines / trees / graphs
+│   │   ├── Polylines            elements: implicit edges i → i+1 inside a piece
 │   │   │   └── Streamlines      alias / thin subclass, tractography vocabulary
-│   │   └── Skeletons            cells: explicit edges (M, 2); trees / graphs
+│   │   └── Skeletons            elements: explicit edges (M, 2); trees / graphs
 │   │       └── Skeleton         thin subclass, ensures a single object
-│   └── Meshes                   cells: explicit (M, k)
+│   └── Meshes                   elements: explicit (M, k)
 │       ├── SurfaceMeshes        polygons: k = 3 (triangles) or 4 (quads)
 │       │   └── SurfaceMesh      thin subclass, ensures a single object
 │       └── VolumeMeshes         simplices: k = 4 (tetrahedra)
@@ -119,14 +119,14 @@ Plural classes are collections of objects (what a file usually holds);
 the singular subclasses only add the check that there is one object, so
 that `SurfaceMesh` can be used where a function needs "a surface".
 
-Every single-scale class is vertices plus cells of a fixed width `k`.
-Two flags say what a cell is:
+Every single-scale class is vertices plus elements of a fixed width `k`.
+Two flags say what an element is:
 
 - `kind`: `"simplex"` (the convex hull of its vertices: point,
   edge, triangle, tetrahedron) or `"polygon"` (a closed loop through its
   vertices, in order: triangle, quad). The two only differ for `k >= 4`,
   which is what separates a quad from a tetrahedron.
-- `directed` (the zarr-vectors name): whether the order of a cell's
+- `directed` (the zarr-vectors name): whether the order of an element's
   vertices carries meaning or is arbitrary. For an edge it is the
   direction (parent → child); for a face, its winding (which side the
   normal points to); for a tetrahedron, its handedness, i.e. the sign
@@ -138,7 +138,7 @@ Two flags say what a cell is:
   outward winding.
 
 This lets one implementation of cropping, attributes and topology
-bookkeeping serve every type. A subclass only says how its cells are
+bookkeeping serve every type. A subclass only says how its elements are
 stored (implicit for points and polylines, explicit for the rest), and
 fixes `k` and `kind`.
 
@@ -151,7 +151,7 @@ onto `Points`, `Lines` (or `Polylines`) here.
 
 ### 2.1 Fields of a single-scale object
 
-Using the vocabulary of §0: vertices and cells, grouped into **pieces**,
+Using the vocabulary of §0: vertices and elements, grouped into **pieces**,
 each piece tagged with the **id** of the object it belongs to.
 
 ```python
@@ -159,7 +159,7 @@ class SingleScaleVectors(Vectors):
     # (N, D) float, native coordinates
     vertices: Optional[ArrayProtocol]
     # (M, k) int, indices into `vertices`; derived when implicit
-    cells: Optional[ArrayProtocol] = None
+    elements: Optional[ArrayProtocol] = None
     # pieces: offsets (P + 1,) into `members` (or into `vertices` when
     # `members` is None); members (L,) vertex indices, possibly shared
     offsets: Optional[ArrayProtocol] = None
@@ -170,25 +170,28 @@ class SingleScaleVectors(Vectors):
     transformations: List[Transformation] = ()
     # each (N, ...), (M, ...), (P, ...); kinds: see 4.4
     vertex_attributes: Dict[str, ArrayProtocol] = {}
-    cell_attributes: Dict[str, ArrayProtocol] = {}
+    element_attributes: Dict[str, ArrayProtocol] = {}
     piece_attributes: Dict[str, ArrayProtocol] = {}
     attribute_kinds: Dict[str, AttributeKind] = {}
 ```
 
-`cells` lives on the base class. For `Points` and `Polylines` it is a
+`elements` lives on the base class. For `Points` and `Polylines` it is a
 derived, read-only property (`arange(N)[:, None]`, and the `i → i+1`
-pairs inside each piece), so code that walks cells needs no special
+pairs inside each piece), so code that walks elements needs no special
 case. `Lines` exposes it as `edges` and `SurfaceMeshes` as `faces`, as
-aliases; the field itself is called `cells` because a tetrahedron's
-`faces` would be its triangles (VTK and meshio say `cells` too).
+aliases. The field itself is called `elements`, the finite-element
+word (Gmsh): `faces` would be ambiguous (a tetrahedron's faces are its
+triangles), `links` (zarr-vectors) reads oddly for a triangle, and
+`cells` (VTK, meshio) would clash with the spatial cells of a chunk
+grid.
 
-| Class | A piece is | Cells |
+| Class | A piece is | Elements |
 |---|---|---|
 | `Points` | one point (one piece per vertex by default) | implicit, `k = 1` |
 | `Polylines` | one polyline run; the order of its members is the line | implicit edges `i → i+1` inside the piece |
-| `Skeletons` | one connected component / stored fragment | `cells: (M, 2)`, usually `directed` (parent → child) |
-| `SurfaceMeshes` | one connected component / stored fragment | `cells: (M, 3)` or `(M, 4)`, polygons |
-| `VolumeMeshes` | one connected component / stored fragment | `cells: (M, 4)`, simplices |
+| `Skeletons` | one connected component / stored fragment | `elements: (M, 2)`, usually `directed` (parent → child) |
+| `SurfaceMeshes` | one connected component / stored fragment | `elements: (M, 3)` or `(M, 4)`, polygons |
+| `VolumeMeshes` | one connected component / stored fragment | `elements: (M, 4)`, simplices |
 
 **Pieces and contiguity.** A piece is a *list* of vertex indices, stored
 in CSR form (§0): piece `p` is `members[offsets[p]:offsets[p+1]]`.
@@ -211,13 +214,13 @@ duplicating shared vertices; it is what a writer for a contiguous-only
 format (TRX) calls. Shared membership is never silently dropped
 otherwise.
 
-Cells belong to pieces through their vertices: a cell is in a piece when
-all its vertices are. A cell whose vertices are shared by two pieces
+Elements belong to pieces through their vertices: an element is in a
+piece when all its vertices are. An element whose vertices are shared by two pieces
 belongs to both, which is also how zarr-vectors attaches links to
 fragments.
 
 **Defaults.** `offsets=None` means one piece holding every vertex (one
-point per piece for `Points`), and `ids=None` means `arange(P)`. Cell
+point per piece for `Points`), and `ids=None` means `arange(P)`. Element
 and member indices are zero-based; their dtype is preserved from the
 store, default `int64`. Vertex dtype is preserved too (`float32` for
 neuroglancer after dequantization).
@@ -245,7 +248,7 @@ a simplex needs `k <= D + 1`, so `VolumeMeshes` needs `D >= 3`.
 | `data` | `vertices` | not renamed to `data`: vectors have several arrays |
 | `ndim` | `ndim` | dimension of the native space (`D`) in both cases |
 | `dtype` | `dtype` | vertex dtype |
-| `shape` | — | no single shape; use `nvertices`, `ncells`, `npieces`, `nobjects` |
+| `shape` | — | no single shape; use `nvertices`, `nelements`, `npieces`, `nobjects` |
 | `__array__` | `__array__` | returns `vertices` (native coordinates); the docstring says so |
 | `grid` | — | see `bounds` |
 | `geometry` | `bounds` | axis-aligned box of the vertices, native space (§5) |
@@ -463,7 +466,7 @@ their own coordinates, so nothing needs re-basing.
 > vector index is a coordinate, not a voxel. To crop vectors to exactly
 > what an image crop covers, use `v.crop(img[a:b])` (§5.3).
 
-### 5.2 What "inside" means for cells
+### 5.2 What "inside" means for elements
 
 `__getitem__` is `crop(box)` with the default mode. `crop` exposes the
 policy:
@@ -472,18 +475,18 @@ policy:
 def crop(self, region, *, mode="inner", space=None) -> Self
 ```
 
-| `mode` | Kept vertices | Kept cells | Polylines effect |
+| `mode` | Kept vertices | Kept elements | Polylines effect |
 |---|---|---|---|
-| `"inner"` (default) | inside the region | cells whose vertices are **all** kept (induced sub-complex) | streamlines are split at the boundary into pieces sharing an id |
-| `"outer"` | inside, plus every vertex of a cell that has **any** vertex inside | cells with any vertex inside (closure) | pieces extend one vertex past the boundary |
-| `"object"` | all vertices of every object touching the region | all cells of those objects | whole streamlines that pass through the region (tractography "ROI include") |
-| `"exact"` | inside, plus new vertices on the boundary | cells clipped by the region, attributes interpolated | pieces end exactly on the boundary |
+| `"inner"` (default) | inside the region | elements whose vertices are **all** kept (induced sub-complex) | streamlines are split at the boundary into pieces sharing an id |
+| `"outer"` | inside, plus every vertex of an element that has **any** vertex inside | elements with any vertex inside (closure) | pieces extend one vertex past the boundary |
+| `"object"` | all vertices of every object touching the region | all elements of those objects | whole streamlines that pass through the region (tractography "ROI include") |
+| `"exact"` | inside, plus new vertices on the boundary | elements clipped by the region, attributes interpolated | pieces end exactly on the boundary |
 
 `"inner"` is the default because, like an image crop, it never returns
 geometry outside the requested region and it is cheap (a vertex mask
-plus a cell mask). `"exact"` is the only mode that creates vertices; it
-can come later. Vertex, cell and piece attributes are subset with the
-same masks, kept cells are **renumbered** to the kept vertices, `offsets`
+plus an element mask). `"exact"` is the only mode that creates vertices; it
+can come later. Vertex, element and piece attributes are subset with the
+same masks, kept elements are **renumbered** to the kept vertices, `offsets`
 and `members` are rebuilt (a piece split by the region becomes
 several pieces), and `ids` keep provenance.
 
@@ -613,7 +616,7 @@ nothing outside the region is read:
 2. read only those chunks and assemble fragments into pieces using the
    object manifests and the cross-chunk strategy (zarr-vectors explicit
    cross-chunk links, or boundary deduplication by coordinate match);
-3. apply the exact per-vertex test and the cell `mode`.
+3. apply the exact per-vertex test and the element `mode`.
 
 The result of `file_vectors[box]` is an in-memory single-scale object
 (or a lazy one backed by dask arrays when the reader supports it), the
@@ -711,7 +714,7 @@ a version and keep the spec-to-model mapping in one module.
    "ordered" flag (§2, and the PR discussion). zarr-vectors has
    `directed` but nothing that separates a width-4 quad from a width-4
    tet, so the zarr-vectors reader needs `geometry_types` or our own
-   metadata to decide. Mixed triangle/quad meshes (two cell blocks, as
+   metadata to decide. Mixed triangle/quad meshes (two element blocks, as
    in meshio) are out of scope for now.
 7. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
