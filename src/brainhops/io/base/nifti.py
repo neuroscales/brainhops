@@ -150,6 +150,17 @@ vectors are in; the intent name `"Mapping"` (see below) marks the RAS
 coordinate maps.
 """
 
+_NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
+"""
+The intent name NiftyReg gives every transformation it writes.
+
+NiftyReg stores its deformation and displacement fields and its
+control-point grids as `VECTOR` (1007) images named `"NREG_TRANS"`, and
+tells them apart with `intent_p1` (`reg-lib/cpu/Maths.hpp`,
+`NREG_TRANS_TYPE`). The name is evidence of a NiftyReg file, which only
+the NiftyReg readers decode, so the generic `VECTOR` readers decline it.
+"""
+
 _NIFTI_INTENT_NAME_MAPPING = "Mapping"
 """
 The intent name SPM gives a field of coordinates (`y_` files).
@@ -221,6 +232,28 @@ def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
         return str(header.get_intent()[2])
     except Exception:
         return None
+
+
+def _nifti_vector_field(data: ArrayProtocol) -> ArrayProtocol:
+    """
+    Drop the singleton time axis of a NIfTI vector field.
+
+    NIfTI stores a 3-D vector field as `(X, Y, Z, 1, 3)`, with the
+    components in the fifth axis and a singleton in place of time. Every
+    reader of a field wants it as `(X, Y, Z, 3)`, or it would sample it
+    as a 4-D grid of 3-vectors, so the singleton is dropped here, in one
+    place. Any other array -- a 4-D `(X, Y, Z, 3)` field, a 5-D one with
+    several time points -- is returned as it is, for the caller to
+    accept or refuse.
+
+    The shared `NiftiParser.data` keeps the axis on purpose: it is the
+    array that matches the header, and is what writers that copy a file
+    back store.
+    """
+    shape = tuple(int(d) for d in data.shape)
+    if len(shape) == 5 and shape[3] == 1:
+        data = data[:, :, :, 0, :]
+    return data
 
 
 def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:

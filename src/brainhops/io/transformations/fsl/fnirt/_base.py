@@ -13,8 +13,13 @@ from brainhops.datamodel.images import Image
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
+from brainhops.io.base.nifti import (
+    _nifti_intent,
+    _nifti_vector_field,
+    _NiftiObject,
+)
 from brainhops.io.base.parsers import Confidence
+from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
@@ -45,11 +50,11 @@ _COEFFICIENT_INTENTS = frozenset(
     }
 )
 
-# The B-spline order that each FNIRT intent code names. A dense
-# deformation field is a first-order (linear) B-spline field sampled on
-# the reference grid. A cubic and a quadratic coefficient field are
-# third- and second-order B-spline fields sampled on a coarse knot grid.
-_SPLINE_ORDER = {
+# The B-spline degree that each FNIRT intent code names. A dense
+# deformation field is a linear (degree 1) B-spline field sampled on the
+# reference grid. A cubic and a quadratic coefficient field are B-spline
+# fields of degree 3 and 2 sampled on a coarse knot grid.
+_SPLINE_DEGREE = {
     FSL_FNIRT_DISPLACEMENT_FIELD: 1,
     FSL_QUADRATIC_SPLINE_COEFFICIENTS: 2,
     FSL_CUBIC_SPLINE_COEFFICIENTS: 3,
@@ -74,11 +79,11 @@ class FnirtWarpField(
     scaled-mm coordinates. A *coefficient field* stores the coefficients
     of a B-spline basis on a coarse knot grid overlaid on the reference
     image. A single reader handles both, because both are B-spline fields
-    on a regular grid and differ only in the spline order, in whether the
+    on a regular grid and differ only in the spline degree, in whether the
     grid holds coefficients or sampled values, and in where the grid sits.
 
-    | Intent | Kind | Order | Grid |
-    | ------ | ---- | ----- | ---- |
+    | Intent | Kind | Degree | Grid |
+    | ------ | ---- | ------ | ---- |
     | 2006 | deformation | 1 | reference voxels |
     | 2007 | cubic coefficients | 3 | knot grid |
     | 2009 | quadratic coefficients | 2 | knot grid |
@@ -173,11 +178,11 @@ class FnirtWarpField(
     # --- exposed parameters -------------------------------------------
 
     @property
-    def order(self) -> tx.Optional[int]:
-        """The B-spline order: `1` dense, `3` cubic, `2` quadratic."""
+    def degree(self) -> tx.Optional[int]:
+        """The B-spline degree: `1` dense, `3` cubic, `2` quadratic."""
         if self.header is None:
             return None
-        return _SPLINE_ORDER.get(_nifti_intent(self.header))
+        return _SPLINE_DEGREE.get(_nifti_intent(self.header))
 
     @property
     def coeff(self) -> tx.Optional[bool]:
@@ -196,7 +201,7 @@ class FnirtWarpField(
     def _is_coeff(self) -> bool:
         return self._intent() in _COEFFICIENT_INTENTS
 
-    def _order(self) -> int:
+    def _degree(self) -> int:
         intent = self._intent()
         if intent == FSL_DCT_COEFFICIENTS:
             raise NotImplementedError(
@@ -204,12 +209,12 @@ class FnirtWarpField(
                 "supported. Convert the field to a deformation field with "
                 "FSL (`fnirtfileutils`) and read that instead."
             )
-        order = _SPLINE_ORDER.get(intent)
-        if order is None:
+        degree = _SPLINE_DEGREE.get(intent)
+        if degree is None:
             raise NotImplementedError(
                 f"Unsupported FNIRT intent code {intent!r}."
             )
-        return order
+        return degree
 
     def _bound(self) -> tx.Union[str, float]:
         # A coefficient field is evaluated with out-of-grid coefficients
@@ -287,12 +292,9 @@ class FnirtWarpField(
 
     def _raw_field(self) -> tx.Any:
         backend = get_array_backend(self.data)
-        field = backend.asarray(self.data)
         # A NIfTI vector field is often five-dimensional, with a singleton
         # axis before the three components. Collapse it to `(*grid, 3)`.
-        if field.ndim == 5 and field.shape[3] == 1:
-            field = field[:, :, :, 0, :]
-        return field
+        return _nifti_vector_field(backend.asarray(self.data))
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
         """The field array on its own grid, as scaled-mm displacements.
@@ -348,7 +350,7 @@ class FnirtWarpField(
         mov = _ImageGeometry(self.moving)
         return _warp_chain(
             field=self._field_array(ref),
-            order=self._order(),
+            degree=self._degree(),
             coeff=self._is_coeff(),
             bound=self._bound(),
             ref_to_field=self._ref_to_field(ref),
@@ -420,7 +422,7 @@ class FnirtWarpField(
     def __repr__(self) -> str:
         return stored_repr(
             self,
-            ("order", "coeff", "deformation_type", "moving", "reference"),
+            ("degree", "coeff", "deformation_type", "moving", "reference"),
         )
 
     def __len__(self) -> int:
@@ -442,7 +444,7 @@ class FnirtWarpField(
 
 def _warp_chain(
     field: np.ndarray,
-    order: int,
+    degree: int,
     coeff: bool,
     bound: tx.Union[str, float],
     ref_to_field: np.ndarray,
@@ -456,17 +458,17 @@ def _warp_chain(
     The field stays on its own grid. The two affines place that grid in
     world coordinates and let the spline evaluation happen during reslice.
 
-    The B-spline order fixes a grid convention that differs between FSL
+    The B-spline degree fixes a grid convention that differs between FSL
     and the resampler the data model uses. FSL anchors the coarse knot
     basis half a cell in from the resampler's centred basis, a shift of
-    `order // 2` grid units, and no shift on an axis whose knot spacing is
+    `degree // 2` grid units, and no shift on an axis whose knot spacing is
     one, where the grid is not coarse. The displacement the spline
     produces is in scaled-mm, while a [`DisplacementField`][] adds it in
     units of its own grid. Both are absorbed into the affines and the
     field values, so the produced chain reproduces FSL's warp.
     """
-    order = int(order)
-    offsets = _anchor_offsets(order, knot_spacing)
+    degree = int(degree)
+    offsets = _anchor_offsets(degree, knot_spacing)
 
     field_to_ref = np.linalg.inv(ref_to_field)
     # `grid_to_fsl` carries a warp-grid coordinate to reference scaled-mm.
@@ -507,7 +509,7 @@ def _warp_chain(
     return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
-            field=prescaled, order=order, bound=bound, coeff=coeff
+            field=prescaled, degree=degree, bound=bound, coeff=coeff
         ),
         WarpFieldToRAS(matrix=grid_to_ras[:-1]),
     )
@@ -518,16 +520,16 @@ def _warp_chain(
 # ----------------------------------------------------------------------
 
 
-def _anchor_offsets(order: int, knot_spacing: np.ndarray) -> np.ndarray:
+def _anchor_offsets(degree: int, knot_spacing: np.ndarray) -> np.ndarray:
     """The per-axis shift between FSL's and the resampler's spline anchor.
 
-    FSL anchors the coarse knot basis `order // 2` grid units in from the
+    FSL anchors the coarse knot basis `degree // 2` grid units in from the
     resampler's centred basis, the same shift for a cubic and a quadratic
     field. An axis whose knot spacing is one has no coarse grid, so its
     shift is zero.
     """
     spacing = np.asarray(knot_spacing, dtype=np.float64)
-    step = float(int(order) // 2)
+    step = float(int(degree) // 2)
     return np.where(spacing == 1.0, 0.0, step).astype(np.float64)
 
 
@@ -539,14 +541,7 @@ def _voxel_grid_in_scaled_mm(
     Returns an array of shape `(nx, ny, nz, 3)` whose entry at a voxel is
     the scaled-mm coordinate of that voxel under `vox2fsl`.
     """
-    grid = backend.stack(
-        backend.meshgrid(*[backend.arange(s) for s in shape], indexing="ij"),
-        -1,
-    )
-    grid = backend.asarray(grid, dtype=vox2fsl.dtype)
-    rotation = backend.asarray(vox2fsl[:3, :3], dtype=vox2fsl.dtype)
-    offset = backend.asarray(vox2fsl[:3, 3], dtype=vox2fsl.dtype)
-    return backend.matmul(rotation, grid[..., None])[..., 0] + offset
+    return voxel_grid_coordinates(shape, vox2fsl, backend)
 
 
 def _detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:

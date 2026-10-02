@@ -27,6 +27,7 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
+    _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
     _apply_like,
     _apply_overrides,
@@ -383,18 +384,22 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         either. SPM12 writes its `y_` deformations that way, and so does
         brainhops' RAS coordinates writer, while ITK's `NiftiImageIO`
         never writes an intent name, and ANTs writes through it: the name
-        is evidence of a RAS map, not of an ITK one.
+        is evidence of a RAS map, not of an ITK one. Nor is one named
+        `"NREG_TRANS"`, which NiftyReg writes on its (RAS) fields.
         """
         if _itk_ndim(_nifti_shape(header)) is None:
             return Confidence.NO
         if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
             return Confidence.NO
-        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_MAPPING:
+        if _nifti_intent_name(header) in (
+            _NIFTI_INTENT_NAME_MAPPING,
+            _NIFTI_INTENT_NAME_NIFTYREG,
+        ):
             return Confidence.NO
         return Confidence.CERTAIN
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -429,7 +434,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 field=field,
                 input=voxel,
                 output=voxel,
-                order=self.order,
+                degree=self.degree,
                 bound=self.bound,
             ),
             VoxelToLPS(matrix=vox2lps, input=voxel, output=world),

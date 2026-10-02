@@ -305,14 +305,14 @@ def test_fnirt_maps_to_moving_ras() -> None:
     assert np.allclose(out, expected, atol=1e-3)
 
 
-def test_fnirt_deformation_field_is_a_first_order_displacement() -> None:
+def test_fnirt_deformation_field_is_a_first_degree_displacement() -> None:
     _, absolute, _ = _fnirt_setup()
     warp = _warp(absolute)
-    assert warp.order == 1
+    assert warp.degree == 1
     assert warp.coeff is False
     field = warp.transformations[1]
     assert type(field) is _xforms.DisplacementField
-    assert field.order == 1
+    assert field.degree == 1
     assert field.coeff is False
     assert np.asarray(field.field).shape == REF_SHAPE + (3,)
 
@@ -408,9 +408,9 @@ def test_generic_reader_does_not_claim_fsl_intents() -> None:
     assert NiftiRASCoordinatesField._score_nibabel(img.header) < 1.0
 
 
-def test_coefficient_field_exposes_order_and_coeff() -> None:
+def test_coefficient_field_exposes_degree_and_coeff() -> None:
     coef = io.transformations.load(fsl_dir / "coefficientfield.nii.gz")
-    assert coef.order == 3  # cubic
+    assert coef.degree == 3  # cubic
     assert coef.coeff is True
     # The stored knot spacing and reference pixel sizes are read from the
     # header for the chain, in reference voxels.
@@ -418,9 +418,9 @@ def test_coefficient_field_exposes_order_and_coeff() -> None:
     assert np.allclose(coef._reference_pixdim(), [2.0, 2.0, 2.0])
 
 
-def test_deformation_field_exposes_order_and_coeff() -> None:
+def test_deformation_field_exposes_degree_and_coeff() -> None:
     warp = io.transformations.load(fsl_dir / "displacementfield.nii.gz")
-    assert warp.order == 1
+    assert warp.degree == 1
     assert warp.coeff is False
 
 
@@ -444,7 +444,7 @@ def test_coefficient_field_chain_shape() -> None:
     assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
     field = chain[1]
     assert type(field) is _xforms.DisplacementField
-    assert field.order == 3
+    assert field.degree == 3
     assert field.coeff is True
     # The coefficients stay on the coarse knot grid.
     assert np.asarray(field.field).shape == (6, 13, 7, 3)
@@ -511,11 +511,11 @@ def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_anchor_offset_is_floor_order_over_two() -> None:
-    """The knot offset is `order // 2`, the same for cubic and quadratic."""
+def test_anchor_offset_is_floor_degree_over_two() -> None:
+    """The knot offset is `degree // 2`, the same for cubic and quadratic."""
     assert np.allclose(_anchor_offsets(3, [5, 5, 5]), [1, 1, 1])
     assert np.allclose(_anchor_offsets(2, [5, 5, 5]), [1, 1, 1])
-    # A dense field (order 1, spacing 1) has no offset.
+    # A dense field (degree 1, spacing 1) has no offset.
     assert np.allclose(_anchor_offsets(1, [1, 1, 1]), [0, 0, 0])
 
 
@@ -613,7 +613,7 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct(
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     """Folding the trailing affine into a dense field is exact in the FOV.
 
-    A dense displacement field has spline order one, so interpolation
+    A dense displacement field has spline degree one, so interpolation
     reproduces an affine exactly at every grid node. Folding the trailing
     affine into the field and evaluating the collapsed two-step warp against
     a sampling grid therefore agrees with the full three-step warp and with

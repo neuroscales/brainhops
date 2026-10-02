@@ -29,6 +29,10 @@ How an ANTs transform list (`-t A -t B`, `[file.mat,1]`) maps onto a
 brainhops `Sequence` is described in
 [`brainhops.io.transformations.itk.mat`][].
 
+The blocks of a `CompositeTransform` (in any ITK file) are read in the
+order they apply to points, which is the reverse of their order in the
+file: ITK applies the last block of a composite first.
+
 Not every ANTs output can be read yet:
 
 - time-varying velocity fields, `<prefix><n>VelocityField.nii.gz`, are

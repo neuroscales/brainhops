@@ -132,7 +132,7 @@ def test_permutation_swaps_axes_and_relabels_groups() -> None:
 
 def test_subspace_field_couples_its_axes_and_passes_the_rest() -> None:
     warp = np.zeros((5, 5, 5, 3))
-    inner = DisplacementField(field=warp, order=1, bound="reflect")
+    inner = DisplacementField(field=warp, degree=1, bound="reflect")
     sub = SubspaceTransformation(
         transformation=inner,
         input_axes=np.asarray([0, 1, 2]),
@@ -149,13 +149,13 @@ def test_raw_field_is_a_single_group() -> None:
     # A raw field couples every axis to every axis, so the chain is one
     # group, left unfactored, and the reslice is the monolithic pull.
     warp = np.zeros((4, 4, 4, 4, 4))
-    field = DisplacementField(field=warp, order=1, bound="reflect")
+    field = DisplacementField(field=warp, degree=1, bound="reflect")
     assert _components([field], (4, 4, 4, 4)) is None
 
 
 def test_closure_through_permutation_after_subspace() -> None:
     warp = np.zeros((5, 5, 5, 3))
-    inner = DisplacementField(field=warp, order=1, bound="reflect")
+    inner = DisplacementField(field=warp, degree=1, bound="reflect")
     sub = SubspaceTransformation(
         transformation=inner,
         input_axes=np.asarray([0, 1, 2]),
@@ -199,7 +199,7 @@ def test_discrete_axis_with_non_integer_scale_raises() -> None:
         sep.pull_separable(
             data,
             seq,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
@@ -213,22 +213,22 @@ def test_discrete_axis_with_integer_shift_is_a_gather() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
         ref = pull(
             data,
             seq.compute().field,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
     assert np.array_equal(got, ref)
 
 
-def test_discrete_axis_order_zero_is_a_gather() -> None:
-    # An order-0 integer shift along a discrete axis is exact and allowed:
+def test_discrete_axis_degree_zero_is_a_gather() -> None:
+    # An degree-0 integer shift along a discrete axis is exact and allowed:
     # it moves whole samples without reading any value between them. The
     # maintainer chose to allow this case.
     system = CoordinateSystem(axes=[_sp("x"), _time(discrete=True)])
@@ -238,19 +238,21 @@ def test_discrete_axis_order_zero_is_a_gather() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=0,
+            degree=0,
             bound="reflect",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=0, bound="reflect", coeff=False
+            data, seq.compute().field, degree=0, bound="reflect", coeff=False
         )
     assert np.array_equal(got, ref)
 
 
-def test_discrete_channel_untouched_at_order_zero_matches_monolithic() -> None:
+def test_discrete_channel_untouched_at_degree_zero_matches_monolithic() -> (
+    None
+):
     # A label map with a discrete channel axis, resliced by a diagonal scale
-    # on the spatial axes at order 0. The channel axis is untouched, so the
+    # on the spatial axes at degree 0. The channel axis is untouched, so the
     # reslice succeeds and matches the monolithic pull.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _time("c", discrete=True)]
@@ -263,12 +265,12 @@ def test_discrete_channel_untouched_at_order_zero_matches_monolithic() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=0,
+            degree=0,
             bound="nearest",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=0, bound="nearest", coeff=False
+            data, seq.compute().field, degree=0, bound="nearest", coeff=False
         )
     assert np.allclose(got, ref)
 
@@ -287,19 +289,19 @@ def test_interpolating_across_discrete_channel_still_raises() -> None:
         sep.pull_separable(
             data,
             seq,
-            order=1,
+            degree=1,
             bound="nearest",
             coeff=False,
         )
 
 
-@pytest.mark.parametrize("order", [2, 3])
+@pytest.mark.parametrize("degree", [2, 3])
 @pytest.mark.parametrize("coeff", [False, True])
-def test_discrete_channel_whole_sample_map_gathers_at_high_order(
-    order: int, coeff: bool
+def test_discrete_channel_whole_sample_map_gathers_at_high_degree(
+    degree: int, coeff: bool
 ) -> None:
     # A discrete channel axis moved by a whole-sample shift is an exact
-    # gather at any order, even with reflect boundaries or spline
+    # gather at any degree, even with reflect boundaries or spline
     # coefficients where a continuous axis would take the weight-matrix
     # path. The step must succeed and must not blend samples across the
     # discrete axis. This restores the behaviour before the class-(b)
@@ -323,14 +325,14 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_order(
         base = sep.pull_separable(
             data,
             _seq(0.0),
-            order=order,
+            degree=degree,
             bound="reflect",
             coeff=coeff,
         )
         shifted = sep.pull_separable(
             data,
             _seq(1.0),
-            order=order,
+            degree=degree,
             bound="reflect",
             coeff=coeff,
         )
@@ -346,9 +348,9 @@ def test_discrete_channel_whole_sample_map_gathers_at_high_order(
         )
 
 
-def test_discrete_channel_genuine_scale_raises_at_high_order() -> None:
+def test_discrete_channel_genuine_scale_raises_at_high_degree() -> None:
     # A genuine resampling of the discrete channel axis is refused at every
-    # order, so the whole-sample gather is not mistaken for permission to
+    # degree, so the whole-sample gather is not mistaken for permission to
     # interpolate across the axis.
     system = CoordinateSystem(
         axes=[_sp("x"), _sp("y"), _sp("z"), _time("c", discrete=True)]
@@ -364,7 +366,7 @@ def test_discrete_channel_genuine_scale_raises_at_high_order() -> None:
         sep.pull_separable(
             data,
             seq,
-            order=3,
+            degree=3,
             bound="reflect",
             coeff=False,
         )
@@ -383,7 +385,7 @@ def test_ordering_runs_shrinking_before_expanding() -> None:
     shrink = _step("matrix", 1, 100, 10)
     grow = _step("matrix", 1, 10, 100)
     same = _step("gather", 1, 10, 10)
-    order = sep._order_steps([grow, same, shrink], order=1, coeff=False)
+    order = sep._order_steps([grow, same, shrink], degree=1, coeff=False)
     assert order[0] is shrink
     assert order[1] is same
     assert order[2] is grow
@@ -392,7 +394,7 @@ def test_ordering_runs_shrinking_before_expanding() -> None:
 def test_ordering_puts_views_before_other_unit_steps() -> None:
     view = _step("gather", 1, 10, 10)
     matmul = _step("matrix", 1, 10, 10)
-    order = sep._order_steps([matmul, view], order=1, coeff=False)
+    order = sep._order_steps([matmul, view], degree=1, coeff=False)
     assert order[0] is view
     assert order[1] is matmul
 
@@ -400,7 +402,7 @@ def test_ordering_puts_views_before_other_unit_steps() -> None:
 def test_ordering_smaller_expansion_first() -> None:
     small = _step("matrix", 1, 10, 20)
     large = _step("matrix", 1, 10, 100)
-    order = sep._order_steps([large, small], order=1, coeff=False)
+    order = sep._order_steps([large, small], degree=1, coeff=False)
     assert order[0] is small
     assert order[1] is large
 
@@ -410,21 +412,21 @@ def test_ordering_smaller_expansion_first() -> None:
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("order", [0, 1, 3])
+@pytest.mark.parametrize("degree", [0, 1, 3])
 @pytest.mark.parametrize("bound", ["reflect", "nearest", "mirror", 2.5])
 @pytest.mark.parametrize("coeff", [False, True])
 def test_spline_matrix_reproduces_pull_1d(
-    order: int, bound: object, coeff: bool
+    degree: int, bound: object, coeff: bool
 ) -> None:
     with backend("numpy"):
         arr = np.linspace(-1.0, 1.0, 12)
         # A scale and shift that sends some samples outside the grid.
         coords = np.arange(9) * 1.3 - 1.5
-        weights = np.asarray(spline_matrix(12, coords, order, bound, coeff))
+        weights = np.asarray(spline_matrix(12, coords, degree, bound, coeff))
         got = weights @ arr
         if not isinstance(bound, str):
             got = got + float(bound) * (1.0 - weights.sum(1))
-        ref = pull(arr, coords[:, None], order, bound, coeff)
+        ref = pull(arr, coords[:, None], degree, bound, coeff)
     assert np.allclose(got, ref)
 
 
@@ -438,11 +440,11 @@ def _voxel_system(n: int) -> CoordinateSystem:
     return CoordinateSystem(name="voxel", axes=axes)
 
 
-@pytest.mark.parametrize("order", [0, 1, 3])
+@pytest.mark.parametrize("degree", [0, 1, 3])
 @pytest.mark.parametrize("bound", ["reflect", "nearest", "mirror", 2.5])
 @pytest.mark.parametrize("coeff", [False, True])
 def test_separable_matches_monolithic_diagonal(
-    order: int, bound: object, coeff: bool
+    degree: int, bound: object, coeff: bool
 ) -> None:
     system = _voxel_system(3)
     with backend("numpy"):
@@ -457,12 +459,12 @@ def test_separable_matches_monolithic_diagonal(
         got = sep.pull_separable(
             data,
             seq,
-            order=order,
+            degree=degree,
             bound=bound,
             coeff=coeff,
         )
         ref = pull(
-            data, seq.compute().field, order=order, bound=bound, coeff=coeff
+            data, seq.compute().field, degree=degree, bound=bound, coeff=coeff
         )
     assert np.allclose(got, ref)
 
@@ -472,7 +474,7 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
     with backend("numpy"):
         data = np.arange(10.0)
         # A unit scale with an integer shift is a gather, exact for any
-        # order. A scale a hair away from one is a genuine resampling and
+        # degree. A scale a hair away from one is a genuine resampling and
         # falls to the weight-matrix path, still matching the monolithic
         # pull.
         for scale, shift in ((1.0, 2.0), (0.9999999, 0.0)):
@@ -483,23 +485,23 @@ def test_scale_of_exactly_one_is_a_view_and_near_one_interpolates() -> None:
             got = sep.pull_separable(
                 data,
                 seq,
-                order=3,
+                degree=3,
                 bound="reflect",
                 coeff=False,
             )
             ref = pull(
                 data,
                 seq.compute().field,
-                order=3,
+                degree=3,
                 bound="reflect",
                 coeff=False,
             )
             assert np.allclose(got, ref)
 
 
-@pytest.mark.parametrize("order", [0, 1, 3])
+@pytest.mark.parametrize("degree", [0, 1, 3])
 def test_separable_matches_monolithic_through_an_inner_less_reindex(
-    order: int,
+    degree: int,
 ) -> None:
     # An inner-less subspace over different axes is a reindex (#110). It is
     # now factored, so the reslice runs per group, and still matches the
@@ -521,7 +523,7 @@ def test_separable_matches_monolithic_through_an_inner_less_reindex(
         matrix[:, -1] = [0.3, -0.4, 1.0]
         affine = Affine(matrix=matrix, input=system, output=system)
         seq = Sequence(transformations=[grid, swap, affine])
-        opt = dict(order=order, bound="reflect", coeff=False)
+        opt = dict(degree=degree, bound="reflect", coeff=False)
         assert sep._plan(data.shape, seq, **opt) is not None
         got = sep.pull_separable(data, seq, **opt)
         ref = pull(data, seq.compute().field, **opt)
@@ -533,7 +535,7 @@ def _pull_pair_cast(
     column: np.ndarray,
     scale0: float,
     shift0: float,
-    order: int,
+    degree: int,
     bound: object,
 ) -> tuple:
     # The separable and monolithic reslice of a two-axis image, for
@@ -555,12 +557,12 @@ def _pull_pair_cast(
         got = sep.pull_separable(
             data,
             seq,
-            order=order,
+            degree=degree,
             bound=bound,
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=order, bound=bound, coeff=False
+            data, seq.compute().field, degree=degree, bound=bound, coeff=False
         )
     return got, ref
 
@@ -611,7 +613,7 @@ def _plan(seq: Sequence, data_shape: tuple, **opt: object) -> dict:
 def _classify_single(
     scale: float,
     shift: float,
-    order: int = 3,
+    degree: int = 3,
     bound: object = "mirror",
     coeff: bool = False,
 ) -> str:
@@ -620,7 +622,7 @@ def _classify_single(
     matrix = np.asarray([[scale, 0.0, shift], [0.0, 1.0, 0.0]])
     grid = CartesianField(shape=(10, 3))
     seq = Sequence(transformations=[grid, Affine(matrix=matrix)])
-    plan = _plan(seq, (10, 3), order=order, bound=bound, coeff=coeff)
+    plan = _plan(seq, (10, 3), degree=degree, bound=bound, coeff=coeff)
     return plan[(0,)]
 
 
@@ -634,24 +636,24 @@ def test_exact_unit_scale_is_a_gather_and_near_unit_is_a_matrix() -> None:
     assert _classify_single(1.3, 0.0) == "matrix"
 
 
-def test_unit_scale_with_coeff_at_high_order_is_a_matrix() -> None:
-    # With spline coefficients at order two or above, the monolithic pull
+def test_unit_scale_with_coeff_at_high_degree_is_a_matrix() -> None:
+    # With spline coefficients at degree two or above, the monolithic pull
     # returns the reconstruction of the coefficients, not the raw
     # coefficient a gather would return. Such a step takes the weight
-    # matrix instead, at order one or below it stays a gather.
-    assert _classify_single(1.0, 2.0, order=3, coeff=True) == "matrix"
-    assert _classify_single(1.0, 2.0, order=1, coeff=True) == "gather"
-    assert _classify_single(1.0, 2.0, order=0, coeff=True) == "gather"
+    # matrix instead, at degree one or below it stays a gather.
+    assert _classify_single(1.0, 2.0, degree=3, coeff=True) == "matrix"
+    assert _classify_single(1.0, 2.0, degree=1, coeff=True) == "gather"
+    assert _classify_single(1.0, 2.0, degree=0, coeff=True) == "gather"
 
 
-def test_unit_scale_with_reflect_above_order_one_is_a_matrix() -> None:
-    # Scipy's reflect prefilter is not exactly interpolating above order
+def test_unit_scale_with_reflect_above_degree_one_is_a_matrix() -> None:
+    # Scipy's reflect prefilter is not exactly interpolating above degree
     # one, so a reflect gather would diverge from the monolithic pull. Such
-    # a step takes the weight matrix, at order one or below it stays a
+    # a step takes the weight matrix, at degree one or below it stays a
     # gather.
-    assert _classify_single(1.0, 2.0, order=3, bound="reflect") == "matrix"
-    assert _classify_single(1.0, 2.0, order=5, bound="reflect") == "matrix"
-    assert _classify_single(1.0, 2.0, order=1, bound="reflect") == "gather"
+    assert _classify_single(1.0, 2.0, degree=3, bound="reflect") == "matrix"
+    assert _classify_single(1.0, 2.0, degree=5, bound="reflect") == "matrix"
+    assert _classify_single(1.0, 2.0, degree=1, bound="reflect") == "gather"
 
 
 def test_coupled_and_interpolating_groups_are_pulled() -> None:
@@ -662,7 +664,7 @@ def test_coupled_and_interpolating_groups_are_pulled() -> None:
     shear = np.eye(3, 4)
     shear[0, 1] = 0.5
     grid = CartesianField(shape=(4, 5, 6))
-    opt = dict(order=1, bound="reflect", coeff=False)
+    opt = dict(degree=1, bound="reflect", coeff=False)
     seq = Sequence(transformations=[grid, Affine(matrix=shear)])
     assert _plan(seq, (4, 5, 6), **opt) == {(0, 1): "pull", (2,): "gather"}
     warp = SubspaceTransformation(
@@ -687,14 +689,14 @@ def test_matrix_less_affine_is_the_identity_in_a_group() -> None:
     els = [Affine(matrix=matrix), Affine(matrix=None)]
     assert _components(els, (6, 7)) == [((0,), (0,)), ((1,), (1,))]
     seq = Sequence(transformations=[CartesianField(shape=(6, 7)), *els])
-    opt = dict(order=1, bound="reflect", coeff=False)
+    opt = dict(degree=1, bound="reflect", coeff=False)
     assert _plan(seq, (6, 7), **opt) == {(0,): "matrix", (1,): "matrix"}
 
 
 def test_constant_boundary_near_all_corners_of_a_warp() -> None:
     # A coupled three-dimensional warp inside a four-dimensional image,
     # with a large displacement that samples outside the grid near every
-    # corner, a non-zero constant fill, and an order above one. The spatial
+    # corner, a non-zero constant fill, and an degree above one. The spatial
     # warp is a class-(c) batched pull, and the constant fill near the
     # padded corners must match the monolithic pull.
     xax, yax, zax = _sp("x"), _sp("y"), _sp("z")
@@ -708,7 +710,7 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
         data = rng.normal(size=(6, 6, 6, 4))
         warp = rng.normal(size=(6, 6, 6, 3)) * 3.0
         dfield = DisplacementField(
-            field=warp, input=vox3, output=vox3, order=3, bound=7.0
+            field=warp, input=vox3, output=vox3, degree=3, bound=7.0
         )
         aff4 = Affine(
             matrix=np.diag([1.0, 1.0, 1.0, 1.0, 1.0])[:-1],
@@ -736,14 +738,14 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
         got = sep.pull_separable(
             data,
             transformation,
-            order=3,
+            degree=3,
             bound=7.0,
             coeff=False,
         )
         ref = pull(
             data,
             transformation.compute().field,
-            order=3,
+            degree=3,
             bound=7.0,
             coeff=False,
         )
@@ -751,7 +753,7 @@ def test_constant_boundary_near_all_corners_of_a_warp() -> None:
 
 
 def test_class_a_gather_with_coeff_matches_monolithic() -> None:
-    # A flip is class-(a) eligible, but with spline coefficients at order
+    # A flip is class-(a) eligible, but with spline coefficients at degree
     # three the monolithic pull returns the reconstruction of the
     # coefficients, not the raw coefficient a gather would return. The step
     # must route to the weight matrix so the result still matches.
@@ -765,20 +767,20 @@ def test_class_a_gather_with_coeff_matches_monolithic() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=3,
+            degree=3,
             bound="mirror",
             coeff=True,
         )
         ref = pull(
-            data, seq.compute().field, order=3, bound="mirror", coeff=True
+            data, seq.compute().field, degree=3, bound="mirror", coeff=True
         )
     assert np.allclose(got, ref)
 
 
-@pytest.mark.parametrize("order", [3, 5])
-def test_class_a_reflect_gather_matches_monolithic(order: int) -> None:
+@pytest.mark.parametrize("degree", [3, 5])
+def test_class_a_reflect_gather_matches_monolithic(degree: int) -> None:
     # A flip is class-(a) eligible, but scipy's reflect prefilter is not
-    # exactly interpolating above order one, so the gather would diverge
+    # exactly interpolating above degree one, so the gather would diverge
     # from the monolithic pull. The step routes to the weight matrix.
     system = _voxel_system(2)
     with backend("numpy"):
@@ -788,14 +790,14 @@ def test_class_a_reflect_gather_matches_monolithic(order: int) -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=order,
+            degree=degree,
             bound="reflect",
             coeff=False,
         )
         ref = pull(
             data,
             seq.compute().field,
-            order=order,
+            degree=degree,
             bound="reflect",
             coeff=False,
         )
@@ -813,19 +815,19 @@ def test_output_dtype_float32_is_preserved() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=3,
+            degree=3,
             bound="mirror",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=3, bound="mirror", coeff=False
+            data, seq.compute().field, degree=3, bound="mirror", coeff=False
         )
     assert got.dtype == np.float32
     assert ref.dtype == np.float32
     assert np.allclose(got, ref)
 
 
-def test_output_dtype_uint8_order_zero_matches_monolithic() -> None:
+def test_output_dtype_uint8_degree_zero_matches_monolithic() -> None:
     # An integer input is lifted to float for the pipeline and rounded back
     # once at the end, the way the monolithic pull rounds an integer output.
     system = _voxel_system(2)
@@ -836,12 +838,12 @@ def test_output_dtype_uint8_order_zero_matches_monolithic() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=0,
+            degree=0,
             bound="nearest",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=0, bound="nearest", coeff=False
+            data, seq.compute().field, degree=0, bound="nearest", coeff=False
         )
     assert got.dtype == np.uint8
     assert ref.dtype == np.uint8
@@ -860,12 +862,12 @@ def test_class_a_only_pipeline_preserves_dtype() -> None:
         got = sep.pull_separable(
             data,
             seq,
-            order=1,
+            degree=1,
             bound="mirror",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=1, bound="mirror", coeff=False
+            data, seq.compute().field, degree=1, bound="mirror", coeff=False
         )
     assert got.dtype == np.float32
     assert ref.dtype == np.float32
@@ -881,7 +883,7 @@ def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
         rng = np.random.default_rng(6)
         data = rng.normal(size=(5, 5, 5))
         warp = rng.normal(size=(5, 5, 5, 3))
-        inner = DisplacementField(field=warp, order=1, bound="reflect")
+        inner = DisplacementField(field=warp, degree=1, bound="reflect")
         sub = SubspaceTransformation(transformation=inner)
         grid = CartesianField(shape=(5, 5, 5), input=system, output=system)
         seq = Sequence(transformations=[grid, sub])
@@ -889,7 +891,7 @@ def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
             sep.pull_separable(
                 data,
                 seq,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
@@ -897,7 +899,7 @@ def test_subspace_warp_without_axes_does_not_silently_pass_through() -> None:
             pull(
                 data,
                 seq.compute().field,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
@@ -959,14 +961,14 @@ def test_cras_to_fras_bridge_factors_into_singletons() -> None:
         got = sep.pull_separable(
             data,
             transformation,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
         ref = pull(
             data,
             transformation.compute().field,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
@@ -1012,14 +1014,14 @@ def test_coarser_grid_and_sub_geometry_reslice_match_monolithic() -> None:
             got = sep.pull_separable(
                 data,
                 transformation,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
             ref = pull(
                 data,
                 transformation.compute().field,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
@@ -1033,19 +1035,19 @@ def test_three_d_image_through_raw_warp_is_the_fallback() -> None:
         data = rng.normal(size=(5, 5, 5))
         warp = rng.normal(size=(5, 5, 5, 3)) * 0.8
         field = DisplacementField(
-            field=warp, input=system, output=system, order=3, bound="reflect"
+            field=warp, input=system, output=system, degree=3, bound="reflect"
         )
         grid = CartesianField(shape=(5, 5, 5), input=system, output=system)
         seq = Sequence(transformations=[grid, field])
         got = sep.pull_separable(
             data,
             seq,
-            order=3,
+            degree=3,
             bound="reflect",
             coeff=False,
         )
         ref = pull(
-            data, seq.compute().field, order=3, bound="reflect", coeff=False
+            data, seq.compute().field, degree=3, bound="reflect", coeff=False
         )
     # A single coupled group falls back to the monolithic pull, which is
     # bit-identical.
@@ -1067,7 +1069,7 @@ def _demonstration_image() -> tuple:
     rng = np.random.default_rng(0)
     warp = rng.normal(size=(6, 6, 6, 3)) * 0.7
     dfield = DisplacementField(
-        field=warp, input=vox3, output=vox3, order=3, bound="reflect"
+        field=warp, input=vox3, output=vox3, degree=3, bound="reflect"
     )
     aff4 = Affine(
         matrix=np.diag([2.0, 2.0, 2.0, 1.5, 1.0])[:-1],
@@ -1103,7 +1105,7 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
         ref = pull(
             data,
             transformation.compute().field,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
@@ -1121,7 +1123,7 @@ def test_issue_11_spatial_warp_and_time_affine() -> None:
             got = sep.pull_separable(
                 data,
                 transformation,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
@@ -1161,7 +1163,7 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
         ref = pull(
             data,
             transformation.compute().field,
-            order=1,
+            degree=1,
             bound="reflect",
             coeff=False,
         )
@@ -1179,7 +1181,7 @@ def test_issue_11_flip_and_scale_do_not_interpolate_the_data() -> None:
             got = sep.pull_separable(
                 data,
                 transformation,
-                order=1,
+                degree=1,
                 bound="reflect",
                 coeff=False,
             )
@@ -1235,10 +1237,14 @@ def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
         with backend("numpy"):
             data, seq = _build(small_n)
             small = sep.pull_separable(
-                data, seq, order=3, bound="mirror", coeff=False
+                data, seq, degree=3, bound="mirror", coeff=False
             )
             small_ref = pull(
-                data, seq.compute().field, order=3, bound="mirror", coeff=False
+                data,
+                seq.compute().field,
+                degree=3,
+                bound="mirror",
+                coeff=False,
             )
     finally:
         sep.pull_axes = original
@@ -1254,10 +1260,14 @@ def test_large_one_dimensional_axis_routes_to_batched_pull() -> None:
         with backend("numpy"):
             data, seq = _build(large_n)
             large = sep.pull_separable(
-                data, seq, order=3, bound="mirror", coeff=False
+                data, seq, degree=3, bound="mirror", coeff=False
             )
             large_ref = pull(
-                data, seq.compute().field, order=3, bound="mirror", coeff=False
+                data,
+                seq.compute().field,
+                degree=3,
+                bound="mirror",
+                coeff=False,
             )
     finally:
         sep.pull_axes = original
@@ -1303,7 +1313,7 @@ def _warp(
     k = len(shape_axes)
     rng = np.random.default_rng(seed)
     field = rng.normal(size=(*shape_axes, k)) * scale
-    return DisplacementField(field=field, order=1, bound="reflect")
+    return DisplacementField(field=field, degree=1, bound="reflect")
 
 
 def _reslice_equal(
@@ -1311,7 +1321,7 @@ def _reslice_equal(
     shape: tuple,
     seed: int,
     grid_system: object = None,
-    order: int = 3,
+    degree: int = 3,
     bound: object = "reflect",
 ) -> None:
     # Reslice random data of the given shape through a grid-and-subspace
@@ -1330,10 +1340,10 @@ def _reslice_equal(
             grid = CartesianField(shape=shape)
         seq = Sequence(transformations=[grid, sub])
         got = sep.pull_separable(
-            data, seq, order=order, bound=bound, coeff=False
+            data, seq, degree=degree, bound=bound, coeff=False
         )
         ref = pull(
-            data, seq.compute().field, order=order, bound=bound, coeff=False
+            data, seq.compute().field, degree=degree, bound=bound, coeff=False
         )
     assert np.allclose(got, ref)
 
@@ -1585,10 +1595,10 @@ def test_subspace_wrapping_diagonal_reslice_matches_monolithic() -> None:
         grid = CartesianField(shape=(6, 7, 5, 4), input=vox4, output=vox4)
         seq = Sequence(transformations=[grid, sub])
         got = sep.pull_separable(
-            data, seq, order=3, bound="reflect", coeff=False
+            data, seq, degree=3, bound="reflect", coeff=False
         )
         ref = pull(
-            data, seq.compute().field, order=3, bound="reflect", coeff=False
+            data, seq.compute().field, degree=3, bound="reflect", coeff=False
         )
     assert np.allclose(got, ref)
 
@@ -1610,7 +1620,7 @@ def test_scaling_translation_reslice_matches_monolithic() -> None:
             Translation(translation=np.asarray([0.4, -0.6])),
         ]
         seq = Sequence(transformations=[CartesianField(shape=(6, 7)), *els])
-        opt = dict(order=3, bound="mirror", coeff=False)
+        opt = dict(degree=3, bound="mirror", coeff=False)
         assert _plan(seq, data.shape, **opt) == {
             (0,): "matrix",
             (1,): "matrix",
@@ -1635,10 +1645,10 @@ def test_permutation_reslice_matches_monolithic() -> None:
         grid = CartesianField(shape=(6, 4, 5), input=system, output=system)
         seq = Sequence(transformations=[grid, perm])
         got = sep.pull_separable(
-            data, seq, order=1, bound="reflect", coeff=False
+            data, seq, degree=1, bound="reflect", coeff=False
         )
         ref = pull(
-            data, seq.compute().field, order=1, bound="reflect", coeff=False
+            data, seq.compute().field, degree=1, bound="reflect", coeff=False
         )
     assert np.allclose(got, ref)
 
@@ -1660,7 +1670,7 @@ def test_widened_intermediate_stage_reslices_with_a_two_dimensional_pull() -> (
     embed[2, 3], embed[3, 3] = 1.0, 0.5
     rng = np.random.default_rng(41)
     warp = DisplacementField(
-        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, order=1, bound="reflect"
+        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, degree=1, bound="reflect"
     )
     sub = SubspaceTransformation(
         transformation=warp,
@@ -1676,7 +1686,7 @@ def test_widened_intermediate_stage_reslices_with_a_two_dimensional_pull() -> (
             Affine(matrix=np.eye(3, 5)),
         ]
     )
-    opt = dict(order=1, bound="nearest", coeff=False)
+    opt = dict(degree=1, bound="nearest", coeff=False)
     assert _plan(seq, (6, 5, 4), **opt) == {(0, 1): "pull", (2,): "gather"}
     with backend("numpy"):
         data = rng.normal(size=(6, 5, 4))
@@ -1699,7 +1709,7 @@ def test_endpointless_subspace_beside_a_permutation_reslices() -> None:
     )
     perm = Permutation(permutation=np.asarray([2, 0, 1]))
     seq = Sequence(transformations=[grid, scale, perm])
-    opt = dict(order=3, bound="mirror", coeff=False)
+    opt = dict(degree=3, bound="mirror", coeff=False)
     with backend("numpy"):
         rng = np.random.default_rng(43)
         data = rng.normal(size=(6, 4, 5))
@@ -1821,7 +1831,7 @@ def test_interpolating_reslice_with_copy_is_correct_and_not_recopied(
     grid = CartesianField(shape=(3, 4, 5), input=system, output=system)
     affine = Affine(matrix=matrix, input=system, output=system)
     seq = Sequence(transformations=[grid, affine])
-    opt = dict(order=1, bound="reflect", coeff=False)
+    opt = dict(degree=1, bound="reflect", coeff=False)
     with backend("numpy"):
         data = np.arange(3 * 4 * 5, dtype=float).reshape(3, 4, 5)
         got = sep.pull_separable(data, seq, copy=True, **opt)
@@ -1845,7 +1855,7 @@ def test_reslice_through_a_split_sequence_inner_is_correct() -> None:
         output_axes=np.array([0, 1]),
     )
     seq = Sequence([CartesianField(shape=(4, 5, 6)), sub])
-    opt = dict(order=1, bound="reflect", coeff=False)
+    opt = dict(degree=1, bound="reflect", coeff=False)
     with backend("numpy"):
         data = np.random.default_rng(0).normal(size=(4, 5, 6))
         got = sep.pull_separable(data, seq, **opt)

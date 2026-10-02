@@ -1,6 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # externals
 # datamodel
@@ -46,8 +47,8 @@ class FlirtTransform(
     # `inverse()`) off that path.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
-    _input: _systems.CoordinateSystem = _systems.RASmm()
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
     # `matrix` is computed on demand from the raw FLIRT matrix and the two
     # image geometries, so it is not a stored, constructor-taken field

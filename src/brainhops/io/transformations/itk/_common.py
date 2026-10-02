@@ -1,5 +1,6 @@
 # stdlib
 import math
+from warnings import warn
 
 # dependencies
 import numpy as np
@@ -21,6 +22,7 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
@@ -292,13 +294,13 @@ class ItkDisplacementBase(ItkBlockBase):
     cached, so opening a file never touches the warp data: a dask-backed
     or delayed array stays unread until the chain is asked for.
 
-    `order`, `coeff` and `bound` are the spline parameters handed to the
+    `degree`, `coeff` and `bound` are the spline parameters handed to the
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
     and a subclass overrides them to describe its own encoding.
     """
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     coeff: tx.ClassVar[bool] = False
     """Whether the field holds spline coefficients rather than values."""
@@ -391,7 +393,7 @@ class ItkDisplacementBase(ItkBlockBase):
             field=self.field,
             input=VOX,
             output=VOX,
-            order=self.order,
+            degree=self.degree,
             coeff=self.coeff,
             bound=self.bound,
         )
@@ -867,7 +869,7 @@ class ItkBSplineStruct(
     back, so the components are planar rather than interleaved.
     """
 
-    order: tx.ClassVar[int] = 3
+    degree: tx.ClassVar[int] = 3
     coeff: tx.ClassVar[bool] = True
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
@@ -878,6 +880,76 @@ class ItkBSplineStruct(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
+
+
+def _application_order(
+    blocks: tx.List[tx.Any],
+    composites: tx.List[int],
+    position: tx.Optional[int] = None,
+) -> tx.List[tx.Any]:
+    """The blocks of the transform that an ITK file is read as, in the
+    order they apply to points.
+
+    `blocks` are the blocks of the file in file order, without the
+    `CompositeTransform` header, and `composites` the positions (in the
+    file) of every `CompositeTransform` header that was skipped.
+
+    ITK writes a `CompositeTransform` as a header block followed by its
+    transform queue, front to back
+    (`CompositeTransformIOHelperTemplate::GetTransformList`), and reads
+    the blocks after the header back into the queue in the same order
+    (`SetTransformList`, which calls `AddTransform`). But
+    `CompositeTransform::TransformPoint` applies the queue from back to
+    front: a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A brainhops
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+    transformations in the order they apply, so the blocks of a
+    composite file are reversed.
+
+    The top-level transforms of a file are:
+
+    * the composite, if the file starts with a `CompositeTransform`
+      header: it is then the file's only top-level transform;
+    * otherwise each block, as ITK reads a file without a composite
+      header as a list of unrelated transforms.
+
+    `position` selects one of them. By default, the first one is read,
+    as SimpleITK's `ReadTransform` does, with a warning if the file
+    holds several.
+
+    Raises
+    ------
+    ParserContentError
+        If a `CompositeTransform` header is not the first block (ITK
+        only writes one there, and refuses to write it anywhere else),
+        or if the file has no top-level transform `position`.
+    """
+    if composites:
+        if list(composites) != [0]:
+            raise ParserContentError(
+                "ITK only writes a CompositeTransform as the first block "
+                "of a file, and it cannot be nested."
+            )
+        transforms = [list(reversed(blocks))]
+    else:
+        transforms = [[block] for block in blocks]
+
+    if position is None:
+        if len(transforms) > 1:
+            warn(
+                f"This ITK file holds {len(transforms)} transforms and no "
+                f"composite, so only the first one is read. Pass "
+                f"`position=` to read another one.",
+                stacklevel=2,
+            )
+        position = 0
+    if not transforms and position == 0:
+        return []
+    if not 0 <= position < len(transforms):
+        raise ParserContentError(
+            f"This ITK file has {len(transforms)} transform(s), so it has "
+            f"no transform {position}."
+        )
+    return transforms[position]
 
 
 def _inverse_chain(

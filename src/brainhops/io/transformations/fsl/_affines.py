@@ -1,6 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # internals
 from brainhops.datamodel import systems as _systems
@@ -16,15 +17,19 @@ from ._systems import FslCoordinateSystem
 class VoxelToScaledMm(_xforms.Affine):
     """Affine transformation from voxel space to FSL scaled-mm space."""
 
-    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = FslCoordinateSystem()
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
 
 
 class ScaledMmToVoxel(_xforms.Affine):
     """Affine transformation from FSL scaled-mm space to voxel space."""
 
-    _input: _systems.CoordinateSystem = FslCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _input: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
+    _output: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
 
 
 class ScaledMmToScaledMm(_xforms.Affine):
@@ -34,8 +39,8 @@ class ScaledMmToScaledMm(_xforms.Affine):
     reference image and the scaled-mm coordinates of the moving image.
     """
 
-    _input: _systems.CoordinateSystem = FslCoordinateSystem()
-    _output: _systems.CoordinateSystem = FslCoordinateSystem()
+    _input: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
+    _output: KwOnly[_systems.CoordinateSystem] = FslCoordinateSystem()
 
 
 # ----------------------------------------------------------------------

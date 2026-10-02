@@ -3,6 +3,7 @@ RAS and LPS coordinate systems."""
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # internals
 from brainhops.datamodel import systems as _systems
@@ -12,15 +13,19 @@ from brainhops.datamodel import transformations as _xforms
 class VoxelToRAS(_xforms.Affine):
     """Affine transformation from voxel space to RAS space."""
 
-    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
 
 class RASToVoxel(_xforms.Affine):
     """Affine transformation from RAS space to voxel space."""
 
-    _input: _systems.CoordinateSystem = _systems.RASmm()
-    _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
 
     # The two halves of the pair map the same spaces in opposite
     # directions, so each one's inverse is the other. Declaring it here,
@@ -31,14 +36,33 @@ class RASToVoxel(_xforms.Affine):
 class VoxelToLPS(_xforms.Affine):
     """Affine transformation from voxel space to LPS space."""
 
-    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.LPSmm()
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
 
 
 class LPSToVoxel(_xforms.Affine):
     """Affine transformation from LPS space to voxel space."""
 
-    _input: _systems.CoordinateSystem = _systems.LPSmm()
-    _output: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+    _output: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
 
     _reverseof: tx.ClassVar[type] = VoxelToLPS
+
+
+class RASToRAS(_xforms.Affine):
+    """
+    Affine transformation from RAS space to RAS space.
+
+    A world-to-world affine, such as a registration result that maps
+    the world coordinates of one image to those of another. It is a
+    data model of its own, not a plain `Affine`, so that a plain affine,
+    whose endpoints may be anything, is never written to a format that
+    can only store a RAS-to-RAS matrix.
+    """
+
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()

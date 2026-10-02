@@ -406,7 +406,7 @@ def test_bspline_is_a_cubic_spline_of_ras_displacements(
     assert isinstance(field.input, systems.RASmm)
     assert isinstance(field.output, systems.RASmm)
     assert field.displacement.coeff
-    assert int(field.displacement.order) == 3
+    assert int(field.displacement.degree) == 3
     points = _knot_probes()
     expected = _bspline_map(_ramp() - 2.0, KNOTS, points)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
@@ -479,7 +479,7 @@ def test_splines_x5_cannot_hold_are_refused(tmp_path: Path) -> None:
     out = tmp_path / "bad.x5"
     ras2vox, field, vox2ras = X5BSplineField.from_ras(_ramp(), KNOTS)
     for kwargs, match in (
-        (dict(order=1), "cubic"),
+        (dict(degree=1), "cubic"),
         (dict(bound="nearest"), "boundary"),
     ):
         spline = xforms.DisplacementField(
@@ -487,7 +487,7 @@ def test_splines_x5_cannot_hold_are_refused(tmp_path: Path) -> None:
             input=field.input,
             output=field.output,
             coeff=True,
-            **{"order": 3, "bound": "constant", **kwargs},
+            **{"degree": 3, "bound": "constant", **kwargs},
         )
         chain = xforms.Sequence(
             transformations=[ras2vox, spline, vox2ras],

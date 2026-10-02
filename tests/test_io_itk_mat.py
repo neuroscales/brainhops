@@ -153,9 +153,10 @@ def test_matrix_offset_transform_base_is_an_affine() -> None:
     np.testing.assert_allclose(_affine(block), _expected(3))
 
 
-def test_a_chain_keeps_every_block_in_order() -> None:
+def test_a_composite_keeps_every_block_in_application_order() -> None:
     """A chain repeats the `fixed` name, so it cannot be read as a
-    mapping of names to values. The composite's own pair is skipped."""
+    mapping of names to values. The composite's own pair is skipped,
+    and ITK applies the last block of a composite first."""
     parameters, fixed = _parameters(3)
     translation = [10.0, 20.0, 30.0]
     content = b"".join(
@@ -169,11 +170,36 @@ def test_a_chain_keeps_every_block_in_order() -> None:
         ]
     )
     transform = MatTransform.from_bytes(content)
-    affine, shift = transform.transformations
+    shift, affine = transform.transformations
     assert affine.type == itk.ItkTransformClass.AffineTransform
     assert shift.type == itk.ItkTransformClass.TranslationTransform
     np.testing.assert_allclose(_affine(affine), _expected(3))
     np.testing.assert_allclose(np.asarray(shift.parameters), translation)
+
+
+def test_a_plain_list_reads_the_transform_at_position() -> None:
+    """Without a composite pair, each pair is its own transform: the
+    first is read by default, with a warning, and `position=` picks
+    another one."""
+    from brainhops.io.base.parsers import ParserContentError
+
+    parameters, fixed = _parameters(3)
+    translation = [10.0, 20.0, 30.0]
+    content = b"".join(
+        [
+            _variable("AffineTransform_double_3_3", parameters),
+            _variable("fixed", fixed),
+            _variable("TranslationTransform_double_3_3", translation),
+            _variable("fixed", []),
+        ]
+    )
+    with pytest.warns(UserWarning, match="holds 2 transforms"):
+        (affine,) = MatTransform.from_bytes(content).transformations
+    np.testing.assert_allclose(_affine(affine), _expected(3))
+    (shift,) = MatTransform.from_bytes(content, position=1).transformations
+    np.testing.assert_allclose(np.asarray(shift.parameters), translation)
+    with pytest.raises(ParserContentError, match="no transform 2"):
+        MatTransform.from_bytes(content, position=2)
 
 
 def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
