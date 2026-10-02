@@ -6,15 +6,15 @@ from numbers import Number
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Magic
 
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import HAS_PILLOW, HAS_TIFFFILE
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.transformations import (
     Affine,
     Identity,
@@ -29,7 +29,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
     ParserExistsError,
-    ParserNotImplementedError,
     SnifferContentError,
     WriterError,
 )
@@ -300,7 +299,7 @@ def _affine_parts(
     return np.diag(linear).copy(), matrix[:, -1].copy()
 
 
-class _Geometry(tx.NamedTuple):
+class _Geometry(Magic, frozen=True):
     """What a writer can store of an image's geometry."""
 
     sizes: tx.Dict[str, float]  # spatial, positive, in `units`
@@ -325,7 +324,7 @@ def _write_geometry(
     axis measured in a unit of length; the sizes are given only when every
     spatial axis has one. A rotation or a shear has no size to give.
     """
-    empty = _Geometry({}, {}, {}, {}, None)
+    empty = _Geometry(sizes={}, units={}, signs={}, origin={}, time=None)
     parts = _affine_parts(xform, len(axes))
     if parts is None:
         return empty
@@ -349,7 +348,9 @@ def _write_geometry(
             name = backend.length_unit(None if unit is None else str(unit))
             if name is None:
                 # Not a unit of length: no axis gets a size.
-                return _Geometry({}, {}, {}, {}, time)
+                return _Geometry(
+                    sizes={}, units={}, signs={}, origin={}, time=time
+                )
             sizes[axis.name] = abs(scale)
             units[axis.name] = name
             if scale < 0:
@@ -360,7 +361,9 @@ def _write_geometry(
             name = backend.time_unit(None if unit is None else str(unit))
             if name is not None and scale > 0:
                 time = (scale, name)
-    return _Geometry(sizes, units, signs, origin, time)
+    return _Geometry(
+        sizes=sizes, units=units, signs=signs, origin=origin, time=time
+    )
 
 
 def _write_codes(
@@ -993,8 +996,6 @@ class TiffImage(
         [`TiffMultiScaleImage`][brainhops.io.images.tiff.TiffMultiScaleImage],
         unless a `level` is asked for.
         """
-        if not (HAS_TIFFFILE or HAS_PILLOW):
-            return Confidence.NO
         if cls._sniff_head(file, error):
             return Confidence.LIKELY
         return Confidence.NO
@@ -1058,8 +1059,6 @@ class TiffImage(
                 f"{cls.__name__} does not take the option(s) "
                 f"{', '.join(sorted(kwargs))}."
             )
-        if not HAS_TIFFFILE:
-            return cls._from_pillow(source, series, level, pixel_size, unit)
         index = 0 if level is None else int(level)
         with source.open() as tif:
             chosen = backend._select(tif, int(series), index)
@@ -1094,56 +1093,6 @@ class TiffImage(
         image._ome_index = metadata.ome_index
         return image
 
-    @classmethod
-    def _from_pillow(
-        cls,
-        source: backend.TiffSource,
-        series: int,
-        level: tx.Optional[int],
-        pixel_size: tx.Any,
-        unit: tx.Any,
-    ) -> tx.Self:
-        """Read the first page with Pillow, when tifffile is missing."""
-        if not HAS_PILLOW:
-            raise ParserNotImplementedError(
-                "Reading TIFF files needs tifffile (pip install "
-                "brainhops[tiff]) or, for the first page only, Pillow."
-            )
-        if int(series) != 0 or (level or 0) != 0:
-            raise ParserNotImplementedError(
-                "Without tifffile, only the first page of a TIFF file can be "
-                "read (with Pillow). Install tifffile (pip install "
-                "brainhops[tiff]) to read other series or pyramid levels."
-            )
-        from brainhops.io.images.pillow._utils import read_pillow
-
-        if source.filename is not None:
-            file: tx.Any = source.filename
-        else:
-            file = BytesIO(source.content)
-        frame = read_pillow(file, frame=0, palette=False, formats=["TIFF"])
-        data, axes = raster.to_canonical(frame.array, frame.axes)
-        metadata: tx.Dict[str, raster.AxisScale] = {}
-        if not raster.is_default_dpi(frame.dpi):
-            metadata = {
-                "x": (raster.dpi_to_size(frame.dpi[0]), "mm"),
-                "y": (raster.dpi_to_size(frame.dpi[1]), "mm"),
-            }
-        scales = raster.resolve_pixel_size(
-            axes, metadata, pixel_size=pixel_size, unit=unit
-        )
-        return cls(
-            data=data,
-            transformations=raster.raster_transformations(axes, scales),
-            dialect=None,
-            tags={},
-            series=0,
-            level=0,
-            n_series=None,
-            n_levels=None,
-            storage_axes=frame.axes,
-        )
-
     # --- save ---------------------------------------------------------
 
     def _writer(
@@ -1169,226 +1118,6 @@ class TiffImage(
             def go() -> None:
                 with tf.TiffWriter(target, **opener) as writer:
                     writer.write(storage, **write)
-
-            _wrap_write(go)
-
-        return run
-
-
-# ----------------------------------------------------------------------
-#   MULTISCALE IMAGE
-# ----------------------------------------------------------------------
-
-
-@register_format
-class TiffMultiScaleImage(
-    _TiffMixin, BinaryFileParserWriter, WritableFileBasedImage, MultiScaleImage
-):
-    """
-    A pyramidal TIFF series -- OME-TIFF or plain TIFF with SubIFDs, or any
-    pyramid tifffile recognizes (`series.levels`) -- as a multiscale image.
-
-    Each level is a [`TiffImage`][brainhops.io.images.tiff.TiffImage],
-    finest first, whose pixels are read when its data is first accessed.
-    Every level maps its pixels onto the same `"physical"` system, so the
-    pyramid's own transformations are empty (the identity), as for an
-    OME-Zarr pyramid that declares no common transformation.
-
-    A level's pixel size is the base pixel size times its downsampling
-    factor, the ratio of the base shape to its own along each axis. Levels
-    are aligned by their *extent*: the edges of a level's first and last
-    pixels coincide with those of the base level, so pixel `i` of a level
-    downsampled by `f` is centred on the base level's pixel coordinate
-    `f * i + (f - 1) / 2`, the centre of the block of base pixels it
-    summarizes. This is the convention of block-averaged pyramids (and of
-    OME-Zarr pyramids whose levels carry the matching translation).
-    """
-
-    dialect: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc("The metadata dialect of the file: 'ome', 'imagej' or None."),
-    ] = None
-
-    ome_xml: tx.Annotated[
-        tx.Optional[str], tx.Doc("The OME-XML of an OME-TIFF file.")
-    ] = None
-
-    imagej_metadata: tx.Annotated[
-        tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("The ImageJ metadata of an ImageJ file."),
-    ] = None
-
-    tags: tx.Annotated[
-        tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("The tags of interest of the first page, by name."),
-    ] = None
-
-    series: tx.Annotated[
-        tx.Optional[int], tx.Doc("The index of the series that was read.")
-    ] = None
-
-    n_series: tx.Annotated[
-        tx.Optional[int], tx.Doc("The number of series in the file.")
-    ] = None
-
-    storage_axes: tx.Annotated[
-        tx.Optional[str],
-        tx.Doc("The axes of the series as tifffile stores them."),
-    ] = None
-
-    # --- sniff --------------------------------------------------------
-
-    @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        series: int = 0,
-        level: tx.Optional[int] = None,
-        **kwargs,
-    ) -> float:
-        """
-        Score how confident the class is that an open file holds a
-        pyramid: `CERTAIN` when the series asked for (the first by
-        default) has several levels and no `level` is asked for, and `NO`
-        otherwise.
-        """
-        if not HAS_TIFFFILE or level is not None:
-            return Confidence.NO
-        if not cls._sniff_head(file, error):
-            return Confidence.NO
-        tf = backend._require_tifffile()
-        try:
-            with preserve_position(file):
-                with tf.TiffFile(file) as tif:
-                    levels = len(tif.series[int(series)].levels)
-        except Exception:
-            return Confidence.NO
-        return Confidence.CERTAIN if levels > 1 else Confidence.NO
-
-    # --- load ---------------------------------------------------------
-
-    @classmethod
-    def from_source(
-        cls,
-        source: backend.TiffSource,
-        series: int = 0,
-        pixel_size: tx.Any = None,
-        unit: tx.Any = None,
-        origin: tx.Any = None,
-        mmap: bool = True,
-        lazy: tx.Optional[bool] = None,
-        **kwargs,
-    ) -> tx.Self:
-        """
-        Read every level of one series of a TIFF file. The options are
-        those of [`TiffImage`][brainhops.io.images.tiff.TiffImage]
-        `.from_source`, but for `level`.
-        """
-        if kwargs:
-            raise TypeError(
-                f"{cls.__name__} does not take the option(s) "
-                f"{', '.join(sorted(kwargs))}."
-            )
-        if not HAS_TIFFFILE:
-            raise ParserNotImplementedError(
-                "Reading a TIFF pyramid needs tifffile: pip install "
-                "brainhops[tiff]"
-            )
-        with source.open() as tif:
-            n = len(tif.series)
-            backend._select(tif, int(series), 0)
-            series = int(series) % n
-            base = tif.series[series]
-            count = len(base.levels)
-        levels = [
-            TiffImage.from_source(
-                source,
-                series=series,
-                level=index,
-                pixel_size=pixel_size,
-                unit=unit,
-                origin=origin,
-                mmap=mmap,
-                lazy=lazy,
-            )
-            for index in range(count)
-        ]
-        first = levels[0]
-        image = cls(
-            images=levels,
-            transformations=[],
-            dialect=first.dialect,
-            ome_xml=first.ome_xml,
-            imagej_metadata=first.imagej_metadata,
-            tags=first.tags,
-            series=series,
-            n_series=first.n_series,
-            storage_axes=first.storage_axes,
-        )
-        image._ome_index = getattr(first, "_ome_index", None)
-        return image
-
-    # --- save ---------------------------------------------------------
-
-    def _writer(
-        self,
-        dialect: tx.Optional[str] = None,
-        name: tx.Optional[str] = None,
-        bigtiff: tx.Optional[bool] = None,
-        **options,
-    ) -> tx.Callable[[tx.Any], None]:
-        """
-        Write the pyramid: the full-resolution level as the main image,
-        and the others as its SubIFDs, in OME-TIFF or plain TIFF (ImageJ
-        stores no pyramid). The pixel size is that of the full-resolution
-        level; the other levels' placement is not stored, and is derived
-        again from their shapes when the file is read.
-        """
-        tf = backend._require_tifffile()
-        images = list(self.images or [])
-        if not images:
-            raise WriterError(
-                "This multiscale image has no levels, so there is nothing "
-                "to write."
-            )
-        xform = images[0].transformation
-        if self.transformations:
-            xform = self.transformation @ xform
-        storage, codes, axes = self._level_storage(
-            images[0].data, images[0].transformation, self.storage_axes
-        )
-        levels = [storage]
-        for index, image in enumerate(images[1:], start=1):
-            stored, _, _ = self._level_storage(
-                image.data, image.transformation, self.storage_axes, codes
-            )
-            if stored.ndim != storage.ndim:
-                raise WriterError(
-                    f"Level {index} of this pyramid does not have as many "
-                    f"axes as its first level."
-                )
-            levels.append(stored)
-        geometry = _write_geometry(xform, axes)
-        _, opener, write = self._options(
-            storage, codes, geometry, name, dialect, allow_imagej=False
-        )
-        write.update(options)
-        nbytes = sum(level.nbytes for level in levels)
-        opener["bigtiff"] = _bigtiff(nbytes, bigtiff)
-        sub = {
-            key: write[key]
-            for key in ("photometric", "planarconfig")
-            if key in write
-        }
-        sub.update(options)
-
-        def run(target: tx.Any) -> None:
-            def go() -> None:
-                with tf.TiffWriter(target, **opener) as writer:
-                    writer.write(levels[0], subifds=len(levels) - 1, **write)
-                    for level in levels[1:]:
-                        writer.write(level, subfiletype=1, **sub)
 
             _wrap_write(go)
 

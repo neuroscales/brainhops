@@ -8,8 +8,8 @@ lazily, or eagerly -- and gathers what the file says about the size of a
 pixel. It knows nothing of coordinate systems or transformations, which
 are the business of the shared raster conventions in
 `brainhops.io.images.base._utils_raster`. It mirrors
-`brainhops.io.images.pillow._utils`, the backend the TIFF reader falls back on
-when tifffile is not installed.
+`brainhops.io.images.pillow._utils`, the Pillow backend of the raster
+reader.
 
 ## Dialects
 
@@ -73,6 +73,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Magic
 
 # internals
 from brainhops._core import path
@@ -271,7 +272,7 @@ def _rational(value: tx.Any) -> tx.Optional[float]:
 _Scales = tx.Dict[str, raster.AxisScale]
 
 
-class TiffMetadata(tx.NamedTuple):
+class TiffMetadata(Magic, frozen=True):
     """What a TIFF file says about the geometry of one of its series."""
 
     dialect: tx.Optional[str]

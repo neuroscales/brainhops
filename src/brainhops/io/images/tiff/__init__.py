@@ -4,8 +4,8 @@ pyramidal TIFF -- read and written with
 [tifffile](https://github.com/cgohlke/tifffile).
 
 This reader requires the `tiff` extra (`pip install brainhops[tiff]`).
-Without tifffile, the first page of a TIFF file is still read, with
-Pillow (see [Without tifffile](#without-tifffile)).
+Without tifffile, it is not registered (see
+[Without tifffile](#without-tifffile)).
 
 ```python
 from brainhops.io.images import load
@@ -138,13 +138,15 @@ tags read from a file are written back.
 
 ## Without tifffile
 
-When tifffile is not installed, the reader falls back on Pillow for the
-first page of the file (`series=0`, no level): the pixels are read in
-full, and only the resolution tags give a pixel size (in inches or
-centimetres, placeholders excepted). OME-XML, ImageJ metadata, stacks and
-pyramids need tifffile, as does writing.
+When tifffile is not installed, this module is not registered, and a TIFF
+file is read by the Pillow raster reader
+([`PillowImage`][brainhops.io.images.pillow.PillowImage]) instead, if
+Pillow is installed: one page (`frame=`) at a time, with the resolution
+tags as the pixel size only with `dpi=True`. OME-XML, ImageJ metadata,
+stacks and pyramids need tifffile.
 """
 
 __all__ = ["TiffImage", "TiffMultiScaleImage"]
 
-from ._image import TiffImage, TiffMultiScaleImage
+from ._image import TiffImage
+from ._multiscale import TiffMultiScaleImage

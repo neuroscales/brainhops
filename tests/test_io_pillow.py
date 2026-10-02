@@ -7,6 +7,9 @@ exact pixels, mode and resolution of the file it reads.
 """
 
 import io
+import os
+import subprocess
+import sys
 import warnings
 import zlib
 from pathlib import Path
@@ -362,6 +365,56 @@ def test_tiff_falls_back_on_pillow() -> None:
     image = bio.images.load(content, hint="pillow")
     assert isinstance(image, PillowImage)
     np.testing.assert_array_equal(image.data, GREY16.T)
+
+
+_WITHOUT_TIFFFILE = """
+import sys
+
+sys.modules["tifffile"] = None  # as if tifffile were not installed
+
+import numpy as np
+from PIL import Image
+
+import brainhops.io as bio
+from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.images.pillow import PillowImage
+
+path = sys.argv[1]
+array = np.arange(12, dtype=np.uint8).reshape(3, 4)
+Image.fromarray(array).save(path, dpi=(254, 254))
+assert not hasattr(bio.images, "tiff")
+image = bio.load(path)
+assert isinstance(image, PillowImage), type(image)
+np.testing.assert_array_equal(image.data, array.T)
+image = bio.images.load(path, dpi=True)
+np.testing.assert_allclose(image.transformation.scale, 0.1)
+try:
+    bio.load(path, hint="tiff")
+except ParserContentError as e:
+    assert "pip install brainhops[tiff]" in str(e), str(e)
+else:
+    raise AssertionError("hint='tiff' should fail without tifffile")
+"""
+
+
+def test_pillow_reads_tiff_without_tifffile(tmp_path: Path) -> None:
+    # Without tifffile the TIFF reader is not registered: TIFF files are
+    # read by Pillow, whose weak TIFF sniff is then the only claim, and
+    # asking for the TIFF reader says what to install.
+    script = tmp_path / "script.py"
+    script.write_text(_WITHOUT_TIFFFILE)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(bio.__file__).parents[2])]
+        + [p for p in [env.get("PYTHONPATH")] if p]
+    )
+    result = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "a.tif")],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_not_an_image(tmp_path: Path) -> None:

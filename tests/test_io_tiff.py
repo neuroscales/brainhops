@@ -1,6 +1,7 @@
 """
 Tests for TIFF images (plain, BigTIFF, OME-TIFF, ImageJ, pyramidal) read
-and written with tifffile, and for the Pillow fallback.
+and written with tifffile. Reading TIFF with Pillow when tifffile is
+missing is tested in `test_io_pillow.py`.
 
 Fixtures are generated with tifffile (and Pillow, for files tifffile
 always tags), so that each test states the exact layout and metadata of
@@ -25,7 +26,6 @@ from brainhops.datamodel.images import (  # noqa: E402
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
-    ParserNotImplementedError,
     WriterError,
 )
 from brainhops.io.images import load  # noqa: E402
@@ -544,30 +544,6 @@ def test_pyramid_sniff(tmp_path: Path) -> None:
     assert TiffMultiScaleImage.sniff(plain) == Confidence.NO
     assert TiffImage.sniff(pyramid) == Confidence.LIKELY
     assert TiffImage.sniff(b"not a tiff file") == Confidence.NO
-
-
-# ----------------------------------------------------------------------
-#   PILLOW FALLBACK
-# ----------------------------------------------------------------------
-
-
-def test_pillow_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("PIL")
-    monkeypatch.setattr(tiff_image, "HAS_TIFFFILE", False)
-    content = _bytes(GREY, resolution=(100, 50), resolutionunit="CENTIMETER")
-    image = TiffImage.from_bytes(content)
-    assert isinstance(image.data, np.ndarray)
-    np.testing.assert_array_equal(image.data, GREY.T)
-    np.testing.assert_allclose(_scale(image), [0.1, 0.2])
-    assert _units(image) == ["millimeter"] * 2
-    # Placeholders are unknown there too.
-    image = TiffImage.from_bytes(_bytes(GREY))
-    assert _units(image) == [None, None]
-    with pytest.raises(ParserNotImplementedError):
-        TiffImage.from_bytes(content, series=1)
-    with pytest.raises(ParserNotImplementedError):
-        TiffMultiScaleImage.from_bytes(content)
-    assert TiffMultiScaleImage.sniff(content) == Confidence.NO
 
 
 # ----------------------------------------------------------------------
