@@ -32,7 +32,7 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     LPSCoordinateSystem,
     RASCoordinateSystem,
-    _is_informative,
+    _says_nothing,
 )
 from brainhops.datamodel.transformations import (
     AdaptationError,
@@ -183,7 +183,7 @@ def test_a_subspace_with_an_unknown_inner_system(
     # its spelling, the subspace knows nothing of its full space, refuses
     # to guess its size, and is closed by a neighbour that knows it.
     sub = _scale_x(unknown)
-    assert not _is_informative(sub.input)
+    assert _says_nothing(sub.input)
     with pytest.raises(ConversionError, match="axis count"):
         sub.to(Affine)
     shift = Translation(translation=np.array([1.0, 2.0, 3.0]))
@@ -337,11 +337,11 @@ def test_a_known_endpoint_is_propagated_onto_an_unknown_one(
     assert seq._flattened().transformations[0].input == _xyz()
 
 
-def test_smartproperty_informative_keeps_the_stored_value() -> None:
+def test_smartproperty_unset_keeps_the_stored_value() -> None:
     class Box(DataModelBase):
         _value: tx.Optional[CS] = None
 
-        @smartproperty(informative=_is_informative)
+        @smartproperty(unset=_says_nothing)
         def value(self) -> CS:
             return _xyz()
 

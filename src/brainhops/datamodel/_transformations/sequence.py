@@ -8,7 +8,7 @@ from bagof.magic import replace
 
 # api
 from brainhops._core.properties import smartproperty
-from brainhops.datamodel.systems import CoordinateSystem, _is_informative
+from brainhops.datamodel.systems import CoordinateSystem, _says_nothing
 
 # internals
 from . import registries
@@ -137,13 +137,13 @@ class Sequence(SequenceMixin, Transformation):
 
     transformations = smartproperty("transformations")
 
-    @smartproperty(informative=_is_informative)
+    @smartproperty(unset=_says_nothing)
     def input(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[0].input
         return None
 
-    @smartproperty(informative=_is_informative)
+    @smartproperty(unset=_says_nothing)
     def output(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[-1].output
@@ -255,16 +255,10 @@ class Sequence(SequenceMixin, Transformation):
         flattened = []
         for i, t in enumerate(self.transformations):
             is_first, is_last = i == 0, i == len(self) - 1
-            if (
-                is_first
-                and not _is_informative(t.input)
-                and _is_informative(inp)
-            ):
+            if is_first and _says_nothing(t.input) and not _says_nothing(inp):
                 t = t.to(input=inp)
             elif (
-                is_last
-                and not _is_informative(t.output)
-                and _is_informative(out)
+                is_last and _says_nothing(t.output) and not _says_nothing(out)
             ):
                 t = t.to(output=out)
             if isinstance(t, Sequence):
@@ -411,7 +405,7 @@ def _compute_sequence(
         # Propagate the sequence's own endpoints onto its first and last
         # elements, but only when it carries any, so the identity link is
         # preserved in the common case of an endpoint-less composition.
-        if _is_informative(seq.input) or _is_informative(seq.output):
+        if not (_says_nothing(seq.input) and _says_nothing(seq.output)):
             seq = seq._flattened()
 
         # --- 2. simplify ---
@@ -609,9 +603,9 @@ def _normalize_inverse(t: Transformation) -> Transformation:
         return Identity(input=t.input, output=t.output)
     inv = t.forward.inverse()
     kwargs = {}
-    if _is_informative(t.input):
+    if not _says_nothing(t.input):
         kwargs["input"] = t.input
-    if _is_informative(t.output):
+    if not _says_nothing(t.output):
         kwargs["output"] = t.output
     return inv.to(**kwargs) if kwargs else inv
 

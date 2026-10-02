@@ -276,7 +276,7 @@ def test_equality_of_closed_systems_is_unchanged() -> None:
 def test_no_system_equals_a_missing_system(unknown_axes: tx.Sequence) -> None:
     # Equality is ordinary: a plain system that says nothing is still a
     # system, and `None` is not one. Whether an endpoint tells anything is
-    # what `_is_informative` answers (see below).
+    # what `_says_nothing` answers (see below).
     system = CS(axes=unknown_axes)
     assert system != None  # noqa: E711
     assert None != system  # noqa: E711
@@ -297,29 +297,29 @@ def test_a_system_that_says_something_differs_from_a_missing_system(
 
 
 @pytest.mark.parametrize(
-    "system, informative",
+    "system, says_nothing",
     [
-        (None, False),
-        (CS(), False),
-        (CS(axes=[...]), False),
-        (CS(axes=(...,)), False),
-        (CS(name="s"), True),
-        (CS(axes=[X, ...]), True),
-        (CS(axes=[..., X]), True),
-        (CS(axes=[]), True),
-        (CS(axes=[X]), True),
-        (CS(axes=[X, Y]), True),  # a CoordinateSystem2D
-        (SpatialCoordinateSystem(), True),
-        (ArrayCoordinateSystem(), True),
-        (RASCoordinateSystem(), True),
+        (None, True),
+        (CS(), True),
+        (CS(axes=[...]), True),
+        (CS(axes=(...,)), True),
+        (CS(name="s"), False),
+        (CS(axes=[X, ...]), False),
+        (CS(axes=[..., X]), False),
+        (CS(axes=[]), False),
+        (CS(axes=[X]), False),
+        (CS(axes=[X, Y]), False),  # a CoordinateSystem2D
+        (SpatialCoordinateSystem(), False),
+        (ArrayCoordinateSystem(), False),
+        (RASCoordinateSystem(), False),
     ],
     ids=lambda v: repr(v) if not isinstance(v, bool) else str(v),
 )
-def test_is_informative(system: tx.Optional[CS], informative: bool) -> None:
+def test_says_nothing(system: tx.Optional[CS], says_nothing: bool) -> None:
     # A missing system, and a plain unnamed `CoordinateSystem` whose axes
     # are `[...]`, tell nothing; any name, axis or class of its own tells
     # something.
-    assert _systems._is_informative(system) is informative
+    assert _systems._says_nothing(system) is says_nothing
 
 
 def test_systems_stay_unhashable() -> None:

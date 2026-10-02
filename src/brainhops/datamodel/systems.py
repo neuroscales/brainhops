@@ -1094,8 +1094,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         of the same class, have the same name, and have equal axes. A
         system is never equal to `None`, not even a plain
         `CoordinateSystem()` that says nothing at all; whether a system
-        tells anything, as a missing endpoint of a transformation does
-        not, is what [`_is_informative`][] answers.
+        tells nothing, as a missing endpoint of a transformation does, is
+        what [`_says_nothing`][] answers.
         [`compatible_with`][] is the looser question of whether two
         systems could describe the same space.
     """
@@ -1372,19 +1372,19 @@ def _axes_or_unknown(
     return AxisList([...]) if system is None else system.axes
 
 
-def _is_informative(system: tx.Optional[CoordinateSystem]) -> bool:
-    """Whether `system` tells anything about a space.
+def _says_nothing(system: tx.Optional[CoordinateSystem]) -> bool:
+    """Whether `system` tells nothing about a space.
 
     A missing system (`None`) tells nothing, and neither does a plain,
     unnamed `CoordinateSystem` whose axes are `[...]`: an endpoint of a
     transformation that is either one is read as undeclared, and is
-    derived, propagated or replaced as a missing one is. Any other
-    system -- one with a name, an axis, or a class of its own -- tells
-    something. This is not equality: no system equals `None`.
+    derived, propagated or replaced as a missing one is -- so it is what
+    an endpoint property reads as unset,
+    `@smartproperty(unset=_says_nothing)`. Any other system -- one with
+    a name, an axis, or a class of its own -- tells something. This is
+    not equality: no system equals `None`.
     """
-    if system is None:
-        return False
-    return not (
+    return system is None or (
         type(system) is CoordinateSystem
         and system.name is None
         and list(system.axes) == [...]

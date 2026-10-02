@@ -151,11 +151,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         """
         return self._layout["version"]
 
-    @smartproperty(empty_as_unset=True)
+    @smartproperty(unset=(None, "empty"))
     def images(self) -> tx.List[SingleScaleImage]:
         return self._layout["images"]
 
-    @smartproperty(empty_as_unset=True)
+    @smartproperty(unset=(None, "empty"))
     def transformations(self) -> tx.List[Transformation]:
         # The intrinsic-to-world placements the whole pyramid shares, one per
         # world space the metadata names, the preferred one last. A

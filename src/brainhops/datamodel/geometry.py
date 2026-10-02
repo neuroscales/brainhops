@@ -17,7 +17,7 @@ from .systems import (
     AxisSequence,
     CoordinateSystem,
     _axes_or_unknown,
-    _is_informative,
+    _says_nothing,
 )
 from .transformations import (
     Affine,
@@ -186,9 +186,9 @@ class Geometry(_GeometryFields, ImmutableSequence):
         # geometry's own input and output are propagated onto the grid and
         # the transformation, matching `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
-        if not _is_informative(grid.input) and _is_informative(self.input):
+        if _says_nothing(grid.input) and not _says_nothing(self.input):
             grid = grid.to(input=self.input)
-        if not _is_informative(transformation.output) and _is_informative(
+        if _says_nothing(transformation.output) and not _says_nothing(
             self.output
         ):
             transformation = transformation.to(output=self.output)
