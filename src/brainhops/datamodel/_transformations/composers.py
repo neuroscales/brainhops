@@ -32,6 +32,7 @@ from .concrete import (
     Identity,
     Linear,
     Permutation,
+    Rotation,
     Scaling,
     Translation,
 )
@@ -91,6 +92,14 @@ def _(To: Affine, Ti: Affine) -> Affine:
 @composer
 def _(To: Linear, Ti: Linear) -> Linear:
     return Linear(
+        matrix=To.matrix @ Ti.matrix, input=Ti.input, output=To.output
+    )
+
+
+@composer
+def _(To: Rotation, Ti: Rotation) -> Rotation:
+    # The rotations are a group: the product of two is a rotation.
+    return Rotation(
         matrix=To.matrix @ Ti.matrix, input=Ti.input, output=To.output
     )
 
