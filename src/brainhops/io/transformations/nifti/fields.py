@@ -39,8 +39,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.base.affines import RasToVoxel, VoxelToRas
+from brainhops.io.transformations.base.fields import RasCoordinatesField
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 _NDIM = 3
@@ -48,7 +48,7 @@ _NDIM = 3
 
 
 @register_format
-class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
+class NiftiRasCoordinatesField(RasCoordinatesField, NiftiBasedTransformation):
     """
     Field of RAS coordinates, stored in a NIfTI file.
     """
@@ -64,7 +64,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         one SPM writes for its `y_` coordinate maps, so it is claimed
         with certainty. `DISPVECT` (1006) is not claimed at all: the
         standard reserves it for displacements, which
-        [`NiftiRASDisplacementField`][] reads. FSL intent codes are left
+        [`NiftiRasDisplacementField`][] reads. FSL intent codes are left
         to the FSL readers, which decode them.
 
         A `VECTOR` file in ITK's layout is also claimed with certainty by
@@ -149,7 +149,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
 
 @register_format
-class NiftiRASDisplacementField(
+class NiftiRasDisplacementField(
     _xforms.ImmutableSequence, NiftiBasedTransformation
 ):
     """
@@ -192,7 +192,7 @@ class NiftiRASDisplacementField(
         `DISPVECT` (1006) is the code the standard reserves for
         displacements, so a file that carries it is claimed with
         certainty. Nothing else is: a field without it may as well hold
-        coordinates, and is left to [`NiftiRASCoordinatesField`][].
+        coordinates, and is left to [`NiftiRasCoordinatesField`][].
         """
         if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
@@ -278,7 +278,7 @@ class NiftiRASDisplacementField(
         field = backend.matmul(rotate, vectors[..., None])[..., 0]
         voxel = _systems.VoxelCoordinateSystem()
         return (
-            RASToVoxel(matrix=_affines.inv(compact)),
+            RasToVoxel(matrix=_affines.inv(compact)),
             _xforms.DisplacementField(
                 field=field,
                 input=voxel,
@@ -286,7 +286,7 @@ class NiftiRASDisplacementField(
                 order=self.order,
                 bound=self.bound,
             ),
-            VoxelToRAS(matrix=compact),
+            VoxelToRas(matrix=compact),
         )
 
     @property

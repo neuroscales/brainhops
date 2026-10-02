@@ -27,18 +27,18 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
-from brainhops.io.transformations.fsl.fnirt import FNIRTWarpField  # noqa: E402
-from brainhops.io.transformations.itk import ITKTransform  # noqa: E402
+from brainhops.io.transformations.fsl.fnirt import FnirtWarpField  # noqa: E402
+from brainhops.io.transformations.itk import ItkTransform  # noqa: E402
 from brainhops.io.transformations.itk._common import (  # noqa: E402
-    ITKAffineBase,
-    ITKDisplacementBase,
+    ItkAffineBase,
+    ItkDisplacementBase,
 )
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
-    ITKNiftiCoordinatesField,
-    ITKNiftiDisplacementField,
+    ItkNiftiCoordinatesField,
+    ItkNiftiDisplacementField,
 )
 from brainhops.io.transformations.spm.y import (  # noqa: E402
-    SPMCoordinatesField,
+    SpmCoordinatesField,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -73,7 +73,7 @@ def _write_vector(path: Path, vectors: np.ndarray) -> Path:
     return path
 
 
-def _spm(tmp_path: Path) -> SPMCoordinatesField:
+def _spm(tmp_path: Path) -> SpmCoordinatesField:
     # An SPM `y_` map is a field of absolute RAS coordinates.
     ijk = np.stack(np.meshgrid(*map(np.arange, SHAPE), indexing="ij"), -1)
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
@@ -83,7 +83,7 @@ def _spm(tmp_path: Path) -> SPMCoordinatesField:
     )
 
 
-def _fnirt(kind: str) -> FNIRTWarpField:
+def _fnirt(kind: str) -> FnirtWarpField:
     return io.transformations.load(
         DATA / "fsl" / f"{kind}.nii.gz",
         moving=nb.load(str(DATA / "fsl" / "src.nii.gz")),
@@ -102,27 +102,27 @@ def _itk_block(name: str) -> xforms.Sequence:
 
 
 FORMATS = {
-    "spm": (SPMCoordinatesField, _spm),
-    "fnirt-dense": (FNIRTWarpField, lambda _: _fnirt("displacementfield")),
-    "fnirt-coeff": (FNIRTWarpField, lambda _: _fnirt("coefficientfield")),
+    "spm": (SpmCoordinatesField, _spm),
+    "fnirt-dense": (FnirtWarpField, lambda _: _fnirt("displacementfield")),
+    "fnirt-coeff": (FnirtWarpField, lambda _: _fnirt("coefficientfield")),
     "itk-nifti-displacement": (
-        ITKNiftiDisplacementField,
-        lambda tmp: _itk_nifti(ITKNiftiDisplacementField, tmp),
+        ItkNiftiDisplacementField,
+        lambda tmp: _itk_nifti(ItkNiftiDisplacementField, tmp),
     ),
     "itk-nifti-coordinates": (
-        ITKNiftiCoordinatesField,
-        lambda tmp: _itk_nifti(ITKNiftiCoordinatesField, tmp),
+        ItkNiftiCoordinatesField,
+        lambda tmp: _itk_nifti(ItkNiftiCoordinatesField, tmp),
     ),
     "itk-block-affine": (
-        ITKAffineBase,
+        ItkAffineBase,
         lambda _: _itk_block("itk_affine3d.tfm"),
     ),
     "itk-block-displacement": (
-        ITKDisplacementBase,
+        ItkDisplacementBase,
         lambda _: _itk_block("itk_displacement3d.h5"),
     ),
     "itk-block-bspline": (
-        ITKDisplacementBase,
+        ItkDisplacementBase,
         lambda _: _itk_block("itk_bspline3d.tfm"),
     ),
 }
@@ -269,7 +269,7 @@ def test_the_inverse_is_a_plain_sequence(loaded, request) -> None:  # noqa: ANN0
             pytest.mark.xfail(
                 raises=TypeError,
                 strict=True,
-                reason="NiftiRASToVoxel.inverse() takes no `compute` "
+                reason="NiftiRasToVoxel.inverse() takes no `compute` "
                 "argument; unrelated to immutability.",
             )
         )
@@ -281,7 +281,7 @@ def test_the_inverse_is_a_plain_sequence(loaded, request) -> None:  # noqa: ANN0
 
 
 @pytest.mark.parametrize(
-    "cls", [ITKNiftiDisplacementField, ITKNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
 )
 def test_an_itk_nifti_field_round_trips(tmp_path, cls) -> None:  # noqa: ANN001
     first = _itk_nifti(cls, tmp_path)
@@ -304,7 +304,7 @@ def test_an_itk_nifti_field_round_trips(tmp_path, cls) -> None:  # noqa: ANN001
 def test_an_itk_files_list_of_blocks_stays_editable() -> None:
     """A composite ITK file holds any number of blocks, in any order."""
     xform = io.transformations.load(DATA / "itk_composite_affine3d.tfm")
-    assert isinstance(xform, ITKTransform)
+    assert isinstance(xform, ItkTransform)
     assert not isinstance(xform, xforms.ImmutableSequence)
     first, second = xform
     del xform[0]

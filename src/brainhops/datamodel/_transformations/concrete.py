@@ -39,7 +39,7 @@ class ConcreteTransformation(Transformation):
     """Base class for concrete transformations that hold a parameter."""
 
     # Some transformation types come in pairs that map the same two spaces
-    # in opposite directions -- `VoxelToLPS` and `LPSToVoxel` pin their
+    # in opposite directions -- `VoxelToLps` and `LpsToVoxel` pin their
     # endpoints, and each one's name states a direction. The inverse of such
     # a type is not itself: it is the other half of the pair. The pairing is
     # declared once, on either half, by naming the other in `_reverseof`;
@@ -66,8 +66,8 @@ class ConcreteTransformation(Transformation):
         super().__init_subclass__(**kwargs)
         # Read from `cls.__dict__`, never `getattr`: only a class that
         # declares `_reverseof` in its own body claims a pair. An inherited
-        # one would let a refinement such as `class MyLPSToVoxel(LPSToVoxel)`
-        # silently steal `VoxelToLPS`'s half of the pairing, and would also
+        # one would let a refinement such as `class MyLpsToVoxel(LpsToVoxel)`
+        # silently steal `VoxelToLps`'s half of the pairing, and would also
         # let the throwaway stand-in classes `Magic` builds while reading the
         # MRO -- which reach this hook too -- do the same. A refinement
         # instead inherits the pairing of its base, and reverses to that

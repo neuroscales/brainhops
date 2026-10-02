@@ -74,8 +74,8 @@ that:
 | `DISPVECT` (1006)                  | RAS displacements                  |
 | no intent (0)                      | RAS coordinates                    |
 
-The RAS readers are `NiftiRASCoordinatesField` and
-`NiftiRASDisplacementField`, in [`brainhops.io.transformations.nifti`][].
+The RAS readers are `NiftiRasCoordinatesField` and
+`NiftiRasDisplacementField`, in [`brainhops.io.transformations.nifti`][].
 
 - `VECTOR` is exactly what ITK writes, but it is a generic code that any
   software may use, and ITK itself does not treat its vectors as
@@ -89,7 +89,7 @@ The RAS readers are `NiftiRASCoordinatesField` and
 - An explicit hint decides: `load(path, hint="itk")` (or `"ants"`) reads
   the file as an ITK displacement field, whatever its intent code, and
   `hint="itk.coordinates"` as an ITK coordinates field. Calling the class
-  directly, `ITKNiftiDisplacementField.from_file(path)`, does the same.
+  directly, `ItkNiftiDisplacementField.from_file(path)`, does the same.
 - `DISPVECT` and no intent stay with the RAS readers. A `DISPVECT` file
   holds RAS displacements, which is also what ITK 5.4 and later assumes
   of one. Read with a hint, a three-component `DISPVECT` file has its
@@ -106,13 +106,13 @@ time axis, but NIfTI has no geometry for that axis, and it is not read.
 """
 
 __all__ = [
-    "ITKNiftiCoordinatesField",
-    "ITKNiftiDisplacementField",
-    "ITKNiftiField",
+    "ItkNiftiCoordinatesField",
+    "ItkNiftiDisplacementField",
+    "ItkNiftiField",
 ]
 
 from ._fields import (
-    ITKNiftiCoordinatesField,
-    ITKNiftiDisplacementField,
-    ITKNiftiField,
+    ItkNiftiCoordinatesField,
+    ItkNiftiDisplacementField,
+    ItkNiftiField,
 )

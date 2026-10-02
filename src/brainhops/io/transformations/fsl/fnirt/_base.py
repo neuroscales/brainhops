@@ -18,8 +18,8 @@ from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
-from .._fields import RASToWarpField, WarpFieldToRAS
-from .._formats import FSLTransformationFormat
+from .._fields import RasToWarpField, WarpFieldToRas
+from .._formats import FslTransformationFormat
 from .._repr import stored_repr
 
 # FNIRT NIfTI intent codes. These constants are defined in `nifti1.h`.
@@ -61,8 +61,8 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 
 @register_format
-class FNIRTWarpField(
-    FSLTransformationFormat,
+class FnirtWarpField(
+    FslTransformationFormat,
     NiftiBasedTransformation,
     _xforms.ImmutableSequence,
 ):
@@ -505,11 +505,11 @@ def _warp_chain(
     grid_to_ras[:3, 3] = grid_to_ras_off
 
     return (
-        RASToWarpField(matrix=ras_to_grid[:-1]),
+        RasToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
             field=prescaled, order=order, bound=bound, coeff=coeff
         ),
-        WarpFieldToRAS(matrix=grid_to_ras[:-1]),
+        WarpFieldToRas(matrix=grid_to_ras[:-1]),
     )
 
 

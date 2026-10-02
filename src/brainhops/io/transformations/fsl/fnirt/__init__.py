@@ -6,6 +6,6 @@ order-parameterized reader handles both. Both express displacements in FSL
 scaled-mm coordinates.
 """
 
-__all__ = ["FNIRTWarpField"]
+__all__ = ["FnirtWarpField"]
 
-from ._base import FNIRTWarpField
+from ._base import FnirtWarpField

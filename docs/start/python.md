@@ -16,9 +16,9 @@ from brainhops import io
 
 src = io.load("source.nii.gz")  # -> Nifti1Image
 dst = io.load("dest.nii.gz")  # -> Nifti1Image
-aff = io.load("affine.lta")  # -> LTATransformation
+aff = io.load("affine.lta")  # -> LtaTransformation
 dsp = io.load("disp.nii.gz", hint="voxdisp")  # -> NiftiVoxelDisplacementField
-wrp = io.load("warp.nii.gz", hint="spmy")  # -> SPMCoordinatesField
+wrp = io.load("warp.nii.gz", hint="spmy")  # -> SpmCoordinatesField
 ```
 
 Alternatively, the appropriate classes could have been used:
@@ -26,9 +26,9 @@ Alternatively, the appropriate classes could have been used:
 ```python
 src = io.Nifti1Image.load("source.nii.gz")
 dst = io.Nifti1Image.load("dest.nii.gz")
-aff = io.LTATransformation.load("affine.lta")
+aff = io.LtaTransformation.load("affine.lta")
 dsp = io.NiftiVoxelDisplacementField.load("disp.nii.gz")
-wrp = io.SPMCoordinatesField.load("warp.nii.gz")
+wrp = io.SpmCoordinatesField.load("warp.nii.gz")
 ```
 
 or loaders specific to subtypes of objects:
@@ -90,9 +90,9 @@ affine a NIfTI file holds. Build that format explicitly when it is what
 you mean:
 
 ```python
-from brainhops.io.transformations.nifti import NiftiVoxelToRAS
+from brainhops.io.transformations.nifti import NiftiVoxelToRas
 
-NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+NiftiVoxelToRas.from_other(affine).save("affine.nii")
 ```
 
 An LTA file says which coordinate systems its affine maps between, so a

@@ -1,12 +1,12 @@
-__all__ = ["LTAStruct"]
+__all__ = ["LtaStruct"]
 
 # externals
 import typing_extensions as tx
 from bagof.magic import Factory
 
 # internals
-from ._enums import LTAMatrixType, LTAType, LTAValidity
-from ._parser import LTAParser, MatrixParser, VolumeInfoParser
+from ._enums import LtaMatrixType, LtaType, LtaValidity
+from ._parser import LtaParser, MatrixParser, VolumeInfoParser
 
 # type hints
 _2Ints = tx.Tuple[int, int]
@@ -17,12 +17,12 @@ _MatrixComplex = tx.Tuple[tx.Tuple[complex, ...], ...]
 _Matrix = tx.Union[_MatrixFloat, _MatrixComplex]
 
 
-class LTAStruct(LTAParser):
+class LtaStruct(LtaParser):
     """
     In-memory representation of an LTA file.
 
     The parsing mechanisms are implemented in the parent classes:
-    `LTAParser`, `MatrixParser`, and `VolumeInfoParser`.
+    `LtaParser`, `MatrixParser`, and `VolumeInfoParser`.
 
     :: note "Reference"
         https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/LtaFormat
@@ -63,15 +63,15 @@ class LTAStruct(LTAParser):
         matrix: _Matrix = ()
 
         @property
-        def matrix_type(self) -> LTAMatrixType:
+        def matrix_type(self) -> LtaMatrixType:
             """Determines the type of the matrix based on its contents."""
             if not self.matrix:
-                return LTAMatrixType.UNKNOWN_MATRIX
+                return LtaMatrixType.UNKNOWN_MATRIX
             if isinstance(self.matrix[0][0], complex):
-                return LTAMatrixType.COMPLEX_MATRIX
+                return LtaMatrixType.COMPLEX_MATRIX
             if isinstance(self.matrix[0][0], float):
-                return LTAMatrixType.REAL_MATRIX
-            return LTAMatrixType.UNKNOWN_MATRIX
+                return LtaMatrixType.REAL_MATRIX
+            return LtaMatrixType.UNKNOWN_MATRIX
 
         @property
         def dtype(self) -> tx.Optional[type]:
@@ -81,9 +81,9 @@ class LTAStruct(LTAParser):
             Either `float` for real matrices, `complex` for complex matrices,
             or `None` if unknown.
             """
-            if self.matrix_type == LTAMatrixType.COMPLEX_MATRIX:
+            if self.matrix_type == LtaMatrixType.COMPLEX_MATRIX:
                 return complex
-            if self.matrix_type == LTAMatrixType.REAL_MATRIX:
+            if self.matrix_type == LtaMatrixType.REAL_MATRIX:
                 return float
             return None
 
@@ -99,7 +99,7 @@ class LTAStruct(LTAParser):
     class VolumeInfo(VolumeInfoParser):
         """The geometry of a volume."""
 
-        valid: LTAValidity = LTAValidity.VOLUME_INFO_INVALID
+        valid: LtaValidity = LtaValidity.VOLUME_INFO_INVALID
         filename: str = ""  # Filename of the volume
         volume: _3Ints = (0, 0, 0)  # 3D shape
         voxelsize: _3Floats = (1.0, 1.0, 1.0)  # Voxel size
@@ -118,7 +118,7 @@ class LTAStruct(LTAParser):
 
         NAME = "dst"
 
-    type: LTAType = LTAType.LINEAR_VOX_TO_VOX
+    type: LtaType = LtaType.LINEAR_VOX_TO_VOX
     nxforms: int = 1
     mean: _3Floats = (0.0, 0.0, 0.0)
     sigma: float = 0.0

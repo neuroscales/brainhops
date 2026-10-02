@@ -25,7 +25,7 @@ from brainhops.io.base.parsers import (
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
+class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     """Reader for a FLIRT `.mat` file.
 
     A FLIRT `.mat` file is a plain text `(4, 4)` affine matrix, one row
