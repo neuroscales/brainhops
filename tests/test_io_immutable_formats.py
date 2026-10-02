@@ -12,9 +12,10 @@ the chain is a tuple and item assignment, deletion and insertion raise.
 These tests pin that, and pin that nothing else changed: each format
 still loads, rebuilds through `to(...)`, inverts, computes to the same
 result as the plain sequence of its transformations, and -- where it has
-a writer, which only the ITK NIfTI fields do -- round-trips through a
-file. The fields of an X5 file are fixed-structure too. An ITK file's
-list of blocks is not fixed-structure, and stays editable.
+a writer, which the ITK NIfTI fields and the ITK MATLAB blocks do --
+round-trips through a file. The fields of an X5 file are fixed-structure
+too. An ITK file's list of blocks is not fixed-structure, and stays
+editable.
 """
 
 from pathlib import Path
@@ -33,6 +34,7 @@ from brainhops.io.transformations.itk._common import (  # noqa: E402
     ItkAffineBase,
     ItkDisplacementBase,
 )
+from brainhops.io.transformations.itk.mat import MatTransform  # noqa: E402
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ItkNiftiCoordinatesField,
     ItkNiftiDisplacementField,
@@ -134,6 +136,10 @@ FORMATS = {
     "itk-block-affine": (
         ItkAffineBase,
         lambda _: _itk_block("itk_affine3d.tfm"),
+    ),
+    "itk-block-mat": (
+        ItkAffineBase,
+        lambda _: _itk_block("itk_affine3d_0GenericAffine.mat"),
     ),
     "itk-block-displacement": (
         ItkDisplacementBase,
@@ -312,6 +318,22 @@ def test_an_itk_nifti_field_round_trips(tmp_path, cls) -> None:  # noqa: ANN001
     np.testing.assert_allclose(
         _apply(second, points), _apply(first, points), rtol=1e-5, atol=1e-4
     )
+
+
+def test_an_itk_mat_block_round_trips(tmp_path) -> None:  # noqa: ANN001
+    first = _itk_block("itk_affine3d_0GenericAffine.mat")
+    out = tmp_path / "out.mat"
+    MatTransform([first]).save(out)
+    (second,) = io.transformations.load(out)
+    assert type(second) is type(first)
+    assert isinstance(second.transformations, tuple)
+    assert _kinds(second) == _kinds(first)
+    np.testing.assert_array_equal(second.parameters, first.parameters)
+    np.testing.assert_array_equal(
+        second.fixed_parameters, first.fixed_parameters
+    )
+    with pytest.raises(TypeError, match="cannot be edited in place"):
+        second[0] = xforms.Identity()
 
 
 # ----------------------------------------------------------------------
