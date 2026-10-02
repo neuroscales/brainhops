@@ -94,8 +94,8 @@ class AfniWarp(AfniWarpFormat, _xforms.ImmutableSequence):
     Abstract: each storage has its own registered class.
     """
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -140,7 +140,7 @@ class AfniWarp(AfniWarpFormat, _xforms.ImmutableSequence):
         backend = get_array_backend(vectors)
         flip = backend.asarray(_DICOM_RAS_VECTOR, dtype=vectors.dtype)
         return ras_displacement_chain(
-            vectors * flip, vox2ras, order=self.order, bound=self.bound
+            vectors * flip, vox2ras, degree=self.degree, bound=self.bound
         )
 
     @property
