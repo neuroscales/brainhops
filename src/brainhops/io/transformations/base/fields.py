@@ -172,7 +172,45 @@ def homogeneous_matrix(
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
 ) -> np.ndarray:
-    """The `(D + 1, D + 1)` matrix of an affine-like grid slot."""
+    """
+    The homogeneous matrix of the transformation that places a field's grid.
+
+    A field stored in world units is read as a chain whose first and last
+    transformations map between the field's voxel grid and the world (see
+    [`ras_displacement_chain`][]). A writer needs that voxel-to-world
+    mapping back as a plain matrix, to store it in the file's header. It
+    may come out of the chain as an `Affine`, or as any transformation
+    that converts to one, such as a `Scaling`, a `Translation` or a
+    format-specific voxel-to-RAS class.
+
+    This function converts `xform` to an `Affine` and returns its
+    homogeneous matrix, checking that the format can store it.
+
+    Parameters
+    ----------
+    xform : Transformation
+        The transformation that maps the field's voxel grid to the world,
+        usually the last transformation of the chain.
+    what : str
+        How to name the field in error messages, e.g.
+        `"An X5 displacement field"`.
+    ndim : int, optional
+        The number of spatial dimensions the format supports. When given,
+        the matrix must be `(ndim + 1, ndim + 1)`.
+
+    Returns
+    -------
+    matrix : array, shape `(D + 1, D + 1)`
+        The homogeneous voxel-to-world matrix, as float64, where `D` is
+        the number of spatial dimensions.
+
+    Raises
+    ------
+    WriterError
+        If `xform` does not convert to an `Affine`, if its matrix is not
+        square (the grid and the world must have as many dimensions), or
+        if it does not have `ndim` dimensions.
+    """
     try:
         matrix = xform.to(_xforms.Affine).homogeneous_matrix
     except Exception as error:
