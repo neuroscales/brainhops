@@ -1,4 +1,5 @@
 # stdlib
+import functools
 import itertools
 from types import ModuleType
 
@@ -7,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
-from brainhops._core.dependencies import da
+from brainhops._core.dependencies import da, np
 from brainhops.backends import (
     best_backend,
     copy_array,
@@ -473,23 +474,359 @@ def value2coeff(
     # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Prepare for spline_filter.
-    # `spline_filter` only accepts `order`, `output` and `mode` -- there is no
-    # `cval` argument, so a float `bound` (a constant fill value) cannot be
-    # forwarded. We prefilter a float bound with mode='constant', matching how
-    # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
-    # exact for string bounds and consistent (if not a strict inverse) for
-    # float bounds.
-    mode = bound if isinstance(bound, str) else "constant"
-    opts = dict(order=order, mode=mode)
-    return _over_batch(
+    # The coefficients are those that `coeff2value` interpolates exactly.
+    # scipy's prefilter computes them for the bounds whose evaluation
+    # extends the coefficients the way the prefilter extends the values.
+    # `nearest` and constant bounds are not among them, and are solved.
+    mode, cval = _scipy_boundary(bound)
+    if mode in _SOLVED_MODES:
+        bound = 0.0 if mode == "grid-constant" else mode
+
+        def convert(x: ArrayProtocol) -> ArrayProtocol:
+            return _interpolating_coefficients(x, int(order), bound, cval)
+
+    else:
+
+        def convert(x: ArrayProtocol) -> ArrayProtocol:
+            return nd.spline_filter(x, order=order, mode=mode)
+
+    output = _over_batch(
         nx,
         input,
         batch,
-        lambda x: nd.spline_filter(x, **opts),
+        convert,
         tuple(input.shape[-ndim:]),
         output=input if inplace else None,
     )
+    if da is not None and isinstance(output, da.Array):
+        output = output.rechunk(input.chunks)
+    return output
+
+
+_SOLVED_MODES = ("nearest", "grid-constant", "reflect")
+"""
+The modes whose coefficients `value2coeff` solves for rather than filters.
+
+scipy's prefilter extends the values by reflection for `nearest`, and by
+mirroring for `constant`, while its evaluation extends the coefficients
+by clamping for `nearest` and by `cval` for `grid-constant` (which is what
+constant bounds are evaluated with). The two do not match, and filtered
+coefficients do not interpolate the values near the edges (see #250).
+scipy's `reflect` prefilter does match its evaluation, but approximates
+it near the edges of a short axis, by up to 1e-4 at order five.
+"""
+
+_EDGE = 48
+"""
+The samples at each end of an axis whose coefficients a boundary changes.
+
+A boundary changes the coefficients by an amount that decays as the
+spline's pole to the power of the distance to the edge; the largest pole,
+at order five, is 0.43, and 0.43 ** 48 is about 3e-18.
+"""
+
+
+@functools.lru_cache(maxsize=None)
+def _boundary_solvers(
+    size: int, order: int, bound: tx.Union[str, float]
+) -> tx.Tuple[
+    tx.Optional[np.ndarray],
+    tx.Optional[tx.Tuple[np.ndarray, np.ndarray]],
+    tx.Optional[tx.Tuple[np.ndarray, np.ndarray]],
+    np.ndarray,
+]:
+    """
+    How to solve for the coefficients of one axis under a boundary.
+
+    The values of an axis are its coefficients times `A`, the matrix of
+    [`spline_matrix`][] under `bound` -- clamped coefficients for
+    `nearest`, reflected ones for `reflect`, and zeros past the edges for
+    `0.0`. A short axis is solved with the inverse of `A`, returned first.
+
+    A long one is solved by scipy's recursive `mirror` prefilter, whose
+    matrix `M` is the same but with mirrored coefficients past the edges,
+    then corrected near each end. `inv(A) - inv(M)` is negligible farther
+    than `_EDGE` samples from either end, and its corner blocks have rank
+    one per pole of the prefilter -- one at orders 2 and 3, two at orders
+    4 and 5: they change the initial value of each pole's recursion. So
+    the correction at each end is returned as a pair `(U, V)`, applied as
+    `U @ (V @ values[edge])`, which costs a few operations per sample of
+    the edge. Both are trimmed to the samples the correction reaches at
+    this order: about 20 at order 2, 28 at order 3 and 44 at order 5. At
+    the low end `V` reads the first `V.shape[1]` values and `U` corrects
+    the first `U.shape[0]` coefficients; at the high end, the last ones.
+
+    The last item is `inv(A) @ 1`, which a constant bound needs.
+    """
+    edge = _EDGE
+    length = size if size <= 2 * edge else 4 * edge
+    grid = np.arange(length, dtype=np.float64)
+    matrix = np.asarray(spline_matrix(length, grid, order, bound, True))
+    inverse = np.linalg.inv(matrix)
+    if length == size:
+        return inverse, None, None, inverse.sum(axis=1)
+    mirror = np.asarray(spline_matrix(length, grid, order, "mirror", True))
+    correction = inverse - np.linalg.inv(mirror)
+    low = _low_rank(correction[:edge, :edge])
+    # The high corner is trimmed, and returned, from its far end.
+    high = _low_rank(correction[-edge:, -edge:][::-1, ::-1])
+    high = (high[0][::-1], high[1][:, ::-1])
+    # The coefficients of a constant under `mirror` are that constant.
+    ones = np.ones(size)
+    ones[: low[0].shape[0]] += low[0] @ low[1].sum(axis=1)
+    ones[size - high[0].shape[0] :] += high[0] @ high[1].sum(axis=1)
+    return None, low, high, ones
+
+
+_CORRECTION_TOLERANCE = 1e-17
+"""The relative size below which an entry of a correction is dropped."""
+
+
+def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
+    """
+    A corner block, starting at the edge, as `U @ V` of the rank it has to
+    machine precision, with `U`'s rows and `V`'s columns cut where they
+    fall below `_CORRECTION_TOLERANCE` of the largest entry.
+    """
+    u, s, vt = np.linalg.svd(block)
+    rank = max(1, int((s > s[0] * 1e-14).sum()))
+    u, vt = u[:, :rank] * s[:rank], vt[:rank]
+    scale = np.abs(block).max() * _CORRECTION_TOLERANCE
+    rows = np.flatnonzero(np.abs(u).max(axis=1) * np.abs(vt).max() > scale)
+    cols = np.flatnonzero(np.abs(vt).max(axis=0) * np.abs(u).max() > scale)
+    return u[: rows[-1] + 1], vt[:, : cols[-1] + 1]
+
+
+def _along(
+    nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
+) -> ArrayProtocol:
+    """`matrix` applied to `x` along one of its axes."""
+    matrix = nx.asarray(matrix, dtype=np.float64)
+    return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
+
+
+def _edge_terms(
+    nx: ModuleType,
+    pair: tx.Tuple[np.ndarray, np.ndarray],
+    slab: ArrayProtocol,
+    axis: int,
+    length: int,
+    at_end: bool,
+) -> tx.List[tx.Tuple[np.ndarray, ArrayProtocol]]:
+    """
+    The rank-one terms `(u, w)` of the edge correction `U @ (V @ slab)`.
+
+    `w` holds `V @ slab` along `axis`, kept as an axis of length one, and
+    `u` is a column of `U` laid along `axis` and padded with zeros to
+    `length` (at its start when the edge is at the end of the axis), so
+    that `u * w` broadcasts to the corrected part of the array without
+    materializing anything larger than `w`.
+    """
+    u, v = pair
+    weights = nx.tensordot(
+        nx.asarray(v, dtype=np.float64), slab, axes=([1], [axis])
+    )
+    shape = [1] * slab.ndim
+    shape[axis] = -1
+    terms = []
+    for j in range(u.shape[1]):
+        column = np.zeros(length)
+        if at_end:
+            column[length - u.shape[0] :] = u[:, j]
+        else:
+            column[: u.shape[0]] = u[:, j]
+        terms.append((column.reshape(shape), nx.expand_dims(weights[j], axis)))
+    return terms
+
+
+def _add_edges(
+    like: ArrayProtocol,
+    axis: int,
+    low: tx.Tuple[tx.Tuple[np.ndarray, np.ndarray], ArrayProtocol],
+    high: tx.Tuple[tx.Tuple[np.ndarray, np.ndarray], ArrayProtocol],
+) -> ArrayProtocol:
+    """
+    A dask array `like`, with the edge corrections `low` and `high` --
+    each a `(U, V)` pair and the slab of values `V` reads -- added at the
+    two ends of `axis`.
+
+    The axis is split at chunk boundaries: the chunks the corrections
+    reach are corrected by broadcasting their rank-one terms, which dask
+    fuses into one task per chunk, and the chunks in between are passed
+    through untouched, so the result keeps the chunks of `like`.
+    """
+    size = int(like.shape[axis])
+    depth_low = int(low[0][0].shape[0])
+    depth_high = int(high[0][0].shape[0])
+    bounds = np.cumsum((0,) + tuple(like.chunks[axis]))
+    stop = int(bounds[np.searchsorted(bounds, depth_low)])
+    start = int(
+        bounds[np.searchsorted(bounds, size - depth_high, "right") - 1]
+    )
+    index = (slice(None),) * axis
+    if stop > start:
+        stop, start = size, 0
+    pieces = []
+    for (pair, slab), first, last, at_end in (
+        (low, 0, stop, False),
+        (high, start, size, True),
+    ):
+        part = like[index + (slice(first, last),)]
+        for column, weights in _edge_terms(
+            da, pair, slab, axis, last - first, at_end
+        ):
+            part = part + column * weights
+        pieces.append(part)
+    if (stop, start) == (size, 0):
+        # The two corrections share chunks: they are both added to the
+        # whole axis.
+        whole = pieces[0]
+        for column, weights in _edge_terms(
+            da, high[0], high[1], axis, size, True
+        ):
+            whole = whole + column * weights
+        return whole
+    middle = like[index + (slice(stop, start),)]
+    return da.concatenate([pieces[0], middle, pieces[1]], axis=axis)
+
+
+def _constant_correction(
+    ones: tx.Sequence[np.ndarray], cval: float
+) -> tx.Iterator[tx.Tuple[tx.Tuple[slice, ...], np.ndarray]]:
+    """
+    Where, and by how much, coefficients filtered as if they were zero past
+    the edges must change to be `cval` past the edges.
+
+    With `L` the per-axis solve and `ones[d] = L_d @ 1`, the coefficients
+    are `L @ (values - cval) + cval = L @ values + cval * (1 - prod_d
+    ones[d])`. Each `ones[d]` is one but within its edge depths, so the
+    correction is zero but on the slabs along the faces of the array.
+    They are yielded, each sample once, as `(slices, correction)` pairs.
+    """
+    ndim = len(ones)
+    edges = [np.flatnonzero(np.abs(o - 1) > 0) for o in ones]
+    for axis in range(ndim):
+        size = len(ones[axis])
+        near = edges[axis]
+        if near.size == 0:
+            continue
+        for part in (near[near < size // 2], near[near >= size // 2]):
+            if part.size == 0:
+                continue
+            region = []
+            factors = []
+            for d in range(ndim):
+                n = len(ones[d])
+                if d == axis:
+                    sl = slice(int(part[0]), int(part[-1]) + 1)
+                elif d < axis and edges[d].size:
+                    # Samples already in an earlier axis's slabs are skipped.
+                    lo = int(edges[d][edges[d] < n // 2].max(initial=-1)) + 1
+                    hi = int(edges[d][edges[d] >= n // 2].min(initial=n))
+                    sl = slice(lo, hi)
+                else:
+                    sl = slice(0, n)
+                region.append(sl)
+                shape = [1] * ndim
+                shape[d] = -1
+                factors.append(ones[d][sl].reshape(shape))
+            if any(sl.stop <= sl.start for sl in region):
+                continue
+            product = factors[0]
+            for factor in factors[1:]:
+                product = product * factor
+            yield tuple(region), cval * (1 - product)
+
+
+def _interpolating_coefficients(
+    values: ArrayProtocol,
+    order: int,
+    bound: tx.Union[str, float],
+    cval: float,
+) -> ArrayProtocol:
+    """
+    The spline coefficients that interpolate `values` exactly, when the
+    coefficients past the edges are clamped (`bound="nearest"`), reflected
+    (`bound="reflect"`), or are `cval` (`bound=0.0`).
+
+    Each axis is prefiltered in turn, by scipy's recursive filter with
+    corrected initial values at each end (see [`_boundary_solvers`][]):
+    the cost is the filter's. A numpy array is filtered in place after the
+    first axis, so it takes no more memory than the filter does. A dask
+    array keeps its chunks, and each chunk reads only its neighbours and
+    the samples near each end of its axes.
+
+    Coefficients that are `cval` past the edges interpolate `values` when
+    `coefficients - cval`, zero past the edges, interpolate `values -
+    cval`. The solve is linear and separable, so `cval` changes the
+    coefficients only near the faces of the array, and is applied there
+    (see [`_constant_correction`][]) rather than to a copy of the values.
+    """
+    nx = get_array_backend(values)
+    nd = get_ndimage_backend(values)
+    lazy = da is not None and isinstance(values, da.Array)
+    coeff = values
+    all_ones = []
+    for axis in range(values.ndim):
+        size = int(values.shape[axis])
+        inverse, low, high, ones = _boundary_solvers(size, order, bound)
+        if inverse is not None:
+            coeff = _along(nx, inverse, coeff, axis)
+        else:
+            index = (slice(None),) * axis
+            # The corrections read the values before they are filtered.
+            low = (low, coeff[index + (slice(0, low[1].shape[1]),)])
+            high = (
+                high,
+                coeff[index + (slice(size - high[1].shape[1], size),)],
+            )
+            if not lazy:
+                low = _edge_terms(
+                    np, low[0], low[1], axis, low[0][0].shape[0], False
+                )
+                high = _edge_terms(
+                    np, high[0], high[1], axis, high[0][0].shape[0], True
+                )
+            inplace = not lazy and coeff is not values
+            filtered = nd.spline_filter1d(
+                coeff,
+                order,
+                axis=axis,
+                output=coeff if inplace else np.float64,
+                mode="mirror",
+            )
+            if inplace:
+                filtered = coeff
+            if lazy:
+                coeff = _add_edges(filtered, axis, low, high)
+            else:
+                for terms, region in (
+                    (low, slice(0, low[0][0].shape[axis])),
+                    (high, slice(size - high[0][0].shape[axis], size)),
+                ):
+                    target = filtered[index + (region,)]
+                    for column, weights in terms:
+                        target += column * weights
+                coeff = filtered
+        all_ones.append(ones)
+    if cval:
+        if lazy:
+            # `cval * (1 - prod_d ones[d])`, broadcast chunk by chunk.
+            shape = [1] * coeff.ndim
+            shape[0] = -1
+            product = da.from_array(
+                all_ones[0].reshape(shape),
+                chunks=(coeff.chunks[0],) + (1,) * (coeff.ndim - 1),
+            )
+            for d in range(1, coeff.ndim):
+                shape = [1] * coeff.ndim
+                shape[d] = -1
+                product = product * all_ones[d].reshape(shape)
+            coeff = coeff + cval * (1 - product)
+        else:
+            for region, correction in _constant_correction(all_ones, cval):
+                coeff[region] += correction
+    return coeff
 
 
 def value2coeff_field(

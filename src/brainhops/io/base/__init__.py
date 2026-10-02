@@ -56,9 +56,9 @@ from .specs import (
 )
 
 if HAS_NIBABEL:
-    from . import mgh, nifti
+    from . import mgh, minc, nifti
 
-    __all__ += ["mgh", "nifti"]
+    __all__ += ["mgh", "minc", "nifti"]
 
 # The Zarr store adapter needs abczarr and at least one backend driver.
 # abczarr alone cannot open a store, so the adapter is exposed only when a

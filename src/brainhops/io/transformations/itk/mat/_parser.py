@@ -25,7 +25,12 @@ from brainhops.io.base.parsers import (
 )
 
 # locals
-from .._common import ItkPrecision, ItkStruct, ItkTransformClass
+from .._common import (
+    ItkPrecision,
+    ItkStruct,
+    ItkTransformClass,
+    _application_order,
+)
 from .._systems import _make_system
 
 # constants
@@ -140,7 +145,12 @@ class MatTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+    def from_bytes(
+        cls,
+        content: bytes,
+        position: tx.Optional[int] = None,
+        **kwargs,
+    ) -> tx.Self:
         """Build the transform chain from the bytes of an ITK MATLAB
         transform file.
 
@@ -149,6 +159,11 @@ class MatTransformParser(
         `fixed`. Like ITK's own reader, this one reads the variables in
         pairs, takes the second of each pair as the fixed parameters
         whatever its name, and refuses anything but column vectors.
+
+        `position` selects which top-level transform of the file to
+        read: the composite, if the file starts with a
+        `CompositeTransform` header, else one of its blocks. By default,
+        the first one, with a warning if the file holds several.
         """
         variables = list(_read_variables(bytes(content)))
         if len(variables) % 2:
@@ -164,6 +179,7 @@ class MatTransformParser(
                 )
 
         blocks = []
+        composites = []
         for index in range(0, len(variables), 2):
             (variable, parameters), (_, fixed_parameters) = variables[
                 index : index + 2
@@ -176,8 +192,9 @@ class MatTransformParser(
                 )
 
             if match.group("type") == "CompositeTransform":
-                # skip composite transforms, they just point to the
-                # following transforms.
+                # A composite header has no parameters of its own: its
+                # queue is the blocks that follow it.
+                composites.append(index // 2)
                 continue
 
             blocks.append(
@@ -192,7 +209,7 @@ class MatTransformParser(
             )
 
         obj = cls()
-        obj.transformations = blocks
+        obj.transformations = _application_order(blocks, composites, position)
         return obj
 
     # --- to -----------------------------------------------------------
@@ -395,10 +412,8 @@ def _write_variable(
 def _single_block(chain: tx.Any) -> ItkStruct:
     """The one block that `chain` holds, as an ITK block.
 
-    ANTs writes a single linear transform per `.mat` file, and a chain
-    is not written: ITK applies the blocks of a `CompositeTransform` in
-    the reverse of their order in the file, so the order a chain should
-    be written in is not settled here.
+    ANTs writes a single linear transform per `.mat` file, so a chain
+    is not written.
     """
     children = list(chain.transformations or [])
     if len(children) != 1:

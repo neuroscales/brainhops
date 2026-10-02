@@ -4,6 +4,7 @@ __all__ = [
     "FileBasedTransformation",
     "WritableFileBasedTransformation",
     "base",
+    "elastix",
     "freesurfer",
     "itk",
     "load",
@@ -16,7 +17,7 @@ __all__ = [
 # internals
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import base, freesurfer, itk, matrix, mrtrix, niftyreg
+from . import base, elastix, freesurfer, itk, matrix, mrtrix, niftyreg
 from .base import (
     FileBasedTransformation,
     WritableFileBasedTransformation,
