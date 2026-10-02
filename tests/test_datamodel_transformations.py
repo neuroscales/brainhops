@@ -79,6 +79,39 @@ def test_same_type_conversion_without_overrides_is_passthrough() -> None:
     assert affine.to(Affine) is affine
 
 
+def test_same_type_rebuild_of_an_unlisted_type_applies_overrides() -> None:
+    # Only a handful of types are named on the same-type converter. Every
+    # other type, a user subclass included, reaches the one catch-all
+    # `Transformation -> Transformation` converter, which must apply the
+    # overrides the same way rather than hand the original back.
+    class MyAffine(Affine):
+        """A subclass no converter names."""
+
+    target = CoordinateSystem(name="target")
+    original = MyAffine(matrix=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    rebuilt = original.to(input=target)
+    assert type(rebuilt) is MyAffine
+    assert rebuilt is not original
+    assert rebuilt.input is target
+    assert original.input is None
+    np.testing.assert_allclose(rebuilt.matrix, original.matrix)
+
+
+def test_same_type_rebuild_of_a_sequence_replaces_its_chain() -> None:
+    # `Sequence._flattened` rebuilds itself through the same-type
+    # converter, so an override of the chain must be honoured, and the
+    # endpoints the sequence was given must be carried over.
+    inp = CoordinateSystem(name="in")
+    seq = Sequence(
+        transformations=[Translation(translation=[1.0, 2.0])], input=inp
+    )
+    chain = [Scaling(scale=[2.0, 3.0])]
+    rebuilt = seq.to(transformations=chain)
+    assert type(rebuilt) is type(seq)
+    assert list(rebuilt.transformations) == chain
+    assert rebuilt.input is inp
+
+
 def test_cartesian_field_same_type_rebuild_keeps_shape() -> None:
     # A CartesianField serves `field` through a property backed by
     # `shape`, and its setter rejects a non-None `field`. The rebuild

@@ -10,6 +10,7 @@ __all__ = [
     "WritableBinaryFileBasedObject",
     "format_registry",
     "load",
+    "save",
     "sniff",
     "parsers",
     "register_format",
@@ -37,6 +38,7 @@ from ._base import (
     register_format,
 )
 from ._load import load, sniff
+from ._save import save
 from .specs import (
     ImageSpec,
     OperationSpec,

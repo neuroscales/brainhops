@@ -238,6 +238,24 @@ def test_an_image_without_data_cannot_be_written(tmp_path) -> None:  # noqa: ANN
         NiftiImage().save(tmp_path / "empty.nii")
 
 
+def test_an_image_built_from_data_alone_is_written(tmp_path) -> None:  # noqa: ANN001
+    """
+    An image with no header and no transformation records no geometry,
+    rather than failing to decode a header it does not have, and is
+    written with the identity as its voxel-to-world map.
+    """
+    data = np.arange(24, dtype="float32").reshape(2, 3, 4)
+    image = NiftiImage(data=data)
+    assert image.transformations == []
+
+    target = tmp_path / "bare.nii"
+    image.save(target)
+
+    written = nb.load(str(target))
+    assert np.array_equal(np.asarray(written.dataobj), data)
+    assert np.allclose(written.affine, np.eye(4))
+
+
 # ----------------------------------------------------------------------
 #   TRANSFORMATIONS
 # ----------------------------------------------------------------------
