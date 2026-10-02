@@ -10,6 +10,9 @@ them can hold it.
 
 __all__ = ["save"]
 
+# stdlib
+import inspect
+
 # dependencies
 import typing_extensions as tx
 from bagof.magic import fields
@@ -122,12 +125,8 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             except Exception as e:  # noqa: BLE001
                 reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
         if len(writers) > 1:
-            names = ", ".join(sorted(fmt.__name__ for fmt, _ in writers))
             raise AmbiguousFormatError(
-                f"Cannot choose a format for {name!r}: {names} can all "
-                f"hold {type(obj).__name__}, and nothing tells them "
-                f"apart. Give one of them an explicit PRIORITY, or build "
-                f"the format you want and save that."
+                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
             )
         if writers:
             writers[0][1].save(file, **kwargs)
@@ -193,3 +192,65 @@ def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
         )
         return False
     return True
+
+
+# NOTE  `_describe` and the wording of `_ambiguity_message` follow the
+#   messages `parse` and `sniff` give for the same error, so that the
+#   three can share one helper. `save` takes no `hint=`, so a format is
+#   chosen here by converting the object to it.
+
+
+def _describe(cls: type) -> str:
+    """
+    What a format holds, in the words of its own docstring.
+
+    The first paragraph of the class's own docstring, on one line and
+    without its final full stop. A docstring inherited from a base class
+    describes the base, not this format, so it is not used.
+
+    A data model without a docstring of its own is given one that lists
+    its fields under an `Attributes` heading. A paragraph that opens with
+    a section heading, underlined with dashes, describes nothing, so no
+    description is given.
+    """
+    doc = cls.__dict__.get("__doc__")
+    if not isinstance(doc, str) or not doc.strip():
+        return ""
+    paragraph = inspect.cleandoc(doc).split("\n\n", 1)[0]
+    lines = paragraph.splitlines()
+    if len(lines) > 1 and set(lines[1].strip()) == {"-"}:
+        return ""
+    return " ".join(paragraph.split()).rstrip(".")
+
+
+def _ambiguity_message(
+    name: str, obj: tx.Any, candidates: tx.Iterable[type]
+) -> str:
+    """
+    Tell a user which formats a file could be written in, and how to
+    choose one.
+
+    Each candidate is named, described in its own words, and given the
+    call that writes `obj` in it. How to make the formats tell such an
+    object apart (a `PRIORITY`) is a question for whoever maintains
+    them, and is not put to the user.
+    """
+    candidates = sorted(candidates, key=lambda cls: cls.__name__)
+    lines = [
+        f"Cannot tell which format to write {name!r} in: this "
+        f"{type(obj).__name__} can be written equally well in any of "
+        f"these {len(candidates)} formats, which would give different "
+        f"results."
+    ]
+    for cls in candidates:
+        line = f"  - {cls.__name__}"
+        about = _describe(cls)
+        if about:
+            line += f" ({about})"
+        line += f": `{cls.__name__}.from_other(obj).save(path)`"
+        lines.append(line)
+    lines.append(
+        f"Choose one by converting the object to that format and saving "
+        f"it, as in `{candidates[0].__name__}.from_other(obj).save(path)`."
+    )
+    return "\n".join(lines)

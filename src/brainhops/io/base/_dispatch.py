@@ -10,12 +10,10 @@ a given file was read by a given parser.
 __all__ = ["Source", "parse", "sniff"]
 
 # stdlib
-import os
-import posixpath
-import re
 from collections.abc import Iterable
 from io import BytesIO, StringIO
-from os import PathLike
+from os import DirEntry, PathLike, sep
+from os.path import basename
 from urllib.parse import urlsplit
 
 # dependencies
@@ -128,7 +126,7 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     `x.nii.gz`, and the last link of an fsspec chain
     (`simplecache::s3://...`) is the file.
     """
-    if isinstance(other, os.DirEntry):
+    if isinstance(other, DirEntry):
         # A directory entry is a local path, but `str()` gives its repr.
         text = other.path
     elif isinstance(other, (str, path.PathLike)):
@@ -140,24 +138,37 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     return _base_name(text)
 
 
-# A URL scheme of two characters or more, so that a Windows drive letter
-# such as `C:` is not read as one.
-_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
-
-
 def _base_name(text: str) -> str:
     """The last component of a local path or of the path of a URL."""
     if "::" in text and "://" in text:
         # An fsspec chain: the last link is the file, the others are
         # layers over it (caches, archives).
         text = text.rsplit("::", 1)[-1]
-    if _SCHEME.match(text):
+    if _has_scheme(text):
         # The name is in the path of the URL, not in its query or
         # fragment, which may hold slashes and dots of their own.
         text = urlsplit(text).path
         # Trailing slashes matter for directory-based formats (.zarr)
-        return posixpath.basename(text.rstrip("/"))
-    return os.path.basename(text.rstrip("/" + os.sep))
+        return text.rstrip("/").rsplit("/", 1)[-1]
+    return basename(text.rstrip("/" + sep))
+
+
+def _has_scheme(text: str) -> bool:
+    """
+    Whether `text` opens with a URL scheme (`s3:`, `https:`, `file:`).
+
+    A scheme is a letter followed by letters, digits, `+`, `-` or `.`,
+    and is at least two characters long here, so that a Windows drive
+    letter such as `C:` is not read as one.
+    """
+    scheme, colon, _ = text.partition(":")
+    return (
+        bool(colon)
+        and len(scheme) > 1
+        and scheme.isascii()
+        and scheme[0].isalpha()
+        and all(c.isalnum() or c in "+-." for c in scheme)
+    )
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:

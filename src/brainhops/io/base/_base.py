@@ -488,8 +488,25 @@ class _FileBasedModelMixin:
         `FileBasedObject` first in `FileBasedImage`'s bases therefore
         makes the MRO of `NiftiImage` inconsistent: "Cannot create a
         consistent method resolution order (MRO) for bases
-        DataModelBase, FileParserWriter, Image". A mixin that is not a
-        parser has no such constraint, and goes ahead of the data model.
+        DataModelBase, FileParserWriter, Image".
+
+        Listing the data models last everywhere does give a consistent
+        MRO, with `FileBasedObject` ahead of `DataModelBase`. That means
+        reordering the parser bases (`NiftiParser`, `ZarrParser`, the
+        ITK and FLIRT parsers), the dispatchers and the formats. But the
+        file machinery is itself a generic data model
+        (`FileBasedTransformation` is a `Transformation`). Moved ahead of
+        the specific data model a format refines, its declarations of a
+        field shadow the specific ones:
+
+        - `NiftiVoxelToRAS`, `NiftiRASToVoxel` and
+          `NiftiRASCoordinatesField` lose their voxel and RAS endpoint
+          defaults.
+        - The ITK formats no longer take their chain as their first
+          positional argument.
+
+        A mixin that is not a parser has none of these constraints, and
+        goes ahead of the data model.
 
     !!! note "Every string is a file"
         No file-based class takes a string as its first constructor
