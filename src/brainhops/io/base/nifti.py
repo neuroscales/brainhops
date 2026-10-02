@@ -27,16 +27,16 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
 )
-from brainhops.datamodel.transformations import (
-    Affine,
-    ConversionError,
-    Sequence,
-    Transformation,
-)
+from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import (
     is_physicalunit,
     is_spaceunit,
     is_timeunit,
+)
+from brainhops.io.base._geometry import (
+    embed_affine,
+    ras_conversion,
+    reduce_to_affine,
 )
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
@@ -44,7 +44,6 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
     SnifferContentError,
-    UnrepresentableTransformationError,
     WriterError,
     WriterNotImplementedError,
     preserve_position,
@@ -184,24 +183,6 @@ _NIFTI_XFORM_CODE_BY_NAME = {
 
 _QFORM_NAME = "qform"
 """The name the reader gives the rigid voxel-to-RAS affine of the qform."""
-
-_RAS_FROM_ORIENTATION = {
-    "left-to-right": (0, 1.0),
-    "right-to-left": (0, -1.0),
-    "posterior-to-anterior": (1, 1.0),
-    "anterior-to-posterior": (1, -1.0),
-    "inferior-to-superior": (2, 1.0),
-    "superior-to-inferior": (2, -1.0),
-}
-"""
-The RAS axis and sign that an anatomical orientation points along.
-
-Each key is the value of an anatomical orientation carried by an axis. The
-first element of the pair is the index of the RAS axis the orientation runs
-along, and the second is its sign. This drives the conversion of a
-voxel-to-world affine into voxel-to-RAS from the axes themselves, rather
-than from the world space's name.
-"""
 
 _NIFTI_DEFAULT_XFORM_CODE = 2
 """
@@ -893,60 +874,9 @@ def _embed_affine(matrix: np.ndarray) -> np.ndarray:
     """
     Embed a homogeneous voxel-to-world matrix in the `(4, 4)` NIfTI stores.
 
-    NIfTI stores a three-dimensional voxel-to-world affine. A
-    two-dimensional map yields a `(3, 3)` homogeneous matrix, whose
-    rotation and translation are placed in a `(4, 4)` matrix whose extra
-    axis is the identity. A three-dimensional map is already `(4, 4)` and
-    is returned unchanged.
-
-    A spatial map of more than three dimensions has no NIfTI geometry to be
-    written into, and raises `WriterError`.
+    See [`embed_affine`][brainhops.io.base._geometry.embed_affine].
     """
-    out_dim = matrix.shape[0] - 1
-    in_dim = matrix.shape[1] - 1
-    if out_dim > 3 or in_dim > 3:
-        raise WriterError(
-            f"NIfTI stores a three-dimensional voxel-to-world affine, so a "
-            f"{out_dim}D-to-{in_dim}D transformation cannot be written. "
-            f"Reduce the transformation to three spatial dimensions before "
-            f"writing it to NIfTI."
-        )
-    embedded = np.eye(4)
-    embedded[:out_dim, :in_dim] = matrix[:out_dim, :in_dim]
-    embedded[:out_dim, 3] = matrix[:out_dim, in_dim]
-    return embedded
-
-
-def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
-    """
-    The `(4, 4)` matrix that maps a world space's coordinates into RAS.
-
-    The matrix is built from the anatomical orientation carried by each
-    axis, not from the world space's name. An LPS space becomes a flip of
-    the first two axes, an RSA space becomes a permutation, and a space
-    already in RAS becomes the identity.
-
-    The conversion is derived only when all three leading axes carry a
-    recognized anatomical orientation. When any of them does not, the
-    identity is returned, so a space with no orientation is stored as it
-    is.
-    """
-    # An axis about which nothing is known, including the `...` of a
-    # missing space, carries no orientation.
-    axes = _axes_or_unknown(system)[:3]
-    mapping = []
-    for axis in axes:
-        value = getattr(getattr(axis, "orientation", None), "value", None)
-        if value not in _RAS_FROM_ORIENTATION:
-            return np.eye(4)
-        mapping.append(_RAS_FROM_ORIENTATION[value])
-    if len(mapping) != 3:
-        return np.eye(4)
-    conversion = np.zeros((4, 4))
-    conversion[3, 3] = 1.0
-    for column, (row, sign) in enumerate(mapping):
-        conversion[row, column] = sign
-    return conversion
+    return embed_affine(matrix, "NIfTI")
 
 
 def _voxel_to_ras(xform: Transformation) -> np.ndarray:
@@ -965,24 +895,7 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     `UnrepresentableTransformationError`. A spatial transformation of more
     than three dimensions raises `WriterError`.
     """
-    reduced = xform.compute() if isinstance(xform, Sequence) else xform
-    error = None
-    affine = reduced
-    if not isinstance(affine, Affine):
-        try:
-            affine = reduced.to(Affine)
-        except ConversionError as exc:
-            error = exc
-    if not isinstance(affine, Affine):
-        # A field returns itself from a conversion to `Affine`, and a
-        # `Sequence` of a non-affine reduces to one, so the result has to
-        # be checked rather than trusted.
-        raise UnrepresentableTransformationError(
-            f"A {type(xform).__name__} cannot be written as NIfTI geometry: "
-            f"NIfTI stores an affine voxel-to-world matrix, and this "
-            f"transformation has no affine representation."
-        ) from error
-
+    affine = reduce_to_affine(xform, "NIfTI")
     matrix = affine.homogeneous_matrix
     if matrix is None:
         matrix = np.eye(4)
@@ -991,7 +904,7 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     matrix = _embed_affine(matrix)
 
     world = _closed_world(getattr(affine, "output", None), world_ndim)
-    conversion = _ras_conversion(world)
+    conversion = ras_conversion(world)
     return conversion @ matrix
 
 
