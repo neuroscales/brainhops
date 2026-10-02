@@ -6,6 +6,7 @@ __all__ = ["NiftiParser"]
 # stdlib
 import gzip
 import inspect
+import warnings
 from io import BytesIO
 from urllib.parse import urlsplit
 
@@ -502,8 +503,23 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                     nbkwargs["check"] = kwargs.pop("check")
                 else:
                     nbkwargs["check"] = False
-                obj = NiftiHeader.from_fileobj(f, **nbkwargs)
-                result = cls.sniff_nibabel(obj, **kwargs)
+                # Check the magic before asking `nibabel`, which parses
+                # anything it is given -- and warns about the garbage
+                # it finds in a file that is not a NIfTI at all.
+                start = _tell(f)
+                head = f.read(_NIFTI_HEADER_SIZES[version])
+                if not _has_nifti_magic(head, version):
+                    raise ValueError(f"No NIfTI-{version} magic number")
+                if start is not None:
+                    f.seek(start)
+                else:
+                    f = BytesIO(head)
+                # A probe must not leak warnings: actual reads still
+                # surface what `nibabel` has to say.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    obj = NiftiHeader.from_fileobj(f, **nbkwargs)
+                    result = cls.sniff_nibabel(obj, **kwargs)
         except Exception as e:
             base_error = e
             result = Confidence.NO
@@ -634,6 +650,34 @@ def _tell(fileobj: tx.IO) -> tx.Optional[int]:
         return fileobj.tell() if fileobj.seekable() else None
     except Exception:
         return None
+
+
+# The size of the header, and where and what its magic string is, by
+# NIfTI version. NIfTI-1 keeps it near the end of its header, NIfTI-2
+# right after `sizeof_hdr`, followed by a DOS/Unix line-ending check.
+_NIFTI_HEADER_SIZES = {1: 348, 2: 540}
+_NIFTI_MAGICS = {
+    1: (344, (b"n+1\0", b"ni1\0")),
+    2: (4, (b"n+2\0\r\n\032\n", b"ni2\0\r\n\032\n")),
+}
+
+
+def _has_nifti_magic(head: bytes, version: int) -> bool:
+    """
+    Whether the first bytes of a (decompressed) file hold the header
+    size and magic string of a NIfTI header of the given version.
+
+    This is cheap and exact, so a file that is not a NIfTI is turned
+    away before `nibabel` is asked to make sense of it.
+    """
+    size = _NIFTI_HEADER_SIZES[version]
+    if len(head) < size:
+        return False
+    sizes = {int.from_bytes(head[:4], order) for order in ("little", "big")}
+    if size not in sizes:
+        return False
+    offset, magics = _NIFTI_MAGICS[version]
+    return any(head[offset : offset + len(m)] == m for m in magics)
 
 
 def _nifti_version(fileobj: tx.BinaryIO) -> int:
