@@ -55,6 +55,7 @@ nav = [
         "api/io/images/zarr.md",
         "api/io/images/pillow.md",
         "api/io/images/tiff.md",
+        "api/io/images/jpeg2000.md",
         "api/io/images/openslide.md",
       ]},
       {"transformations" = [

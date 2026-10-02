@@ -37,16 +37,16 @@ from brainhops.datamodel.transformations import (
 POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.concrete": {
         "Affine": ("matrix",),
-        "CartesianField": ("shape", "order", "bound", "coeff"),
+        "CartesianField": ("shape", "degree", "bound", "coeff"),
         "ConcreteTransformation": (),
-        "CoordinatesField": ("field", "order", "bound", "coeff"),
-        "DisplacementField": ("field", "order", "bound", "coeff"),
+        "CoordinatesField": ("field", "degree", "bound", "coeff"),
+        "DisplacementField": ("field", "degree", "bound", "coeff"),
         "Identity": (),
         "Linear": ("matrix",),
         "Permutation": ("permutation",),
         "Rotation": ("matrix",),
         "Scaling": ("scale",),
-        "TransformationField": ("field", "order", "bound", "coeff"),
+        "TransformationField": ("field", "degree", "bound", "coeff"),
         "Translation": ("translation",),
     },
     "brainhops.datamodel._transformations.inverse": {
@@ -93,8 +93,8 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "VoxelToRAS": ("matrix",),
     },
     "brainhops.io.transformations.base.fields": {
-        "LPSCoordinatesField": ("field", "order", "bound", "coeff"),
-        "RASCoordinatesField": ("field", "order", "bound", "coeff"),
+        "LPSCoordinatesField": ("field", "degree", "bound", "coeff"),
+        "RASCoordinatesField": ("field", "degree", "bound", "coeff"),
     },
     "brainhops.io.transformations.elastix._xform": {
         "ElastixParameterTransform": (
@@ -210,7 +210,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.io.transformations.nifti.fields": {
         "NiftiRASCoordinatesField": (
             "field",
-            "order",
+            "degree",
             "bound",
             "coeff",
             "image",

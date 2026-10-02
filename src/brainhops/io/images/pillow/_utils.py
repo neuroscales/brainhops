@@ -70,11 +70,6 @@ EXTENSIONS: tx.Tuple[str, ...] = (
     ".pbm",
     ".pnm",
     ".pfm",
-    ".jp2",
-    ".j2k",
-    ".jpx",
-    ".jpf",
-    ".j2c",
     ".tga",
     ".pcx",
     ".qoi",
@@ -84,8 +79,9 @@ The file extensions the Pillow reader claims.
 
 The list is curated rather than taken from Pillow's registry, which also
 lists formats Pillow only identifies (HDF5, GRIB, FITS) or that other
-readers handle better. TIFF is left out on purpose: TIFF files are claimed
-by the dedicated TIFF reader, and Pillow reads one only as a fallback.
+readers handle better. TIFF and JPEG 2000 are left out on purpose: their
+files are claimed by the dedicated TIFF and JPEG 2000 readers, and Pillow
+reads one only as a fallback.
 """
 
 SNIFF_FORMATS: tx.Tuple[str, ...] = (
