@@ -12,6 +12,7 @@ __all__ = [
     "load",
     "save",
     "sniff",
+    "mrtrix",
     "parsers",
     "freesurfer",
     "register_format",
@@ -27,7 +28,7 @@ __all__ = [
 
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 
-from . import freesurfer, parsers
+from . import freesurfer, mrtrix, parsers
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
