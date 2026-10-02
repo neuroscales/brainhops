@@ -454,3 +454,85 @@ class WritableBinaryFileBasedObject(
     BinaryFileParserWriter, WritableFileBasedObject
 ):
     """An object that is stored in a binary file and can be written back."""
+
+
+# ----------------------------------------------------------------------
+#   DATA MODELS
+# ----------------------------------------------------------------------
+
+
+class _FileBasedModel:
+    """
+    Gives a file-based data model a `from_other` that reads files.
+
+    A data model's `from_other` builds an instance from a mapping, from
+    an instance of a similar class, or from constructor arguments. A
+    file-based one can also be built from the file that stores it, so
+    this mixin tries that first: a path, an open file, bytes or a
+    structured source are read with `load`, and everything else is left
+    to the data model.
+
+    It sits where the data models meet the file formats, ahead of the
+    data model in the bases (`FileBasedImage`, `FileBasedTransformation`),
+    so that the data models themselves never deal with files.
+
+    !!! note "Every string is a file"
+        No file-based class takes a string as its first constructor
+        argument, so a string always names a file, or a store, and is
+        read with `load`. A file that cannot be read fails there, rather
+        than being handed to the constructor as if it were data.
+    """
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from a file, or from anything the data model
+        reads.
+
+        A path (`str` or `os.PathLike`), an open file, `bytes` or a
+        structured source ([`SourceSpec`][brainhops.io.base.SourceSpec])
+        is read with `load`: on a dispatcher such as `FileBasedImage`,
+        the best-matching registered format reads it, and on a concrete
+        format, that format does. Any other value is handed to the data
+        model's own `from_other`, which reads a mapping field by field,
+        copies an instance of a similar class, and passes anything else
+        to the constructor.
+
+        Parameters
+        ----------
+        other : Any
+            A file, its content, a mapping, or an instance of a similar
+            class.
+        *args
+            Constructor arguments. A file is read with keyword options
+            only.
+        **kwargs
+            Format-specific options when reading a file, and field
+            values otherwise.
+
+        Returns
+        -------
+        obj
+            The object that was built.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments come with a file to read.
+        """
+        if not _is_file_or_content(other):
+            return super().from_other(other, *args, **kwargs)
+        if args:
+            raise TypeError(
+                f"{cls.__name__}.from_other() reads a file with keyword "
+                f"options only, but was given {len(args)} positional "
+                f"argument(s)."
+            )
+        return cls.load(other, **kwargs)
+
+
+def _is_file_or_content(other: tx.Any) -> bool:
+    """Whether `load` reads `other` as a file or as file content."""
+    return isinstance(
+        other, (str, path.PathLike, bytes, bytearray, SourceSpec)
+    ) or hasattr(other, "read")
