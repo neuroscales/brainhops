@@ -1,16 +1,17 @@
 """Tests for the readers of coordinate systems once systems may be open.
 
 An open system (its axes hold `...`) states only some of its axes.
-Every reader treats a plain `CoordinateSystem()` (whose axes default to
-`[...]`) and a missing endpoint alike, counts axes only when a system is
-closed, and never guesses what `...` stands for.
+Every reader of axes treats a plain `CoordinateSystem()` (whose axes
+default to `[...]`) and a missing endpoint alike -- neither states an
+axis -- counts axes only when a system is closed, and never guesses what
+`...` stands for. As an endpoint, though, a missing system (`None`) is
+deferred, and an explicit one is kept as given.
 """
 
 import numpy as np
 import pytest
 import typing_extensions as tx
 
-from brainhops._core.properties import smartproperty
 from brainhops.datamodel._transformations import separable as sep
 from brainhops.datamodel._transformations.adaptors import (
     _grid_extents,
@@ -26,13 +27,11 @@ from brainhops.datamodel._transformations.utils import (
     systems_disagree,
 )
 from brainhops.datamodel.axes import A, Axis, R, S, SpaceAxis
-from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.geometry import _index2transform
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     LPSCoordinateSystem,
     RASCoordinateSystem,
-    _says_nothing,
 )
 from brainhops.datamodel.transformations import (
     AdaptationError,
@@ -54,7 +53,8 @@ from brainhops.datamodel.transformations import (
 CS = CoordinateSystem
 X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
 
-# The ways of saying "nothing is known about this system".
+# The ways of saying "no axis of this system is known", as read by the
+# readers of axes: a missing system, or one whose axes are `[...]`.
 UNKNOWN = {
     "missing": None,
     "default": CS(),
@@ -64,7 +64,7 @@ UNKNOWN = {
 
 @pytest.fixture(params=list(UNKNOWN), ids=list(UNKNOWN))
 def unknown(request: pytest.FixtureRequest) -> tx.Optional[CS]:
-    """A system about which nothing is known, in each spelling."""
+    """A system none of whose axes is known, or none at all."""
     return UNKNOWN[request.param]
 
 
@@ -181,9 +181,11 @@ def test_a_subspace_with_an_unknown_inner_system(
 ) -> None:
     # An inner system that states no axis gives nothing to place: whatever
     # its spelling, the subspace knows nothing of its full space, refuses
-    # to guess its size, and is closed by a neighbour that knows it.
+    # to guess its size, and is closed by a neighbour that knows it. A
+    # missing inner system stays missing, and an explicit one is kept.
     sub = _scale_x(unknown)
-    assert _says_nothing(sub.input)
+    assert sub.input == unknown
+    assert sub.input is None or sub.input.ndim is None
     with pytest.raises(ConversionError, match="axis count"):
         sub.to(Affine)
     shift = Translation(translation=np.array([1.0, 2.0, 3.0]))
@@ -191,20 +193,27 @@ def test_a_subspace_with_an_unknown_inner_system(
     assert np.allclose(result.matrix[:, :3], np.diag([2.0, 1.0, 1.0]))
 
 
-def test_a_declared_unknown_system_derives_like_a_missing_one(
-    unknown_axes: tx.Sequence,
-) -> None:
-    # A declared system that says nothing is read as no declaration, so the
-    # subspace derives its full-space system from its inner system.
+def test_a_missing_full_space_system_is_derived() -> None:
+    # A subspace with no declared system derives its full-space system from
+    # its inner system.
+    sub = SubspaceTransformation(
+        transformation=Scaling(scale=np.array([2.0]), input=CS(axes=[X])),
+        input_axes=np.array([1]),
+        output_axes=np.array([1]),
+    )
+    assert sub.input == CS(axes=[Axis(), X, ...])
+
+
+def test_a_declared_unknown_system_is_kept(unknown_axes: tx.Sequence) -> None:
+    # A declared system is the subspace's full-space system, even one that
+    # says nothing about its axes: only a missing one is derived.
     sub = SubspaceTransformation(
         transformation=Scaling(scale=np.array([2.0]), input=CS(axes=[X])),
         input_axes=np.array([1]),
         output_axes=np.array([1]),
         input=CS(axes=unknown_axes),
     )
-    assert sub.input == CS(axes=[Axis(), X, ...])
-    # It is still stored as given.
-    assert sub._input.axes == [...]
+    assert sub.input == CS() and sub._input.axes == [...]
 
 
 # ----------------------------------------------------------------------
@@ -280,34 +289,58 @@ def test_a_family_dimension_is_contradicted_only_by_known_axes(
 
 
 # ----------------------------------------------------------------------
-#   ENDPOINTS: None AND CoordinateSystem() READ ALIKE
+#   ENDPOINTS: None DEFERS, AN EXPLICIT SYSTEM IS KEPT
 # ----------------------------------------------------------------------
+# An endpoint that is `None` is no system: the transformation defers to
+# its context for it -- a sequence to its children, an inverse to its
+# forward, a simplification to the other side. An endpoint that is a
+# system is kept as given, even `CoordinateSystem()`, which says nothing
+# about its axes.
+
+# A declared system that says nothing about its axes, in each spelling.
+EMPTY = {"default": CS(), "axes=[...]": CS(axes=[...])}
 
 
-def test_a_sequence_derives_its_endpoints_past_an_unknown_one(
-    unknown: tx.Optional[CS],
-) -> None:
+@pytest.fixture(params=list(EMPTY), ids=list(EMPTY))
+def empty(request: pytest.FixtureRequest) -> CS:
+    """An explicit system about which nothing is known."""
+    return EMPTY[request.param]
+
+
+def test_a_sequence_derives_a_missing_endpoint() -> None:
     child = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
-    seq = Sequence(transformations=[child], input=unknown, output=unknown)
+    seq = Sequence(transformations=[child], input=None, output=None)
     assert seq.input == _xyz() and seq.output == _xyz()
 
 
-def test_an_inverse_derives_its_endpoints_past_an_unknown_one(
-    unknown: tx.Optional[CS],
-) -> None:
+def test_a_sequence_keeps_an_explicit_endpoint(empty: CS) -> None:
+    child = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
+    seq = Sequence(transformations=[child], input=empty, output=empty)
+    assert seq.input is empty and seq.output is empty
+
+
+def test_an_inverse_derives_a_missing_endpoint() -> None:
     forward = Affine(
         matrix=np.eye(3, 4), input=_xyz(), output=RASCoordinateSystem()
     )
-    inverse = Inverse(forward=forward, input=unknown, output=unknown)
+    inverse = Inverse(forward=forward)
     assert inverse.input == RASCoordinateSystem()
     assert inverse.output == _xyz()
     assert inverse.inverse().input == _xyz()
 
 
-def test_a_bijection_reads_past_an_unknown_side(
-    unknown: tx.Optional[CS],
-) -> None:
-    forward = Affine(matrix=np.eye(3, 4), input=unknown, output=unknown)
+def test_an_inverse_keeps_an_explicit_endpoint(empty: CS) -> None:
+    forward = Affine(
+        matrix=np.eye(3, 4), input=_xyz(), output=RASCoordinateSystem()
+    )
+    inverse = Inverse(forward=forward, input=empty, output=empty)
+    assert inverse.input is empty and inverse.output is empty
+    # ... and carries it back onto the forward.
+    assert inverse.inverse().input is empty
+
+
+def test_a_bijection_reads_past_a_missing_side() -> None:
+    forward = Affine(matrix=np.eye(3, 4))
     backward = Affine(
         matrix=np.eye(3, 4), input=_xyz(), output=RASCoordinateSystem()
     )
@@ -316,40 +349,42 @@ def test_a_bijection_reads_past_an_unknown_side(
     assert bijection.output == _xyz()
 
 
-def test_an_unknown_endpoint_is_not_propagated_over_a_known_one(
-    unknown: tx.Optional[CS],
-) -> None:
-    # An identity that says nothing about its input does not overwrite the
-    # input of the transform it simplifies into.
+def test_a_bijection_keeps_an_explicit_side(empty: CS) -> None:
+    forward = Affine(matrix=np.eye(3, 4), input=empty, output=empty)
+    backward = Affine(
+        matrix=np.eye(3, 4), input=_xyz(), output=RASCoordinateSystem()
+    )
+    bijection = Bijection(forward=forward, backward=backward)
+    assert bijection.input is empty and bijection.output is empty
+
+
+def test_a_missing_endpoint_is_not_propagated_over_a_known_one() -> None:
+    # An identity with no input does not overwrite the input of the
+    # transform it simplifies into.
     affine = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
-    seq = Sequence(transformations=[Identity(input=unknown), affine])
-    result = seq.simplify()
-    assert result.input == _xyz()
+    seq = Sequence(transformations=[Identity(), affine])
+    assert seq.simplify().input == _xyz()
 
 
-def test_a_known_endpoint_is_propagated_onto_an_unknown_one(
-    unknown: tx.Optional[CS],
-) -> None:
-    # A sequence's own endpoint reaches a first element that says nothing
-    # about its input, however that element spells it.
-    first = Scaling(scale=np.array([2.0, 2.0, 2.0]), input=unknown)
+def test_an_explicit_endpoint_is_propagated(empty: CS) -> None:
+    # An identity that declares its input, even one that says nothing about
+    # its axes, gives that input to the transform it simplifies into.
+    affine = Affine(matrix=np.eye(3, 4), input=_xyz(), output=_xyz())
+    seq = Sequence(transformations=[Identity(input=empty), affine])
+    assert seq.simplify().input is empty
+
+
+def test_a_known_endpoint_is_propagated_onto_a_missing_one() -> None:
+    # A sequence's own endpoint reaches a first element with no input.
+    first = Scaling(scale=np.array([2.0, 2.0, 2.0]))
     seq = Sequence(transformations=[first], input=_xyz())
     assert seq._flattened().transformations[0].input == _xyz()
 
 
-def test_smartproperty_unset_keeps_the_stored_value() -> None:
-    class Box(DataModelBase):
-        _value: tx.Optional[CS] = None
-
-        @smartproperty(unset=_says_nothing)
-        def value(self) -> CS:
-            return _xyz()
-
-    unknown = CS(axes=[...])
-    box = Box(value=unknown)
-    assert box.value == _xyz()
-    assert box._value is unknown
-    assert Box(value=CS(axes=[X])).value == CS(axes=[X])
+def test_a_known_endpoint_does_not_replace_an_explicit_one(empty: CS) -> None:
+    first = Scaling(scale=np.array([2.0, 2.0, 2.0]), input=empty)
+    seq = Sequence(transformations=[first], input=_xyz())
+    assert seq._flattened().transformations[0].input is empty
 
 
 # ----------------------------------------------------------------------

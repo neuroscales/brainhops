@@ -14,7 +14,6 @@ from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
-    _says_nothing,
 )
 
 # internals
@@ -104,12 +103,12 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- properties ---------------------------------------------------
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "input", None)
         return _subsystem(system, self.input_axes, full=self._input)
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def output(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
@@ -189,20 +188,19 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
     # --- properties ---------------------------------------------------
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
-        # A side that says nothing about the system defers to the other.
-        if self.forward is not None and not _says_nothing(self.forward.input):
+        if self.forward is not None and self.forward.input is not None:
             return self.forward.input
-        if self.backward is not None:
+        if self.backward is not None and self.backward.output is not None:
             return self.backward.output
         return None
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def output(self) -> tx.Optional[CoordinateSystem]:
-        if self.forward is not None and not _says_nothing(self.forward.output):
+        if self.forward is not None and self.forward.output is not None:
             return self.forward.output
-        if self.backward is not None:
+        if self.backward is not None and self.backward.input is not None:
             return self.backward.input
         return None
 
@@ -263,7 +261,7 @@ def _subsystem(
     inner system that states no axis has nothing to embed, and is
     returned as is.
     """
-    if not _says_nothing(full):
+    if full is not None:
         return full
     if index is None or system is None:
         return system

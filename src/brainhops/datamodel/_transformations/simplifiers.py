@@ -41,7 +41,6 @@ from bagof.magic import replace
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.systems import _says_nothing
 
 # internals
 from .base import Transformation
@@ -275,8 +274,8 @@ def _(
     first: Identity, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
     return Identity(
-        input=second.input if _says_nothing(first.input) else first.input,
-        output=first.output if _says_nothing(second.output) else second.output,
+        input=first.input or second.input,
+        output=second.output or first.output,
     )
 
 
@@ -284,7 +283,7 @@ def _(
 def _(
     first: Identity, second: Transformation, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if _says_nothing(first.input) or first.input == second.input:
+    if first.input is None or first.input == second.input:
         return second
     return replace(second, input=first.input)
 
@@ -293,7 +292,7 @@ def _(
 def _(
     first: Transformation, second: Identity, policy: SimplifyTable
 ) -> tx.Optional[Transformation]:
-    if _says_nothing(second.output) or second.output == first.output:
+    if second.output is None or second.output == first.output:
         return first
     return replace(first, output=second.output)
 
@@ -419,9 +418,9 @@ def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
     # replaces it. Only the declared ones are read, so a derived endpoint
     # stays derived.
     edits = {}
-    if not _says_nothing(like._input):
+    if like._input is not None:
         edits["input"] = like._input
-    if not _says_nothing(like._output):
+    if like._output is not None:
         edits["output"] = like._output
     return t.to(**edits) if edits else t
 

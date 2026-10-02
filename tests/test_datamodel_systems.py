@@ -275,8 +275,7 @@ def test_equality_of_closed_systems_is_unchanged() -> None:
 
 def test_no_system_equals_a_missing_system(unknown_axes: tx.Sequence) -> None:
     # Equality is ordinary: a plain system that says nothing is still a
-    # system, and `None` is not one. Whether an endpoint tells anything is
-    # what `_says_nothing` answers (see below).
+    # system, and `None` is not one.
     system = CS(axes=unknown_axes)
     assert system != None  # noqa: E711
     assert None != system  # noqa: E711
@@ -296,30 +295,14 @@ def test_a_system_that_says_something_differs_from_a_missing_system(
     assert ArrayCoordinateSystem(axes=unknown_axes) != None  # noqa: E711
 
 
-@pytest.mark.parametrize(
-    "system, says_nothing",
-    [
-        (None, True),
-        (CS(), True),
-        (CS(axes=[...]), True),
-        (CS(axes=(...,)), True),
-        (CS(name="s"), False),
-        (CS(axes=[X, ...]), False),
-        (CS(axes=[..., X]), False),
-        (CS(axes=[]), False),
-        (CS(axes=[X]), False),
-        (CS(axes=[X, Y]), False),  # a CoordinateSystem2D
-        (SpatialCoordinateSystem(), False),
-        (ArrayCoordinateSystem(), False),
-        (RASCoordinateSystem(), False),
-    ],
-    ids=lambda v: repr(v) if not isinstance(v, bool) else str(v),
-)
-def test_says_nothing(system: tx.Optional[CS], says_nothing: bool) -> None:
-    # A missing system, and a plain unnamed `CoordinateSystem` whose axes
-    # are `[...]`, tell nothing; any name, axis or class of its own tells
-    # something.
-    assert _systems._says_nothing(system) is says_nothing
+def test_an_explicit_endpoint_is_kept_and_a_missing_one_defers() -> None:
+    # An endpoint is `None` (no system: the transformation defers to its
+    # context) or a system, kept as given -- even one that says nothing
+    # about its axes. There is no third kind.
+    for system in (CS(), CS(axes=[...]), CS(name="s"), RASCoordinateSystem()):
+        assert Identity(input=system).input is system
+    assert Identity().input is None
+    assert Identity(input=CS()) != Identity()
 
 
 def test_systems_stay_unhashable() -> None:

@@ -8,7 +8,7 @@ from bagof.magic import replace
 
 # api
 from brainhops._core.properties import smartproperty
-from brainhops.datamodel.systems import CoordinateSystem, _says_nothing
+from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
 from . import registries
@@ -137,13 +137,13 @@ class Sequence(SequenceMixin, Transformation):
 
     transformations = smartproperty("transformations")
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def input(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[0].input
         return None
 
-    @smartproperty(unset=_says_nothing)
+    @smartproperty
     def output(self) -> tx.Optional[CoordinateSystem]:
         if self.transformations:
             return self.transformations[-1].output
@@ -254,12 +254,9 @@ class Sequence(SequenceMixin, Transformation):
         inp, out = self.input, self.output
         flattened = []
         for i, t in enumerate(self.transformations):
-            is_first, is_last = i == 0, i == len(self) - 1
-            if is_first and _says_nothing(t.input) and not _says_nothing(inp):
+            if i == 0 and t.input is None and inp is not None:
                 t = t.to(input=inp)
-            elif (
-                is_last and _says_nothing(t.output) and not _says_nothing(out)
-            ):
+            elif i == len(self) - 1 and t.output is None and out is not None:
                 t = t.to(output=out)
             if isinstance(t, Sequence):
                 # A `Geometry` child contributes its grid followed by its
@@ -405,7 +402,7 @@ def _compute_sequence(
         # Propagate the sequence's own endpoints onto its first and last
         # elements, but only when it carries any, so the identity link is
         # preserved in the common case of an endpoint-less composition.
-        if not (_says_nothing(seq.input) and _says_nothing(seq.output)):
+        if seq.input is not None or seq.output is not None:
             seq = seq._flattened()
 
         # --- 2. simplify ---
@@ -603,9 +600,9 @@ def _normalize_inverse(t: Transformation) -> Transformation:
         return Identity(input=t.input, output=t.output)
     inv = t.forward.inverse()
     kwargs = {}
-    if not _says_nothing(t.input):
+    if t.input is not None:
         kwargs["input"] = t.input
-    if not _says_nothing(t.output):
+    if t.output is not None:
         kwargs["output"] = t.output
     return inv.to(**kwargs) if kwargs else inv
 
