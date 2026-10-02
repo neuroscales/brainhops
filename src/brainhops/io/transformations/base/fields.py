@@ -54,6 +54,11 @@ class LPSCoordinatesField(_xforms.CoordinatesField):
 # voxel, the displacements rotated into voxel units, voxel back to RAS --
 # and written back by undoing that rotation. Both directions live here,
 # so that the formats agree on them.
+#
+# The same chain holds a field of B-spline coefficients of RAS
+# displacements (an X5 `bspline` transform), with `coeff=True`: the
+# displacement at a point is a linear combination of the coefficients,
+# so rotating the coefficients rotates the displacement they encode.
 
 
 def ras_displacement_chain(
@@ -62,6 +67,7 @@ def ras_displacement_chain(
     *,
     order: tx.Any = 1,
     bound: tx.Any = BoundaryCondition.nearest,
+    coeff: bool = False,
 ) -> tx.Tuple[RASToVoxel, _xforms.DisplacementField, VoxelToRAS]:
     """
     The chain that maps RAS to RAS through a field of RAS displacements.
@@ -69,11 +75,15 @@ def ras_displacement_chain(
     Parameters
     ----------
     vectors : array, shape `(*shape, ndim)`
-        Displacements in RAS millimetres, one vector per voxel.
+        Displacements in RAS millimetres, one vector per voxel -- or,
+        when `coeff` is set, the spline coefficients of those
+        displacements, one vector per knot.
     vox2ras : array, shape `(ndim + 1, ndim + 1)`
         The voxel-to-RAS affine of the grid the vectors are sampled on.
     order, bound
         Interpolation order and boundary condition of the field.
+    coeff : bool
+        Whether `vectors` are spline coefficients rather than values.
 
     Returns
     -------
@@ -98,6 +108,7 @@ def ras_displacement_chain(
             output=voxel,
             order=order,
             bound=bound,
+            coeff=coeff,
         ),
         VoxelToRAS(matrix=compact),
     )
@@ -107,6 +118,7 @@ def split_ras_displacement_chain(
     chain: tx.Sequence[_xforms.Transformation],
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
+    coeff: bool = False,
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
     """
     Undo [`ras_displacement_chain`][]: the grid and the RAS vectors.
@@ -119,19 +131,24 @@ def split_ras_displacement_chain(
         How to name the field in error messages.
     ndim : int, optional
         The number of spatial dimensions the format supports.
+    coeff : bool
+        Whether the format stores spline coefficients rather than
+        sampled values.
 
     Returns
     -------
     vox2ras : array, shape `(ndim + 1, ndim + 1)`
         The voxel-to-RAS affine of the grid, read from the last slot.
     vectors : array, shape `(*shape, ndim)`
-        The displacements, rotated back into RAS millimetres.
+        The displacements (or their coefficients), rotated back into RAS
+        millimetres.
 
     Raises
     ------
     WriterError
-        If the chain does not have that shape, holds spline
-        coefficients, or its grid is not an affine.
+        If the chain does not have that shape, holds coefficients when
+        the format stores values (or the reverse), or its grid is not an
+        affine.
     """
     chain = tuple(chain or ())
     if len(chain) != 3 or not isinstance(chain[1], _xforms.DisplacementField):
@@ -144,10 +161,15 @@ def split_ras_displacement_chain(
         raise WriterError(
             "This field has no displacements, so there is nothing to write."
         )
-    if displacement.coeff:
+    if displacement.coeff and not coeff:
         raise WriterError(
             f"{what} stores sampled displacements, and this field holds "
             f"spline coefficients. Convert it to values first."
+        )
+    if coeff and not displacement.coeff:
+        raise WriterError(
+            f"{what} stores spline coefficients, and this field holds "
+            f"sampled displacements. Convert it to coefficients first."
         )
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
