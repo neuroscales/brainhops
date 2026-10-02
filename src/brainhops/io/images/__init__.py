@@ -5,22 +5,23 @@ __all__ = [
     "WritableFileBasedImage",
     "base",
     "load",
+    "mrtrix",
     "sniff",
 ]
 
 # internals
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 
-from . import base
+from . import base, mrtrix
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 
 # Formats must be imported for them to register themselves: the registry
 # only ever holds classes that have actually been imported, so a lazily
 # imported format would silently be invisible to `load`.
 if HAS_NIBABEL:
-    from . import nifti
+    from . import freesurfer, nifti
 
-    __all__ += ["nifti"]
+    __all__ += ["freesurfer", "nifti"]
 
 # The Zarr reader needs abczarr and at least one of its backend drivers.
 # abczarr alone cannot open a store, so the reader is registered only when a
