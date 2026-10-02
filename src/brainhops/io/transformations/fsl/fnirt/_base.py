@@ -15,6 +15,7 @@ from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
 from brainhops.io.base.parsers import Confidence
+from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from .._affines import _ImageGeometry
@@ -539,14 +540,7 @@ def _voxel_grid_in_scaled_mm(
     Returns an array of shape `(nx, ny, nz, 3)` whose entry at a voxel is
     the scaled-mm coordinate of that voxel under `vox2fsl`.
     """
-    grid = backend.stack(
-        backend.meshgrid(*[backend.arange(s) for s in shape], indexing="ij"),
-        -1,
-    )
-    grid = backend.asarray(grid, dtype=vox2fsl.dtype)
-    rotation = backend.asarray(vox2fsl[:3, :3], dtype=vox2fsl.dtype)
-    offset = backend.asarray(vox2fsl[:3, 3], dtype=vox2fsl.dtype)
-    return backend.matmul(rotation, grid[..., None])[..., 0] + offset
+    return voxel_grid_coordinates(shape, vox2fsl, backend)
 
 
 def _detect_deformation_type(field: tx.Any, ref_scaled: tx.Any) -> str:

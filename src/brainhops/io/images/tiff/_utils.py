@@ -51,6 +51,7 @@ __all__ = [
     "TiffMetadata",
     "TiffSource",
     "is_tiff",
+    "is_whole_slide",
     "length_unit",
     "time_unit",
     "resolution_scales",
@@ -720,6 +721,19 @@ class TiffSource:
             raise ParserContentError(
                 f"tifffile cannot read this file: {e}"
             ) from e
+
+
+# The tifffile flags of the vendor whole-slide formats that OpenSlide also
+# reads, with a dedicated reader (see `brainhops.io.images.openslide`).
+_WHOLE_SLIDE_FLAGS = ("is_svs", "is_ndpi", "is_philips", "is_scn", "is_bif")
+
+
+def is_whole_slide(tif: tx.Any) -> bool:
+    """Whether a TIFF file is a vendor whole-slide image (Aperio SVS,
+    Hamamatsu NDPI, Philips, Leica SCN, Ventana BIF), by its first
+    page."""
+    page = tif.pages.first
+    return any(getattr(page, flag, False) for flag in _WHOLE_SLIDE_FLAGS)
 
 
 def _select(tif: tx.Any, series: int, level: int) -> tx.Any:

@@ -132,6 +132,8 @@ from brainhops.io.base._geometry import (
     ras_conversion,
     reduce_to_affine,
 )
+from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -1023,24 +1025,6 @@ def afni_dataset_files(
     if brik is None:
         brik = parent / (stem + brik_ext)
     return head, brik, stem
-
-
-def _local_path(file: tx.Any) -> tx.Optional[str]:
-    """The local file system path of `file`, or `None` if it has none."""
-    try:
-        local = os.fspath(file)
-    except Exception:
-        return None
-    if isinstance(local, bytes):
-        local = os.fsdecode(local)
-    return local if os.path.isfile(local) else None
-
-
-def _open_path(file: tx.Any) -> tx.BinaryIO:
-    local = _local_path(file)
-    if local is not None:
-        return open(local, "rb")
-    return file.open("rb")
 
 
 def _read_head(file: tx.Any) -> AfniHeader:

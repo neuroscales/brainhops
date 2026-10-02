@@ -39,10 +39,22 @@ The supported displacement fields have the following encoding:
       Empty. The transform topology matches the physical coordinate space
       of the primary image metadata instead.
 
-Furthermore, the H5 format supports nested chained transforms. A group of
-chained transforms is encoded by a group with class name `CompositeTransform`,
-whose `Parameters` and `FixedParameters` are empty, and whose children
-are the individual transform blocks.
+Furthermore, the H5 format holds chained transforms (ANTs'
+`<prefix>Composite.h5`). A `CompositeTransform` is written as a first
+block of class `CompositeTransform`, which has no parameters, followed by
+the blocks of its transform queue, front to back. ITK applies that queue
+back to front (`CompositeTransform::TransformPoint`): a file
+`[Composite, T0, T1]` maps `x` to `T0(T1(x))`. A brainhops
+[`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+transformations in the order they apply, so the reader lists the blocks
+of a composite in reverse file order: `[T1, T0]`. A file with several
+blocks but no `CompositeTransform` header is a list of separate
+transforms, which ITK does not compose. The reader loads one of them:
+the first, as SimpleITK's `ReadTransform` does, with a warning that the
+file holds several, or the one at `position=`
+(`H5Transform.from_file(path, position=1)`). A composite file holds a
+single transform, the composite, at position 0. Composites cannot be
+nested: ITK only writes a `CompositeTransform` as the first block.
 
 ## Approximate specification
 
@@ -64,12 +76,15 @@ HDF5 Attributes or standalone datasets:
 All transformation records are wrapped inside a top-level group path
 named exactly `/TransformGroup`.
 
-If a file contains a chain of transforms or a `CompositeTransform`, they
-are stored inside numerical sub-groups corresponding sequentially to
-their execution stack order:
-* `/TransformGroup/0`
+Every block is stored in a sub-group named after its position in the
+file, counting from zero, and ITK reads them back by number (so `10`
+comes after `9`, not after `1`):
+
+* `/TransformGroup/0` -- the `CompositeTransform` header, if any
 * `/TransformGroup/1`
 * `/TransformGroup/2`
+
+The blocks of a composite are applied in the reverse of this order.
 
 ### 3. Internal Group Structure
 

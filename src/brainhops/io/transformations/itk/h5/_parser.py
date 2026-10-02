@@ -16,7 +16,7 @@ from brainhops.io.base.hdf5 import (
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # locals
-from .._common import ItkStruct, ItkTransformClass
+from .._common import ItkStruct, ItkTransformClass, _application_order
 
 __all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
 
@@ -62,6 +62,11 @@ class H5TransformParser(
     """Parses an ITK binary (`.h5`) transform file into a chain of
     transform blocks.
 
+    The blocks of a `CompositeTransform` (such as ANTs'
+    `<prefix>Composite.h5`) are listed in the order they apply to
+    points, which is the reverse of their order in the file (ITK applies
+    the last block of a composite first).
+
     Each block is itself a brainhops transformation, so the parsed blocks
     are stored straight into the `transformations` of the sequence that
     this parser is mixed into.
@@ -97,6 +102,7 @@ class H5TransformParser(
         h5file: h5py.File,
         keep_open: bool = False,
         load: bool = True,
+        position: tx.Optional[int] = None,
         **kwargs,
     ) -> tx.Self:
         """
@@ -112,6 +118,11 @@ class H5TransformParser(
         keep_open : bool, optional
             If True, keep the HDF5 file open after loading.
             If False, close the file after loading.
+        position : int, optional
+            Which top-level transform of the file to read: the
+            composite, if the file starts with a `CompositeTransform`
+            header, else one of its blocks. By default, the first one,
+            with a warning if the file holds several.
 
         Returns
         -------
@@ -129,10 +140,14 @@ class H5TransformParser(
             header.OSVersion = _readstr(h5file["/OSVersion"])
 
         obj = cls(header=header, file=h5file if keep_open else None)
-        nodes = h5file.get("/TransformGroup", [])
+        nodes = h5file.get("/TransformGroup", {})
 
         blocks = []
-        for node in nodes:
+        composites = []
+        # ITK names the groups after their position, `0`, `1`, ...,
+        # and reads them by number; h5py lists them by name, which
+        # would put `10` before `2`.
+        for index, node in enumerate(sorted(nodes, key=_node_number)):
             # Parse transform type
             xtype = _readstr(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
@@ -140,8 +155,9 @@ class H5TransformParser(
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
 
             if xtype == "CompositeTransform":
-                # skip composite transforms, they just point to the
-                # following transforms.
+                # A composite header has no parameters of its own: its
+                # queue is the blocks that follow it.
+                composites.append(index)
                 continue
 
             # Read transform parameters
@@ -189,7 +205,7 @@ class H5TransformParser(
                 )
             )
 
-        obj.transformations = blocks
+        obj.transformations = _application_order(blocks, composites, position)
 
         if not keep_open:
             h5file.close()
@@ -202,6 +218,14 @@ class H5TransformParser(
     def __del__(self) -> None:
         """Close the underlying HDF5 file, if one is still open."""
         self._close()
+
+
+def _node_number(name: str) -> tx.Tuple[int, tx.Union[int, str]]:
+    """Sort key of a `/TransformGroup` child: numbers first, by value."""
+    try:
+        return (0, int(name))
+    except ValueError:
+        return (1, name)
 
 
 def _readstr(dataset: h5py.Dataset) -> str:
