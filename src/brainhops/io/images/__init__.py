@@ -23,9 +23,9 @@ from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 # only ever holds classes that have actually been imported, so a lazily
 # imported format would silently be invisible to `load`.
 if HAS_NIBABEL:
-    from . import nifti
+    from . import freesurfer, nifti
 
-    __all__ += ["nifti"]
+    __all__ += ["freesurfer", "nifti"]
 
 # Raster images (PNG, JPEG, ...) are read and written with Pillow.
 if HAS_PILLOW:

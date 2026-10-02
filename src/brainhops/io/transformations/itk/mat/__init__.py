@@ -77,7 +77,86 @@ through VNL's `vnl_matlab_write` and `vnl_matlab_readhdr`
 
 As in every ITK format, the parameters map points of the fixed space to
 points of the moving space, in LPS world coordinates, and a matrix is
-stored row-major.
+stored row-major. For an `AffineTransform` with matrix `A`, translation
+`t` (the last `D` parameters) and center `c` (the fixed parameters), a
+point `x` of the fixed space maps to the point
+
+```text
+y = A (x - c) + c + t
+```
+
+of the moving space: the transform *pulls* the moving image onto the
+fixed grid. That is the chain an
+[`ItkAffineBase`][brainhops.io.transformations.itk.ItkAffineBase] block
+holds -- `recenter`, `linear`, `uncenter`, `translation` -- as an
+immutable sequence: to change a block, build a new one rather than edit
+its chain in place.
+
+## Writing
+
+[`MatTransform`][brainhops.io.transformations.itk.mat.MatTransform]
+writes a file as `itk::MatlabTransformIO` does: the parameters, then
+the fixed parameters, as two column vectors, little-endian and `double`
+by default (`save(..., byteorder=">", precision="float")` changes
+either). `scipy.io.loadmat` reads what it writes.
+
+- A block read from an ITK file is written back unchanged -- its
+  class, its parameters and its center -- so a file read and saved again
+  is the same file, byte for byte.
+- Any other affine (or a transformation that converts to one, such as a
+  `Translation`) is written as an `AffineTransform` whose center is the
+  origin: `fixed` is zero, and the translation is the last column of the
+  matrix. A brainhops affine has no center, and with `c = 0` ITK reads
+  back exactly `y = A x + t`. Its endpoints must be ITK's space (LPS
+  millimetres) or unspecified; an affine between RAS spaces is refused
+  rather than silently reinterpreted.
+
+```python
+from brainhops.datamodel.transformations import Affine
+from brainhops.io.transformations.itk.mat import MatTransform
+
+MatTransform([Affine(matrix)]).save("out0GenericAffine.mat")
+```
+
+Only one block is written, as ANTs writes one transform per `.mat` file.
+A chain is refused: compose it first (`.compute()`).
+
+## ANTs conventions
+
+ANTs reads and writes its transforms through ITK, so the conventions
+above are those of ANTs: LPS millimetres, and fixed to moving.
+
+- **Warps.** `<prefix><n>Warp.nii.gz` and `<prefix><n>InverseWarp.nii.gz`
+  are ITK NIfTI displacement fields, read by
+  [`brainhops.io.transformations.itk.nifti`][].
+- **Transform lists.** `antsApplyTransforms -t T1 -t T2 ... -t Tn`
+  describes the image transform as a stack, "the last one listed is
+  applied first" -- to the *moving image*. To the *points* of the fixed
+  space, which is how the transforms are evaluated, they apply in the
+  order listed: `T1` first. A brainhops
+  [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+  transformations in the order they are applied to points, so it is the
+  ANTs list in the same order:
+
+    - `-t out1Warp.nii.gz -t out0GenericAffine.mat` is
+      `Sequence([warp, affine])`;
+    - `-t [out0GenericAffine.mat,1] -t out1InverseWarp.nii.gz` is
+      `Sequence([~affine, inverse_warp])`,
+
+    with `warp = io.load("out1Warp.nii.gz", hint="ants")`,
+    `inverse_warp = io.load("out1InverseWarp.nii.gz", hint="ants")` and
+    `affine = io.load("out0GenericAffine.mat")` (a warp needs the hint:
+    its header alone does not say it holds LPS vectors). The first maps
+    the fixed space to the moving space (it resamples the moving image
+    onto the fixed grid), the second maps the moving space back to the
+    fixed one.
+- **Inversion.** `[file.mat,1]` (`useInverse`) inverts a linear
+  transform: it is `io.load("file.mat").inverse()` (or `~`). ANTs does not
+  invert a warp this way; it writes the inverse warp to its own file.
+- **Composite files.** Inside one ITK file holding a `CompositeTransform`
+  (`<prefix>Composite.h5`), ITK lists the blocks the other way round: it
+  applies the last block of the file first. That is why the writer does
+  not write chains.
 """
 
 __all__ = ["MatTransform", "MatTransformParser"]

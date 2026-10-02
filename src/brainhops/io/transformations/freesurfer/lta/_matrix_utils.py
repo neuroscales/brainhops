@@ -1,35 +1,30 @@
 # externals
 import numpy as np
-import typing_extensions as tx
 
 # internals
+from brainhops.io.base.freesurfer import (
+    code2orient,
+    fs_phys2ras,
+    fs_vox2phys,
+    mat2code,
+    mat2orient,
+)
+
+# local
 from ._enums import LtaType
 from ._struct import LtaStruct
-
-# type hints
-_3Ints = tx.Tuple[int, int, int]
-_3Flips = tx.Tuple[tx.Literal[-1, 1], tx.Literal[-1, 1], tx.Literal[-1, 1]]
 
 
 def _get_vox2phys(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
     """Compute the vox2phys matrix from the volume geometry."""
-    shift = -0.5 * np.asarray(vol_info.volume) * np.asarray(vol_info.voxelsize)
-    vox2phys = np.eye(4)
-    vox2phys[0, 0] = vol_info.voxelsize[0]
-    vox2phys[1, 1] = vol_info.voxelsize[1]
-    vox2phys[2, 2] = vol_info.voxelsize[2]
-    vox2phys[:3, 3] = shift
-    return vox2phys
+    return fs_vox2phys(vol_info.volume, vol_info.voxelsize)
 
 
 def _get_phys2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
     """Compute the phys2ras matrix from the volume geometry."""
-    phys2ras = np.eye(4)
-    phys2ras[:3, 0] = vol_info.xras
-    phys2ras[:3, 1] = vol_info.yras
-    phys2ras[:3, 2] = vol_info.zras
-    phys2ras[:3, 3] = vol_info.cras
-    return phys2ras
+    return fs_phys2ras(
+        vol_info.xras, vol_info.yras, vol_info.zras, vol_info.cras
+    )
 
 
 def _get_vox2ras(vol_info: LtaStruct.VolumeInfo) -> np.ndarray:
@@ -112,61 +107,10 @@ def _get_vox2vox(lta: LtaStruct) -> np.ndarray:
     raise AssertionError(f"unsupported LTA type: {lta.type}")
 
 
-def _mat2code(vox2ras: np.ndarray) -> tx.Tuple[_3Ints, _3Flips]:
-    """Convert a vox2ras matrix to an orientation code.
-
-    Parameters
-    ----------
-    vox2ras : np.ndarray
-        A 4x4 vox2ras matrix.
-
-    Returns
-    -------
-    permut : (int, int, int)
-        A tuple of three integers representing the permutation of axes.
-    flips : ({-1, 1}, {-1, 1}, {-1, 1})
-        A tuple of three integers representing the flips of axes.
-    """
-    vox2ras = vox2ras[:3, :3]  # keep linear part only
-    phys2ras = vox2ras / np.linalg.norm(vox2ras, axis=0)
-    u, _, vh = np.linalg.svd(phys2ras)
-    ortho = u @ vh
-    permut = np.abs(ortho + np.random.rand(3, 3) * 1e-6)
-    permut = np.round(permut).astype(np.int8)
-    permut = np.argmax(permut, axis=0)
-    flips = np.sign(np.diag(ortho[permut, :]))
-    return permut, flips
-
-
-def _code2orient(permut: _3Ints, flips: _3Flips) -> str:
-    """Convert a permutation and flip code to an orientation string.
-
-    Parameters
-    ----------
-    permut : (int, int, int)
-        A tuple of three integers representing the permutation of axes.
-    flips : ({-1, 1}, {-1, 1}, {-1, 1})
-        A tuple of three integers representing the flips of axes.
-
-    Returns
-    -------
-    orient : str
-        Three uppercase letters representing the orientation of the axes.
-        Letters correspond to each voxel axis (F-ordered) and can take values:
-        - 'L' (right-to-left) or 'R' (left-to-right)
-        - 'P' (anterior-to-posterior) or 'A' (posterior-to-anterior)
-        - 'I' (superior-to-inferior) or 'S' (inferior-to-superior)
-
-    """
-    names = [["L", "R"], ["P", "A"], ["I", "S"]]
-    name = "".join([names[p][int(f > 0)] for p, f in zip(permut, flips)])
-    return name
-
-
-def _mat2orient(vox2ras: np.ndarray) -> str:
-    """Convert a vox2ras matrix to an orientation string."""
-    permut, flips = _mat2code(vox2ras)
-    return _code2orient(permut, flips)
+# The orientation helpers are shared with the other FreeSurfer formats.
+_mat2code = mat2code
+_code2orient = code2orient
+_mat2orient = mat2orient
 
 
 def _get_orient(vol_info: LtaStruct.VolumeInfo) -> str:

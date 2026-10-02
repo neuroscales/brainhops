@@ -14,6 +14,7 @@ __all__ = [
     "sniff",
     "parsers",
     "raster",
+    "freesurfer",
     "register_format",
     "ImageSpec",
     "Parser",
@@ -32,7 +33,7 @@ from brainhops._core.dependencies import (
     has_abczarr_driver,
 )
 
-from . import parsers, raster
+from . import freesurfer, parsers, raster
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
@@ -57,9 +58,9 @@ from .specs import (
 )
 
 if HAS_NIBABEL:
-    from . import nifti
+    from . import mgh, nifti
 
-    __all__ += ["nifti"]
+    __all__ += ["mgh", "nifti"]
 
 if HAS_PILLOW:
     from . import pillow
