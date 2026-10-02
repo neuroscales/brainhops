@@ -62,7 +62,9 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 @register_format
 class FNIRTWarpField(
-    FSLTransformationFormat, NiftiBasedTransformation, _xforms.ImmutableSequence
+    FSLTransformationFormat,
+    NiftiBasedTransformation,
+    _xforms.ImmutableSequence,
 ):
     """A FNIRT non-linear transformation stored in a NIfTI file.
 
@@ -81,9 +83,12 @@ class FNIRTWarpField(
     | 2007 | cubic coefficients | 3 | knot grid |
     | 2009 | quadratic coefficients | 2 | knot grid |
 
-    The reader keeps the field on its own grid and returns a sequence of
-    transformations that maps reference-image world (RAS) coordinates to
-    moving-image world (RAS) coordinates. The B-spline basis is evaluated
+    The reader keeps the field on its own grid and returns an
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
+    of three transformations -- reference RAS to warp-grid voxels, the
+    displacement field, and warp-grid voxels to moving RAS -- that maps
+    reference-image world (RAS) coordinates to moving-image world (RAS)
+    coordinates. The B-spline basis is evaluated
     only when the sequence is computed, so a coefficient field is never
     expanded onto the reference grid at read time.
 
@@ -367,7 +372,7 @@ class FNIRTWarpField(
         the resolved chain is cached and handed out as is, and a list
         would let an in-place edit change the cache, leaving the warp
         reporting a chain that its data no longer describes.
-        """  # noqa: E501
+        """
         explicit = getattr(self, "_transformations", None)
         if explicit is not None:
             return explicit

@@ -162,6 +162,11 @@ class ITKBlockBase(ITKStruct, _xforms.ImmutableSequence):
     [`Sequence`][brainhops.datamodel.transformations.Sequence] reads
     them: reading them off the chain would build the chain, and building
     a warp block's chain decodes its warp data.
+
+    A block's chain is made of named slots, so a block is an
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
+    the chain is a tuple, and editing it in place raises `TypeError`.
+    Assigning a whole new chain, or `replace`-ing it, still works.
     """
 
     @smartproperty(cache=True)
@@ -289,7 +294,7 @@ class ITKDisplacementBase(ITKBlockBase):
     `order`, `coeff` and `bound` are the spline parameters handed to the
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
     and a subclass overrides them to describe its own encoding.
-    """  # noqa: E501
+    """
 
     order: tx.ClassVar[int] = 1
     """The spline order used to interpolate the field."""
