@@ -13,6 +13,7 @@ import typing_extensions as tx
 from brainhops import io
 from brainhops.datamodel.images import Image
 from brainhops.io.base import ImageSpec, TransformationSpec, format_hints
+from brainhops.io.base.parsers import AmbiguousFormatError, WriterError
 
 from ._errors import CliError, WritingUnavailable
 
@@ -130,61 +131,22 @@ def load_transform(
         ) from exc
 
 
-def _writable_image_formats() -> tx.Set[type]:
-    """The registered image formats that can be written to disk.
-
-    The set is empty while no image writer has been added. A caller uses
-    it to tell a user that writing is not available yet, rather than
-    failing part way through.
-    """
-    from brainhops.io.images.base import WritableFileBasedImage
-
-    return set(getattr(WritableFileBasedImage, "_REGISTRY", set()))
-
-
-def _match_by_extension(
-    output: str, formats: tx.Iterable[type]
-) -> tx.Optional[type]:
-    """The format whose declared extension matches `output`.
-
-    When several formats match, the one with the longest matching
-    extension wins, so `.nii.gz` is preferred over `.gz`. `None` means no
-    registered format claims the extension.
-    """
-    lowered = output.lower()
-    best: tx.Optional[type] = None
-    best_length = -1
-    for fmt in formats:
-        for extension in getattr(fmt, "EXTENSIONS", ()):
-            if lowered.endswith(extension.lower()):
-                if len(extension) > best_length:
-                    best_length = len(extension)
-                    best = fmt
-    return best
-
-
 def save_image(image: Image, output: str) -> None:
     """Write an image to a file, or raise `WritingUnavailable`.
 
-    The output format is chosen from the file extension. When no image
-    writer is registered for that extension, the image is left unwritten
-    and `WritingUnavailable` is raised. The computation that produced the
-    image has already succeeded at that point, so the error names the
-    format and points at the open work rather than reading as a crash.
-
-    Image writing is not part of the library yet. This function is
-    written against the writable-format registry so that it starts
-    working the moment a writer is registered, with no change here.
+    The output format is chosen from the file name by `brainhops.io.save`.
+    When no image format is registered for the name, none of them stands
+    out, or the one chosen cannot write this image, the image is left
+    unwritten and
+    `WritingUnavailable` is raised. The computation that produced the
+    image has already succeeded at that point, so the error says that
+    the image could not be saved, and why, rather than reading as a
+    crash.
     """
-    formats = _writable_image_formats()
-    fmt = _match_by_extension(output, formats)
-    if fmt is None:
+    try:
+        io.save(image, output)
+    except (AmbiguousFormatError, WriterError) as exc:
         raise WritingUnavailable(
-            "Writing images is not available yet: no image writer is "
-            f"registered for {output!r}. The image was resliced "
-            "successfully but could not be saved. NIfTI image writing is "
-            "tracked in issue #41."
-        )
-    # A writer exists: build it from the resampled image and write it.
-    writer = fmt(data=image.data, transformations=list(image.transformations))
-    writer.save(output)
+            f"The image was computed but could not be saved to "
+            f"{output!r}: {exc}"
+        ) from exc
