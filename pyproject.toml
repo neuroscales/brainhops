@@ -33,6 +33,9 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 h5py = ["h5py"]
 itk = ["brainhops[h5py]"]
 x5 = ["brainhops[h5py]"]
+# MATLAB v7.3 (HDF5) .mat matrices; text, .npy, .npz and v4-v7 .mat need
+# only numpy and scipy.
+matrix = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
 pillow = ["pillow"]
 nifti = ["brainhops[nibabel]"]
