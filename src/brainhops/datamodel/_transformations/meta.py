@@ -153,7 +153,10 @@ class Projection(MetaTransformation):
 
     # --- methods ------------------------------------------------------
 
-    def inverse(self) -> tx.Self:
+    def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
+        # Swapping what is dropped and what is created is already the
+        # exact inverse, so there is nothing to defer and `compute`
+        # changes nothing.
         return self.to(
             dropped=self.created,
             created=self.dropped,

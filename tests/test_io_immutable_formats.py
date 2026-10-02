@@ -262,17 +262,8 @@ def test_the_format_computes_like_its_plain_chain(loaded) -> None:  # noqa: ANN0
     )
 
 
-def test_the_inverse_is_a_plain_sequence(loaded, request) -> None:  # noqa: ANN001
-    name, _, obj = loaded
-    if name == "spm":
-        request.applymarker(
-            pytest.mark.xfail(
-                raises=TypeError,
-                strict=True,
-                reason="NiftiRasToVoxel.inverse() takes no `compute` "
-                "argument; unrelated to immutability.",
-            )
-        )
+def test_the_inverse_is_a_plain_sequence(loaded) -> None:  # noqa: ANN001
+    _, _, obj = loaded
     inverse = obj.inverse()
     assert not isinstance(inverse, xforms.ImmutableSequence)
     assert len(inverse) == len(obj)

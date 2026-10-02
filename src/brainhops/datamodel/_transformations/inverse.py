@@ -128,11 +128,12 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
 
     # --- methods ------------------------------------------------------
 
-    def inverse(self, compute: bool = False) -> Transformation:
+    def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         """Return the forward transformation, with the endpoints restored.
 
         The inverse of an inverse is the original forward transformation.
-        An endpoint edit made on the wrapper is carried onto it.
+        An endpoint edit made on the wrapper is carried onto it. With
+        `compute`, the other keywords are passed on to `compute()`.
         """
         forward = self.forward
         if forward is None:
@@ -142,7 +143,7 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         if new_input is not forward.input or new_output is not forward.output:
             forward = forward.to(input=new_input, output=new_output)
         if compute:
-            forward = forward.compute()
+            forward = forward.compute(**kwargs)
         return forward
 
     def compute(
