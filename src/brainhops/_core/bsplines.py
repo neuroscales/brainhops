@@ -8,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
-from brainhops._core.dependencies import da, dk
+from brainhops._core.dependencies import da, dk, np
 from brainhops.backends import (
     best_backend,
     get_array_backend,
@@ -81,59 +81,269 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
     return _map_coordinates
 
 
-def _crop_for(
-    coords: ArrayProtocol, shape: tx.Sequence[int], order: int, whole: bool
-) -> tx.List[slice]:
-    """The part of an input that sampling at `coords` reads, as slices.
+_SPLINE_POLES = {
+    2: 0.17157287525380990,
+    3: 0.26794919243112270,
+    4: 0.36134122590022018,
+    5: 0.43057534709997379,
+}
+"""
+The magnitude of the dominant pole of the b-spline prefilter, per order.
 
-    An axis is cropped to the samples that the interpolation stencils of
-    `coords` touch, with one sample to spare, but only when that crop lies
-    inside the grid: the boundary condition is then never consulted, and
-    sampling the crop is exactly sampling the whole axis. Any stencil that
-    reaches past an edge -- or a coordinate that is not finite -- keeps
-    the whole axis, so the boundary condition is applied to the real edge
-    of the grid rather than to the edge of a crop. With `whole`, every
-    axis is kept, which a prefilter needs: it runs along whole axes.
+The prefilter is a recursive filter: the coefficient at one sample depends
+on a sample `k` steps away through a weight that decays as `pole ** k`.
+"""
+
+_PREFILTER_TOLERANCE = 1e-12
+"""The weight below which a sample is left out of a coefficient."""
+
+_SCIPY_PREPAD = {"nearest": 12, "grid-constant": 12}
+"""
+The samples scipy pads an array with before it prefilters it, per mode.
+
+`scipy.ndimage.map_coordinates` pads by twelve edge samples for `nearest`,
+and by twelve `cval` samples for `grid-constant`, and prefilters the padded
+array (`_prepad_for_spline_filter`). Its other modes prefilter the array
+as it is.
+"""
+
+_LOCAL_MODES = ("nearest", "reflect", "mirror", "grid-wrap", "grid-constant")
+"""The modes a block of coordinates can be sampled with from a window."""
+
+
+def _halo(order: int) -> int:
     """
-    margin = int(order) // 2 + 1
-    slices = []
-    for c, n in zip(coords, shape):
-        n = int(n)
-        if whole or c.size == 0:
-            slices.append(slice(0, n))
-            continue
-        lo, hi = float(c.min()), float(c.max())
-        if not (math.isfinite(lo) and math.isfinite(hi)):
-            slices.append(slice(0, n))
-            continue
-        lo = math.floor(lo) - margin
-        hi = math.ceil(hi) + margin + 1
-        if lo < 0 or hi > n:
-            lo, hi = 0, n
-        slices.append(slice(lo, hi))
-    return slices
+    The samples a prefilter of this order reads on each side of a window.
+
+    Beyond it, a sample weighs less than `_PREFILTER_TOLERANCE` in any
+    coefficient of the window, so the coefficients of a window padded by
+    this halo are those of the whole extended array.
+    """
+    pole = _SPLINE_POLES.get(int(order))
+    if pole is None:
+        return 0
+    return int(math.ceil(math.log(_PREFILTER_TOLERANCE) / math.log(pole)))
+
+
+def _fold(k: np.ndarray, n: int, mode: str) -> np.ndarray:
+    """
+    The sample that each index `k` of an extended axis of length `n` holds.
+
+    The axis is extended by `mode`, as `scipy.ndimage` extends it, and an
+    index that the extension fills with `cval` is `-1`.
+    """
+    if mode == "mirror":
+        if n == 1:
+            return np.zeros_like(k)
+        period = 2 * n - 2
+        k = np.mod(k, period)
+        return np.where(k >= n, period - k, k)
+    if mode == "reflect":
+        period = 2 * n
+        k = np.mod(k, period)
+        return np.where(k >= n, period - 1 - k, k)
+    if mode == "grid-wrap":
+        return np.mod(k, n)
+    if mode == "nearest":
+        return np.clip(k, 0, n - 1)
+    if mode == "grid-constant":
+        return np.where((k >= 0) & (k < n), k, -1)
+    raise ValueError(f"No sample mapping for mode {mode!r}.")
+
+
+def _axis_plan(
+    lo: int, hi: int, n: int, mode: str, order: int, prefilter: bool
+) -> tx.Tuple[np.ndarray, int, np.ndarray]:
+    """
+    How to sample one axis where the stencils read indices `[lo, hi)`.
+
+    Returns the samples of the input to read (`-1` for `cval`), the halo
+    to cut from each end of the window once it is prefiltered, and, for
+    each index in `[lo, hi)`, the position of its coefficient in the cut
+    window (`-1` for `cval`).
+
+    Without a prefilter the stencils read the samples directly, extended
+    by `mode`. With one, they read spline coefficients, which scipy takes
+    from the array extended by `mode` -- after padding it, for `nearest`
+    and `grid-constant` -- so the window is that extension around the
+    indices read, plus a halo the prefilter runs over and that is then
+    cut. The coefficients beyond scipy's padded array are its edge
+    coefficient for `nearest`, and `cval` for `grid-constant`.
+    """
+    index = np.arange(lo, hi)
+    if not prefilter:
+        return _fold(index, n, mode), 0, np.arange(hi - lo)
+    pad = _SCIPY_PREPAD.get(mode, 0)
+    padded = n + 2 * pad
+    halo = _halo(order)
+    index = index + pad
+    if pad:
+        coeff = _fold(index, padded, mode)
+        used = coeff[coeff >= 0]
+        if used.size == 0:
+            return np.full(1, -1), 0, np.full(hi - lo, -1)
+        start, stop = int(used.min()), int(used.max()) + 1
+        local = np.where(coeff >= 0, coeff - start, -1)
+        # The padded array is extended past its own edge by scipy's
+        # prefilter: `reflect` for `nearest`, `mirror` for `grid-constant`.
+        window = np.arange(start - halo, stop + halo)
+        outer = "reflect" if mode == "nearest" else "mirror"
+        signal = _fold(_fold(window, padded, outer) - pad, n, mode)
+    else:
+        local = np.arange(hi - lo)
+        signal = _fold(np.arange(lo - halo, hi + halo), n, mode)
+    return signal, halo, local
+
+
+def _take(
+    array: ArrayProtocol,
+    positions: tx.Sequence[np.ndarray],
+    cval: float,
+) -> ArrayProtocol:
+    """
+    `array[np.ix_(*positions)]`, where a position of `-1` reads `cval`.
+    """
+    nx = get_array_backend(array)
+    mask = None
+    for axis, pos in enumerate(positions):
+        array = nx.take(array, nx.asarray(np.maximum(pos, 0)), axis=axis)
+        if (pos < 0).any():
+            shape = [1] * len(positions)
+            shape[axis] = -1
+            outside = (pos < 0).reshape(shape)
+            mask = outside if mask is None else mask | outside
+    if mask is not None:
+        array = nx.where(
+            nx.asarray(mask), nx.asarray(cval, dtype=array.dtype), array
+        )
+    return array
+
+
+def _gather(
+    input: ArrayProtocol, indices: tx.Sequence[np.ndarray], cval: float
+) -> tx.Optional[ArrayProtocol]:
+    """
+    `input[np.ix_(*indices)]`, materialized, where `-1` reads `cval`.
+
+    Only the samples that are read are computed: each axis is sliced to
+    the indices it uses, by a slice when they are contiguous and by a list
+    otherwise -- such as the two ends of a `grid-wrap` axis. `None` when an
+    axis reads no sample at all, and the whole window is `cval`.
+    """
+    patch = input
+    positions = []
+    for axis, index in enumerate(indices):
+        used = np.unique(index[index >= 0])
+        if used.size == 0:
+            return None
+        if int(used[-1]) - int(used[0]) + 1 == used.size:
+            key = slice(int(used[0]), int(used[-1]) + 1)
+        else:
+            key = used
+        patch = patch[(slice(None),) * axis + (key,)]
+        positions.append(
+            np.where(index >= 0, np.searchsorted(used, index), -1)
+        )
+    if hasattr(patch, "compute"):
+        patch = patch.compute()
+    return _take(patch, positions, cval)
 
 
 def _map_coordinates_1block(
-    coords: ArrayProtocol, input: ArrayProtocol, **opts
+    coords: ArrayProtocol,
+    input: ArrayProtocol,
+    order: int,
+    mode: str,
+    cval: float,
+    prefilter: bool,
 ) -> ArrayProtocol:
     """Sample `input` at one materialized block of `(ndim, N)` coordinates.
 
-    Only the crop of `input` that these coordinates read is materialized
-    (see [`_crop_for`][]), and it is sampled with its own concrete (scipy
-    or cupy) ndimage, so the result is the one the non-dask backends give.
+    The block reads a window of `input` around the stencils of its
+    coordinates, extended by `mode` the way scipy extends the whole array
+    (see [`_axis_plan`][]), so it never reads more than its stencils and,
+    with a prefilter, a halo around them. The window is prefiltered, when
+    asked, and sampled with its own concrete (scipy or cupy) ndimage.
+
+    The result is scipy's on the whole array, to `_PREFILTER_TOLERANCE`,
+    with two exceptions. scipy approximates its `reflect` prefilter near
+    the edges of a short axis -- by about 2e-6 at order five on seven
+    samples -- and this does not. A point
+    with a coordinate that is not finite is no position at all, and scipy
+    returns `cval`, NaN or an edge sample for it depending on the mode and
+    the order: here it is NaN, or `cval` for an array of integers.
+
+    The `wrap` mode does not extend the array in any way a window can
+    reproduce, so it reads the whole array, and so does any mode this
+    module does not know.
     """
-    whole = bool(opts["prefilter"]) and int(opts["order"]) > 1
-    slices = _crop_for(coords, input.shape, opts["order"], whole)
-    patch = input[tuple(slices)]
-    if hasattr(patch, "compute"):
-        patch = patch.compute()
-    offset = [s.start for s in slices]
-    if any(offset):
-        nx = get_array_backend(coords)
-        offset = nx.asarray(offset, dtype=coords.dtype)
-        coords = coords - offset[:, None]
-    return get_ndimage_backend(patch).map_coordinates(patch, coords, **opts)
+    order = int(order)
+    prefilter = bool(prefilter) and order > 1
+    opts = dict(order=order, mode=mode, cval=cval, prefilter=prefilter)
+    dtype = input.dtype
+    if mode not in _LOCAL_MODES:
+        whole = input.compute() if hasattr(input, "compute") else input
+        return get_ndimage_backend(whole).map_coordinates(
+            whole, coords, **opts
+        )
+
+    nx = get_array_backend(coords)
+    count = int(coords.shape[1])
+    finite = nx.all(nx.isfinite(coords), axis=0)
+    if not bool(nx.all(finite)):
+        fill = np.nan if np.issubdtype(np.dtype(dtype), np.floating) else cval
+        output = nx.full((count,), fill, dtype=dtype)
+        if bool(nx.any(finite)):
+            output[finite] = _map_coordinates_1block(
+                coords[:, finite], input, **opts
+            )
+        return output
+    if count == 0:
+        return nx.empty((0,), dtype=dtype)
+
+    margin = order // 2 + 1
+    starts, signals, halos, locals_ = [], [], [], []
+    for c, n in zip(coords, input.shape):
+        lo = int(math.floor(float(c.min()))) - margin
+        hi = int(math.ceil(float(c.max()))) + margin + 1
+        signal, halo, local = _axis_plan(
+            lo, hi, int(n), mode, order, prefilter
+        )
+        starts.append(lo)
+        signals.append(signal)
+        halos.append(halo)
+        locals_.append(local)
+
+    window = _gather(input, signals, cval)
+    if window is None:
+        return nx.full((count,), cval, dtype=dtype)
+    nd = get_ndimage_backend(window)
+    if prefilter:
+        window = nd.spline_filter(
+            window, order, output=np.float64, mode="mirror"
+        )
+        window = window[
+            tuple(slice(h, window.shape[i] - h) for i, h in enumerate(halos))
+        ]
+        window = _take(window, locals_, cval)
+    offset = get_array_backend(coords).asarray(starts, dtype=coords.dtype)
+    output = nd.map_coordinates(
+        window,
+        coords - offset[:, None],
+        order=order,
+        mode="mirror",
+        prefilter=False,
+    )
+    return output.astype(dtype, copy=False)
+
+
+def _map_coordinates_block(
+    coords: ArrayProtocol, input: ArrayProtocol, **opts
+) -> ArrayProtocol:
+    """Sample `input` at one `(ndim, *shape)` block of coordinates."""
+    ndim, *shape = coords.shape
+    flat = coords.reshape((ndim, -1))
+    return _map_coordinates_1block(flat, input, **opts).reshape(shape)
 
 
 def _dask_map_coordinates(
@@ -141,23 +351,37 @@ def _dask_map_coordinates(
 ) -> ArrayProtocol:
     """``map_coordinates`` for a dask array, lazy and exact at the edges.
 
+    `coords` has shape `(ndim, *shape)` and the result has shape `shape`.
+
     `dask_image.ndinterp.map_coordinates` is not used. It crops the input
     around the coordinates of each chunk and clips that crop to the grid,
     so a chunk whose coordinates all lie beyond the start of an axis gets
     an empty crop, and `scipy` then reads outside of a zero-length array:
     the result is whatever memory happens to hold. A crop clipped at the
     end of an axis is not empty, but it drops the samples that `reflect`,
-    `mirror` or `wrap` fold back onto, and the samples a prefilter of
-    order above one runs over.
+    `mirror` or `grid-wrap` fold back onto, and its prefilter runs over
+    the crop rather than over the array.
 
-    Here each block of coordinates is sampled by one task that crops the
-    input itself (see [`_crop_for`][]) and keeps a whole axis whenever a
-    stencil reaches past its edge, so the boundary condition is always
-    applied at the real edge of the grid. The input is passed to the tasks
-    as a delayed rebuild of itself, so each task only computes its crop.
+    Here each block of coordinates is sampled by one task that reads a
+    window of the input around its stencils, extended by the boundary
+    condition as scipy extends the whole array, and padded by the halo a
+    prefilter needs (see [`_map_coordinates_1block`][]). A block never
+    reads more of the input than that, wherever its points are -- a
+    `grid-wrap` window at an edge reads a few samples from each end.
+
+    A window covers the points of its block, so the blocks keep the
+    spatial layout of the coordinates: dask coordinates keep their own
+    chunks, and any other array is cut into dask's default chunk size,
+    rather than sampled as one block that would read the whole input. The
+    input is passed to the tasks as a delayed rebuild of itself, so each
+    task only computes its window.
     """
-    coords = da.asarray(coords)
-    coords = coords.rechunk({0: -1})
+    if isinstance(coords, da.Array):
+        coords = coords.rechunk({0: -1})
+    else:
+        coords = da.from_array(
+            coords, chunks=(-1,) + ("auto",) * (coords.ndim - 1)
+        )
     if isinstance(input, da.Array):
         source = dk.delayed(da.Array)(
             input.dask, input.name, input.chunks, input.dtype
@@ -165,7 +389,7 @@ def _dask_map_coordinates(
     else:
         source = dk.delayed(input)
     return da.map_blocks(
-        _map_coordinates_1block,
+        _map_coordinates_block,
         coords,
         source,
         dtype=input.dtype,
@@ -184,7 +408,7 @@ def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
     Every other backend uses its own ndimage package.
     """
     if da is not None and nx is da:
-        return _autoreshape(_dask_map_coordinates)
+        return _dask_map_coordinates
     return _autoreshape(nd.map_coordinates)
 
 

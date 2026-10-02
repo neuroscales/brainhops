@@ -9,12 +9,13 @@ from run to run, with `PYTHONHASHSEED` and with earlier allocations. A crop
 clipped at the end of an axis kept a single sample, which is wrong for the
 boundary conditions that fold back into the grid.
 
-The sampler now crops the input itself and keeps a whole axis whenever a
-stencil reaches past its edge. These tests pin it to the numpy backend,
-which samples the whole array, for points on both sides of every axis.
+The sampler now reads, for each block of coordinates, a window of the
+input around its stencils, extended by the boundary condition as scipy
+extends the whole array and padded by the halo its prefilter needs. These
+tests pin it to the numpy backend, which samples the whole array, for
+points on both sides of every axis, and pin that a block never reads more
+than its window, wherever its points are.
 """
-
-import itertools
 
 import numpy as np
 import pytest
@@ -22,14 +23,16 @@ import pytest
 da = pytest.importorskip("dask.array")
 pytest.importorskip("dask_image")
 
+import brainhops._core.bsplines as bsplines  # noqa: E402
 from brainhops._core.bsplines import (  # noqa: E402
-    _crop_for,
+    _SPLINE_POLES,
+    _halo,
     pull,
     pull_field,
 )
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
-ORDERS = [0, 1, 2, 3]
+ORDERS = [0, 1, 2, 3, 4, 5]
 SHAPE = (7, 8, 9)
 """The spatial shape of the input: small, and no two axes alike."""
 
@@ -79,7 +82,12 @@ def test_dask_samples_outside_the_grid_as_numpy_does(
         coeff,
     )
     assert isinstance(lazy, da.Array)
-    np.testing.assert_allclose(np.asarray(lazy.compute()), expected)
+    # scipy approximates its `reflect` prefilter near the edges of a short
+    # axis, and the window computes it exactly: see the test below.
+    atol = 1e-4 if bound == "reflect" and not coeff and order > 2 else 1e-12
+    np.testing.assert_allclose(
+        np.asarray(lazy.compute()), expected, rtol=1e-7, atol=atol
+    )
 
 
 @pytest.mark.parametrize("bound", ["nearest", "reflect", "constant"])
@@ -111,28 +119,158 @@ def test_dask_sampling_is_deterministic() -> None:
     )
 
 
-def test_a_crop_never_reaches_past_the_grid() -> None:
+@pytest.mark.parametrize("order", [2, 3, 4, 5])
+@pytest.mark.parametrize("bound", ["reflect", "mirror", "grid-wrap"])
+@pytest.mark.parametrize("size", [7, 20])
+def test_the_window_prefilter_is_exact(
+    order: int, bound: str, size: int
+) -> None:
     """
-    An axis is cropped only when every stencil lies inside the grid, so a
-    crop is never empty and the boundary condition is only ever applied
-    at the real edge of the grid.
+    The window samples the spline of the extended signal, here computed on
+    an extension long enough that its own ends weigh nothing. scipy's
+    `reflect` prefilter is approximate near the edges of a short axis --
+    about 2e-6 at order five on 7 samples -- and the window is not.
     """
-    shape = (10,)
-    for lo, hi in itertools.product([-20.0, -0.5, 0.0, 3.0], [3.5, 9.0, 25.0]):
-        coords = np.array([[lo, hi]])
-        for order in ORDERS:
-            (crop,) = _crop_for(coords, shape, order, whole=False)
-            assert 0 <= crop.start < crop.stop <= shape[0]
-            if lo < 2 or hi > 7:
-                assert (crop.start, crop.stop) == (0, shape[0])
+    from scipy.ndimage import map_coordinates, spline_filter1d
+
+    rng = np.random.default_rng(9)
+    values = rng.standard_normal(size)
+    points = rng.uniform(-30, size + 30, size=200)
+    pad = 600
+    index = np.arange(-pad, size + pad)
+    if bound == "grid-wrap":
+        index = np.mod(index, size)
+    else:
+        period = 2 * size - (2 if bound == "mirror" else 0)
+        index = np.mod(index, period)
+        index = np.where(
+            index >= size,
+            period - (1 if bound == "reflect" else 0) - index,
+            index,
+        )
+    coeff = spline_filter1d(values[index], order, mode="mirror")
+    exact = map_coordinates(
+        coeff, [points + pad], order=order, prefilter=False, mode="mirror"
+    )
+    lazy = pull(
+        da.from_array(values, chunks=4), points[:, None], order, bound, False
+    )
+    np.testing.assert_allclose(np.asarray(lazy.compute()), exact, atol=1e-10)
 
 
-def test_a_crop_keeps_whole_axes_for_a_prefilter_and_non_finite_points() -> (
-    None
-):
-    coords = np.array([[4.0, 5.0], [np.nan, 5.0]])
-    crops = _crop_for(coords, (10, 10), 1, whole=False)
-    assert (crops[0].start, crops[0].stop) == (3, 7)
-    assert (crops[1].start, crops[1].stop) == (0, 10)
-    crops = _crop_for(coords, (10, 10), 3, whole=True)
-    assert all((c.start, c.stop) == (0, 10) for c in crops)
+def test_the_halo_leaves_out_only_negligible_samples() -> None:
+    for order, pole in _SPLINE_POLES.items():
+        assert pole ** _halo(order) < 1e-12
+    assert _halo(0) == _halo(1) == 0
+
+
+@pytest.fixture
+def reads(monkeypatch) -> list:  # noqa: ANN001
+    """The samples each block reads, per axis, as sorted index arrays."""
+    seen = []
+    gather = bsplines._gather
+
+    def spy(input, indices, cval):  # noqa: ANN001, ANN202
+        seen.append([np.unique(i[i >= 0]) for i in indices])
+        return gather(input, indices, cval)
+
+    monkeypatch.setattr(bsplines, "_gather", spy)
+    return seen
+
+
+LARGE = (300, 400, 500)
+"""A volume far larger than the windows its blocks should read."""
+
+
+@pytest.mark.parametrize("order", [1, 3, 5])
+@pytest.mark.parametrize(
+    "bound", ["nearest", "reflect", "mirror", "grid-wrap", "constant"]
+)
+@pytest.mark.parametrize("where", ["inside", "before", "after", "edge"])
+def test_a_block_reads_a_window_around_its_stencils(
+    reads,  # noqa: ANN001
+    order: int,
+    bound: str,
+    where: str,
+) -> None:
+    """
+    However large the volume, and wherever the points are, a block reads
+    at most its stencils plus the prefilter's halo on each side -- never a
+    whole axis, and never the whole volume to prefilter it.
+    """
+    rng = np.random.default_rng(4)
+    span = 6.0
+    high = np.asarray(LARGE, dtype=float)
+    low = {
+        "inside": np.full(3, 100.0),
+        "before": np.full(3, -60.0),
+        "after": high + 40.0,
+        "edge": np.full(3, -span / 2),
+    }[where]
+    points = low + rng.uniform(0, span, size=(4, 4, 4, 3))
+    volume = da.random.default_rng(5).random(LARGE, chunks=100)
+    pull(volume, points, order, bound, False).compute()
+    assert reads
+    limit = span + 2 * (_halo(order) + order // 2 + 2) + 24
+    for block in reads:
+        for used in block:
+            assert used.size <= limit
+
+
+def test_a_grid_wrap_window_reads_both_ends_of_an_axis(reads) -> None:  # noqa: ANN001
+    """At an edge, a `grid-wrap` window reads a few samples from each end."""
+    points = np.random.default_rng(6).uniform(-2, 2, size=(4, 4, 4, 3))
+    volume = da.random.default_rng(7).random(LARGE, chunks=100)
+    pull(volume, points, 3, "grid-wrap", False).compute()
+    for used, size in zip(reads[0], LARGE):
+        assert used.min() == 0
+        assert used.max() == size - 1
+        assert not np.isin(size // 2, used)
+
+
+def test_points_outside_a_constant_boundary_read_nothing(reads) -> None:  # noqa: ANN001
+    points = np.full((2, 2, 2, 3), -100.0)
+    volume = da.random.default_rng(8).random(LARGE, chunks=100)
+    out = pull(volume, points, 3, 2.5, False).compute()
+    np.testing.assert_allclose(np.asarray(out), 2.5)
+    assert all(used.size == 0 for block in reads for used in block)
+
+
+def test_a_point_that_is_not_finite_maps_to_nan() -> None:
+    """
+    scipy returns `cval`, NaN or an edge sample for such a point,
+    depending on the mode and order; none of it is a position. The other
+    points of the same block are sampled as usual.
+    """
+    values, coords = _input(), _coords()
+    coords[2, 0, 0] = [np.nan, 1.0, 2.0]
+    coords[2, 0, 1] = [1.0, np.inf, 2.0]
+    lazy = pull(
+        da.from_array(values, chunks=(1, 3, 4, 4)), coords, 3, "nearest", False
+    )
+    lazy = np.asarray(lazy.compute())
+    assert np.isnan(lazy[:, 2, 0, :2]).all()
+    finite = np.isfinite(coords).all(-1)
+    expected = pull(values, coords, 3, "nearest", False)
+    np.testing.assert_allclose(
+        lazy[:, finite], expected[:, finite], rtol=1e-7, atol=1e-12
+    )
+
+
+def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
+    """
+    Coordinates that are not a dask array are cut into blocks of dask's
+    chunk size, each reading its own window, rather than sampled as one
+    block whose window would be the whole input.
+    """
+    dask = pytest.importorskip("dask")
+    axis = np.arange(64.0) + 100.0
+    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
+    volume = da.random.default_rng(10).random(LARGE, chunks=100)
+    with dask.config.set({"array.chunk-size": "256KiB"}):
+        lazy = pull(volume, points, 3, "nearest", False)
+        assert lazy.numblocks != (1, 1, 1)
+        lazy.compute()
+    assert len(reads) > 1
+    for block in reads:
+        assert max(used.size for used in block) < 64 + 2 * _halo(3)
