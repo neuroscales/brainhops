@@ -18,7 +18,7 @@ data_dir = Path(__file__).parent / "data"
 FILES_H5 = list(data_dir.glob("*.h5"))
 FILES_TFM = list(data_dir.glob("*.tfm"))
 
-TFMTransform = io.transformations.itk.tfm.TFMTransform
+TfmTransform = io.transformations.itk.tfm.TfmTransform
 
 
 @pytest.mark.parametrize("filename", FILES_H5)
@@ -34,7 +34,7 @@ def test_read_h5(filename: str, load: bool, keep_open: bool) -> None:
 
 @pytest.mark.parametrize("filename", FILES_TFM)
 def test_read_tfm(filename: str) -> None:
-    transform = TFMTransform.from_file(filename)
+    transform = TfmTransform.from_file(filename)
     # trigger conversion
     transforms = transform.transformations  # noqa: F841
 
@@ -50,10 +50,10 @@ def test_read_tfm(filename: str) -> None:
 
 @pytest.mark.parametrize("filename", FILES_TFM)
 def test_tfm_is_dispatched(filename: str) -> None:
-    assert io.transformations.sniff(filename) is TFMTransform
-    assert io.sniff(filename) is TFMTransform
-    assert type(io.transformations.load(filename)) is TFMTransform
-    assert type(io.load(filename)) is TFMTransform
+    assert io.transformations.sniff(filename) is TfmTransform
+    assert io.sniff(filename) is TfmTransform
+    assert type(io.transformations.load(filename)) is TfmTransform
+    assert type(io.load(filename)) is TfmTransform
 
 
 @pytest.mark.parametrize("filename", FILES_H5)
@@ -76,12 +76,12 @@ def test_tfm_header_only_is_read_as_empty(tmp_path) -> None:  # noqa: ANN001
     header_only = tmp_path / "header_only.tfm"
     header_only.write_text("# Insight Transform File V1.0\n")
 
-    assert TFMTransform.sniff_line("") == 0.0
-    assert list(TFMTransform.from_file(header_only).transformations) == []
+    assert TfmTransform.sniff_line("") == 0.0
+    assert list(TfmTransform.from_file(header_only).transformations) == []
     # The `.tfm` extension still routes it to the ITK reader, which reads
     # it as an empty transform.
-    assert io.transformations.sniff(header_only) is TFMTransform
-    assert type(io.transformations.load(header_only)) is TFMTransform
+    assert io.transformations.sniff(header_only) is TfmTransform
+    assert type(io.transformations.load(header_only)) is TfmTransform
 
 
 # ----------------------------------------------------------------------
@@ -98,7 +98,7 @@ def test_blocks_are_transformations(filename: str) -> None:
     transform = io.transformations.load(filename)
     assert isinstance(transform, xforms.Sequence)
     for block in transform.transformations:
-        assert isinstance(block, itk.ITKStruct)
+        assert isinstance(block, itk.ItkStruct)
         assert isinstance(block, xforms.Sequence)
         # A block is a non-empty chain, and every child is a
         # transformation in its own right.
@@ -107,8 +107,8 @@ def test_blocks_are_transformations(filename: str) -> None:
 
 
 def test_affine_block_exposes_named_cached_slots() -> None:
-    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
-    assert isinstance(block, itk.ITKAffineBase)
+    block = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    assert isinstance(block, itk.ItkAffineBase)
 
     assert np.allclose(block.center, block.fixed_parameters)
     assert isinstance(block.linear, xforms.Linear)
@@ -134,9 +134,9 @@ def test_affine_block_exposes_named_cached_slots() -> None:
 
 def _versor_rigid_3d(
     versor: tuple, translation: tuple, center: tuple
-) -> itk.ITKStruct:
-    return itk.ITKStruct(
-        type=itk.ITKTransformClass.VersorRigid3DTransform,
+) -> itk.ItkStruct:
+    return itk.ItkStruct(
+        type=itk.ItkTransformClass.VersorRigid3DTransform,
         precision="double",
         ndim_input=3,
         ndim_output=3,
@@ -207,7 +207,7 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
         ("itk_bspline3d.h5", 3, True),
     ]:
         block = io.transformations.load(data_dir / name)[-1]
-        assert isinstance(block, itk.ITKDisplacementBase)
+        assert isinstance(block, itk.ItkDisplacementBase)
         assert list(block) == [
             block.lps2voxel,
             block.displacement,
@@ -258,7 +258,7 @@ def test_warp_field_is_decoded_in_itks_own_layout(
     other transposes the warp silently.
     """
     block = io.transformations.load(data_dir / f"{name}.tfm")[-1]
-    assert isinstance(block, itk.ITKDisplacementBase)
+    assert isinstance(block, itk.ItkDisplacementBase)
 
     expected = np.load(data_dir / f"{name}_expected.npy")
     field = np.asarray(block.field)
@@ -327,8 +327,8 @@ def test_euler_3d_composes_its_angles_the_way_itk_does(name: str) -> None:
     its offset -- which is where the center of rotation folds in -- read
     off `TransformPoint` at the origin.
     """
-    block = TFMTransform.from_file(data_dir / f"{name}.tfm")[0]
-    assert block.type == itk.ITKTransformClass.Euler3DTransform
+    block = TfmTransform.from_file(data_dir / f"{name}.tfm")[0]
+    assert block.type == itk.ItkTransformClass.Euler3DTransform
 
     matrix = np.asarray(block.compute().to(xforms.Affine, lossy=True).matrix)
     np.testing.assert_allclose(
@@ -344,8 +344,8 @@ def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
     it must also stay out of the center of rotation -- a four-long center
     would make the block claim a fourth axis.
     """
-    plain = TFMTransform.from_file(data_dir / "itk_euler3d.tfm")[0]
-    zyx = TFMTransform.from_file(data_dir / "itk_euler3d_zyx.tfm")[0]
+    plain = TfmTransform.from_file(data_dir / "itk_euler3d.tfm")[0]
+    zyx = TfmTransform.from_file(data_dir / "itk_euler3d_zyx.tfm")[0]
 
     assert len(plain.fixed_parameters) == 4
     assert plain.compute_zyx is False
@@ -358,8 +358,8 @@ def test_euler_3d_reads_the_modern_four_fixed_parameters() -> None:
 
     # A pre-5 file writes the center alone, and is read as ZXY -- the
     # only order that existed before the flag did.
-    legacy = itk.ITKStruct(
-        type=itk.ITKTransformClass.Euler3DTransform,
+    legacy = itk.ItkStruct(
+        type=itk.ItkTransformClass.Euler3DTransform,
         precision="double",
         ndim_input=3,
         ndim_output=3,
@@ -393,7 +393,7 @@ def test_euler_3d_matches_simpleitk() -> None:
 
 def test_transform_group_is_gone() -> None:
     """Blocks live in `transformations`, so there is no second list."""
-    transform = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")
+    transform = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")
     assert not hasattr(transform, "transform_group")
 
 
@@ -496,8 +496,8 @@ def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
     """The grid geometry is read off `ndim_input`, not off a 3-D layout."""
     # A 2-D grid writes 2 + 2 + 2 + 4 fixed parameters: shape, origin,
     # spacing, then the 2x2 direction matrix.
-    block = itk.ITKStruct(
-        type=itk.ITKTransformClass.DisplacementFieldTransform,
+    block = itk.ItkStruct(
+        type=itk.ItkTransformClass.DisplacementFieldTransform,
         precision="double",
         ndim_input=2,
         ndim_output=2,
@@ -535,7 +535,7 @@ def test_block_chain_is_an_immutable_tuple(name: str) -> None:
 
 def test_assigning_an_empty_chain_takes_effect() -> None:
     """An empty chain is a chain, not 'no chain given'."""
-    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    block = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
     assert len(block) == 4
     block.transformations = []
     assert len(block) == 0
@@ -545,7 +545,7 @@ def test_assigning_an_empty_chain_takes_effect() -> None:
 
 def test_replace_rebuilds_the_chain_from_the_new_parameters() -> None:
     """`replace` must not freeze the chain derived from the old ones."""
-    block = TFMTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
+    block = TfmTransform.from_file(data_dir / "itk_affine3d.tfm")[0]
     assert len(block) == 4  # build and cache the derived chain
 
     parameters = np.asarray(block.parameters).copy()
@@ -576,7 +576,7 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
     """
     pytest.importorskip("h5py")
     block = io.transformations.load(data_dir / "itk_displacement3d.h5")[-1]
-    assert isinstance(block, itk.ITKDisplacementBase)
+    assert isinstance(block, itk.ItkDisplacementBase)
 
     assert block.input == block.output
     assert not hasattr(block, "_cache_field")
@@ -599,9 +599,9 @@ def test_warp_block_endpoints_do_not_decode_the_field() -> None:
 
 def _similarity_2d(
     scale: float, angle: float, translation: tuple, center: tuple
-) -> itk.ITKStruct:
-    return itk.ITKStruct(
-        type=itk.ITKTransformClass.Similarity2DTransform,
+) -> itk.ItkStruct:
+    return itk.ItkStruct(
+        type=itk.ItkTransformClass.Similarity2DTransform,
         precision="double",
         ndim_input=2,
         ndim_output=2,
@@ -612,9 +612,9 @@ def _similarity_2d(
 
 def _similarity_3d(
     scale: float, versor: tuple, translation: tuple, center: tuple
-) -> itk.ITKStruct:
-    return itk.ITKStruct(
-        type=itk.ITKTransformClass.Similarity3DTransform,
+) -> itk.ItkStruct:
+    return itk.ItkStruct(
+        type=itk.ItkTransformClass.Similarity3DTransform,
         precision="double",
         ndim_input=3,
         ndim_output=3,

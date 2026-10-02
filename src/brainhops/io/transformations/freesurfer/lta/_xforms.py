@@ -1,9 +1,9 @@
 __all__ = [
-    "LTAFormat",
-    "LTATransformation",
-    "LTATransformationVoxToVox",
-    "LTATransformationPhysToPhys",
-    "LTATransformationRASToRAS",
+    "LtaFormat",
+    "LtaTransformation",
+    "LtaTransformationVoxToVox",
+    "LtaTransformationPhysToPhys",
+    "LtaTransformationRasToRas",
 ]
 
 # stdlib
@@ -31,22 +31,22 @@ from brainhops.io.transformations.base import (
 
 # local
 from .._formats import FreesurferTransformationFormat
-from ._enums import LTAType, LTAValidity
+from ._enums import LtaType, LtaValidity
 from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
-from ._struct import LTAStruct
-from ._systems import LTACoordinateSystem, LTAPhysicalSystem, LTAVoxelSystem
+from ._struct import LtaStruct
+from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
 
 
 def _system(
-    cls: tx.Type[LTACoordinateSystem],
-    info: tx.Optional[LTAStruct.VolumeInfo],
-) -> tx.Optional[LTACoordinateSystem]:
+    cls: tx.Type[LtaCoordinateSystem],
+    info: tx.Optional[LtaStruct.VolumeInfo],
+) -> tx.Optional[LtaCoordinateSystem]:
     """The system of a volume, or `None` if the struct records no
     geometry for it: without one, the system is unknown."""
     return None if info is None else cls.from_struct(info)
 
 
-class LTAFormat(FreesurferTransformationFormat, AffineTransformationFormat):
+class LtaFormat(FreesurferTransformationFormat, AffineTransformationFormat):
     """An affine transformation stored in a FreeSurfer LTA file."""
 
     HINTS = ("lta",)
@@ -58,8 +58,8 @@ class LTAFormat(FreesurferTransformationFormat, AffineTransformationFormat):
 # text for a text format (as `TextFileParser` does for FLIRT), so it is
 # needed as well, and must come first to take precedence.
 @register_format
-class LTATransformation(
-    LTAFormat,
+class LtaTransformation(
+    LtaFormat,
     TextFileParserWriter,
     _xforms.Affine,
     WritableFileBasedTransformation,
@@ -73,8 +73,8 @@ class LTATransformation(
 
     This is the registered format for `.lta` files: `io.load`,
     `io.transformations.load` and `from_other` read them, and `io.save`
-    writes them. The views below it (`LTATransformationVoxToVox`,
-    `LTATransformationPhysToPhys`, `LTATransformationRASToRAS`) read the
+    writes them. The views below it (`LtaTransformationVoxToVox`,
+    `LtaTransformationPhysToPhys`, `LtaTransformationRasToRas`) read the
     same files, but are not registered: they would claim every `.lta`
     file exactly as well as this class does.
 
@@ -89,8 +89,8 @@ class LTATransformation(
         | --------------------- | --------------------------- |
         | both `RASmm`          | `LINEAR_RAS_TO_RAS`         |
         | both `RSAmm`          | `LINEAR_RSA_TO_RSA`         |
-        | both `LTAVoxelSystem` | `LINEAR_VOX_TO_VOX`         |
-        | both `LTAPhysicalSystem` | `LINEAR_PHYSVOX_TO_PHYSVOX` |
+        | both `LtaVoxelSystem` | `LINEAR_VOX_TO_VOX`         |
+        | both `LtaPhysicalSystem` | `LINEAR_PHYSVOX_TO_PHYSVOX` |
 
         Any other pair of systems has no LTA encoding, and writing it
         raises
@@ -99,10 +99,10 @@ class LTATransformation(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".lta",)
 
-    struct: LTAStruct = Factory(LTAStruct, repr=False)
+    struct: LtaStruct = Factory(LtaStruct, repr=False)
 
     @property
-    def input(self) -> LTACoordinateSystem:
+    def input(self) -> LtaCoordinateSystem:
         """The transformation's input coordinate system.
 
         Derived from the struct's type and its source volume geometry,
@@ -110,18 +110,18 @@ class LTATransformation(
         """
         if getattr(self, "_input", None) is not None:
             return self._input
-        if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
+        if self.struct.type == LtaType.LINEAR_RAS_TO_RAS:
             return _systems.RASmm()
-        elif self.struct.type == LTAType.LINEAR_RSA_TO_RSA:
+        elif self.struct.type == LtaType.LINEAR_RSA_TO_RSA:
             return _systems.RSAmm()
-        elif self.struct.type == LTAType.LINEAR_VOX_TO_VOX:
-            return _system(LTAVoxelSystem, self.struct.src)
-        elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
-            return _system(LTAPhysicalSystem, self.struct.src)
+        elif self.struct.type == LtaType.LINEAR_VOX_TO_VOX:
+            return _system(LtaVoxelSystem, self.struct.src)
+        elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
+            return _system(LtaPhysicalSystem, self.struct.src)
         raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
-    def output(self) -> LTACoordinateSystem:
+    def output(self) -> LtaCoordinateSystem:
         """The transformation's output coordinate system.
 
         Derived from the struct's type and its destination volume
@@ -129,14 +129,14 @@ class LTATransformation(
         """
         if getattr(self, "_output", None) is not None:
             return self._output
-        if self.struct.type == LTAType.LINEAR_RAS_TO_RAS:
+        if self.struct.type == LtaType.LINEAR_RAS_TO_RAS:
             return _systems.RASmm()
-        elif self.struct.type == LTAType.LINEAR_RSA_TO_RSA:
+        elif self.struct.type == LtaType.LINEAR_RSA_TO_RSA:
             return _systems.RSAmm()
-        elif self.struct.type == LTAType.LINEAR_VOX_TO_VOX:
-            return _system(LTAVoxelSystem, self.struct.dst)
-        elif self.struct.type == LTAType.LINEAR_PHYSVOX_TO_PHYSVOX:
-            return _system(LTAPhysicalSystem, self.struct.dst)
+        elif self.struct.type == LtaType.LINEAR_VOX_TO_VOX:
+            return _system(LtaVoxelSystem, self.struct.dst)
+        elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
+            return _system(LtaPhysicalSystem, self.struct.dst)
         raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
@@ -151,11 +151,11 @@ class LTATransformation(
         return np.asarray(self.struct.affine.matrix, dtype=np.float64)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem) -> None:
+    def input(self, value: LtaCoordinateSystem) -> None:
         self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem) -> None:
+    def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
     @matrix.setter
@@ -172,8 +172,8 @@ class LTATransformation(
         **kwargs,
     ) -> float:
         """Score how likely a line is to be the first line of an LTA
-        file. See `LTAStruct.sniff_line`."""
-        return LTAStruct.sniff_line(line, error=error, **kwargs)
+        file. See `LtaStruct.sniff_line`."""
+        return LtaStruct.sniff_line(line, error=error, **kwargs)
 
     # --- from ---------------------------------------------------------
 
@@ -187,7 +187,7 @@ class LTATransformation(
             object or bytes, and `from_text` or `from_lines` for content
             held in memory.
         """
-        if isinstance(other, LTAStruct):
+        if isinstance(other, LtaStruct):
             hint = "use from_struct()"
         else:
             hint = (
@@ -199,16 +199,16 @@ class LTATransformation(
             DeprecationWarning,
             stacklevel=2,
         )
-        if isinstance(other, LTAStruct):
+        if isinstance(other, LtaStruct):
             return cls.from_struct(other)
         with catch_warnings():
             # Warned above, in terms of this class rather than the struct.
             simplefilter("ignore", DeprecationWarning)
-            return cls.from_struct(LTAStruct.from_(other))
+            return cls.from_struct(LtaStruct.from_(other))
 
     @classmethod
-    def from_struct(cls, struct: LTAStruct, **kwargs) -> tx.Self:
-        """Build the transformation from an already-parsed [`LTAStruct`][].
+    def from_struct(cls, struct: LtaStruct, **kwargs) -> tx.Self:
+        """Build the transformation from an already-parsed [`LtaStruct`][].
 
         Keyword arguments are passed to the constructor, and override
         what the struct says (`input`, `output`, `matrix`).
@@ -223,13 +223,13 @@ class LTATransformation(
         Keyword arguments are passed to the constructor, and override
         what the file says (`input`, `output`, `matrix`).
         """
-        return cls.from_struct(LTAStruct.from_lines(lines), **kwargs)
+        return cls.from_struct(LtaStruct.from_lines(lines), **kwargs)
 
     # --- to -----------------------------------------------------------
 
-    def to_struct(self) -> LTAStruct:
+    def to_struct(self) -> LtaStruct:
         """
-        The [`LTAStruct`][] that encodes this transformation.
+        The [`LtaStruct`][] that encodes this transformation.
 
         A transformation whose `matrix`, `input` and `output` are all
         derived from its struct is encoded by that struct, unchanged.
@@ -271,37 +271,37 @@ class LTATransformation(
         return self.to_struct().to_text(**kwargs)
 
 
-class LTATransformationVoxToVox(LTATransformation):
+class LtaTransformationVoxToVox(LtaTransformation):
     """
     A Linear Transform Array (LTA) file interpreted as a voxel-to-voxel
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(
+    struct: LtaStruct = Factory(
         partial(
-            LTAStruct,
-            type=LTAType.LINEAR_VOX_TO_VOX,
-            src=LTAStruct.SrcVolumeInfo(),
-            dst=LTAStruct.DstVolumeInfo(),
+            LtaStruct,
+            type=LtaType.LINEAR_VOX_TO_VOX,
+            src=LtaStruct.SrcVolumeInfo(),
+            dst=LtaStruct.DstVolumeInfo(),
         ),
         repr=False,
     )
 
     @property
-    def input(self) -> LTACoordinateSystem:
+    def input(self) -> LtaCoordinateSystem:
         """The voxel system of the struct's source volume, unless it has
         been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
-        return _system(LTAVoxelSystem, self.struct.src)
+        return _system(LtaVoxelSystem, self.struct.src)
 
     @property
-    def output(self) -> LTACoordinateSystem:
+    def output(self) -> LtaCoordinateSystem:
         """The voxel system of the struct's destination volume, unless it
         has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
-        return _system(LTAVoxelSystem, self.struct.dst)
+        return _system(LtaVoxelSystem, self.struct.dst)
 
     @property
     def matrix(self) -> np.ndarray:
@@ -312,11 +312,11 @@ class LTATransformationVoxToVox(LTATransformation):
         return _get_vox2vox(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem) -> None:
+    def input(self, value: LtaCoordinateSystem) -> None:
         self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem) -> None:
+    def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
     @matrix.setter
@@ -324,37 +324,37 @@ class LTATransformationVoxToVox(LTATransformation):
         self._matrix = value
 
 
-class LTATransformationPhysToPhys(LTATransformation):
+class LtaTransformationPhysToPhys(LtaTransformation):
     """
     A Linear Transform Array (LTA) file interpreted as a physical-to-physical
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(
+    struct: LtaStruct = Factory(
         partial(
-            LTAStruct,
-            type=LTAType.LINEAR_PHYSVOX_TO_PHYSVOX,
-            src=LTAStruct.SrcVolumeInfo(),
-            dst=LTAStruct.DstVolumeInfo(),
+            LtaStruct,
+            type=LtaType.LINEAR_PHYSVOX_TO_PHYSVOX,
+            src=LtaStruct.SrcVolumeInfo(),
+            dst=LtaStruct.DstVolumeInfo(),
         ),
         repr=False,
     )
 
     @property
-    def input(self) -> LTACoordinateSystem:
+    def input(self) -> LtaCoordinateSystem:
         """The physical system of the struct's source volume, unless it
         has been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
-        return _system(LTAPhysicalSystem, self.struct.src)
+        return _system(LtaPhysicalSystem, self.struct.src)
 
     @property
-    def output(self) -> LTACoordinateSystem:
+    def output(self) -> LtaCoordinateSystem:
         """The physical system of the struct's destination volume,
         unless it has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
-        return _system(LTAPhysicalSystem, self.struct.dst)
+        return _system(LtaPhysicalSystem, self.struct.dst)
 
     @property
     def matrix(self) -> np.ndarray:
@@ -365,11 +365,11 @@ class LTATransformationPhysToPhys(LTATransformation):
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem) -> None:
+    def input(self, value: LtaCoordinateSystem) -> None:
         self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem) -> None:
+    def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
     @matrix.setter
@@ -377,29 +377,29 @@ class LTATransformationPhysToPhys(LTATransformation):
         self._matrix = value
 
 
-class LTATransformationRASToRAS(LTATransformation):
+class LtaTransformationRasToRas(LtaTransformation):
     """
     A Linear Transform Array (LTA) file interpreted as a RAS-to-RAS
     affine transformation.
     """
 
-    struct: LTAStruct = Factory(
+    struct: LtaStruct = Factory(
         partial(
-            LTAStruct,
-            type=LTAType.LINEAR_RAS_TO_RAS,
+            LtaStruct,
+            type=LtaType.LINEAR_RAS_TO_RAS,
         ),
         repr=False,
     )
 
     @property
-    def input(self) -> LTACoordinateSystem:
+    def input(self) -> LtaCoordinateSystem:
         """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_input", None) is not None:
             return self._input
         return _systems.RASmm()
 
     @property
-    def output(self) -> LTACoordinateSystem:
+    def output(self) -> LtaCoordinateSystem:
         """The RAS coordinate system, unless it has been set explicitly."""
         if getattr(self, "_output", None) is not None:
             return self._output
@@ -414,11 +414,11 @@ class LTATransformationRASToRAS(LTATransformation):
         return _get_ras2ras(self.struct)[:-1]
 
     @input.setter
-    def input(self, value: LTACoordinateSystem) -> None:
+    def input(self, value: LtaCoordinateSystem) -> None:
         self._input = value
 
     @output.setter
-    def output(self, value: LTACoordinateSystem) -> None:
+    def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
     @matrix.setter
@@ -432,8 +432,8 @@ class LTATransformationRASToRAS(LTATransformation):
 
 
 def _as_block(
-    info: tx.Optional[LTAStruct.VolumeInfo], cls: type
-) -> LTAStruct.VolumeInfo:
+    info: tx.Optional[LtaStruct.VolumeInfo], cls: type
+) -> LtaStruct.VolumeInfo:
     """A volume geometry, as a block of type `cls` (source or
     destination).
 
@@ -441,20 +441,20 @@ def _as_block(
     when the geometry is unknown.
     """
     if info is None:
-        return cls(valid=LTAValidity.VOLUME_INFO_INVALID)
+        return cls(valid=LtaValidity.VOLUME_INFO_INVALID)
     if type(info) is cls:
         return info
     return cls(**{f.name: getattr(info, f.name) for f in fields(cls)})
 
 
-def _build_struct(xform: LTATransformation) -> LTAStruct:
+def _build_struct(xform: LtaTransformation) -> LtaStruct:
     """Encode the matrix and coordinate systems of `xform` as a struct.
 
-    See `LTATransformation.to_struct`.
+    See `LtaTransformation.to_struct`.
     """
     src_system, dst_system = xform.input, xform.output
     old = xform.struct
-    Src, Dst = LTAStruct.SrcVolumeInfo, LTAStruct.DstVolumeInfo
+    Src, Dst = LtaStruct.SrcVolumeInfo, LtaStruct.DstVolumeInfo
 
     def both(cls: type) -> bool:
         return isinstance(src_system, cls) and isinstance(dst_system, cls)
@@ -463,16 +463,16 @@ def _build_struct(xform: LTATransformation) -> LTAStruct:
         # The geometry is not part of what a RAS-to-RAS affine means, but
         # FreeSurfer tools use it, so the one already there is kept.
         lta_type = (
-            LTAType.LINEAR_RAS_TO_RAS
+            LtaType.LINEAR_RAS_TO_RAS
             if both(_systems.RASmm)
-            else LTAType.LINEAR_RSA_TO_RSA
+            else LtaType.LINEAR_RSA_TO_RSA
         )
         src, dst = _as_block(old.src, Src), _as_block(old.dst, Dst)
-    elif both(LTAVoxelSystem) or both(LTAPhysicalSystem):
+    elif both(LtaVoxelSystem) or both(LtaPhysicalSystem):
         lta_type = (
-            LTAType.LINEAR_VOX_TO_VOX
-            if both(LTAVoxelSystem)
-            else LTAType.LINEAR_PHYSVOX_TO_PHYSVOX
+            LtaType.LINEAR_VOX_TO_VOX
+            if both(LtaVoxelSystem)
+            else LtaType.LINEAR_PHYSVOX_TO_PHYSVOX
         )
         src = _as_block(getattr(src_system, "struct", None), Src)
         dst = _as_block(getattr(dst_system, "struct", None), Dst)
@@ -486,8 +486,8 @@ def _build_struct(xform: LTATransformation) -> LTAStruct:
         raise UnrepresentableTransformationError(
             f"An LTA file cannot encode an affine from {name(src_system)} "
             f"to {name(dst_system)}: it encodes RASmm to RASmm, RSAmm to "
-            f"RSAmm, LTAVoxelSystem to LTAVoxelSystem, and "
-            f"LTAPhysicalSystem to LTAPhysicalSystem. Set the input and "
+            f"RSAmm, LtaVoxelSystem to LtaVoxelSystem, and "
+            f"LtaPhysicalSystem to LtaPhysicalSystem. Set the input and "
             f"output of the affine to say which it is."
         )
 
@@ -503,12 +503,12 @@ def _build_struct(xform: LTATransformation) -> LTAStruct:
             )
         homogeneous = np.concatenate([matrix, [[0.0, 0.0, 0.0, 1.0]]])
 
-    return LTAStruct(
+    return LtaStruct(
         type=lta_type,
         nxforms=old.nxforms,
         mean=old.mean,
         sigma=old.sigma,
-        affine=LTAStruct.Affine(
+        affine=LtaStruct.Affine(
             matrix=tuple(tuple(float(v) for v in row) for row in homogeneous)
         ),
         label=old.label,

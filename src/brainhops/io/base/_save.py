@@ -59,7 +59,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         is not turned into the voxel-to-RAS affine a NIfTI file holds,
         since it would come back meaning something it did not say. Build
         the format you want when that is what the file should hold:
-        `NiftiVoxelToRAS.from_other(affine).save(file)`.
+        `NiftiVoxelToRas.from_other(affine).save(file)`.
 
     Parameters
     ----------
@@ -147,8 +147,8 @@ def _model(cls: type) -> tx.Optional[type]:
     The data model that `cls` is an instance of, file formats aside.
 
     It is the first class in the MRO that is a data model and is not a
-    file format: `SingleScaleImage` for `NiftiImage`, and `VoxelToRAS`
-    for `NiftiVoxelToRAS`. A class that is not a data model has none.
+    file format: `SingleScaleImage` for `NiftiImage`, and `VoxelToRas`
+    for `NiftiVoxelToRas`. A class that is not a data model has none.
     """
     for base in cls.__mro__:
         if issubclass(base, DataModelBase) and not issubclass(
@@ -172,7 +172,7 @@ def _holds(fmt: type, obj: tx.Any, reasons: tx.List[str]) -> bool:
     `obj` is an instance of, and must take every field of that data
     model.
 
-    - *The very data model*, not a more specific one: `NiftiVoxelToRAS`
+    - *The very data model*, not a more specific one: `NiftiVoxelToRas`
       is an `Affine`, but one that means voxel-to-RAS, so a general
       `Affine` written through it would come back meaning something it
       did not say.

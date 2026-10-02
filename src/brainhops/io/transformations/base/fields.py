@@ -4,14 +4,14 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 
 
-class RASCoordinatesField(_xforms.CoordinatesField):
+class RasCoordinatesField(_xforms.CoordinatesField):
     """Field of RAS coordinates."""
 
     _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
     _output: _systems.CoordinateSystem = _systems.RASmm()
 
 
-class LPSCoordinatesField(_xforms.CoordinatesField):
+class LpsCoordinatesField(_xforms.CoordinatesField):
     """Field of LPS coordinates."""
 
     _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()

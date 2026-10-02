@@ -12,15 +12,15 @@ from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import FileBasedTransformation
 
 from .._affines import _ImageGeometry
-from .._formats import FSLAffineFormat
+from .._formats import FslAffineFormat
 from .._repr import stored_repr
-from ._parser import FLIRTMatrixParser
+from ._parser import FlirtMatrixParser
 
 
 @register_format
-class FLIRTTransform(
-    FSLAffineFormat,
-    FLIRTMatrixParser,
+class FlirtTransform(
+    FslAffineFormat,
+    FlirtMatrixParser,
     _xforms.Affine,
     FileBasedTransformation,
 ):

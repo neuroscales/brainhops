@@ -28,18 +28,18 @@ nb = pytest.importorskip("nibabel")
 from brainhops.io.base.nifti import NiftiParser  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
-    NiftiVoxelToRAS,
+    NiftiRasCoordinatesField,
+    NiftiVoxelToRas,
 )
 from brainhops.io.transformations.spm.y import (  # noqa: E402
-    SPMCoordinatesField,
+    SpmCoordinatesField,
 )
 
 NIFTI_FORMATS = [
     NiftiImage,
-    NiftiVoxelToRAS,
-    NiftiRASCoordinatesField,
-    SPMCoordinatesField,
+    NiftiVoxelToRas,
+    NiftiRasCoordinatesField,
+    SpmCoordinatesField,
 ]
 
 # The methods NiftiParser specializes. Anything else may legitimately
@@ -173,8 +173,8 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
 #   THE DATA MODEL A FORMAT REFINES COMES FIRST
 # ----------------------------------------------------------------------
 #
-# A format lists the specific data model it refines (`VoxelToRAS`,
-# `RASCoordinatesField`, `Sequence`) ahead of the file machinery. That
+# A format lists the specific data model it refines (`VoxelToRas`,
+# `RasCoordinatesField`, `Sequence`) ahead of the file machinery. That
 # machinery is itself a generic data model (`FileBasedTransformation` is
 # a `Transformation`), so listing it first lets the generic declarations
 # of a field shadow the specific ones. These pin what such a reordering
@@ -184,7 +184,7 @@ def test_loading_a_nifti_goes_through_the_nifti_reader(tmp_path) -> None:  # noq
 def test_a_nifti_affine_defaults_to_voxel_to_ras() -> None:
     from brainhops.datamodel.systems import RASmm, VoxelCoordinateSystem
 
-    affine = NiftiVoxelToRAS(
+    affine = NiftiVoxelToRas(
         matrix=[[1.0, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]
     )
     assert isinstance(affine.input, VoxelCoordinateSystem)
@@ -196,13 +196,13 @@ def test_a_nifti_coordinate_field_defaults_to_ras() -> None:
 
     from brainhops.datamodel.systems import RASmm
 
-    field = NiftiRASCoordinatesField(field=np.zeros((2, 2, 2, 3)))
+    field = NiftiRasCoordinatesField(field=np.zeros((2, 2, 2, 3)))
     assert isinstance(field.output, RASmm)
 
 
 def test_an_itk_transform_takes_its_chain_first() -> None:
     from brainhops.datamodel.transformations import Scaling
-    from brainhops.io.transformations.itk.tfm import TFMTransform
+    from brainhops.io.transformations.itk.tfm import TfmTransform
 
     chain = [Scaling([1.0, 2.0, 3.0])]
-    assert list(TFMTransform(chain).transformations) == chain
+    assert list(TfmTransform(chain).transformations) == chain

@@ -16,8 +16,8 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
-    NiftiRASDisplacementField,
+    NiftiRasCoordinatesField,
+    NiftiRasDisplacementField,
 )
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
@@ -95,7 +95,7 @@ def standard_warp(tmp_path):  # noqa: ANN001, ANN201
 
 def test_a_dispvect_file_maps_ras_to_ras(standard_warp) -> None:  # noqa: ANN001
     field = io.transformations.load(standard_warp)
-    assert type(field) is NiftiRASDisplacementField
+    assert type(field) is NiftiRasDisplacementField
     assert field.input.name == "RAS"
     assert field.output.name == "RAS"
     assert len(field) == 3
@@ -121,7 +121,7 @@ def test_a_constant_displacement_is_a_translation_in_mm(tmp_path) -> None:  # no
     vectors = np.broadcast_to(
         np.array([1.0, -2.0, 3.0], "float32"), (*SHAPE, 3)
     ).copy()
-    field = NiftiRASDisplacementField.from_file(
+    field = NiftiRasDisplacementField.from_file(
         _write(tmp_path / "shift.nii", vectors, DISPVECT)
     )
     points = np.array([[10.0, -19.0, 31.0], [9.5, -17.0, 40.0]])
@@ -153,8 +153,8 @@ def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # n
     disp = _write(tmp_path / "disp.nii.gz", _ramp(), DISPVECT)
     coords = io.transformations.load(coords)
     disp = io.transformations.load(disp)
-    assert type(coords) is NiftiRASCoordinatesField
-    assert type(disp) is NiftiRASDisplacementField
+    assert type(coords) is NiftiRasCoordinatesField
+    assert type(disp) is NiftiRasDisplacementField
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply_coordinates(coords, points), _apply(disp, points), atol=1e-4
@@ -180,7 +180,7 @@ def test_a_displacement_field_round_trips(standard_warp, tmp_path) -> None:  # n
     )
 
     reloaded = io.transformations.load(target)
-    assert type(reloaded) is NiftiRASDisplacementField
+    assert type(reloaded) is NiftiRasDisplacementField
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(reloaded, points), _apply(field, points), atol=1e-4
@@ -192,23 +192,23 @@ def test_a_displacement_field_built_from_its_slots_is_written(
 ) -> None:
     """A field that was never read from a file is written from its chain."""
     from brainhops.io.transformations.base.affines import (
-        RASToVoxel,
-        VoxelToRAS,
+        RasToVoxel,
+        VoxelToRas,
     )
 
     voxels = (_ramp() @ np.linalg.inv(VOX2RAS[:3, :3]).T).astype("float32")
-    field = NiftiRASDisplacementField(
+    field = NiftiRasDisplacementField(
         transformations=(
-            RASToVoxel(matrix=np.linalg.inv(VOX2RAS)[:3]),
+            RasToVoxel(matrix=np.linalg.inv(VOX2RAS)[:3]),
             xforms.DisplacementField(field=voxels),
-            VoxelToRAS(matrix=VOX2RAS[:3]),
+            VoxelToRas(matrix=VOX2RAS[:3]),
         )
     )
     target = tmp_path / "built.nii"
     field.save(target)
 
     reloaded = io.transformations.load(target)
-    assert type(reloaded) is NiftiRASDisplacementField
+    assert type(reloaded) is NiftiRasDisplacementField
     points = _grid_points().reshape(-1, 3)
     np.testing.assert_allclose(
         _apply(reloaded, points),
@@ -235,7 +235,7 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
     assert name == MAPPING
 
     reloaded = io.transformations.load(target)
-    assert type(reloaded) is NiftiRASCoordinatesField
+    assert type(reloaded) is NiftiRasCoordinatesField
     np.testing.assert_array_equal(
         np.asarray(reloaded.field)[:, :, :, 0], values
     )
@@ -248,14 +248,14 @@ def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # 
     """
     values = (_grid_points() + _ramp()).astype("float32")
     legacy = _write(tmp_path / "legacy.nii.gz", values, DISPVECT)
-    assert type(io.transformations.load(legacy)) is NiftiRASDisplacementField
+    assert type(io.transformations.load(legacy)) is NiftiRasDisplacementField
 
     field = io.transformations.load(legacy, hint="nifti.coordinates")
-    assert type(field) is NiftiRASCoordinatesField
+    assert type(field) is NiftiRasCoordinatesField
     target = tmp_path / "migrated.nii.gz"
     field.save(target)
     assert int(nb.load(str(target)).header["intent_code"]) == VECTOR
-    assert type(io.transformations.load(target)) is NiftiRASCoordinatesField
+    assert type(io.transformations.load(target)) is NiftiRasCoordinatesField
 
 
 # ----------------------------------------------------------------------
@@ -268,7 +268,7 @@ def test_a_two_component_field_is_refused(tmp_path) -> None:  # noqa: ANN001
     img.header.set_intent(DISPVECT)
     path = tmp_path / "flat.nii"
     nb.save(img, str(path))
-    field = NiftiRASDisplacementField.from_file(path)
+    field = NiftiRasDisplacementField.from_file(path)
     with pytest.raises(Exception, match="three-dimensional"):
         field.transformations  # noqa: B018
 
@@ -276,17 +276,17 @@ def test_a_two_component_field_is_refused(tmp_path) -> None:  # noqa: ANN001
 def test_a_spline_field_is_not_written(tmp_path) -> None:  # noqa: ANN001
     from brainhops.io.base.parsers import WriterError
     from brainhops.io.transformations.base.affines import (
-        RASToVoxel,
-        VoxelToRAS,
+        RasToVoxel,
+        VoxelToRas,
     )
 
-    field = NiftiRASDisplacementField(
+    field = NiftiRasDisplacementField(
         transformations=(
-            RASToVoxel(matrix=np.eye(4)[:3]),
+            RasToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
                 field=np.zeros((*SHAPE, 3), "float32"), coeff=True
             ),
-            VoxelToRAS(matrix=np.eye(4)[:3]),
+            VoxelToRas(matrix=np.eye(4)[:3]),
         )
     )
     with pytest.raises(WriterError, match="coefficients"):
@@ -317,12 +317,12 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
     assert field.ras2voxel is ras2voxel
 
     # A chain given as a list is frozen too.
-    built = NiftiRASDisplacementField(transformations=list(field))
+    built = NiftiRasDisplacementField(transformations=list(field))
     assert isinstance(built.transformations, tuple)
 
     # Rebuilding is how a field with other slots is made: here, one whose
     # way back to RAS is shifted by 1 mm along x.
-    from brainhops.io.transformations.base.affines import VoxelToRAS
+    from brainhops.io.transformations.base.affines import VoxelToRas
 
     matrix = np.asarray(field.voxel2ras.matrix).copy()
     matrix[0, 3] += 1.0
@@ -331,10 +331,10 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
         transformations=(
             field.ras2voxel,
             field.displacement,
-            VoxelToRAS(matrix=matrix),
+            VoxelToRas(matrix=matrix),
         ),
     )
-    assert type(shifted) is NiftiRASDisplacementField
+    assert type(shifted) is NiftiRasDisplacementField
     assert isinstance(shifted.transformations, tuple)
     assert field.ras2voxel is ras2voxel  # the original is untouched
     points = _grid_points().reshape(-1, 3)
