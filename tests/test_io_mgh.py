@@ -8,10 +8,12 @@ set, and write files that read back unchanged -- footer parameters and
 trailing tags included.
 """
 
+import gc
 import gzip
 import io as _io
 import os
 import struct
+import warnings
 
 import numpy as np
 import pytest
@@ -152,6 +154,24 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
     scaling = image.transformations[0]
     assert isinstance(scaling, Scaling)
     assert np.allclose(scaling.scale, header["delta"])
+
+
+@pytest.mark.parametrize("name", ["vol.mgh", "vol.mgz"])
+def test_load_leaves_no_file_open(tmp_path, name) -> None:  # noqa: ANN001
+    """Loading closes the file it reads the header from (#262), while
+    the voxels are still read lazily, from the file."""
+    data = _data()
+    source = _write(tmp_path, name, data)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        image = io.load(source)
+        assert isinstance(image, MghImage)
+        assert nb.is_proxy(image.image.dataobj)
+        assert np.array_equal(np.asarray(image.data), data)
+        del image
+        gc.collect()
+    leaks = [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert not leaks, [str(w.message) for w in leaks]
 
 
 def test_tkr_and_scanner_differ_by_a_ras_to_ras_rigid(tmp_path) -> None:  # noqa: ANN001
