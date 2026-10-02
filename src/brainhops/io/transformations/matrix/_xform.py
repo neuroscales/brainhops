@@ -156,12 +156,12 @@ class MatrixAffine(
     # --- ArrayParser hooks ----------------------------------------------
 
     @classmethod
-    def accepts_array(cls, array: np.ndarray) -> bool:
+    def _accepts_array(cls, array: np.ndarray) -> bool:
         """A matrix is a numeric 2-D array."""
         return is_numeric_array(array) and array.ndim == 2
 
     @classmethod
-    def array_confidence(cls, array: np.ndarray, **kwargs) -> float:
+    def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
         """`WEAK` if the array reads as an affine under the requested
         `vector` and `ndim` conventions, else `NO`."""
         vector = kwargs.get("vector", "column")

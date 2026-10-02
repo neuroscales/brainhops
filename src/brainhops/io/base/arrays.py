@@ -13,10 +13,13 @@ It has two layers:
 - **Functions** (`read_text_array`, `read_npy`, `read_npz`, `read_mat`,
   ...) that parse the content of one container.
 - **Parsers**, one per container, deriving from the abstract
-  [`ArrayParser`][], which turns the array they read into an object
-  through hooks that a format class implements (`accepts_array`,
-  `array_confidence`, `from_array`). A format mixes one of them in per
-  container, as in `class NpyMatrixAffine(NpyArrayParser, MatrixAffine)`.
+  [`ArrayParser`][]. Each implements the usual `from_*` / `sniff_*`
+  entry points of its kind of content (`from_lines` for text,
+  `from_bytes` for binary), and hands the array it read to
+  `from_array`, which a format class implements (with the private
+  hooks `_accepts_array` and `_array_confidence`). A format mixes one
+  of them in per container, as in
+  `class NpyMatrixAffine(NpyArrayParser, MatrixAffine)`.
 
   Text (built on `TextFileParser`):
 
@@ -41,8 +44,8 @@ whitespace, commas or tabs. AFNI `.1D` and generic `.dat` files are
 whitespace-separated columns with `#` comments, so they are extensions
 of [`TxtArrayParser`][] rather than formats of their own.
 [`MatArrayParser`][] dispatches between the two unrelated MATLAB
-containers: its score is the best of its variants', and it reads a file
-with the variant whose container it is.
+containers: its `sniff_bytes` scores the best of its variants', and its
+`from_bytes` reads a file with the variant whose container it is.
 
 Every reader takes the whole file content as `bytes` (or text lines),
 never a path, so that it works the same on files, streams and in-memory
@@ -74,6 +77,7 @@ __all__ = [
 ]
 
 # stdlib
+import functools
 import io
 import os
 import re
@@ -113,6 +117,8 @@ _ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06")
 _HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"
 _MAT5_MAGIC = b"MATLAB 5.0 MAT-file"
 _MAT73_MAGIC = b"MATLAB 7.3 MAT-file"
+_MAT73_KINDS = ("mat73", "hdf5")
+"""What `detect_container` calls a MATLAB v7.3 file."""
 
 
 def detect_container(content: bytes) -> tx.Optional[str]:
@@ -183,7 +189,8 @@ def read_text_rows(
     Raises
     ------
     ArrayContainerError
-        If a value is not a number.
+        If a value is not a number, or a line holds a NUL byte (binary
+        content that happens to decode).
     """
     if isinstance(comments, str):
         comments = (comments,)
@@ -191,6 +198,8 @@ def read_text_rows(
     split = re.compile(separators).split if separators else _SEPARATORS.split
     rows = []
     for line in lines:
+        if "\x00" in line:
+            raise ArrayContainerError("Not text (NUL byte).")
         for marker in comments:
             line = line.split(marker, 1)[0]
         line = line.strip()
@@ -237,6 +246,8 @@ def read_text_array(
 
 def read_npy(content: bytes) -> np.ndarray:
     """Read the array stored in `.npy` content, without unpickling."""
+    if detect_container(content) != "npy":
+        raise ArrayContainerError("Not a .npy file.")
     try:
         array = np.load(io.BytesIO(content), allow_pickle=False)
     except Exception as e:
@@ -248,6 +259,8 @@ def read_npy(content: bytes) -> np.ndarray:
 
 def read_npz(content: bytes) -> tx.Dict[str, np.ndarray]:
     """Read every array stored in `.npz` content, without unpickling."""
+    if detect_container(content) != "npz":
+        raise ArrayContainerError("Not a .npz file.")
     try:
         with np.load(io.BytesIO(content), allow_pickle=False) as npz:
             return {key: npz[key] for key in npz.files}
@@ -279,11 +292,27 @@ def read_mat(content: bytes) -> tx.Dict[str, np.ndarray]:
     ImportError
         If the file is v7.3 and `h5py` is not installed.
     """
-    kind = detect_container(content)
-    if kind in ("mat73", "hdf5"):
+    if detect_container(content) in _MAT73_KINDS:
         return read_mat73(content)
+    return _read_mat_legacy(content)
+
+
+def _read_mat_legacy(content: bytes) -> tx.Dict[str, np.ndarray]:
+    """Read the numeric arrays of MATLAB v4 or v5-v7 content.
+
+    A v5-v7 file is recognized by its header. A v4 file has none, so it
+    is any binary content that `scipy.io` reads: text is turned down.
+    """
+    kind = detect_container(content)
     if kind not in ("mat5", None):
-        raise ArrayContainerError(f"Not a MATLAB file (found {kind}).")
+        raise ArrayContainerError(f"Not a MATLAB v4-v7 file (found {kind}).")
+    if kind is None:
+        try:
+            is_text = "\x00" not in bytes(content).decode("utf-8")
+        except UnicodeDecodeError:
+            is_text = False
+        if is_text:
+            raise ArrayContainerError("Text, not a MATLAB v4 file.")
     import scipy.io
 
     try:
@@ -333,6 +362,11 @@ def read_mat73(content: bytes) -> tx.Dict[str, np.ndarray]:
     ImportError
         If `h5py` is not installed.
     """
+    kind = detect_container(content)
+    if kind not in _MAT73_KINDS:
+        raise ArrayContainerError(
+            f"Not a MATLAB v7.3 file (found {kind or 'no HDF5 header'})."
+        )
     try:
         import h5py
     except ImportError as e:  # pragma: no cover - h5py is a test extra
@@ -430,24 +464,28 @@ def select_array(
 #   PARSERS
 # ----------------------------------------------------------------------
 
-_Content = tx.Union[bytes, tx.List[str]]
-"""What a container reads: the file's bytes, or the lines of a text."""
+_Reader = tx.Callable[
+    [tx.Any], tx.Union[np.ndarray, tx.Mapping[str, np.ndarray]]
+]
+"""A container reader: the content in, its single array or its named
+arrays out, `ArrayContainerError` if the content is not the container."""
 
 
 class ArrayParser(FileParser):
     """
     Abstract base of the readers of one generic array container.
 
-    A concrete subclass reads one container (`read_arrays`) and declares
-    its `EXTENSIONS`, `HINTS` and `CONTAINER`. What the array *means* is
+    A concrete subclass reads one container through the usual entry
+    points: `from_lines` / `sniff_lines` for a text container,
+    `from_bytes` / `sniff_bytes` for a binary one. It declares its
+    `EXTENSIONS`, `HINTS` and `CONTAINER`. What the array *means* is
     left to a format class, which mixes the container parser in and
-    implements three hooks:
+    implements:
 
-    - `accepts_array`: which arrays it
-      can read, used to pick one in a container that holds several;
-    - `array_confidence`: how sure it
-      is that the array is its own;
-    - `from_array`: how to build the object.
+    - `from_array`: how to build the object from the array;
+    - `_accepts_array`: which arrays it can read, used to pick one in a
+      container that holds several;
+    - `_array_confidence`: how sure it is that the array is its own.
 
     Abstract: it reads no container, and is never registered as a
     format.
@@ -455,7 +493,7 @@ class ArrayParser(FileParser):
     **Selecting an array**: in a container that holds several (`.npz`,
     `.mat`), `key=` (or its alias `variable=`) names the array to read.
     By default, the container must hold exactly one array that
-    `accepts_array` accepts. Single-array containers ignore it.
+    `_accepts_array` accepts. Single-array containers ignore it.
     """
 
     CONTAINER: tx.ClassVar[str] = ""
@@ -466,104 +504,14 @@ class ArrayParser(FileParser):
 
     A generic container says nothing about what its array means, so the
     default is `WEAK`: any format that recognizes the file positively
-    wins. A format raises it in `array_confidence` when the array itself
+    wins. A format raises it in `_array_confidence` when the array itself
     identifies it."""
 
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = None
     """The largest file, in bytes, that sniffing reads. A larger file is
     turned down without being read whole. `None` means no limit."""
 
-    # --- container ----------------------------------------------------
-
-    @classmethod
-    def read_arrays(
-        cls, content: _Content, encoding: str = "utf-8"
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        """
-        Read the arrays stored in the container.
-
-        Parameters
-        ----------
-        content : bytes | list[str]
-            The file content, or the lines of a text file.
-        encoding : str
-            How text content is encoded.
-
-        Returns
-        -------
-        arrays : dict[str | None, ndarray]
-            The named arrays of the container, or `{None: array}` for a
-            container that stores a single, unnamed array.
-
-        Raises
-        ------
-        ArrayContainerError
-            If the content is not this container.
-        """
-        raise NotImplementedError(
-            f"{cls.__name__} does not read a container; use one of the "
-            f"concrete array parsers."
-        )
-
-    @classmethod
-    def read_array(
-        cls,
-        content: _Content,
-        key: tx.Optional[str] = None,
-        encoding: str = "utf-8",
-    ) -> tx.Tuple[tx.Optional[str], np.ndarray]:
-        """
-        Read the one array of the container that this format reads.
-
-        Parameters
-        ----------
-        content : bytes | list[str]
-            The file content, or the lines of a text file.
-        key : str, optional
-            The name of the array, in a container that holds several.
-        encoding : str
-            How text content is encoded.
-
-        Returns
-        -------
-        key : str | None
-            The name of the array, or `None` in a single-array container.
-        array : ndarray
-
-        Raises
-        ------
-        ArrayContainerError
-            If the content is not this container, or holds no single
-            array that `accepts_array` accepts.
-        """
-        arrays = cls.read_arrays(content, encoding=encoding)
-        if list(arrays) == [None]:
-            name, array = None, arrays[None]
-        else:
-            name, array = select_array(
-                arrays, key, cls.accepts_array, f"{cls.CONTAINER} array"
-            )
-        if not cls.accepts_array(array):
-            what = "The array" if name is None else repr(name)
-            raise ArrayContainerError(
-                f"{what} cannot be read by {cls.__name__} "
-                f"({array.dtype} {array.shape})."
-            )
-        return name, array
-
-    # --- hooks ----------------------------------------------------------
-
-    @classmethod
-    def accepts_array(cls, array: np.ndarray) -> bool:
-        """Whether this format can read `array`. Any numeric array by
-        default."""
-        return is_numeric_array(array)
-
-    @classmethod
-    def array_confidence(cls, array: np.ndarray, **kwargs) -> float:
-        """How confident this format is that an accepted `array` is its
-        own, given the reading options. `SNIFF_CONFIDENCE` by default."""
-        return cls.SNIFF_CONFIDENCE
+    # --- format hooks -------------------------------------------------
 
     @classmethod
     def from_array(
@@ -574,6 +522,18 @@ class ArrayParser(FileParser):
         raise ParserNotImplementedError(
             f"from_array() is not available in parser of type {cls.__name__}"
         )
+
+    @classmethod
+    def _accepts_array(cls, array: np.ndarray) -> bool:
+        """Whether this format can read `array`. Any numeric array by
+        default."""
+        return is_numeric_array(array)
+
+    @classmethod
+    def _array_confidence(cls, array: np.ndarray, **kwargs) -> float:
+        """How confident this format is that an accepted `array` is its
+        own, given the reading options. `SNIFF_CONFIDENCE` by default."""
+        return cls.SNIFF_CONFIDENCE
 
     # --- sniff ----------------------------------------------------------
 
@@ -605,30 +565,71 @@ class ArrayParser(FileParser):
             return _reject(error, f"Larger than {limit} bytes.")
         return cls.sniff_content(content, error=error, **kwargs)
 
-    @classmethod
-    def sniff_lines(
-        cls,
-        lines: tx.Iterable[str],
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        return cls._sniff(_as_lines(lines), error, **kwargs)
+    # --- shared by the containers' sniff_* and from_* -------------------
 
     @classmethod
-    def _sniff(
+    def _read_array(
+        cls, read: _Reader, content: tx.Any, kwargs: tx.Dict[str, tx.Any]
+    ) -> tx.Tuple[tx.Optional[str], np.ndarray]:
+        """
+        Read the container with `read`, and pick the array this format
+        reads.
+
+        The selection options (`key`, its alias `variable`, and the text
+        `encoding`, already used) are popped from `kwargs`, which is left
+        holding the options of the format.
+
+        Returns
+        -------
+        key : str | None
+            The name of the array, or `None` in a single-array container.
+        array : ndarray
+
+        Raises
+        ------
+        ParserContentError
+            If the content is not this container, or holds no single
+            array that `_accepts_array` accepts.
+        """
+        variable = kwargs.pop("variable", None)
+        key = kwargs.pop("key", None)
+        kwargs.pop("encoding", None)
+        key = variable if variable is not None else key
+        try:
+            arrays = read(content)
+            if isinstance(arrays, np.ndarray):
+                name, array = None, arrays
+            else:
+                name, array = select_array(
+                    arrays, key, cls._accepts_array, f"{cls.CONTAINER} array"
+                )
+        except ArrayContainerError as e:
+            raise ParserContentError(str(e)) from e
+        if not cls._accepts_array(array):
+            what = "The array" if name is None else repr(name)
+            raise ParserContentError(
+                f"{what} cannot be read by {cls.__name__} "
+                f"({array.dtype} {array.shape})."
+            )
+        return name, array
+
+    @classmethod
+    def _sniff_array(
         cls,
-        content: _Content,
+        read: _Reader,
+        content: tx.Any,
         error: tx.Union[bool, tx.Type[Exception]],
         **kwargs,
     ) -> float:
-        key, encoding = _pop_selection(dict(kwargs))
+        """Score `content` read with `read`: `_array_confidence` of the
+        array that `_read_array` picks, or `NO`."""
         try:
-            _, array = cls.read_array(content, key=key, encoding=encoding)
-        except ArrayContainerError as e:
+            _, array = cls._read_array(read, content, kwargs)
+        except ParserContentError as e:
             return _reject(error, str(e))
         except Exception as e:  # anything a container library raises
             return _reject(error, f"Not a {cls.CONTAINER} file: {e}")
-        score = cls.array_confidence(array, **kwargs)
+        score = cls._array_confidence(array, **kwargs)
         if not score:
             return _reject(
                 error,
@@ -636,21 +637,6 @@ class ArrayParser(FileParser):
                 f"{cls.__name__}.",
             )
         return score
-
-    # --- from -----------------------------------------------------------
-
-    @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        return cls._parse(_as_lines(lines), **kwargs)
-
-    @classmethod
-    def _parse(cls, content: _Content, **kwargs) -> tx.Self:
-        key, encoding = _pop_selection(kwargs)
-        try:
-            name, array = cls.read_array(content, key=key, encoding=encoding)
-        except ArrayContainerError as e:
-            raise ParserContentError(str(e)) from e
-        return cls.from_array(array, key=name, **kwargs)
 
 
 class TextArrayParser(ArrayParser, TextFileParser):
@@ -675,9 +661,9 @@ class TextArrayParser(ArrayParser, TextFileParser):
     `EXTENSIONS` and whose content it reads scores at least
     `NAMED_CONFIDENCE`: the name says "plain numbers", which no content
     check can. Without such a name, a reader also requires its
-    *signature* (`has_signature`), so that one content is claimed by one
-    reader only: CSV needs a comma, TSV a tab, and whitespace text
-    yields tab-separated content to TSV.
+    *signature*, so that one content is claimed by one reader only: CSV
+    needs a comma, TSV a tab, and whitespace text yields tab-separated
+    content to TSV.
     """
 
     CONTAINER: tx.ClassVar[str] = "text"
@@ -692,21 +678,7 @@ class TextArrayParser(ArrayParser, TextFileParser):
     reader's extensions."""
 
     @classmethod
-    def read_arrays(
-        cls, content: _Content, encoding: str = "utf-8"
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        if isinstance(content, (bytes, bytearray)):
-            try:
-                content = bytes(content).decode(encoding).splitlines()
-            except UnicodeDecodeError as e:
-                raise ArrayContainerError("Not text.") from e
-        lines = list(content)
-        if any("\x00" in line for line in lines):
-            raise ArrayContainerError("Not text (NUL byte).")
-        return {None: read_text_array(lines, separators=cls.SEPARATORS)}
-
-    @classmethod
-    def has_signature(cls, lines: tx.List[str]) -> bool:
+    def _has_signature(cls, lines: tx.List[str]) -> bool:
         """Whether text that this reader reads is recognizably its own,
         whatever the file is called. Always, by default."""
         return True
@@ -731,19 +703,21 @@ class TextArrayParser(ArrayParser, TextFileParser):
             return _not_text(cls, error, e)
 
     @classmethod
-    def _sniff(
+    def sniff_lines(
         cls,
-        content: _Content,
-        error: tx.Union[bool, tx.Type[Exception]],
+        lines: tx.Iterable[str],
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
         named = kwargs.pop("_named", False)
-        score = super()._sniff(content, error, **kwargs)
+        lines = _as_lines(lines)
+        read = functools.partial(read_text_array, separators=cls.SEPARATORS)
+        score = cls._sniff_array(read, lines, error, **kwargs)
         if not score:
             return score
         if named:
             return max(score, cls.NAMED_CONFIDENCE)
-        if not cls.has_signature(_data_lines(content)):
+        if not cls._has_signature(_data_lines(lines)):
             return _reject(
                 error,
                 f"Text without the signature of {cls.__name__}, in a file "
@@ -752,6 +726,12 @@ class TextArrayParser(ArrayParser, TextFileParser):
         return score
 
     # --- from -----------------------------------------------------------
+
+    @classmethod
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        read = functools.partial(read_text_array, separators=cls.SEPARATORS)
+        name, array = cls._read_array(read, _as_lines(lines), kwargs)
+        return cls.from_array(array, key=name, **kwargs)
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -787,9 +767,11 @@ class TxtArrayParser(TextArrayParser):
     SEPARATORS: tx.ClassVar[tx.Optional[str]] = r"\s+"
 
     @classmethod
-    def has_signature(cls, lines: tx.List[str]) -> bool:
+    def _has_signature(cls, lines: tx.List[str]) -> bool:
         tsv = TsvArrayParser
-        return not (tsv.has_signature(lines) and _reads(lines, tsv.SEPARATORS))
+        return not (
+            tsv._has_signature(lines) and _reads(lines, tsv.SEPARATORS)
+        )
 
 
 class CsvArrayParser(TextArrayParser):
@@ -805,7 +787,7 @@ class CsvArrayParser(TextArrayParser):
     SEPARATORS: tx.ClassVar[tx.Optional[str]] = r" *, *"
 
     @classmethod
-    def has_signature(cls, lines: tx.List[str]) -> bool:
+    def _has_signature(cls, lines: tx.List[str]) -> bool:
         return any("," in line for line in lines)
 
 
@@ -822,41 +804,28 @@ class TsvArrayParser(TextArrayParser):
     SEPARATORS: tx.ClassVar[tx.Optional[str]] = r" *\t *"
 
     @classmethod
-    def has_signature(cls, lines: tx.List[str]) -> bool:
+    def _has_signature(cls, lines: tx.List[str]) -> bool:
         return any("\t" in line for line in lines)
 
 
 class _BinaryArrayParser(ArrayParser, BinaryFileParser):
-    """An array container that is never text."""
+    """An array container that is never text: each subclass implements
+    `sniff_bytes` and `from_bytes`."""
 
     @classmethod
-    def sniff_bytes(
+    def sniff_lines(
         cls,
-        content: bytes,
+        lines: tx.Iterable[str],
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        return cls._sniff(bytes(content), error, **kwargs)
+        return _reject(error, f"A {cls.CONTAINER} file is binary, not text.")
 
     @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        return cls._parse(bytes(content), **kwargs)
-
-    @classmethod
-    def read_arrays(
-        cls, content: _Content, encoding: str = "utf-8"
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        if not isinstance(content, (bytes, bytearray)):
-            raise ArrayContainerError(
-                f"A {cls.CONTAINER} file is binary, not text."
-            )
-        return cls._read_binary(bytes(content))
-
-    @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        raise NotImplementedError
+    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+        raise ParserContentError(
+            f"A {cls.CONTAINER} file is binary, not text."
+        )
 
 
 class NpyArrayParser(_BinaryArrayParser):
@@ -868,12 +837,18 @@ class NpyArrayParser(_BinaryArrayParser):
     HINTS = ("npy",)
 
     @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        if detect_container(content) != "npy":
-            raise ArrayContainerError("Not a .npy file.")
-        return {None: read_npy(content)}
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return cls._sniff_array(read_npy, bytes(content), error, **kwargs)
+
+    @classmethod
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        name, array = cls._read_array(read_npy, bytes(content), kwargs)
+        return cls.from_array(array, key=name, **kwargs)
 
 
 class NpzArrayParser(_BinaryArrayParser):
@@ -885,12 +860,18 @@ class NpzArrayParser(_BinaryArrayParser):
     HINTS = ("npz",)
 
     @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        if detect_container(content) != "npz":
-            raise ArrayContainerError("Not a .npz file.")
-        return dict(read_npz(content))
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return cls._sniff_array(read_npz, bytes(content), error, **kwargs)
+
+    @classmethod
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        name, array = cls._read_array(read_npz, bytes(content), kwargs)
+        return cls.from_array(array, key=name, **kwargs)
 
 
 class MatArrayParser(_BinaryArrayParser):
@@ -905,18 +886,17 @@ class MatArrayParser(_BinaryArrayParser):
       `scipy.io.loadmat`;
     - [`Mat73ArrayParser`][]: v7.3, an HDF5 file read with `h5py`.
 
-    This class dispatches between them: its score is the best of theirs,
-    and it reads a file with the one whose container the content is. It
-    declares the hint `"mat"`, which the subclasses inherit; the v7.3
-    reader adds `"mat73"` and `"73"` (so `"mat.73"`).
+    This class dispatches between its `VARIANTS`: `sniff_bytes` scores
+    the best of theirs, and `from_bytes` reads a file with the variant
+    whose container it is. The variants override both, so they read
+    their own container only. It declares the hint `"mat"`, which the
+    subclasses inherit; the v7.3 reader adds `"mat73"` and `"73"` (so
+    `"mat.73"`).
 
-    **Variants.** Only the class that lists `VARIANTS` in its own body
-    dispatches; its subclasses inherit the attribute but not the role,
-    and read their own container. A format built on this one (as in
-    `MatMatrixAffine`) declares its own `VARIANTS`, so that dispatch
-    returns objects of its own variant classes. Register the variants
-    for dispatch, not the dispatcher: it would only ever tie with (and
-    lose to) its own subclasses.
+    A format built on this one (as in `MatMatrixAffine`) declares its
+    own `VARIANTS`, so that dispatch returns objects of its own variant
+    classes. Register the variants for dispatch, not the dispatcher: it
+    would only ever tie with (and lose to) its own subclasses.
     """
 
     CONTAINER: tx.ClassVar[str] = "mat"
@@ -924,75 +904,24 @@ class MatArrayParser(_BinaryArrayParser):
     HINTS = ("mat",)
 
     VARIANTS: tx.ClassVar[tx.Tuple[type, ...]] = ()
-    """The version-specific readers this class dispatches to, when it
-    declares them itself."""
+    """The readers this class dispatches to: the v4-v7 reader, then the
+    v7.3 reader."""
 
     @classmethod
-    def variants(cls) -> tx.Tuple[type, ...]:
-        """The readers this class dispatches to; empty for a reader of
-        one version."""
-        return cls.__dict__.get("VARIANTS", ())
-
-    @classmethod
-    def is_container(cls, content: _Content) -> bool:
-        """Whether `content` is the container this class reads (for the
-        dispatcher, the container of any of its variants)."""
-        return any(v.is_container(content) for v in cls.variants())
-
-    @classmethod
-    def variant(cls, content: _Content) -> type:
-        """
-        The class that reads `content`: this class itself for a reader of
-        one version, else the variant whose container the content is.
-
-        Raises
-        ------
-        ArrayContainerError
-            If no variant reads this container.
-        """
-        variants = cls.variants()
-        if not variants:
-            return cls
-        for variant in variants:
-            if variant.is_container(content):
-                return variant
-        kind = (
-            detect_container(content)
-            if isinstance(content, (bytes, bytearray))
-            else "text"
-        )
-        raise ArrayContainerError(f"Not a MATLAB file (found {kind}).")
-
-    @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        return cls.variant(content)._read_binary(content)
-
-    @classmethod
-    def _sniff(
+    def sniff_bytes(
         cls,
-        content: _Content,
-        error: tx.Union[bool, tx.Type[Exception]],
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        variants = cls.variants()
-        if not variants:
-            return super()._sniff(content, error, **kwargs)
-        score = max(v._sniff(content, False, **kwargs) for v in variants)
-        if not score:
-            return _reject(error, f"Not read by {cls.__name__}.")
-        return score
+        score = max(v.sniff_bytes(content, **kwargs) for v in cls.VARIANTS)
+        return score or _reject(error, f"Not read by {cls.__name__}.")
 
     @classmethod
-    def _parse(cls, content: _Content, **kwargs) -> tx.Self:
-        if not cls.variants():
-            return super()._parse(content, **kwargs)
-        try:
-            variant = cls.variant(content)
-        except ArrayContainerError as e:
-            raise ParserContentError(str(e)) from e
-        return variant._parse(content, **kwargs)
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        legacy, v73 = cls.VARIANTS
+        is_v73 = detect_container(content) in _MAT73_KINDS
+        return (v73 if is_v73 else legacy).from_bytes(content, **kwargs)
 
 
 class MatLegacyArrayParser(MatArrayParser):
@@ -1006,24 +935,20 @@ class MatLegacyArrayParser(MatArrayParser):
     """
 
     @classmethod
-    def is_container(cls, content: _Content) -> bool:
-        if not isinstance(content, (bytes, bytearray)):
-            return False
-        kind = detect_container(content)
-        return kind == "mat5" or (kind is None and not _is_text(content))
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return cls._sniff_array(
+            _read_mat_legacy, bytes(content), error, **kwargs
+        )
 
     @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        kind = detect_container(content)
-        if kind is None and _is_text(content):
-            raise ArrayContainerError("Text, not a MATLAB v4 file.")
-        if kind not in ("mat5", None):
-            raise ArrayContainerError(
-                f"Not a MATLAB v4-v7 file (found {kind})."
-            )
-        return dict(read_mat(content))
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        name, array = cls._read_array(_read_mat_legacy, bytes(content), kwargs)
+        return cls.from_array(array, key=name, **kwargs)
 
 
 class Mat73ArrayParser(MatArrayParser):
@@ -1042,21 +967,18 @@ class Mat73ArrayParser(MatArrayParser):
     HINTS = ("mat73", "73")
 
     @classmethod
-    def is_container(cls, content: _Content) -> bool:
-        return isinstance(content, (bytes, bytearray)) and detect_container(
-            content
-        ) in ("mat73", "hdf5")
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        return cls._sniff_array(read_mat73, bytes(content), error, **kwargs)
 
     @classmethod
-    def _read_binary(
-        cls, content: bytes
-    ) -> tx.Dict[tx.Optional[str], np.ndarray]:
-        kind = detect_container(content)
-        if kind not in ("mat73", "hdf5"):
-            raise ArrayContainerError(
-                f"Not a MATLAB v7.3 file (found {kind or 'no HDF5 header'})."
-            )
-        return dict(read_mat73(content))
+    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
+        name, array = cls._read_array(read_mat73, bytes(content), kwargs)
+        return cls.from_array(array, key=name, **kwargs)
 
 
 MatArrayParser.VARIANTS = (MatLegacyArrayParser, Mat73ArrayParser)
@@ -1082,30 +1004,10 @@ def _as_lines(lines: tx.Iterable[str]) -> tx.List[str]:
     return [line for line in lines if isinstance(line, str)]
 
 
-def _pop_selection(
-    kwargs: tx.Dict[str, tx.Any],
-) -> tx.Tuple[tx.Optional[str], str]:
-    """Pop the options that select the array: `key` (alias `variable`)
-    and the text `encoding`."""
-    variable = kwargs.pop("variable", None)
-    key = kwargs.pop("key", None)
-    encoding = kwargs.pop("encoding", "utf-8")
-    return (variable if variable is not None else key), encoding
-
-
-def _is_text(content: bytes, encoding: str = "utf-8") -> bool:
-    try:
-        return "\x00" not in content.decode(encoding)
-    except UnicodeDecodeError:
-        return False
-
-
-def _data_lines(content: _Content) -> tx.List[str]:
+def _data_lines(lines: tx.List[str]) -> tx.List[str]:
     """The lines of a text that hold values: comments and blank lines
     removed."""
-    if isinstance(content, (bytes, bytearray)):
-        content = bytes(content).decode("utf-8", "replace").splitlines()
-    lines = (line.split("#", 1)[0].strip() for line in content)
+    lines = (line.split("#", 1)[0].strip() for line in lines)
     return [line for line in lines if line]
 
 

@@ -643,23 +643,40 @@ def test_base_is_abstract(tmp_path) -> None:  # noqa: ANN001
     # the base reads no container
     with pytest.raises(NotImplementedError):
         MatrixAffine.from_text(_text(A))
-    assert MatrixAffine.sniff_text(_text(A)) == Confidence.NO
+    with pytest.raises(NotImplementedError):
+        MatrixAffine.sniff_text(_text(A))
     # ... and neither does the generic array parser
     with pytest.raises(NotImplementedError):
-        arrays.ArrayParser.read_arrays(b"")
+        arrays.ArrayParser.from_bytes(b"")
 
 
 def test_array_parsers_are_generic() -> None:
     """The container parsers read any numeric array, with no affine
     semantics, and declare their own extensions and hints."""
+
+    class Raw:
+        """A format that keeps the array as is."""
+
+        @classmethod
+        def from_array(cls, array, key=None, **kwargs) -> tuple:  # noqa: ANN001
+            return key, array
+
+    def raw(parser: type) -> type:
+        return type("Raw" + parser.__name__, (Raw, parser), {})
+
     buffer = io.BytesIO()
     np.save(buffer, np.arange(24.0).reshape(2, 3, 4))
-    name, array = arrays.NpyArrayParser.read_array(buffer.getvalue())
+    content = buffer.getvalue()
+    name, array = raw(arrays.NpyArrayParser).from_bytes(content)
     assert name is None and array.shape == (2, 3, 4)
+    assert arrays.NpyArrayParser.sniff_bytes(content) == Confidence.WEAK
     # the text base is lenient about separators; its readers are not
-    name, array = arrays.TextArrayParser.read_array(["1 2;3", "4,5\t6"])
+    lines = ["1 2;3", "4,5\t6"]
+    name, array = raw(arrays.TextArrayParser).from_lines(lines)
     assert array.shape == (2, 3)
-    name, array = arrays.CsvArrayParser.read_array(["1, 2,3", "4,5 , 6"])
+    with pytest.raises(ParserContentError):
+        raw(arrays.CsvArrayParser).from_lines(lines)
+    name, array = raw(arrays.CsvArrayParser).from_lines(["1, 2,3", "4,5 , 6"])
     assert array.shape == (2, 3)
     expected = {
         arrays.TxtArrayParser: (("txt",), (".txt", ".dat", ".1D")),
@@ -721,11 +738,11 @@ def test_mat_dispatcher(tmp_path, fmt, variant) -> None:  # noqa: ANN001
         other.from_file(path)
     # the generic parser dispatches the same way
     content = path.read_bytes()
-    assert arrays.MatArrayParser.variant(content).__name__ == (
-        "MatLegacyArrayParser" if fmt != "7.3" else "Mat73ArrayParser"
-    )
-    _, array = arrays.MatArrayParser.read_array(content)
-    assert np.allclose(array, A)
+    legacy, v73 = arrays.MatArrayParser.VARIANTS
+    parser, other = (v73, legacy) if fmt == "7.3" else (legacy, v73)
+    score = arrays.MatArrayParser.sniff_bytes(content)
+    assert score == parser.sniff_bytes(content) > 0
+    assert other.sniff_bytes(content) == Confidence.NO
     # dispatch never sees a tie between the dispatcher and a variant
     assert sniff(path) is variant
     assert type(load(path, hint="mat")) is variant
@@ -735,8 +752,6 @@ def test_mat_dispatcher_is_not_registered() -> None:
     """Only the variants are registered: the dispatcher would compete
     with its own subclasses for the same files."""
     assert MatMatrixAffine not in FileBasedTransformation._REGISTRY
-    assert not MatLegacyMatrixAffine.variants()
-    assert not Mat73MatrixAffine.variants()
     with pytest.raises(ParserContentError):
         MatMatrixAffine.from_text(_text(A))
     assert MatMatrixAffine.sniff_text(_text(A)) == Confidence.NO
