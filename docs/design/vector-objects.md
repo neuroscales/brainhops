@@ -23,10 +23,10 @@ tetrahedral volume meshes. It aims for three things:
    of the vertices. On a file-backed, chunked store (zarr-vectors,
    neuroglancer precomputed) it only reads the chunks that intersect the
    box.
-3. **Multi-scale.** A pyramid of levels, where a level is either a
+3. **Multi-scale.** A pyramid of levels, where a level is a
    geometric simplification (zarr-vectors coarsening, neuroglancer mesh
-   LODs) or a sub-sample of the objects (neuroglancer annotation spatial
-   levels).
+   LODs), a sub-sample of the objects (neuroglancer annotation spatial
+   levels), or both (zarr-vectors).
 
 ---
 
@@ -529,7 +529,6 @@ field-of-view box) later; that is not required here.
 class MultiScaleVectors(Vectors, Generic[T]):
     # finest first
     levels: List[T] = ()
-    reduction: Literal["geometric", "sparse"] = "geometric"
     # pyramid -> world, as MultiScaleImage
     transformations: List[Transformation] = ()
 ```
@@ -549,29 +548,36 @@ avoids both the clash and `MultiScaleImage`'s type-specific `images`.
 `nscales`, `transformation` (setter included), `__call__` and `reslice`
 behave as for `MultiScaleImage`.
 
-### 6.2 Two kinds of levels
+### 6.2 Two ways a level can be reduced
 
-| Kind | Example | A coarse level is | Resolution of a level |
-|---|---|---|---|
-| **geometric** | zarr-vectors coarsening (`bin_ratio`, metavertices); neuroglancer multilod mesh LODs | a simplified version of *every* object | per-axis bin size (zarr-vectors `base_bin_shape × reduction_factor^l`; neuroglancer `lod_scales × lod_scale_multiplier`) |
-| **sparse** | neuroglancer annotation `spatial` levels; zarr-vectors `object_sparsity < 1` | a *subset* of the objects, at full precision | none; carries `sparsity` (fraction kept) instead |
+A coarser level can be reduced in two independent ways, and a level may
+use both:
 
-A pyramid has **one** kind of level, stated by `reduction` (not `kind`,
-which is the cell kind of §2); levels of both kinds are
-never mixed. This matters for selection: `_nearest_resolution_index`
-falls back to the finest level as soon as any resolution is `None`, so a
-mixed list would always select level 0.
+| Reduction | Example | Recorded per level |
+|---|---|---|
+| **coarsened**: every object is kept, with a simplified geometry | zarr-vectors coarsening (`bin_ratio`, metavertices); neuroglancer multilod mesh LODs | `resolution`: per-axis bin size (zarr-vectors `base_bin_shape × reduction_factor^l`; neuroglancer `lod_scales × lod_scale_multiplier`) |
+| **subsampled**: a subset of the objects is kept, each at the level's precision | neuroglancer annotation `spatial` levels; zarr-vectors `object_sparsity < 1` | `sparsity`: fraction of the objects kept (finest = 1) |
 
-- **geometric:** each level records `resolution`. Given a target
-  resolution (from a `Geometry`, as in `MultiScaleImage.reslice`, or an
-  explicit `resolution=`), the level whose resolution is nearest is
-  picked with `_nearest_resolution_index`.
-- **sparse:** each level records `sparsity` (fraction of the objects it
-  holds, finest = 1). The level is chosen by `max_count=` or
-  `sparsity=`.
+zarr-vectors levels can do both at once: a level is coarsened by its
+`bin_ratio` and also keeps only an `object_sparsity` fraction of the
+objects. So there is no per-pyramid switch: every level carries a
+`resolution` (or `None` when it is not coarsened, as for neuroglancer
+annotations) and a `sparsity` (default 1).
 
-A zarr-vectors store whose levels both coarsen and drop objects is read
-as geometric; `sparsity` is still reported per level as metadata.
+Level selection takes either criterion, or both:
+
+- `resolution=` (or a target `Geometry`, as in `MultiScaleImage.reslice`)
+  picks, among the levels that record a resolution, the nearest one with
+  `_nearest_resolution_index`. Levels with `resolution=None` are filtered
+  out first, because that helper falls back to the finest level as soon
+  as any resolution is `None`. When no level records one, the criterion
+  is ignored.
+- `max_count=` or `sparsity=` restricts the choice to levels holding at
+  most that many (or at least that fraction of) objects.
+
+When both are given, the sparsity constraint filters the levels and the
+resolution picks among those left. With neither, the finest level is
+used, as for images.
 
 Neuroglancer's annotation pyramid is *cumulative*: a coarse level holds
 a random subset, and each finer level holds only what its parents did
