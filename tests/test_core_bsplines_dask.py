@@ -23,17 +23,15 @@ import pytest
 dask = pytest.importorskip("dask")
 da = pytest.importorskip("dask.array")
 pytest.importorskip("dask.optimization")
-pytest.importorskip("dask_image")
 
-import brainhops._core.bsplines as bsplines  # noqa: E402
+import brainhops._core.dask_ndimage as dask_ndimage  # noqa: E402
 from brainhops._core.bsplines import (  # noqa: E402
-    _SPLINE_POLES,
-    _halo,
     coeff2value,
     pull,
     pull_field,
     value2coeff,
 )
+from brainhops._core.dask_ndimage import _SPLINE_POLES, _halo  # noqa: E402
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
 ORDERS = [0, 1, 2, 3, 4, 5]
@@ -172,13 +170,13 @@ def test_the_halo_leaves_out_only_negligible_samples() -> None:
 def reads(monkeypatch) -> list:  # noqa: ANN001
     """The samples each block reads, per axis, as sorted index arrays."""
     seen = []
-    gather = bsplines._gather
+    gather = dask_ndimage._gather
 
     def spy(input, indices, cval):  # noqa: ANN001, ANN202
         seen.append([np.unique(i[i >= 0]) for i in indices])
         return gather(input, indices, cval)
 
-    monkeypatch.setattr(bsplines, "_gather", spy)
+    monkeypatch.setattr(dask_ndimage, "_gather", spy)
     return seen
 
 
@@ -359,3 +357,19 @@ def test_orders_zero_and_one_are_their_own_coefficients(
         assert out is not array
         np.testing.assert_array_equal(np.asarray(out), values)
         assert convert(array, order, "mirror", inplace=True) is array
+
+
+def test_the_dask_backend_needs_only_dask() -> None:
+    """
+    Its ndimage package is brainhops' own. An import error in it would be
+    swallowed by the lazy import and silently disable the backend, so the
+    backend is checked to be there whenever dask is.
+    """
+    import sys
+
+    from brainhops.backends import available_backends, get_ndimage_backend
+
+    assert "dask" in available_backends()
+    assert get_ndimage_backend(da.zeros(3)) is dask_ndimage
+    assert get_ndimage_backend("dask") is dask_ndimage
+    assert "dask_image" not in sys.modules

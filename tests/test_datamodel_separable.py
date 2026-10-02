@@ -1875,7 +1875,6 @@ def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
     # A dask array is immutable, so a gather-only reslice under `copy=True`
     # returns its lazy result as is, with no copy step, and still right.
     da = pytest.importorskip("dask.array")
-    pytest.importorskip("dask_image")
 
     def _no_copy(arr: object) -> object:
         raise AssertionError("a dask result was copied")

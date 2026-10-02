@@ -74,7 +74,7 @@ ARRAY_BACKENDS = [
         "dask",
         marks=pytest.mark.skipif(
             "dask" not in available_backends(),
-            reason="dask and dask-image are not installed",
+            reason="dask is not installed",
         ),
     ),
 ]

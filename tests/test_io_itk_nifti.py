@@ -374,7 +374,7 @@ def _clamped_voxels(points_lps: np.ndarray) -> np.ndarray:
             "dask",
             marks=pytest.mark.skipif(
                 "dask" not in available_backends(),
-                reason="dask and dask-image are not installed",
+                reason="dask is not installed",
             ),
         ),
     ],

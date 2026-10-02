@@ -25,7 +25,7 @@ brainhops = "brainhops.cli:main"
 [project.optional-dependencies]
 
 # backends
-dask = ["dask[array]", "dask-image"]
+dask = ["dask[array]"]
 cupy = ["cupy"]
 backends = ["brainhops[dask]", "brainhops[cupy]"]
 
