@@ -5,7 +5,7 @@ import io as _io
 import pytest
 import typing_extensions as tx
 
-from brainhops._core import path
+from brainhops._core.path import exists
 from brainhops.io.base._base import (
     FileBasedObject,
     TextFileBasedObject,
@@ -15,6 +15,7 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
+    SnifferContentError,
     TextFileParser,
     TextFileParserWriter,
     preserve_position,
@@ -172,10 +173,27 @@ def test_a_name_too_long_to_look_up_is_a_missing_file() -> None:
     `OSError: File name too long` from the file system.
     """
     content = "HELLO world\n" * 100
-    assert not path.exists(content)
+    assert not exists(content)
     assert Greeting.sniff_file(content) == Confidence.NO
     with pytest.raises(ParserExistsError):
         Greeting.from_file(content)
+
+
+def test_a_text_sniffer_scores_binary_content_zero(tmp_path) -> None:  # noqa: ANN001
+    """Content that does not decode as text is not a text format: a
+    sniffer says "no" rather than leak a `UnicodeDecodeError`."""
+    binary = b"\x00\x01HELLO\x9a\xff"
+    path = tmp_path / "binary.greet"
+    path.write_bytes(binary)
+
+    assert Greeting.sniff_bytes(binary) == Confidence.NO
+    assert Greeting.sniff(path) == Confidence.NO
+    with open(path, "rb") as f:
+        assert Greeting.sniff(f) == Confidence.NO
+    with pytest.raises(SnifferContentError):
+        Greeting.sniff(path, error=True)
+    with pytest.raises(SnifferContentError):
+        Greeting.sniff_bytes(binary, error=True)
 
 
 def test_writing_creates_a_file_that_did_not_exist(tmp_path) -> None:  # noqa: ANN001

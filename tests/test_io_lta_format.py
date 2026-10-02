@@ -233,6 +233,21 @@ def test_other_content_is_not_sniffed(cls: type) -> None:
         cls.sniff_text("1 0 0 0\n", error=True)
 
 
+@pytest.mark.parametrize("cls", [LTAStruct, LTATransformation])
+def test_binary_content_is_not_sniffed(cls: type, tmp_path) -> None:  # noqa: ANN001
+    # A binary file sharing the `.lta` extension does not decode as text,
+    # which is a "no" from the text sniffer rather than an error.
+    binary = b"\x00\x01type = 1\x9a\xff"
+    file = tmp_path / "binary.lta"
+    file.write_bytes(binary)
+    assert cls.sniff_bytes(binary) == Confidence.NO
+    assert cls.sniff(file) == Confidence.NO
+    with open(file, "rb") as f:
+        assert cls.sniff(f) == Confidence.NO
+    with pytest.raises(SnifferContentError):
+        cls.sniff(file, error=True)
+
+
 def test_a_file_is_sniffed_by_its_content_alone(tmp_path) -> None:  # noqa: ANN001
     file = _write(tmp_path, _struct(), "transform.txt")
     assert LTATransformation.sniff(file) == Confidence.LIKELY
