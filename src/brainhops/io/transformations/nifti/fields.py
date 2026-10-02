@@ -66,6 +66,14 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         standard reserves it for displacements, which
         [`NiftiRASDisplacementField`][] reads. FSL intent codes are left
         to the FSL readers, which decode them.
+
+        A `VECTOR` file in ITK's layout is also claimed with certainty by
+        the ITK displacement reader, which reads its vectors as LPS,
+        unless its intent name is `"Mapping"` -- which SPM and this
+        reader write and ITK never does. A `VECTOR` file without that
+        name says nothing of the frame of its vectors, so the two tie
+        and a hint decides. See
+        [`brainhops.io.transformations.itk.nifti`][].
         """
         intent = _nifti_intent(header)
         if intent == _NIFTI_INTENT_VECTOR:

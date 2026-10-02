@@ -140,8 +140,11 @@ Intent code of a generic vector image.
 
 The NIfTI-1 standard reserves it "for any other type of vector" than a
 displacement. brainhops writes its fields of RAS coordinates with it,
-as SPM writes its `y_` deformations (coordinate maps). It says nothing
-about the frame its vectors are in.
+as SPM writes its `y_` deformations (coordinate maps), and ITK writes it
+for every vector image unless told otherwise, so it is also the code of
+ITK's (LPS) displacement fields. It says nothing about the frame its
+vectors are in; the intent name `"Mapping"` (see below) marks the RAS
+coordinate maps.
 """
 
 _NIFTI_INTENT_NAME_MAPPING = "Mapping"
