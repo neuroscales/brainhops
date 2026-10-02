@@ -351,45 +351,69 @@ Answer to issue question 5. Two models were weighed:
   codec decodes the record into the common fields once. On write the
   record is the base and the common fields are encoded over it.
 
-**Decision: overlay, with a change-detecting write.** A common field is
-written over the record only when it *differs* from what the current
-record decodes to:
+**Decision: overlay, with a change-detecting write.** On read, the
+codec decodes the record into the common fields and keeps a deep copy
+of what it decoded as the *snapshot*. On write, a common field is
+encoded over the record only when it differs from the snapshot:
 
 ```python
+_decoded: tx.Dict[str, tx.Any] = Field(Factory(dict), repr=False, eq=False)  # snapshot
+
 def _write(self, *, image=None, report):
     raw = self._raw_or_default()
-    current = self._decode(raw, image=image)            # what the record says now
-    changed = {k: v for k, v in self._vocab_items() if v != current.get(k)}
+    changed = {k: v for k, v in self._vocab_items() if v != self._decoded.get(k)}
     return self._encode(raw, changed, image=image, report=report)
 ```
 
-Three cases follow, and they are the rule the user has to know: *a
-common field you set wins; a record edit survives unless you also set
-the common field; `None` means "whatever the record says"*.
+The record is never re-decoded at write time: the snapshot is the
+reference, and it says what the user was shown. An object built in
+memory or converted from another format has an empty snapshot (and a
+default record), so every non-`None` field counts as a change, which is
+what a fresh record needs. Four cases follow, and they are the rule the
+user has to know: *untouched means "keep the record's"; a common field
+you set wins; a common field you set to `None` is cleared in the
+record; edit the record only for what the vocabulary does not cover*.
 
 1. Nothing touched after read: `changed` is empty, the record is written
    as read (faithful round trip, no encode at all).
 2. The user edits the record (`metadata.raw["descrip"] = ...`): the
-   decoded `description` now differs from the stale common field, so
-   the common field looks "changed" too. To break the tie the decoded
-   snapshot taken at read time is kept (`_decoded`, not a field): a
-   common field that still equals its read-time snapshot is *not* a
-   user change and does not win. So the record edit survives.
-3. The user sets the common field (snapshot differs): it wins, whatever
-   the record holds.
+   common field still equals its snapshot, so it is not a change and
+   the record edit survives.
+3. The user sets the common field: it differs from the snapshot and
+   wins, whatever the record holds.
+4. The user sets a common field to `None` after a read: it differs from
+   the snapshot, so `changed` carries `None` and `_encode` *clears* the
+   slot in the record. What clearing means is per format: NIfTI
+   `descrip = ""`, `slice_code = 0` (with `slice_start/end/duration`),
+   `cal_min = cal_max = 0`; a keyval/keyvalue/attribute key is removed;
+   LTA comments are dropped. Without this a user could never erase a
+   value, and `derive()` could not invalidate one (section 9). It is
+   the same rule as `extra[key] = None` removing a key (today's MRtrix
+   and NRRD rule), so there is no second sentinel.
 
-This keeps "the common field is the last word" and the snapshot costs
-one small dict per instance. Setting a common field to `None` after a
-read means "drop my value, keep the record's", which is case 2 again.
-`extra` follows the same rule against the format's free-form store,
-with a key set to `None` removing it (today's MRtrix and NRRD rule).
+`extra` is compared key by key against its snapshot in the same way.
+
+**Snapshot lifetime.** `_decoded` is a real `Magic` field (private name,
+like `Transformation._input`), excluded from `repr` and `eq` and never
+set by users, so it survives everything the record survives:
+`replace()` and `copy` carry it (a `replace(description="x")` therefore
+changes exactly one field), pickling keeps it, and same-format
+`from_instance` copies it next to `raw`. Cross-format `from_instance`
+resets it to empty next to the reset `raw`, and `derive()` keeps it
+next to the kept `raw` (section 9). It is filled once, by the reader,
+with `copy.deepcopy` of the decoded values (the `extra` dict and the
+tuples in it are mutable or shared; the nibabel header is in `raw`, not
+in the snapshot, and needs no copy). Losing it is therefore never
+expected; if it ever is empty with a non-default record (a hand-built
+instance), the behaviour degrades to the plain overlay, which is still
+correct, only less faithful to record edits.
 
 Codec hooks on the subclass, both private:
 
 ```python
 @classmethod
 def _decode(cls, raw, *, image=None) -> dict: ...        # record -> common fields
-def _encode(self, raw, changed: dict, *, image=None, report) -> raw: ...
+def _encode(self, raw, changed: dict, *, image=None, report) -> raw: ...  # None in `changed` clears
 ```
 
 `image=` (or the transformation) is passed for the fields that need the
@@ -441,7 +465,7 @@ Answer to issue question 3. Conversion is the data model's own path:
 `TargetMetadata.from_other(source)` → `from_instance`, as for images.
 `FormatMetadata.from_instance` does, in order:
 
-1. Reset `raw` to the target's default (never copied across formats;
+1. Reset `raw` and the snapshot to the target's defaults (never copied across formats;
    copied as-is when `isinstance(other, cls)`, exactly like
    `_foreign_format_fields`).
 2. For each vocabulary field: source `UNSUPPORTED` → `None`; target
@@ -565,8 +589,19 @@ def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
   indices) or cleared when the volume count changed and no selection is
   known. This is today's AFNI `_PER_BRICK` and NRRD `_PER_AXIS` rule,
   made generic.
-- `extra` is kept verbatim; nothing in it is understood. `raw` is
-  dropped (a derived object is no longer that file).
+- `extra` is kept verbatim; nothing in it is understood.
+- `raw` and the snapshot are **kept**, so a same-format read, resample,
+  save keeps extensions, `aux_file` and the rest of the record. The
+  fields `derive` clears are set to `None` on the new object, which
+  differs from the snapshot, so the write *clears* them in the record
+  (case 4 of section 6): NIfTI `slice_code` goes to 0 after a
+  resampling, the keyval `SliceTiming` is removed. Record content that
+  is grid- or volume-bound but outside the vocabulary (NIfTI
+  `slice_start/end`, AFNI `TAXIS_OFFSETS` and the `_PER_GRID`/
+  `_PER_BRICK` attributes, NRRD `_PER_AXIS` fields) is scrubbed by a
+  per-format hook, `_derive_raw(raw, *, grid_changed, volumes)`, which
+  is where today's AFNI and NRRD rules move. Without both, case 1 would
+  write stale slice timing from an untouched record.
 
 Where it is called:
 
@@ -760,7 +795,7 @@ for a JSON-capable node.
 | Format | `raw` | `supports=` (highlights) | `extra` store / notes |
 |---|---|---|---|
 | MGH | `MghStruct(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag) | none |
-| AFNI | `AfniHeader` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `derive` |
+| AFNI | `AfniHeader` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `_derive_raw` |
 | TIFF/OME/ImageJ | `TiffStruct` (renamed) + `ome_xml`/ImageJ dict | `name`, `description`, `generated_by`, `creation_time`, `manufacturer*`, `channels` (per instance by dialect) | ImageJ extras or plain tags; OME-XML round-trips whole, `_encode` patches `Name`/`Channel` only |
 | Pillow | `dict(info)` | `description`, `creation_time` | text chunks, `exif`, `icc_profile` |
 | OpenSlide (read-only) | — | `description`, `manufacturer`, `objective_magnification` | `properties` |
@@ -842,7 +877,7 @@ pickling, `Maybe` conversion, constructor refusal); `supports=` →
 `unsupported_fields` and per-instance `supports()`; `from_instance`
 loss accounting on two synthetic formats; policies (`ignore`/`warn`/
 `raise`, one warning per conversion); the change-detecting write
-(cases 1-3 of section 6); `derive` for each scope and for a level;
+(cases 1-4 of section 6, including clearing); `derive` for each scope and for a level;
 sidecar import/export with unknown keys. Each format PR adds: (a)
 decode assertions on an existing fixture; (b) same-format round trip
 comparing `raw` (byte-exact where the format already promises it: M3Z,
@@ -878,7 +913,7 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   `__post_init__` where the capability is per-instance; refused at
   construction, reported at write when assigned; never copied across.
 - **M6** Overlay with change detection: a common field wins only when
-  it differs from its read-time snapshot; record edits survive. The
+  it differs from its read-time snapshot (a `Magic` field that survives `replace`/`derive`); `None` clears the slot; record edits survive. The
   record field is `raw`, with a per-format read alias. Geometry-derived
   fields (`derived=`) are read-only for that format and reported as
   `approximated` when they disagree with the data model.
