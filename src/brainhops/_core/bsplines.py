@@ -1,7 +1,6 @@
 # stdlib
 import functools
 import itertools
-from numbers import Integral
 from types import ModuleType
 
 # dependencies
@@ -16,29 +15,6 @@ from brainhops.backends import (
     get_array_backend,
     get_ndimage_backend,
 )
-
-
-def refuse_order(kwargs: tx.Mapping[str, tx.Any]) -> None:
-    """Refuse a spline degree passed as `order`, its name before #283.
-
-    Only an integer is refused with a pointer to `degree`: any other
-    `order` is left to the caller, which refuses it as the unknown
-    keyword it is.
-    """
-    order = kwargs.get("order", None)
-    if isinstance(order, Integral) and not isinstance(order, bool):
-        raise TypeError("`order` was renamed to `degree` (#283)")
-
-
-def degree_not_order(func: tx.Callable) -> tx.Callable:
-    """Make `func` refuse `order=`, the name of `degree` before #283."""
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs) -> tx.Any:
-        refuse_order(kwargs)
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:

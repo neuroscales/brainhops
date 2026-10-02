@@ -19,7 +19,6 @@ from numbers import Integral, Real
 import typing_extensions as tx
 
 # core
-from brainhops._core.bsplines import refuse_order
 from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
 
 # api
@@ -190,14 +189,6 @@ class TransformationField(ConcreteTransformation):
             """
         ),
     ] = False
-
-    # --- construction -------------------------------------------------
-
-    def __new__(cls, *args, **kwargs) -> tx.Self:
-        # `degree` was called `order` before #283; a field has no memory
-        # order of its own, so an integer `order` can only mean `degree`.
-        refuse_order(kwargs)
-        return super().__new__(cls)
 
 
 class DisplacementField(TransformationField):

@@ -8,7 +8,6 @@ from bagof.hints.numpy import DTypeLike
 
 # core
 from brainhops._core.affines import axis_scales
-from brainhops._core.bsplines import degree_not_order
 from brainhops._core.typing import ArrayProtocol
 
 # internals
@@ -156,7 +155,6 @@ class SingleScaleImage(Image):
 
     # --- methods ------------------------------------------------------
 
-    @degree_not_order
     def reslice(
         self,
         geometry: tx.Optional[
@@ -401,7 +399,6 @@ class MultiScaleImage(Image):
             )
         )
 
-    @degree_not_order
     def reslice(
         self,
         geometry: tx.Optional[
