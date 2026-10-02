@@ -1,4 +1,5 @@
 # stdlib
+import warnings
 from pathlib import Path
 
 # dependencies
@@ -469,7 +470,9 @@ def test_composite_warp_computes() -> None:
     transform = io.load(data_dir / "itk_composite_displacement3d.h5")
     result = transform.compute()
     assert isinstance(result, xforms.Sequence)
-    # The affines on either side fold into one, leaving affine + field.
+    # The warp block applies first (ITK applies the last block of a
+    # composite first): the computed chain starts with its LPS-to-voxel
+    # affine and ends with the field.
     assert isinstance(result[0], xforms.Affine)
     ndim = transform[-1].ndim_input
     assert np.asarray(result[0].matrix).shape == (ndim, ndim + 1)
@@ -735,3 +738,233 @@ def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
     ]
     values = [getattr(axis.orientation, "value", None) for axis in system.axes]
     assert values[:3] == expected[:ndim]
+
+
+# ----------------------------------------------------------------------
+#   COMPOSITE ORDER
+# ----------------------------------------------------------------------
+#
+# ITK writes a `CompositeTransform` as a header block followed by its
+# queue, front to back, and `CompositeTransform::TransformPoint` applies
+# the queue back to front: a file `[Composite, T0, T1]` maps `x` to
+# `T0(T1(x))`. A brainhops `Sequence` lists its blocks in the order they
+# apply, so it reads `[T1, T0]`.
+
+#: Translate by `SHIFT`, then scale by `SCALE`: two blocks that do not
+#: commute, as `(class, parameters, fixed parameters)`.
+SHIFT = [10.0, -20.0, 30.0]
+SCALE = [2.0, 3.0, 4.0]
+COMPOSITE = [
+    ("CompositeTransform", [], []),
+    ("TranslationTransform", SHIFT, []),
+    ("ScaleTransform", SCALE, [0.0, 0.0, 0.0]),
+]
+POINTS = np.array([[1.0, 2.0, 3.0], [-4.0, 5.0, -6.0], [0.0, 0.0, 0.0]])
+
+
+def _itk_order(points: np.ndarray) -> np.ndarray:
+    """`T0(T1(x))`, worked by hand: scale first, then translate."""
+    return points * SCALE + SHIFT
+
+
+def _apply(transform: xforms.Transformation, points: np.ndarray) -> np.ndarray:
+    matrix = np.asarray(
+        transform.compute().to(xforms.Affine, lossy=True).matrix
+    )
+    return points @ matrix[:, :-1].T + matrix[:, -1]
+
+
+def _write_tfm(path: Path, blocks: list) -> Path:
+    lines = ["#Insight Transform File V1.0"]
+    for index, (name, parameters, fixed) in enumerate(blocks):
+        lines.append(f"#Transform {index}")
+        lines.append(f"Transform: {name}_double_3_3")
+        if name != "CompositeTransform":
+            lines.append("Parameters: " + " ".join(map(str, parameters)))
+            lines.append("FixedParameters: " + " ".join(map(str, fixed)))
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _write_h5(path: Path, blocks: list) -> Path:
+    """Write the layout of `itk::HDF5TransformIO`: one group per block,
+    named after its position."""
+    h5py = pytest.importorskip("h5py")
+    string = h5py.string_dtype("ascii")
+    with h5py.File(path, "w") as f:
+        f["ITKVersion"] = np.array([b"5.4.0"], dtype=string)
+        group = f.create_group("TransformGroup")
+        for index, (name, parameters, fixed) in enumerate(blocks):
+            node = group.create_group(str(index))
+            node["TransformType"] = np.array(
+                [f"{name}_double_3_3".encode()], dtype=string
+            )
+            if name != "CompositeTransform":
+                node["TransformParameters"] = np.asarray(
+                    parameters, dtype="f8"
+                )
+                node["TransformFixedParameters"] = np.asarray(
+                    fixed, dtype="f8"
+                )
+    return path
+
+
+WRITERS = {"tfm": _write_tfm, "h5": _write_h5}
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_composite_blocks_apply_in_itks_order(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE)
+    transform = io.transformations.load(path)
+    assert [block.type for block in transform] == [
+        itk.ItkTransformClass.ScaleTransform,
+        itk.ItkTransformClass.TranslationTransform,
+    ]
+    np.testing.assert_allclose(_apply(transform, POINTS), _itk_order(POINTS))
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_single_block_files_are_unchanged(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"single.{ext}", COMPOSITE[1:2])
+    (block,) = io.transformations.load(path)
+    assert block.type == itk.ItkTransformClass.TranslationTransform
+    np.testing.assert_allclose(_apply(block, POINTS), POINTS + SHIFT)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_plain_list_reads_its_first_transform(tmp_path, ext: str) -> None:  # noqa: ANN001
+    """Without a `CompositeTransform` header, each block is its own
+    transform, and only the first one is read, as SimpleITK's
+    `ReadTransform` does, with a warning."""
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    with pytest.warns(UserWarning, match="holds 2 transforms"):
+        (block,) = io.transformations.load(path)
+    assert block.type == itk.ItkTransformClass.TranslationTransform
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_plain_list_reads_the_given_position(tmp_path, ext: str) -> None:  # noqa: ANN001
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        first = io.transformations.load(path, position=0)
+        (block,) = io.transformations.load(path, position=1)
+    assert [b.type for b in first] == [
+        itk.ItkTransformClass.TranslationTransform
+    ]
+    assert block.type == itk.ItkTransformClass.ScaleTransform
+    np.testing.assert_allclose(_apply(block, POINTS), POINTS * SCALE)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_position_out_of_range_is_refused(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import ParserContentError
+
+    path = WRITERS[ext](tmp_path / f"list.{ext}", COMPOSITE[1:])
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    with pytest.raises(ParserContentError, match="no transform 2"):
+        format.from_file(path, position=2)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_composite_file_holds_one_transform(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import ParserContentError
+
+    path = WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE)
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        transform = format.from_file(path, position=0)
+    assert [block.type for block in transform] == [
+        itk.ItkTransformClass.ScaleTransform,
+        itk.ItkTransformClass.TranslationTransform,
+    ]
+    with pytest.raises(ParserContentError, match="has 1 transform"):
+        format.from_file(path, position=1)
+
+
+@pytest.mark.parametrize("ext", sorted(WRITERS))
+def test_a_composite_header_must_come_first(tmp_path, ext: str) -> None:  # noqa: ANN001
+    from brainhops.io.base.parsers import ParserContentError
+
+    blocks = [COMPOSITE[1], COMPOSITE[0], COMPOSITE[2]]
+    path = WRITERS[ext](tmp_path / f"misplaced.{ext}", blocks)
+    format = itk.tfm.TfmTransform if ext == "tfm" else itk.h5.H5Transform
+    with pytest.raises(ParserContentError, match="first block"):
+        format.from_file(path)
+
+
+def test_h5_blocks_are_read_by_number(tmp_path) -> None:  # noqa: ANN001
+    """h5py lists `/TransformGroup/10` before `/TransformGroup/2`; ITK
+    reads them by number."""
+    shifts = [[float(i), 0.0, 0.0] for i in range(12)]
+    blocks = [COMPOSITE[0]] + [
+        ("TranslationTransform", shift, []) for shift in shifts
+    ]
+    transform = io.transformations.load(_write_h5(tmp_path / "x.h5", blocks))
+    read = [list(np.asarray(block.parameters)) for block in transform]
+    assert read == shifts[::-1]
+
+
+@pytest.mark.parametrize("ext", ["tfm", "h5"])
+def test_composite_fixture_matches_hand_computed_itk_order(ext: str) -> None:
+    """`itk_composite_affine3d` holds `[Composite, Affine, Scale]`:
+    ITK scales first, then applies the affine about its center."""
+    if ext == "h5":
+        pytest.importorskip("h5py")
+    transform = io.transformations.load(
+        data_dir / f"itk_composite_affine3d.{ext}"
+    )
+    linear = np.array([[0.9, 0.1, 0.0], [-0.1, 0.9, 0.0], [0.0, 0.0, 1.0]])
+    center = np.full(3, 50.0)
+    translation = np.array([10.0, 5.0, 2.0])
+    scaled = POINTS * [1.2, 0.8, 1.0]
+    expected = (scaled - center) @ linear.T + center + translation
+    np.testing.assert_allclose(_apply(transform, POINTS), expected)
+    # One point, worked out on paper.
+    np.testing.assert_allclose(
+        _apply(transform, np.array([[1.0, 2.0, 3.0]])),
+        [[11.24, 16.32, 5.0]],
+    )
+
+
+@pytest.mark.parametrize("ext", ["tfm", "h5"])
+def test_composite_order_matches_simpleitk(tmp_path, ext: str) -> None:  # noqa: ANN001
+    sitk = pytest.importorskip("SimpleITK")
+    paths = [
+        WRITERS[ext](tmp_path / f"composite.{ext}", COMPOSITE),
+        data_dir / f"itk_composite_affine3d.{ext}",
+    ]
+    for path in paths:
+        reference = sitk.ReadTransform(str(path))
+        expected = np.array(
+            [reference.TransformPoint(tuple(map(float, p))) for p in POINTS]
+        )
+        transform = io.transformations.load(path)
+        np.testing.assert_allclose(_apply(transform, POINTS), expected)
+
+
+def test_composite_order_matches_nitransforms(tmp_path) -> None:  # noqa: ANN001
+    """nitransforms reverses an ITK `.h5` composite into its own
+    first-applied-first chain, in RAS."""
+    pytest.importorskip("h5py")
+    manip = pytest.importorskip("nitransforms.manip")
+    # nitransforms reads only affine and displacement blocks.
+    shift = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, *SHIFT]
+    scale = [SCALE[0], 0, 0, 0, SCALE[1], 0, 0, 0, SCALE[2], 0, 0, 0]
+    path = _write_h5(
+        tmp_path / "composite.h5",
+        [
+            COMPOSITE[0],
+            ("AffineTransform", shift, [0.0, 0.0, 0.0]),
+            ("AffineTransform", scale, [0.0, 0.0, 0.0]),
+        ],
+    )
+    chain = manip.TransformChain.from_filename(str(path), fmt="itk")
+    lps_to_ras = np.array([-1.0, -1.0, 1.0])
+    expected = (
+        np.asarray(chain.map(POINTS * lps_to_ras), dtype=float) * lps_to_ras
+    )
+    transform = io.transformations.load(path)
+    np.testing.assert_allclose(_apply(transform, POINTS), expected)
+    np.testing.assert_allclose(expected, _itk_order(POINTS))
