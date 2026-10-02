@@ -12,6 +12,7 @@ __all__ = [
 # internals
 from brainhops._core.dependencies import (
     HAS_NIBABEL,
+    HAS_OPENSLIDE,
     HAS_PILLOW,
     HAS_TIFFFILE,
     has_abczarr_driver,
@@ -50,6 +51,43 @@ if HAS_TIFFFILE:
     __all__ += ["tiff"]
 else:
     register_missing_format(["tiff", "tifffile"], "tifffile", "tiff")
+
+# Whole-slide images are read with OpenSlide (openslide-python and the
+# OpenSlide library). Without it, the TIFF-based slides are read by the
+# TIFF reader.
+if HAS_OPENSLIDE:
+    from . import openslide
+
+    __all__ += ["openslide"]
+else:
+    register_missing_format(
+        [
+            "openslide",
+            "aperio",
+            "svs",
+            "hamamatsu",
+            "ndpi",
+            "vms",
+            "vmu",
+            "mirax",
+            "mrxs",
+            "3dhistech",
+            "leica",
+            "scn",
+            "philips",
+            "ventana",
+            "bif",
+            "sakura",
+            "svslide",
+            "trestle",
+            "zeiss",
+            "czi",
+            "dicom-wsi",
+            "generic-tiff",
+        ],
+        "openslide-python",
+        "openslide",
+    )
 
 # The Zarr reader needs abczarr and at least one of its backend drivers.
 # abczarr alone cannot open a store, so the reader is registered only when a

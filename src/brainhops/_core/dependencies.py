@@ -14,6 +14,7 @@ _H5PY = ("h5", "h5py", "HAS_H5PY")
 _ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
 _PILLOW = ("pil", "PIL", "HAS_PILLOW")
 _TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
+_OPENSLIDE = ("openslide", "openslide", "HAS_OPENSLIDE")
 
 # ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
@@ -33,6 +34,7 @@ _LAZY_NAMES = (
     + _ABCZARR
     + _PILLOW
     + _TIFFFILE
+    + _OPENSLIDE
     + _NUMPY
     + _CUPY
     + _DASK
@@ -66,6 +68,9 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _TIFFFILE:
         return _lazy_import(globals(), name, "tifffile", "tifffile")
+
+    if name in _OPENSLIDE:
+        return _lazy_import(globals(), name, "openslide", "openslide")
 
     # ==================================================================
     #
@@ -192,7 +197,8 @@ def _lazy_import(
             leaf = importlib.import_module(name)
             if i == 0:
                 root = leaf
-    except ImportError:
+    except (ImportError, OSError):
+        # OSError: a binding whose native library is missing (OpenSlide).
         leaf = None
 
     # Only the root and the caller's chosen short name are recorded. The

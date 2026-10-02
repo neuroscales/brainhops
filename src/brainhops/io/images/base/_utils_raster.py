@@ -91,6 +91,7 @@ __all__ = [
     "physical_system",
     "resolve_pixel_size",
     "raster_transformations",
+    "level_transformation",
     "physical_pixel_size",
     "convert_length",
     "is_default_dpi",
@@ -692,6 +693,44 @@ def raster_transformations(
     )
     scale = [float(scales.get(axis.name, (1.0, None))[0]) for axis in axes]
     return [Scaling(input=pixel, output=physical, scale=scale)]
+
+
+def level_transformation(
+    axes: tx.Sequence[Axis],
+    scales: tx.Mapping[str, tx.Tuple[float, tx.Any]],
+    factors: tx.Sequence[float],
+    origin: tx.Mapping[str, float],
+) -> Transformation:
+    """
+    The pixel-to-physical transformation of one level of a pyramid.
+
+    `scales` are the sizes of the full-resolution pixels, by axis name
+    (`resolve_pixel_size`), `factors` the downsampling factor of the level
+    along each axis, and `origin` the position of the first
+    full-resolution pixel, by axis name, in the unit of its size.
+
+    A level downsampled by `f` along an axis has pixels `f` times as large
+    as the base level's, and covers the same extent: the edges of the
+    first and last pixels coincide. So its pixel `i` is centred on the
+    base level's (fractional) pixel `f * i + (f - 1) / 2`, and lands at
+    `size * (f * i + (f - 1) / 2) + origin`.
+    """
+    level_scales = {}
+    translation = []
+    for axis, factor in zip(axes, factors):
+        size, unit = scales.get(axis.name, (1.0, None))
+        level_scales[axis.name] = (size * factor, unit)
+        translation.append(
+            size * (factor - 1) / 2 + origin.get(axis.name, 0.0)
+        )
+    scaling = raster_transformations(axes, level_scales)[0]
+    if not any(translation):
+        return scaling
+    n = len(axes)
+    matrix = np.zeros((n, n + 1))
+    matrix[:, :-1] = np.diag(np.asarray(scaling.scale, dtype=float))
+    matrix[:, -1] = translation
+    return Affine(matrix=matrix, input=scaling.input, output=scaling.output)
 
 
 def _diagonal(xform: Transformation) -> tx.Optional[np.ndarray]:
