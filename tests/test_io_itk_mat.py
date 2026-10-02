@@ -19,7 +19,10 @@ from numpy.typing import ArrayLike
 # internals
 from brainhops import io
 from brainhops.datamodel import transformations as xforms
-from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.base.parsers import (
+    ParserContentError,
+    UnrepresentableTransformationError,
+)
 from brainhops.io.transformations import itk
 from brainhops.io.transformations.itk.mat import MatTransform
 
@@ -294,3 +297,185 @@ def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # n
     assert io.transformations.sniff(ants) is MatTransform
     assert type(io.transformations.load(flirt)) is FlirtTransform
     assert type(io.transformations.load(ants)) is MatTransform
+
+
+# ----------------------------------------------------------------------
+#   WRITING
+# ----------------------------------------------------------------------
+
+
+def _random_affine(ndim: int) -> np.ndarray:
+    rng = np.random.default_rng(ndim)
+    linear = np.eye(ndim) + rng.normal(size=(ndim, ndim)) * 0.1
+    shift = rng.normal(size=(ndim, 1)) * 10
+    return np.concatenate([linear, shift], axis=1)
+
+
+def _from_affine(matrix: np.ndarray) -> MatTransform:
+    return MatTransform([xforms.Affine(matrix)])
+
+
+@pytest.mark.parametrize("ndim", NDIMS)
+def test_a_fixture_is_written_back_byte_for_byte(ndim: int) -> None:
+    """A block read from a file keeps its class and its center, so it is
+    written back as ITK wrote it."""
+    content = _fixture(ndim).read_bytes()
+    assert MatTransform.from_bytes(content).to_bytes() == content
+
+
+@pytest.mark.parametrize("ndim", NDIMS)
+def test_an_affine_round_trips(ndim: int, tmp_path) -> None:  # noqa: ANN001
+    matrix = _random_affine(ndim)
+    path = tmp_path / "out0GenericAffine.mat"
+    _from_affine(matrix).save(path)
+    transform = io.load(path)
+    assert type(transform) is MatTransform
+    (block,) = transform.transformations
+    assert block.type == itk.ItkTransformClass.AffineTransform
+    assert block.precision == itk.ItkPrecision.Double
+    # A brainhops affine has no center: ITK's is the origin.
+    np.testing.assert_array_equal(np.asarray(block.fixed_parameters), 0)
+    np.testing.assert_allclose(_affine(transform), matrix, atol=1e-12)
+
+
+@pytest.mark.parametrize("ndim", NDIMS)
+@pytest.mark.parametrize("precision", ["double", "float"])
+@pytest.mark.parametrize("byteorder", ["<", ">"])
+def test_scipy_reads_what_is_written(
+    ndim: int, precision: str, byteorder: str
+) -> None:
+    """`scipy.io.loadmat` reads MATLAB v4 files, and sees the two
+    variables `MatlabTransformIO` writes, at their precision."""
+    from io import BytesIO
+
+    scipy_io = pytest.importorskip("scipy.io")
+    matrix = _random_affine(ndim)
+    content = _from_affine(matrix).to_bytes(
+        byteorder=byteorder, precision=precision
+    )
+    variables = scipy_io.loadmat(BytesIO(content))
+    name = f"AffineTransform_{precision}_{ndim}_{ndim}"
+    assert {name, "fixed"} <= set(variables)
+    parameters, fixed = variables[name], variables["fixed"]
+    # scipy keeps the byte order of the file.
+    itemsize = 8 if precision == "double" else 4
+    assert parameters.shape == (ndim * (ndim + 1), 1)
+    assert (parameters.dtype.kind, parameters.dtype.itemsize) == (
+        "f",
+        itemsize,
+    )
+    assert fixed.shape == (ndim, 1)
+    assert (fixed.dtype.kind, fixed.dtype.itemsize) == ("f", 8)
+    np.testing.assert_array_equal(fixed, 0)
+    np.testing.assert_allclose(
+        parameters[: ndim * ndim, 0].reshape(ndim, ndim),
+        matrix[:, :-1],
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        parameters[ndim * ndim :, 0], matrix[:, -1], rtol=1e-6
+    )
+
+    # And the reader reads it back the same.
+    (block,) = MatTransform.from_bytes(content).transformations
+    assert block.precision == precision
+    np.testing.assert_allclose(_affine(block), matrix, rtol=1e-6, atol=1e-6)
+
+
+def test_the_default_encoding_is_little_endian_double() -> None:
+    content = _from_affine(_random_affine(3)).to_bytes()
+    mopt, rows, cols, imagf, namlen = np.frombuffer(content, "<i4", count=5)
+    assert (mopt, rows, cols, imagf) == (0, 12, 1, 0)
+    assert content[20 : 20 + namlen] == b"AffineTransform_double_3_3\0"
+
+
+@pytest.mark.parametrize("precision", ["double", "float"])
+def test_a_centered_block_keeps_its_center(precision: str) -> None:
+    """A block that carries a center is written with it: the parameters
+    are not rewritten about the origin."""
+    parameters, fixed = _parameters(3)
+    block = itk.ItkStruct(
+        type="AffineTransform",
+        precision=precision,
+        ndim_input=3,
+        ndim_output=3,
+        parameters=parameters,
+        fixed_parameters=fixed,
+    )
+    content = MatTransform(transformations=[block]).to_bytes()
+    (back,) = MatTransform.from_bytes(content).transformations
+    assert back.precision == precision
+    np.testing.assert_allclose(np.asarray(back.fixed_parameters), fixed)
+    np.testing.assert_allclose(_affine(back), _expected(3), rtol=1e-6)
+
+
+def test_io_save_writes_a_mat_transform(tmp_path) -> None:  # noqa: ANN001
+    transform = io.load(_fixture(3))
+    path = tmp_path / "copy0GenericAffine.mat"
+    io.save(transform, path)
+    assert path.read_bytes() == _fixture(3).read_bytes()
+
+
+def test_a_concrete_transformation_is_written_as_an_affine() -> None:
+    shift = xforms.Translation([1.0, 2.0, 3.0])
+    content = MatTransform([shift]).to_bytes()
+    (block,) = MatTransform.from_bytes(content).transformations
+    assert block.type == itk.ItkTransformClass.AffineTransform
+    expected = np.concatenate([np.eye(3), [[1.0], [2.0], [3.0]]], axis=1)
+    np.testing.assert_allclose(_affine(block), expected)
+
+
+def test_what_itk_cannot_hold_is_refused(tmp_path) -> None:  # noqa: ANN001
+    from brainhops.datamodel import systems
+
+    matrix = _random_affine(3)
+    refused = [
+        # Not ITK's space.
+        MatTransform(
+            [
+                xforms.Affine(
+                    matrix, input=systems.RASmm(), output=systems.RASmm()
+                )
+            ]
+        ),
+        # Not square.
+        MatTransform([xforms.Affine(np.ones((2, 4)))]),
+        # A chain: ITK applies the blocks of a composite last to first.
+        MatTransform(
+            transformations=[xforms.Affine(matrix), xforms.Affine(matrix)]
+        ),
+        MatTransform(transformations=[]),
+    ]
+    path = tmp_path / "refused.mat"
+    for transform in refused:
+        with pytest.raises(UnrepresentableTransformationError):
+            transform.save(path)
+    # The content is built before the file is opened.
+    assert not path.exists()
+
+
+def test_written_files_are_read_by_itk(tmp_path) -> None:  # noqa: ANN001
+    sitk = pytest.importorskip("SimpleITK")
+    for ndim in NDIMS:
+        for precision in ("double", "float"):
+            matrix = _random_affine(ndim)
+            path = tmp_path / f"out{ndim}{precision}.mat"
+            _from_affine(matrix).save(path, precision=precision)
+            transform = sitk.ReadTransform(str(path))
+            point = np.arange(ndim, dtype=float) + 1
+            np.testing.assert_allclose(
+                transform.TransformPoint(tuple(point)),
+                matrix[:, :-1] @ point + matrix[:, -1],
+                rtol=1e-5,
+            )
+
+
+@pytest.mark.parametrize("ndim", NDIMS)
+def test_ants_use_inverse_is_the_inverse(ndim: int) -> None:
+    """`[file.mat,1]` in an ANTs transform list is `~io.load(file.mat)`."""
+    inverse = ~io.load(_fixture(ndim))
+    homogeneous = np.eye(ndim + 1)
+    homogeneous[:ndim] = _expected(ndim)
+    np.testing.assert_allclose(
+        _affine(inverse), np.linalg.inv(homogeneous)[:ndim], atol=1e-12
+    )
