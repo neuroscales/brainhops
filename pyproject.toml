@@ -31,9 +31,7 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 
 # io
 itk = ["h5py"]
-# 5.0 adds `to_stream`/`from_stream`, through which NIfTI is read from
-# and written to a remote path. It supports Python 3.8, which gets 5.2.
-nibabel = ["nibabel >= 5"]
+nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]

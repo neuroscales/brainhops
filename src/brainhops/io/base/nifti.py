@@ -5,6 +5,7 @@ __all__ = ["NiftiParser"]
 
 # stdlib
 import gzip
+import inspect
 from io import BytesIO
 from urllib.parse import urlsplit
 
@@ -380,10 +381,11 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         included when the stream allows reading it."""
         with preserve_position(fileobj):
             try:
-                obj = _nifti_from_stream(fileobj)
+                obj = _nifti_from_stream(fileobj, **kwargs)
             except Exception:
                 f = open_compressed(fileobj)
-                obj = nb.Nifti1Header.from_fileobj(f, **kwargs)
+                read = nb.Nifti1Header.from_fileobj
+                obj = read(f, **_accepted(read, kwargs))
         return cls.from_nibabel(obj)
 
     @classmethod
@@ -640,8 +642,63 @@ def _nifti_version(fileobj: tx.BinaryIO) -> int:
     return 2 if 540 in sizes else 1
 
 
+def _accepted(func: tx.Callable, kwargs: tx.Mapping[str, tx.Any]) -> dict:
+    """
+    The keyword arguments, of `kwargs`, that `func` accepts: all of them
+    if it takes `**kwargs`.
+
+    The options for reading a NIfTI file differ with how it is read: a
+    file `nibabel` opens by name takes `mmap` and `keep_file_open`, a
+    stream does not. Each `nibabel` call is handed the ones it knows.
+    """
+    Parameter = inspect.Parameter
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    if any(p.kind is Parameter.VAR_KEYWORD for p in parameters):
+        return dict(kwargs)
+    named = (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    names = {p.name for p in parameters if p.kind in named}
+    return {key: value for key, value in kwargs.items() if key in names}
+
+
+def _image_from_stream(
+    image_class: type, fileobj: tx.BinaryIO, **kwargs
+) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    """
+    Build a NIfTI image from an open, uncompressed file object.
+
+    `from_stream` arrived in nibabel 5.0; before, the stream goes in a
+    file map, as `nibabel` 4's own `from_bytes` does.
+    """
+    if hasattr(image_class, "from_stream"):
+        read = image_class.from_stream
+        return read(fileobj, **_accepted(read, kwargs))
+    file_map = image_class.make_file_map({"image": fileobj, "header": fileobj})
+    read = image_class.from_file_map
+    return read(file_map, **_accepted(read, kwargs))
+
+
+def _image_to_stream(
+    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
+) -> None:
+    """
+    Write a NIfTI image to an open file object, uncompressed.
+
+    `to_stream` arrived in nibabel 5.0; before, the stream goes in a file
+    map, as `nibabel` 4's own `to_bytes` does.
+    """
+    if hasattr(image, "to_stream"):
+        image.to_stream(fileobj)
+        return
+    image.to_file_map(
+        image.make_file_map({"image": fileobj, "header": fileobj})
+    )
+
+
 def _nifti_from_stream(
-    fileobj: tx.BinaryIO,
+    fileobj: tx.BinaryIO, **kwargs
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
     """
     Build a NIfTI-1 or NIfTI-2 image from an open, possibly gzipped, file
@@ -652,11 +709,17 @@ def _nifti_from_stream(
     reads the voxels from `fileobj` lazily, so the caller keeps it open
     for as long as they may be read. On failure, the stream is put back
     where it was.
+
+    `nibabel` cannot memory-map a stream: given `mmap`, it falls back to
+    reading the voxels, and `keep_file_open` has no effect on an open
+    file object.
     """
     image_class = _NIFTI_IMAGES[_nifti_version(fileobj)]
     start = _tell(fileobj)
     try:
-        return image_class.from_stream(open_compressed(fileobj))
+        return _image_from_stream(
+            image_class, open_compressed(fileobj), **kwargs
+        )
     except Exception:
         if start is not None:
             fileobj.seek(start)
@@ -670,22 +733,22 @@ def _load_nifti(
     Load a NIfTI image from a path, local or remote.
 
     A local path is handed to `nibabel`'s `from_filename`, which
-    memory-maps the voxels and reads them only when asked; `kwargs` (such
-    as `mmap`) go to it. A remote path is opened through its own backend
-    (universal-pathlib or cloudpathlib, through `bagof.paths`) and read
-    into memory: the array proxy reads long after this returns, when the
-    remote stream would be closed, and reading the voxels fetches them
-    all anyway. Options about how `nibabel` opens a file do not apply to
-    a stream, so `kwargs` are not used for it.
+    memory-maps the voxels and reads them only when asked. A remote path
+    is opened through its own backend (universal-pathlib or
+    cloudpathlib, through `bagof.paths`) and read into memory: the array
+    proxy reads long after this returns, when the remote stream would be
+    closed, and reading the voxels fetches them all anyway. Each is
+    handed the `kwargs` it accepts; see `_nifti_from_stream`.
     """
     if _is_local(file):
         filename = str(path.Path(file))
         with open(filename, "rb") as f:
             image_class = _NIFTI_IMAGES[_nifti_version(f)]
-        return image_class.from_filename(filename, **kwargs)
+        read = image_class.from_filename
+        return read(filename, **_accepted(read, kwargs))
     with path.Path(file).open("rb") as f:
         buffer = BytesIO(f.read())
-    return _nifti_from_stream(buffer)
+    return _nifti_from_stream(buffer, **kwargs)
 
 
 def _load_nifti_header(
@@ -715,15 +778,16 @@ def _save_nifti(
         image.to_filename(str(path.Path(file)))
         return
     # The name is read from the URL's text: a backend may not know it,
-    # and a query (`?token=...`) is not part of it. `to_stream` writes
-    # what it is given, so compression is ours to add.
+    # and a query (`?token=...`) is not part of it. A stream is written
+    # what it is given, so compression is ours to add. `open_compressed`
+    # only reads (`indexed_gzip` cannot write), so this is `gzip`'s.
     compress = urlsplit(str(file)).path.lower().endswith(".gz")
     with path.Path(file).open("wb") as f:
         if compress:
             with gzip.GzipFile(fileobj=f, mode="wb") as gz:
-                image.to_stream(gz)
+                _image_to_stream(image, gz)
         else:
-            image.to_stream(f)
+            _image_to_stream(image, f)
 
 
 def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:

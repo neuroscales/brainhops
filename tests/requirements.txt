@@ -1,5 +1,5 @@
 pytest
 pytest-cov
 h5py
-nibabel >= 5
+nibabel
 dask

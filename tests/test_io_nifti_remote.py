@@ -159,6 +159,65 @@ def test_a_nifti2_stream_is_read(remote) -> None:  # noqa: ANN001
     assert isinstance(header, nb.Nifti2Header)
 
 
+@pytest.mark.parametrize("ext", EXTENSIONS)
+def test_streams_are_read_and_written_without_the_stream_api(
+    remote,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+    ext: str,
+) -> None:
+    # `to_stream`/`from_stream` arrived in nibabel 5.0. Without them, a
+    # stream goes through a file map instead.
+    source, target = f"s3://bucket/in{ext}", f"s3://bucket/out{ext}"
+    remote.store[source] = _encode(ext)
+    for name in ("from_stream", "to_stream"):
+        for klass in nb.Nifti1Image.__mro__:
+            if name in vars(klass):
+                monkeypatch.delattr(klass, name)
+    assert not hasattr(nb.Nifti1Image, "from_stream")
+    assert not hasattr(nb.Nifti1Image, "to_stream")
+
+    image = NiftiImage.load(remote(source), mmap=False)
+    assert np.array_equal(np.asarray(image.data), DATA)
+    image.save(remote(target))
+
+    monkeypatch.undo()
+    written = remote.store[target]
+    assert (written[:2] == b"\x1f\x8b") == ext.endswith(".gz")
+    assert np.array_equal(np.asarray(_decode(written).dataobj), DATA)
+
+
+def test_reader_options_reach_only_the_calls_that_take_them(
+    remote,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    raw = _encode(".nii")
+    options = {"mmap": False, "keep_file_open": False}
+    # A stream cannot be memory-mapped: the options are not its own.
+    url = "s3://bucket/image.nii"
+    remote.store[url] = raw
+    image = NiftiImage.load(remote(url), **options)
+    assert np.array_equal(np.asarray(image.data), DATA)
+    image = NiftiImage.from_bytes(raw, **options)
+    assert np.array_equal(np.asarray(image.data), DATA)
+    # A local file takes them.
+    target = tmp_path / "image.nii"
+    target.write_bytes(raw)
+    image = NiftiImage.load(target, **options)
+    assert not isinstance(image.image.dataobj.get_unscaled(), np.memmap)
+
+
+def test_only_accepted_keywords_are_passed_on() -> None:
+    def named(a, *, b=None):  # noqa: ANN001, ANN202
+        pass
+
+    def anything(a, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        pass
+
+    kwargs = {"a": 1, "b": 2, "c": 3}
+    assert nifti_base._accepted(named, kwargs) == {"a": 1, "b": 2}
+    assert nifti_base._accepted(anything, kwargs) == kwargs
+
+
 # ----------------------------------------------------------------------
 #   A LOCAL PATH STILL GOES TO NIBABEL BY NAME
 # ----------------------------------------------------------------------
