@@ -14,6 +14,7 @@ from .convert import convert
 from .errors import ConversionError, LossyConversionError
 from .modes import ModeLike
 from .simplify import SimplifyLike
+from .utils import require_endomorphism
 
 # typing
 if tx.TYPE_CHECKING:
@@ -193,6 +194,166 @@ class Transformation(DataModelBase, reverse=True):
         `T.inverse()` is equivalent to `~T`.
         """
         raise NotImplementedError("Transformation.inverse()")
+
+    def square(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the square of this transformation, `self @ self`.
+
+        The square is the sequence `[self, self]`, which composes when it
+        is computed. It is defined for a transformation that maps a space
+        to itself.
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself.
+        """
+        require_endomorphism(self, "square")
+        obj = registries.SEQUENCE([self, self])
+        return obj.compute(**kwargs) if compute else obj
+
+    def sqrt(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the principal square root of this transformation.
+
+        The square root `S` of `T` is the transformation with
+        `S @ S == T`, the half-transformation. The principal one, whose
+        linear part has its eigenvalues in the open right half-plane, is
+        unique, and it is of the same kind as `T`: the square root of a
+        rotation is a rotation, of a translation a translation, of a
+        scaling a scaling, of an affine an affine. The square root of a
+        permutation is a [`Linear`][] transformation.
+
+        The square root is lazy: an [`Sqrt`][] wrapper is returned, and
+        computed when it is applied, computed or converted. A transformation
+        that needs no wrapper (an identity) is returned as is. A
+        [`Sequence`][] is reduced first (see [`Sequence.sqrt`][]).
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself, or, when
+            the result is computed, if its linear part has an eigenvalue on
+            the closed negative real axis (a reflection, a rotation by a
+            half turn, a singular matrix), so that it has no real principal
+            square root.
+        NotImplementedError
+            If brainhops does not compute the square root of this kind of
+            transformation. A displacement field has one only when it is an
+            exponential: `v.exp().sqrt()` is `exp(v / 2)`.
+        """
+        raise NotImplementedError(
+            f"The square root of a {type(self).__name__} is not implemented."
+        )
+
+    def exp(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the exponential of this transformation.
+
+        The transformation is read as the stationary velocity field of its
+        displacement, `v(x) = T(x) - x`, and its exponential is the flow of
+        that velocity at time one:
+
+        * a [`DisplacementField`][] is the velocity it stores, in the
+          voxels of its own grid, and it is integrated by scaling and
+          squaring (see [`Exp`][]);
+        * an affine `x -> M x + t` has the linear velocity
+          `x -> (M - I) x + t`, whose flow is the matrix exponential of
+          `[[M - I, t], [0, 0]]`. A scaling `s` gives the scaling
+          `exp(s - 1)`, a linear `M` gives `expm(M - I)`, and a
+          translation, the flow of a constant velocity, is its own
+          exponential. This is not the matrix exponential of the stored
+          matrix, which would not fix the identity.
+
+        This reading does not depend on the coordinates, so the
+        exponential of `P^-1 @ T @ P` is `P^-1 @ exp(T) @ P`, and an affine
+        has the same exponential as the field that samples it.
+
+        The exponential is lazy: an [`Exp`][] wrapper is returned, and
+        computed when it is applied, computed or converted. A
+        transformation that is its own exponential (an identity, a
+        translation) is returned as is. A [`Sequence`][] is reduced first
+        (see [`Sequence.exp`][]).
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself.
+        NotImplementedError
+            If brainhops does not compute the exponential of this kind of
+            transformation.
+        """
+        raise NotImplementedError(
+            f"The exponential of a {type(self).__name__} is not implemented."
+        )
+
+    def log(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the principal logarithm of this transformation.
+
+        The logarithm is the inverse of [`exp`][brainhops.datamodel.\
+transformations.Transformation.exp]: it is the transformation
+        `x -> x + v(x)`, where `v` is the principal stationary velocity
+        whose flow at time one is this transformation, so that
+        `T.log().exp()` is `T`. For an affine `T`, with `[[L, l], [0, 0]]`
+        the principal matrix logarithm of its homogeneous matrix, it is
+        `x -> (I + L) x + l`: a scaling `s` gives the scaling `1 + log(s)`,
+        and a translation is its own logarithm.
+
+        The logarithm is lazy: a [`Log`][] wrapper is returned, and
+        computed when it is applied, computed or converted. A
+        transformation that is its own logarithm (an identity, a
+        translation) is returned as is. A [`Sequence`][] is reduced first
+        (see [`Sequence.log`][]).
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself, or, when
+            the result is computed, if its linear part has an eigenvalue on
+            the closed negative real axis (a reflection, a rotation by a
+            half turn, a singular matrix), so that it has no real principal
+            logarithm.
+        NotImplementedError
+            If brainhops does not compute the logarithm of this kind of
+            transformation. A displacement field has one only when it is an
+            exponential: `v.exp().log()` is `v`.
+        """
+        raise NotImplementedError(
+            f"The logarithm of a {type(self).__name__} is not implemented."
+        )
 
     def to(
         self,

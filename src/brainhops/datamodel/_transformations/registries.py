@@ -21,6 +21,7 @@ import typing_extensions as tx
 if tx.TYPE_CHECKING:
     from .base import Transformation
     from .inverse import Inverse
+    from .operators import Exp, Log, Sqrt
     from .sequence import Sequence
 
 
@@ -44,6 +45,36 @@ INVERSE: tx.Optional[tx.Type["Inverse"]] = None
 def register_inverse(cls: tx.Type["Inverse"]) -> None:
     global INVERSE
     INVERSE = cls
+    return cls
+
+
+# --- operators --------------------------------------------------------
+
+SQRT: tx.Optional[tx.Type["Sqrt"]] = None
+"""Registered `Sqrt` class, to avoid cyclic imports."""
+
+EXP: tx.Optional[tx.Type["Exp"]] = None
+"""Registered `Exp` class, to avoid cyclic imports."""
+
+LOG: tx.Optional[tx.Type["Log"]] = None
+"""Registered `Log` class, to avoid cyclic imports."""
+
+
+def register_sqrt(cls: tx.Type["Sqrt"]) -> tx.Type["Sqrt"]:
+    global SQRT
+    SQRT = cls
+    return cls
+
+
+def register_exp(cls: tx.Type["Exp"]) -> tx.Type["Exp"]:
+    global EXP
+    EXP = cls
+    return cls
+
+
+def register_log(cls: tx.Type["Log"]) -> tx.Type["Log"]:
+    global LOG
+    LOG = cls
     return cls
 
 

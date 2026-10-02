@@ -56,13 +56,20 @@ from .concrete import (
     Translation,
     is_identity,
 )
-from .errors import ConversionError
+from .errors import ConversionError, DomainError
 from .inverse import Inverse
-from .meta import Bijection, Projection, SubspaceTransformation
+from .meta import (
+    Bijection,
+    Projection,
+    SubspaceTransformation,
+    _same_axes,
+)
 from .multiscale import MultiscaleField
+from .operators import Operation
 from .sequence import Sequence, _unnest
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
+from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
 NUMERIC = SimplifyPolicy.numeric
@@ -155,6 +162,38 @@ def _(t: Inverse, policy: SimplifyTable) -> Transformation:
     if isinstance(simplified, Identity):
         return Identity(input=t.input, output=t.output)
     return _with_endpoints(simplified.inverse(), t)
+
+
+@simplifier
+def _(t: Operation, policy: SimplifyTable) -> Transformation:
+    """Simplify what an operator wraps, without ever resolving it.
+
+    As for an inverse, resolving an operator is computation, which is
+    [`Operation.compute`][]'s job. Simplifying the forward can still
+    collapse the whole wrapper, because every operator fixes the identity,
+    or make it cheaper: the wrapper is rebuilt through the simplified
+    forward's own method, so it becomes the typed wrapper of whatever
+    family the forward turned into. A forward whose operator is refused is
+    left wrapped as it was, since a simplifier never raises.
+    """
+    if policy.resolve(t) is NONE:
+        return t
+    forward = t.forward
+    simplified = _simplify(forward, policy=policy)
+    if simplified is forward:
+        return t
+    if isinstance(simplified, Identity):
+        return Identity(input=t.input, output=t.output)
+    try:
+        rebuilt = getattr(simplified, t._method)()
+    except (DomainError, NotImplementedError):
+        return t
+    if type(rebuilt) is type(t):
+        # The wrapper's own options, such as the number of squaring steps of
+        # a field exponential, survive the rebuild.
+        options = {name: getattr(t, name) for name in t.metadata_fields}
+        rebuilt = rebuilt.to(**options) if options else rebuilt
+    return _with_endpoints(rebuilt, t)
 
 
 @simplifier
@@ -400,29 +439,6 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     if isinstance(first, Inverse) and first.forward is second:
         return True
     return False
-
-
-def _same_axes(t: SubspaceTransformation) -> bool:
-    # Whether a subspace reads and writes the same axes, in the same
-    # order -- i.e. whether it embeds its inner transform without also
-    # reindexing the coordinates.
-    if t.input_axes is None and t.output_axes is None:
-        return True
-    if t.input_axes is None or t.output_axes is None:
-        return False
-    return list(t.input_axes) == list(t.output_axes)
-
-
-def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
-    # Carry the endpoints a wrapper declared onto the transform that
-    # replaces it. Only the declared ones are read, so a derived endpoint
-    # stays derived.
-    edits = {}
-    if like._input is not None:
-        edits["input"] = like._input
-    if like._output is not None:
-        edits["output"] = like._output
-    return t.to(**edits) if edits else t
 
 
 def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:

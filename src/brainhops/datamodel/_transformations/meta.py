@@ -19,11 +19,12 @@ from brainhops.datamodel.systems import (
 # internals
 from . import registries
 from .base import Transformation
+from .concrete import Identity
 from .errors import CompositionError
 from .modes import ModeLike
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
-from .utils import axis_list
+from .utils import axis_list, require_endomorphism, with_endpoints
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
@@ -131,6 +132,39 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
             input_axes=self.output_axes,
             output_axes=self.input_axes,
         )
+
+    # A subspace transformation that reads and writes the same axes is
+    # `blockdiag(inner, I)`. Each operator fixes the identity and respects
+    # a block-diagonal structure, so it acts on the inner transformation
+    # alone and the subspace keeps its axes.
+
+    def sqrt(self, compute: bool = False, **kwargs) -> tx.Self:
+        return self._operate("sqrt", "square root", compute, kwargs)
+
+    def exp(self, compute: bool = False, **kwargs) -> tx.Self:
+        return self._operate("exp", "exponential", compute, kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> tx.Self:
+        return self._operate("log", "logarithm", compute, kwargs)
+
+    def _operate(
+        self,
+        method: str,
+        operator: str,
+        compute: bool,
+        kwargs: tx.Dict[str, tx.Any],
+    ) -> tx.Self:
+        require_endomorphism(self, operator)
+        if not _same_axes(self):
+            raise NotImplementedError(
+                f"The {operator} of a subspace transformation that reindexes "
+                "its axes is not implemented."
+            )
+        obj = self
+        if self.transformation is not None:
+            inner = getattr(self.transformation, method)()
+            obj = self.to(transformation=inner)
+        return obj.compute(**kwargs) if compute else obj
 
 
 class Projection(MetaTransformation):
@@ -241,6 +275,45 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         if compute:
             obj = obj.compute(**kwargs)
         return obj
+
+    def sqrt(self, compute: bool = False, **kwargs) -> tx.Self:
+        # The principal square root of an inverse is the inverse of the
+        # principal square root, so both directions are kept.
+        require_endomorphism(self, "square root")
+        forward, backward = self.forward, self.backward
+        obj = self.to(
+            forward=None if forward is None else forward.sqrt(),
+            backward=None if backward is None else backward.sqrt(),
+        )
+        return obj.compute(**kwargs) if compute else obj
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        # The exponential of the forward map. The backward map is not
+        # carried over: the inverse of `exp(T)` is not `exp(T^-1)`.
+        return self._forward_map("exponential").exp(compute, **kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        # As for `exp`, the logarithm of the forward map.
+        return self._forward_map("logarithm").log(compute, **kwargs)
+
+    def _forward_map(self, operator: str) -> Transformation:
+        require_endomorphism(self, operator)
+        if self.forward is not None:
+            return with_endpoints(self.forward, self)
+        if self.backward is not None:
+            return with_endpoints(self.backward.inverse(), self)
+        return Identity(input=self.input, output=self.output)
+
+
+def _same_axes(t: SubspaceTransformation) -> bool:
+    # Whether a subspace reads and writes the same axes, in the same
+    # order -- i.e. whether it embeds its inner transform without also
+    # reindexing the coordinates.
+    if t.input_axes is None and t.output_axes is None:
+        return True
+    if t.input_axes is None or t.output_axes is None:
+        return False
+    return list(t.input_axes) == list(t.output_axes)
 
 
 def _subsystem(
