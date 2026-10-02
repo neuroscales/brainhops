@@ -291,3 +291,55 @@ def test_a_spline_field_is_not_written(tmp_path) -> None:  # noqa: ANN001
     )
     with pytest.raises(WriterError, match="coefficients"):
         field.save(tmp_path / "spline.nii")
+
+
+# ----------------------------------------------------------------------
+#   IMMUTABILITY
+# ----------------------------------------------------------------------
+
+
+def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # noqa: ANN001
+    """Its slots name fixed positions in the chain, so the chain is a
+    tuple and the field cannot be edited in place."""
+    from bagof.magic import replace
+
+    field = io.transformations.load(standard_warp)
+    assert isinstance(field, xforms.ImmutableSequence)
+    assert isinstance(field.transformations, tuple)
+    ras2voxel = field.ras2voxel
+    with pytest.raises(TypeError):
+        field[0] = ras2voxel
+    with pytest.raises(TypeError):
+        del field[0]
+    with pytest.raises(TypeError):
+        field.insert(0, ras2voxel)
+    assert len(field) == 3
+    assert field.ras2voxel is ras2voxel
+
+    # A chain given as a list is frozen too.
+    built = NiftiRASDisplacementField(transformations=list(field))
+    assert isinstance(built.transformations, tuple)
+
+    # Rebuilding is how a field with other slots is made: here, one whose
+    # way back to RAS is shifted by 1 mm along x.
+    from brainhops.io.transformations.base.affines import VoxelToRAS
+
+    matrix = np.asarray(field.voxel2ras.matrix).copy()
+    matrix[0, 3] += 1.0
+    shifted = replace(
+        field,
+        transformations=(
+            field.ras2voxel,
+            field.displacement,
+            VoxelToRAS(matrix=matrix),
+        ),
+    )
+    assert type(shifted) is NiftiRASDisplacementField
+    assert isinstance(shifted.transformations, tuple)
+    assert field.ras2voxel is ras2voxel  # the original is untouched
+    points = _grid_points().reshape(-1, 3)
+    np.testing.assert_allclose(
+        _apply(shifted, points),
+        _apply(field, points) + [1.0, 0.0, 0.0],
+        atol=1e-4,
+    )

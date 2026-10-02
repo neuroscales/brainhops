@@ -149,7 +149,9 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
 
 @register_format
-class NiftiRASDisplacementField(_xforms.Sequence, NiftiBasedTransformation):
+class NiftiRASDisplacementField(
+    _xforms.ImmutableSequence, NiftiBasedTransformation
+):
     """
     Field of RAS displacements, stored in a NIfTI file.
 
@@ -160,8 +162,8 @@ class NiftiRASDisplacementField(_xforms.Sequence, NiftiBasedTransformation):
 
     A `DisplacementField` adds its values in the units of its own grid,
     so the field is the
-    [`Sequence`][brainhops.datamodel.transformations.Sequence] of three
-    named slots:
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]
+    of three named slots:
 
     | Slot           | Transformation                              |
     | -------------- | ------------------------------------------- |
@@ -258,7 +260,10 @@ class NiftiRASDisplacementField(_xforms.Sequence, NiftiBasedTransformation):
 
         It is built from the NIfTI header and data on first access, and
         cached. Assigning to it overrides the derived chain, which is how
-        a field that was not read from a file is built.
+        a field that was not read from a file is built. Either way it is a
+        tuple, and the field refuses in-place edits: its slots name fixed
+        positions in the chain, so a copy with other slots is made with
+        `replace`.
         """
         vox2ras = self._vox2ras()
         compact = vox2ras[:_NDIM]
