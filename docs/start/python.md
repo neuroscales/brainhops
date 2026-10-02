@@ -16,7 +16,7 @@ from brainhops import io
 
 src = io.load("source.nii.gz")  # -> Nifti1Image
 dst = io.load("dest.nii.gz")  # -> Nifti1Image
-aff = io.load("affine.lta")  # -> LTATransformationRAS2RAS
+aff = io.load("affine.lta")  # -> LTATransformation
 dsp = io.load("disp.nii.gz", hint="voxdisp")  # -> NiftiVoxelDisplacementField
 wrp = io.load("warp.nii.gz", hint="spmy")  # -> SPMCoordinatesField
 ```
@@ -26,7 +26,7 @@ Alternatively, the appropriate classes could have been used:
 ```python
 src = io.Nifti1Image.load("source.nii.gz")
 dst = io.Nifti1Image.load("dest.nii.gz")
-aff = io.LTATransformationRAS2RAS.load("affine.lta")
+aff = io.LTATransformation.load("affine.lta")
 dsp = io.NiftiVoxelDisplacementField.load("disp.nii.gz")
 wrp = io.SPMCoordinatesField.load("warp.nii.gz")
 ```
@@ -93,6 +93,19 @@ you mean:
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
 NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+```
+
+An LTA file says which coordinate systems its affine maps between, so a
+general `Affine` is written to one when its `input` and `output` say it
+too: both `RASmm` (or both `RSAmm`), or both the voxel or physical
+system of an LTA volume. An affine read from an LTA file is written back
+as it was read:
+
+```python
+from brainhops.datamodel.systems import RASmm
+
+io.save(Affine(matrix, input=RASmm(), output=RASmm()), "affine.lta")
+io.save(io.load("affine.lta"), "copy.lta")  # -> the same file
 ```
 
 ## Images Are Transformed Arrays
