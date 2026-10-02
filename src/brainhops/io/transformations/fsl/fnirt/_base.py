@@ -13,7 +13,11 @@ from brainhops.datamodel.images import Image
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.nifti import _nifti_intent, _NiftiObject
+from brainhops.io.base.nifti import (
+    _nifti_intent,
+    _nifti_vector_field,
+    _NiftiObject,
+)
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
@@ -288,12 +292,9 @@ class FnirtWarpField(
 
     def _raw_field(self) -> tx.Any:
         backend = get_array_backend(self.data)
-        field = backend.asarray(self.data)
         # A NIfTI vector field is often five-dimensional, with a singleton
         # axis before the three components. Collapse it to `(*grid, 3)`.
-        if field.ndim == 5 and field.shape[3] == 1:
-            field = field[:, :, :, 0, :]
-        return field
+        return _nifti_vector_field(backend.asarray(self.data))
 
     def _field_array(self, ref: _ImageGeometry) -> tx.Any:
         """The field array on its own grid, as scaled-mm displacements.

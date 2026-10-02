@@ -227,6 +227,48 @@ def test_an_spm_deformation_is_sampled_in_ras(
     assert np.all(reference <= high + 1e-3)
 
 
+def test_points_map_through_a_loaded_coordinates_field(tmp_path) -> None:  # noqa: ANN001
+    """
+    Points map through a loaded field of RAS coordinates, and through the
+    `rasfield` slot of an SPM `y_` field, to one RAS position each.
+
+    The field is a linear function of RAS, so trilinear sampling between
+    the nodes is exact. Its singleton axis was once kept, which mapped a
+    single point to a `(4, 1, 3)` array of wrong positions.
+    """
+    matrix = np.array([[1.1, 0.1, 0.0], [0.0, 0.9, -0.2], [0.1, 0.0, 1.05]])
+    shift = np.array([1.5, -2.0, 3.0])
+    values = (_grid_points() @ matrix.T + shift).astype("float32")
+    # Points inside the grid, off its nodes.
+    ras2vox = np.linalg.inv(VOX2RAS)
+    voxels = np.array([[1.3, 2.6, 4.1], [0.5, 0.5, 0.5], [2.9, 3.2, 1.7]])
+    points = voxels @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
+    np.testing.assert_allclose(
+        points @ ras2vox[:3, :3].T + ras2vox[:3, 3], voxels, atol=1e-12
+    )
+    expected = points @ matrix.T + shift
+
+    coords = io.transformations.load(
+        _write(tmp_path / "coords.nii.gz", values, VECTOR), "coordinates"
+    )
+    assert type(coords) is NiftiRASCoordinatesField
+    spm = io.transformations.load(
+        _write(tmp_path / "y_sub01.nii.gz", values, VECTOR)
+    )
+    assert type(spm) is SpmCoordinatesField
+    for field in (coords, spm.rasfield):
+        assert np.asarray(field.field).shape == (*SHAPE, 3)
+        one = _apply_coordinates(field, points[:1])
+        assert one.shape == (1, 3)
+        np.testing.assert_allclose(one, expected[:1], atol=1e-4)
+        many = _apply_coordinates(field, points)
+        assert many.shape == points.shape
+        np.testing.assert_allclose(many, expected, atol=1e-4)
+    mapped = _apply(spm, points)
+    assert mapped.shape == points.shape
+    np.testing.assert_allclose(mapped, expected, atol=1e-4)
+
+
 # ----------------------------------------------------------------------
 #   ROUND TRIPS
 # ----------------------------------------------------------------------
