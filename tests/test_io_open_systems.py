@@ -15,14 +15,17 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.axes import (  # noqa: E402
     Axis,
+    ChannelAxis,
     L,
     P,
     S,
     SpaceAxis,
+    TimeAxis,
 )
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.systems import (  # noqa: E402
     CoordinateSystem,
+    FArrayCoordinateSystem,
     LPSCoordinateSystem,
     VoxelCoordinateSystem,
 )
@@ -195,3 +198,67 @@ def test_the_pyramid_axes_are_an_axis_list() -> None:
     written = _pyramid(None)._write_axes(3)
     assert [axis.name for axis in written] == ["x", "y", "z"]
     assert _pyramid([...])._write_axes(2) == [Axis(), Axis()]
+
+
+# ----------------------------------------------------------------------
+#   MEMORY ORDER
+# ----------------------------------------------------------------------
+
+
+def test_a_nifti_voxel_space_is_f_ordered(tmp_path) -> None:  # noqa: ANN001
+    # NIfTI stores its array in F order, and nibabel reads it that way.
+    image = nb.Nifti1Image(np.zeros((4, 5, 6), dtype="float32"), np.eye(4))
+    nb.save(image, str(tmp_path / "a.nii"))
+    loaded = io.images.load(tmp_path / "a.nii")
+    for t in loaded.transformations:
+        assert t.input.order == "F"
+        assert isinstance(t.input, FArrayCoordinateSystem)
+
+
+def _zarr_voxel_space(tmp_path, axes: list) -> CS:  # noqa: ANN001
+    from brainhops.io.images.zarr import OmeZarrImage
+
+    shape = (4, 5, 6, 2, 3)[: len(axes)]
+    data = np.zeros(shape, dtype="float32")
+    image = SingleScaleImage(data=data, transformations=[])
+    OmeZarrImage(images=[image], axes=axes).save(str(tmp_path / "a.zarr"))
+    loaded = io.images.load(str(tmp_path / "a.zarr"))
+    return loaded.images[0].transformations[0].input
+
+
+@pytest.mark.parametrize(
+    "axes",
+    [
+        [SpaceAxis(name=n) for n in "xyz"],
+        [*(SpaceAxis(name=n) for n in "xyz"), TimeAxis(name="t")],
+        [*(SpaceAxis(name=n) for n in "xyz"), ChannelAxis(name="c")],
+    ],
+    ids=["xyz", "xyzt", "xyzc"],
+)
+def test_a_zarr_voxel_space_read_by_reversal_is_f_ordered(
+    tmp_path,  # noqa: ANN001
+    axes: list,
+) -> None:
+    # The store is C-ordered, and `(t, z, y, x)` is read as `(x, y, z, t)`:
+    # the reversal of the stored axes, so the first axis read changes
+    # fastest.
+    pytest.importorskip("zarr", minversion="3")
+    system = _zarr_voxel_space(tmp_path, axes)
+    assert system.order == "F"
+    assert isinstance(system, FArrayCoordinateSystem)
+
+
+def test_a_zarr_voxel_space_read_otherwise_has_no_order(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # `(t, c, z, y, x)` is read as `(x, y, z, t, c)`, which is not the
+    # reversal: the levels are neither C- nor F-ordered.
+    pytest.importorskip("zarr", minversion="3")
+    axes = [
+        *(SpaceAxis(name=n) for n in "xyz"),
+        TimeAxis(name="t"),
+        ChannelAxis(name="c"),
+    ]
+    system = _zarr_voxel_space(tmp_path, axes)
+    assert system.order is None
+    assert type(system) is CS

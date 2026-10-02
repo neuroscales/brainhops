@@ -335,7 +335,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             for axis in _nifti_to_axes(self.header)
             if axis.name is not None
         ]
-        return CoordinateSystem(axes=axes, name="voxel")
+        # A NIfTI array is F-ordered: the first axis changes fastest.
+        return CoordinateSystem(axes=axes, name="voxel", order="F")
 
     @system.setter
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:

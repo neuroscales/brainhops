@@ -239,8 +239,8 @@ def test_the_root_reaches_every_generic_system(
             _space(3, "sample"),
             cs.VoxelCoordinateSystem,
         ),
-        # The memory order is not written on the axes: the C- and
-        # F-ordered classes are reached from their ordered bases only.
+        # An ordered base reaches the classes of its order on the axes
+        # alone (see MEMORY ORDER below for the rest).
         (cs.CArrayCoordinateSystem, _plain(2), cs.CArrayCoordinateSystem2D),
         (cs.CArrayCoordinateSystem, _plain(3), cs.CArrayCoordinateSystem3D),
         (cs.FArrayCoordinateSystem, _plain(2), cs.FArrayCoordinateSystem2D),
@@ -431,3 +431,183 @@ def test_the_singleton_orientations_are_frozen() -> None:
     with pytest.raises(AttributeError):
         cs.RASmm().axes[0].orientation.value = "right-to-left"
     assert LeftToRight().value == "left-to-right"
+
+
+# ----------------------------------------------------------------------
+#   MEMORY ORDER
+# ----------------------------------------------------------------------
+# `order` selects the C- and F-ordered classes, together with the axes.
+# Every system has the field, so every class can be called with it.
+
+_ORDERED = [
+    cs.CArrayCoordinateSystem2D,
+    cs.CArrayCoordinateSystem3D,
+    cs.FArrayCoordinateSystem2D,
+    cs.FArrayCoordinateSystem3D,
+    cs.CPixelCoordinateSystem,
+    cs.FPixelCoordinateSystem,
+    cs.CVoxelCoordinateSystem,
+    cs.FVoxelCoordinateSystem,
+    cs.FRASCoordinateSystem,
+    cs.FLPSCoordinateSystem,
+    cs.FRSACoordinateSystem,
+    cs.CRASCoordinateSystem,
+    cs.CLPSCoordinateSystem,
+    cs.CRSACoordinateSystem,
+]
+
+
+def _bases(cls: type) -> tx.List[type]:
+    # Every system class above `cls`, the root included. A C-ordered
+    # anatomical grid lists its axes S, A, R, which its anatomical parent
+    # (a fixed R, A, S tuple) cannot hold, so that one parent cannot be
+    # called with them.
+    anatomical = {
+        cs.RASCoordinateSystem,
+        cs.LPSCoordinateSystem,
+        cs.RSACoordinateSystem,
+    }
+    c_ordered = cls.__name__.startswith("C") and cls.__mro__[1] in anatomical
+    return [
+        base
+        for base in cls.__mro__[1:]
+        if isinstance(base, type)
+        and issubclass(base, cs.CoordinateSystem)
+        and not (c_ordered and base in anatomical)
+    ]
+
+
+@pytest.mark.parametrize("cls", _ORDERED, ids=lambda c: c.__name__)
+def test_an_ordered_class_has_its_order(cls: type) -> None:
+    order = "C" if issubclass(cls, cs.CArrayCoordinateSystem) else "F"
+    assert cls().order == order and cls(axes=None).order == order
+    other = "F" if order == "C" else "C"
+    with pytest.raises((TypeError, ValueError)):
+        cls(order=other)
+
+
+@pytest.mark.parametrize("cls", _ORDERED, ids=lambda c: c.__name__)
+def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
+    default = cls()
+    bases = _bases(cls)
+    assert cs.CoordinateSystem in bases
+    assert cs.ArrayCoordinateSystem in bases
+    for base in bases:
+        built = base(axes=list(default.axes), order=default.order)
+        assert type(built) is cls, base.__name__
+
+
+@pytest.mark.parametrize(
+    "base, axes, order, expected",
+    [
+        (cs.CoordinateSystem, _plain(4), "C", cs.CArrayCoordinateSystem),
+        (
+            cs.CoordinateSystem,
+            [ax.Axis(), ...],
+            "F",
+            cs.FArrayCoordinateSystem,
+        ),
+        (cs.CoordinateSystem, _plain(2), "C", cs.CArrayCoordinateSystem2D),
+        (cs.CoordinateSystem, _plain(3), "F", cs.FArrayCoordinateSystem3D),
+        # The order says the axes index an array: a spatial axis whose
+        # unit is not given is enough for a pixel or a voxel grid.
+        (cs.CoordinateSystem, _space(2), "C", cs.CPixelCoordinateSystem),
+        (
+            cs.SpatialCoordinateSystem,
+            _space(2),
+            "F",
+            cs.FPixelCoordinateSystem,
+        ),
+        (cs.CoordinateSystem, _space(3), "C", cs.CVoxelCoordinateSystem),
+        (cs.ArrayCoordinateSystem, _space(3), "F", cs.FVoxelCoordinateSystem),
+        (cs.CoordinateSystem, _oriented("RAS"), "F", cs.FRASCoordinateSystem),
+        (
+            cs.CoordinateSystem,
+            _oriented("SPL", "sample"),
+            "C",
+            cs.CLPSCoordinateSystem,
+        ),
+        (
+            cs.ArrayCoordinateSystem,
+            _oriented("ASR"),
+            "C",
+            cs.CRSACoordinateSystem,
+        ),
+    ],
+)
+def test_the_order_and_the_axes_select_the_class(
+    base: type, axes: list, order: str, expected: type
+) -> None:
+    built = base(axes=axes, order=order)
+    assert type(built) is expected and built.order == order
+
+
+@pytest.mark.parametrize(
+    "base, axes, expected",
+    [
+        (cs.ArrayCoordinateSystem, _plain(3), cs.ArrayCoordinateSystem3D),
+        (cs.ArrayCoordinateSystem, [ax.Axis(), ...], cs.ArrayCoordinateSystem),
+        (cs.ArrayCoordinateSystem, _plain(4), cs.ArrayCoordinateSystem),
+        (cs.CoordinateSystem, _space(3, "sample"), cs.VoxelCoordinateSystem),
+        (cs.CoordinateSystem, _space(2, "sample"), cs.PixelCoordinateSystem),
+        (
+            cs.CoordinateSystem,
+            _oriented("RAS", "sample"),
+            cs.RASCoordinateSystem,
+        ),
+    ],
+)
+def test_an_unspecified_order_builds_the_generic_class(
+    base: type, axes: list, expected: type
+) -> None:
+    for built in (base(axes=axes), base(axes=axes, order=None)):
+        assert type(built) is expected and built.order is None
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: cs.RASmm(order="F"),
+        lambda: cs.LPSmm(order="C"),
+        lambda: cs.RSAmm(axes=_oriented("RSA", "mm"), order="F"),
+        lambda: cs.PhysicalCoordinateSystem(axes=[ax.Axis()], order="C"),
+        lambda: cs.SpatialCoordinateSystem(axes=_space(4), order="C"),
+    ],
+)
+def test_only_an_array_system_has_an_order(build: tx.Callable) -> None:
+    with pytest.raises(ValueError, match="indexes no array"):
+        build()
+
+
+def test_no_ordered_call_is_ambiguous() -> None:
+    kinds = [
+        _plain(2),
+        _plain(3),
+        _plain(4),
+        _space(2),
+        _space(3),
+        _space(2, "sample"),
+        _space(3, "sample"),
+        _oriented("RAS"),
+        _oriented("RAS", "sample"),
+        _oriented("SAR", "sample"),
+        _oriented("LPS"),
+        _oriented("RSA", "sample"),
+        [ax.Axis(), ...],
+    ]
+    roots = [
+        getattr(cs, name)
+        for name in cs.__all__
+        if isinstance(getattr(cs, name), type)
+        and issubclass(getattr(cs, name), cs.CoordinateSystem)
+    ]
+    for root in roots:
+        for axes in kinds:
+            for order in ("C", "F", None):
+                try:
+                    root(axes=axes, order=order)
+                except PolymorphError as e:  # pragma: no cover
+                    pytest.fail(f"{root.__name__}: {e}")
+                except (TypeError, ValueError):
+                    # A class refuses axes, or an order, it cannot hold.
+                    pass

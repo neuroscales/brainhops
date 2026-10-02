@@ -180,7 +180,9 @@ def _nifti_to_transformations(
 
     # >> Voxel space
     # `_nifti_to_axes` gives the axes of the voxel space: they count samples.
-    voxel_space = CoordinateSystem(name="voxel", axes=named_axes)
+    # A NIfTI array is stored, and read by nibabel, in F order: the first
+    # axis changes fastest.
+    voxel_space = CoordinateSystem(name="voxel", axes=named_axes, order="F")
 
     # >> Physical space
     # The same axes, measured in the header's units. An axis of another

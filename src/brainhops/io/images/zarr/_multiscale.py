@@ -261,9 +261,20 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             return CoordinateSystem(name=name, axes=axes)
 
         # A voxel space indexes an array, so its coordinates count samples.
+        # Its memory order is the one the levels are read in: the store is
+        # C-ordered (Zarr's layout), and each level is read through `perm`
+        # (`_axisorder.to_canonical`). When `perm` reverses the stored axes
+        # -- `(t, c, z, y, x)` read as `(x, y, z, c, t)`, or any store with
+        # at most one non-spatial axis -- the first axis read is the last
+        # stored, the fastest changing, so the level is F-ordered, like
+        # nibabel's. Any other permutation (a store with both a time and a
+        # channel axis is read `(x, y, z, t, c)`) is neither C nor F, and
+        # leaves the order unspecified.
+        reverses = list(perm) == list(range(ndim))[::-1]
         voxel_system = CoordinateSystem(
             name="voxel",
             axes=[replace(axis, unit=SampleUnit()) for axis in canonical_axes],
+            order="F" if reverses else None,
         )
         intrinsic_system = system(intrinsic_name(multiscale))
         systems = {name: system(name) for name in declared}

@@ -11,15 +11,33 @@ constraint of each class:
 | two or three, all measured in samples         | `ArrayCoordinateSystem*`   |
 | spatial *and* measured in samples             | `Pixel`/`VoxelCoordinate…` |
 | oriented right, anterior, superior (in order) | `RASCoordinateSystem`      |
-| ... and in a physical unit                    | `RASmm`                    |
+| ... and in millimetres                        | `RASmm`                    |
 
 and likewise for LPS and RSA. A class that inherits from two dispatch
 targets -- `SpatialCoordinateSystem3D` from `CoordinateSystem3D` and
 `SpatialCoordinateSystem` -- is selected on what both stand for, with no
-constraint of its own. The C- and F-ordered variants cannot be told apart
-from the axes (the memory order is not written on them), so they are
-reached only from their own ordered base: `FVoxelCoordinateSystem(axes=<RAS
-axes>)` builds an `FRASCoordinateSystem`.
+constraint of its own.
+
+The memory order of an array is not written on its axes, so the C- and
+F-ordered variants are selected on `order` (`"C"`, `"F"`, or `None` when
+it is not specified), together with the axes:
+
+| `order=`, and the axes are...           | ...so the system is            |
+| --------------------------------------- | ------------------------------ |
+| `"C"` / `"F"`, anything                 | `C`/`FArrayCoordinateSystem`   |
+| ... two or three                        | `C`/`FArrayCoordinateSystem2D/3D` |
+| ... two, spatial                        | `C`/`FPixelCoordinateSystem`   |
+| ... three, spatial                      | `C`/`FVoxelCoordinateSystem`   |
+| `"F"`, oriented R, A, S                 | `FRASCoordinateSystem`         |
+| `"C"`, oriented S, A, R (a C-ordered    | `CRASCoordinateSystem`         |
+| grid lists its axes z, y, x)            |                                |
+
+`order` is a field of every system, so every class can be called with it
+and pass it on: `CoordinateSystem(axes=<RAS axes>, order="F")` builds an
+`FRASCoordinateSystem`, and so do `ArrayCoordinateSystem`,
+`FArrayCoordinateSystem` and `FVoxelCoordinateSystem` called the same
+way. Only an array system has an order, so a system the axes and the
+order do not make one of (`RASmm(order="F")`) refuses it.
 
 Every row of the table says something about *all* the axes, so only a
 closed system is dispatched. An open system -- one whose axes hold `...`
@@ -1089,6 +1107,14 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
     """The axes of the coordinate system, in order. `[...]`, the default,
     says nothing about them; `axes=None` reads as the default."""
 
+    order: tx.Optional[tx.Literal["C", "F"]] = None
+    """The memory order of the array the coordinates index: `"C"` (the
+    last axis changes fastest), `"F"` (the first axis does), or `None`
+    when it is not specified. Only an [`ArrayCoordinateSystem`][] indexes
+    an array, so any other system refuses an order; the field is
+    declared here so that every class can be called with it, and pass it
+    on to the C- or F-ordered class it selects."""
+
     def __init_subclass__(cls, **kwargs: tx.Any) -> None:
         super().__init_subclass__(**kwargs)
         _bind_axes_default(cls)
@@ -1100,6 +1126,15 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             raise ValueError(
                 "The axes of a coordinate system hold at most one `...`, "
                 "which stands for all the axes about which nothing is known."
+            )
+        if self.order is not None and not isinstance(
+            self, ArrayCoordinateSystem
+        ):
+            raise ValueError(
+                f"A {type(self).__name__} indexes no array, so it has no "
+                f"memory order: order={self.order!r} is for a system whose "
+                f"coordinates index an array, an ArrayCoordinateSystem, "
+                f"which the order selects whenever the axes allow one."
             )
 
     # --- properties ---------------------------------------------------
@@ -1452,27 +1487,37 @@ class ArrayCoordinateSystem(CoordinateSystem):
     """A coordinate system for a multidimensional array.
 
     Its coordinates count samples, so the axes it builds by default carry
-    the sample unit (see [`SampleUnit`][]). By default, the array is
-    assumed C-ordered: the first axis is the slowest changing in memory,
-    and the last axis is the fastest changing.
+    the sample unit (see [`SampleUnit`][]). Its `order` is the memory
+    order of the array, `None` when it is not specified: an
+    `ArrayCoordinateSystem` says nothing about it.
 
     It is a base rather than a dispatch target: calling it with two or
     three axes builds the matching fixed-arity class, and a system of two
     or three sampled axes is selected as one of those from
-    [`CoordinateSystem`][] too.
+    [`CoordinateSystem`][] too. Calling any class with `order="C"` or
+    `order="F"` builds the C- or F-ordered class that the order and the
+    axes select (see the module).
     """
 
     name: tx.Optional[str] = "array"
 
 
-class CArrayCoordinateSystem(ArrayCoordinateSystem):
-    """A coordinate system for a C-ordered multidimensional array."""
+class CArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "C"}):
+    """A coordinate system for a C-ordered multidimensional array.
+
+    The first axis is the slowest changing in memory, and the last axis
+    the fastest changing. It is what `order="C"` selects.
+    """
 
     name: tx.Optional[str] = "carray"
 
 
-class FArrayCoordinateSystem(ArrayCoordinateSystem):
-    """A coordinate system for an F-ordered multidimensional array."""
+class FArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "F"}):
+    """A coordinate system for an F-ordered multidimensional array.
+
+    The first axis is the fastest changing in memory, and the last axis
+    the slowest changing. It is what `order="F"` selects.
+    """
 
     name: tx.Optional[str] = "farray"
 
@@ -1507,41 +1552,30 @@ class ArrayCoordinateSystem3D(
     axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
-# The memory order is not written on the axes, so nothing selects a C- or
-# F-ordered class but its own ordered base: `on=None` keeps them out of
-# the dispatch of every class above, and the decorator registers them
-# with that one base.
-@CArrayCoordinateSystem.register_polymorph(axes=_is2d)
-class CArrayCoordinateSystem2D(
-    CoordinateSystem2D, CArrayCoordinateSystem, on=None
-):
+# The C- and F-ordered classes below inherit from two dispatch targets --
+# a fixed-arity class, selected on its axes, and an ordered one, selected
+# on `order` -- so bagof selects them on what both stand for, from every
+# class above them: `CoordinateSystem(axes=<3 axes>, order="F")` is an
+# `FArrayCoordinateSystem3D`.
+class CArrayCoordinateSystem2D(CoordinateSystem2D, CArrayCoordinateSystem):
     """A coordinate system for a C-ordered array with two dimensions."""
 
     axes: _Axes[_2Axes] = (_dim(0), _dim(1))
 
 
-@CArrayCoordinateSystem.register_polymorph(axes=_is3d)
-class CArrayCoordinateSystem3D(
-    CoordinateSystem3D, CArrayCoordinateSystem, on=None
-):
+class CArrayCoordinateSystem3D(CoordinateSystem3D, CArrayCoordinateSystem):
     """A coordinate system for a C-ordered array with three dimensions."""
 
     axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
-@FArrayCoordinateSystem.register_polymorph(axes=_is2d)
-class FArrayCoordinateSystem2D(
-    CoordinateSystem2D, FArrayCoordinateSystem, on=None
-):
+class FArrayCoordinateSystem2D(CoordinateSystem2D, FArrayCoordinateSystem):
     """A coordinate system for an F-ordered array with two dimensions."""
 
     axes: _Axes[_2Axes] = (_dim(0), _dim(1))
 
 
-@FArrayCoordinateSystem.register_polymorph(axes=_is3d)
-class FArrayCoordinateSystem3D(
-    CoordinateSystem3D, FArrayCoordinateSystem, on=None
-):
+class FArrayCoordinateSystem3D(CoordinateSystem3D, FArrayCoordinateSystem):
     """A coordinate system for an F-ordered array with three dimensions."""
 
     axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
@@ -1560,7 +1594,16 @@ class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
 
 # A spatial system of sampled axes is both spatial and an array, and the
 # spatial reading wins: the pixel and voxel systems below are spatial
-# systems, and are reached through them.
+# systems, and are reached through them. The C- and F-ordered voxel
+# systems inherit from two dispatch targets -- a 3D spatial system and an
+# ordered 3D array -- and bagof selects them on what both stand for, from
+# every class above. A C- or F-ordered pixel system is a pixel system, and
+# a pixel system asks for axes that count samples, which an ordered one
+# does not (the order already says the axes index an array, so a spatial
+# axis whose unit is not given is enough): it stays out of the dispatch of
+# every class (`on=None`), and is registered by hand with its ordered
+# array base (on its spatial axes), and with the pixel and the 2D spatial
+# systems (on its order), through which every class above reaches it.
 class SpatialCoordinateSystem2D(
     CoordinateSystem2D, SpatialCoordinateSystem, on={}, priority=1
 ):
@@ -1608,28 +1651,33 @@ class VoxelCoordinateSystem(
 
 
 @CArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+@PixelCoordinateSystem.register_polymorph(order="C")
+@SpatialCoordinateSystem2D.register_polymorph(order="C")
 class CPixelCoordinateSystem(
     PixelCoordinateSystem, CArrayCoordinateSystem2D, on=None
 ):
     """A coordinate system for C-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "cpixel"
+    order: tx.Literal["C"] = "C"
     axes: _Axes[_2SpatialAxes] = (_space("j"), _space("i"))
 
 
 @FArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
+@PixelCoordinateSystem.register_polymorph(order="F")
+@SpatialCoordinateSystem2D.register_polymorph(order="F")
 class FPixelCoordinateSystem(
     PixelCoordinateSystem, FArrayCoordinateSystem2D, on=None
 ):
     """A coordinate system for F-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "fpixel"
+    order: tx.Literal["F"] = "F"
     axes: _Axes[_2SpatialAxes] = (_space("i"), _space("j"))
 
 
-@CArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
 class CVoxelCoordinateSystem(
-    SpatialCoordinateSystem3D, CArrayCoordinateSystem3D, on=None
+    SpatialCoordinateSystem3D, CArrayCoordinateSystem3D
 ):
     """A coordinate system for C-ordered 3D voxel grids."""
 
@@ -1637,9 +1685,8 @@ class CVoxelCoordinateSystem(
     axes: _Axes[_3SpatialAxes] = (_space("k"), _space("j"), _space("i"))
 
 
-@FArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
 class FVoxelCoordinateSystem(
-    SpatialCoordinateSystem3D, FArrayCoordinateSystem3D, on=None
+    SpatialCoordinateSystem3D, FArrayCoordinateSystem3D
 ):
     """A coordinate system for F-ordered 3D voxel grids."""
 
@@ -1804,20 +1851,23 @@ class RSAmm(
 # ----------------------------------------------------------------------
 # An F-ordered grid lists its axes x, y, z; a C-ordered one lists them z,
 # y, x. So an F-ordered RAS grid has axes that point R, A, S, and a
-# C-ordered one has axes that point S, A, R -- which is what each is
-# selected on, from its ordered voxel base. Like that base, they stay out
-# of the dispatch of every other class (`on=None`): the C-ordered ones
-# list their axes in an order their anatomical parent does not select.
+# C-ordered one has axes that point S, A, R.
+#
+# An F-ordered one is what both its parents stand for -- its orientation
+# and an F-ordered voxel grid -- so bagof selects it from every class
+# above it, with no constraint of its own. A C-ordered one lists its axes
+# in an order its anatomical parent does not select (S, A, R is not R, A,
+# S), so it cannot stand for what that parent does: it stays out of the
+# dispatch of every class (`on=None`), and is registered by hand with its
+# C-ordered voxel base, on its own axis order. Every class that reaches
+# that base reaches it too.
 
 
 def _sampled(axis: tx.Type[Axis], name: str) -> Axis:
     return axis(name=name, unit=_SAMPLE)
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RAS"))
-class FRASCoordinateSystem(
-    RASCoordinateSystem, FVoxelCoordinateSystem, on=None
-):
+class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):
     """Combines [`RASCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
@@ -1832,10 +1882,7 @@ class FRASCoordinateSystem(
     )
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("LPS"))
-class FLPSCoordinateSystem(
-    LPSCoordinateSystem, FVoxelCoordinateSystem, on=None
-):
+class FLPSCoordinateSystem(LPSCoordinateSystem, FVoxelCoordinateSystem):
     """Combines [`LPSCoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
@@ -1850,10 +1897,7 @@ class FLPSCoordinateSystem(
     )
 
 
-@FVoxelCoordinateSystem.register_polymorph(axes=_is_anat("RSA"))
-class FRSACoordinateSystem(
-    RSACoordinateSystem, FVoxelCoordinateSystem, on=None
-):
+class FRSACoordinateSystem(RSACoordinateSystem, FVoxelCoordinateSystem):
     """Combines [`RSACoordinateSystem`][] with [`FVoxelCoordinateSystem`][].
 
     This coordinate system describes an F-ordered voxel grid whose axes
@@ -1879,6 +1923,7 @@ class CRASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRAS"
+    order: tx.Literal["C"] = "C"
     axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR]] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisPA, "y"),
@@ -1897,6 +1942,7 @@ class CLPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cLPS"
+    order: tx.Literal["C"] = "C"
     axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL]] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisAP, "y"),
@@ -1915,6 +1961,7 @@ class CRSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRSA"
+    order: tx.Literal["C"] = "C"
     axes: _Axes[AxisTuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR]] = (
         _sampled(_axes.AxisPA, "z"),
         _sampled(_axes.AxisIS, "y"),
