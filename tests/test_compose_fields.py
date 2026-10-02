@@ -18,7 +18,11 @@ reference ``A(interp(f))``.
 import numpy as np
 import pytest
 
-from brainhops.backends import backend, get_array_backend
+from brainhops.backends import (
+    available_backends,
+    backend,
+    get_array_backend,
+)
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel._transformations.sequence import (
     normalize_modes,
@@ -64,6 +68,18 @@ QUERY_POINTS = np.array(
 # paired only with the cubic order.
 ORDER_COEFF = [(1, False), (3, False), (3, True)]
 
+ARRAY_BACKENDS = [
+    "numpy",
+    pytest.param(
+        "dask",
+        marks=pytest.mark.skipif(
+            "dask" not in available_backends(),
+            reason="dask and dask-image are not installed",
+        ),
+    ),
+]
+"""The array backends a fold is checked on: both now prefilter exactly."""
+
 
 def _evaluate(field, points):  # noqa: ANN001, ANN202
     """The coordinate map of ``field`` sampled at ``points``.
@@ -98,27 +114,24 @@ def test_fold_affine_into_field_keeps_interpolation_settings(
     assert folded.coeff == field.coeff
 
 
+@pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
 @pytest.mark.parametrize("order, coeff", ORDER_COEFF)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
     order: int,
     coeff: bool,
+    array_backend: str,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
 
-    # Pinned to the exact backend. Folding builds its node grid with
-    # `CartesianField`, so under the dask backend the folded field is a
-    # dask array and its spline prefilter is `dask_image`'s, which is
-    # applied patch-wise rather than along the whole axis. That is a
-    # deliberate trade -- a real IIR filter over a large volume is what
-    # dask exists to avoid -- and it costs about 3e-2 here, far above the
-    # tolerance this test is about. The arithmetic under test is the
-    # composer's, not the interpolator's, so it is checked where the
-    # interpolation is exact.
-    with backend("numpy"):
+    # Folding builds its node grid with `CartesianField`, so under the dask
+    # backend the folded field is a dask array, prefiltered chunk by chunk.
+    # That prefilter reads a halo around each chunk wide enough to match
+    # the whole-axis one, so the fold is exact on either backend.
+    with backend(array_backend):
         field = field_type(
             field=values, order=order, bound=BoundaryCondition.mirror
         ).to(coeff=coeff)

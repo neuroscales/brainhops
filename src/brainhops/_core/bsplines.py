@@ -11,45 +11,128 @@ from bagof.hints.array import ArrayLike, ArrayProtocol
 from brainhops._core.dependencies import da, dk, np
 from brainhops.backends import (
     best_backend,
+    copy_array,
     get_array_backend,
     get_ndimage_backend,
 )
 
+_FILTER_EXTENSION = {
+    "mirror": "mirror",
+    "constant": "mirror",
+    "grid-constant": "mirror",
+    "wrap": "mirror",
+    "reflect": "reflect",
+    "nearest": "reflect",
+    "grid-wrap": "grid-wrap",
+}
+"""
+How `scipy.ndimage.spline_filter` extends an array past its edges, per mode.
 
-def _spline_filter_1block(block: ArrayProtocol, **opts) -> ArrayProtocol:
-    """Prefilter a single materialized block with its own ndimage backend.
+Its coefficients are those of the array extended this way, to about 1e-15,
+except that it approximates the `reflect` extension near the edges of a
+short axis: by about 1e-4 at order five on five samples.
+"""
 
-    The block is concrete (numpy or cupy), so its ndimage package is the
-    non-dask one, whose `spline_filter` prefilters the whole block at once.
+
+def _spline_filter1d_block(
+    block: ArrayProtocol, order: int, dim: int
+) -> ArrayProtocol:
+    """Prefilter one materialized block along one axis."""
+    nd = get_ndimage_backend(block)
+    return nd.spline_filter1d(
+        block, order, axis=dim, output=np.float64, mode="mirror"
+    )
+
+
+def _merge_chunks(
+    chunks: tx.Sequence[int], minimum: int
+) -> tx.Tuple[int, ...]:
+    """Merge neighbouring chunks until each is at least `minimum` long.
+
+    The last chunk is merged into the one before it when it is short. A
+    single chunk shorter than `minimum` is left as it is.
     """
-    return get_ndimage_backend(block).spline_filter(block, **opts)
+    merged: tx.List[int] = []
+    for chunk in chunks:
+        if merged and merged[-1] < minimum:
+            merged[-1] += int(chunk)
+        else:
+            merged.append(int(chunk))
+    if len(merged) > 1 and merged[-1] < minimum:
+        merged[-2] += merged.pop()
+    return tuple(merged)
+
+
+def _dask_spline_filter1d(
+    input: ArrayProtocol, order: int, dim: int, extension: str
+) -> ArrayProtocol:
+    """Prefilter a dask array along one axis, chunk by chunk.
+
+    The axis is extended by the prefilter's halo (see [`_halo`][]) at
+    each end, the way scipy extends it: a few samples, read from the same
+    end of the axis or, for `grid-wrap`, from the other end. Each chunk is
+    then prefiltered with the halo of its neighbours, which dask shares
+    through the graph (`map_overlap`), and the extension is cut. Chunks
+    shorter than the halo are merged with their neighbours first, until
+    they are as long as it.
+    """
+    halo = _halo(order)
+    size = int(input.shape[dim])
+    index = (slice(None),) * dim
+    left = _fold(np.arange(-halo, 0), size, extension)
+    right = _fold(np.arange(size, size + halo), size, extension)
+    padded = da.concatenate(
+        [input[index + (left,)], input, input[index + (right,)]], axis=dim
+    )
+    # `map_overlap` needs chunks at least as long as the halo, and merges
+    # shorter ones itself -- into chunks as long as the whole axis. So
+    # each run of short chunks is merged with its neighbours here, and the
+    # two halos are one chunk each.
+    chunks = _merge_chunks(input.chunks[dim], halo)
+    if min(chunks) < halo:
+        chunks = (size,)
+    padded = padded.rechunk({dim: (halo, *chunks, halo)})
+    filtered = da.map_overlap(
+        _spline_filter1d_block,
+        padded,
+        depth={dim: halo},
+        boundary="none",
+        trim=True,
+        dtype=np.float64,
+        order=order,
+        dim=dim,
+    )
+    return filtered[index + (slice(halo, halo + size),)]
 
 
 def _spline_filter(
-    input: ArrayProtocol, nd: ModuleType, **opts
+    input: ArrayProtocol, nd: ModuleType, order: int, mode: str
 ) -> ArrayProtocol:
-    """Apply an ndimage spline prefilter, staying correct for a dask array
-    that is smaller than the prefilter's overlap depth.
+    """Apply an ndimage spline prefilter, chunk by chunk for a dask array.
 
-    `dask_image.spline_filter` prefilters through `map_overlap`, whose
-    overlap depth is the spline's precision support (14 samples for a
-    cubic). When an axis is shorter than that depth, dask cannot build the
-    overlap and raises `ValueError` while the graph is assembled -- even
-    when the array is a single chunk, since the depth still exceeds the
-    axis. An array that small gains nothing from chunking, so it is
-    prefiltered exactly as one block with the per-block (scipy or cupy)
-    filter, which is what `map_overlap` approximates and matches the
-    coefficients the non-dask backends compute.
+    `dask_image.spline_filter` prefilters through `map_overlap` with an
+    overlap sized for a tolerance of 1e-8 -- its coefficients are off by
+    up to 1e-6 at order five -- refuses the `wrap` mode, and cannot build
+    the overlap when an axis is shorter than it. It is not used.
+
+    The prefilter is separable, so a dask array is prefiltered one axis at
+    a time (see [`_dask_spline_filter1d`][]), each chunk reading only the
+    halo of its neighbours along that axis. The result keeps the input's
+    chunks, never needs the whole array at once, and is scipy's to
+    `_PREFILTER_TOLERANCE`.
     """
-    if da is not None and isinstance(input, da.Array):
-        try:
-            return nd.spline_filter(input, **opts)
-        except ValueError:
-            single = input.rechunk(-1)
-            return single.map_blocks(
-                _spline_filter_1block, dtype="float64", **opts
-            )
-    return nd.spline_filter(input, **opts)
+    if da is None or not isinstance(input, da.Array):
+        return nd.spline_filter(input, order=order, mode=mode)
+    if int(order) not in _SPLINE_POLES:
+        raise RuntimeError("spline order not supported")
+    if mode not in _FILTER_EXTENSION:
+        raise ValueError(f"Unknown spline boundary mode {mode!r}.")
+    output = input.astype(np.float64)
+    for dim in range(input.ndim):
+        output = _dask_spline_filter1d(
+            output, int(order), dim, _FILTER_EXTENSION[mode]
+        )
+    return output.rechunk(input.chunks)
 
 
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
@@ -412,6 +495,37 @@ def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
     return _autoreshape(nd.map_coordinates)
 
 
+def _over_batch(
+    nx: ModuleType,
+    input: ArrayProtocol,
+    batch: tx.Tuple[int, ...],
+    func: tx.Callable[[ArrayProtocol], ArrayProtocol],
+    shape: tx.Tuple[int, ...],
+    output: tx.Optional[ArrayProtocol] = None,
+) -> ArrayProtocol:
+    """Apply `func` to each `input[index]` of a batch, into `(*batch, *shape)`.
+
+    A concrete array is filled item by item, into `output` when given. A
+    dask array is assembled by stacking the results instead: assigning one
+    dask array into another rebuilds the graph of every chunk it covers,
+    which takes minutes on a finely chunked array.
+    """
+    indices = itertools.product(*[range(s) for s in batch])
+    if da is not None and nx is da:
+        dtype = input.dtype
+        parts = [
+            nx.asarray(func(input[index])).astype(dtype) for index in indices
+        ]
+        if not batch:
+            return parts[0]
+        return nx.stack(parts).reshape(tuple(batch) + tuple(shape))
+    if output is None:
+        output = nx.empty_like(input, shape=tuple(batch) + tuple(shape))
+    for index in indices:
+        output[index] = func(input[index])
+    return output
+
+
 def pull(
     input: ArrayProtocol,
     coords: ArrayProtocol,
@@ -457,15 +571,18 @@ def pull(
     batch = input.shape[:-ndim]
     # Prepare for map_coordinates
     coords = nx.moveaxis(coords, -1, 0)
-    output = nx.empty_like(input, shape=batch + coords.shape[1:])
     mode, cval = _scipy_boundary(bound)
     order = int(order)
     opts = {"order": order, "mode": mode, "cval": cval, "prefilter": not coeff}
     # Interpolate each batch
     map_coordinates = _map_coordinates_for(nx, nd)
-    for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = map_coordinates(input[index], coords, **opts)
-    return output
+    return _over_batch(
+        nx,
+        input,
+        batch,
+        lambda x: map_coordinates(x, coords, **opts),
+        tuple(coords.shape[1:]),
+    )
 
 
 def pull_axes(
@@ -663,6 +780,10 @@ def coeff2value(
     array-like
         The array of values. Shape (*batch, *spatial)
     """
+    # Splines of order 0 and 1 interpolate their coefficients: the
+    # coefficients are the values.
+    if int(order) < 2:
+        return input if inplace else copy_array(input)
     # Get packages
     nx = get_array_backend(input)
     nd = get_ndimage_backend(nx)
@@ -679,14 +800,18 @@ def coeff2value(
     )
     grid = nx.stack(grid, axis=0)
     # Prepare for map_coordinates
-    output = nx.empty_like(input) if not inplace else input
     mode, cval = _scipy_boundary(bound)
     order = int(order)
     opts = {"order": order, "mode": mode, "cval": cval, "prefilter": False}
     map_coordinates = _map_coordinates_for(nx, nd)
-    for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = map_coordinates(input[index], grid, **opts)
-    return output
+    return _over_batch(
+        nx,
+        input,
+        batch,
+        lambda x: map_coordinates(x, grid, **opts),
+        tuple(input.shape[-ndim:]),
+        output=input if inplace else None,
+    )
 
 
 def coeff2value_field(
@@ -773,6 +898,10 @@ def value2coeff(
     array-like
         The array of spline coefficients. Shape (*batch, *spatial)
     """
+    # Splines of order 0 and 1 interpolate their coefficients: the
+    # coefficients are the values.
+    if int(order) < 2:
+        return input if inplace else copy_array(input)
     # Get packages
     nx = get_array_backend(input)
     nd = get_ndimage_backend(input)
@@ -789,12 +918,16 @@ def value2coeff(
     # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
     # exact for string bounds and consistent (if not a strict inverse) for
     # float bounds.
-    output = nx.empty_like(input) if not inplace else input
     mode = bound if isinstance(bound, str) else "constant"
     opts = dict(order=order, mode=mode)
-    for index in itertools.product(*[range(s) for s in batch]):
-        output[index] = _spline_filter(input[index], nd, **opts)
-    return output
+    return _over_batch(
+        nx,
+        input,
+        batch,
+        lambda x: _spline_filter(x, nd, **opts),
+        tuple(input.shape[-ndim:]),
+        output=input if inplace else None,
+    )
 
 
 def value2coeff_field(

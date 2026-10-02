@@ -20,15 +20,19 @@ than its window, wherever its points are.
 import numpy as np
 import pytest
 
+dask = pytest.importorskip("dask")
 da = pytest.importorskip("dask.array")
+pytest.importorskip("dask.optimization")
 pytest.importorskip("dask_image")
 
 import brainhops._core.bsplines as bsplines  # noqa: E402
 from brainhops._core.bsplines import (  # noqa: E402
     _SPLINE_POLES,
     _halo,
+    coeff2value,
     pull,
     pull_field,
+    value2coeff,
 )
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
@@ -263,7 +267,6 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
     chunk size, each reading its own window, rather than sampled as one
     block whose window would be the whole input.
     """
-    dask = pytest.importorskip("dask")
     axis = np.arange(64.0) + 100.0
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
     volume = da.random.default_rng(10).random(LARGE, chunks=100)
@@ -274,3 +277,85 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
     assert len(reads) > 1
     for block in reads:
         assert max(used.size for used in block) < 64 + 2 * _halo(3)
+
+
+# ----------------------------------------------------------------------
+#   CONVERTING VALUES TO SPLINE COEFFICIENTS
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("order", [2, 3, 5])
+@pytest.mark.parametrize(
+    "bound",
+    ["nearest", "reflect", "mirror", "grid-wrap", "wrap", 2.5],
+    ids=str,
+)
+@pytest.mark.parametrize("chunks", [(4, 5, 6), (2, 3, 3)], ids=["4", "2"])
+def test_dask_coefficients_are_scipys(
+    bound,  # noqa: ANN001
+    order: int,
+    chunks: tuple,
+) -> None:
+    """
+    A dask array is prefiltered chunk by chunk, keeps its chunks, and its
+    coefficients are scipy's -- including chunks shorter than the halo,
+    and the `wrap` mode, which `dask_image` refuses.
+    """
+    values = np.random.default_rng(11).standard_normal((2, 12, 14, 16))
+    expected = value2coeff(values, order, bound, ndim=3)
+    lazy = value2coeff(
+        da.from_array(values, chunks=(1, *chunks)), order, bound, ndim=3
+    )
+    assert lazy.chunks == da.from_array(values, chunks=(1, *chunks)).chunks
+    # scipy approximates its `reflect` extension -- `nearest` prefilters
+    # with it -- near the edges of a short axis.
+    atol = 1e-6 if bound in ("reflect", "nearest") else 1e-9
+    np.testing.assert_allclose(np.asarray(lazy), expected, atol=atol)
+
+
+@pytest.mark.parametrize("order", [2, 3, 5])
+@pytest.mark.parametrize("bound", ["reflect", "mirror", "grid-wrap"])
+def test_dask_coefficients_round_trip(order: int, bound: str) -> None:
+    values = np.random.default_rng(12).standard_normal((12, 14, 16))
+    lazy = da.from_array(values, chunks=5)
+    coeff = value2coeff(lazy, order, bound)
+    back = coeff2value(coeff, order, bound)
+    assert isinstance(back, da.Array)
+    np.testing.assert_allclose(np.asarray(back), values, atol=1e-9)
+
+
+def test_a_coefficient_chunk_reads_its_neighbours_only() -> None:
+    """
+    One chunk of coefficients depends on the input chunks within the
+    prefilter's halo of it, not on the whole array.
+    """
+    size = 25
+    assert size > _halo(3)
+    lazy = da.from_array(np.zeros((6 * size,) * 3), chunks=size)
+    coeff = value2coeff(lazy, 3, "mirror")
+    assert coeff.chunks == lazy.chunks
+    block = coeff.blocks[2, 2, 2]
+    graph = dict(block.__dask_graph__())
+    keys = list(dask.core.flatten(block.__dask_keys__()))
+    needed, _ = dask.optimization.cull(graph, keys)
+    inputs = {k for k in needed if isinstance(k, tuple) and k[0] == lazy.name}
+    assert inputs == {
+        (lazy.name, i, j, k)
+        for i in (1, 2, 3)
+        for j in (1, 2, 3)
+        for k in (1, 2, 3)
+    }
+
+
+@pytest.mark.parametrize("order", [0, 1])
+@pytest.mark.parametrize("lazy", [False, True], ids=["numpy", "dask"])
+def test_orders_zero_and_one_are_their_own_coefficients(
+    order: int, lazy: bool
+) -> None:
+    values = np.random.default_rng(13).standard_normal((5, 6, 7))
+    array = da.from_array(values, chunks=3) if lazy else values
+    for convert in (value2coeff, coeff2value):
+        out = convert(array, order, "mirror")
+        assert out is not array
+        np.testing.assert_array_equal(np.asarray(out), values)
+        assert convert(array, order, "mirror", inplace=True) is array
