@@ -75,11 +75,14 @@ Checked against the NiftyReg sources (KCL-BMEIS/niftyreg, commit
 __all__ = ["NiftyRegAffine"]
 
 # internals
+from brainhops._core.dependencies import HAS_NIBABEL
 from brainhops.io.base._dispatch import register_missing_format
 
 from ._affine import NiftyRegAffine
 
-try:
+# The affine is plain text; the fields and grids are NIfTI files, read
+# with nibabel, which is optional.
+if HAS_NIBABEL:
     from ._fields import (
         NiftyRegControlPointGrid,
         NiftyRegDeformationField,
@@ -101,7 +104,7 @@ try:
         "NiftyRegVelocityField",
         "NiftyRegVelocityGrid",
     ]
-except ImportError:  # nibabel is optional
+else:
     register_missing_format(
         [
             "niftyreg.cpp",

@@ -198,7 +198,10 @@ def voxel_grid_coordinates(
     Formats that store a field of world *positions* (an FSL absolute
     warp, a NiftyReg deformation field or control-point grid) are read
     as displacements by subtracting these, and written back by adding
-    them.
+    them. A `CoordinatesField` would hold the same map inside its grid,
+    but no boundary condition extends positions beyond the grid the way
+    these tools do -- by keeping the edge *displacement* -- while
+    `nearest` on a displacement field does.
 
     Parameters
     ----------
