@@ -22,6 +22,7 @@ import os
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
+from bagof.magic import KwOnly
 
 # core
 from brainhops._core import affines as _affines
@@ -606,12 +607,12 @@ class MrtrixWarpFull(
 
     HINTS = ("warpfull", "warp_full")
 
-    from_image: int = 1
+    from_image: KwOnly[int] = 1
     """Which image the warp moves: `1` (the default) maps image-2 points
     (or midway points, with `midway`) to image-1 points; `2` the other
     way. MRtrix's `-from`."""
 
-    midway: bool = False
+    midway: KwOnly[bool] = False
     """Whether the warp stops at the midway space (MRtrix's
     `-midway_space`), rather than mapping between the two images."""
 

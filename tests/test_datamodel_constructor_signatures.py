@@ -200,6 +200,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "TxtMatrixAffine",
         )
     },
+    "brainhops.io.transformations.mrtrix._linear": {
+        "MrtrixLinearTransform": ("matrix",),
+    },
+    "brainhops.io.transformations.mrtrix._warps": {
+        "MrtrixDeformationField": ("transformations", "header", "dataobj"),
+        "MrtrixDisplacementField": ("transformations", "header", "dataobj"),
+        "MrtrixWarp": ("header", "dataobj"),
+        "MrtrixWarpFull": ("transformations", "header", "dataobj"),
+    },
     "brainhops.io.transformations.nifti.affines": {
         "NiftiRASToVoxel": ("matrix", "image", "header"),
         "NiftiVoxelToRAS": ("matrix", "image", "header"),

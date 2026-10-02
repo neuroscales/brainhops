@@ -15,7 +15,7 @@ from collections import OrderedDict
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory
+from bagof.magic import Factory, KwOnly
 
 # datamodel
 from brainhops.datamodel import systems as _systems
@@ -114,10 +114,10 @@ class MrtrixLinearTransform(
     SEPARATORS: tx.ClassVar[tx.Optional[str]] = r"[\s,;]+"
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 20
 
-    _input: _systems.CoordinateSystem = _systems.RASmm()
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
-    _keyval: tx.Dict[str, str] = Factory(OrderedDict, repr=False)
+    _keyval: KwOnly[tx.Dict[str, str]] = Factory(OrderedDict, repr=False)
     """The `# key: value` comments of the file, written back."""
 
     @classmethod
