@@ -380,7 +380,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         included when the stream allows reading it."""
         with preserve_position(fileobj):
             try:
-                obj = _nifti_from_stream(fileobj, **kwargs)
+                obj = _nifti_from_stream(fileobj)
             except Exception:
                 f = open_compressed(fileobj)
                 obj = nb.Nifti1Header.from_fileobj(f, **kwargs)
@@ -609,58 +609,58 @@ def _is_local(file: path.FilenameLike) -> bool:
     return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
 
 
-def _first_readable(
-    fileobj: tx.BinaryIO, readers: tx.Sequence[tx.Callable[[tx.IO], tx.Any]]
-) -> tx.Any:
-    """
-    The first of `readers` that can read `fileobj`, gzipped or not.
+# A NIfTI image or header class, by NIfTI version.
+_NIFTI_IMAGES = {1: nb.Nifti1Image, 2: nb.Nifti2Image}
+_NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
 
-    Each reader is handed the stream from where it started, decompressed
-    if it is gzipped: a stream has no name for `nibabel` to tell a `.gz`
-    from, so the compression is sniffed from its magic bytes. If none
-    can read it, the first reader's error is raised. A stream that cannot
-    seek back gets only the first reader.
-    """
+
+def _tell(fileobj: tx.IO) -> tx.Optional[int]:
+    """The position of a stream, or `None` if it cannot seek back."""
     try:
-        start = fileobj.tell()
+        return fileobj.tell() if fileobj.seekable() else None
     except Exception:
-        readers, start = readers[:1], None
-    errors = []
-    for read in readers:
-        if start is not None:
-            fileobj.seek(start)
-        try:
-            return read(open_compressed(fileobj))
-        except Exception as e:
-            errors.append(e)
-    if start is not None:
-        fileobj.seek(start)
-    raise errors[0]
+        return None
+
+
+def _nifti_version(fileobj: tx.BinaryIO) -> int:
+    """
+    The NIfTI version of an open, possibly gzipped, file object: 2 if
+    its header size is that of NIfTI-2, else 1.
+
+    The stream is left where it was. One that cannot seek back is not
+    peeked at, and taken for NIfTI-1.
+    """
+    start = _tell(fileobj)
+    if start is None:
+        return 1
+    head = open_compressed(fileobj).read(4)
+    fileobj.seek(start)
+    # `sizeof_hdr`, in either byte order.
+    sizes = {int.from_bytes(head, order) for order in ("little", "big")}
+    return 2 if 540 in sizes else 1
 
 
 def _nifti_from_stream(
-    fileobj: tx.BinaryIO, **kwargs
+    fileobj: tx.BinaryIO,
 ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
     """
     Build a NIfTI-1 or NIfTI-2 image from an open, possibly gzipped, file
     object.
 
-    The image's array proxy reads the voxels from `fileobj` lazily, so
-    the caller keeps it open for as long as they may be read.
+    A stream has no name for `nibabel` to tell a `.gz` from, so the
+    compression is sniffed from its magic bytes. The image's array proxy
+    reads the voxels from `fileobj` lazily, so the caller keeps it open
+    for as long as they may be read. On failure, the stream is put back
+    where it was.
     """
-
-    def reader(image_class: type) -> tx.Callable[[tx.IO], tx.Any]:
-        def read(f: tx.IO) -> tx.Any:
-            # `from_file_map` wants `FileHolder`s, not raw file objects.
-            holder = nb.FileHolder(fileobj=f)
-            file_map = {"header": holder, "image": holder}
-            return image_class.from_file_map(file_map, **kwargs)
-
-        return read
-
-    return _first_readable(
-        fileobj, [reader(nb.Nifti1Image), reader(nb.Nifti2Image)]
-    )
+    image_class = _NIFTI_IMAGES[_nifti_version(fileobj)]
+    start = _tell(fileobj)
+    try:
+        return image_class.from_stream(open_compressed(fileobj))
+    except Exception:
+        if start is not None:
+            fileobj.seek(start)
+        raise
 
 
 def _load_nifti(
@@ -669,18 +669,23 @@ def _load_nifti(
     """
     Load a NIfTI image from a path, local or remote.
 
-    A local path is handed to `nibabel.load`, which memory-maps the
-    voxels and reads them only when asked. A remote path is opened
-    through its own backend (universal-pathlib or cloudpathlib, through
-    `bagof.paths`) and read into memory: the array proxy reads long
-    after this returns, when the remote stream would be closed, and
-    reading the voxels fetches them all anyway.
+    A local path is handed to `nibabel`'s `from_filename`, which
+    memory-maps the voxels and reads them only when asked; `kwargs` (such
+    as `mmap`) go to it. A remote path is opened through its own backend
+    (universal-pathlib or cloudpathlib, through `bagof.paths`) and read
+    into memory: the array proxy reads long after this returns, when the
+    remote stream would be closed, and reading the voxels fetches them
+    all anyway. Options about how `nibabel` opens a file do not apply to
+    a stream, so `kwargs` are not used for it.
     """
     if _is_local(file):
-        return nb.load(str(path.Path(file)), **kwargs)
+        filename = str(path.Path(file))
+        with open(filename, "rb") as f:
+            image_class = _NIFTI_IMAGES[_nifti_version(f)]
+        return image_class.from_filename(filename, **kwargs)
     with path.Path(file).open("rb") as f:
         buffer = BytesIO(f.read())
-    return _nifti_from_stream(buffer, **kwargs)
+    return _nifti_from_stream(buffer)
 
 
 def _load_nifti_header(
@@ -689,11 +694,10 @@ def _load_nifti_header(
     """Read the header of a NIfTI file at a path, local or remote,
     without reading its voxels."""
     if _is_local(file):
-        return nb.load(str(path.Path(file))).header
+        return _load_nifti(file).header
     with path.Path(file).open("rb") as f:
-        return _first_readable(
-            f, [nb.Nifti1Header.from_fileobj, nb.Nifti2Header.from_fileobj]
-        )
+        header_class = _NIFTI_HEADERS[_nifti_version(f)]
+        return header_class.from_fileobj(open_compressed(f))
 
 
 def _save_nifti(
@@ -703,20 +707,23 @@ def _save_nifti(
     Write a NIfTI image to a path, local or remote, gzipped when its name
     ends in `.gz`.
 
-    A local path is handed to `nibabel.save`, which picks the compression
-    from the extension. A remote path is opened through its own backend
-    and written the encoded bytes.
+    A local path is handed to `nibabel`'s `to_filename`, which picks the
+    compression from the extension. A remote path is opened through its
+    own backend, and the image written to the stream.
     """
     if _is_local(file):
-        nb.save(image, str(path.Path(file)))
+        image.to_filename(str(path.Path(file)))
         return
-    data = image.to_bytes()
     # The name is read from the URL's text: a backend may not know it,
-    # and a query (`?token=...`) is not part of it.
-    if urlsplit(str(file)).path.lower().endswith(".gz"):
-        data = gzip.compress(data)
+    # and a query (`?token=...`) is not part of it. `to_stream` writes
+    # what it is given, so compression is ours to add.
+    compress = urlsplit(str(file)).path.lower().endswith(".gz")
     with path.Path(file).open("wb") as f:
-        f.write(data)
+        if compress:
+            with gzip.GzipFile(fileobj=f, mode="wb") as gz:
+                image.to_stream(gz)
+        else:
+            image.to_stream(f)
 
 
 def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:

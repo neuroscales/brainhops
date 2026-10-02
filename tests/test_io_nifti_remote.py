@@ -193,6 +193,17 @@ def test_a_local_path_is_loaded_by_name(
         assert np.array_equal(np.asarray(image.data), DATA)
 
 
+@pytest.mark.parametrize("ext", EXTENSIONS)
+def test_a_local_nifti2_image_is_read(tmp_path, ext: str) -> None:  # noqa: ANN001
+    target = tmp_path / f"image2{ext}"
+    nb.save(nb.Nifti2Image(DATA, AFFINE), str(target))
+    image = NiftiImage.load(target)
+    assert isinstance(image.image, nb.Nifti2Image)
+    assert np.array_equal(np.asarray(image.data), DATA)
+    header = nifti_base._like_header(target)
+    assert isinstance(header, nb.Nifti2Header)
+
+
 def test_a_local_uncompressed_image_is_memory_mapped(tmp_path) -> None:  # noqa: ANN001
     target = tmp_path / "image.nii"
     target.write_bytes(_encode(".nii"))
