@@ -1,6 +1,7 @@
 # Design: vector objects (points, polylines, meshes)
 
-**Status:** design only, no code. Relates to #130 (general vector
+**Status:** design only, no code. Reviewed once (Fable); review
+findings are folded in. Relates to #130 (general vector
 formats), #175 (zarr-vectors) and the per-category format issues
 (points, streamlines, meshes). Decisions still open are listed under
 [Open questions](#open-questions).
@@ -46,14 +47,22 @@ The parts the vector API copies, from `datamodel/images.py` and
 | `MultiScaleImage` | `images` (levels) + transformations of the pyramid; `reslice` picks the level nearest to the target resolution |
 | `io.images.load/sniff` | format dispatch through `FileBasedImage` |
 
-The key observation that makes the vector model fit into the existing
-machinery: **a set of vertices is already a transformation the library
-knows.** An `(N, D)` vertex array is a `CoordinatesField` defined on a
-one-dimensional grid of `N` indices, mapping *vertex index* to *native
-coordinates*. Composing a native-to-world transformation with it gives
-the vertices in world space, and the composers that do this
-(`Affine @ CoordinatesField`, field-of-field sampling, ...) already
-exist. Moving vertices is composition, not a new code path.
+The observation that lets the vector model reuse the existing machinery:
+**a point array can be evaluated through the transformation composers.**
+The composers that apply a transformation to a `CoordinatesField`
+(`Affine @ CoordinatesField` is matrix arithmetic; the field composers
+call `pull_field(field, coords=...)`, which accepts any `(..., D)`
+coordinates) already compute `T(x)` for arbitrary points. A private
+helper, `_apply_to_points(T, points) -> points`, wraps the `(N, D)` array
+in a throw-away `CoordinatesField` (one-axis input system, `coeff=False`
+forced), composes, computes, and returns `.field`.
+
+The vertices are **never** stored or exposed as a `Transformation`. Much
+of the transformation code assumes a field is defined on a grid with as
+many axes as components (`_fields_as_identity`, `InverseCoordinatesField`
+mesh inversion, `order`/`bound`/`coeff` metadata, and spline prefiltering
+when `coeff` is set, which would run *along the vertex index*). Treating
+vertices as a transformation would leak all of that.
 
 ---
 
@@ -89,36 +98,55 @@ onto `PointCloud`, `Skeleton` (or `Polylines`) here.
 
 ### 2.1 Fields of a single-scale object
 
+Every type uses the same layout: vertices grouped into **pieces** by a
+CSR `offsets` array, an object id per piece, and (for types with
+explicit cells) cells grouped by piece the same way.
+
 ```python
 class SingleScaleVectors(Vectors):
-    vertices: Optional[ArrayProtocol]          # (N, D), native coordinates
+    vertices: Optional[ArrayProtocol]          # (N, D) float, native coordinates
+    offsets: Optional[ArrayProtocol] = None    # (P + 1,) CSR pieces over vertices
+    ids: Optional[ArrayProtocol] = None        # (P,) object id of each piece
     transformations: List[Transformation] = () # native -> world, last preferred
     vertex_attributes: Dict[str, ArrayProtocol] = {}   # each (N, ...)
-    cell_attributes:   Dict[str, ArrayProtocol] = {}   # each (M, ...)
-    object_attributes: Dict[str, ArrayProtocol] = {}   # each (P, ...)
+    piece_attributes:  Dict[str, ArrayProtocol] = {}   # each (P, ...)
     attribute_kinds:   Dict[str, AttributeKind] = {}   # see 4.4
+
+class _ExplicitCells(SingleScaleVectors):      # Skeleton, Mesh
+    cells: Optional[ArrayProtocol] = None      # (M, k) int, piece-local or global (below)
+    cell_offsets: Optional[ArrayProtocol] = None  # (P + 1,) CSR pieces over cells
+    cell_attributes: Dict[str, ArrayProtocol] = {}    # each (M, ...)
 ```
 
-and per type:
+| Class | A piece is | Cells |
+|---|---|---|
+| `PointCloud` | one point (`offsets = arange(N + 1)` by default) | none |
+| `Polylines` | one polyline run | implicit edges `i → i+1` inside the piece |
+| `Skeleton` | one connected component / stored fragment | `cells: (M, 2)` |
+| `SurfaceMesh`, `VolumeMesh` | one connected component / stored fragment | `cells: (M, 3)` / `(M, 4)` |
 
-| Class | Topology fields |
-|---|---|
-| `PointCloud` | none; `ids: (N,)` optional |
-| `Polylines` | `offsets: (P + 1,)` CSR boundaries of pieces; `ids: (P,)` object id of each piece |
-| `Skeleton` | `edges: (M, 2)`; `ids: (N,)` object id per vertex (a skeleton per segment id) |
-| `SurfaceMesh`, `VolumeMesh` | `cells: (M, k)`; `ids: (M,)` optional object id per cell |
+Defaults keep simple cases simple: `offsets=None` means one piece holding
+every vertex (one point per piece for `PointCloud`), and `ids=None` means
+`arange(P)`. Cell indices refer to the global vertex array, zero-based;
+their dtype is preserved from the store, default `int64`. Vertex dtype is
+preserved too (`float32` for neuroglancer after dequantization).
+
+`ids` separate *pieces* from *objects*. A streamline cut in two by a
+crop becomes two pieces with the same id, so per-object data (`dps` in
+TRX vocabulary) still refers to the right object. `piece_attributes` is
+indexed by piece and duplicated on split, so it stays a plain array
+aligned with `offsets`; `unique(ids)` gives the objects. This is
+zarr-vectors' model: a *fragment* is a run of an object's vertices, and
+the object manifest lists fragments. Neuroglancer annotation
+`relationships` become piece attributes.
 
 `vertices` is optional for the same reason `SingleScaleImage.data` is:
 a reader derives it lazily. Arrays follow `ArrayProtocol` (numpy, dask,
 cupy, torch), like image data.
 
-`ids` separate *pieces* from *objects*. A streamline cut in two by a
-crop becomes two pieces with the same id, so object attributes
-(`dps` in TRX vocabulary) still refer to the right object, and
-`object_attributes` is indexed by **piece** (duplicated on split) so it
-stays a plain array aligned with `offsets`. `unique(ids)` gives the
-objects. This mirrors zarr-vectors, where a *fragment* is a chunk-local
-run of an object's vertices and the object manifest lists fragments.
+**Dimensions.** `D` (native dimension, `ndim`) may differ from the
+world dimension. 2-D data (histology ROIs, slice contours) is supported;
+a cell width must satisfy `k <= D + 1`, so `VolumeMesh` needs `D >= 3`.
 
 ### 2.2 Array-like API (parity with `Image`)
 
@@ -128,7 +156,7 @@ run of an object's vertices and the object manifest lists fragments.
 | `ndim` | `ndim` | dimension of the native space (`D`) in both cases |
 | `dtype` | `dtype` | vertex dtype |
 | `shape` | — | no single shape; use `nvertices`, `ncells`, `npieces`, `nobjects` |
-| `__array__` | `__array__` | returns `vertices` (native coordinates) |
+| `__array__` | `__array__` | returns `vertices` (native coordinates); the docstring says so |
 | `grid` | — | see `bounds` |
 | `geometry` | `bounds` | axis-aligned box of the vertices, native space (§5) |
 
@@ -175,15 +203,14 @@ alike. That refactor is a prerequisite and can land on its own.
 
 ```python
 v.world()                 # (N, D') vertices in the preferred world space
-v.world(space="RASmm")    # in the space of another transformation in the list
-v.world(T)                # in the output space of transformation T (native -> X)
+v.world(space="RASmm")    # in the output space of another transformation in the list
 ```
 
-`world()` returns the computed `CoordinatesField` array; it is
-`(T @ vertex_field).compute()` where `vertex_field` is the vertices
-viewed as a `CoordinatesField` over a 1-D index grid. Nonlinear
-transformations are therefore applied by the composers that already
-exist (sampling a field at coordinates).
+`world()` is `_apply_to_points(v.transformation, v.vertices)` (§1), so
+nonlinear transformations are applied by the composers that already
+exist. There is deliberately no `world(T)`: a transformation argument
+would run *native → X*, the opposite of `v(T)` in §4.1. Moving to
+another space is `v(T).world()`.
 
 ---
 
@@ -203,25 +230,34 @@ fixed → moving`, and `moving_image(T)` and `moving_vectors(T)` both put
 the object in fixed space. Users never have to think about direction:
 the same `T` that moves the image moves the tracts that live with it.
 
+`@` is composition with the right operand applied first, as in the
+code. The current `SingleScaleImage.__call__` / `MultiScaleImage.__call__`
+docstrings state the product the other way round
+(`self.transformation @ transform.inverse()`); the code is right, and the
+mixin refactor of §3.2 fixes the docstring.
+
 ### 4.2 Why "reslicing goes the other way"
 
 The *cost* is what differs. To resample an image in fixed space one
 evaluates `T` at fixed-space grid points (pull). To move vertices into
 fixed space one evaluates `T.inverse()` at the vertices (push). For an
 affine this is free. For a dense field it is the expensive part:
-`T.inverse()` is a lazy `Inverse`, and materializing it at points can
-use either the existing grid inversion (`InverseDisplacementField`,
-mesh-based) and then sampling, or a per-point fixed-point / Newton
-solve, which is cheaper for few points. The choice is a `compute`
-detail, not an API one; the memo only requires that `v(T).world()`
-works when `T` is a field, and that the docstrings say plainly that a
-field transform makes vectors costlier than images (and vice versa for
-a field defined the other way round).
+`T.inverse()` is a lazy `Inverse`. What exists today is the grid
+inversion: `Inverse.field` materializes the whole inverse field (mesh
+inversion, `InverseDisplacementField` / `InverseCoordinatesField`) and
+the points are then sampled from it. `InverseCoordinatesField` assumes
+coordinates in grid units, so the world-to-voxel affine must be composed
+in first. A per-point fixed-point / Newton solve, cheaper for few
+points, is **new work** (a composer for `Inverse*Field` evaluated at
+points), not an existing path. The API requirement is only that
+`v(T).world()` works when `T` contains a field; the docstrings say
+plainly that a field transform makes vectors costlier than images (and
+the other way round for a field defined in the other direction).
 
 ### 4.3 `reslice`: re-express vertices in another native space
 
 ```python
-def reslice(self, target=None, *, crop=False, copy=False) -> Self
+def reslice(self, target=None, *, copy=False) -> Self
 ```
 
 Images: `reslice(geometry)` produces data whose native space is the
@@ -229,7 +265,7 @@ target grid, and whose transformation is `geometry.transformation`.
 Vectors do the same with vertices:
 
 ```
-new_vertices = (target.inverse() @ self.transformation @ vertex_field).compute()
+new_vertices = _apply_to_points(target.inverse() @ self.transformation, vertices)
 result.transformations = [target]
 ```
 
@@ -239,25 +275,29 @@ result.transformations = [target]
 |---|---|
 | `None` | the current world: vertices "baked" into world coordinates, transformation `Identity` to that world |
 | `Transformation` | its input space |
-| `Geometry` / `Image` | the image's voxel space (e.g. tracts in voxel indices for a TRK writer); with `crop=True`, also crop to the image field of view (§5.3) |
+| `Geometry` / `Image` | the image's voxel space (e.g. tracts in voxel indices for a TRK writer) |
 | `Vectors` | the other object's native space |
 
 So `reslice` is the eager counterpart of `__call__`, exactly as for
-images, and "baking" a transform is `v(T).reslice()`. Topology and
-attributes are carried over unchanged, except as in §4.4.
+images, and "baking" a transform is `v(T).reslice()`. Like
+`Image.reslice`, it does not crop: tracts in an image's voxel space and
+restricted to its field of view are `v.crop(img).reslice(img)`.
+Topology and attributes are carried over unchanged, except as in §4.4.
+
+When `self.transformation` holds a multiscale field, `_at_resolution`
+picks the level matching the target grid only if `target` is a
+`Geometry` (or `Image`); otherwise the finest level is used, as for
+images.
 
 ### 4.4 Attributes that are geometric
 
-Some vertex attributes are not scalars: normals, tangents, tensors
-(e.g. per-vertex diffusion tensors), radii. `attribute_kinds` tags them
-(`scalar` default, `vector`, `covector`/`normal`, `tensor`, `length`),
-and `reslice` transforms them with the local Jacobian of the native-to-
-new transformation: vectors by `J`, normals by `J^{-T}` (renormalized),
-tensors by `J · D · Jᵀ`, lengths by a scalar measure that has to be
-specified per kind. An orientation-reversing transformation (`det J <
-0`) flips triangle winding (and tet orientation) in `cells` so that
-outward normals stay outward; `reslice(..., keep_winding=True)` turns
-that off. Untagged attributes are copied.
+Some vertex attributes are not scalars: tangents, normals. In a first
+version `attribute_kinds` tags them as `scalar` (default), `vector` or
+`normal`, and `reslice` transforms them with the local Jacobian of the
+native-to-new transformation: vectors by `J`, normals by `J^{-T}`
+(renormalized). Untagged attributes are copied. Tensors, radii/lengths
+and fixing triangle winding under orientation-reversing transformations
+are left for later.
 
 ---
 
@@ -282,7 +322,18 @@ indexes the native space too, but the space is continuous:
 - a bare scalar raises `TypeError`: a hyperplane selects nothing for a
   point set, and dropping an axis (what an integer does to an image) is
   a projection, which is a different operation (§9);
-- `None` (newaxis) raises; `...` fills unindexed axes with `:`.
+- `None` (newaxis) raises; `...` fills unindexed axes with `:`; more
+  indices than `D` raises;
+- negative bounds are coordinates, **never** "from the end" (an explicit
+  divergence from `_index2transform`);
+- `start >= stop` gives an empty result, not an error; `NaN` bounds
+  raise; vertices with a `NaN` coordinate are never inside, in every
+  mode;
+- an empty result has `vertices.shape == (0, D)`, `offsets == [0]`, and
+  `bounds is None`.
+
+The `__getitem__` docstring repeats the half-voxel caution below, so it
+is seen where it bites, not only in this memo.
 
 Unlike `Image.__getitem__`, the result keeps **the same native space and
 the same transformations**: vertices are not shifted. An image crop has
@@ -315,8 +366,10 @@ def crop(self, region, *, mode="inner", space=None) -> Self
 `"inner"` is the default because, like an image crop, it never returns
 geometry outside the requested region and it is cheap (a vertex mask
 plus a cell mask). `"exact"` is the only mode that creates vertices; it
-can come later. Vertex, cell and object attributes are subset with the
-same masks; `ids` keep provenance.
+can come later. Vertex, cell and piece attributes are subset with the
+same masks, kept cells are **renumbered** to the kept vertices, `offsets`
+and `cell_offsets` are rebuilt (a piece split by the region becomes
+several pieces), and `ids` keep provenance.
 
 ### 5.3 Regions in other spaces
 
@@ -342,7 +395,8 @@ afterwards, so the pre-filter only affects speed.
 ### 5.4 `BoundingBox` and `bounds`
 
 A small immutable datamodel object, `BoundingBox(lower, upper,
-system=None)`, half-open, with `__and__` (intersection), `contains`,
+system=None)`, half-open; without a system it is `D`-dimensional and in
+native space, with `__and__` (intersection), `contains`,
 and `to_slices()`. `Vectors.bounds` returns the box of the vertices in
 native space, read from metadata when the format stores it
 (zarr-vectors `bounds`, neuroglancer `lower_bound`/`upper_bound`) so it
@@ -357,19 +411,25 @@ field-of-view box) later; that is not required here.
 
 ```python
 class MultiScaleVectors(Vectors, Generic[T]):
-    scales: List[T] = ()                       # finest first
+    levels: List[T] = ()                       # finest first
+    kind: Literal["geometric", "sparse"] = "geometric"
     transformations: List[Transformation] = () # pyramid -> world, as MultiScaleImage
 ```
 
 Each level is a single-scale object with its own transformations (level
 native → pyramid space), exactly as each `MultiScaleImage.images[i]`
-carries its voxel-to-pyramid transformation. `to_singlescale(i)`,
-`nscales`, `scales` iteration, `transformation` (setter included),
-`__call__` and `reslice` behave as for `MultiScaleImage`.
+carries its voxel-to-pyramid transformation. The pyramid space is the
+finest level's native space (level 0 carries `Identity`), matching
+`MultiScaleImage.geometry`, which is built from `images[0]`.
 
-Naming: the `Multiscale` mixin already uses `scales`, `MultiScaleImage`
-uses `images`. This memo uses `scales`; `MultiScaleImage` could gain a
-`scales` alias.
+The semantics follow `MultiScaleImage`, not the `Multiscale` mixin, where
+the two disagree: `to_singlescale(i)` composes the pyramid transformation
+into the level (the mixin returns the raw stored scale), and `scales` is
+a property yielding the composed levels (the mixin's `scales` is the
+stored list). The stored list is therefore named `levels` here, which
+avoids both the clash and `MultiScaleImage`'s type-specific `images`.
+`nscales`, `transformation` (setter included), `__call__` and `reslice`
+behave as for `MultiScaleImage`.
 
 ### 6.2 Two kinds of levels
 
@@ -378,19 +438,30 @@ uses `images`. This memo uses `scales`; `MultiScaleImage` could gain a
 | **geometric** | zarr-vectors coarsening (`bin_ratio`, metavertices); neuroglancer multilod mesh LODs | a simplified version of *every* object | per-axis bin size (zarr-vectors `base_bin_shape × reduction_factor^l`; neuroglancer `lod_scales × lod_scale_multiplier`) |
 | **sparse** | neuroglancer annotation `spatial` levels; zarr-vectors `object_sparsity < 1` | a *subset* of the objects, at full precision | none; carries `sparsity` (fraction kept) instead |
 
-Each level records `resolution` (or `None`) and `sparsity` (default 1).
-Level selection follows `MultiScaleImage`: given a target resolution
-(from a `Geometry`, as in `MultiScaleImage.reslice`, or from an explicit
-`resolution=`), pick the geometric level whose resolution is nearest,
-reusing `_nearest_resolution_index`. Sparse levels are chosen by
-`max_count=` / `sparsity=` instead.
+A pyramid has **one** kind, stated by `kind`; levels of both kinds are
+never mixed. This matters for selection: `_nearest_resolution_index`
+falls back to the finest level as soon as any resolution is `None`, so a
+mixed list would always select level 0.
+
+- **geometric:** each level records `resolution`. Given a target
+  resolution (from a `Geometry`, as in `MultiScaleImage.reslice`, or an
+  explicit `resolution=`), the level whose resolution is nearest is
+  picked with `_nearest_resolution_index`.
+- **sparse:** each level records `sparsity` (fraction of the objects it
+  holds, finest = 1). The level is chosen by `max_count=` or
+  `sparsity=`.
+
+A zarr-vectors store whose levels both coarsen and drop objects is read
+as geometric; `sparsity` is still reported per level as metadata.
 
 Neuroglancer's annotation pyramid is *cumulative*: a coarse level holds
 a random subset, and each finer level holds only what its parents did
 not, so the complete set is the union of all levels. The reader exposes
 level `i` as the union of levels coarse … `i`, so that every level is a
-self-contained object and the finest one is complete. Users never see
-the "residual" encoding.
+self-contained object and the finest one is complete. The `sparsity`
+of an exposed level is its cumulative count over the total. Reading
+level `i` also reads every coarser level, which is cheap by design
+(coarse levels are small). Users never see the "residual" encoding.
 
 ### 6.3 Cropping a pyramid
 
@@ -490,9 +561,14 @@ a version and keep the spec-to-model mapping in one module.
    Recommendation: keep it, as images do the same with `data`.
 3. **Default `crop` mode.** `"inner"` (proposed) vs `"object"`, which is
    what tractography users usually mean by "streamlines in a ROI".
-4. **Piece vs object attributes.** Indexing `object_attributes` by piece
-   (duplicating on split) keeps arrays aligned; indexing by object id
-   avoids duplication but needs an id → row map.
-5. **Mixed-type stores.** A zarr-vectors store may declare several
+4. **Piece vs object attributes.** Indexing per-object data by piece
+   (`piece_attributes`, duplicated on split) keeps arrays aligned;
+   indexing by object id avoids duplication but needs an id → row map.
+   A dense `object_attributes` indexed by id could be added beside it.
+5. **Integer-bound warning.** `v[3:7]` is continuous `[3, 7)`, which
+   differs from `img[3:7]` by half a voxel. Should `__getitem__` warn
+   once when every bound is an integer and the native space is a voxel
+   space? Proposed: no warning, docstring only.
+6. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
    `load(..., type=...)`?
