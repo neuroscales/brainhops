@@ -109,6 +109,9 @@ from brainhops.io.base._geometry import (
     ras_conversion,
     reduce_to_affine,
 )
+from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base._utils_files import open_path as _open_path
+from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -817,17 +820,6 @@ def encode_data(header: MrtrixHeader, data: tx.Any) -> bytes:
     return np.ascontiguousarray(stored, dtype=dtype).tobytes()
 
 
-def _local_path(file: tx.Any) -> tx.Optional[str]:
-    """The local file system path of `file`, or `None` if it has none."""
-    try:
-        local = os.fspath(file)
-    except Exception:
-        return None
-    if isinstance(local, bytes):
-        local = os.fsdecode(local)
-    return local if os.path.isfile(local) else None
-
-
 def _read_buffer(file: tx.Any, offset: int, nbytes: int, mmap: bool) -> tx.Any:
     """
     The `nbytes` bytes at `offset` in an uncompressed data file.
@@ -853,13 +845,6 @@ def _is_gzip(file: tx.Any) -> bool:
             return f.read(2) == b"\x1f\x8b"
     except Exception:
         return False
-
-
-def _open_path(file: tx.Any) -> tx.BinaryIO:
-    local = _local_path(file)
-    if local is not None:
-        return open(local, "rb")
-    return file.open("rb")
 
 
 # ----------------------------------------------------------------------
@@ -1235,12 +1220,3 @@ def _data_location(header: MrtrixHeader) -> tx.Tuple[str, int]:
             f"file: {offset}"
         )
     return name, offset
-
-
-def _sibling(filename: tx.Any, name: str) -> tx.Any:
-    """`name`, relative to the directory of `filename` unless absolute."""
-    if os.path.isabs(name):
-        return path.Path(name)
-    if not isinstance(filename, path.PathLike):
-        filename = path.Path(filename)
-    return filename.parent / name

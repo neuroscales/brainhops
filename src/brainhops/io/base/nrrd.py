@@ -93,7 +93,9 @@ from bagof.magic import Factory, Magic
 # internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
-from brainhops.io.base.mrtrix import _local_path, _open_path, _sibling
+from brainhops.io.base._utils_files import local_path as _local_path
+from brainhops.io.base._utils_files import open_path as _open_path
+from brainhops.io.base._utils_files import sibling as _sibling
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
