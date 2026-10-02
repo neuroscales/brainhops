@@ -22,6 +22,10 @@ from brainhops.io.images.tiff._image import (
     _write_geometry,
 )
 
+# A vendor whole-slide pyramid: between LIKELY (a single-scale TIFF image)
+# and CERTAIN (the dedicated OpenSlide reader of that vendor).
+_WHOLE_SLIDE = 0.9
+
 # ----------------------------------------------------------------------
 #   MULTISCALE IMAGE
 # ----------------------------------------------------------------------
@@ -99,6 +103,13 @@ class TiffMultiScaleImage(
         pyramid: `CERTAIN` when the series asked for (the first by
         default) has several levels and no `level` is asked for, and `NO`
         otherwise.
+
+        A whole-slide image of a microscope vendor (Aperio SVS, Hamamatsu
+        NDPI, Philips, Leica SCN, Ventana BIF) scores a little less than
+        `CERTAIN` (still more than a single-scale
+        [`TiffImage`][brainhops.io.images.tiff.TiffImage]), so that the
+        dedicated OpenSlide reader of that vendor, when it is installed,
+        takes it (see [`brainhops.io.images.openslide`][]).
         """
         if level is not None:
             return Confidence.NO
@@ -109,9 +120,12 @@ class TiffMultiScaleImage(
             with preserve_position(file):
                 with tf.TiffFile(file) as tif:
                     levels = len(tif.series[int(series)].levels)
+                    slide = backend.is_whole_slide(tif)
         except Exception:
             return Confidence.NO
-        return Confidence.CERTAIN if levels > 1 else Confidence.NO
+        if levels <= 1:
+            return Confidence.NO
+        return _WHOLE_SLIDE if slide else Confidence.CERTAIN
 
     # --- load ---------------------------------------------------------
 
