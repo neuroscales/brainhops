@@ -80,7 +80,7 @@ points of the moving space, in LPS world coordinates, and a matrix is
 stored row-major.
 """
 
-__all__ = ["MATTransform", "MATTransformParser"]
+__all__ = ["MatTransform", "MatTransformParser"]
 
-from ._parser import MATTransformParser
-from ._xform import MATTransform
+from ._parser import MatTransformParser
+from ._xform import MatTransform

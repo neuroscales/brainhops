@@ -57,32 +57,6 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     # --- sniff --------------------------------------------------------
 
     @classmethod
-    def sniff_fileobj(
-        cls,
-        file: tx.IO,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        # ITK and ANTs write binary MATLAB `.mat` files, which do not
-        # decode as text. That is a "no", not a failure to sniff.
-        try:
-            return super().sniff_fileobj(file, error=error, **kwargs)
-        except UnicodeDecodeError as e:
-            return _not_text(error, e)
-
-    @classmethod
-    def sniff_bytes(
-        cls,
-        content: bytes,
-        error: tx.Union[bool, tx.Type[Exception]] = False,
-        **kwargs,
-    ) -> float:
-        try:
-            return super().sniff_bytes(content, error=error, **kwargs)
-        except UnicodeDecodeError as e:
-            return _not_text(error, e)
-
-    @classmethod
     def sniff_lines(
         cls,
         lines: tx.Iterable[str],
@@ -131,17 +105,6 @@ class FLIRTMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
-
-
-def _not_text(
-    error: tx.Union[bool, tx.Type[Exception]], cause: Exception
-) -> float:
-    """Decline binary content, or raise if the caller asked for it."""
-    if error:
-        if error is True:
-            error = SnifferContentError
-        raise error("Not a text file, so not a FLIRT matrix.") from cause
-    return Confidence.NO
 
 
 def _read_matrix_rows(lines: tx.Iterable[str]) -> tx.List[tx.List[float]]:

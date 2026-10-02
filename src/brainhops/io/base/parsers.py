@@ -934,6 +934,40 @@ class TextFileSniffer(FileSniffer):
     _READ_MODE: str = "rt"
 
     @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """
+        Determine if the given file-like object is of the type that this
+        parser can handle.
+
+        A text stream decodes as it is read, so content that is not text
+        -- a binary file that shares an extension with a text format --
+        fails there. That is a "no", not a failure to sniff.
+
+        Parameters
+        ----------
+        file : IO
+            A file object open for reading.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the file cannot be sniffed.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        float
+            Confidence that the file is of this type, in `[0, 1]`.
+        """
+        try:
+            return super().sniff_fileobj(file, error=error, **kwargs)
+        except UnicodeDecodeError as e:
+            return _not_text(cls, error, e)
+
+    @classmethod
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
@@ -943,6 +977,7 @@ class TextFileSniffer(FileSniffer):
         """
         Determine if the given bytes are of the type that this parser can
         handle, by decoding them to text and delegating to `sniff_text`.
+        Bytes that do not decode are not text, so they score `NO`.
 
         Parameters
         ----------
@@ -961,7 +996,26 @@ class TextFileSniffer(FileSniffer):
         """
         kwargs["error"] = error
         encoding = kwargs.pop("encoding", "utf-8")
-        return cls.sniff_text(content.decode(encoding), **kwargs)
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError as e:
+            return _not_text(cls, error, e)
+        return cls.sniff_text(text, **kwargs)
+
+
+def _not_text(
+    cls: type, error: tx.Union[bool, tx.Type[Exception]], cause: Exception
+) -> float:
+    """Decline content that does not decode as text, or raise if the
+    caller asked for it."""
+    if error:
+        if error is True:
+            error = SnifferContentError
+        raise error(
+            f"{cls.__name__} reads text, but the content does not decode "
+            f"as text."
+        ) from cause
+    return Confidence.NO
 
 
 class TextFileParser(TextFileSniffer, FileParser):

@@ -21,7 +21,7 @@ from brainhops import io
 from brainhops.datamodel import transformations as xforms
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations import itk
-from brainhops.io.transformations.itk.mat import MATTransform
+from brainhops.io.transformations.itk.mat import MatTransform
 
 data_dir = Path(__file__).parent / "data"
 
@@ -68,7 +68,7 @@ def _variable(
 
 def _parameters(ndim: int) -> tx.Tuple[np.ndarray, np.ndarray]:
     """The parameters and fixed parameters of a fixture."""
-    block = MATTransform.from_file(_fixture(ndim))[0]
+    block = MatTransform.from_file(_fixture(ndim))[0]
     return np.asarray(block.parameters), np.asarray(block.fixed_parameters)
 
 
@@ -79,7 +79,7 @@ def _parameters(ndim: int) -> tx.Tuple[np.ndarray, np.ndarray]:
 
 @pytest.mark.parametrize("filename", FILES_MAT)
 def test_read_mat(filename: Path) -> None:
-    transform = MATTransform.from_file(filename)
+    transform = MatTransform.from_file(filename)
     assert isinstance(transform, itk.ITKTransform)
     for block in transform.transformations:
         assert isinstance(block, itk.ITKStruct)
@@ -127,14 +127,14 @@ def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
         content = _variable(name, parameters, order) + _variable(
             "fixed", fixed, order
         )
-        transform = MATTransform.from_bytes(content)
+        transform = MatTransform.from_bytes(content)
         np.testing.assert_allclose(_affine(transform), _expected(ndim))
 
     name = f"AffineTransform_float_{ndim}_{ndim}"
     content = _variable(name, parameters, ">", "f4") + _variable(
         "fixed", fixed, ">", "f8"
     )
-    (block,) = MATTransform.from_bytes(content).transformations
+    (block,) = MatTransform.from_bytes(content).transformations
     assert block.precision == itk.ITKPrecision.Float
     np.testing.assert_allclose(_affine(block), _expected(ndim), rtol=1e-6)
 
@@ -145,7 +145,7 @@ def test_matrix_offset_transform_base_is_an_affine() -> None:
     content = _variable(
         "MatrixOffsetTransformBase_double_3_3", parameters
     ) + _variable("fixed", fixed)
-    (block,) = MATTransform.from_bytes(content).transformations
+    (block,) = MatTransform.from_bytes(content).transformations
     assert block.type == itk.ITKTransformClass.MatrixOffsetTransformBase
     np.testing.assert_allclose(_affine(block), _expected(3))
 
@@ -165,7 +165,7 @@ def test_a_chain_keeps_every_block_in_order() -> None:
             _variable("fixed", []),
         ]
     )
-    transform = MATTransform.from_bytes(content)
+    transform = MatTransform.from_bytes(content)
     affine, shift = transform.transformations
     assert affine.type == itk.ITKTransformClass.AffineTransform
     assert shift.type == itk.ITKTransformClass.TranslationTransform
@@ -181,7 +181,7 @@ def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
     content = _variable(
         "AffineTransform_double_3_3", parameters, rowwise=True
     ) + _variable("center", fixed, rowwise=True)
-    (block,) = MATTransform.from_bytes(content).transformations
+    (block,) = MatTransform.from_bytes(content).transformations
     np.testing.assert_allclose(_affine(block), _expected(3))
 
 
@@ -205,7 +205,7 @@ def test_encoded_variants_read_as_itk_reads_them(tmp_path) -> None:  # noqa: ANN
         path = tmp_path / f"variant{index}.mat"
         path.write_bytes(content)
         transform = sitk.ReadTransform(str(path))
-        matrix = _affine(MATTransform.from_file(path))
+        matrix = _affine(MatTransform.from_file(path))
         for point in points:
             np.testing.assert_allclose(
                 transform.TransformPoint(tuple(point)),
@@ -229,7 +229,7 @@ def test_what_itk_refuses_is_refused() -> None:
     ]
     for content in refused:
         with pytest.raises(ParserContentError):
-            MATTransform.from_bytes(content)
+            MatTransform.from_bytes(content)
 
 
 # ----------------------------------------------------------------------
@@ -239,38 +239,38 @@ def test_what_itk_refuses_is_refused() -> None:
 
 @pytest.mark.parametrize("filename", FILES_MAT)
 def test_mat_is_dispatched(filename: Path) -> None:
-    assert io.transformations.sniff(filename) is MATTransform
-    assert io.sniff(filename) is MATTransform
-    assert type(io.transformations.load(filename)) is MATTransform
-    assert type(io.load(filename)) is MATTransform
+    assert io.transformations.sniff(filename) is MatTransform
+    assert io.sniff(filename) is MatTransform
+    assert type(io.transformations.load(filename)) is MatTransform
+    assert type(io.load(filename)) is MatTransform
 
 
 @pytest.mark.parametrize("hint", ["itk", "ants", "mat", "itk.mat", "ants.mat"])
 @pytest.mark.parametrize("filename", FILES_MAT)
 def test_mat_is_selected_by_its_hints(filename: Path, hint: str) -> None:
-    assert io.sniff(filename, hint=hint) is MATTransform
-    assert type(io.load(filename, hint=hint)) is MATTransform
+    assert io.sniff(filename, hint=hint) is MatTransform
+    assert type(io.load(filename, hint=hint)) is MatTransform
 
 
 @pytest.mark.parametrize("filename", FILES_MAT)
 def test_mat_is_dispatched_from_an_open_file(filename: Path) -> None:
     with open(filename, "rb") as f:
-        assert type(io.load(f)) is MATTransform
+        assert type(io.load(f)) is MatTransform
 
 
 def test_sniffer_claims_only_itk_matlab_files() -> None:
     content = _fixture(3).read_bytes()
-    assert MATTransform.sniff_bytes(content) == 1.0
+    assert MatTransform.sniff_bytes(content) == 1.0
     # A MATLAB v4 variable that is not named after an ITK class.
-    assert MATTransform.sniff_bytes(_variable("data", [1.0, 2.0])) == 0.0
+    assert MatTransform.sniff_bytes(_variable("data", [1.0, 2.0])) == 0.0
     # A MATLAB v5 file starts with a text header.
     v5 = b"MATLAB 5.0 MAT-file, Platform: GLNXA64".ljust(128, b" ")
-    assert MATTransform.sniff_bytes(v5) == 0.0
+    assert MatTransform.sniff_bytes(v5) == 0.0
     # A FLIRT matrix is text.
     flirt = b"1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n"
-    assert MATTransform.sniff_bytes(flirt) == 0.0
-    assert MATTransform.sniff_bytes(b"") == 0.0
-    assert MATTransform.sniff_text("1 0 0 0") == 0.0
+    assert MatTransform.sniff_bytes(flirt) == 0.0
+    assert MatTransform.sniff_bytes(b"") == 0.0
+    assert MatTransform.sniff_text("1 0 0 0") == 0.0
 
 
 def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # noqa: ANN001
@@ -286,11 +286,11 @@ def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # n
     # Each sniffer scores the other format's file as a firm "no".
     assert FLIRTTransform.sniff(ants) == 0.0
     assert FLIRTTransform.sniff_bytes(ants.read_bytes()) == 0.0
-    assert MATTransform.sniff(flirt) == 0.0
+    assert MatTransform.sniff(flirt) == 0.0
     assert FLIRTTransform.sniff(flirt) > 0.0
-    assert MATTransform.sniff(ants) > 0.0
+    assert MatTransform.sniff(ants) > 0.0
 
     assert io.transformations.sniff(flirt) is FLIRTTransform
-    assert io.transformations.sniff(ants) is MATTransform
+    assert io.transformations.sniff(ants) is MatTransform
     assert type(io.transformations.load(flirt)) is FLIRTTransform
-    assert type(io.transformations.load(ants)) is MATTransform
+    assert type(io.transformations.load(ants)) is MatTransform

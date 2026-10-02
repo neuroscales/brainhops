@@ -61,7 +61,7 @@ class _Variable(tx.NamedTuple):
     """Offset of the first value in the content."""
 
 
-class MATTransformParser(
+class MatTransformParser(
     Magic,
     BinaryFileParser,
     convert=True,

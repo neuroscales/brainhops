@@ -5,7 +5,7 @@ Readers and writers for ITK transformation formats.
 | --------------------------- | --------- | --------------------------- |
 | text (`.tfm`, `.txt`)       | `tfm`     | `TFMTransform`              |
 | HDF5 (`.h5`)                | `h5`      | `H5Transform`               |
-| binary MATLAB (`.mat`)      | `mat`     | `MATTransform`              |
+| binary MATLAB (`.mat`)      | `mat`     | `MatTransform`              |
 | NIfTI warp (`.nii[.gz]`)    | `nifti`   | `ITKNiftiDisplacementField` |
 
 ## ANTs

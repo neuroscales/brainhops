@@ -6,12 +6,12 @@ from brainhops.io.base._base import register_format
 
 # locals
 from .._xform import ITKTransform
-from ._parser import MATTransformParser
+from ._parser import MatTransformParser
 
 
 @register_format
-class MATTransform(
-    MATTransformParser,
+class MatTransform(
+    MatTransformParser,
     ITKTransform,
 ):
     """A transformation stored in an ITK binary MATLAB (`.mat`) file.
