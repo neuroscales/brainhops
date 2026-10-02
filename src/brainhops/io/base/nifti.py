@@ -150,6 +150,17 @@ vectors are in; the intent name `"Mapping"` (see below) marks the RAS
 coordinate maps.
 """
 
+_NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
+"""
+The intent name NiftyReg gives every transformation it writes.
+
+NiftyReg stores its deformation and displacement fields and its
+control-point grids as `VECTOR` (1007) images named `"NREG_TRANS"`, and
+tells them apart with `intent_p1` (`reg-lib/cpu/Maths.hpp`,
+`NREG_TRANS_TYPE`). The name is evidence of a NiftyReg file, which only
+the NiftyReg readers decode, so the generic `VECTOR` readers decline it.
+"""
+
 _NIFTI_INTENT_NAME_MAPPING = "Mapping"
 """
 The intent name SPM gives a field of coordinates (`y_` files).

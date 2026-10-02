@@ -25,11 +25,13 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
+    _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
     _apply_like,
     _apply_overrides,
     _new_nifti,
     _nifti_intent,
+    _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
 )
@@ -76,8 +78,16 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         name says nothing of the frame of its vectors, so the two tie
         and a hint decides. See
         [`brainhops.io.transformations.itk.nifti`][].
+
+        A file named `"NREG_TRANS"` is NiftyReg's, and is left to the
+        NiftyReg readers ([`brainhops.io.transformations.niftyreg`][]).
         """
         intent = _nifti_intent(header)
+        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_NIFTYREG:
+            # NiftyReg's own fields: `intent_p1` says whether they hold
+            # positions, displacements, spline coefficients or
+            # velocities, which only the NiftyReg readers decode.
+            return Confidence.NO
         if intent == _NIFTI_INTENT_VECTOR:
             return Confidence.CERTAIN
         if intent == _NIFTI_INTENT_DISPVECT:
