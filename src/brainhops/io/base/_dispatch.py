@@ -46,21 +46,18 @@ class Source:
       memory and re-wrapped in a fresh buffer for every attempt.
     - One-shot iterables of lines are materialized once into a list.
 
-    `file` says that the input is expected to be a file, so that a `str`
-    names a path rather than holding text. An `os.PathLike` always names
-    a path. The input itself is handed to parsers unchanged either way.
+    A `str` is a path, like an `os.PathLike`. Text held in memory is
+    wrapped with `Source.content`, which the content entry points
+    (`from_text`, `sniff_text`, ...) use: only they know that their `str`
+    is text, and the type alone cannot tell.
     """
 
-    def __init__(self, other: tx.Any, file: bool = False) -> None:
+    def __init__(self, other: tx.Any) -> None:
         self.other = other
         self.pos = None
         self.buffer = None
         self.factory = None
-        self.path = (
-            other
-            if isinstance(other, PathLike) or (file and isinstance(other, str))
-            else None
-        )
+        self.path = other if isinstance(other, (str, PathLike)) else None
 
         if hasattr(other, "read"):
             if self._seekable(other):
@@ -106,6 +103,14 @@ class Source:
             return iter(self.other)
         return self.other
 
+    @classmethod
+    def content(cls, other: tx.Any) -> "Source":
+        """Wrap content held in memory, where a `str` is text rather than
+        a path."""
+        source = cls(other)
+        source.path = None
+        return source
+
     @property
     def missing(self) -> tx.Optional[path.Path]:
         """The path the input names, if it names a file that does not
@@ -122,13 +127,13 @@ class Source:
     @property
     def name(self) -> tx.Optional[str]:
         """The file name, if the input is a named file."""
-        other = self.other
+        other = self.path
+        if other is None:
+            other = getattr(self.other, "name", None)  # an open file
         if isinstance(other, PathLike):
             other = fspath(other)
         if not isinstance(other, str):
-            other = getattr(other, "name", None)
-            if not isinstance(other, str):
-                return None
+            return None
         # Trailing slashes matter for directory-based formats (.zarr)
         return path.Path(other.rstrip("/")).name
 
@@ -583,14 +588,13 @@ def _failure(
 
 
 def sniff(
-    content: tx.Any,
+    source: "Source",
     registry: tx.Set[type],
     fn_sniff: str,
     error: tx.Union[bool, tx.Type[Exception]] = False,
     what: str = "input content",
     hints: tx.Iterable[str] = (),
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
-    file: bool = False,
     **kwargs,
 ) -> tx.Optional[type]:
     """
@@ -613,7 +617,7 @@ def sniff(
 
     Parameters
     ----------
-    content : Any
+    source : Source
         The input to identify.
     registry : set[type]
         The formats to choose between.
@@ -623,8 +627,6 @@ def sniff(
         If not False, raise instead of returning `None`.
     what : str
         How to describe the input in an error message.
-    file : bool
-        The input is expected to be a file, so a `str` names a path.
     **kwargs
         Parser-specific options.
 
@@ -645,7 +647,6 @@ def sniff(
         for subclass in registry
         if not requested_hints or format_hints(subclass) & requested_hints
     }
-    source = Source(content, file=file)
     tiers = _candidates(source, registry, fn_sniff, allowed=allowed, **kwargs)
 
     if tiers and len(tiers[0]) == 1:

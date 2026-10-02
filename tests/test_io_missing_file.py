@@ -238,13 +238,22 @@ def test_unreadable_dispatched_text_is_not_reported_as_missing(
     assert not isinstance(excinfo.value, FileNotFoundError)
 
 
-def test_source_only_treats_a_str_as_a_path_when_a_file_is_expected(
+def test_a_source_str_is_a_path_unless_wrapped_as_content(
     missing,  # noqa: ANN001
 ) -> None:
-    assert Source(str(missing)).missing is None
-    assert str(Source(str(missing), file=True).missing) == str(missing)
+    assert str(Source(str(missing)).missing) == str(missing)
     assert str(Source(missing).missing) == str(missing)
-    assert Source(missing.parent, file=True).missing is None
+    assert Source(str(missing.parent)).missing is None
+    assert Source.content(str(missing)).missing is None
+
+
+def test_text_content_is_not_matched_by_extension() -> None:
+    # A `str` of content used to be read as a file name too, so text that
+    # happened to end in ".nii" was described as a file and matched by
+    # extension.
+    assert Source("image.nii").name == "image.nii"
+    assert Source.content("image.nii").name is None
+    assert repr(Source.content("HELLO world")) == "input content"
 
 
 # ----------------------------------------------------------------------
