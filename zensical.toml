@@ -38,6 +38,7 @@ nav = [
         "api/io/base/mrtrix.md",
         "api/io/base/freesurfer.md",
         "api/io/base/mgh.md",
+        "api/io/base/minc.md",
         "api/io/base/zarr.md",
       ]},
       {"images" = [
@@ -46,6 +47,7 @@ nav = [
         "api/io/images/nifti.md",
         "api/io/images/mrtrix.md",
         {"freesurfer.mgh" = "api/io/images/mgh.md"},
+        "api/io/images/minc.md",
         "api/io/images/zarr.md",
         "api/io/images/pillow.md",
         "api/io/images/tiff.md",
