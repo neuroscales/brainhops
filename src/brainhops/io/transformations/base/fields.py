@@ -6,6 +6,7 @@ __all__ = [
     "homogeneous_matrix",
     "ras_displacement_chain",
     "split_ras_displacement_chain",
+    "voxel_grid_coordinates",
 ]
 
 # dependencies
@@ -184,6 +185,52 @@ def split_ras_displacement_chain(
     rotate = backend.asarray(vox2ras[:ndim, :ndim], dtype=field.dtype)
     vectors = backend.matmul(rotate, field[..., None])[..., 0]
     return vox2ras, vectors
+
+
+def voxel_grid_coordinates(
+    shape: tx.Sequence[int],
+    vox2world: np.ndarray,
+    backend: tx.Any = None,
+) -> ArrayProtocol:
+    """
+    The world coordinate of every voxel of a grid.
+
+    Formats that store a field of world *positions* (an FSL absolute
+    warp, a NiftyReg deformation field or control-point grid) are read
+    as displacements by subtracting these, and written back by adding
+    them. A `CoordinatesField` would hold the same map inside its grid,
+    but no boundary condition extends positions beyond the grid the way
+    these tools do -- by keeping the edge *displacement* -- while
+    `nearest` on a displacement field does.
+
+    Parameters
+    ----------
+    shape : sequence of int
+        The shape of the grid, `(X, Y, Z)`.
+    vox2world : array, shape `(ndim + 1, ndim + 1)` or `(ndim, ndim + 1)`
+        The voxel-to-world affine of the grid.
+    backend : ArrayBackend, optional
+        The array backend to build the coordinates with (NumPy by
+        default), so that they match the field they are combined with.
+
+    Returns
+    -------
+    coordinates : array, shape `(*shape, ndim)`
+        The coordinate of voxel `(i, j, k)` is
+        `vox2world @ [i, j, k, 1]`.
+    """
+    if backend is None:
+        backend = get_array_backend()
+    vox2world = np.asarray(vox2world)
+    ndim = len(shape)
+    grid = backend.stack(
+        backend.meshgrid(*[backend.arange(s) for s in shape], indexing="ij"),
+        -1,
+    )
+    grid = backend.asarray(grid, dtype=vox2world.dtype)
+    rotation = backend.asarray(vox2world[:ndim, :ndim], dtype=vox2world.dtype)
+    offset = backend.asarray(vox2world[:ndim, ndim], dtype=vox2world.dtype)
+    return backend.matmul(rotation, grid[..., None])[..., 0] + offset
 
 
 _NUMBERS = {1: "one", 2: "two", 3: "three", 4: "four"}
