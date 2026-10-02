@@ -11,6 +11,7 @@ __all__ = [
 
 # internals
 from brainhops._core.dependencies import (
+    HAS_H5PY,
     HAS_NIBABEL,
     HAS_PILLOW,
     HAS_TIFFFILE,
@@ -25,9 +26,18 @@ from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 # only ever holds classes that have actually been imported, so a lazily
 # imported format would silently be invisible to `load`.
 if HAS_NIBABEL:
-    from . import freesurfer, nifti
+    from . import freesurfer, minc, nifti
 
-    __all__ += ["freesurfer", "nifti"]
+    __all__ += ["freesurfer", "minc", "nifti"]
+    # MINC2 is an HDF5 file, read only with h5py.
+    if not HAS_H5PY:
+        register_missing_format(
+            ["minc2", "minc.2", "minc.minc2"], "h5py", "minc"
+        )
+else:
+    register_missing_format(
+        ["minc", "minc1", "minc2", "minc.1", "minc.2"], "nibabel", "minc"
+    )
 
 # Raster images (PNG, JPEG, ...) are read and written with Pillow.
 if HAS_PILLOW:

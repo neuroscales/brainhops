@@ -41,6 +41,8 @@ pillow = ["pillow"]
 tiff = ["tifffile"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
+# MINC1 is read with nibabel; MINC2 (HDF5) also needs h5py.
+minc = ["brainhops[nibabel]", "brainhops[h5py]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
 # abczarr reads and writes Zarr through a driver; the default pulls in the
