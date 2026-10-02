@@ -5,13 +5,14 @@ __all__ = [
     "WritableFileBasedImage",
     "base",
     "load",
+    "mrtrix",
     "sniff",
 ]
 
 # internals
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 
-from . import base
+from . import base, mrtrix
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
 
 # Formats must be imported for them to register themselves: the registry
