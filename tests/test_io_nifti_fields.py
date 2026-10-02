@@ -182,7 +182,7 @@ def test_a_coordinates_field_drops_its_singleton_axis(tmp_path) -> None:  # noqa
             "dask",
             marks=pytest.mark.skipif(
                 "dask" not in available_backends(),
-                reason="dask and dask-image are not installed",
+                reason="dask is not installed",
             ),
         ),
     ],

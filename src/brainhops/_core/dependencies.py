@@ -22,7 +22,9 @@ _DASK_ARRAY = ("da", "dask.array", "HAS_DASK_ARRAY")
 _SCIPY = ("sp", "scipy", "HAS_SCIPY")
 _SCIPY_NDIMAGE = ("npndi", "scipy.ndimage", "HAS_SCIPY_NDIMAGE")
 _CUPY_NDIMAGE = ("cpndi", "cupyx.scipy.ndimage", "HAS_CUPY_NDIMAGE")
-_DASK_NDIMAGE = ("dkndi", "dask_image.ndinterp", "HAS_DASK_NDIMAGE")
+# The dask backend's ndimage functions are brainhops' own, and need
+# nothing but dask.
+_DASK_NDIMAGE = ("dkndi", "brainhops._core.dask_ndimage", "HAS_DASK_NDIMAGE")
 
 _LAZY_NAMES = (
     _NIBABEL
@@ -91,7 +93,11 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _DASK_NDIMAGE:
         return _lazy_import(
-            globals(), name, "dask_image.ndinterp", "dkndi", "DASK_NDIMAGE"
+            globals(),
+            name,
+            "brainhops._core.dask_ndimage",
+            "dkndi",
+            "DASK_NDIMAGE",
         )
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

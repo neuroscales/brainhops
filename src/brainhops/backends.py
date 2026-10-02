@@ -23,7 +23,7 @@ _MODULES = {
 _NDIMAGE_PACKAGE = {
     "numpy": "scipy",
     "cupy": "cupy",
-    "dask": "dask-image",
+    "dask": "dask",
 }
 
 _PRIORITY = ("dask", "cupy", "numpy")
@@ -32,11 +32,9 @@ _PRIORITY = ("dask", "cupy", "numpy")
 def available_backends() -> tx.Tuple[str, ...]:
     """The backends that can be selected, most preferred first.
 
-    A backend appears only when both of its packages are installed. dask
-    without `dask-image` is therefore not available: it could interpolate
-    only by materializing the array it was handed, which for a lazily read
-    volume is the very allocation dask is used to avoid. It is deactivated
-    rather than quietly served by scipy.
+    A backend appears only when both of its packages are installed. The
+    dask backend's ndimage package is brainhops' own
+    ([`brainhops._core.dask_ndimage`][]), so dask alone is enough for it.
     """
     return tuple(
         name
@@ -237,11 +235,9 @@ def copy_array(x: ArrayProtocol) -> ArrayProtocol:
 def _ndimage_of(name: str) -> ModuleType:
     """The ndimage package of a backend, by name.
 
-    A missing package is reported, never substituted. Serving the dask
+    A missing package is reported, never substituted: serving the dask
     backend with scipy would materialize the array it was handed, which for
-    a lazily read volume is the allocation dask is used to avoid, so a dask
-    backend without `dask-image` raises here and is absent from
-    [available_backends][brainhops.backends.available_backends].
+    a lazily read volume is the allocation dask is used to avoid.
     """
     array, image = _MODULES[name]
     if array is None:
@@ -259,7 +255,8 @@ def get_ndimage_backend(
 ) -> ModuleType:
     """Determine the ndimage package for a given array
 
-    One of: scipy.ndimage, cupyx.scipy.ndimage, dask_image.ndinterp
+    One of: scipy.ndimage, cupyx.scipy.ndimage,
+    brainhops._core.dask_ndimage
 
     Raises
     ------
