@@ -33,6 +33,7 @@ from brainhops.io.base.nifti import (
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
+    _nifti_vector_field,
     _NiftiObject,
 )
 from brainhops.io.base.parsers import (
@@ -114,10 +115,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         data = self.data
         if data is None:
             return None
-        shape = tuple(int(d) for d in data.shape)
-        if len(shape) == 5 and shape[3] == 1:
-            data = data[:, :, :, 0, :]
-        return data
+        return _nifti_vector_field(data)
 
     @field.setter
     def field(self, value: tx.Optional[ArrayProtocol]) -> None:
@@ -203,8 +201,8 @@ class NiftiRASDisplacementField(
 
     HINTS = ("displacements",)
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -262,9 +260,8 @@ class NiftiRASDisplacementField(
         backend = get_array_backend(data)
         data = backend.asarray(data)
         shape = tuple(int(d) for d in data.shape)
-        if len(shape) == 5 and shape[3] == 1:
-            data = data[:, :, :, 0, :]
-        elif len(shape) != 4:
+        data = _nifti_vector_field(data)
+        if data.ndim != 4:
             raise ParserContentError(
                 f"A NIfTI displacement field is stored as a (X, Y, Z, 1, 3) "
                 f"array, not as an array of shape {shape}."
@@ -293,7 +290,7 @@ class NiftiRASDisplacementField(
         return ras_displacement_chain(
             self._ras_vectors(),
             self._vox2ras(),
-            order=self.order,
+            degree=self.degree,
             bound=self.bound,
         )
 

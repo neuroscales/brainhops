@@ -203,15 +203,15 @@ def test_replace_cartesian_field_changes_endpoints_and_keeps_shape() -> None:
     np.testing.assert_array_equal(np.asarray(replaced.field), expected)
 
 
-def test_replace_cartesian_field_changes_order_and_bound() -> None:
+def test_replace_cartesian_field_changes_degree_and_bound() -> None:
     cf = CartesianField(shape=(3, 4))
     replaced = replace(
         cf,
-        order=InterpolationOrder.cubic,
+        degree=InterpolationOrder.cubic,
         bound=BoundaryCondition.reflect,
     )
     assert isinstance(replaced, CartesianField)
-    assert replaced.order == InterpolationOrder.cubic
+    assert replaced.degree == InterpolationOrder.cubic
     assert replaced.bound == BoundaryCondition.reflect
     # Everything not named is carried over unchanged.
     assert replaced.shape == (3, 4)
@@ -236,11 +236,11 @@ def test_replace_coordinates_field_round_trips_explicit_field() -> None:
     # Guard against regressing the base: CoordinatesField takes `field` as
     # a normal init field, so replace carries an explicit array over.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(field=values.copy(), order=3, coeff=True)
-    replaced = replace(cf, order=1)
+    cf = CoordinatesField(field=values.copy(), degree=3, coeff=True)
+    replaced = replace(cf, degree=1)
     assert isinstance(replaced, CoordinatesField)
     assert not isinstance(replaced, CartesianField)
-    assert replaced.order == 1
+    assert replaced.degree == 1
     assert replaced.coeff is True
     np.testing.assert_array_equal(np.asarray(replaced.field), values)
 
@@ -346,13 +346,13 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
     # field rather than converting it a second time.
     calls = {"count": 0}
 
-    def spy(field, order, bound, inplace=False):  # noqa: ANN001, ANN202
+    def spy(field, degree, bound, inplace=False):  # noqa: ANN001, ANN202
         calls["count"] += 1
         return field + 1.0
 
     monkeypatch.setattr(xc, "value2coeff_field", spy)
     values = np.zeros((5, 6, 2))
-    field = DisplacementField(field=values.copy(), order=3, coeff=False)
+    field = DisplacementField(field=values.copy(), degree=3, coeff=False)
     coeffs = field.to(coeff=True)
     assert coeffs.coeff is True
     assert calls["count"] == 1

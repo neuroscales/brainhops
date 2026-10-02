@@ -2,7 +2,7 @@
 
 === ":octicons-terminal-24:"
     ```shell
-    brainhops reslice <input> --reference IMAGE [--transform SOURCE ...] --output IMAGE [--order ORDER] [--bound BOUND]
+    brainhops reslice <input> --reference IMAGE [--transform SOURCE ...] --output IMAGE [--degree DEGREE] [--bound BOUND]
     ```
 
 Resample an image onto the grid of a reference image, after applying a
@@ -30,7 +30,7 @@ runs in the opposite one.
 | `-r`, `--reference`    | `path` | Reference image whose geometry defines the output grid and its placement in world space. | *required* |
 | `-t`, `--transform`    | `path` | A forward (push) transformation to apply to the input image. Repeat the option to apply several, in the order given. | |
 | `-o`, `--output`       | `path` | Path to write the resampled image to.                                                    | *required* |
-| `--order`              | `int`  | Spline interpolation order (`0` = nearest, `1` = linear).                                | `1`        |
+| `--degree`             | `int`  | Spline degree (`0` = nearest, `1` = linear, `3` = cubic).                                | `1`        |
 | `--bound`              | `str`  | Boundary condition used outside the field of view.                                       | `reflect`  |
 
 ## Transform operators

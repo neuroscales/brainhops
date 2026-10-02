@@ -129,10 +129,10 @@ def add_parser(
         help="Path to write the resampled image to.",
     )
     parser.add_argument(
-        "--order",
+        "--degree",
         type=int,
         default=1,
-        help="Spline interpolation order (0=nearest, 1=linear). Default 1.",
+        help="Spline degree (0=nearest, 1=linear, 3=cubic). Default 1.",
     )
     parser.add_argument(
         "--bound",
@@ -179,7 +179,7 @@ def reslice_image(
     input_path: tx.Union[str, ImageSpec],
     reference_path: tx.Union[str, ImageSpec],
     transform_paths: list,
-    order: int = 1,
+    degree: int = 1,
     bound: str = "reflect",
 ) -> Image:
     """Resample an image onto a reference grid and return it.
@@ -225,7 +225,7 @@ def reslice_image(
         else _split_image_spec(reference_path)
     )
     reference = load_image(reference_spec)
-    return image.reslice(reference, order=order, bound=bound)
+    return image.reslice(reference, degree=degree, bound=bound)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -234,7 +234,7 @@ def run(args: argparse.Namespace) -> int:
         args.input,
         args.reference,
         args.transforms,
-        order=args.order,
+        degree=args.degree,
         bound=args.bound,
     )
     save_image(resliced, args.output)

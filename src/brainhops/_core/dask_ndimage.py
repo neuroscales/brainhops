@@ -6,7 +6,10 @@ They follow `scipy.ndimage` -- same arguments, same results, to about
 of coordinates reads a window of the input around its stencils, and a
 chunk of spline coefficients reads the halo of its neighbours. Each
 window is extended past the edges of the array the way scipy extends the
-whole array, so the boundary conditions are scipy's.
+whole array, so the boundary conditions are scipy's. The public functions
+keep scipy's signatures -- `order` is the spline degree there -- so that
+they stand in for `scipy.ndimage` and `cupyx.scipy.ndimage`; the private
+helpers name it `degree`, as the rest of brainhops does.
 
 They replace `dask_image.ndinterp`, whose `map_coordinates` reads outside
 of an empty crop for coordinates beyond the start of an axis, and whose
@@ -39,7 +42,7 @@ _SPLINE_POLES = {
     5: 0.43057534709997379,
 }
 """
-The magnitude of the dominant pole of the b-spline prefilter, per order.
+The magnitude of the dominant pole of the b-spline prefilter, per degree.
 
 The prefilter is a recursive filter: the coefficient at one sample depends
 on a sample `k` steps away through a weight that decays as `pole ** k`.
@@ -62,15 +65,15 @@ _LOCAL_MODES = ("nearest", "reflect", "mirror", "grid-wrap", "grid-constant")
 """The modes a block of coordinates can be sampled with from a window."""
 
 
-def _halo(order: int) -> int:
+def _halo(degree: int) -> int:
     """
-    The samples a prefilter of this order reads on each side of a window.
+    The samples a prefilter of this degree reads on each side of a window.
 
     Beyond it, a sample weighs less than `_PREFILTER_TOLERANCE` in any
     coefficient of the window, so the coefficients of a window padded by
     this halo are those of the whole extended array.
     """
-    pole = _SPLINE_POLES.get(int(order))
+    pole = _SPLINE_POLES.get(int(degree))
     if pole is None:
         return 0
     return int(math.ceil(math.log(_PREFILTER_TOLERANCE) / math.log(pole)))
@@ -103,7 +106,7 @@ def _fold(k: np.ndarray, n: int, mode: str) -> np.ndarray:
 
 
 def _axis_plan(
-    lo: int, hi: int, n: int, mode: str, order: int, prefilter: bool
+    lo: int, hi: int, n: int, mode: str, degree: int, prefilter: bool
 ) -> tx.Tuple[np.ndarray, int, np.ndarray]:
     """
     How to sample one axis where the stencils read indices `[lo, hi)`.
@@ -126,7 +129,7 @@ def _axis_plan(
         return _fold(index, n, mode), 0, np.arange(hi - lo)
     pad = _SCIPY_PREPAD.get(mode, 0)
     padded = n + 2 * pad
-    halo = _halo(order)
+    halo = _halo(degree)
     index = index + pad
     if pad:
         coeff = _fold(index, padded, mode)
@@ -203,7 +206,7 @@ def _gather(
 def _map_coordinates_1block(
     coords: ArrayProtocol,
     input: ArrayProtocol,
-    order: int,
+    degree: int,
     mode: str,
     cval: float,
     prefilter: bool,
@@ -218,24 +221,29 @@ def _map_coordinates_1block(
 
     The result is scipy's on the whole array, to `_PREFILTER_TOLERANCE`,
     with two exceptions. scipy approximates its `reflect` prefilter near
-    the edges of a short axis -- by about 2e-6 at order five on seven
+    the edges of a short axis -- by about 2e-6 at degree five on seven
     samples -- and this does not. A point
     with a coordinate that is not finite is no position at all, and scipy
     returns `cval`, NaN or an edge sample for it depending on the mode and
-    the order: here it is NaN, or `cval` for an array of integers.
+    the degree: here it is NaN, or `cval` for an array of integers.
 
     The `wrap` mode does not extend the array in any way a window can
     reproduce, so it reads the whole array, and so does any mode this
     module does not know.
     """
-    order = int(order)
-    prefilter = bool(prefilter) and order > 1
-    opts = dict(order=order, mode=mode, cval=cval, prefilter=prefilter)
+    degree = int(degree)
+    prefilter = bool(prefilter) and degree > 1
+    opts = dict(degree=degree, mode=mode, cval=cval, prefilter=prefilter)
     dtype = input.dtype
     if mode not in _LOCAL_MODES:
         whole = input.compute() if hasattr(input, "compute") else input
         return backends.get_ndimage_backend(whole).map_coordinates(
-            whole, coords, **opts
+            whole,
+            coords,
+            order=degree,
+            mode=mode,
+            cval=cval,
+            prefilter=prefilter,
         )
 
     nx = backends.get_array_backend(coords)
@@ -252,13 +260,13 @@ def _map_coordinates_1block(
     if count == 0:
         return nx.empty((0,), dtype=dtype)
 
-    margin = order // 2 + 1
+    margin = degree // 2 + 1
     starts, signals, halos, locals_ = [], [], [], []
     for c, n in zip(coords, input.shape):
         lo = int(math.floor(float(c.min()))) - margin
         hi = int(math.ceil(float(c.max()))) + margin + 1
         signal, halo, local = _axis_plan(
-            lo, hi, int(n), mode, order, prefilter
+            lo, hi, int(n), mode, degree, prefilter
         )
         starts.append(lo)
         signals.append(signal)
@@ -271,7 +279,7 @@ def _map_coordinates_1block(
     nd = backends.get_ndimage_backend(window)
     if prefilter:
         window = nd.spline_filter(
-            window, order, output=np.float64, mode="mirror"
+            window, degree, output=np.float64, mode="mirror"
         )
         window = window[
             tuple(slice(h, window.shape[i] - h) for i, h in enumerate(halos))
@@ -283,7 +291,7 @@ def _map_coordinates_1block(
     output = nd.map_coordinates(
         window,
         coords - offset[:, None],
-        order=order,
+        order=degree,
         mode="mirror",
         prefilter=False,
     )
@@ -335,7 +343,7 @@ def map_coordinates(
     input is passed to the tasks as a delayed rebuild of itself, so each
     task only computes its window.
     """
-    opts = dict(order=order, mode=mode, cval=cval, prefilter=prefilter)
+    opts = dict(degree=order, mode=mode, cval=cval, prefilter=prefilter)
     coords = coordinates
     if isinstance(coords, da.Array):
         coords = coords.rechunk({0: -1})
@@ -374,17 +382,17 @@ How `scipy.ndimage.spline_filter` extends an array past its edges, per mode.
 
 Its coefficients are those of the array extended this way, to about 1e-15,
 except that it approximates the `reflect` extension near the edges of a
-short axis: by about 1e-4 at order five on five samples.
+short axis: by about 1e-4 at degree five on five samples.
 """
 
 
 def _spline_filter1d_block(
-    block: ArrayProtocol, order: int, dim: int
+    block: ArrayProtocol, degree: int, dim: int
 ) -> ArrayProtocol:
     """Prefilter one materialized block along one axis."""
     nd = backends.get_ndimage_backend(block)
     return nd.spline_filter1d(
-        block, order, axis=dim, output=np.float64, mode="mirror"
+        block, degree, axis=dim, output=np.float64, mode="mirror"
     )
 
 
@@ -408,7 +416,7 @@ def _merge_chunks(
 
 
 def _dask_spline_filter1d(
-    input: ArrayProtocol, order: int, dim: int, extension: str
+    input: ArrayProtocol, degree: int, dim: int, extension: str
 ) -> ArrayProtocol:
     """Prefilter a dask array along one axis, chunk by chunk.
 
@@ -420,7 +428,7 @@ def _dask_spline_filter1d(
     shorter than the halo are merged with their neighbours first, until
     they are as long as it.
     """
-    halo = _halo(order)
+    halo = _halo(degree)
     size = int(input.shape[dim])
     index = (slice(None),) * dim
     left = _fold(np.arange(-halo, 0), size, extension)
@@ -443,7 +451,7 @@ def _dask_spline_filter1d(
         boundary="none",
         trim=True,
         dtype=np.float64,
-        order=order,
+        degree=degree,
         dim=dim,
     )
     return filtered[index + (slice(halo, halo + size),)]
@@ -494,9 +502,9 @@ def spline_filter1d(
     return result.rechunk(input.chunks)
 
 
-def _check_filter(order: int, output: tx.Any, mode: str) -> None:
+def _check_filter(degree: int, output: tx.Any, mode: str) -> None:
     """Refuse what scipy's prefilter refuses, and an output it cannot be."""
-    if int(order) not in _SPLINE_POLES:
+    if int(degree) not in _SPLINE_POLES:
         raise RuntimeError("spline order not supported")
     if mode not in _FILTER_EXTENSION:
         raise ValueError(f"Unknown spline boundary mode {mode!r}.")

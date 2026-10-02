@@ -2,7 +2,7 @@
 
 Composing an affine-like transformation with a ``CoordinatesField`` or a
 ``DisplacementField`` folds the affine into the stored field. The folded
-field must keep the interpolation settings of the input field (``order``,
+field must keep the interpolation settings of the input field (``degree``,
 ``bound`` and ``coeff``); otherwise it is later re-interpolated at the wrong
 settings. A field of spline coefficients must be converted to sampled values
 before the affine arithmetic and converted back afterwards; otherwise the
@@ -10,7 +10,7 @@ arithmetic runs on coefficients and yields garbage.
 
 Both faults were present in the affine-into-field composers. This file locks
 the fix in two ways: it checks that the folded field reports the same
-``order``, ``bound`` and ``coeff`` as its input, and it checks that
+``degree``, ``bound`` and ``coeff`` as its input, and it checks that
 evaluating the folded field at interior points reproduces the in-order
 reference ``A(interp(f))``.
 """
@@ -59,14 +59,14 @@ AFFINE_MATRIX = np.array([[1.7, 0.4, 2.0], [-0.3, 0.9, -1.5]])
 GRID_SHAPE = (14, 15)
 
 # Query points in the interior of the grid, offset from the nodes so that a
-# wrong interpolation order changes the result.
+# wrong spline degree changes the result.
 QUERY_POINTS = np.array(
     [[5.5, 6.5], [7.2, 8.1], [6.3, 5.7], [8.0, 9.0], [5.8, 7.4]]
 )
 
-# Coefficients require a spline order of at least two, so `coeff=True` is
-# paired only with the cubic order.
-ORDER_COEFF = [(1, False), (3, False), (3, True)]
+# Coefficients require a spline degree of at least two, so `coeff=True` is
+# paired only with the cubic degree.
+DEGREE_COEFF = [(1, False), (3, False), (3, True)]
 
 ARRAY_BACKENDS = [
     "numpy",
@@ -94,32 +94,32 @@ def _evaluate(field, points):  # noqa: ANN001, ANN202
 
 
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("order, coeff", ORDER_COEFF)
+@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
 def test_fold_affine_into_field_keeps_interpolation_settings(
     field_type: type,
-    order: int,
+    degree: int,
     coeff: bool,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
     field = field_type(
-        field=values, order=order, bound=BoundaryCondition.mirror
+        field=values, degree=degree, bound=BoundaryCondition.mirror
     ).to(coeff=coeff)
 
     folded = (Affine(matrix=AFFINE_MATRIX) @ field).compute()
 
-    assert folded.order == field.order
+    assert folded.degree == field.degree
     assert folded.bound == field.bound
     assert folded.coeff == field.coeff
 
 
 @pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("order, coeff", ORDER_COEFF)
+@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
-    order: int,
+    degree: int,
     coeff: bool,
     array_backend: str,
 ) -> None:
@@ -133,7 +133,7 @@ def test_fold_affine_into_field_matches_inorder_reference(
     # the whole-axis one, so the fold is exact on either backend.
     with backend(array_backend):
         field = field_type(
-            field=values, order=order, bound=BoundaryCondition.mirror
+            field=values, degree=degree, bound=BoundaryCondition.mirror
         ).to(coeff=coeff)
 
         matrix = AFFINE_MATRIX
@@ -146,10 +146,10 @@ def test_fold_affine_into_field_matches_inorder_reference(
     # Folding a coordinate field is exact within the field of view, because
     # interpolation is linear and the affine is affine. Folding a
     # displacement field carries an additional interior term under a spline
-    # order above one: the representation subtracts the node grid, whose
+    # degree above one: the representation subtracts the node grid, whose
     # cubic interpolation departs from the identity by an amount that decays
     # away from the edges but does not vanish on a finite grid.
-    interior_term = field_type is DisplacementField and order > 1
+    interior_term = field_type is DisplacementField and degree > 1
     atol = 1e-3 if interior_term else 1e-10
     np.testing.assert_allclose(result, reference, atol=atol, rtol=0)
 
@@ -194,7 +194,7 @@ def _coords_4d(seed: int = 0) -> CoordinatesField:
     return CoordinatesField(
         field=field,
         output=_full4("in"),
-        order=3,
+        degree=3,
         bound=BoundaryCondition.mirror,
     )
 
@@ -237,11 +237,11 @@ def test_subspace_coords_permuted_positions_align() -> None:
 
 
 def test_subspace_coords_preserves_interpolation_settings() -> None:
-    # C1. The order, bound and coeff of the input field are preserved.
+    # C1. The degree, bound and coeff of the input field are preserved.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = compose(To, Ti)
-    assert got.order == Ti.order
+    assert got.degree == Ti.degree
     assert got.bound == Ti.bound
     assert got.coeff == Ti.coeff
 
@@ -337,7 +337,7 @@ def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
     assert isinstance(got, CoordinatesField)
     np.testing.assert_array_equal(np.asarray(got.field), np.asarray(Ti.field))
     assert got.output == _sub3("out")
-    assert got.order == Ti.order
+    assert got.degree == Ti.degree
     assert got.bound == Ti.bound
 
 

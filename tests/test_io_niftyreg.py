@@ -527,9 +527,9 @@ def test_control_point_grid_matches_niftyreg(
     nb.save(_nreg_image(positions, vox2world, 2), path)
     xform = load(path)
     assert isinstance(xform, NiftyRegControlPointGrid)
-    assert xform.order == 3 and xform.coeff
+    assert xform.degree == 3 and xform.coeff
     assert xform.affine is None
-    assert xform.displacement.coeff and xform.displacement.order == 3
+    assert xform.displacement.coeff and xform.displacement.degree == 3
     points = np.concatenate(
         [_points(rng, 25, 0, 1), _points(rng, 10, -0.8, 1.8)]
     )
@@ -558,7 +558,7 @@ def test_linear_grid_matches_niftyreg(
     path = tmp_path / "lin.nii.gz"
     nb.save(_nreg_image(positions, vox2world, 6), path)
     xform = load(path, hint="niftyreg.cpp")
-    assert xform.order == 1 and not xform.coeff
+    assert xform.degree == 1 and not xform.coeff
     points = np.concatenate(
         [_points(rng, 20, 0, 1), _points(rng, 10, -0.5, 1.5)]
     )
@@ -632,9 +632,9 @@ def test_grid_refuses_sampled_values() -> None:
 
     grid = NiftyRegControlPointGrid()
     grid.transformations = ras_displacement_chain(
-        np.zeros((4, 4, 4, 3)), np.eye(4), order=2, coeff=True
+        np.zeros((4, 4, 4, 3)), np.eye(4), degree=2, coeff=True
     )
-    with pytest.raises(WriterError, match="order 2"):
+    with pytest.raises(WriterError, match="degree 2"):
         grid.to_nibabel()
 
 

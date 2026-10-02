@@ -12,6 +12,7 @@ __all__ = [
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # core
 from brainhops._core import affines as _affines
@@ -32,15 +33,19 @@ from .affines import RASToVoxel, VoxelToRAS
 class RASCoordinatesField(_xforms.CoordinatesField):
     """Field of RAS coordinates."""
 
-    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
 
 class LPSCoordinatesField(_xforms.CoordinatesField):
     """Field of LPS coordinates."""
 
-    _input: _systems.CoordinateSystem = _systems.VoxelCoordinateSystem()
-    _output: _systems.CoordinateSystem = _systems.LPSmm()
+    _input: KwOnly[_systems.CoordinateSystem] = (
+        _systems.VoxelCoordinateSystem()
+    )
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
 
 
 # ----------------------------------------------------------------------
@@ -66,7 +71,7 @@ def ras_displacement_chain(
     vectors: ArrayProtocol,
     vox2ras: np.ndarray,
     *,
-    order: tx.Any = 1,
+    degree: tx.Any = 1,
     bound: tx.Any = BoundaryCondition.nearest,
     coeff: bool = False,
 ) -> tx.Tuple[RASToVoxel, _xforms.DisplacementField, VoxelToRAS]:
@@ -81,8 +86,8 @@ def ras_displacement_chain(
         displacements, one vector per knot.
     vox2ras : array, shape `(ndim + 1, ndim + 1)`
         The voxel-to-RAS affine of the grid the vectors are sampled on.
-    order, bound
-        Interpolation order and boundary condition of the field.
+    degree, bound
+        Spline degree and boundary condition of the field.
     coeff : bool
         Whether `vectors` are spline coefficients rather than values.
 
@@ -107,7 +112,7 @@ def ras_displacement_chain(
             field=field,
             input=voxel,
             output=voxel,
-            order=order,
+            degree=degree,
             bound=bound,
             coeff=coeff,
         ),

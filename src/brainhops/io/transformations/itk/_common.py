@@ -294,13 +294,13 @@ class ItkDisplacementBase(ItkBlockBase):
     cached, so opening a file never touches the warp data: a dask-backed
     or delayed array stays unread until the chain is asked for.
 
-    `order`, `coeff` and `bound` are the spline parameters handed to the
+    `degree`, `coeff` and `bound` are the spline parameters handed to the
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
     and a subclass overrides them to describe its own encoding.
     """
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     coeff: tx.ClassVar[bool] = False
     """Whether the field holds spline coefficients rather than values."""
@@ -393,7 +393,7 @@ class ItkDisplacementBase(ItkBlockBase):
             field=self.field,
             input=VOX,
             output=VOX,
-            order=self.order,
+            degree=self.degree,
             coeff=self.coeff,
             bound=self.bound,
         )
@@ -869,7 +869,7 @@ class ItkBSplineStruct(
     back, so the components are planar rather than interleaved.
     """
 
-    order: tx.ClassVar[int] = 3
+    degree: tx.ClassVar[int] = 3
     coeff: tx.ClassVar[bool] = True
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
