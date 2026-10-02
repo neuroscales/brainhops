@@ -9,11 +9,11 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NiftiObject,
 )
-from brainhops.io.transformations.base.affines import RasToVoxel
-from brainhops.io.transformations.base.fields import RasCoordinatesField
-from brainhops.io.transformations.nifti.affines import NiftiRasToVoxel
+from brainhops.io.transformations.base.affines import RASToVoxel
+from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.nifti.affines import NiftiRASToVoxel
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
-from brainhops.io.transformations.nifti.fields import NiftiRasCoordinatesField
+from brainhops.io.transformations.nifti.fields import NiftiRASCoordinatesField
 
 
 @register_format
@@ -44,14 +44,14 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """
         float a NIfTI header as an SPM deformation field.
 
-        Deliberately *identical* to `NiftiRasCoordinatesField`: on
+        Deliberately *identical* to `NiftiRASCoordinatesField`: on
         content alone the two are indistinguishable, and pretending
         otherwise would be inventing evidence. The `y_`/`iy_` prefix is
         the only real difference, and it decides the tie through
         `PREFIXES`, which ranks a constrained parser above an
         unconstrained one.
         """
-        return NiftiRasCoordinatesField._score_nibabel(header)
+        return NiftiRASCoordinatesField._score_nibabel(header)
 
     # The stored chain is a tuple, as `ImmutableSequence` declares it, so
     # the derived and the assigned chain are both immutable, and in-place
@@ -61,24 +61,24 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     def transformations(
         self,
     ) -> tx.Tuple[
-        tx.Optional[RasToVoxel],
-        tx.Optional[RasCoordinatesField],
+        tx.Optional[RASToVoxel],
+        tx.Optional[RASCoordinatesField],
     ]:
         """The transformations that make up the sequence."""
         _transformations = getattr(self, "_transformations", None)
         if _transformations is not None:
             return _transformations
         return (
-            NiftiRasToVoxel(image=self.image, header=self.header),
-            NiftiRasCoordinatesField(image=self.image, header=self.header),
+            NiftiRASToVoxel(image=self.image, header=self.header),
+            NiftiRASCoordinatesField(image=self.image, header=self.header),
         )
 
     @transformations.setter
     def transformations(
         self,
         value: tx.Tuple[
-            tx.Optional[RasToVoxel],
-            tx.Optional[RasCoordinatesField],
+            tx.Optional[RASToVoxel],
+            tx.Optional[RASCoordinatesField],
         ],
     ) -> None:
         # `None` is the inherited default, and means "derive them from
@@ -86,27 +86,27 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         self._transformations = None if value is None else tuple(value)
 
     @property
-    def ras2voxel(self) -> tx.Optional[RasToVoxel]:
+    def ras2voxel(self) -> tx.Optional[RASToVoxel]:
         """The RAS-to-voxel transformation."""
         xform = self.transformations[0]
         if xform is None:
-            xform = NiftiRasToVoxel(image=self.image, header=self.header)
+            xform = NiftiRASToVoxel(image=self.image, header=self.header)
         return xform
 
     @property
-    def rasfield(self) -> tx.Optional[RasCoordinatesField]:
+    def rasfield(self) -> tx.Optional[RASCoordinatesField]:
         """The field of RAS coordinates."""
         xform = self.transformations[1]
         if xform is None:
-            xform = NiftiRasCoordinatesField(
+            xform = NiftiRASCoordinatesField(
                 image=self.image, header=self.header
             )
         return xform
 
     @ras2voxel.setter
-    def ras2voxel(self, value: RasToVoxel) -> None:
+    def ras2voxel(self, value: RASToVoxel) -> None:
         self._transformations = (value, self.transformations[1])
 
     @rasfield.setter
-    def rasfield(self, value: RasCoordinatesField) -> None:
+    def rasfield(self, value: RASCoordinatesField) -> None:
         self._transformations = (self.transformations[0], value)

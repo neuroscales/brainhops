@@ -15,12 +15,12 @@ nb = pytest.importorskip("nibabel")
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.transformations.base.affines import (  # noqa: E402
-    RasToVoxel,
-    VoxelToRas,
+    RASToVoxel,
+    VoxelToRAS,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRasToVoxel,
-    NiftiVoxelToRas,
+    NiftiRASToVoxel,
+    NiftiVoxelToRAS,
 )
 from brainhops.io.transformations.spm.y import (  # noqa: E402
     SpmCoordinatesField,
@@ -56,7 +56,7 @@ def _spm(tmp_path):  # noqa: ANN001, ANN202
 
 @pytest.mark.parametrize("compute", [False, True])
 @pytest.mark.parametrize(
-    "cls, back", [(NiftiRasToVoxel, VoxelToRas), (NiftiVoxelToRas, RasToVoxel)]
+    "cls, back", [(NiftiRASToVoxel, VoxelToRAS), (NiftiVoxelToRAS, RASToVoxel)]
 )
 def test_a_nifti_affine_inverse_takes_compute(cls, back, compute) -> None:  # noqa: ANN001
     img = _image()
@@ -70,7 +70,7 @@ def test_a_nifti_affine_inverse_takes_compute(cls, back, compute) -> None:  # no
 
 
 @pytest.mark.parametrize("compute", [False, True])
-@pytest.mark.parametrize("cls", [NiftiRasToVoxel, NiftiVoxelToRas])
+@pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
 def test_a_nifti_affine_with_a_set_matrix_inverts(cls, compute) -> None:  # noqa: ANN001
     # A set matrix takes the `super().inverse()` path, which must
     # receive `compute` too.
@@ -83,10 +83,10 @@ def test_a_nifti_affine_with_a_set_matrix_inverts(cls, compute) -> None:  # noqa
 
 def test_a_sequence_holding_a_nifti_affine_inverts() -> None:
     img = _image()
-    seq = xforms.Sequence([NiftiRasToVoxel(image=img, header=img.header)])
+    seq = xforms.Sequence([NiftiRASToVoxel(image=img, header=img.header)])
     inverse = seq.inverse()
     assert len(inverse) == 1
-    assert isinstance(inverse[0], VoxelToRas)
+    assert isinstance(inverse[0], VoxelToRAS)
     np.testing.assert_allclose(inverse[0].homogeneous_matrix, VOX2RAS)
 
 

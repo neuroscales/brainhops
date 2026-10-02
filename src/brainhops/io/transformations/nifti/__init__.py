@@ -7,9 +7,9 @@ The NIfTI-1 standard (`nifti1.h`) gives a field of vectors two intent
 codes, and they do not mean the same map:
 
 - `DISPVECT` (1006), "specifically for displacements", is read and
-  written by [`NiftiRasDisplacementField`][].
+  written by [`NiftiRASDisplacementField`][].
 - `VECTOR` (1007), "for any other type of vector", is read and written
-  by [`NiftiRasCoordinatesField`][].
+  by [`NiftiRASCoordinatesField`][].
 
 A displacement field maps `x -> x + u(x)`; a coordinates field maps a
 voxel to the position its vector holds. Reading one as the other moves
@@ -32,18 +32,18 @@ lay out its axes as one, so a grid written with it would be misread.
     one. Nothing in the file tells the two apart, and guessing from the
     values would be just that, so read them explicitly:
     `load(path, hint="nifti.coordinates")`, or
-    `NiftiRasCoordinatesField.from_file(path)`. Saving the result
+    `NiftiRASCoordinatesField.from_file(path)`. Saving the result
     rewrites it with the `VECTOR` intent.
 """
 
 __all__ = [
     "NiftiBasedTransformation",
-    "NiftiRasCoordinatesField",
-    "NiftiRasDisplacementField",
-    "NiftiRasToVoxel",
-    "NiftiVoxelToRas",
+    "NiftiRASCoordinatesField",
+    "NiftiRASDisplacementField",
+    "NiftiRASToVoxel",
+    "NiftiVoxelToRAS",
 ]
 
-from .affines import NiftiRasToVoxel, NiftiVoxelToRas
+from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
 from .base import NiftiBasedTransformation
-from .fields import NiftiRasCoordinatesField, NiftiRasDisplacementField
+from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField

@@ -28,11 +28,11 @@ from brainhops.io.transformations.base import (  # noqa: E402
     FileBasedTransformation,
 )
 from brainhops.io.transformations.base.affines import (  # noqa: E402
-    LpsToVoxel,
-    VoxelToLps,
+    LPSToVoxel,
+    VoxelToLPS,
 )
 from brainhops.io.transformations.base.fields import (  # noqa: E402
-    LpsCoordinatesField,
+    LPSCoordinatesField,
 )
 from brainhops.io.transformations.itk._systems import (  # noqa: E402
     _make_system,
@@ -43,9 +43,9 @@ from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ItkNiftiField,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRasCoordinatesField,
-    NiftiRasDisplacementField,
-    NiftiVoxelToRas,
+    NiftiRASCoordinatesField,
+    NiftiRASDisplacementField,
+    NiftiVoxelToRAS,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -174,9 +174,9 @@ def test_the_field_maps_lps_to_lps(itk_warp, ndim) -> None:  # noqa: ANN001
         field.displacement,
         field.voxel2lps,
     ]
-    assert isinstance(field.lps2voxel, LpsToVoxel)
+    assert isinstance(field.lps2voxel, LPSToVoxel)
     assert isinstance(field.displacement, xforms.DisplacementField)
-    assert isinstance(field.voxel2lps, VoxelToLps)
+    assert isinstance(field.voxel2lps, VoxelToLPS)
     np.testing.assert_allclose(field.voxel2lps.matrix, _vox2lps(ndim)[:-1])
 
 
@@ -321,8 +321,8 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
     coords = ItkNiftiCoordinatesField.from_file(coords)
     assert coords.input == _make_system(ndim)
     assert coords.output == _make_system(ndim)
-    assert isinstance(coords.lps2voxel, LpsToVoxel)
-    assert isinstance(coords.coordinates, LpsCoordinatesField)
+    assert isinstance(coords.lps2voxel, LPSToVoxel)
+    assert isinstance(coords.coordinates, LPSCoordinatesField)
     assert coords.coordinates.output == _make_system(ndim)
     points = _all_nodes_ras(ndim)
     np.testing.assert_allclose(
@@ -366,7 +366,7 @@ def test_an_itk_vector_file_is_ambiguous_without_a_hint(itk_warp) -> None:  # no
     with pytest.raises(AmbiguousFormatError):
         io.load(itk_warp)
     assert ItkNiftiDisplacementField.sniff(itk_warp) == pytest.approx(
-        NiftiRasCoordinatesField.sniff(itk_warp)
+        NiftiRASCoordinatesField.sniff(itk_warp)
     )
 
 
@@ -399,13 +399,13 @@ def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  
     """
     coords = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "coords.nii.gz"
-    NiftiRasCoordinatesField(field=coords).save(path)
+    NiftiRASCoordinatesField(field=coords).save(path)
     header = nb.load(str(path)).header
     assert header.get_intent() == ("vector", (), "Mapping")
     assert header.get_data_shape() == (*SHAPES[3], 1, 3)
-    assert io.transformations.sniff(path) is NiftiRasCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRasCoordinatesField
-    assert type(io.load(path)) is NiftiRasCoordinatesField
+    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert type(io.load(path)) is NiftiRASCoordinatesField
 
     bare = _write(tmp_path / "bare.nii.gz", coords, VECTOR)
     assert nb.load(str(bare)).header.get_intent()[2] == ""
@@ -440,14 +440,14 @@ def test_a_hint_selects_the_ras_reader(tmp_path) -> None:  # noqa: ANN001
     since the ITK coordinates reader never claims a file on content."""
     path = _write(tmp_path / "warp.nii.gz", _ramp(3))
     loaded = io.transformations.load(path, hint="coordinates")
-    assert type(loaded) is NiftiRasCoordinatesField
+    assert type(loaded) is NiftiRASCoordinatesField
 
 
 @pytest.mark.parametrize(
     "intent, ras",
     [
-        (DISPVECT, NiftiRasDisplacementField),
-        (NONE, NiftiRasCoordinatesField),
+        (DISPVECT, NiftiRASDisplacementField),
+        (NONE, NiftiRASCoordinatesField),
     ],
 )
 def test_non_itk_intents_stay_with_the_ras_reader(
@@ -472,7 +472,7 @@ def test_a_2d_field_without_itks_intent_is_not_claimed(tmp_path) -> None:  # noq
     plain NIfTI affine it was before, and a hint still reaches it."""
     path = _write(tmp_path / "field.nii.gz", _ramp(2), NONE)
     assert ItkNiftiDisplacementField.sniff(path) == 0
-    assert type(io.transformations.load(path)) is NiftiVoxelToRas
+    assert type(io.transformations.load(path)) is NiftiVoxelToRAS
     loaded = io.transformations.load(path, hint="itk")
     assert type(loaded) is ItkNiftiDisplacementField
 
@@ -626,11 +626,11 @@ def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # n
     vectors = _ramp(ndim)
     field = ItkNiftiDisplacementField(
         transformations=[
-            LpsToVoxel(matrix=np.linalg.inv(vox2lps)[:-1], input=world),
+            LPSToVoxel(matrix=np.linalg.inv(vox2lps)[:-1], input=world),
             xforms.DisplacementField(
                 field=vectors @ np.linalg.inv(vox2lps[:ndim, :ndim]).T
             ),
-            VoxelToLps(matrix=vox2lps[:-1], output=world),
+            VoxelToLPS(matrix=vox2lps[:-1], output=world),
         ]
     )
     assert field.input == world
@@ -651,7 +651,7 @@ def test_spline_coefficients_are_not_written() -> None:
     voxel = systems.VoxelCoordinateSystem()
     field = ItkNiftiDisplacementField(
         transformations=[
-            LpsToVoxel(matrix=np.eye(4)[:3]),
+            LPSToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
                 field=np.zeros((*SHAPES[3], 3)),
                 input=voxel,
@@ -659,7 +659,7 @@ def test_spline_coefficients_are_not_written() -> None:
                 order=3,
                 coeff=True,
             ),
-            VoxelToLps(matrix=np.eye(4)[:3]),
+            VoxelToLPS(matrix=np.eye(4)[:3]),
         ]
     )
     with pytest.raises(WriterError):

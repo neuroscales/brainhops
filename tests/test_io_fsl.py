@@ -400,12 +400,12 @@ def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
 def test_generic_reader_does_not_claim_fsl_intents() -> None:
     """The generic RAS-coordinates reader no longer sniffs FSL intents."""
     from brainhops.io.transformations.nifti.fields import (
-        NiftiRasCoordinatesField,
+        NiftiRASCoordinatesField,
     )
 
     img = nb.load(str(fsl_dir / "coefficientfield.nii.gz"))
     # A CERTAIN score would mean it is still claiming the FSL intent.
-    assert NiftiRasCoordinatesField._score_nibabel(img.header) < 1.0
+    assert NiftiRASCoordinatesField._score_nibabel(img.header) < 1.0
 
 
 def test_coefficient_field_exposes_order_and_coeff() -> None:
@@ -441,7 +441,7 @@ def test_coefficient_field_chain_shape() -> None:
     )
     chain = coef.transformations
     names = [type(t).__name__ for t in chain]
-    assert names == ["RasToWarpField", "DisplacementField", "WarpFieldToRas"]
+    assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
     field = chain[1]
     assert type(field) is _xforms.DisplacementField
     assert field.order == 3
@@ -590,7 +590,7 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
             transformations=list(coef.transformations)
         ).compute()
         names = [type(t).__name__ for t in computed.transformations]
-        assert names == ["RasToWarpField", "DisplacementField"]
+        assert names == ["RASToWarpField", "DisplacementField"]
 
         # Led by a sampling grid, the full warp reproduces the fslpy
         # reference.
@@ -624,7 +624,7 @@ def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
         transformations=list(warp.transformations)
     ).compute()
     names = [type(t).__name__ for t in computed.transformations]
-    assert names == ["RasToWarpField", "DisplacementField"]
+    assert names == ["RASToWarpField", "DisplacementField"]
 
     # The full three-step warp and the folded two-step warp both reproduce
     # the fslpy reference when they lead with a sampling grid.

@@ -74,8 +74,8 @@ that:
 | `DISPVECT` (1006)                  | RAS displacements                  |
 | no intent (0)                      | RAS coordinates                    |
 
-The RAS readers are `NiftiRasCoordinatesField` and
-`NiftiRasDisplacementField`, in [`brainhops.io.transformations.nifti`][].
+The RAS readers are `NiftiRASCoordinatesField` and
+`NiftiRASDisplacementField`, in [`brainhops.io.transformations.nifti`][].
 
 - `VECTOR` is exactly what ITK writes, but it is a generic code that any
   software may use, and ITK itself does not treat its vectors as

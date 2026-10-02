@@ -3,7 +3,7 @@ __all__ = [
     "LtaTransformation",
     "LtaTransformationVoxToVox",
     "LtaTransformationPhysToPhys",
-    "LtaTransformationRasToRas",
+    "LtaTransformationRASToRAS",
 ]
 
 # stdlib
@@ -74,7 +74,7 @@ class LtaTransformation(
     This is the registered format for `.lta` files: `io.load`,
     `io.transformations.load` and `from_other` read them, and `io.save`
     writes them. The views below it (`LtaTransformationVoxToVox`,
-    `LtaTransformationPhysToPhys`, `LtaTransformationRasToRas`) read the
+    `LtaTransformationPhysToPhys`, `LtaTransformationRASToRAS`) read the
     same files, but are not registered: they would claim every `.lta`
     file exactly as well as this class does.
 
@@ -377,7 +377,7 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         self._matrix = value
 
 
-class LtaTransformationRasToRas(LtaTransformation):
+class LtaTransformationRASToRAS(LtaTransformation):
     """
     A Linear Transform Array (LTA) file interpreted as a RAS-to-RAS
     affine transformation.
