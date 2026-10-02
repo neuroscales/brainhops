@@ -89,13 +89,13 @@ class FLIRTTransform(
                 "images, so it cannot be set. Set flirt_matrix instead."
             )
 
-    def inverse(self) -> _xforms.Affine:
+    def inverse(self, compute: bool = False, **kwargs) -> _xforms.Affine:
         # The inverse of a resolved FLIRT affine is a plain affine, because
         # the raw-matrix and image structure of a FLIRT transform does not
         # survive inversion.
         return _xforms.Affine(
             matrix=self.matrix, input=self.input, output=self.output
-        ).inverse()
+        ).inverse(compute=compute, **kwargs)
 
     def __repr__(self) -> str:
         return stored_repr(self, ("flirt_matrix", "moving", "reference"))

@@ -195,6 +195,21 @@ def test_flirt_matrix_is_the_documented_composition() -> None:
     assert np.allclose(flirt.homogeneous_matrix, oracle)
 
 
+def test_a_sequence_holding_flirt_inverts() -> None:
+    """`Sequence.inverse` passes `compute` on to the FLIRT inverse."""
+    flirt = _flirt(
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    inverse = _xforms.Sequence([flirt]).inverse(compute=True)
+    assert len(inverse) == 1
+    assert np.allclose(
+        inverse[0].homogeneous_matrix,
+        np.linalg.inv(EXPECTED_FLIRT_REF2MOV),
+        atol=1e-4,
+    )
+
+
 def test_flirt_requires_both_images() -> None:
     flirt = _flirt()
     with pytest.raises(ValueError, match="reference and the moving image"):
