@@ -1,6 +1,6 @@
 """
-Two-dimensional raster images -- PNG, JPEG, BMP, GIF, WebP, PNM, JPEG 2000,
-TGA, ... -- read and written with [Pillow](https://python-pillow.org).
+Two-dimensional raster images -- PNG, JPEG, BMP, GIF, WebP, PNM, TGA,
+... -- read and written with [Pillow](https://python-pillow.org).
 
 This reader requires the `pillow` extra (`pip install brainhops[pillow]`).
 
@@ -132,6 +132,11 @@ not store the data exactly.
   the dedicated TIFF reader, which reads stacks, pyramids and their
   metadata; this reader claims TIFF content only as a fallback, and reads
   it when tifffile (the `tiff` extra) is not installed.
+* **JPEG 2000.** JPEG 2000 files (`.jp2`, `.j2k`, ...) are likewise left
+  to the dedicated JPEG 2000 reader
+  ([`brainhops.io.images.jpeg2000`][]), which reads their resolution
+  levels and resolution boxes; this reader claims them only as a fallback
+  (`hint="pillow"`), at full resolution.
 """
 
 __all__ = ["PillowImage"]

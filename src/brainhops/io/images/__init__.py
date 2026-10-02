@@ -30,12 +30,17 @@ if HAS_NIBABEL:
     __all__ += ["freesurfer", "nifti"]
 
 # Raster images (PNG, JPEG, ...) are read and written with Pillow.
+# JPEG 2000 images, as multiscale images, are read and written with Pillow
+# (OpenJPEG) too.
 if HAS_PILLOW:
-    from . import pillow
+    from . import jpeg2000, pillow
 
-    __all__ += ["pillow"]
+    __all__ += ["jpeg2000", "pillow"]
 else:
     register_missing_format(["pillow"], "Pillow", "pillow")
+    register_missing_format(
+        ["jpeg2000", "jp2", "j2k", "j2c"], "Pillow", "pillow"
+    )
 
 # TIFF images are read and written with tifffile. Without it, Pillow
 # (whose TIFF sniff is weaker) reads them as raster images.

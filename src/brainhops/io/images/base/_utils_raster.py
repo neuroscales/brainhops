@@ -84,6 +84,7 @@ __all__ = [
     "to_canonical",
     "storage_permutation",
     "to_storage",
+    "planar_storage",
     "default_axes",
     "image_axes",
     "pixel_system",
@@ -121,6 +122,7 @@ from brainhops.datamodel.units import (
     is_physicalunit,
     is_spaceunit,
 )
+from brainhops.io.base.parsers import WriterError
 
 # ----------------------------------------------------------------------
 #   CONSTANTS
@@ -821,3 +823,94 @@ def size_to_dpi(size: float, unit: tx.Union[str, Unit] = "mm") -> float:
     if not math.isfinite(mm) or mm <= 0:
         raise ValueError(f"A pixel size must be positive, not {size!r}.")
     return MM_PER_INCH / mm
+
+
+# ----------------------------------------------------------------------
+#   PLANAR STORAGE
+# ----------------------------------------------------------------------
+
+
+def planar_storage(
+    data: tx.Any, xform: tx.Optional[Transformation]
+) -> tx.Tuple[np.ndarray, tx.Optional[tx.Dict[str, float]]]:
+    """
+    The pixels of an image as a planar raster format stores them, `(rows,
+    columns[, samples])`, and the pixel size along `x` and `y` in
+    millimetres, if it is known.
+
+    The image has two spatial axes (any other spatial axis must be a
+    singleton) and at most one channel axis.
+
+    Raises
+    ------
+    WriterError
+        If the image has no data, or cannot be stored as a
+    """
+    if data is None:
+        raise WriterError(
+            "This image has no data, so there is nothing to write."
+        )
+    shape = tuple(int(d) for d in data.shape)
+    ndim = len(shape)
+    axes = image_axes(ndim, getattr(xform, "input", None))
+    if axes is None:
+        if ndim == 2:
+            axes = default_axes(2)
+        elif ndim == 3 and shape[-1] <= 4:
+            axes = default_axes(3, channel=True)
+        else:
+            raise WriterError(
+                f"Cannot tell the axes of an array of shape {shape}: a "
+                f"raster image is (x, y) or (x, y, c) with at most four "
+                f"channels. Give the image a pixel coordinate system "
+                f"whose axes say which is which."
+            )
+    sizes = physical_pixel_size(xform, axes, "mm")
+
+    # Keep two spatial axes and at most one channel axis; any other
+    # axis must be a singleton, and is dropped.
+    space = [i for i, a in enumerate(axes) if axis_group(a) == "space"]
+    channel = [i for i, a in enumerate(axes) if axis_group(a) == "channel"]
+    if len(space) > 2:
+        # A slice of a volume: keep the two spatial axes that are not
+        # singletons (or, failing that, the first ones), in order.
+        wide = [i for i in space if shape[i] != 1]
+        narrow = [i for i in space if shape[i] == 1]
+        if len(wide) <= 2:
+            space = sorted(wide + narrow[: 2 - len(wide)])
+    if len(space) != 2:
+        raise WriterError(
+            f"A raster image has two spatial axes, but this one has "
+            f"{len(space)}, not counting singletons (shape {shape}). "
+            f"Extract a 2D slice before writing it."
+        )
+    channel = [i for i in channel if shape[i] != 1] or channel[:1]
+    if len(channel) > 1:
+        raise WriterError(
+            f"A raster image has at most one channel axis, but this one "
+            f"has {len(channel)} (shape {shape})."
+        )
+    keep = space + channel
+    drop = [i for i in range(ndim) if i not in keep]
+    if any(shape[i] != 1 for i in drop):
+        names = [axes[i].name for i in drop if shape[i] != 1]
+        raise WriterError(
+            f"A raster image has two spatial axes and one channel axis, "
+            f"so the axes {names} (shape {shape}) cannot be written. "
+            f"Select one of their elements before writing."
+        )
+    index = tuple(slice(None) if i in keep else 0 for i in range(ndim))
+    data = data[index]
+    # The two spatial axes kept are, in order, the columns (x) and the
+    # rows (y) of the raster, whatever their names: a sagittal slice
+    # (y, z) is written with y along the columns. Pillow stores rows
+    # first, then columns, then samples.
+    position = {axis: k for k, axis in enumerate(sorted(keep))}
+    order = [position[space[1]], position[space[0]]]
+    order += [position[i] for i in channel]
+    storage = data.transpose(order)
+
+    if sizes is not None:
+        x, y = (axes[i].name for i in space)
+        sizes = {"x": sizes[x], "y": sizes[y]}
+    return storage, sizes
