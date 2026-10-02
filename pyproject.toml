@@ -39,6 +39,10 @@ matrix = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
 pillow = ["pillow"]
 tiff = ["tifffile"]
+# openslide-python needs the OpenSlide C library, which openslide-bin
+# ships as wheels (where it has none, install it with the system's
+# package manager).
+openslide = ["openslide-python", "openslide-bin"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
@@ -68,6 +72,7 @@ io = [
     "brainhops[nibabel]",
     "brainhops[pillow]",
     "brainhops[tiff]",
+    "brainhops[openslide]",
     "brainhops[zarr]",
 ]
 
@@ -80,6 +85,7 @@ test = [
     "brainhops[nibabel]",
     "brainhops[pillow]",
     "brainhops[tiff]",
+    "brainhops[openslide]",
     "brainhops[zarr]"
 ]
 
