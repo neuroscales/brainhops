@@ -45,6 +45,14 @@ try:
 except ImportError:  # nibabel is optional
     pass
 
+# The X5 reader needs h5py, which is optional.
+try:
+    from . import x5
+
+    __all__ += ["x5"]
+except ImportError:  # h5py is optional
+    pass
+
 # The OME-Zarr field reader needs abczarr and at least one backend driver.
 # abczarr alone cannot open a store, so the reader is registered only when a
 # driver is present. This mirrors how io.images gates io.images.zarr.

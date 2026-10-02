@@ -103,12 +103,11 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import (
-    Affine,
-    ConversionError,
-    Sequence,
-    Transformation,
+from brainhops.datamodel.transformations import Transformation
+from brainhops.io.base._geometry import (
+    embed_affine,
+    ras_conversion,
+    reduce_to_affine,
 )
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
@@ -116,7 +115,6 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     ParserExistsError,
     SnifferContentError,
-    UnrepresentableTransformationError,
     WriterError,
     preserve_position,
 )
@@ -868,47 +866,6 @@ def _open_path(file: tx.Any) -> tx.BinaryIO:
 #   GEOMETRY (writing)
 # ----------------------------------------------------------------------
 
-_RAS_FROM_ORIENTATION = {
-    "left-to-right": (0, 1.0),
-    "right-to-left": (0, -1.0),
-    "posterior-to-anterior": (1, 1.0),
-    "anterior-to-posterior": (1, -1.0),
-    "inferior-to-superior": (2, 1.0),
-    "superior-to-inferior": (2, -1.0),
-}
-"""The RAS axis and sign an anatomical orientation runs along."""
-
-# NOTE  `_RAS_FROM_ORIENTATION`, `_ras_conversion` and the reduction to an
-#   affine in `voxel_to_ras` mirror their NIfTI counterparts in
-#   `brainhops.io.base.nifti`. They are repeated here because that module
-#   imports nibabel, which the MRtrix format does not need.
-
-
-def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
-    """
-    The `(4, 4)` matrix that maps a world space's coordinates into RAS.
-
-    Built from the anatomical orientation of the first three axes; the
-    identity when any of them carries none.
-    """
-    try:
-        axes = list(system.axes or [])[:3] if system is not None else []
-    except Exception:
-        axes = []
-    mapping = []
-    for axis in axes:
-        value = getattr(getattr(axis, "orientation", None), "value", None)
-        if value not in _RAS_FROM_ORIENTATION:
-            return np.eye(4)
-        mapping.append(_RAS_FROM_ORIENTATION[value])
-    if len(mapping) != 3:
-        return np.eye(4)
-    conversion = np.zeros((4, 4))
-    conversion[3, 3] = 1.0
-    for column, (row, sign) in enumerate(mapping):
-        conversion[row, column] = sign
-    return conversion
-
 
 def voxel_to_ras(xform: Transformation) -> np.ndarray:
     """
@@ -927,39 +884,17 @@ def voxel_to_ras(xform: Transformation) -> np.ndarray:
     WriterError
         If it maps more than three spatial dimensions.
     """
-    reduced = xform.compute() if isinstance(xform, Sequence) else xform
-    affine = reduced
-    error = None
-    if not isinstance(affine, Affine):
-        try:
-            affine = reduced.to(Affine)
-        except ConversionError as exc:
-            error = exc
-    if not isinstance(affine, Affine):
-        raise UnrepresentableTransformationError(
-            f"A {type(xform).__name__} cannot be written as MRtrix "
-            f"geometry: MRtrix stores an affine voxel-to-scanner matrix, "
-            f"and this transformation has no affine representation."
-        ) from error
+    affine = reduce_to_affine(xform, "MRtrix", "scanner")
     matrix = affine.homogeneous_matrix
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
-    out_dim, in_dim = matrix.shape[0] - 1, matrix.shape[1] - 1
-    if out_dim > 3 or in_dim > 3:
-        raise WriterError(
-            f"MRtrix stores a three-dimensional voxel-to-scanner affine, "
-            f"so a {in_dim}D-to-{out_dim}D transformation cannot be "
-            f"written."
-        )
-    embedded = np.eye(4)
-    embedded[:out_dim, :in_dim] = matrix[:out_dim, :in_dim]
-    embedded[:out_dim, 3] = matrix[:out_dim, in_dim]
+    embedded = embed_affine(matrix, "MRtrix", "scanner")
     output = getattr(affine, "output", None)
     try:
         if output is not None and output.ndim is None:
-            output = output.expand(out_dim)
+            output = output.expand(matrix.shape[0] - 1)
     except Exception:
         output = None
-    return _ras_conversion(output) @ embedded
+    return ras_conversion(output) @ embedded
 
 
 def split_voxel_to_scanner(
