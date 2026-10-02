@@ -93,7 +93,12 @@ class AmbiguousFormatError(ParserError):
     meaningful way to choose between them, and picking one at random
     would silently return the wrong kind of object.
 
-    The fix belongs in the parsers, not in the caller: give one of them a
+    The message is written for the user who hit it: it names each
+    candidate format, and the `hint=` value (or the format's own `load`)
+    that reads the content as that format.
+
+    If the formats should be able to tell such content apart, the fix
+    belongs in the parsers, not in the caller: give one of them a
     sniffer that can tell the two apart (a magic number, an intent code,
     a filename constraint), or set an explicit `PRIORITY`.
     """

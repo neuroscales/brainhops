@@ -19,6 +19,4 @@ class ITKTransform(_xforms.Sequence, FileBasedTransformation):
     and register themselves.
     """
 
-    # ANTs writes its transforms in ITK's formats, so every ITK reader
-    # also answers to the "ants" hint.
     HINTS = ("itk", "ants")
