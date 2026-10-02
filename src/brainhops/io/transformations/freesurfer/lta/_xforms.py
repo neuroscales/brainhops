@@ -52,6 +52,11 @@ class LTAFormat(FreesurferTransformationFormat, AffineTransformationFormat):
     HINTS = ("lta",)
 
 
+# `WritableFileBasedTransformation` writes through `FileParserWriter`, which
+# knows no encoding: its `sniff_bytes`, `from_bytes` and `to_bytes` raise
+# `NotImplementedError`. `TextFileParserWriter` is what bridges bytes to
+# text for a text format (as `TextFileParser` does for FLIRT), so it is
+# needed as well, and must come first to take precedence.
 @register_format
 class LTATransformation(
     LTAFormat,
