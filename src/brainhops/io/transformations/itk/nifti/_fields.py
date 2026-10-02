@@ -42,8 +42,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
-from brainhops.io.transformations.base.fields import LPSCoordinatesField
+from brainhops.io.transformations.base.affines import LpsToVoxel, VoxelToLps
+from brainhops.io.transformations.base.fields import LpsCoordinatesField
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 # locals
@@ -136,15 +136,15 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ITKNiftiField(_xforms.Sequence, NiftiBasedTransformation):
+class ItkNiftiField(_xforms.Sequence, NiftiBasedTransformation):
     """
     A field stored in an ITK NIfTI vector image, from LPS to LPS.
 
     The vectors of the image are in ITK's LPS physical space, while the
     NIfTI header carries the usual voxel-to-RAS affine. This base reads
     both, and leaves to its subclasses what the vectors mean:
-    displacements ([`ITKNiftiDisplacementField`][]) or absolute
-    coordinates ([`ITKNiftiCoordinatesField`][]).
+    displacements ([`ItkNiftiDisplacementField`][]) or absolute
+    coordinates ([`ItkNiftiCoordinatesField`][]).
 
     The same code reads 2-D and 3-D fields: the dimension is read off the
     header, and the endpoints are the ITK spaces of that dimension --
@@ -329,7 +329,7 @@ class ITKNiftiField(_xforms.Sequence, NiftiBasedTransformation):
 
 
 @register_format
-class ITKNiftiDisplacementField(ITKNiftiField):
+class ItkNiftiDisplacementField(ItkNiftiField):
     """
     ITK displacement field, stored as a NIfTI vector image.
 
@@ -418,7 +418,7 @@ class ITKNiftiDisplacementField(ITKNiftiField):
         rotate = backend.asarray(lps2vox, dtype=vectors.dtype)
         field = backend.matmul(rotate, vectors[..., None])[..., 0]
         return (
-            LPSToVoxel(
+            LpsToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
             _xforms.DisplacementField(
@@ -428,7 +428,7 @@ class ITKNiftiDisplacementField(ITKNiftiField):
                 order=self.order,
                 bound=self.bound,
             ),
-            VoxelToLPS(matrix=vox2lps, input=voxel, output=world),
+            VoxelToLps(matrix=vox2lps, input=voxel, output=world),
         )
 
     @property
@@ -489,7 +489,7 @@ class ITKNiftiDisplacementField(ITKNiftiField):
 
 
 @register_format
-class ITKNiftiCoordinatesField(ITKNiftiField):
+class ItkNiftiCoordinatesField(ItkNiftiField):
     """
     Field of LPS coordinates, stored as an ITK NIfTI vector image.
 
@@ -544,10 +544,10 @@ class ITKNiftiCoordinatesField(ITKNiftiField):
         ndim, vox2lps = self._grid()
         world, voxel = self._spaces(ndim)
         return (
-            LPSToVoxel(
+            LpsToVoxel(
                 matrix=_affines.inv(vox2lps), input=world, output=voxel
             ),
-            LPSCoordinatesField(
+            LpsCoordinatesField(
                 field=self._lps_vectors(ndim), input=voxel, output=world
             ),
         )

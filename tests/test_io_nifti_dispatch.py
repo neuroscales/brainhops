@@ -13,12 +13,12 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
-    NiftiRASDisplacementField,
-    NiftiVoxelToRAS,
+    NiftiRasCoordinatesField,
+    NiftiRasDisplacementField,
+    NiftiVoxelToRas,
 )
 from brainhops.io.transformations.spm.y import (  # noqa: E402
-    SPMCoordinatesField,
+    SpmCoordinatesField,
 )
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
@@ -50,7 +50,7 @@ def test_a_plain_nifti_loads_as_its_affine(tmp_path) -> None:  # noqa: ANN001
     nothing else a transformation could be built from.
     """
     path = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
-    assert type(io.transformations.load(path)) is NiftiVoxelToRAS
+    assert type(io.transformations.load(path)) is NiftiVoxelToRas
 
 
 def test_a_displacement_intent_loads_as_a_displacement_field(
@@ -61,16 +61,16 @@ def test_a_displacement_intent_loads_as_a_displacement_field(
     `DISPVECT` means displacements, as the NIfTI-1 standard says.
     """
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
-    assert io.transformations.sniff(path) is NiftiRASDisplacementField
-    assert type(io.transformations.load(path)) is NiftiRASDisplacementField
-    assert type(io.load(path)) is NiftiRASDisplacementField
+    assert io.transformations.sniff(path) is NiftiRasDisplacementField
+    assert type(io.transformations.load(path)) is NiftiRasDisplacementField
+    assert type(io.load(path)) is NiftiRasDisplacementField
 
 
 def test_a_vector_intent_loads_as_a_coordinates_field(tmp_path) -> None:  # noqa: ANN001
     """`VECTOR` is what brainhops and SPM write for a coordinates field."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), VECTOR)
-    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert io.transformations.sniff(path) is NiftiRasCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRasCoordinatesField
 
 
 def test_each_field_reader_declines_the_other_intent(tmp_path) -> None:  # noqa: ANN001
@@ -80,9 +80,9 @@ def test_each_field_reader_declines_the_other_intent(tmp_path) -> None:  # noqa:
     """
     disp = _write(tmp_path, "disp.nii", (4, 5, 6, 1, 3), DISPVECT)
     coords = _write(tmp_path, "coords.nii", (4, 5, 6, 1, 3), VECTOR)
-    assert NiftiRASCoordinatesField.sniff(disp) == 0
-    assert NiftiRASDisplacementField.sniff(coords) == 0
-    assert SPMCoordinatesField.sniff(disp) == 0
+    assert NiftiRasCoordinatesField.sniff(disp) == 0
+    assert NiftiRasDisplacementField.sniff(coords) == 0
+    assert SpmCoordinatesField.sniff(disp) == 0
 
 
 def test_a_field_without_an_intent_is_not_read_as_displacements(
@@ -90,7 +90,7 @@ def test_a_field_without_an_intent_is_not_read_as_displacements(
 ) -> None:
     """Without `DISPVECT` nothing says the vectors are displacements."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), NONE)
-    assert NiftiRASDisplacementField.sniff(path) == 0
+    assert NiftiRasDisplacementField.sniff(path) == 0
 
 
 @pytest.mark.parametrize("hint", ["nifti.coordinates", "coordinates"])
@@ -102,14 +102,14 @@ def test_a_hint_reads_a_dispvect_file_as_coordinates(tmp_path, hint) -> None:  #
     """
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     loaded = io.transformations.load(path, hint=hint)
-    assert type(loaded) is NiftiRASCoordinatesField
+    assert type(loaded) is NiftiRasCoordinatesField
 
 
 @pytest.mark.parametrize("hint", ["nifti.displacements", "displacements"])
 def test_a_hint_selects_the_displacement_reader(tmp_path, hint) -> None:  # noqa: ANN001
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     loaded = io.transformations.load(path, hint=hint)
-    assert type(loaded) is NiftiRASDisplacementField
+    assert type(loaded) is NiftiRasDisplacementField
 
 
 def test_a_field_shape_is_recognized_without_an_intent_code(
@@ -120,8 +120,8 @@ def test_a_field_shape_is_recognized_without_an_intent_code(
     has to carry the decision on its own.
     """
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), NONE)
-    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert io.transformations.sniff(path) is NiftiRasCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRasCoordinatesField
 
 
 def test_the_spm_prefix_wins_an_otherwise_exact_tie(tmp_path) -> None:  # noqa: ANN001
@@ -130,7 +130,7 @@ def test_the_spm_prefix_wins_an_otherwise_exact_tie(tmp_path) -> None:  # noqa: 
     is the only evidence, and it decides.
     """
     path = _write(tmp_path, "y_sub01.nii", (4, 5, 6, 1, 3), VECTOR)
-    assert type(io.transformations.load(path)) is SPMCoordinatesField
+    assert type(io.transformations.load(path)) is SpmCoordinatesField
 
 
 def test_the_spm_prefix_does_not_override_a_displacement_intent(
@@ -142,20 +142,20 @@ def test_the_spm_prefix_does_not_override_a_displacement_intent(
     the intent code.
     """
     path = _write(tmp_path, "y_sub01.nii", (4, 5, 6, 1, 3), DISPVECT)
-    assert type(io.transformations.load(path)) is NiftiRASDisplacementField
+    assert type(io.transformations.load(path)) is NiftiRasDisplacementField
 
 
 def test_the_spm_prefix_works_without_an_intent_code(tmp_path) -> None:  # noqa: ANN001
     """Fields written without an intent code are common too."""
     path = _write(tmp_path, "iy_sub01.nii", (4, 5, 6, 1, 3), NONE)
-    assert type(io.transformations.load(path)) is SPMCoordinatesField
+    assert type(io.transformations.load(path)) is SpmCoordinatesField
 
 
 def test_the_spm_reader_does_not_claim_files_it_is_not_named_for(
     tmp_path,  # noqa: ANN001
 ) -> None:
     path = _write(tmp_path, "sub01.nii", (4, 5, 6, 1, 3), VECTOR)
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRasCoordinatesField
 
 
 # ----------------------------------------------------------------------
@@ -170,7 +170,7 @@ def test_dispatch_is_the_same_compressed_or_not(tmp_path, suffix) -> None:  # no
     gzipped stream has to be detected from its magic bytes instead.
     """
     path = _write(tmp_path, "field" + suffix, (4, 5, 6, 1, 3), DISPVECT)
-    assert type(io.transformations.load(path)) is NiftiRASDisplacementField
+    assert type(io.transformations.load(path)) is NiftiRasDisplacementField
 
 
 def test_a_compressed_file_is_actually_decompressed(tmp_path) -> None:  # noqa: ANN001
@@ -179,7 +179,7 @@ def test_a_compressed_file_is_actually_decompressed(tmp_path) -> None:  # noqa: 
     img = nb.Nifti1Image(data, np.eye(4))
     target = tmp_path / "scan.nii.gz"
     nb.save(img, str(target))
-    obj = NiftiVoxelToRAS.from_file(target)
+    obj = NiftiVoxelToRas.from_file(target)
     assert obj.image is not None
     assert np.asarray(obj.image.dataobj).sum() == pytest.approx(data.sum())
 
@@ -199,9 +199,9 @@ def test_a_field_scores_above_a_plain_image(tmp_path) -> None:  # noqa: ANN001
     """The ranking these scores produce is what drives dispatch."""
     field = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), VECTOR)
     plain = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
-    assert NiftiRASCoordinatesField.sniff(
+    assert NiftiRasCoordinatesField.sniff(
         field
-    ) > NiftiRASCoordinatesField.sniff(plain)
+    ) > NiftiRasCoordinatesField.sniff(plain)
 
 
 def test_sniff_identifies_the_format_without_parsing(tmp_path) -> None:  # noqa: ANN001
@@ -211,7 +211,7 @@ def test_sniff_identifies_the_format_without_parsing(tmp_path) -> None:  # noqa:
     plain = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
     field = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     assert io.sniff(plain) is NiftiImage
-    assert io.sniff(field) is NiftiRASDisplacementField
+    assert io.sniff(field) is NiftiRasDisplacementField
     # and it agrees with what `load` actually returns
     assert type(io.load(plain)) is io.sniff(plain)
     assert type(io.load(field)) is io.sniff(field)
@@ -239,8 +239,8 @@ def test_a_field_shaped_volume_is_not_claimed_as_an_image(
     """
     vector = _write(tmp_path, "coords.nii", (4, 5, 6, 1, 3), VECTOR)
     dispvect = _write(tmp_path, "disp.nii", (4, 5, 6, 1, 3), DISPVECT)
-    assert type(io.load(vector)) is NiftiRASCoordinatesField
-    assert type(io.load(dispvect)) is NiftiRASDisplacementField
+    assert type(io.load(vector)) is NiftiRasCoordinatesField
+    assert type(io.load(dispvect)) is NiftiRasDisplacementField
 
 
 def test_image_data_survives_the_reader_closing_the_file(

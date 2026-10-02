@@ -467,7 +467,7 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     pytest.importorskip("abczarr")
     nb = pytest.importorskip("nibabel")
     from brainhops.io.images.zarr import ZarrImage
-    from brainhops.io.transformations.fsl.flirt import FLIRTTransform
+    from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
     path = str(tmp_path / "image.zarr")
     data = np.arange(2 * 3 * 4, dtype="float32").reshape(2, 3, 4)
@@ -490,7 +490,7 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     moving = nb.load(str(data_dir / "fsl" / "src.nii.gz"))
     flirt_matrix = np.eye(4)
     flirt_matrix[0, 3] = 5.0
-    fsl = FLIRTTransform(
+    fsl = FlirtTransform(
         flirt_matrix=flirt_matrix, reference=reference, moving=moving
     )  # RAS -> RAS
 

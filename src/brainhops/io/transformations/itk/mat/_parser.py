@@ -20,7 +20,7 @@ from brainhops.io.base.parsers import (
 )
 
 # locals
-from .._common import ITKStruct, ITKTransformClass
+from .._common import ItkStruct, ItkTransformClass
 
 # constants
 _CLASS_RE = re.compile(
@@ -173,8 +173,8 @@ class MatTransformParser(
                 continue
 
             blocks.append(
-                ITKStruct(
-                    type=ITKTransformClass(match.group("type")),
+                ItkStruct(
+                    type=ItkTransformClass(match.group("type")),
                     precision=match.group("precision"),
                     ndim_input=int(match.group("input_dim")),
                     ndim_output=int(match.group("output_dim")),

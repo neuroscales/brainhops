@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
     TextFileParser,
 )
 
-from .._common import ITKStruct, ITKTransformClass
+from .._common import ItkStruct, ItkTransformClass
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -34,7 +34,7 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TFMTransformParser(
+class TfmTransformParser(
     Magic,
     TextFileParser,
     convert=True,
@@ -127,10 +127,10 @@ class TFMTransformParser(
                 # following transforms.
                 continue
 
-            transform_type = ITKTransformClass(transform_type)
+            transform_type = ItkTransformClass(transform_type)
 
             blocks.append(
-                ITKStruct(
+                ItkStruct(
                     type=transform_type,
                     precision=precision,
                     ndim_input=input_dim,

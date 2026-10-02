@@ -1,10 +1,10 @@
-__all__ = ["LTAType", "LTAMatrixType", "LTAValidity"]
+__all__ = ["LtaType", "LtaMatrixType", "LtaValidity"]
 
 # stdlib
 from enum import Enum
 
 
-class LTAType(int, Enum):
+class LtaType(int, Enum):
     """The affine transformation type recorded in an LTA file header.
 
     This enumeration identifies the coordinate systems that the
@@ -27,7 +27,7 @@ class LTAType(int, Enum):
     MATLAB_ASCII_TYPE = 13
 
 
-class LTAMatrixType(int, Enum):
+class LtaMatrixType(int, Enum):
     """The element type of a matrix parsed from an LTA file."""
 
     UNKNOWN_MATRIX = 0
@@ -35,7 +35,7 @@ class LTAMatrixType(int, Enum):
     COMPLEX_MATRIX = 2
 
 
-class LTAValidity(int, Enum):
+class LtaValidity(int, Enum):
     """Whether a volume-geometry block in an LTA file is populated."""
 
     VOLUME_INFO_INVALID = 0

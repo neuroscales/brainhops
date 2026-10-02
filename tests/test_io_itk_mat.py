@@ -80,9 +80,9 @@ def _parameters(ndim: int) -> tx.Tuple[np.ndarray, np.ndarray]:
 @pytest.mark.parametrize("filename", FILES_MAT)
 def test_read_mat(filename: Path) -> None:
     transform = MatTransform.from_file(filename)
-    assert isinstance(transform, itk.ITKTransform)
+    assert isinstance(transform, itk.ItkTransform)
     for block in transform.transformations:
-        assert isinstance(block, itk.ITKStruct)
+        assert isinstance(block, itk.ItkStruct)
         assert isinstance(block, xforms.Sequence)
         assert all(isinstance(t, xforms.Transformation) for t in block)
 
@@ -91,7 +91,7 @@ def test_read_mat(filename: Path) -> None:
 def test_generic_affine_is_the_affine_itk_reads(ndim: int) -> None:
     transform = io.load(_fixture(ndim))
     (block,) = transform.transformations
-    assert block.type == itk.ITKTransformClass.AffineTransform
+    assert block.type == itk.ItkTransformClass.AffineTransform
     assert block.ndim_input == block.ndim_output == ndim
     np.testing.assert_allclose(np.asarray(block.center), [4, 5, 6][:ndim])
 
@@ -135,7 +135,7 @@ def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
         "fixed", fixed, ">", "f8"
     )
     (block,) = MatTransform.from_bytes(content).transformations
-    assert block.precision == itk.ITKPrecision.Float
+    assert block.precision == itk.ItkPrecision.Float
     np.testing.assert_allclose(_affine(block), _expected(ndim), rtol=1e-6)
 
 
@@ -146,7 +146,7 @@ def test_matrix_offset_transform_base_is_an_affine() -> None:
         "MatrixOffsetTransformBase_double_3_3", parameters
     ) + _variable("fixed", fixed)
     (block,) = MatTransform.from_bytes(content).transformations
-    assert block.type == itk.ITKTransformClass.MatrixOffsetTransformBase
+    assert block.type == itk.ItkTransformClass.MatrixOffsetTransformBase
     np.testing.assert_allclose(_affine(block), _expected(3))
 
 
@@ -167,8 +167,8 @@ def test_a_chain_keeps_every_block_in_order() -> None:
     )
     transform = MatTransform.from_bytes(content)
     affine, shift = transform.transformations
-    assert affine.type == itk.ITKTransformClass.AffineTransform
-    assert shift.type == itk.ITKTransformClass.TranslationTransform
+    assert affine.type == itk.ItkTransformClass.AffineTransform
+    assert shift.type == itk.ItkTransformClass.TranslationTransform
     np.testing.assert_allclose(_affine(affine), _expected(3))
     np.testing.assert_allclose(np.asarray(shift.parameters), translation)
 
@@ -276,7 +276,7 @@ def test_sniffer_claims_only_itk_matlab_files() -> None:
 def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # noqa: ANN001
     """Both formats use `.mat`, so only their content tells them apart."""
     pytest.importorskip("nibabel")
-    from brainhops.io.transformations.fsl.flirt import FLIRTTransform
+    from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
     flirt = tmp_path / "src2ref.mat"
     np.savetxt(str(flirt), np.eye(4), fmt="%.8g")
@@ -284,13 +284,13 @@ def test_flirt_and_itk_mat_files_go_to_their_own_readers(tmp_path) -> None:  # n
     ants.write_bytes(_fixture(3).read_bytes())
 
     # Each sniffer scores the other format's file as a firm "no".
-    assert FLIRTTransform.sniff(ants) == 0.0
-    assert FLIRTTransform.sniff_bytes(ants.read_bytes()) == 0.0
+    assert FlirtTransform.sniff(ants) == 0.0
+    assert FlirtTransform.sniff_bytes(ants.read_bytes()) == 0.0
     assert MatTransform.sniff(flirt) == 0.0
-    assert FLIRTTransform.sniff(flirt) > 0.0
+    assert FlirtTransform.sniff(flirt) > 0.0
     assert MatTransform.sniff(ants) > 0.0
 
-    assert io.transformations.sniff(flirt) is FLIRTTransform
+    assert io.transformations.sniff(flirt) is FlirtTransform
     assert io.transformations.sniff(ants) is MatTransform
-    assert type(io.transformations.load(flirt)) is FLIRTTransform
+    assert type(io.transformations.load(flirt)) is FlirtTransform
     assert type(io.transformations.load(ants)) is MatTransform

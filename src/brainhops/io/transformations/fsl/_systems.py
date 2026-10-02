@@ -6,7 +6,7 @@ from brainhops.datamodel import axes as _axes
 from brainhops.datamodel.systems import SpatialCoordinateSystem3D
 
 
-class FSLCoordinateSystem(SpatialCoordinateSystem3D):
+class FslCoordinateSystem(SpatialCoordinateSystem3D):
     """The FSL "scaled-mm" coordinate system of an image.
 
     Coordinates are voxel indices scaled by the pixel sizes, with the
