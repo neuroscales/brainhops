@@ -37,7 +37,9 @@ in this order:
 2. The fixed parameters, a column vector named `fixed` -- typically the
    center of rotation.
 
-A file with several blocks repeats the pair, so the same name may appear
+ITK's reader takes the variables in pairs, and the second of each pair is
+the fixed parameters whatever its name; both must be column vectors. A
+file with several blocks repeats the pair, so the same name may appear
 more than once. A chain written from a `CompositeTransform` starts with a
 pair for the composite itself, which only points to the blocks after it.
 
@@ -59,9 +61,17 @@ column-major order. The digits of `type` are:
 * `M`: byte order, `0` for little-endian and `1` for big-endian. ITK
   (through `vnl_matlab_write`) writes in the native order of the machine,
   and the header integers are in that same order.
-* `O`: reserved, always `0`.
-* `P`: precision, `0` for `double` and `1` for `float`.
+* `O`: `0`. MATLAB reserves this digit; VNL sets it to `1` for a matrix
+  it writes row by row, which reads the same for a vector.
+* `P`: precision, `0` for `double` and `1` for `float`. The parameters of
+  a `float` transform are `float`, but fixed parameters are always
+  `double`.
 * `T`: matrix type, `0` for a full numeric matrix.
+
+The layout is that of `itk::MatlabTransformIOTemplate::Read` and `Write`
+(`Modules/IO/TransformMatlab/src/itkMatlabTransformIO.cxx`), which go
+through VNL's `vnl_matlab_write` and `vnl_matlab_readhdr`
+(`vnl/vnl_matlab_write.cxx`, `vnl/vnl_matlab_read.cxx`).
 
 ### Implicit Geometrical Specifications
 

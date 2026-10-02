@@ -29,19 +29,23 @@ _CLASS_RE = re.compile(
     r"(?P<input_dim>\d+)_"
     r"(?P<output_dim>\d+)$"
 )
-_FIXED = "fixed"
 # A MATLAB v4 variable header is five 32-bit integers:
 # type (MOPT), rows, columns, imaginary flag, length of the name.
 _HEADER_SIZE = 20
 # ITK names a variable after a transform class, which is short. The cap
 # only keeps a sniffer from reading a whole foreign file for a name.
 _MAX_NAME = 256
-# The P digit of MOPT: the precision of the stored values. ITK writes
-# `double` transforms as 0 and `float` transforms as 1.
+# The P digit of MOPT: the precision of the stored values. ITK writes the
+# parameters of a `double` transform as 0 and of a `float` transform as 1;
+# fixed parameters are always `double`.
 _PRECISIONS = {0: "f8", 1: "f4"}
-# The M digit of MOPT: the byte order. ITK writes in the native order of
-# the machine that wrote the file, which is almost always little-endian.
+# The M digit of MOPT: the byte order. `vnl_matlab_write` writes the
+# header and the values in the native order of the machine that wrote
+# the file, and records which one it was here.
 _BYTE_ORDERS = {"<": 0, ">": 1}
+# The O digit of MOPT. MATLAB reserves it as 0; VNL sets it to 1 for a
+# matrix it writes row by row. ITK writes vectors, where the two agree.
+_STORAGES = (0, 1)
 
 
 class _Variable(tx.NamedTuple):
@@ -51,6 +55,8 @@ class _Variable(tx.NamedTuple):
     dtype: np.dtype
     count: int
     """Number of values: rows times columns."""
+    cols: int
+    """Number of columns. ITK only reads column vectors."""
     start: int
     """Offset of the first value in the content."""
 
@@ -130,26 +136,36 @@ class MATTransformParser(
         """Build the transform chain from the bytes of an ITK MATLAB
         transform file.
 
-        ITK writes each block as two variables: its parameters, named
-        after its transform class, then its fixed parameters, named
-        `fixed`.
+        ITK writes each block as two column vectors: its parameters,
+        named after its transform class, then its fixed parameters, named
+        `fixed`. Like ITK's own reader, this one reads the variables in
+        pairs, takes the second of each pair as the fixed parameters
+        whatever its name, and refuses anything but column vectors.
         """
         variables = list(_read_variables(bytes(content)))
+        if len(variables) % 2:
+            raise ParserContentError(
+                f"ITK writes variables in pairs (parameters, then fixed "
+                f"parameters), but the file holds {len(variables)}."
+            )
+        for variable, _ in variables:
+            if variable.cols != 1:
+                raise ParserContentError(
+                    f"ITK only reads column vectors, but {variable.name!r} "
+                    f"has {variable.cols} columns."
+                )
+
         blocks = []
-        index = 0
-        while index < len(variables):
-            name, parameters = variables[index]
-            index += 1
-            match = _CLASS_RE.match(name)
+        for index in range(0, len(variables), 2):
+            (variable, parameters), (_, fixed_parameters) = variables[
+                index : index + 2
+            ]
+            match = _CLASS_RE.match(variable.name)
             if not match:
                 raise ParserContentError(
                     f"Expected a variable named after an ITK transform "
-                    f"class, not {name!r}."
+                    f"class, not {variable.name!r}."
                 )
-            fixed_parameters = np.array([], dtype=parameters.dtype)
-            if index < len(variables) and variables[index][0] == _FIXED:
-                fixed_parameters = variables[index][1]
-                index += 1
 
             if match.group("type") == "CompositeTransform":
                 # skip composite transforms, they just point to the
@@ -216,7 +232,9 @@ def _read_header(
             mopt // 10 % 10,
             mopt % 10,
         )
-        if m != digit or o != 0 or t != 0 or p not in _PRECISIONS:
+        if m != digit or o not in _STORAGES or t != 0:
+            continue
+        if p not in _PRECISIONS:
             continue
         if rows < 0 or cols < 0 or imagf != 0:
             continue
@@ -224,11 +242,11 @@ def _read_header(
             continue
         start = offset + _HEADER_SIZE
         raw = content[start : start + namlen]
-        # The name is NUL-terminated, and the length counts the NUL.
-        if len(raw) < namlen or raw[-1:] != b"\0":
+        if len(raw) < namlen:
             continue
+        # The name is NUL-terminated, and the length counts the NUL.
         try:
-            name = raw[:-1].decode("ascii")
+            name = raw.split(b"\0", 1)[0].decode("ascii")
         except UnicodeDecodeError:
             continue
         if not name.isidentifier():
@@ -238,14 +256,14 @@ def _read_header(
         start += namlen
         if need_data and len(content) < start + count * dtype.itemsize:
             continue
-        return _Variable(name, dtype, count, start)
+        return _Variable(name, dtype, count, cols, start)
     return None
 
 
 def _read_variables(
     content: bytes,
-) -> tx.Iterator[tx.Tuple[str, np.ndarray]]:
-    """Yield the name and the values of every variable, in file order.
+) -> tx.Iterator[tx.Tuple[_Variable, np.ndarray]]:
+    """Yield the header and the values of every variable, in file order.
 
     A mapping would not do: a file that holds several blocks repeats the
     `fixed` name, and may repeat a class name too.
@@ -263,8 +281,7 @@ def _read_variables(
             count=variable.count,
             offset=variable.start,
         )
-        # ITK writes every vector as a column, so the column-major order
-        # MATLAB stores values in is also the order of the vector. The
-        # copy owns its memory and is in native byte order.
-        yield variable.name, values.astype(variable.dtype.newbyteorder("="))
+        # A column vector reads the same column- or row-major. The copy
+        # owns its memory and is in native byte order.
+        yield variable, values.astype(variable.dtype.newbyteorder("="))
         offset = variable.start + variable.count * variable.dtype.itemsize

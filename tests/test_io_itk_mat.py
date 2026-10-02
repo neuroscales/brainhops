@@ -42,13 +42,27 @@ def _affine(transform: xforms.Transformation) -> np.ndarray:
 
 
 def _variable(
-    name: str, values: ArrayLike, order: str = "<", precision: str = "f8"
+    name: str,
+    values: ArrayLike,
+    order: str = "<",
+    precision: str = "f8",
+    rowwise: bool = False,
+    cols: int = 1,
 ) -> bytes:
-    """Encode one MATLAB v4 column vector, as `vnl_matlab_write` does."""
+    """Encode one MATLAB v4 variable, as `vnl_matlab_write` does.
+
+    The header and the values are in byte order `order`, and the type
+    records it (`M`), VNL's row-wise flag (`O`) and the precision (`P`).
+    """
     values = np.asarray(values, dtype=order + precision)
-    mopt = (0 if order == "<" else 1000) + (0 if precision == "f8" else 10)
+    mopt = (
+        (0 if order == "<" else 1000)
+        + (100 if rowwise else 0)
+        + (0 if precision == "f8" else 10)
+    )
     raw = name.encode("ascii") + b"\0"
-    header = np.array([mopt, values.size, 1, 0, len(raw)], dtype=order + "i4")
+    rows = values.size // cols
+    header = np.array([mopt, rows, cols, 0, len(raw)], dtype=order + "i4")
     return header.tobytes() + raw + values.tobytes()
 
 
@@ -103,8 +117,10 @@ def test_generic_affine_fixtures_still_match_simpleitk() -> None:
 
 @pytest.mark.parametrize("ndim", NDIMS)
 def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
-    """`vnl_matlab_write` writes in the native byte order of the machine,
-    and a `float` transform in single precision."""
+    """`vnl_matlab_write` writes in the native byte order of the machine
+    that wrote the file, so a big-endian machine writes big-endian files.
+    A `float` transform has single precision parameters, but its fixed
+    parameters are `double`, as they are for every ITK transform."""
     parameters, fixed = _parameters(ndim)
     name = f"AffineTransform_double_{ndim}_{ndim}"
     for order in "<>":
@@ -116,7 +132,7 @@ def test_big_endian_and_single_precision_read_the_same(ndim: int) -> None:
 
     name = f"AffineTransform_float_{ndim}_{ndim}"
     content = _variable(name, parameters, ">", "f4") + _variable(
-        "fixed", fixed, ">", "f4"
+        "fixed", fixed, ">", "f8"
     )
     (block,) = MATTransform.from_bytes(content).transformations
     assert block.precision == itk.ITKPrecision.Float
@@ -157,10 +173,63 @@ def test_a_chain_keeps_every_block_in_order() -> None:
     np.testing.assert_allclose(np.asarray(shift.parameters), translation)
 
 
-def test_a_truncated_file_is_refused() -> None:
+def test_variables_are_read_in_pairs_as_itk_reads_them() -> None:
+    """`MatlabTransformIO::Read` takes the variable after the parameters
+    as the fixed parameters whatever its name, and accepts VNL's row-wise
+    flag, which changes nothing for a vector."""
+    parameters, fixed = _parameters(3)
+    content = _variable(
+        "AffineTransform_double_3_3", parameters, rowwise=True
+    ) + _variable("center", fixed, rowwise=True)
+    (block,) = MATTransform.from_bytes(content).transformations
+    np.testing.assert_allclose(_affine(block), _expected(3))
+
+
+def test_encoded_variants_read_as_itk_reads_them(tmp_path) -> None:  # noqa: ANN001
+    """The variants encoded above are files ITK itself reads, to the same
+    mapping, so the encoder is not just agreeing with the reader."""
+    sitk = pytest.importorskip("SimpleITK")
+    parameters, fixed = _parameters(3)
+    name = "AffineTransform_double_3_3"
+    variants = [
+        _variable(name, parameters, ">") + _variable("fixed", fixed, ">"),
+        _variable("AffineTransform_float_3_3", parameters, ">", "f4")
+        + _variable("fixed", fixed, ">"),
+        _variable(name, parameters, rowwise=True)
+        + _variable("center", fixed, rowwise=True),
+        _variable("MatrixOffsetTransformBase_double_3_3", parameters)
+        + _variable("fixed", fixed),
+    ]
+    points = np.random.default_rng(0).normal(size=(5, 3)) * 10
+    for index, content in enumerate(variants):
+        path = tmp_path / f"variant{index}.mat"
+        path.write_bytes(content)
+        transform = sitk.ReadTransform(str(path))
+        matrix = _affine(MATTransform.from_file(path))
+        for point in points:
+            np.testing.assert_allclose(
+                transform.TransformPoint(tuple(point)),
+                matrix[:, :3] @ point + matrix[:, 3],
+                rtol=1e-6,
+            )
+
+
+def test_what_itk_refuses_is_refused() -> None:
     content = _fixture(3).read_bytes()
-    with pytest.raises(ParserContentError):
-        MATTransform.from_bytes(content[:-8])
+    parameters, fixed = _parameters(3)
+    name = "AffineTransform_double_3_3"
+    refused = [
+        # Truncated values.
+        content[:-8],
+        # No fixed parameters: ITK reads variables in pairs.
+        _variable(name, parameters),
+        # Not column vectors: ITK only reads those.
+        _variable(name, parameters, cols=12) + _variable("fixed", fixed),
+        _variable(name, parameters, cols=2) + _variable("fixed", fixed),
+    ]
+    for content in refused:
+        with pytest.raises(ParserContentError):
+            MATTransform.from_bytes(content)
 
 
 # ----------------------------------------------------------------------
