@@ -55,6 +55,7 @@ class ITKTransformClass(StrEnum):
 
     # Affines
     AffineTransform = "AffineTransform"
+    MatrixOffsetTransformBase = "MatrixOffsetTransformBase"
 
     # Non-linear
     DisplacementFieldTransform = "DisplacementFieldTransform"
@@ -788,9 +789,10 @@ class ITKScaleSkewVersor3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKAffineStruct(ITKAffineBase, on={"type": _ITKT.AffineTransform}):
+class _ITKMatrixOffsetBase(ITKAffineBase):
     """
-    Affine transform with parameters for linear transformation and translation.
+    A full matrix and a translation, as `MatrixOffsetTransformBase` and
+    its subclass `AffineTransform` both store them.
     """
 
     def __post_init__(self) -> None:
@@ -813,6 +815,23 @@ class ITKAffineStruct(ITKAffineBase, on={"type": _ITKT.AffineTransform}):
         return _xforms.Translation(
             np.array(self.parameters[-Do:], dtype=np.float64)
         )
+
+
+class ITKAffineStruct(
+    _ITKMatrixOffsetBase, on={"type": _ITKT.AffineTransform}
+):
+    """
+    Affine transform with parameters for linear transformation and translation.
+    """
+
+
+class ITKMatrixOffsetStruct(
+    _ITKMatrixOffsetBase, on={"type": _ITKT.MatrixOffsetTransformBase}
+):
+    """
+    The base class of ITK's affine transforms, which older ANTs releases
+    write in place of `AffineTransform`. Its parameters are the same.
+    """
 
 
 class ITKDisplacementFieldStruct(

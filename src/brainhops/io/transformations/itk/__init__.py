@@ -8,10 +8,11 @@ __all__ = [
     "ITKStruct",
     "ITKTransform",
     "ITKTransformClass",
+    "mat",
     "tfm",
 ]
 
-from . import tfm
+from . import mat, tfm
 from ._common import (
     ITKAffineBase,
     ITKBlockBase,
