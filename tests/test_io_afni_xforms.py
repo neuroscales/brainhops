@@ -503,6 +503,40 @@ def test_brik_warp_from_a_chain(tmp_path) -> None:  # noqa: ANN001
     _check_warp(again, vectors)
 
 
+def test_to_image(tmp_path) -> None:  # noqa: ANN001
+    vectors = _vectors(6)
+    labels = "x_delta~y_delta~z_delta~hexvol~BulkEn~ShearEn~"
+    warp = io.load(_write_brik(tmp_path, vectors, labels=labels))
+    image = warp.to_image()
+    assert type(image) is AfniImage
+    assert image.header.labels == ["x_delta", "y_delta", "z_delta"]
+    assert image.header.view == "tlrc"
+    assert np.allclose(image.header.cardinal_matrix, CARD)
+    assert np.asarray(image.data).dtype == np.float32
+    assert np.allclose(np.asarray(image.data), vectors[..., :3])
+    # saved as an image, it is read back as a warp
+    image.save(tmp_path / "image+tlrc.HEAD")
+    again = io.load(tmp_path / "image+tlrc.HEAD")
+    assert type(again) is AfniBrikWarp
+    _check_warp(again, vectors)
+
+
+def test_to_image_of_a_warp_not_read_from_a_brik(tmp_path) -> None:  # noqa: ANN001
+    vectors = _vectors()
+    for warp in (
+        AfniBrikWarp(
+            transformations=tuple(io.load(_write_brik(tmp_path, vectors)))
+        ),
+        io.load(_write_nifti(tmp_path, vectors)),
+    ):
+        image = warp.to_image()
+        assert image.header.labels == ["x_delta", "y_delta", "z_delta"]
+        assert np.allclose(image.header.cardinal_matrix, CARD)
+        assert np.allclose(np.asarray(image.data), vectors)
+        image.save(tmp_path / "image.HEAD")
+        _check_warp(io.load(tmp_path / "image.HEAD"), vectors)
+
+
 def test_an_oblique_grid_cannot_be_written(tmp_path) -> None:  # noqa: ANN001
     vectors = _vectors()
     warp = io.load(_write_brik(tmp_path, vectors))

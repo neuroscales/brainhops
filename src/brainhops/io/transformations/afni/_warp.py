@@ -158,6 +158,39 @@ class AfniWarp(AfniWarpFormat, _xforms.ImmutableSequence):
         """The affine from the warp's voxels back to RAS world."""
         return self.transformations[2]
 
+    def to_image(self) -> AfniImage:
+        """
+        The warp as an AFNI image: what AFNI stores for it.
+
+        The image has three `float32` sub-bricks, the `x`, `y` and `z`
+        displacements in DICOM (LPS) millimetres, on the warp's cardinal
+        grid, labelled `x_delta`, `y_delta`, `z_delta` as AFNI labels a
+        warp's. Saved as an AFNI dataset, it is read back as a warp.
+
+        The attributes of the AFNI header the warp was read from, if any,
+        are kept (its view among them).
+
+        Raises
+        ------
+        WriterError
+            If the chain is not a displacement field between two affines,
+            or its grid is oblique: AFNI places a warp on a cardinal grid.
+        """
+        vox2dicom, vectors = self._dicom_field()
+        header = getattr(self, "header", None)
+        source = header if isinstance(header, AfniHeader) else None
+        world = afni_world(source.view) if source is not None else None
+        affine = _xforms.Affine(
+            input=_systems.VoxelCoordinateSystem(),
+            output=world or _systems.LPSmm(),
+            matrix=vox2dicom[:3],
+        )
+        data = np.asarray(vectors, dtype=np.float32)
+        image = AfniImage(data=data, transformations=[affine], header=source)
+        labels = {"BRICK_LABS": "\0".join(WARP_LABELS)}
+        header = image._afni_header(datatype="float", attributes=labels)
+        return AfniImage(data=data, transformations=[affine], header=header)
+
     # --- conversion ---------------------------------------------------
 
     @classmethod
@@ -225,11 +258,13 @@ class AfniBrikWarp(AfniWarp, AfniParser, WritableFileBasedTransformation):
     three-sub-brick dataset without them is read as an image; read it as
     a warp with `hint="afni.warp"`, or with this class directly.
 
-    **Writing** goes through [`AfniImage`][brainhops.io.images.afni.AfniImage]:
+    **Writing** goes through the image of
+    [`to_image`][brainhops.io.transformations.afni.AfniWarp.to_image]:
     the warp is written as three `float32` sub-bricks labelled as AFNI
     labels them, on its cardinal grid. The attributes of the header the
     warp was read from are written back, and the writer options of
-    `AfniImage` (`view`, `attributes`) are accepted.
+    [`AfniImage`][brainhops.io.images.afni.AfniImage] (`view`,
+    `attributes`) are accepted.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = AfniImage.EXTENSIONS
@@ -266,20 +301,6 @@ class AfniBrikWarp(AfniWarp, AfniParser, WritableFileBasedTransformation):
 
     # --- writing ------------------------------------------------------
 
-    def _writer_image(self) -> AfniImage:
-        """The image of the three displacement sub-bricks, on the
-        warp's grid."""
-        vox2dicom, vectors = self._dicom_field()
-        source = self.header if isinstance(self.header, AfniHeader) else None
-        world = afni_world(source.view) if source is not None else None
-        affine = _xforms.Affine(
-            input=_systems.VoxelCoordinateSystem(),
-            output=world or _systems.LPSmm(),
-            matrix=vox2dicom[:3],
-        )
-        data = np.asarray(vectors, dtype=np.float32)
-        return AfniImage(data=data, transformations=[affine], header=source)
-
     def to_filename(self, filename: tx.Any, **kwargs) -> None:
         """
         Write the warp as an AFNI dataset: its `.HEAD` and its `.BRIK`.
@@ -289,8 +310,4 @@ class AfniBrikWarp(AfniWarp, AfniParser, WritableFileBasedTransformation):
         always `float`, as AFNI writes it.
         """
         kwargs.pop("datatype", None)
-        attributes = dict(kwargs.pop("attributes", None) or {})
-        attributes.setdefault("BRICK_LABS", "\0".join(WARP_LABELS))
-        self._writer_image().to_filename(
-            filename, attributes=attributes, datatype="float", **kwargs
-        )
+        self.to_image().to_filename(filename, datatype="float", **kwargs)
