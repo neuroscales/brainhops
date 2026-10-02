@@ -130,7 +130,8 @@ not store the data exactly.
   read in full when the image is loaded.
 * **TIFF.** Pillow reads TIFF, but TIFF files (`.tif`, `.tiff`) are left to
   the dedicated TIFF reader, which reads stacks, pyramids and their
-  metadata; this reader claims TIFF content only as a fallback.
+  metadata; this reader claims TIFF content only as a fallback, and reads
+  it when tifffile (the `tiff` extra) is not installed.
 """
 
 __all__ = ["PillowImage"]

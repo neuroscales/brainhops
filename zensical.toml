@@ -48,6 +48,7 @@ nav = [
         {"freesurfer.mgh" = "api/io/images/mgh.md"},
         "api/io/images/zarr.md",
         "api/io/images/pillow.md",
+        "api/io/images/tiff.md",
       ]},
       {"transformations" = [
         "api/io/transformations/index.md",

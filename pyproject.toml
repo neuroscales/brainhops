@@ -38,6 +38,7 @@ x5 = ["brainhops[h5py]"]
 matrix = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
 pillow = ["pillow"]
+tiff = ["tifffile"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
@@ -66,6 +67,7 @@ io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]",
 ]
 
@@ -77,6 +79,7 @@ test = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]"
 ]
 
