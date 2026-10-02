@@ -12,7 +12,6 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
 
 # core
-from brainhops._core import affines as _affines
 from brainhops._core.properties import smartproperty
 from brainhops.backends import get_array_backend
 
@@ -39,8 +38,11 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
-from brainhops.io.transformations.base.fields import RASCoordinatesField
+from brainhops.io.transformations.base.fields import (
+    RASCoordinatesField,
+    ras_displacement_chain,
+    split_ras_displacement_chain,
+)
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 _NDIM = 3
@@ -265,28 +267,11 @@ class NiftiRASDisplacementField(
         positions in the chain, so a copy with other slots is made with
         `replace`.
         """
-        vox2ras = self._vox2ras()
-        compact = vox2ras[:_NDIM]
-        # The stored vectors are world-space displacements, and a
-        # `DisplacementField` adds its values in the units of its own
-        # grid, so they are rotated into voxel units. Only the linear
-        # part of the world-to-voxel affine acts on a displacement.
-        vectors = self._ras_vectors()
-        backend = get_array_backend(vectors)
-        ras2vox = np.linalg.inv(vox2ras[:_NDIM, :_NDIM])
-        rotate = backend.asarray(ras2vox, dtype=vectors.dtype)
-        field = backend.matmul(rotate, vectors[..., None])[..., 0]
-        voxel = _systems.VoxelCoordinateSystem()
-        return (
-            RASToVoxel(matrix=_affines.inv(compact)),
-            _xforms.DisplacementField(
-                field=field,
-                input=voxel,
-                output=voxel,
-                order=self.order,
-                bound=self.bound,
-            ),
-            VoxelToRAS(matrix=compact),
+        return ras_displacement_chain(
+            self._ras_vectors(),
+            self._vox2ras(),
+            order=self.order,
+            bound=self.bound,
         )
 
     @property
@@ -319,37 +304,11 @@ class NiftiRASDisplacementField(
         When `like` is given, non-encoding header fields are copied from
         it. Keyword arguments override header fields last.
         """
-        chain = tuple(self.transformations or ())
-        if len(chain) != 3 or not isinstance(
-            chain[1], _xforms.DisplacementField
-        ):
-            raise WriterError(
-                "A NIfTI displacement field is written from a chain of "
-                "three transformations: RAS to voxel, a displacement "
-                "field, and voxel to RAS."
-            )
-        displacement = chain[1]
-        if displacement.field is None:
-            raise WriterError(
-                "This field has no displacements, so there is nothing to "
-                "write."
-            )
-        if displacement.coeff:
-            raise WriterError(
-                "NIfTI stores sampled displacements, and this field holds "
-                "spline coefficients. Convert it to values first."
-            )
-        vox2ras = _homogeneous(chain[2])
-        field = displacement.field
-        backend = get_array_backend(field)
-        field = backend.asarray(field)
-        if field.ndim != _NDIM + 1 or field.shape[-1] != _NDIM:
-            raise WriterError(
-                f"A NIfTI displacement field holds one 3-vector per voxel "
-                f"of a 3-D grid, not an array of shape {tuple(field.shape)}."
-            )
-        rotate = backend.asarray(vox2ras[:_NDIM, :_NDIM], dtype=field.dtype)
-        vectors = backend.matmul(rotate, field[..., None])[..., 0]
+        what = "A NIfTI displacement field"
+        vox2ras, vectors = split_ras_displacement_chain(
+            self.transformations, what, ndim=_NDIM
+        )
+        backend = get_array_backend(vectors)
         # NIfTI stores a vector field as a five-dimensional array, with
         # the components in the fifth axis.
         vectors = backend.expand_dims(vectors, axis=3)
@@ -358,22 +317,3 @@ class NiftiRASDisplacementField(
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
-
-
-def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
-    """The `(4, 4)` matrix of a three-dimensional affine-like slot."""
-    try:
-        matrix = xform.to(_xforms.Affine).homogeneous_matrix
-    except Exception as error:
-        raise WriterError(
-            f"The grid of a NIfTI displacement field must be an affine, "
-            f"not a {type(xform).__name__}."
-        ) from error
-    matrix = np.asarray(matrix, dtype=np.float64)
-    if matrix.shape != (_NDIM + 1, _NDIM + 1):
-        raise WriterError(
-            f"The grid of a NIfTI displacement field must be "
-            f"three-dimensional, and its affine has shape "
-            f"{matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
-        )
-    return matrix
