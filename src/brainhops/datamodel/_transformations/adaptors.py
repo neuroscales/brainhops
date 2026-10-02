@@ -1002,9 +1002,11 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
     # millimetre to a micrometre is then exactly 1000, and a ratio and its
     # reciprocal multiply back to exactly one, which a division of the two
     # scales does not guarantee.
+    # A non-SI unit, such as the inch, has a fractional exponent, so the
+    # ratio is then the division of the two scales.
     source_log10 = getattr(source_unit, "log10_scale", None)
     target_log10 = getattr(target_unit, "log10_scale", None)
-    if source_log10 is not None and target_log10 is not None:
+    if isinstance(source_log10, int) and isinstance(target_log10, int):
         return 10 ** (source_log10 - target_log10)
     return float(source_unit.scale) / float(target_unit.scale)
 
