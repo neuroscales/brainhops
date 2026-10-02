@@ -32,6 +32,7 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 # io
 itk = ["h5py"]
 nibabel = ["nibabel"]
+pillow = ["pillow"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
@@ -55,7 +56,12 @@ zarr = [
 zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
-io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
+io = [
+    "brainhops[itk]",
+    "brainhops[nibabel]",
+    "brainhops[pillow]",
+    "brainhops[zarr]",
+]
 
 # test
 test = [
@@ -64,6 +70,7 @@ test = [
     "brainhops[dask]",
     "brainhops[itk]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
     "brainhops[zarr]"
 ]
 
