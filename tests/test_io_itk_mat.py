@@ -153,9 +153,10 @@ def test_matrix_offset_transform_base_is_an_affine() -> None:
     np.testing.assert_allclose(_affine(block), _expected(3))
 
 
-def test_a_chain_keeps_every_block_in_order() -> None:
+def test_a_composite_keeps_every_block_in_application_order() -> None:
     """A chain repeats the `fixed` name, so it cannot be read as a
-    mapping of names to values. The composite's own pair is skipped."""
+    mapping of names to values. The composite's own pair is skipped,
+    and ITK applies the last block of a composite first."""
     parameters, fixed = _parameters(3)
     translation = [10.0, 20.0, 30.0]
     content = b"".join(
@@ -169,7 +170,7 @@ def test_a_chain_keeps_every_block_in_order() -> None:
         ]
     )
     transform = MatTransform.from_bytes(content)
-    affine, shift = transform.transformations
+    shift, affine = transform.transformations
     assert affine.type == itk.ItkTransformClass.AffineTransform
     assert shift.type == itk.ItkTransformClass.TranslationTransform
     np.testing.assert_allclose(_affine(affine), _expected(3))

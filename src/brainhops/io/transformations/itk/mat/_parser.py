@@ -25,7 +25,12 @@ from brainhops.io.base.parsers import (
 )
 
 # locals
-from .._common import ItkPrecision, ItkStruct, ItkTransformClass
+from .._common import (
+    ItkPrecision,
+    ItkStruct,
+    ItkTransformClass,
+    _application_order,
+)
 from .._systems import _make_system
 
 # constants
@@ -164,6 +169,7 @@ class MatTransformParser(
                 )
 
         blocks = []
+        composites = []
         for index in range(0, len(variables), 2):
             (variable, parameters), (_, fixed_parameters) = variables[
                 index : index + 2
@@ -176,8 +182,9 @@ class MatTransformParser(
                 )
 
             if match.group("type") == "CompositeTransform":
-                # skip composite transforms, they just point to the
-                # following transforms.
+                # A composite header has no parameters of its own: its
+                # queue is the blocks that follow it.
+                composites.append(index // 2)
                 continue
 
             blocks.append(
@@ -192,7 +199,7 @@ class MatTransformParser(
             )
 
         obj = cls()
-        obj.transformations = blocks
+        obj.transformations = _application_order(blocks, composites)
         return obj
 
     # --- to -----------------------------------------------------------
@@ -395,10 +402,8 @@ def _write_variable(
 def _single_block(chain: tx.Any) -> ItkStruct:
     """The one block that `chain` holds, as an ITK block.
 
-    ANTs writes a single linear transform per `.mat` file, and a chain
-    is not written: ITK applies the blocks of a `CompositeTransform` in
-    the reverse of their order in the file, so the order a chain should
-    be written in is not settled here.
+    ANTs writes a single linear transform per `.mat` file, so a chain
+    is not written.
     """
     children = list(chain.transformations or [])
     if len(children) != 1:

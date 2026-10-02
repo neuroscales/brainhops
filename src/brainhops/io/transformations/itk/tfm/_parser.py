@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
     TextFileParser,
 )
 
-from .._common import ItkStruct, ItkTransformClass
+from .._common import ItkStruct, ItkTransformClass, _application_order
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -42,6 +42,10 @@ class TfmTransformParser(
 ):
     """Parses an ITK text (`.tfm`) transform file into a chain of
     transform blocks.
+
+    The blocks of a `CompositeTransform` are listed in the order they
+    apply to points, which is the reverse of their order in the file
+    (ITK applies the last block of a composite first).
 
     Each block is itself a brainhops transformation, so the parsed blocks
     are stored straight into the `transformations` of the sequence that
@@ -85,6 +89,8 @@ class TfmTransformParser(
 
         obj = cls()
         blocks = []
+        composites = []
+        position = 0
 
         while True:
             if not lines.peek():
@@ -122,9 +128,11 @@ class TfmTransformParser(
             else:
                 fixed_parameters = []
 
+            position += 1
             if transform_type == "CompositeTransform":
-                # skip composite transforms, they just point to the
-                # following transforms.
+                # A composite header has no parameters of its own: its
+                # queue is the blocks that follow it.
+                composites.append(position - 1)
                 continue
 
             transform_type = ItkTransformClass(transform_type)
@@ -140,7 +148,7 @@ class TfmTransformParser(
                 )
             )
 
-        obj.transformations = blocks
+        obj.transformations = _application_order(blocks, composites)
         return obj
 
 

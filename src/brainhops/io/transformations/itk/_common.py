@@ -21,6 +21,7 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
@@ -878,6 +879,46 @@ class ItkBSplineStruct(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
+
+
+def _application_order(
+    blocks: tx.List[tx.Any], composites: tx.List[int]
+) -> tx.List[tx.Any]:
+    """The blocks of an ITK file, in the order they apply to points.
+
+    `blocks` are the blocks of the file in file order, without the
+    `CompositeTransform` header, and `composites` the positions (in the
+    file) of every `CompositeTransform` header that was skipped.
+
+    ITK writes a `CompositeTransform` as a header block followed by its
+    transform queue, front to back
+    (`CompositeTransformIOHelperTemplate::GetTransformList`), and reads
+    the blocks after the header back into the queue in the same order
+    (`SetTransformList`, which calls `AddTransform`). But
+    `CompositeTransform::TransformPoint` applies the queue from back to
+    front: a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A brainhops
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+    transformations in the order they apply, so the blocks of a
+    composite file are reversed.
+
+    A file without a `CompositeTransform` header is a plain list of
+    transforms, which ITK does not compose (SimpleITK reads only its
+    first one): its blocks are kept in file order.
+
+    Raises
+    ------
+    ParserContentError
+        If a `CompositeTransform` header is not the first block. ITK
+        only writes one there, and refuses to write it anywhere else.
+    """
+    if not composites:
+        return list(blocks)
+    if list(composites) != [0]:
+        raise ParserContentError(
+            "ITK only writes a CompositeTransform as the first block of "
+            "a file, and it cannot be nested."
+        )
+    return list(reversed(blocks))
 
 
 def _inverse_chain(
