@@ -93,7 +93,12 @@ class AmbiguousFormatError(ParserError):
     meaningful way to choose between them, and picking one at random
     would silently return the wrong kind of object.
 
-    The fix belongs in the parsers, not in the caller: give one of them a
+    The message is written for the user who hit it: it names each
+    candidate format, and the `hint=` value (or the format's own `load`)
+    that reads the content as that format.
+
+    If the formats should be able to tell such content apart, the fix
+    belongs in the parsers, not in the caller: give one of them a
     sniffer that can tell the two apart (a magic number, an intent code,
     a filename constraint), or set an explicit `PRIORITY`.
     """
@@ -541,6 +546,11 @@ class FileParser(FileSniffer):
         This is the generic front door to the `from_*` family: it looks
         at what it was handed and calls the right one.
 
+        A `str` is always a path, whether or not the file exists, so a
+        missing file raises `FileNotFoundError` whichever way its path
+        was spelled. Text held in memory is read with `from_text` or
+        `from_content`.
+
         Parameters
         ----------
         other : FileOrContentLike
@@ -552,8 +562,14 @@ class FileParser(FileSniffer):
         -------
         obj
             The parsed object.
+
+        Raises
+        ------
+        ParserExistsError
+            If `other` is a path to a file that does not exist. It is a
+            `FileNotFoundError`.
         """
-        if isinstance(other, str) and path.Path(other).exists():
+        if isinstance(other, str):
             other = path.Path(other)
 
         if isinstance(other, path.PathLike):
