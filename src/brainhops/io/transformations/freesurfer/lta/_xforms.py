@@ -30,6 +30,7 @@ from brainhops.io.transformations.base import (
 )
 
 # local
+from .._formats import FreesurferTransformationFormat
 from ._enums import LTAType, LTAValidity
 from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
 from ._struct import LTAStruct
@@ -45,10 +46,10 @@ def _system(
     return None if info is None else cls.from_struct(info)
 
 
-class LTAFormat(AffineTransformationFormat):
+class LTAFormat(FreesurferTransformationFormat, AffineTransformationFormat):
     """An affine transformation stored in a FreeSurfer LTA file."""
 
-    HINTS = ("lta", "freesurfer")
+    HINTS = ("lta",)
 
 
 @register_format

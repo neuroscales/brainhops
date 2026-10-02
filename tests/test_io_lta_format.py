@@ -303,12 +303,41 @@ def test_every_type_is_read_through_dispatch(
     assert load(str(file)).struct == xform.struct
 
 
-def test_a_structured_source_is_read_with_the_lta_hint(tmp_path) -> None:  # noqa: ANN001
+HINTS = [
+    "lta",
+    "freesurfer",
+    "affine",
+    "freesurfer.lta",
+    "affine.lta",
+    "xform.freesurfer.lta",
+]
+
+
+def test_lta_declares_its_hints() -> None:
+    from brainhops.io.base.specs import format_hints
+
+    # The FreeSurfer family carries "freesurfer", the format "lta", and
+    # the affine family "affine"; they compose into dotted hints.
+    assert format_hints(LTATransformation) >= set(HINTS)
+
+
+@pytest.mark.parametrize("hint", HINTS)
+def test_a_structured_source_is_read_with_a_hint(tmp_path, hint: str) -> None:  # noqa: ANN001
     from brainhops.io.base.specs import SourceSpec
 
     file = _write(tmp_path, _struct(), "transform.txt")
-    xform = io.load(SourceSpec(path=str(file), hints=("lta",)))
+    xform = io.load(SourceSpec(path=str(file), hints=(hint,)))
     assert type(xform) is LTATransformation
+
+
+@pytest.mark.parametrize("hint", HINTS)
+def test_a_hint_selects_the_lta_reader(tmp_path, hint: str) -> None:  # noqa: ANN001
+    file = _write(tmp_path, _struct(), "transform.txt")
+    assert io.sniff(file, hint=hint) is LTATransformation
+    assert type(io.load(file, hint=hint)) is LTATransformation
+    assert type(io.transformations.load(file, hint=hint)) is (
+        LTATransformation
+    )
 
 
 def test_a_freesurfer_file_is_read_through_dispatch(tmp_path) -> None:  # noqa: ANN001
