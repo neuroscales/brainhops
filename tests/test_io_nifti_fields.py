@@ -14,10 +14,14 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
+from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
     NiftiRASDisplacementField,
+)
+from brainhops.io.transformations.spm.y import (  # noqa: E402
+    SPMCoordinatesField,
 )
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
@@ -72,9 +76,6 @@ def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
 
 def _apply_coordinates(field, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
     """Map RAS points through a voxel-to-RAS coordinates field."""
-    # The reader keeps the singleton axis of the `(X, Y, Z, 1, 3)` layout
-    # in its field, so the grid is rebuilt from the squeezed values.
-    field = xforms.CoordinatesField(field=np.asarray(field.field)[:, :, :, 0])
     ras2vox = np.linalg.inv(VOX2RAS)
     voxels = np.asarray(points, float) @ ras2vox[:3, :3].T + ras2vox[:3, 3]
     voxels = xforms.CoordinatesField(field=voxels)
@@ -161,6 +162,71 @@ def test_a_coordinates_field_and_its_displacements_agree(tmp_path) -> None:  # n
     )
 
 
+def test_a_coordinates_field_drops_its_singleton_axis(tmp_path) -> None:  # noqa: ANN001
+    """
+    NIfTI stores a vector field as `(X, Y, Z, 1, 3)`. The singleton axis
+    is dropped on read, or the field would be sampled as a 4-D grid.
+    """
+    values = (_grid_points() + _ramp()).astype("float32")
+    field = io.transformations.load(_write(tmp_path / "c.nii", values, VECTOR))
+    assert type(field) is NiftiRASCoordinatesField
+    assert np.asarray(field.field).shape == (*SHAPE, 3)
+    np.testing.assert_array_equal(np.asarray(field.field), values)
+
+
+@pytest.mark.parametrize(
+    "array_backend",
+    [
+        "numpy",
+        pytest.param(
+            "dask",
+            marks=pytest.mark.skipif(
+                "dask" not in available_backends(),
+                reason="dask and dask-image are not installed",
+            ),
+        ),
+    ],
+)
+def test_an_spm_deformation_is_sampled_in_ras(
+    tmp_path,  # noqa: ANN001
+    array_backend: str,
+) -> None:
+    """
+    An SPM `y_` deformation, stored as `(X, Y, Z, 1, 3)`, maps each node
+    of its grid to the RAS position it holds, and every other point --
+    inside the grid or outside of it -- to a position that is the same on
+    every call and on every backend.
+
+    Its field once kept the singleton axis, and was sampled as a 4-D grid
+    of 3-vectors: values of the order of 1e24 and 1e-22.
+    """
+    values = (_grid_points() + _ramp()).astype("float32")
+    path = _write(tmp_path / "y_sub01.nii.gz", values, VECTOR)
+    nodes = _grid_points().reshape(-1, 3)
+    outside = np.stack(
+        np.meshgrid(*[np.linspace(-60.0, 60.0, 5)] * 3, indexing="ij"),
+        axis=-1,
+    ).reshape(-1, 3)
+    with backend("numpy"):
+        reference = _apply(io.transformations.load(path), outside)
+    with backend(array_backend):
+        field = io.transformations.load(path)
+        assert type(field) is SPMCoordinatesField
+        assert np.asarray(field.rasfield.field).shape == (*SHAPE, 3)
+        np.testing.assert_allclose(
+            _apply(field, nodes), values.reshape(-1, 3), atol=1e-4
+        )
+        for _ in range(3):
+            np.testing.assert_allclose(
+                _apply(field, outside), reference, atol=1e-4
+            )
+    # A deformation of this grid moves no point further than its own
+    # extent, so a sample far outside of that range is not a position.
+    low, high = values.reshape(-1, 3).min(0), values.reshape(-1, 3).max(0)
+    assert np.all(reference >= low - 1e-3)
+    assert np.all(reference <= high + 1e-3)
+
+
 # ----------------------------------------------------------------------
 #   ROUND TRIPS
 # ----------------------------------------------------------------------
@@ -236,9 +302,7 @@ def test_a_coordinates_field_round_trips_as_vector(tmp_path) -> None:  # noqa: A
 
     reloaded = io.transformations.load(target)
     assert type(reloaded) is NiftiRASCoordinatesField
-    np.testing.assert_array_equal(
-        np.asarray(reloaded.field)[:, :, :, 0], values
-    )
+    np.testing.assert_array_equal(np.asarray(reloaded.field), values)
 
 
 def test_a_legacy_coordinates_file_is_read_through_a_hint(tmp_path) -> None:  # noqa: ANN001

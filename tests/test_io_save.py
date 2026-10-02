@@ -344,7 +344,7 @@ def test_a_nifti_coordinate_field_round_trips(tmp_path) -> None:  # noqa: ANN001
     io.save(NiftiRASCoordinatesField(field=field), tmp_path / "field.nii")
     back = io.transformations.load(tmp_path / "field.nii")
     assert isinstance(back, NiftiRASCoordinatesField)
-    np.testing.assert_array_equal(np.asarray(back.field)[..., 0, :], field)
+    np.testing.assert_array_equal(np.asarray(back.field), field)
 
 
 @needs_zarr

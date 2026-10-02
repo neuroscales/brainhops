@@ -91,8 +91,21 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
-        """The field of RAS coordinates."""
-        return self.data
+        """
+        The field of RAS coordinates, as an `(X, Y, Z, 3)` array.
+
+        NIfTI stores a vector field as `(X, Y, Z, 1, 3)`, with the
+        components in the fifth axis, and SPM writes its `y_` fields that
+        way. The singleton axis before the components is dropped, or the
+        field would be sampled as a 4-D grid of 3-vectors.
+        """
+        data = self.data
+        if data is None:
+            return None
+        shape = tuple(int(d) for d in data.shape)
+        if len(shape) == 5 and shape[3] == 1:
+            data = data[:, :, :, 0, :]
+        return data
 
     @field.setter
     def field(self, value: tx.Optional[ArrayProtocol]) -> None:

@@ -1,5 +1,6 @@
 # stdlib
 import itertools
+import math
 from types import ModuleType
 
 # dependencies
@@ -7,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
-from brainhops._core.dependencies import da
+from brainhops._core.dependencies import da, dk
 from brainhops.backends import (
     best_backend,
     get_array_backend,
@@ -80,30 +81,111 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
     return _map_coordinates
 
 
+def _crop_for(
+    coords: ArrayProtocol, shape: tx.Sequence[int], order: int, whole: bool
+) -> tx.List[slice]:
+    """The part of an input that sampling at `coords` reads, as slices.
+
+    An axis is cropped to the samples that the interpolation stencils of
+    `coords` touch, with one sample to spare, but only when that crop lies
+    inside the grid: the boundary condition is then never consulted, and
+    sampling the crop is exactly sampling the whole axis. Any stencil that
+    reaches past an edge -- or a coordinate that is not finite -- keeps
+    the whole axis, so the boundary condition is applied to the real edge
+    of the grid rather than to the edge of a crop. With `whole`, every
+    axis is kept, which a prefilter needs: it runs along whole axes.
+    """
+    margin = int(order) // 2 + 1
+    slices = []
+    for c, n in zip(coords, shape):
+        n = int(n)
+        if whole or c.size == 0:
+            slices.append(slice(0, n))
+            continue
+        lo, hi = float(c.min()), float(c.max())
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            slices.append(slice(0, n))
+            continue
+        lo = math.floor(lo) - margin
+        hi = math.ceil(hi) + margin + 1
+        if lo < 0 or hi > n:
+            lo, hi = 0, n
+        slices.append(slice(lo, hi))
+    return slices
+
+
+def _map_coordinates_1block(
+    coords: ArrayProtocol, input: ArrayProtocol, **opts
+) -> ArrayProtocol:
+    """Sample `input` at one materialized block of `(ndim, N)` coordinates.
+
+    Only the crop of `input` that these coordinates read is materialized
+    (see [`_crop_for`][]), and it is sampled with its own concrete (scipy
+    or cupy) ndimage, so the result is the one the non-dask backends give.
+    """
+    whole = bool(opts["prefilter"]) and int(opts["order"]) > 1
+    slices = _crop_for(coords, input.shape, opts["order"], whole)
+    patch = input[tuple(slices)]
+    if hasattr(patch, "compute"):
+        patch = patch.compute()
+    offset = [s.start for s in slices]
+    if any(offset):
+        nx = get_array_backend(coords)
+        offset = nx.asarray(offset, dtype=coords.dtype)
+        coords = coords - offset[:, None]
+    return get_ndimage_backend(patch).map_coordinates(patch, coords, **opts)
+
+
+def _dask_map_coordinates(
+    input: ArrayProtocol, coords: ArrayProtocol, **opts
+) -> ArrayProtocol:
+    """``map_coordinates`` for a dask array, lazy and exact at the edges.
+
+    `dask_image.ndinterp.map_coordinates` is not used. It crops the input
+    around the coordinates of each chunk and clips that crop to the grid,
+    so a chunk whose coordinates all lie beyond the start of an axis gets
+    an empty crop, and `scipy` then reads outside of a zero-length array:
+    the result is whatever memory happens to hold. A crop clipped at the
+    end of an axis is not empty, but it drops the samples that `reflect`,
+    `mirror` or `wrap` fold back onto, and the samples a prefilter of
+    order above one runs over.
+
+    Here each block of coordinates is sampled by one task that crops the
+    input itself (see [`_crop_for`][]) and keeps a whole axis whenever a
+    stencil reaches past its edge, so the boundary condition is always
+    applied at the real edge of the grid. The input is passed to the tasks
+    as a delayed rebuild of itself, so each task only computes its crop.
+    """
+    coords = da.asarray(coords)
+    coords = coords.rechunk({0: -1})
+    if isinstance(input, da.Array):
+        source = dk.delayed(da.Array)(
+            input.dask, input.name, input.chunks, input.dtype
+        )
+    else:
+        source = dk.delayed(input)
+    return da.map_blocks(
+        _map_coordinates_1block,
+        coords,
+        source,
+        dtype=input.dtype,
+        chunks=coords.chunks[1:],
+        drop_axis=0,
+        **opts,
+    )
+
+
 def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
     """The (autoreshaping) ``map_coordinates`` to use for a backend.
 
-    Older `dask-image` releases have no `ndinterp.map_coordinates`, so a
-    dask array would otherwise fail with `AttributeError`. There is nothing
-    to chunk over anyway -- `map_coordinates` needs random access to the
-    whole input -- so each block is materialized and interpolated with its
-    concrete (scipy or cupy) ndimage, the same computation the non-dask
-    backends run, and the result is wrapped back into the array backend.
-    Newer stacks keep the native (lazy) `dask_image` path unchanged.
+    A dask array is sampled by [`_dask_map_coordinates`][], which is exact
+    for coordinates outside of the grid, rather than by `dask_image`'s,
+    which is not -- and which older `dask-image` releases do not have.
+    Every other backend uses its own ndimage package.
     """
-    if hasattr(nd, "map_coordinates"):
-        return _autoreshape(nd.map_coordinates)
-
-    def fallback(
-        input: ArrayProtocol, coords: ArrayProtocol, **kwargs
-    ) -> ArrayProtocol:
-        block = input.compute() if hasattr(input, "compute") else input
-        pts = coords.compute() if hasattr(coords, "compute") else coords
-        concrete = get_ndimage_backend(block)
-        result = _autoreshape(concrete.map_coordinates)(block, pts, **kwargs)
-        return nx.asarray(result)
-
-    return fallback
+    if da is not None and nx is da:
+        return _autoreshape(_dask_map_coordinates)
+    return _autoreshape(nd.map_coordinates)
 
 
 def pull(
