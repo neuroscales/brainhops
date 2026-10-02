@@ -109,7 +109,9 @@ def _backends() -> list:
 
 
 @pytest.mark.parametrize("array_backend", _backends())
-@pytest.mark.parametrize("shape", [(5,), (12, 14, 16), (230, 7)], ids=str)
+@pytest.mark.parametrize(
+    "shape", [(5,), (12, 14, 16), (97, 3), (230, 7)], ids=str
+)
 @pytest.mark.parametrize("order", ALL_ORDERS)
 @pytest.mark.parametrize("bound", ALL_BOUNDS, ids=str)
 def test_value2coeff_inverts_coeff2value(

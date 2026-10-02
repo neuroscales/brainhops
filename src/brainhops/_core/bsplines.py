@@ -530,7 +530,10 @@ at order five, is 0.43, and 0.43 ** 48 is about 3e-18.
 def _boundary_solvers(
     size: int, order: int, bound: tx.Union[str, float]
 ) -> tx.Tuple[
-    tx.Optional[np.ndarray], tx.Optional[np.ndarray], tx.Optional[np.ndarray]
+    tx.Optional[np.ndarray],
+    tx.Optional[tx.Tuple[np.ndarray, np.ndarray]],
+    tx.Optional[tx.Tuple[np.ndarray, np.ndarray]],
+    np.ndarray,
 ]:
     """
     How to solve for the coefficients of one axis under a boundary.
@@ -538,31 +541,50 @@ def _boundary_solvers(
     The values of an axis are its coefficients times `A`, the matrix of
     [`spline_matrix`][] under `bound` -- clamped coefficients for
     `nearest`, reflected ones for `reflect`, and zeros past the edges for
-    `0.0`. A short axis is solved
-    with the inverse of `A`, returned first. A long one is solved by
-    scipy's `mirror` prefilter, whose matrix `M` is the same but with
-    mirrored coefficients past the edges, then corrected near each end:
-    `inv(A) - inv(M)` is negligible farther than `_EDGE` samples from
-    either end, so its two corner blocks, returned last, are the whole
-    correction.
+    `0.0`. A short axis is solved with the inverse of `A`, returned first.
+
+    A long one is solved by scipy's recursive `mirror` prefilter, whose
+    matrix `M` is the same but with mirrored coefficients past the edges,
+    then corrected near each end. `inv(A) - inv(M)` is negligible farther
+    than `_EDGE` samples from either end, and its corner blocks have rank
+    one per pole of the prefilter -- one at orders 2 and 3, two at orders
+    4 and 5: they change the initial value of each pole's recursion. So
+    the correction at each end is returned as a pair `(U, V)`, applied as
+    `U @ (V @ values[edge])`, which costs a few operations per sample of
+    the edge.
+
+    The last item is `inv(A) @ 1`, which a constant bound needs.
     """
     edge = _EDGE
-    length = size if size <= 4 * edge else 4 * edge
+    length = size if size <= 2 * edge else 4 * edge
     grid = np.arange(length, dtype=np.float64)
     matrix = np.asarray(spline_matrix(length, grid, order, bound, True))
     inverse = np.linalg.inv(matrix)
     if length == size:
-        return inverse, None, None
+        return inverse, None, None, inverse.sum(axis=1)
     mirror = np.asarray(spline_matrix(length, grid, order, "mirror", True))
     correction = inverse - np.linalg.inv(mirror)
-    return None, correction[:edge, :edge], correction[-edge:, -edge:]
+    low = _low_rank(correction[:edge, :edge])
+    high = _low_rank(correction[-edge:, -edge:])
+    # The coefficients of a constant under `mirror` are that constant.
+    ones = np.ones(size)
+    ones[:edge] += low[0] @ low[1].sum(axis=1)
+    ones[-edge:] += high[0] @ high[1].sum(axis=1)
+    return None, low, high, ones
+
+
+def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
+    """`block` as `U @ V`, of the rank it has to machine precision."""
+    u, s, vt = np.linalg.svd(block)
+    rank = max(1, int((s > s[0] * 1e-14).sum()))
+    return u[:, :rank] * s[:rank], vt[:rank]
 
 
 def _along(
     nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
 ) -> ArrayProtocol:
     """`matrix` applied to `x` along one of its axes."""
-    matrix = nx.asarray(matrix, dtype=x.dtype)
+    matrix = nx.asarray(matrix, dtype=np.float64)
     return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
 
 
@@ -577,41 +599,76 @@ def _interpolating_coefficients(
     coefficients past the edges are clamped (`bound="nearest"`), reflected
     (`bound="reflect"`), or are `cval` (`bound=0.0`).
 
-    Both extensions are separable, so the axes are solved one at a time
-    (see [`_boundary_solvers`][]). Coefficients that are `cval` past the
-    edges interpolate `values` when `coefficients - cval`, zero past the
-    edges, interpolate `values - cval`. Each chunk of a dask array reads
-    only its neighbours and the samples near each end of an axis.
+    Each axis is prefiltered in turn, by scipy's recursive filter with
+    corrected initial values at each end (see [`_boundary_solvers`][]):
+    the cost is the filter's. A numpy array is filtered in place after the
+    first axis, so it takes no more memory than the filter does. A dask
+    array keeps its chunks, and each chunk reads only its neighbours and
+    the samples near each end of its axes.
+
+    Coefficients that are `cval` past the edges interpolate `values` when
+    `coefficients - cval`, zero past the edges, interpolate `values -
+    cval`; the solve is linear and separable, so `cval` is taken out after
+    the first axis as `cval * inv(A) @ 1`, rather than from a copy of the
+    values.
     """
     nx = get_array_backend(values)
     nd = get_ndimage_backend(values)
-    coeff = nx.asarray(values).astype("float64")
-    if cval:
-        coeff = coeff - cval
-    for axis in range(coeff.ndim):
-        size = int(coeff.shape[axis])
-        inverse, low, high = _boundary_solvers(size, order, bound)
+    lazy = da is not None and isinstance(values, da.Array)
+    coeff = values
+    for axis in range(values.ndim):
+        size = int(values.shape[axis])
+        inverse, low, high, ones = _boundary_solvers(size, order, bound)
         if inverse is not None:
             coeff = _along(nx, inverse, coeff, axis)
-            continue
-        edge = low.shape[0]
-        index = (slice(None),) * axis
-        start = index + (slice(0, edge),)
-        middle = index + (slice(edge, size - edge),)
-        stop = index + (slice(size - edge, size),)
-        filtered = nd.spline_filter1d(
-            coeff, order, axis=axis, output=np.float64, mode="mirror"
-        )
-        coeff = nx.concatenate(
-            [
-                filtered[start] + _along(nx, low, coeff[start], axis),
-                filtered[middle],
-                filtered[stop] + _along(nx, high, coeff[stop], axis),
-            ],
-            axis=axis,
-        )
+        else:
+            edge = low[0].shape[0]
+            index = (slice(None),) * axis
+            start = index + (slice(0, edge),)
+            stop = index + (slice(size - edge, size),)
+            # The corrections read the values before they are filtered.
+            first = _along(
+                nx, low[0], _along(nx, low[1], coeff[start], axis), axis
+            )
+            last = _along(
+                nx, high[0], _along(nx, high[1], coeff[stop], axis), axis
+            )
+            inplace = not lazy and coeff is not values
+            filtered = nd.spline_filter1d(
+                coeff,
+                order,
+                axis=axis,
+                output=coeff if inplace else np.float64,
+                mode="mirror",
+            )
+            if inplace:
+                filtered = coeff
+            if lazy:
+                middle = index + (slice(edge, size - edge),)
+                coeff = nx.concatenate(
+                    [
+                        filtered[start] + first,
+                        filtered[middle],
+                        filtered[stop] + last,
+                    ],
+                    axis=axis,
+                )
+            else:
+                filtered[start] += first
+                filtered[stop] += last
+                coeff = filtered
+        if cval and axis == 0:
+            shape = (-1,) + (1,) * (values.ndim - 1)
+            removed = nx.asarray(cval * ones, dtype=np.float64).reshape(shape)
+            if lazy:
+                coeff = coeff - removed
+            else:
+                coeff -= removed
     if cval:
-        coeff = coeff + cval
+        if lazy:
+            coeff = coeff + cval
+        else:
+            coeff += cval
     return coeff
 
 
