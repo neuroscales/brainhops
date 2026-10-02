@@ -106,11 +106,11 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
-    def inverse(self) -> VoxelToRAS:
+    def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
             return NiftiVoxelToRAS(image=self.image, header=self.header)
-        return super().inverse().to(VoxelToRAS)
+        return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
         # This transformation maps RAS to voxel, so its inverse maps
@@ -140,11 +140,11 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     def matrix(self, value: np.ndarray) -> None:
         self._matrix = value
 
-    def inverse(self) -> RASToVoxel:
+    def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
             return NiftiRASToVoxel(image=self.image, header=self.header)
-        return super().inverse().to(RASToVoxel)
+        return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
         return _voxel_to_ras(self)
