@@ -1,5 +1,6 @@
 # dependencies
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # api
 from brainhops._core.properties import smartproperty
@@ -78,6 +79,15 @@ class Transformation(DataModelBase, reverse=True):
     # `replace()` freeze the derived value into a declared one, and a
     # sequence that declares nothing would come back claiming the systems
     # its children happen to name.
+    #
+    # The endpoints are keyword-only. A positional parameter's place in
+    # `__init__` follows the order bagof collects fields in, which follows
+    # the MRO, so it would move whenever a class reorders its bases and
+    # differ between families. Only the fields that define a
+    # transformation (`matrix`, `field`, `transformations`, `forward`...)
+    # are positional. bagof does not carry `KwOnly` over to a field that
+    # a subclass declares again: a subclass that gives an endpoint a new
+    # default must write `KwOnly[...]` itself.
     _input: tx.Annotated[
         tx.Optional[CoordinateSystem],
         tx.Doc(
@@ -87,6 +97,7 @@ class Transformation(DataModelBase, reverse=True):
             from the coordinate system of the image being transformed).
             """
         ),
+        KwOnly(),
     ] = None
 
     _output: tx.Annotated[
@@ -98,6 +109,7 @@ class Transformation(DataModelBase, reverse=True):
             from the coordinate system of the image being transformed).
             """
         ),
+        KwOnly(),
     ] = None
 
     input = smartproperty("input")
