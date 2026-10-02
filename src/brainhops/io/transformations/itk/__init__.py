@@ -1,12 +1,12 @@
 """
 Readers and writers for ITK transformation formats.
 
-| Format                      | Module    | Reader                      |
-| --------------------------- | --------- | --------------------------- |
-| text (`.tfm`, `.txt`)       | `tfm`     | `TFMTransform`              |
-| HDF5 (`.h5`)                | `h5`      | `H5Transform`               |
-| binary MATLAB (`.mat`)      | `mat`     | `MatTransform`              |
-| NIfTI warp (`.nii[.gz]`)    | `nifti`   | `ITKNiftiDisplacementField` |
+| Format                   | Module  | Class                       | Writes |
+| ------------------------ | ------- | --------------------------- | ------ |
+| text (`.tfm`, `.txt`)    | `tfm`   | `TFMTransform`              | no     |
+| HDF5 (`.h5`)             | `h5`    | `H5Transform`               | no     |
+| binary MATLAB (`.mat`)   | `mat`   | `MatTransform`              | yes    |
+| NIfTI warp (`.nii[.gz]`) | `nifti` | `ITKNiftiDisplacementField` | yes    |
 
 ## ANTs
 
@@ -24,6 +24,10 @@ so they are ITK files, and every reader here also answers to
 - linear transforms, `<prefix><n>GenericAffine.mat` (and `Rigid.mat`,
   `Affine.mat`, `Similarity.mat`, `Translation.mat` and
   `DerivedInitialMovingTranslation.mat`), are ITK binary MATLAB files.
+
+How an ANTs transform list (`-t A -t B`, `[file.mat,1]`) maps onto a
+brainhops `Sequence` is described in
+[`brainhops.io.transformations.itk.mat`][].
 
 Not every ANTs output can be read yet:
 

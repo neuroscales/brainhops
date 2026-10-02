@@ -1,5 +1,6 @@
 # stdlib
 import re
+import sys
 
 # dependencies
 import numpy as np
@@ -9,18 +10,23 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Magic
 
 # core
+from brainhops._core import path
 from brainhops._core.streams import preserve_position
 
 # io
+from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileParserWriter,
     Confidence,
     ParserContentError,
     SnifferContentError,
+    UnrepresentableTransformationError,
+    WriterError,
 )
 
 # locals
-from .._common import ITKStruct, ITKTransformClass
+from .._common import ITKPrecision, ITKStruct, ITKTransformClass
+from .._systems import _make_system
 
 # constants
 _CLASS_RE = re.compile(
@@ -39,6 +45,8 @@ _MAX_NAME = 256
 # parameters of a `double` transform as 0 and of a `float` transform as 1;
 # fixed parameters are always `double`.
 _PRECISIONS = {0: "f8", 1: "f4"}
+# The P digit that each ITK precision is written with.
+_PRECISION_DIGITS = {ITKPrecision.Double: 0, ITKPrecision.Float: 1}
 # The M digit of MOPT: the byte order. `vnl_matlab_write` writes the
 # header and the values in the native order of the machine that wrote
 # the file, and records which one it was here.
@@ -63,12 +71,12 @@ class _Variable(tx.NamedTuple):
 
 class MatTransformParser(
     Magic,
-    BinaryFileParser,
+    BinaryFileParserWriter,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
     """Parses an ITK binary MATLAB (`.mat`) transform file into a chain
-    of transform blocks.
+    of transform blocks, and writes one back.
 
     Each block is itself a brainhops transformation, so the parsed blocks
     are stored straight into the `transformations` of the sequence that
@@ -187,6 +195,82 @@ class MatTransformParser(
         obj.transformations = blocks
         return obj
 
+    # --- to -----------------------------------------------------------
+
+    def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
+        """Write the transformation to a file.
+
+        The content is built before the file is opened, so a
+        transformation that the format cannot hold is refused without
+        creating or truncating the file.
+        """
+        content = self.to_bytes(**kwargs)
+        with path.Path(filename).open(self._WRITE_MODE) as f:
+            f.write(content)
+
+    def to_bytes(
+        self,
+        byteorder: str = "<",
+        precision: tx.Optional[tx.Union[ITKPrecision, str]] = None,
+        **kwargs,
+    ) -> bytes:
+        """The content of the ITK MATLAB file that encodes this
+        transformation, as `itk::MatlabTransformIO` writes it.
+
+        The transformation must be a single block, which is what ANTs
+        writes to a `.mat` file. It is written as two column vectors: its
+        parameters, named `{Class}_{Precision}_{D}_{D}`, then its fixed
+        parameters, named `fixed`.
+
+        - An ITK block (one that was read from an ITK file, or built as
+          an [`ITKStruct`][]) is written as it is: its class, its
+          parameters and its fixed parameters -- and so its center.
+        - Any other transformation that converts to an
+          [`Affine`][brainhops.datamodel.transformations.Affine] is
+          written as an `AffineTransform` whose center (`fixed`) is the
+          origin. The translation is then the last column of the
+          matrix, and ITK reads back exactly that matrix. Its `input`
+          and `output` must be ITK's space -- `LPSmm` in 3-D -- or left
+          unspecified, in which case they are taken to be ITK's space.
+
+        Parameters
+        ----------
+        byteorder : {"<", ">", "="}, default="<"
+            The byte order of the headers and the values. ITK writes in
+            the native order of the machine, which is little-endian on
+            every common one; `"="` asks for the native order here.
+        precision : {"double", "float"}, optional
+            The precision of the parameters, which also goes into the
+            class name. By default, that of the block, and `double` for
+            a transformation that is not an ITK block. The fixed
+            parameters are always `double`, as ITK writes them.
+
+        Raises
+        ------
+        UnrepresentableTransformationError
+            If the transformation is not a single block, or not an ITK
+            block or an affine between ITK's spaces.
+        """
+        if byteorder == "=":
+            byteorder = "<" if sys.byteorder == "little" else ">"
+        if byteorder not in _BYTE_ORDERS:
+            raise WriterError(
+                f"byteorder must be '<', '>' or '=', not {byteorder!r}."
+            )
+        block = _single_block(self)
+        if precision is None:
+            precision = block.precision
+        precision = ITKPrecision(precision)
+        name = (
+            f"{ITKTransformClass(block.type).value}_{precision.value}_"
+            f"{block.ndim_input}_{block.ndim_output}"
+        )
+        return _write_variable(
+            name, block.parameters, byteorder, precision
+        ) + _write_variable(
+            "fixed", block.fixed_parameters, byteorder, ITKPrecision.Double
+        )
+
 
 # ---------------------------------------------------------------------
 # Utilities
@@ -285,3 +369,86 @@ def _read_variables(
         # owns its memory and is in native byte order.
         yield variable, values.astype(variable.dtype.newbyteorder("="))
         offset = variable.start + variable.count * variable.dtype.itemsize
+
+
+def _write_variable(
+    name: str,
+    values: tx.Any,
+    byteorder: str,
+    precision: ITKPrecision,
+) -> bytes:
+    """Encode one column vector as a MATLAB v4 variable, as
+    `vnl_matlab_write` does: the header, the `NUL`-terminated name, then
+    the values, all in byte order `byteorder`."""
+    digit = _PRECISION_DIGITS[precision]
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    values = values.astype(byteorder + _PRECISIONS[digit])
+    raw = name.encode("ascii") + b"\0"
+    # M*1000 + O*100 + P*10 + T, with O = 0 and T = 0 (full numeric).
+    mopt = _BYTE_ORDERS[byteorder] * 1000 + digit * 10
+    header = np.array(
+        [mopt, values.size, 1, 0, len(raw)], dtype=byteorder + "i4"
+    )
+    return header.tobytes() + raw + values.tobytes()
+
+
+def _single_block(chain: tx.Any) -> ITKStruct:
+    """The one block that `chain` holds, as an ITK block.
+
+    ANTs writes a single linear transform per `.mat` file, and a chain
+    is not written: ITK applies the blocks of a `CompositeTransform` in
+    the reverse of their order in the file, so the order a chain should
+    be written in is not settled here.
+    """
+    children = list(chain.transformations or [])
+    if len(children) != 1:
+        raise UnrepresentableTransformationError(
+            f"An ITK MATLAB file is written with a single transform, as "
+            f"ANTs writes it, but this chain holds {len(children)}. "
+            f"Compose them first, for example with `.compute()`."
+        )
+    (child,) = children
+    if isinstance(child, ITKStruct):
+        return child
+    return _affine_block(child)
+
+
+def _affine_block(xform: _xforms.Transformation) -> ITKStruct:
+    """Encode an affine between ITK's spaces as an `AffineTransform`
+    block centered on the origin."""
+    affine = xform
+    if not isinstance(affine, _xforms.Affine):
+        affine = xform.to(_xforms.Affine, error=None)
+    matrix = None if affine is None else affine.matrix
+    if matrix is None:
+        raise UnrepresentableTransformationError(
+            f"An ITK MATLAB file holds an ITK transform or an affine, and "
+            f"a {type(xform).__name__} cannot be written as either."
+        )
+    matrix = np.asarray(matrix, dtype=np.float64)
+    ndim = matrix.shape[0]
+    if matrix.shape != (ndim, ndim + 1):
+        raise UnrepresentableTransformationError(
+            f"An ITK affine maps a space to a space of the same "
+            f"dimension, of shape (D, D + 1), but the matrix has shape "
+            f"{matrix.shape}."
+        )
+    space = _make_system(ndim)
+    for end in ("input", "output"):
+        system = getattr(affine, end)
+        if system is not None and system != space:
+            raise UnrepresentableTransformationError(
+                f"An ITK affine maps LPS millimetres to LPS millimetres, "
+                f"but the {end} of this one is {type(system).__name__}. "
+                f"Convert it to ITK's space first."
+            )
+    return ITKStruct(
+        type=ITKTransformClass.AffineTransform,
+        precision=ITKPrecision.Double,
+        ndim_input=ndim,
+        ndim_output=ndim,
+        # ITK stores the matrix row-major, then the translation. With the
+        # center at the origin, ITK's translation is the affine's.
+        parameters=np.concatenate([matrix[:, :-1].ravel(), matrix[:, -1]]),
+        fixed_parameters=np.zeros(ndim),
+    )
