@@ -30,10 +30,12 @@ cupy = ["cupy"]
 backends = ["brainhops[dask]", "brainhops[cupy]"]
 
 # io
-itk = ["h5py"]
+hdf5 = ["h5py"]
+itk = ["brainhops[hdf5]"]
+x5 = ["brainhops[hdf5]"]
 # MATLAB v7.3 (HDF5) .mat matrices; text, .npy, .npz and v4-v7 .mat need
 # only numpy and scipy.
-matrix = ["h5py"]
+matrix = ["brainhops[hdf5]"]
 nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
@@ -59,7 +61,13 @@ zarr = [
 zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
-io = ["brainhops[itk]", "brainhops[matrix]", "brainhops[nibabel]", "brainhops[zarr]"]
+io = [
+    "brainhops[itk]",
+    "brainhops[matrix]",
+    "brainhops[x5]",
+    "brainhops[nibabel]",
+    "brainhops[zarr]",
+]
 
 # test
 test = [
@@ -68,6 +76,7 @@ test = [
     "brainhops[dask]",
     "brainhops[itk]",
     "brainhops[matrix]",
+    "brainhops[x5]",
     "brainhops[nibabel]",
     "brainhops[zarr]"
 ]
