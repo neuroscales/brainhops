@@ -1,5 +1,5 @@
 """Readers and writers for FreeSurfer transformation formats."""
 
-__all__ = ["lta"]
+__all__ = ["lta", "m3z"]
 
-from . import lta
+from . import lta, m3z
