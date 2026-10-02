@@ -117,7 +117,6 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 from brainhops.datamodel.units import (
-    UNITS_SPACE,
     Unit,
     is_physicalunit,
     is_spaceunit,
@@ -513,11 +512,6 @@ def _meters(unit: tx.Any) -> tx.Optional[float]:
             return None
     if not (is_spaceunit(unit) and is_physicalunit(unit)):
         return None
-    name = str(unit)
-    # The table gives the true length of the non-SI units, whose `scale`
-    # is not set; an SI unit has its length in metres as its `scale`.
-    if name in UNITS_SPACE:
-        return float(UNITS_SPACE[name][0])
     scale = getattr(unit, "scale", None)
     if isinstance(scale, Number) and scale > 0:
         return float(scale)

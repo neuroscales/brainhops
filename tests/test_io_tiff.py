@@ -8,8 +8,10 @@ always tags), so that each test states the exact layout and metadata of
 the file it reads.
 """
 
+import gc
 import io
 import math
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -778,3 +780,58 @@ def test_write_multiscale_from_datamodel(tmp_path: Path) -> None:
     np.testing.assert_array_equal(back.images[1].data, base[::2, ::2])
     np.testing.assert_allclose(_scale(back.images[1]), [2, 2])
     assert math.isclose(_shift(back.images[1])[0], 0.5)
+
+
+# --- file handles (#266) ----------------------------------------------
+
+
+def _resource_warnings(read: tx.Callable[[], None]) -> tx.List[str]:
+    """The `ResourceWarning`s emitted by `read` and by collecting what it
+    dropped."""
+    gc.collect()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        read()
+        gc.collect()
+    return [str(w.message) for w in caught if w.category is ResourceWarning]
+
+
+def test_lazy_read_closes_its_file(tmp_path: Path) -> None:
+    pytest.importorskip("dask.array")
+    pytest.importorskip("zarr")
+    path = _write(
+        tmp_path,
+        "a.tif",
+        STACK,
+        compression="zlib",
+        tile=(16, 16),
+        metadata={"axes": "ZCYX"},
+    )
+
+    def read() -> None:
+        image = load(path, lazy=True)
+        np.testing.assert_array_equal(
+            np.asarray(image.data), STACK.transpose(3, 2, 0, 1)
+        )
+
+    assert _resource_warnings(read) == []
+
+
+@pytest.mark.parametrize("lazy", [None, False, True])
+def test_pyramid_read_closes_its_files(tmp_path: Path, lazy: tx.Any) -> None:
+    if lazy:
+        pytest.importorskip("dask.array")
+        pytest.importorskip("zarr")
+    path = _pyramid(tmp_path)
+    expected = tifffile.imread(path)
+
+    def read() -> None:
+        image = load(path, lazy=lazy)
+        assert isinstance(image, TiffMultiScaleImage)
+        levels = [np.asarray(level.data) for level in image.images]
+        np.testing.assert_array_equal(levels[0], expected.transpose(2, 1, 0))
+        np.testing.assert_array_equal(
+            levels[2], expected[:, ::4, ::4].transpose(2, 1, 0)
+        )
+
+    assert _resource_warnings(read) == []
