@@ -263,7 +263,7 @@ _Value = tx.Union[str, tx.Tuple[int, ...], tx.Tuple[float, ...]]
 # ----------------------------------------------------------------------
 
 
-class AfniFormat:
+class AfniFormat(DataModelBase):
     """
     A format of the AFNI family, whatever it stores.
 
@@ -271,6 +271,11 @@ class AfniFormat:
     and transformation formats, and carries the `"afni"` hint they all
     answer to. Each format adds its own hints (`"brik"`, ...), which are
     then also reachable as `"afni.brik"`, ...
+
+    Everything an AFNI format stores is a data model, so the family is
+    one too: a class that is both an AFNI format and a parser, or both
+    an AFNI image and an AFNI transformation format, then needs no care
+    about where `DataModelBase` goes in its bases.
     """
 
     HINTS = ("afni",)
@@ -1115,7 +1120,7 @@ def _write_brik(header: AfniHeader, data: tx.Any, brik: tx.Any) -> None:
 # ----------------------------------------------------------------------
 
 
-class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
+class AfniParser(AfniFormat, BinaryFileParserWriter):
     """
     Base class for objects that are encoded by an AFNI dataset
     (`.HEAD` + `.BRIK`).

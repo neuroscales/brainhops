@@ -149,13 +149,30 @@ def _model(cls: type) -> tx.Optional[type]:
     It is the first class in the MRO that is a data model and is not a
     file format: `SingleScaleImage` for `NiftiImage`, and `VoxelToRAS`
     for `NiftiVoxelToRAS`. A class that is not a data model has none.
+
+    A format family that is a data model, such as `AfniFormat` and
+    the markers built on it (`AfniAffineFormat`), is a file format too:
+    it holds nothing but format `HINTS`. A class is a data model of its
+    own only if a data model without hints is among its bases, as
+    `Affine` and `ImmutableSequence` are for `AfniAffine` and `AfniWarp`.
     """
     for base in cls.__mro__:
-        if issubclass(base, DataModelBase) and not issubclass(
-            base, FileSniffer
+        if (
+            issubclass(base, DataModelBase)
+            and not issubclass(base, FileSniffer)
+            and any(_is_plain_model(klass) for klass in base.__mro__)
         ):
             return base
     return None
+
+
+def _is_plain_model(cls: type) -> bool:
+    """Whether `cls` is a data model that carries no format hints."""
+    return (
+        cls is not DataModelBase
+        and issubclass(cls, DataModelBase)
+        and not hasattr(cls, "HINTS")
+    )
 
 
 def _init_fields(cls: type) -> tx.Set[str]:

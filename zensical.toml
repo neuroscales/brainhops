@@ -74,6 +74,7 @@ nav = [
         "api/io/transformations/fsl.md",
         {"fsl.flirt" = "api/io/transformations/fsl-flirt.md"},
         {"fsl.fnirt" = "api/io/transformations/fsl-fnirt.md"},
+        {"afni" = "api/io/transformations/afni.md"},
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         "api/io/transformations/zarr.md",
       ]},
