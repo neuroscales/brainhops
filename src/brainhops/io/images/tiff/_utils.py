@@ -67,6 +67,7 @@ __all__ = [
 
 # stdlib
 import math
+import weakref
 import xml.etree.ElementTree as ElementTree
 from io import BytesIO
 
@@ -820,7 +821,24 @@ def _read_lazily(source: TiffSource, series: int, level: int) -> tx.Any:
             BytesIO(source.content), aszarr=True, series=series, level=level
         )
     try:
-        return da.from_zarr(zarr.open(store, mode="r"))
+        array = da.from_zarr(zarr.open(store, mode="r"))
     except Exception:
         store.close()
         return None
+    _close_with(store)
+    return array
+
+
+def _close_with(store: tx.Any) -> None:
+    """Close the files a tifffile Zarr store reopens to read chunks when
+    the store is collected.
+
+    The store reopens the file on the first chunk read and keeps it open in
+    its file cache until `store.close()`, which the dask graph never calls:
+    without this, the file would only be closed by the garbage collector,
+    with a `ResourceWarning`. The finalizer holds the cache, not the store,
+    so that it does not keep the store (and the dask array) alive.
+    """
+    cache = getattr(store, "_filecache", None)
+    if cache is not None:
+        weakref.finalize(store, cache.clear)
