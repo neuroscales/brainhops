@@ -50,7 +50,7 @@ X, Y, Z = Axis(name="x"), Axis(name="y"), Axis(name="z")
 T = TimeAxis(name="t", unit="second")
 
 # "Nothing is known about the axes", given as a list or as a tuple. Both
-# are stored as `[...]`, the default; `axes=None` is refused.
+# are stored as `[...]`, the default, as `axes=None` is.
 UNKNOWN_SPELLINGS = {"[...]": [...], "(...,)": (...,)}
 
 # Where `...` sits among two explicit axes, `X` and `T`.
@@ -118,15 +118,37 @@ OPEN_CLASSES = [
     CS,
     SpatialCoordinateSystem,
     ArrayCoordinateSystem,
-    PhysicalCoordinateSystem,
 ]
 
 
 @pytest.mark.parametrize("cls", OPEN_CLASSES, ids=lambda c: c.__name__)
-def test_axes_none_is_refused(cls: type) -> None:
-    # One spelling of unknown axes: `[...]`, which the error names.
-    with pytest.raises(TypeError, match=r"cannot be None: use `\[\.\.\.\]`"):
-        cls(axes=None)
+def test_axes_none_reads_as_the_default(cls: type) -> None:
+    # `None` is normalised on the way in: what is stored is `[...]`, so a
+    # system's axes are always an axis sequence.
+    system = cls(axes=None)
+    assert type(system) is cls
+    assert type(system.axes) is AxisList and system.axes == [...]
+    assert system == cls() == cls(axes=[...])
+    # Each system gets a list of its own.
+    assert cls(axes=None).axes is not cls(axes=None).axes
+
+
+def test_axes_none_reads_as_ellipsis_in_any_spelling() -> None:
+    assert CS(axes=None) == CS() == CS(axes=[...])
+    assert CS("s", None) == CS(name="s")
+    assert CS.from_dict({"axes": None}) == CS()
+
+
+@pytest.mark.parametrize("cls, ndim", FIXED_CLASSES)
+def test_axes_none_is_the_default_of_a_fixed_dimension_class(
+    cls: type, ndim: int
+) -> None:
+    # `[...]` cannot be stored in a class that fixes its number of axes,
+    # so `None` -- as not giving the axes at all -- is the class's own
+    # default axes there.
+    system = cls(axes=None)
+    assert type(system) is cls and type(system.axes) is AxisTuple
+    assert system == cls() and system.ndim == ndim
 
 
 def test_axes_default_to_ellipsis() -> None:
@@ -155,7 +177,6 @@ def test_at_most_one_ellipsis(axes: list) -> None:
     [
         # The type of the field, a tuple of `ndim` axes, refuses them: it
         # is not optional, it has a fixed length, and `...` is no axis.
-        ("None", TypeError, "lists every one of them"),
         ("start", ValueError, "Expected iterable of length"),
         ("middle", ValueError, "Expected iterable of length"),
         ("end", ValueError, "Expected iterable of length"),
@@ -167,7 +188,6 @@ def test_fixed_dimension_classes_refuse_an_open_system(
 ) -> None:
     explicit = list(cls().axes)
     axes = {
-        "None": None,
         "start": [..., *explicit],
         "middle": [explicit[0], ..., *explicit[1:]],
         "end": [*explicit, ...],
@@ -1298,7 +1318,6 @@ def test_every_system_stores_an_axis_sequence() -> None:
 @pytest.mark.parametrize(
     "axes, error, match",
     [
-        (None, TypeError, "lists every one of them"),
         ([SpaceAxis(), SpaceAxis()], ConversionError, "length 3, got 2"),
         (
             [SpaceAxis(), SpaceAxis(), SpaceAxis(), SpaceAxis()],
@@ -1312,7 +1331,7 @@ def test_every_system_stores_an_axis_sequence() -> None:
             "always 'space'",
         ),
     ],
-    ids=["none", "too-short", "too-long", "ellipsis", "wrong-kind"],
+    ids=["too-short", "too-long", "ellipsis", "wrong-kind"],
 )
 def test_a_fixed_axis_tuple_field_refuses(
     axes: tx.Optional[list], error: type, match: str

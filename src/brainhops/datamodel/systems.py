@@ -76,7 +76,8 @@ from numbers import Integral
 
 # externals
 import typing_extensions as tx
-from bagof.magic import fields, replace
+from bagof.converters import Converter
+from bagof.magic import ConvertTo, fields, replace
 
 # internals
 from . import axes as _axes
@@ -777,8 +778,8 @@ class AxisList(AxisSequence[AXIS], list):
     A coordinate system whose number of axes is not fixed by its class
     stores its axes as one: a list or a tuple given to the system is
     converted to one, item by item, to the type of axis the class
-    declares. Its default, `[...]`, says nothing about the axes;
-    `axes=None` is refused.
+    declares. Its default, `[...]`, says nothing about the axes, and
+    `axes=None` reads as that default.
 
     The type parameter is the type of the items:
     `AxisList[Union[Axis, EllipsisType]]` may be open, and
@@ -877,6 +878,54 @@ def _check_unique(positions: tx.List[int], what: str) -> None:
         raise ValueError(
             f"{what} names the same axis more than once: {positions}."
         )
+
+
+# ----------------------------------------------------------------------
+#   THE AXES FIELD
+# ----------------------------------------------------------------------
+
+
+class _NoneReadsAsDefault:
+    """The converter of the `axes` field of a coordinate system.
+
+    `axes=None` reads as not giving the axes at all: the class's default
+    takes its place, which is `[...]` for a system whose number of axes
+    is not fixed, and the class's own axes for one whose number is. Any
+    other value is converted to the type of the field, as bagof would.
+
+    Each `axes` field gets its own converter, which `_bind_axes_default`
+    points at the field once the class is built, to read its default.
+    """
+
+    def __init__(self, hint: tx.Any) -> None:
+        self.hint = hint
+        self.field: tx.Any = None
+        self._convert: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+
+    def __call__(self, value: tx.Any) -> tx.Any:
+        if value is None and self.field is not None:
+            factory = self.field.factory
+            value = factory() if callable(factory) else self.field.default
+        if self._convert is None:
+            self._convert = Converter.get(self.hint)
+        return self._convert(value)
+
+
+class _Axes:
+    """`_Axes[hint]` types an `axes` field as `hint`, where `None` reads as
+    the field's default (see `_NoneReadsAsDefault`)."""
+
+    def __class_getitem__(cls, hint: tx.Any) -> tx.Any:
+        return tx.Annotated[hint, ConvertTo(_NoneReadsAsDefault(hint))]
+
+
+def _bind_axes_default(cls: type) -> None:
+    """Point the converter of the `axes` field of `cls` at that field."""
+    for field in fields(cls):
+        if field.name == "axes" and isinstance(
+            field.converter, _NoneReadsAsDefault
+        ):
+            field.converter.field = field
 
 
 # ----------------------------------------------------------------------
@@ -996,8 +1045,9 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         * `[..., TimeAxis()]` says that the last axis is time, and nothing
           about the others.
         * `[Axis(name="x"), ...]` says that the first axis is `x`.
-        * `[...]`, the default, says nothing at all. It is the one
-          spelling of unknown axes: `axes=None` is refused.
+        * `[...]`, the default, says nothing at all. `axes=None` reads
+          as not giving the axes, so it is `[...]` too, and is stored as
+          `[...]`: `CoordinateSystem(axes=None) == CoordinateSystem()`.
 
         A list or a tuple given as `axes` is stored as an [`AxisList`][].
         An axis is read by its name as `system.axes["x"]`, at a position
@@ -1008,7 +1058,9 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
         [`CoordinateSystem3D`][], are always closed. They store their
         axes as an [`AxisTuple`][], whose type fixes the number of axes
         and the class of each one, so they reject `...`. It has the API
-        of an [`AxisList`][], but is immutable.
+        of an [`AxisList`][], but is immutable. `axes=None` reads as not
+        giving the axes there too, so it builds the class's default axes:
+        `CoordinateSystem3D(axes=None) == CoordinateSystem3D()`.
 
         Calling a class builds the most specific system its axes
         describe (see the module), and only a closed system is
@@ -1032,27 +1084,15 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
     name: tx.Optional[str] = None
     """The name of the coordinate system."""
 
-    axes: AxisList[tx.Union[Axis, _Ellipsis]] = [...]
+    axes: _Axes[AxisList[tx.Union[Axis, _Ellipsis]]] = [...]
     """The axes of the coordinate system, in order. `[...]`, the default,
-    says nothing about them."""
+    says nothing about them; `axes=None` reads as the default."""
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _bind_axes_default(cls)
 
     # --- validation ---------------------------------------------------
-
-    def __pre_init__(self, arguments: tx.Any) -> None:
-        # The converter would refuse `None` too, but with a message about
-        # iterables: say what to write instead.
-        if arguments.get("axes", ...) is not None:
-            return
-        name = type(self).__name__
-        if isinstance(self, (CoordinateSystem2D, CoordinateSystem3D)):
-            raise TypeError(
-                f"{name}.axes cannot be None: a {name} has a fixed number "
-                f"of axes, and lists every one of them."
-            )
-        raise TypeError(
-            f"{name}.axes cannot be None: use `[...]` for axes about which "
-            f"nothing is known."
-        )
 
     def __post_init__(self) -> None:
         if sum(a is ... for a in self.axes) > 1:
@@ -1315,16 +1355,19 @@ def _is_informative(system: tx.Optional[CoordinateSystem]) -> bool:
     )
 
 
+_bind_axes_default(CoordinateSystem)
+
+
 class CoordinateSystem2D(CoordinateSystem, on={"axes": _is2d}):
     """A coordinate systems with exactly two dimensions."""
 
-    axes: _2Axes = (Axis(), Axis())
+    axes: _Axes[_2Axes] = (Axis(), Axis())
 
 
 class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
     """A coordinate system with exactly three dimensions."""
 
-    axes: _3Axes = (Axis(), Axis(), Axis())
+    axes: _Axes[_3Axes] = (Axis(), Axis(), Axis())
 
 
 # ----------------------------------------------------------------------
@@ -1445,7 +1488,7 @@ class ArrayCoordinateSystem2D(
 ):
     """A coordinate system for an array with two dimensions."""
 
-    axes: _2Axes = (_dim(0), _dim(1))
+    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
 
 
 @ArrayCoordinateSystem.register_polymorph(axes=_is3d)
@@ -1456,7 +1499,7 @@ class ArrayCoordinateSystem3D(
 ):
     """A coordinate system for an array with three dimensions."""
 
-    axes: _3Axes = (_dim(0), _dim(1), _dim(2))
+    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
 # The memory order is not written on the axes, so nothing selects a C- or
@@ -1469,7 +1512,7 @@ class CArrayCoordinateSystem2D(
 ):
     """A coordinate system for a C-ordered array with two dimensions."""
 
-    axes: _2Axes = (_dim(0), _dim(1))
+    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
 
 
 @CArrayCoordinateSystem.register_polymorph(axes=_is3d)
@@ -1478,7 +1521,7 @@ class CArrayCoordinateSystem3D(
 ):
     """A coordinate system for a C-ordered array with three dimensions."""
 
-    axes: _3Axes = (_dim(0), _dim(1), _dim(2))
+    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
 @FArrayCoordinateSystem.register_polymorph(axes=_is2d)
@@ -1487,7 +1530,7 @@ class FArrayCoordinateSystem2D(
 ):
     """A coordinate system for an F-ordered array with two dimensions."""
 
-    axes: _2Axes = (_dim(0), _dim(1))
+    axes: _Axes[_2Axes] = (_dim(0), _dim(1))
 
 
 @FArrayCoordinateSystem.register_polymorph(axes=_is3d)
@@ -1496,7 +1539,7 @@ class FArrayCoordinateSystem3D(
 ):
     """A coordinate system for an F-ordered array with three dimensions."""
 
-    axes: _3Axes = (_dim(0), _dim(1), _dim(2))
+    axes: _Axes[_3Axes] = (_dim(0), _dim(1), _dim(2))
 
 
 # ----------------------------------------------------------------------
@@ -1507,7 +1550,7 @@ class FArrayCoordinateSystem3D(
 class SpatialCoordinateSystem(CoordinateSystem, on={"axes": _is_spatial}):
     """A coordinate system, whose axes have spatial meaning."""
 
-    axes: AxisList[tx.Union[SpaceAxis, _Ellipsis]] = [...]
+    axes: _Axes[AxisList[tx.Union[SpaceAxis, _Ellipsis]]] = [...]
 
 
 # A spatial system of sampled axes is both spatial and an array, and the
@@ -1518,7 +1561,7 @@ class SpatialCoordinateSystem2D(
 ):
     """A 2D coordinate system, whose axes have spatial meaning."""
 
-    axes: _2SpatialAxes = (SpaceAxis(), SpaceAxis())
+    axes: _Axes[_2SpatialAxes] = (SpaceAxis(), SpaceAxis())
 
 
 class SpatialCoordinateSystem3D(
@@ -1526,7 +1569,7 @@ class SpatialCoordinateSystem3D(
 ):
     """A 3D coordinate system, whose axes have spatial meaning."""
 
-    axes: _3SpatialAxes = (
+    axes: _Axes[_3SpatialAxes] = (
         SpaceAxis(),
         SpaceAxis(),
         SpaceAxis(),
@@ -1543,7 +1586,7 @@ class PixelCoordinateSystem(
     """A coordinate system for 2D pixel grids."""
 
     name: tx.Optional[str] = "pixel"
-    axes: _2SpatialAxes = (_space("dim0"), _space("dim1"))
+    axes: _Axes[_2SpatialAxes] = (_space("dim0"), _space("dim1"))
 
 
 class VoxelCoordinateSystem(
@@ -1552,7 +1595,7 @@ class VoxelCoordinateSystem(
     """A coordinate system for 3D voxel grids."""
 
     name: tx.Optional[str] = "voxel"
-    axes: _3SpatialAxes = (
+    axes: _Axes[_3SpatialAxes] = (
         _space("dim0"),
         _space("dim1"),
         _space("dim2"),
@@ -1566,7 +1609,7 @@ class CPixelCoordinateSystem(
     """A coordinate system for C-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "cpixel"
-    axes: _2SpatialAxes = (_space("j"), _space("i"))
+    axes: _Axes[_2SpatialAxes] = (_space("j"), _space("i"))
 
 
 @FArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)
@@ -1576,7 +1619,7 @@ class FPixelCoordinateSystem(
     """A coordinate system for F-ordered 2D pixel grids."""
 
     name: tx.Optional[str] = "fpixel"
-    axes: _2SpatialAxes = (_space("i"), _space("j"))
+    axes: _Axes[_2SpatialAxes] = (_space("i"), _space("j"))
 
 
 @CArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
@@ -1586,7 +1629,7 @@ class CVoxelCoordinateSystem(
     """A coordinate system for C-ordered 3D voxel grids."""
 
     name: tx.Optional[str] = "cvoxel"
-    axes: _3SpatialAxes = (_space("k"), _space("j"), _space("i"))
+    axes: _Axes[_3SpatialAxes] = (_space("k"), _space("j"), _space("i"))
 
 
 @FArrayCoordinateSystem3D.register_polymorph(axes=_is_spatial)
@@ -1596,7 +1639,7 @@ class FVoxelCoordinateSystem(
     """A coordinate system for F-ordered 3D voxel grids."""
 
     name: tx.Optional[str] = "fvoxel"
-    axes: _3SpatialAxes = (_space("i"), _space("j"), _space("k"))
+    axes: _Axes[_3SpatialAxes] = (_space("i"), _space("j"), _space("k"))
 
 
 # ----------------------------------------------------------------------
@@ -1620,7 +1663,7 @@ class RASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "RAS"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
         _axes.R(),
         _axes.A(),
         _axes.S(),
@@ -1638,7 +1681,7 @@ class LPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "LPS"
-    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
         _axes.L(),
         _axes.P(),
         _axes.S(),
@@ -1656,7 +1699,7 @@ class RSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "RSA"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
         _axes.R(),
         _axes.S(),
         _axes.A(),
@@ -1687,7 +1730,7 @@ class RASmm(
     """[`RASCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RAS"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
         _mm(_axes.AxisLR),
         _mm(_axes.AxisPA),
         _mm(_axes.AxisIS),
@@ -1702,7 +1745,7 @@ class LPSmm(
     """[`LPSCoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "LPS"
-    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
         _mm(_axes.AxisRL),
         _mm(_axes.AxisAP),
         _mm(_axes.AxisIS),
@@ -1717,7 +1760,7 @@ class RSAmm(
     """[`RSACoordinateSystem`][] in millimetres."""
 
     name: tx.Optional[str] = "RSA"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
         _mm(_axes.AxisLR),
         _mm(_axes.AxisIS),
         _mm(_axes.AxisPA),
@@ -1750,7 +1793,7 @@ class FRASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "fRAS"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisPA, _axes.AxisIS]] = (
         _sampled(_axes.AxisLR, "x"),
         _sampled(_axes.AxisPA, "y"),
         _sampled(_axes.AxisIS, "z"),
@@ -1768,7 +1811,7 @@ class FLPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "fLPS"
-    axes: AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS] = (
+    axes: _Axes[AxisTuple[_axes.AxisRL, _axes.AxisAP, _axes.AxisIS]] = (
         _sampled(_axes.AxisRL, "x"),
         _sampled(_axes.AxisAP, "y"),
         _sampled(_axes.AxisIS, "z"),
@@ -1786,7 +1829,7 @@ class FRSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "fRSA"
-    axes: AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA] = (
+    axes: _Axes[AxisTuple[_axes.AxisLR, _axes.AxisIS, _axes.AxisPA]] = (
         _sampled(_axes.AxisLR, "x"),
         _sampled(_axes.AxisIS, "y"),
         _sampled(_axes.AxisPA, "z"),
@@ -1804,7 +1847,7 @@ class CRASCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRAS"
-    axes: AxisTuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR] = (
+    axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisPA, _axes.AxisLR]] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisPA, "y"),
         _sampled(_axes.AxisLR, "x"),
@@ -1822,7 +1865,7 @@ class CLPSCoordinateSystem(
     """
 
     name: tx.Optional[str] = "cLPS"
-    axes: AxisTuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL] = (
+    axes: _Axes[AxisTuple[_axes.AxisIS, _axes.AxisAP, _axes.AxisRL]] = (
         _sampled(_axes.AxisIS, "z"),
         _sampled(_axes.AxisAP, "y"),
         _sampled(_axes.AxisRL, "x"),
@@ -1840,7 +1883,7 @@ class CRSACoordinateSystem(
     """
 
     name: tx.Optional[str] = "cRSA"
-    axes: AxisTuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR] = (
+    axes: _Axes[AxisTuple[_axes.AxisPA, _axes.AxisIS, _axes.AxisLR]] = (
         _sampled(_axes.AxisPA, "z"),
         _sampled(_axes.AxisIS, "y"),
         _sampled(_axes.AxisLR, "x"),
