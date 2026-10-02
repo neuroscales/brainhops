@@ -5,6 +5,7 @@ __all__ = [
     "WritableFileBasedTransformation",
     "afni",
     "base",
+    "elastix",
     "freesurfer",
     "itk",
     "load",
@@ -16,7 +17,7 @@ __all__ = [
 # internals
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import afni, base, freesurfer, itk, matrix, niftyreg
+from . import afni, base, elastix, freesurfer, itk, matrix, niftyreg
 from .base import (
     FileBasedTransformation,
     WritableFileBasedTransformation,

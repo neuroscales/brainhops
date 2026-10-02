@@ -3,7 +3,8 @@ The volume geometry shared by every FreeSurfer format.
 
 FreeSurfer describes the world placement of a volume the same way in
 every file that records one -- the header of an MGH/MGZ image, the source
-and destination blocks of an LTA transform, ... -- with:
+and destination blocks of an LTA transform, the source and atlas
+geometries of a non-linear morph (`.m3z`), ... -- with:
 
 - the volume's shape, in voxels (`width, height, depth`);
 - the voxel size (`xsize, ysize, zsize`), in millimetres;
@@ -36,7 +37,7 @@ Three coordinate systems derive from it:
 The functions take the geometry as plain values, so that each format
 reads it from wherever it stores it.
 
-Every FreeSurfer format -- MGH/MGZ images, LTA transforms, ... --
+Every FreeSurfer format -- MGH/MGZ images, LTA transforms, morphs, ... --
 derives from [`FreesurferFormat`][brainhops.io.base.freesurfer.
 FreesurferFormat], so that the `"freesurfer"` hint selects them all.
 """
@@ -70,10 +71,10 @@ class FreesurferFormat:
     A format of the FreeSurfer family, whatever it stores.
 
     It is the shared base of the FreeSurfer image formats (MGH/MGZ) and
-    transformation formats (LTA), and carries the `"freesurfer"` hint
+    transformation formats (LTA, M3Z), and carries the `"freesurfer"` hint
     they all answer to. Each format adds its own hints (`"mgh"`,
-    `"lta"`, ...), which are then also reachable as `"freesurfer.mgh"`,
-    `"freesurfer.lta"`, ...
+    `"lta"`, `"m3z"`, ...), which are then also reachable as
+    `"freesurfer.mgh"`, `"freesurfer.lta"`, ...
     """
 
     HINTS = ("freesurfer",)
