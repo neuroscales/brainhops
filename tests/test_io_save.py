@@ -159,9 +159,45 @@ def test_priority_breaks_a_tie(formats, tmp_path) -> None:  # noqa: ANN001
 def test_a_tie_is_an_ambiguity(formats, tmp_path) -> None:  # noqa: ANN001
     formats("One", EXTENSIONS=(".n",))
     formats("Two", EXTENSIONS=(".n",))
-    with pytest.raises(AmbiguousFormatError, match="One, Two"):
+    with pytest.raises(AmbiguousFormatError):
         io.save(Note(text="hi"), tmp_path / "x.n")
     assert not (tmp_path / "x.n").exists()
+
+
+def test_an_ambiguity_tells_the_user_how_to_choose(formats, tmp_path) -> None:  # noqa: ANN001
+    formats(
+        "Plain",
+        EXTENSIONS=(".n",),
+        __doc__="""
+        A note written as plain text.
+
+        This paragraph is detail for the reference, not for the message.
+        """,
+    )
+    formats("Bare", EXTENSIONS=(".n",))
+    with pytest.raises(AmbiguousFormatError) as raised:
+        io.save(Note(text="hi"), tmp_path / "x.n")
+    message = str(raised.value)
+    lines = message.splitlines()
+
+    # The file and the object, then one line per candidate, in order.
+    assert "'x.n'" in lines[0] and "Note" in lines[0]
+    assert "2 formats" in lines[0]
+    # Each candidate is described in the words of its own docstring, when
+    # it has one, and comes with the call that writes the object in it.
+    assert lines[1] == "  - Bare: `Bare.from_other(obj).save(path)`"
+    assert lines[2] == (
+        "  - Plain (A note written as plain text): "
+        "`Plain.from_other(obj).save(path)`"
+    )
+    assert "from_other(obj).save(path)" in lines[-1]
+    # Neither the docstring of the data model, nor the list of fields
+    # generated for a class with none, describes the format. How
+    # maintainers settle a tie is not the user's concern.
+    assert "data model with one field" not in message
+    assert "Attributes" not in message
+    assert "PRIORITY" not in message
+    assert "detail for the reference" not in message
 
 
 def test_a_tie_with_a_format_that_cannot_hold_it_is_not_one(
