@@ -651,7 +651,8 @@ def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
     # used to index the inner (k-axis) system with full-space positions and
     # raise IndexError. It must instead reconstruct a full-space system,
     # placing each inner axis at its declared position and filling the gaps
-    # with placeholder axes.
+    # with placeholder axes. The number of axes of the full space is not
+    # known, so the system is open: it ends with `...`.
     inner = Identity(
         input=CoordinateSystem(
             axes=[Axis(name="x"), Axis(name="y"), Axis(name="z")]
@@ -662,18 +663,20 @@ def test_subspace_input_reconstructs_full_space_for_high_axes() -> None:
     )
     system = subspace.input  # previously raised IndexError
     assert system is not None
-    assert len(system.axes) == 4
-    assert [getattr(a, "name", None) for a in system.axes] == [
-        None,
-        "x",
-        "y",
-        "z",
+    assert system.ndim is None
+    assert system.axes == [
+        Axis(),
+        Axis(name="x"),
+        Axis(name="y"),
+        Axis(name="z"),
+        ...,
     ]
 
 
 def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
     # For axes that start at 0 the reconstruction reproduces the inner
-    # system's own axes in order, as before.
+    # system's own axes in order, as before, followed by `...`, since the
+    # full space may hold more axes.
     inner = Identity(
         input=CoordinateSystem(axes=[Axis(name="x"), Axis(name="y")])
     )
@@ -681,7 +684,8 @@ def test_subspace_endpoint_reconstruction_is_backward_compatible() -> None:
         transformation=inner, input_axes=[0, 1], output_axes=[0, 1]
     )
     system = subspace.input
-    assert [getattr(a, "name", None) for a in system.axes] == ["x", "y"]
+    assert system.axes == [Axis(name="x"), Axis(name="y"), ...]
+    assert system.axes.names == ("x", "y", ...)
 
 
 def test_subspace_declared_endpoint_is_returned_as_is() -> None:

@@ -6,12 +6,15 @@ _Getter = tx.Callable[[tx.Self], tx.Any]
 _Setter = tx.Callable[[tx.Self, tx.Any], None]
 _Deleter = tx.Callable[[tx.Self], None]
 _IsUnset = tx.Callable[[tx.Any], bool]
+_UnsetForm = tx.Union[None, tx.Literal["empty"], _IsUnset]
+UnsetLike = tx.Union[_UnsetForm, tx.Tuple[_UnsetForm, ...]]
+"""When a stored value reads as unset: `None`, `"empty"`, a predicate, or
+a tuple of them (see [`smartproperty`][])."""
 
 
-#: The containers that read as "no value supplied" when `empty_as_unset` is
-#: set. Only a sized container is listed, so an array -- whose truth value
-#: is ambiguous, and which raises rather than answering -- is never treated
-#: as empty.
+#: The containers that read as unset under `unset="empty"`. Only a sized
+#: container is listed, so an array -- whose truth value is ambiguous, and
+#: which raises rather than answering -- is never treated as empty.
 _EMPTY_TYPES = (list, tuple, dict, set, frozenset)
 
 
@@ -26,7 +29,7 @@ def lazyproperty(fget: _Getter) -> property:
 @tx.overload
 def lazyproperty(
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
 ) -> tx.Callable[[_Getter], property]:
     """Decorator factory (with options)."""
 
@@ -36,7 +39,7 @@ def lazyproperty(
     fget: None,
     doc: tx.Optional[str] = None,
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
 ) -> tx.Callable[[_Getter], property]:
     """Functional decorator factory."""
 
@@ -46,7 +49,7 @@ def lazyproperty(
     fget: _Getter,
     doc: tx.Optional[str] = None,
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
 ) -> property:
     """
     Functional decorator.
@@ -59,12 +62,9 @@ def lazyproperty(
         The function that computes the property value.
     doc : str, optional
         The docstring for the property.
-    empty_as_unset : bool, default=False
-        Whether to treat an empty container as "no value supplied" and
-        compute the value instead. This is needed when the property stands
-        in for an inherited field whose default is an empty container: the
-        constructor writes that default through this setter, which would
-        otherwise shadow the reader for the object's whole life.
+    unset : None, "empty", callable, or tuple of them, default=None
+        When the stored value reads as no value, so that the value is
+        computed instead. See [`smartproperty`][].
 
     Returns
     -------
@@ -73,10 +73,8 @@ def lazyproperty(
     """
 
 
-def lazyproperty(fget=None, doc=None, empty_as_unset=False):
-    return smartproperty(
-        fget, fset=False, cache=True, doc=doc, empty_as_unset=empty_as_unset
-    )
+def lazyproperty(fget=None, doc=None, unset=None):
+    return smartproperty(fget, fset=False, cache=True, doc=doc, unset=unset)
 
 
 # --- smartproperty ----------------------------------------------------
@@ -90,7 +88,7 @@ def smartproperty(fget: _Getter) -> property:
 @tx.overload
 def smartproperty(
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
     cache: bool = False,
 ) -> tx.Callable[[_Getter], property]:
     """Decorator factory (with options)."""
@@ -103,7 +101,7 @@ def smartproperty(
     fdel: tx.Optional[_Deleter] = None,
     doc: tx.Optional[str] = None,
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
     cache: bool = False,
 ) -> tx.Callable[[_Getter], property]:
     """Functional decorator factory."""
@@ -116,7 +114,7 @@ def smartproperty(
     fdel: tx.Optional[_Deleter] = None,
     doc: tx.Optional[str] = None,
     *,
-    empty_as_unset: bool = False,
+    unset: UnsetLike = None,
     cache: bool = False,
 ) -> property:
     """
@@ -125,7 +123,7 @@ def smartproperty(
     A property that can:
 
     * read and write its value from a "private" attribute,
-    * compute its value on first access if the private attribute is None, and
+    * compute its value on access if the private attribute is unset, and
     * cache the computed value for future access.
 
     Parameters
@@ -136,8 +134,8 @@ def smartproperty(
     fset : callable | bool, optional
         The function that sets the property value, or `False` to make the
         property read-only. If `None` or `True`, a default setter is
-        created that writes the value to a private attribute and deletes
-        the cached value, if any.
+        created that writes the value, as given, to a private attribute
+        and deletes the cached value, if any.
     fdel : callable, optional
         The function that deletes the property value.
         If `None` or `False`, the property cannot be deleted.
@@ -145,12 +143,18 @@ def smartproperty(
         and/or cached attribute, if any.
     doc : str, optional
         The docstring for the property.
-    empty_as_unset : bool, default=False
-        Whether to treat an empty container as "no value supplied" and
-        compute the value instead. This is needed when the property stands
-        in for an inherited field whose default is an empty container: the
-        constructor writes that default through this setter, which would
-        otherwise shadow the reader for the object's whole life.
+    unset : None, "empty", callable, or tuple of them, default=None
+        When the getter computes the value instead of returning the one
+        stored. `None` means a stored `None`, which is the default;
+        `"empty"` means a stored empty container (a `list`, `tuple`,
+        `dict`, `set` or `frozenset`); a callable `unset(value) -> bool`
+        says it for any value. A tuple means any of them:
+        `unset=(None, "empty")` computes the value when nothing, or an
+        empty container, is stored -- which a property needs when it
+        stands in for an inherited field whose default is an empty
+        container, since the constructor writes that default through the
+        setter. Whatever `unset` says, the setter stores the value as
+        given: only the getter reads it as unset.
     cache : bool, default=False
         Whether to cache the computed value for future access.
 
@@ -158,6 +162,11 @@ def smartproperty(
     -------
     property
         The property object.
+
+    Raises
+    ------
+    TypeError, ValueError
+        If `unset` is not one of the forms above.
     """
 
 
@@ -166,22 +175,19 @@ def smartproperty(
     fset=None,
     fdel=None,
     doc=None,
-    empty_as_unset=False,
+    unset=None,
     cache=False,
 ):
+    # Read `unset` once, when the property is declared, so that a wrong one
+    # is refused there and the getter tests one predicate.
+    is_unset = _unset_predicate(unset)
 
     if fget is None:
-        # Applied with options -- `@smartproperty(empty_as_unset=True)` --
-        # rather than directly: return the decorator the function is handed
-        # to.
+        # Applied with options -- `@smartproperty(unset=...)` -- rather
+        # than directly: return the decorator the function is handed to.
         def decorate(func: tx.Callable) -> property:
             return smartproperty(
-                func,
-                fset,
-                fdel,
-                doc,
-                empty_as_unset=empty_as_unset,
-                cache=cache,
+                func, fset, fdel, doc, unset=unset, cache=cache
             )
 
         return decorate
@@ -192,13 +198,10 @@ def smartproperty(
     else:
         name = fget.__name__
 
-    is_unset = _make_is_unset(empty_as_unset)
     fget = _make_fget(name, fget, is_unset, set=fset is not False, cache=cache)
 
     if not callable(fset):
-        fset = _make_fset(
-            name, is_unset, settable=fset is not False, cacheable=cache
-        )
+        fset = _make_fset(name, settable=fset is not False, cacheable=cache)
 
     return property(fget, fset, fdel, doc)
 
@@ -295,42 +298,37 @@ def _make_fget_fallback(name: str, make_fn: _Getter) -> _Getter:
 
 def _make_fset(
     name: str,
-    isunset_fn: _IsUnset,
     settable: bool = True,
     cacheable: bool = False,
 ) -> _Setter:
     if settable and cacheable:
-        return _make_fset_settable_cacheable(name, isunset_fn)
+        return _make_fset_settable_cacheable(name)
     if settable:
-        return _make_fset_settable(name, isunset_fn)
+        return _make_fset_settable(name)
     return None
 
 
-def _make_fset_settable(name: str, isunset_fn: _IsUnset) -> _Setter:
-    # Return a setter function that writes the value to the private
-    # attribute corresponding to `name`. A value that reads as unset is
-    # normalized to None, so the getter falls back instead of serving it.
+def _make_fset_settable(name: str) -> _Setter:
+    # Return a setter function that writes the value, as given, to the
+    # private attribute corresponding to `name`. Whether it reads as unset
+    # is the getter's question.
     private_name = "_" + name
 
     def fset(self: tx.Self, value: tx.Any) -> None:
-        if isunset_fn(value):
-            value = None
         setattr(self, private_name, value)
 
     fset.__name__ = name
     return fset
 
 
-def _make_fset_settable_cacheable(name: str, isunset_fn: _IsUnset) -> _Setter:
-    # Return a setter function that writes the value to the private
-    # attribute corresponding to `name`, and deletes the cached value,
-    # if any.
+def _make_fset_settable_cacheable(name: str) -> _Setter:
+    # Return a setter function that writes the value, as given, to the
+    # private attribute corresponding to `name`, and deletes the cached
+    # value, if any.
     private_name = "_" + name
     cache_name = "_cache_" + name
 
     def fset(self: tx.Self, value: tx.Any) -> None:
-        if isunset_fn(value):
-            value = None
         setattr(self, private_name, value)
         if hasattr(self, cache_name):
             delattr(self, cache_name)
@@ -339,17 +337,48 @@ def _make_fset_settable_cacheable(name: str, isunset_fn: _IsUnset) -> _Setter:
     return fset
 
 
-def _make_is_unset(empty_is_unset: bool) -> _IsUnset:
-    if empty_is_unset:
-        return _is_none_or_empty
-    return _is_none
+# --- unset ------------------------------------------------------------
 
 
-def _is_none_or_empty(value: tx.Any) -> bool:
-    if value is None:
-        return True
-    return isinstance(value, _EMPTY_TYPES) and len(value) == 0
+def _unset_predicate(unset: UnsetLike) -> _IsUnset:
+    """The one predicate `unset` stands for (see `smartproperty`)."""
+    forms = unset if isinstance(unset, tuple) else (unset,)
+    if not forms:
+        raise ValueError(
+            "unset=() names no form: give None, 'empty', a predicate, or a "
+            "tuple of them."
+        )
+    tests = tuple(_unset_form(form) for form in forms)
+    if len(tests) == 1:
+        return tests[0]
+
+    def is_unset(value: tx.Any) -> bool:
+        return any(test(value) for test in tests)
+
+    return is_unset
+
+
+def _unset_form(form: tx.Any) -> _IsUnset:
+    if form is None:
+        return _is_none
+    if isinstance(form, str):
+        if form == "empty":
+            return _is_empty
+        raise ValueError(
+            f"unset={form!r} is not a form of unset: the one string it takes "
+            f"is 'empty'."
+        )
+    if callable(form):
+        return form
+    raise TypeError(
+        f"unset takes None, 'empty', a predicate `(value) -> bool`, or a "
+        f"tuple of them, not a {type(form).__name__}."
+    )
 
 
 def _is_none(value: tx.Any) -> bool:
     return value is None
+
+
+def _is_empty(value: tx.Any) -> bool:
+    return isinstance(value, _EMPTY_TYPES) and len(value) == 0

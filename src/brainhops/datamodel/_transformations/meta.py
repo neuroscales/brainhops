@@ -11,19 +11,19 @@ from brainhops._core.typing import npvector
 
 # datamodel
 from brainhops.datamodel import kinds
-from brainhops.datamodel.axes import Axis
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import (
+    CoordinateSystem,
+    _axes_or_unknown,
+)
 
 # internals
 from . import registries
 from .base import Transformation
+from .errors import CompositionError
 from .modes import ModeLike
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
-
-# typing
-if tx.TYPE_CHECKING:
-    from brainhops.datamodel.systems import CoordinateSystem
+from .utils import axis_list
 
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 
@@ -104,12 +104,12 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     # --- properties ---------------------------------------------------
 
     @smartproperty
-    def input(self) -> tx.Optional["CoordinateSystem"]:
+    def input(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "input", None)
         return _subsystem(system, self.input_axes, full=self._input)
 
     @smartproperty
-    def output(self) -> tx.Optional["CoordinateSystem"]:
+    def output(self) -> tx.Optional[CoordinateSystem]:
         system = getattr(self.transformation, "output", None)
         return _subsystem(system, self.output_axes, full=self._output)
 
@@ -189,7 +189,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     # --- properties ---------------------------------------------------
 
     @smartproperty
-    def input(self) -> tx.Optional["CoordinateSystem"]:
+    def input(self) -> tx.Optional[CoordinateSystem]:
         if self.forward is not None and self.forward.input is not None:
             return self.forward.input
         if self.backward is not None and self.backward.output is not None:
@@ -197,7 +197,7 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
         return None
 
     @smartproperty
-    def output(self) -> tx.Optional["CoordinateSystem"]:
+    def output(self) -> tx.Optional[CoordinateSystem]:
         if self.forward is not None and self.forward.output is not None:
             return self.forward.output
         if self.backward is not None and self.backward.input is not None:
@@ -241,10 +241,10 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 def _subsystem(
-    system: tx.Optional["CoordinateSystem"] = None,
+    system: tx.Optional[CoordinateSystem] = None,
     index: tx.Optional[tx.Sequence[Integral]] = None,
-    full: tx.Optional["CoordinateSystem"] = None,
-) -> tx.Optional["CoordinateSystem"]:
+    full: tx.Optional[CoordinateSystem] = None,
+) -> tx.Optional[CoordinateSystem]:
     """Build the full-space system a subspace transform presents.
 
     `system` is the inner transform's own (subspace) coordinate system,
@@ -252,34 +252,84 @@ def _subsystem(
     positions those axes occupy in the full space.
 
     When a declared endpoint (`full`) is available, it is returned as is.
-    Otherwise a full-space system is reconstructed: the inner system's
-    axis `j` is placed at position `index[j]`, and any position no inner
-    axis lands on is filled with a placeholder [`Axis`][]. This spans
-    `max(index) + 1` axes, so an endpoint-less subspace whose axes exceed
-    the inner system's length no longer indexes past its end.
+    Otherwise the full-space system is derived by
+    [`CoordinateSystem.embed`][brainhops.datamodel.systems.CoordinateSystem.embed]:
+    the inner system's axis `j` sits at position `index[j]`, every other
+    position before the last one holds an unknown [`Axis`][], and the
+    system ends with `...`. The positions are known, but the number of
+    axes of the full space is not, so the derived system is open. An
+    inner system that states no axis has nothing to embed, and is
+    returned as is.
     """
     if full is not None:
         return full
-    if index is None:
+    if index is None or system is None:
         return system
-    axes = getattr(system, "axes", None)
-    if axes is None:
+    if list(system.axes) == [...]:
         return system
-    index = list(index)
-    n = max(index) + 1 if index else 0
-    new_axes = [Axis() for _ in range(n)]
-    for j, i in enumerate(index):
-        if j < len(axes):
-            new_axes[i] = axes[j]
+    embedded = system.embed([int(i) for i in index])
     name = f"subspace({system.name})" if system.name else None
-    if len(new_axes) == len(axes):
-        # Same number of axes, so whatever concrete system class the inner
-        # one is -- an arity-specific `CoordinateSystem3D`, a typed
-        # `VoxelCoordinateSystem` -- still fits, and `replace` keeps it.
-        return replace(system, axes=new_axes, name=name)
-    # The full space has more axes than the inner one, and the positions no
-    # inner axis lands on are plain placeholders. Neither the arity-specific
-    # class (its `axes` field is a fixed-length tuple) nor a typed one (its
-    # axes must all be spatial) can hold that, so the system is rebuilt from
-    # the polymorphic root, which re-dispatches on the new axis count.
-    return CoordinateSystem(axes=new_axes, name=name)
+    return replace(embedded, name=name)
+
+
+def _close_subspace(
+    t: SubspaceTransformation,
+    n_in: tx.Optional[int] = None,
+    n_out: tx.Optional[int] = None,
+) -> SubspaceTransformation:
+    """Give a subspace transform closed full-space systems, when known.
+
+    A subspace transform whose systems are missing or open does not know
+    how many axes its full space has. A neighbour in a composition may
+    know it: the space between two transforms is one space, so the
+    number of axes a neighbour states for it is the number of axes on
+    that side of `t`. `n_in` and `n_out` are such counts, for the input
+    and the output side of `t`.
+
+    The count on one side gives the count on the other, because a
+    subspace transform passes every axis it does not act on through:
+    both sides have as many pass-through axes. A count `t` states itself
+    is never overridden.
+
+    The open systems are closed by
+    [`CoordinateSystem.expand`][brainhops.datamodel.systems.CoordinateSystem.expand]
+    and declared on the returned transform. `t` is returned unchanged when
+    its systems are already closed, or when no count is known. A count
+    that cannot hold the axes `t` acts on, or the axes its systems state,
+    is refused with a [`CompositionError`][].
+    """
+    in_axes = axis_list(t.input_axes)
+    out_axes = axis_list(t.output_axes)
+    own_in, own_out = (
+        _axes_or_unknown(t.input).ndim,
+        _axes_or_unknown(t.output).ndim,
+    )
+    n_in = own_in if own_in is not None else n_in
+    n_out = own_out if own_out is not None else n_out
+    if n_in is None and n_out is not None:
+        n_in = n_out - len(out_axes) + len(in_axes)
+    if n_out is None and n_in is not None:
+        n_out = n_in - len(in_axes) + len(out_axes)
+    if n_in is None or n_out is None:
+        return t
+    for count, axes in ((n_in, in_axes), (n_out, out_axes)):
+        if any(not 0 <= a < count for a in axes):
+            raise CompositionError(
+                f"A subspace transform that acts on the axes {axes} cannot "
+                f"act in the space of {count} axes its neighbour states."
+            )
+    # A missing system expands as `CoordinateSystem()`, which says nothing.
+    changes = {}
+    try:
+        if own_in is None:
+            system = CoordinateSystem() if t.input is None else t.input
+            changes["input"] = system.expand(n_in)
+        if own_out is None:
+            system = CoordinateSystem() if t.output is None else t.output
+            changes["output"] = system.expand(n_out)
+    except ValueError as error:
+        raise CompositionError(
+            f"The systems of a subspace transform do not fit the space its "
+            f"neighbour states: {error}"
+        ) from error
+    return t.to(**changes) if changes else t

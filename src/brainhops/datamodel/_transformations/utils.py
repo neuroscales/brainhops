@@ -2,6 +2,9 @@
 import numpy as np
 import typing_extensions as tx
 
+# api
+from brainhops.datamodel.systems import _axes_or_unknown
+
 # internals
 from .errors import ConversionError
 
@@ -15,11 +18,15 @@ if tx.TYPE_CHECKING:
 def get_ndim(
     t: "Transformation", default: tx.Optional[int] = None
 ) -> tx.Optional[int]:
-    if t.input and t.input.axes is not None:
-        return len(t.input.axes)
-    if t.output and t.output.axes is not None:
-        return len(t.output.axes)
-    return default
+    """The number of axes of the input system of `t`, or else of its output.
+
+    `default` is returned when neither system is closed: a missing or an
+    open system says nothing about the number of axes.
+    """
+    ndim = _axes_or_unknown(t.input).ndim
+    if ndim is None:
+        ndim = _axes_or_unknown(t.output).ndim
+    return default if ndim is None else ndim
 
 
 def systems_disagree(
@@ -30,19 +37,24 @@ def systems_disagree(
     Whether two adjacent coordinate systems need reconciling.
 
     `source` is where one transform leaves its coordinates and `target` is
-    where the next one expects to find them. A system that is unspecified,
-    or that carries no axes, is treated as compatible with its neighbour,
-    so only two fully described and unequal systems disagree: not knowing
-    is never a reason to refuse.
+    where the next one expects to find them. Two closed systems disagree
+    when they are not equal. A system that is missing or open (its axes
+    hold `...`) disagrees with its neighbour only when the
+    axes it does state cannot match the neighbour's, i.e. when the two are
+    not
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]:
+    not knowing is never a reason to refuse.
 
     This is the precondition of everything that assumes the two ends of a
     boundary line up -- the composers, and the two-argument simplifiers.
     [`adapt`][] is what removes a disagreement.
     """
-    if source is None or target is None:
-        return False
-    if source.axes is None or target.axes is None:
-        return False
+    source_axes, target_axes = (
+        _axes_or_unknown(source),
+        _axes_or_unknown(target),
+    )
+    if source_axes.is_open or target_axes.is_open:
+        return not source_axes.compatible_with(target_axes)
     return source != target
 
 
@@ -86,10 +98,11 @@ def axis_counts(
       that preserves the dimension without stating it;
     * the declared input and output systems.
 
-    Only *declared* systems are read. A subspace that declares none
-    reconstructs a system spanning only up to its highest named axis, which
-    may be narrower than the space it acts in, so a subspace states its
-    counts through its declared systems only.
+    Only *declared* systems are read, and only a closed system states a
+    count: a missing or open system (one whose axes hold `...`) leaves it
+    unknown, and is never guessed from. A subspace that declares no system
+    derives an open one from its inner system, so it states its counts
+    through its declared systems only.
 
     Reading never materializes a lazy inverse or composes a sequence.
     """
@@ -144,15 +157,10 @@ def axis_counts(
                 else:
                     ni = len(field.shape) - 1
     if ni is None:
-        ni = _system_len(getattr(t, "_input", None))
+        ni = _axes_or_unknown(getattr(t, "_input", None)).ndim
     if no is None:
-        no = _system_len(getattr(t, "_output", None))
+        no = _axes_or_unknown(getattr(t, "_output", None)).ndim
     return ni, no
-
-
-def _system_len(system: tx.Optional["CoordinateSystem"]) -> tx.Optional[int]:
-    axes = getattr(system, "axes", None)
-    return None if axes is None else len(axes)
 
 
 def _sequence_ends(

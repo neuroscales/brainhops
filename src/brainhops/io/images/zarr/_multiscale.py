@@ -17,7 +17,7 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import SampleUnit
 from brainhops.io.base._base import register_format
@@ -45,6 +45,9 @@ from brainhops.io.images.zarr._ome import (
 from brainhops.io.transformations.zarr import _map
 
 from ._image import ZarrImage
+
+_Ellipsis = type(Ellipsis)
+# The type of `...`. Python 3.10 names it `types.EllipsisType`.
 
 
 class OmeZarrLevel(ZarrImage):
@@ -87,11 +90,15 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     # ---- attributes --------------------------------------------------
 
     _axes: tx.Annotated[
-        tx.Optional[tx.List[Axis]],
+        tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
         tx.Doc(
             "The axes to store a pyramid under, in the brainhops order, "
-            "when it is built from scratch. A pyramid read from a store "
-            "leaves this unset and takes its axes from `ome`."
+            "when it is built from scratch, as an `AxisList`. As in a "
+            "coordinate system, a single `...` may stand for the axes "
+            "about which nothing is known; it is closed to the number of "
+            "axes of the data when the pyramid is written. `None` is not "
+            "`[...]`: it leaves the axes unset, so a pyramid read from a "
+            "store takes its axes from `ome`."
         ),
     ] = None
 
@@ -121,7 +128,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
                 delattr(self, name)
 
     @property
-    def axes(self) -> tx.Optional[tx.List[Axis]]:
+    def axes(self) -> tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]]:
         """The axes a from-scratch pyramid is stored under, or `None`.
 
         bagof stores the `axes` argument under `_axes` but generates no
@@ -144,11 +151,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         """
         return self._layout["version"]
 
-    @smartproperty(empty_as_unset=True)
+    @smartproperty(unset=(None, "empty"))
     def images(self) -> tx.List[SingleScaleImage]:
         return self._layout["images"]
 
-    @smartproperty(empty_as_unset=True)
+    @smartproperty(unset=(None, "empty"))
     def transformations(self) -> tx.List[Transformation]:
         # The intrinsic-to-world placements the whole pyramid shares, one per
         # world space the metadata names, the preferred one last. A
@@ -254,9 +261,20 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             return CoordinateSystem(name=name, axes=axes)
 
         # A voxel space indexes an array, so its coordinates count samples.
+        # Its memory order is the one the levels are read in: the store is
+        # C-ordered (Zarr's layout), and each level is read through `perm`
+        # (`_axisorder.to_canonical`). When `perm` reverses the stored axes
+        # -- `(t, c, z, y, x)` read as `(x, y, z, c, t)`, or any store with
+        # at most one non-spatial axis -- the first axis read is the last
+        # stored, the fastest changing, so the level is F-ordered, like
+        # nibabel's. Any other permutation (a store with both a time and a
+        # channel axis is read `(x, y, z, t, c)`) is neither C nor F, and
+        # leaves the order unspecified.
+        reverses = list(perm) == list(range(ndim))[::-1]
         voxel_system = CoordinateSystem(
             name="voxel",
             axes=[replace(axis, unit=SampleUnit()) for axis in canonical_axes],
+            order="F" if reverses else None,
         )
         intrinsic_system = system(intrinsic_name(multiscale))
         systems = {name: system(name) for name in declared}
@@ -418,8 +436,18 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # explicit `axes` (a from-scratch pyramid) is used first. A pyramid
         # read from a store has none, so its axes are derived from `ome`. A
         # pyramid with neither falls back to a default axis list.
-        if self.axes and len(self.axes) == ndim:
-            return list(self.axes)
+        axes = self.axes
+        if axes and (axes.is_open or axes.ndim == ndim):
+            # OME-Zarr cannot store `...`: an open list is closed to the
+            # number of axes of the data. The axes `...` stands for are
+            # unknown, and are written as any axis with no description is.
+            try:
+                return axes.expand(ndim)
+            except ValueError as error:
+                raise WriterError(
+                    f"Cannot store the axes {axes} under data of {ndim} "
+                    f"dimensions: {error}"
+                ) from error
         if self.ome is not None:
             store_axes = multiscale_axes(self.ome)
             if len(store_axes) == ndim:

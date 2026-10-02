@@ -620,8 +620,9 @@ def _build_factors(
             # unchanged and computed as it would be without `factor`, so
             # leaving it unfactored is always sound. The restricted pieces
             # can fail to compose where the whole chain does not: a piece
-            # that stays a subspace carries no coordinate systems, so it
-            # cannot be embedded next to an affine piece of the same group.
+            # that stays a subspace carries no closed coordinate system, so
+            # it cannot be embedded next to an affine piece of the same
+            # group that does not state the number of axes either.
             return None
         if _inner_is_identity(inner):
             continue

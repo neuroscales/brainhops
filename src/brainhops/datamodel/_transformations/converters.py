@@ -6,6 +6,7 @@ from bagof.magic import replace
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
+from brainhops.datamodel.systems import _axes_or_unknown
 
 # locals
 from .base import Transformation
@@ -257,19 +258,17 @@ def _(t: SubspaceTransformation) -> Affine:
     # and columns of the acted-on axes. Every other axis passes through as
     # the identity, mapping each input pass-through axis to the output
     # pass-through axis in the same position in the ordering.
-    if (
-        t.input is None
-        or t.output is None
-        or t.input.axes is None
-        or t.output.axes is None
-    ):
+    n_in = _axes_or_unknown(t.input).ndim
+    n_out = _axes_or_unknown(t.output).ndim
+    if n_in is None or n_out is None:
         raise ConversionError(
-            "A subspace transformation is embedded into a full affine only "
-            "when its input and output systems are known, because the "
-            "number of axes is read from them."
+            "The axis count of this subspace transformation is unknown, so "
+            "it cannot be embedded into a full affine, whose size is read "
+            "from it. Its input and output systems must be closed, but one "
+            "of them is missing or open (its axes hold `...`). Declare the "
+            "full-space systems, or close them with "
+            "CoordinateSystem.expand."
         )
-    n_in = len(t.input.axes)
-    n_out = len(t.output.axes)
     input_axes = [
         int(i) for i in (t.input_axes if t.input_axes is not None else [])
     ]

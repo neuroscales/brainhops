@@ -20,7 +20,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.systems import (
+    CoordinateSystem,
+    _axes_or_unknown,
+)
 from brainhops.datamodel.transformations import (
     Affine,
     ConversionError,
@@ -332,7 +335,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             for axis in _nifti_to_axes(self.header)
             if axis.name is not None
         ]
-        return CoordinateSystem(axes=axes, name="voxel")
+        # A NIfTI array is F-ordered: the first axis changes fastest.
+        return CoordinateSystem(axes=axes, name="voxel", order="F")
 
     @system.setter
     def system(self, value: tx.Optional[CoordinateSystem]) -> None:
@@ -689,7 +693,9 @@ def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
     identity is returned, so a space with no orientation is stored as it
     is.
     """
-    axes = list(getattr(system, "axes", None) or [])[:3]
+    # An axis about which nothing is known, including the `...` of a
+    # missing space, carries no orientation.
+    axes = _axes_or_unknown(system)[:3]
     mapping = []
     for axis in axes:
         value = getattr(getattr(axis, "orientation", None), "value", None)
@@ -743,10 +749,36 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     if matrix is None:
         matrix = np.eye(4)
     matrix = np.asarray(matrix, dtype=float)
+    world_ndim = matrix.shape[0] - 1
     matrix = _embed_affine(matrix)
 
-    conversion = _ras_conversion(getattr(affine, "output", None))
+    world = _closed_world(getattr(affine, "output", None), world_ndim)
+    conversion = _ras_conversion(world)
     return conversion @ matrix
+
+
+def _closed_world(
+    system: tx.Optional[CoordinateSystem], ndim: int
+) -> tx.Optional[CoordinateSystem]:
+    """
+    The world space, closed to the `ndim` axes the affine maps into.
+
+    NIfTI cannot store an open world space, one whose axes hold `...`, so
+    it is closed from the shape of the voxel-to-world matrix. The axes that
+    `...` stands for carry no orientation, as any axis NIfTI knows nothing
+    about. A world space that states more axes than the matrix has rows
+    raises `WriterError`.
+    """
+    if system is None or system.ndim is not None:
+        return system
+    try:
+        return system.expand(ndim)
+    except ValueError as error:
+        raise WriterError(
+            f"The world space of this transformation states more axes than "
+            f"the {ndim} its voxel-to-world matrix maps into, so it cannot "
+            f"be written as NIfTI geometry."
+        ) from error
 
 
 def _reference_code(system: tx.Optional[CoordinateSystem]) -> int:
@@ -814,8 +846,11 @@ def _space_unit_meters(
 
     A space with no physical spatial unit -- every axis unspecified, or
     counting samples -- returns `None`.
+
+    Only the axes the space states can carry a unit, so the `...` of an open
+    space reads as it would once closed: as axes with no unit.
     """
-    for axis in getattr(system, "axes", None) or ():
+    for axis in _axes_or_unknown(system):
         unit = getattr(axis, "unit", None)
         if is_physicalunit(unit) and is_spaceunit(unit):
             return float(unit.scale)
@@ -839,7 +874,8 @@ def _xyzt_labels(
     output, so a different edge does not change them.
     """
     space = time = None
-    for axis in getattr(system, "axes", None) or ():
+    # The `...` of an open space carries no unit, as it would once closed.
+    for axis in _axes_or_unknown(system):
         unit = getattr(axis, "unit", None)
         if not is_physicalunit(unit):
             continue

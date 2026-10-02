@@ -37,6 +37,7 @@ from brainhops._core.bsplines import pull, pull_axes, spline_matrix
 # api
 from brainhops.backends import copy_array, get_array_backend, may_share_memory
 from brainhops.datamodel import kinds
+from brainhops.datamodel.systems import _axes_or_unknown
 
 # locals
 from .base import Transformation
@@ -362,14 +363,17 @@ def _discrete_axis(
         (group["G"], grid_system),
         (group["D"], data_system),
     ):
-        axes = getattr(system, "axes", None)
-        if axes is None:
-            continue
+        # Positional access reads the axes an open system states, and an
+        # unknown axis, which is not discrete, anywhere else.
+        axes = _axes_or_unknown(system)
         for a in axis_index:
-            if a < len(axes) and getattr(axes[a], "discrete", None):
+            if axes.ndim is not None and a >= axes.ndim:
+                continue
+            axis = axes.at(a)
+            if getattr(axis, "discrete", None):
                 discrete = True
-                name = getattr(axes[a], "name", None) or getattr(
-                    axes[a], "type", None
+                name = getattr(axis, "name", None) or getattr(
+                    axis, "type", None
                 )
     return discrete, name
 
