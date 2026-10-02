@@ -100,7 +100,7 @@ class MrtrixLinearTransform(
     sample).
 
     The `# key: value` comments MRtrix writes (`command_history`,
-    `centre`) are kept in `keyval` and written back.
+    `centre`) are kept and written back.
 
     Plain text matrices look all alike, so a file is claimed only when
     its comments say MRtrix wrote it (a `command_history` entry, or a
@@ -117,17 +117,8 @@ class MrtrixLinearTransform(
     _input: _systems.CoordinateSystem = _systems.RASmm()
     _output: _systems.CoordinateSystem = _systems.RASmm()
 
-    keyval: tx.Dict[str, str] = Factory(OrderedDict, repr=False)
+    _keyval: tx.Dict[str, str] = Factory(OrderedDict, repr=False)
     """The `# key: value` comments of the file, written back."""
-
-    @property
-    def centre(self) -> tx.Optional[np.ndarray]:
-        """The centre of rotation `mrregister` records, if any (it does
-        not change the matrix)."""
-        value = self.keyval.get(_CENTRE)
-        if value is None:
-            return None
-        return np.asarray(value.replace(",", " ").split(), dtype=np.float64)
 
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
@@ -227,7 +218,7 @@ class MrtrixLinearTransform(
                 f"An MRtrix linear transform is 3-D, and this affine has "
                 f"shape {matrix.shape[0] - 1}x{matrix.shape[1] - 1}."
             )
-        for key, value in self.keyval.items():
+        for key, value in self._keyval.items():
             for line in str(value).split("\n"):
                 yield f"# {key}: {line}"
         for row in matrix[:_NDIM]:
@@ -235,4 +226,5 @@ class MrtrixLinearTransform(
         yield "0 0 0 1"
 
     def to_text(self, **kwargs) -> str:
-        return "\n".join(self.to_lines(**kwargs)) + "\n"
+        """The lines of `to_lines`, ending with a newline as MRtrix's."""
+        return super().to_text(**kwargs) + "\n"

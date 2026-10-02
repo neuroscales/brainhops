@@ -566,7 +566,7 @@ def test_the_midway_warps(warpfull, from_image) -> None:  # noqa: ANN001
     )
     expected = _affine(linear, POINTS + offset)
     np.testing.assert_allclose(_apply(warp, POINTS), expected, atol=1e-4)
-    assert len(warp.chain(from_image, midway=True)) == 3
+    assert len(warp.transformations) == 3
 
 
 def test_a_warpfull_round_trips(warpfull, tmp_path) -> None:  # noqa: ANN001
@@ -630,7 +630,7 @@ def test_a_transform_written_by_mrtrix_is_recognised(tmp_path) -> None:  # noqa:
     np.testing.assert_allclose(xform.matrix, MATRIX)
     assert isinstance(xform.input, systems.RASmm)
     assert isinstance(xform.output, systems.RASmm)
-    np.testing.assert_allclose(xform.centre, [1.5, -2.0, 3.0])
+    assert xform._keyval["centre"] == "1.5 -2 3"
 
 
 def test_the_matrix_maps_template_points_to_moving_points(tmp_path) -> None:  # noqa: ANN001
@@ -650,7 +650,7 @@ def test_a_plain_matrix_is_read_by_hint(tmp_path) -> None:  # noqa: ANN001
     assert type(io.load(path, hint="mrtrix.linear")) is MrtrixLinearTransform
     xform = MrtrixLinearTransform.from_file(path)
     np.testing.assert_allclose(xform.matrix, MATRIX)
-    assert xform.centre is None
+    assert "centre" not in xform._keyval
 
     path = tmp_path / "space.txt"
     path.write_text("1 0 0 1\n0 1 0 2\n0 0 1 3\n0 0 0 1\n")
@@ -680,7 +680,7 @@ def test_a_linear_transform_round_trips(tmp_path) -> None:  # noqa: ANN001
     back = io.load(tmp_path / "out.txt")
     assert type(back) is MrtrixLinearTransform
     np.testing.assert_array_equal(back.matrix, xform.matrix)
-    assert back.keyval == xform.keyval
+    assert back._keyval == xform._keyval
 
 
 def test_a_ras_affine_is_saved_as_an_mrtrix_transform(tmp_path) -> None:  # noqa: ANN001

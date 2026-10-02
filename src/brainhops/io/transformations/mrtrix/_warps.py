@@ -597,8 +597,7 @@ class MrtrixWarpFull(
       (`-midway_space`): `im1_to_mid` then `linear1`.
 
     The pieces are available on their own: `linear1`, `linear2`,
-    `im1_to_mid`, `mid_to_im1`, `im2_to_mid`, `mid_to_im2`, and
-    `chain(from_image, midway)` builds any of the maps above.
+    `im1_to_mid`, `mid_to_im1`, `im2_to_mid` and `mid_to_im2`.
 
     Writing writes back the stored warps and linear transforms (and
     every other header key), whatever `from_image` and `midway` are; a
@@ -754,7 +753,7 @@ class MrtrixWarpFull(
         """Warp 3: image-2 points (after `linear2⁻¹`) to midway points."""
         return self._warp(3)
 
-    def chain(
+    def _chain(
         self, from_image: int = 1, midway: bool = False
     ) -> tx.Tuple[_xforms.Transformation, ...]:
         """
@@ -780,7 +779,7 @@ class MrtrixWarpFull(
         The chain of transformations of the map selected by `from_image`
         and `midway`, built on first access and cached.
         """
-        return self.chain(self.from_image, self.midway)
+        return self._chain(self.from_image, self.midway)
 
     # --- writing ------------------------------------------------------
 
