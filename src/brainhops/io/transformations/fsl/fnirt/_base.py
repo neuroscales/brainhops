@@ -62,7 +62,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 
 @register_format
 class FNIRTWarpField(
-    FSLTransformationFormat, NiftiBasedTransformation, _xforms.Sequence
+    FSLTransformationFormat, NiftiBasedTransformation, _xforms.ImmutableSequence
 ):
     """A FNIRT non-linear transformation stored in a NIfTI file.
 
@@ -331,7 +331,7 @@ class FNIRTWarpField(
             return False
         return True
 
-    def _build_chain(self) -> tx.List[_xforms.Transformation]:
+    def _build_chain(self) -> tx.Tuple[_xforms.Transformation, ...]:
         if self.moving is None:
             raise ValueError(
                 "A FNIRT warp maps to the moving image, whose geometry the "
@@ -354,19 +354,25 @@ class FNIRTWarpField(
         )
 
     @property
-    def transformations(self) -> tx.List[_xforms.Transformation]:
+    def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """The transformations mapping reference RAS to moving RAS.
 
         Reading this property resolves the chain from the warp data and
         the image geometries. It raises when a required image is missing.
         The resolved chain is cached, and the cache is rebuilt when the
         moving image, the reference image, or the deformation type changes.
-        """
+
+        It is a tuple, like every chain of an
+        [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
+        the resolved chain is cached and handed out as is, and a list
+        would let an in-place edit change the cache, leaving the warp
+        reporting a chain that its data no longer describes.
+        """  # noqa: E501
         explicit = getattr(self, "_transformations", None)
         if explicit is not None:
             return explicit
         if self.header is None:
-            return []
+            return ()
         key = self._chain_key()
         cached = getattr(self, "_chain_cache", None)
         if cached is not None and cached[0] == key:
@@ -377,9 +383,9 @@ class FNIRTWarpField(
 
     @transformations.setter
     def transformations(
-        self, value: tx.Optional[tx.List[_xforms.Transformation]]
+        self, value: tx.Optional[tx.Sequence[_xforms.Transformation]]
     ) -> None:
-        self._transformations = None if value is None else list(value)
+        self._transformations = None if value is None else tuple(value)
 
     def _chain_key(self) -> tuple:
         return (
@@ -389,11 +395,13 @@ class FNIRTWarpField(
             self.deformation_type,
         )
 
-    def _cached_transformations(self) -> tx.List[_xforms.Transformation]:
+    def _cached_transformations(
+        self,
+    ) -> tx.Tuple[_xforms.Transformation, ...]:
         """The transformations for repr, length and iteration.
 
         This returns the resolved chain when it can be resolved, an
-        explicitly assigned list when one was set, and an empty list
+        explicitly assigned chain when one was set, and an empty tuple
         otherwise, so inspecting an incompletely specified warp does not
         raise. It backs `__len__`, `__iter__` and `__getitem__`.
         """
@@ -401,7 +409,7 @@ class FNIRTWarpField(
         if explicit is not None:
             return explicit
         if not self._resolvable():
-            return []
+            return ()
         return self.transformations
 
     def __repr__(self) -> str:
@@ -437,7 +445,7 @@ def _warp_chain(
     ref: _ImageGeometry,
     mov: _ImageGeometry,
     ref_to_source: np.ndarray,
-) -> tx.List[_xforms.Transformation]:
+) -> tx.Tuple[_xforms.Transformation, ...]:
     """Build the lazy reference-RAS to moving-RAS chain for a warp field.
 
     The field stays on its own grid. The two affines place that grid in
@@ -491,13 +499,13 @@ def _warp_chain(
     grid_to_ras[:3, :3] = grid_to_ras_lin
     grid_to_ras[:3, 3] = grid_to_ras_off
 
-    return [
+    return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
             field=prescaled, order=order, bound=bound, coeff=coeff
         ),
         WarpFieldToRAS(matrix=grid_to_ras[:-1]),
-    ]
+    )
 
 
 # ----------------------------------------------------------------------

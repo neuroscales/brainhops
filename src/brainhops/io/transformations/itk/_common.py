@@ -152,7 +152,7 @@ class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
 # ----------------------------------------------------------------------
 
 
-class ITKBlockBase(ITKStruct, _xforms.Sequence):
+class ITKBlockBase(ITKStruct, _xforms.ImmutableSequence):
     """What every ITK block shares: its endpoints and its inverse.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world

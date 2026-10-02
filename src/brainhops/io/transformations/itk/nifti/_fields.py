@@ -134,7 +134,7 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ITKNiftiField(_xforms.Sequence, NiftiBasedTransformation):
+class ITKNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """
     A field stored in an ITK NIfTI vector image, from LPS to LPS.
 
