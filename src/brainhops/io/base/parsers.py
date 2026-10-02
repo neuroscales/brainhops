@@ -546,6 +546,11 @@ class FileParser(FileSniffer):
         This is the generic front door to the `from_*` family: it looks
         at what it was handed and calls the right one.
 
+        A `str` is always a path, whether or not the file exists, so a
+        missing file raises `FileNotFoundError` whichever way its path
+        was spelled. Text held in memory is read with `from_text` or
+        `from_content`.
+
         Parameters
         ----------
         other : FileOrContentLike
@@ -557,8 +562,14 @@ class FileParser(FileSniffer):
         -------
         obj
             The parsed object.
+
+        Raises
+        ------
+        ParserExistsError
+            If `other` is a path to a file that does not exist. It is a
+            `FileNotFoundError`.
         """
-        if isinstance(other, str) and path.Path(other).exists():
+        if isinstance(other, str):
             other = path.Path(other)
 
         if isinstance(other, path.PathLike):

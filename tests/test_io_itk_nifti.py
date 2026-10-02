@@ -40,9 +40,11 @@ from brainhops.io.transformations.itk._systems import (  # noqa: E402
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
     ITKNiftiCoordinatesField,
     ITKNiftiDisplacementField,
+    ITKNiftiField,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
+    NiftiRASDisplacementField,
     NiftiVoxelToRAS,
 )
 
@@ -331,13 +333,13 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
     )
 
 
-def test_a_ras_field_read_as_itk_coordinates_maps_the_same_points(
+def test_a_dispvect_file_read_as_itk_coordinates_is_converted_to_lps(
     tmp_path,  # noqa: ANN001
 ) -> None:
     """
-    A RAS coordinates field written by brainhops (`DISPVECT`) means the
-    same map when read as ITK LPS coordinates: its vectors are converted
-    the way ITK converts a `DISPVECT` file.
+    A three-component `DISPVECT` file holds RAS vectors. Read as ITK LPS
+    coordinates, through the class or a hint, they are converted the way
+    ITK converts a `DISPVECT` file, so the positions are the same points.
     """
     coords_ras = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "ras.nii.gz"
@@ -366,6 +368,49 @@ def test_an_itk_vector_file_is_ambiguous_without_a_hint(itk_warp) -> None:  # no
     assert ITKNiftiDisplacementField.sniff(itk_warp) == pytest.approx(
         NiftiRASCoordinatesField.sniff(itk_warp)
     )
+
+
+def test_a_vector_file_named_mapping_is_not_claimed(tmp_path, ndim) -> None:  # noqa: ANN001
+    """
+    SPM12 and brainhops name their RAS maps `"Mapping"`; ITK writes no
+    intent name. So such a file, even in ITK's layout, is left to the RAS
+    readers -- and no longer ties -- while a hint still reaches it.
+    """
+    path = _write(tmp_path / "map.nii.gz", _ramp(ndim), VECTOR)
+    img = nb.load(str(path))
+    img.header.set_intent(VECTOR, name="Mapping")
+    nb.save(img, str(path))
+    assert ITKNiftiDisplacementField.sniff(path) == 0
+    assert ITKNiftiCoordinatesField.sniff(path) == 0
+    sniffed = io.transformations.sniff(path)
+    assert sniffed is not None
+    assert not issubclass(sniffed, ITKNiftiField)
+    assert not isinstance(io.transformations.load(path), ITKNiftiField)
+    loaded = io.transformations.load(path, hint="itk")
+    assert type(loaded) is ITKNiftiDisplacementField
+
+
+def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  # noqa: ANN001
+    """
+    brainhops writes a field of RAS coordinates as `VECTOR`, named
+    `"Mapping"`, in the same `(X, Y, Z, 1, 3)` layout ITK uses. The name
+    is what keeps it from tying with an ITK field, while a bare `VECTOR`
+    file in that layout stays ambiguous.
+    """
+    coords = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
+    path = tmp_path / "coords.nii.gz"
+    NiftiRASCoordinatesField(field=coords).save(path)
+    header = nb.load(str(path)).header
+    assert header.get_intent() == ("vector", (), "Mapping")
+    assert header.get_data_shape() == (*SHAPES[3], 1, 3)
+    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert type(io.load(path)) is NiftiRASCoordinatesField
+
+    bare = _write(tmp_path / "bare.nii.gz", coords, VECTOR)
+    assert nb.load(str(bare)).header.get_intent()[2] == ""
+    with pytest.raises(AmbiguousFormatError):
+        io.transformations.load(bare)
 
 
 @pytest.mark.parametrize(
@@ -398,12 +443,24 @@ def test_a_hint_selects_the_ras_reader(tmp_path) -> None:  # noqa: ANN001
     assert type(loaded) is NiftiRASCoordinatesField
 
 
-@pytest.mark.parametrize("intent", [DISPVECT, NONE])
-def test_non_itk_intents_stay_with_the_ras_reader(tmp_path, intent) -> None:  # noqa: ANN001
-    """ITK never writes these for a vector image by default."""
+@pytest.mark.parametrize(
+    "intent, ras",
+    [
+        (DISPVECT, NiftiRASDisplacementField),
+        (NONE, NiftiRASCoordinatesField),
+    ],
+)
+def test_non_itk_intents_stay_with_the_ras_reader(
+    tmp_path,  # noqa: ANN001
+    intent,  # noqa: ANN001
+    ras,  # noqa: ANN001
+) -> None:
+    """ITK never writes these for a vector image by default: `DISPVECT`
+    holds RAS displacements, and a field without an intent code is read
+    as RAS coordinates."""
     path = _write(tmp_path / "field.nii.gz", _ramp(3), intent)
-    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
+    assert io.transformations.sniff(path) is ras
+    assert type(io.transformations.load(path)) is ras
     # ... but an explicit hint still reads them as ITK.
     for hint in ("itk", "ants"):
         loaded = io.transformations.load(path, hint=hint)

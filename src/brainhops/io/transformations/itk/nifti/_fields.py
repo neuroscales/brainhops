@@ -26,12 +26,14 @@ from brainhops.datamodel.enums import BoundaryCondition
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_INTENT_DISPVECT,
+    _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_VECTOR,
     _apply_like,
     _apply_overrides,
     _embed_affine,
     _new_nifti,
     _nifti_intent,
+    _nifti_intent_name,
     _nifti_shape,
     _NiftiObject,
 )
@@ -372,12 +374,20 @@ class ITKNiftiDisplacementField(ITKNiftiField):
         in, so neither reader may outrank the other on content. Any other
         intent code is not ITK's default and is not claimed; a hint still
         reaches such a file, through its `.nii`/`.nii.gz` extension.
+
+        A `VECTOR` file whose intent name is `"Mapping"` is not claimed
+        either. SPM12 writes its `y_` deformations that way, and so does
+        brainhops' RAS coordinates writer, while ITK's `NiftiImageIO`
+        never writes an intent name, and ANTs writes through it: the name
+        is evidence of a RAS map, not of an ITK one.
         """
         if _itk_ndim(_nifti_shape(header)) is None:
             return Confidence.NO
-        if _nifti_intent(header) == _NIFTI_INTENT_VECTOR:
-            return Confidence.CERTAIN
-        return Confidence.NO
+        if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
+            return Confidence.NO
+        if _nifti_intent_name(header) == _NIFTI_INTENT_NAME_MAPPING:
+            return Confidence.NO
+        return Confidence.CERTAIN
 
     order: tx.ClassVar[int] = 1
     """The spline order used to interpolate the field."""
