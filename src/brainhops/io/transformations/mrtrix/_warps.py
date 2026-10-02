@@ -234,8 +234,8 @@ class MrtrixWarp(
     HINTS = ("warp",)
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field (MRtrix composes
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field (MRtrix composes
     warps with `Interp::Linear`)."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
@@ -511,7 +511,7 @@ class MrtrixDisplacementField(
         return ras_displacement_chain(
             self._vectors(),
             self._vox2ras(),
-            order=self.order,
+            degree=self.degree,
             bound=self.bound,
         )
 
