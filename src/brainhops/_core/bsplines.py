@@ -1,4 +1,5 @@
 # stdlib
+import functools
 import itertools
 from types import ModuleType
 
@@ -7,7 +8,7 @@ import typing_extensions as tx
 from bagof.hints.array import ArrayLike, ArrayProtocol
 
 # core
-from brainhops._core.dependencies import da
+from brainhops._core.dependencies import da, np
 from brainhops.backends import (
     best_backend,
     copy_array,
@@ -473,23 +474,145 @@ def value2coeff(
     # collapsing it into the "all" case is intentional.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
-    # Prepare for spline_filter.
-    # `spline_filter` only accepts `order`, `output` and `mode` -- there is no
-    # `cval` argument, so a float `bound` (a constant fill value) cannot be
-    # forwarded. We prefilter a float bound with mode='constant', matching how
-    # `coeff2value`/`map_coordinates` treat it, which keeps the round trip
-    # exact for string bounds and consistent (if not a strict inverse) for
-    # float bounds.
-    mode = bound if isinstance(bound, str) else "constant"
-    opts = dict(order=order, mode=mode)
-    return _over_batch(
+    # The coefficients are those that `coeff2value` interpolates exactly.
+    # scipy's prefilter computes them for the bounds whose evaluation
+    # extends the coefficients the way the prefilter extends the values.
+    # `nearest` and constant bounds are not among them, and are solved.
+    mode, cval = _scipy_boundary(bound)
+    if mode in _SOLVED_MODES:
+        bound = 0.0 if mode == "grid-constant" else mode
+
+        def convert(x: ArrayProtocol) -> ArrayProtocol:
+            return _interpolating_coefficients(x, int(order), bound, cval)
+
+    else:
+
+        def convert(x: ArrayProtocol) -> ArrayProtocol:
+            return nd.spline_filter(x, order=order, mode=mode)
+
+    output = _over_batch(
         nx,
         input,
         batch,
-        lambda x: nd.spline_filter(x, **opts),
+        convert,
         tuple(input.shape[-ndim:]),
         output=input if inplace else None,
     )
+    if da is not None and isinstance(output, da.Array):
+        output = output.rechunk(input.chunks)
+    return output
+
+
+_SOLVED_MODES = ("nearest", "grid-constant", "reflect")
+"""
+The modes whose coefficients `value2coeff` solves for rather than filters.
+
+scipy's prefilter extends the values by reflection for `nearest`, and by
+mirroring for `constant`, while its evaluation extends the coefficients
+by clamping for `nearest` and by `cval` for `grid-constant` (which is what
+constant bounds are evaluated with). The two do not match, and filtered
+coefficients do not interpolate the values near the edges (see #250).
+scipy's `reflect` prefilter does match its evaluation, but approximates
+it near the edges of a short axis, by up to 1e-4 at order five.
+"""
+
+_EDGE = 48
+"""
+The samples at each end of an axis whose coefficients a boundary changes.
+
+A boundary changes the coefficients by an amount that decays as the
+spline's pole to the power of the distance to the edge; the largest pole,
+at order five, is 0.43, and 0.43 ** 48 is about 3e-18.
+"""
+
+
+@functools.lru_cache(maxsize=None)
+def _boundary_solvers(
+    size: int, order: int, bound: tx.Union[str, float]
+) -> tx.Tuple[
+    tx.Optional[np.ndarray], tx.Optional[np.ndarray], tx.Optional[np.ndarray]
+]:
+    """
+    How to solve for the coefficients of one axis under a boundary.
+
+    The values of an axis are its coefficients times `A`, the matrix of
+    [`spline_matrix`][] under `bound` -- clamped coefficients for
+    `nearest`, reflected ones for `reflect`, and zeros past the edges for
+    `0.0`. A short axis is solved
+    with the inverse of `A`, returned first. A long one is solved by
+    scipy's `mirror` prefilter, whose matrix `M` is the same but with
+    mirrored coefficients past the edges, then corrected near each end:
+    `inv(A) - inv(M)` is negligible farther than `_EDGE` samples from
+    either end, so its two corner blocks, returned last, are the whole
+    correction.
+    """
+    edge = _EDGE
+    length = size if size <= 4 * edge else 4 * edge
+    grid = np.arange(length, dtype=np.float64)
+    matrix = np.asarray(spline_matrix(length, grid, order, bound, True))
+    inverse = np.linalg.inv(matrix)
+    if length == size:
+        return inverse, None, None
+    mirror = np.asarray(spline_matrix(length, grid, order, "mirror", True))
+    correction = inverse - np.linalg.inv(mirror)
+    return None, correction[:edge, :edge], correction[-edge:, -edge:]
+
+
+def _along(
+    nx: ModuleType, matrix: np.ndarray, x: ArrayProtocol, axis: int
+) -> ArrayProtocol:
+    """`matrix` applied to `x` along one of its axes."""
+    matrix = nx.asarray(matrix, dtype=x.dtype)
+    return nx.moveaxis(nx.tensordot(matrix, x, axes=([1], [axis])), 0, axis)
+
+
+def _interpolating_coefficients(
+    values: ArrayProtocol,
+    order: int,
+    bound: tx.Union[str, float],
+    cval: float,
+) -> ArrayProtocol:
+    """
+    The spline coefficients that interpolate `values` exactly, when the
+    coefficients past the edges are clamped (`bound="nearest"`), reflected
+    (`bound="reflect"`), or are `cval` (`bound=0.0`).
+
+    Both extensions are separable, so the axes are solved one at a time
+    (see [`_boundary_solvers`][]). Coefficients that are `cval` past the
+    edges interpolate `values` when `coefficients - cval`, zero past the
+    edges, interpolate `values - cval`. Each chunk of a dask array reads
+    only its neighbours and the samples near each end of an axis.
+    """
+    nx = get_array_backend(values)
+    nd = get_ndimage_backend(values)
+    coeff = nx.asarray(values).astype("float64")
+    if cval:
+        coeff = coeff - cval
+    for axis in range(coeff.ndim):
+        size = int(coeff.shape[axis])
+        inverse, low, high = _boundary_solvers(size, order, bound)
+        if inverse is not None:
+            coeff = _along(nx, inverse, coeff, axis)
+            continue
+        edge = low.shape[0]
+        index = (slice(None),) * axis
+        start = index + (slice(0, edge),)
+        middle = index + (slice(edge, size - edge),)
+        stop = index + (slice(size - edge, size),)
+        filtered = nd.spline_filter1d(
+            coeff, order, axis=axis, output=np.float64, mode="mirror"
+        )
+        coeff = nx.concatenate(
+            [
+                filtered[start] + _along(nx, low, coeff[start], axis),
+                filtered[middle],
+                filtered[stop] + _along(nx, high, coeff[stop], axis),
+            ],
+            axis=axis,
+        )
+    if cval:
+        coeff = coeff + cval
+    return coeff
 
 
 def value2coeff_field(
