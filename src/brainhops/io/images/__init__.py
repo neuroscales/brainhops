@@ -12,6 +12,7 @@ __all__ = [
 from brainhops._core.dependencies import (
     HAS_NIBABEL,
     HAS_PILLOW,
+    HAS_TIFFFILE,
     has_abczarr_driver,
 )
 
@@ -31,6 +32,13 @@ if HAS_PILLOW:
     from . import pillow
 
     __all__ += ["pillow"]
+
+# TIFF images are read and written with tifffile. Without it, the first
+# page of a TIFF file is still read with Pillow.
+if HAS_TIFFFILE or HAS_PILLOW:
+    from . import tiff
+
+    __all__ += ["tiff"]
 
 # The Zarr reader needs abczarr and at least one of its backend drivers.
 # abczarr alone cannot open a store, so the reader is registered only when a

@@ -33,6 +33,7 @@ backends = ["brainhops[dask]", "brainhops[cupy]"]
 itk = ["h5py"]
 nibabel = ["nibabel"]
 pillow = ["pillow"]
+tiff = ["tifffile"]
 nifti = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
@@ -60,6 +61,7 @@ io = [
     "brainhops[itk]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]",
 ]
 
@@ -71,6 +73,7 @@ test = [
     "brainhops[itk]",
     "brainhops[nibabel]",
     "brainhops[pillow]",
+    "brainhops[tiff]",
     "brainhops[zarr]"
 ]
 

@@ -13,6 +13,7 @@ _NIBABEL = ("nb", "nibabel", "HAS_NIBABEL")
 _H5PY = ("h5", "h5py", "HAS_H5PY")
 _ABCZARR = ("abczarr", "abczarr", "HAS_ABCZARR")
 _PILLOW = ("pil", "PIL", "HAS_PILLOW")
+_TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
 
 # ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
@@ -29,6 +30,7 @@ _LAZY_NAMES = (
     + _H5PY
     + _ABCZARR
     + _PILLOW
+    + _TIFFFILE
     + _NUMPY
     + _CUPY
     + _DASK
@@ -59,6 +61,9 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _PILLOW:
         return _lazy_import(globals(), name, "PIL", "pil", "PILLOW")
+
+    if name in _TIFFFILE:
+        return _lazy_import(globals(), name, "tifffile", "tifffile")
 
     # ==================================================================
     #

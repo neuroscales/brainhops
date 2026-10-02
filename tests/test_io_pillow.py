@@ -355,7 +355,11 @@ def test_load_by_content_with_wrong_extension(tmp_path: Path) -> None:
 
 
 def test_tiff_falls_back_on_pillow() -> None:
-    image = bio.images.load(_bytes(GREY16, "TIFF"))
+    # TIFF content is claimed by the dedicated TIFF reader (when it is
+    # registered); Pillow still reads it when asked to.
+    content = _bytes(GREY16, "TIFF")
+    assert PillowImage.sniff(content) == Confidence.WEAK
+    image = bio.images.load(content, hint="pillow")
     assert isinstance(image, PillowImage)
     np.testing.assert_array_equal(image.data, GREY16.T)
 

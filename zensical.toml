@@ -36,6 +36,7 @@ nav = [
         "api/io/base/zarr.md",
         "api/io/base/raster.md",
         "api/io/base/pillow.md",
+        "api/io/base/tiff.md",
       ]},
       {"images" = [
         "api/io/images/index.md",
@@ -43,6 +44,7 @@ nav = [
         "api/io/images/nifti.md",
         "api/io/images/zarr.md",
         "api/io/images/pillow.md",
+        "api/io/images/tiff.md",
       ]},
       {"transformations" = [
         "api/io/transformations/index.md",

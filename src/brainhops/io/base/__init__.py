@@ -28,6 +28,7 @@ __all__ = [
 from brainhops._core.dependencies import (
     HAS_NIBABEL,
     HAS_PILLOW,
+    HAS_TIFFFILE,
     has_abczarr_driver,
 )
 
@@ -64,6 +65,11 @@ if HAS_PILLOW:
     from . import pillow
 
     __all__ += ["pillow"]
+
+if HAS_TIFFFILE:
+    from . import tiff
+
+    __all__ += ["tiff"]
 
 # The Zarr store adapter needs abczarr and at least one backend driver.
 # abczarr alone cannot open a store, so the adapter is exposed only when a
