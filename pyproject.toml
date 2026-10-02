@@ -36,6 +36,7 @@ itk = ["h5py"]
 matrix = ["h5py"]
 nibabel = ["nibabel"]
 nifti = ["brainhops[nibabel]"]
+mgh = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
 # abczarr reads and writes Zarr through a driver; the default pulls in the
