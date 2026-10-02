@@ -14,7 +14,7 @@ image = io.images.load("orig.mgz")
 image.data.shape              # (x, y, z) or (x, y, z, frames), F order
 image.transformation          # voxel -> scanner RAS (preferred)
 image.transformations[1]      # voxel -> tkr (surface) RAS
-image.vox2ras, image.vox2ras_tkr   # the same, as (4, 4) arrays
+image.vox2ras, image.vox2tkr  # the same, as (4, 4) arrays
 image.mri_params              # {"tr": ..., "flip_angle": ..., ...}
 image.save("copy.mgz")        # gzipped because of the name
 ```
@@ -31,8 +31,8 @@ and [`brainhops.io.base.mgh`][] for the file layout.
 **`goodRASFlag`.** When it is not positive, FreeSurfer ignores the stored
 geometry and uses 1 mm voxels, coronal LIA direction cosines and a zero
 centre; so does this reader (unlike `nibabel`, whose default direction
-cosines differ). The raw flag is kept as `good_ras`. A written file
-always records its geometry, with the flag set.
+cosines differ). The raw flag is kept, privately, as `_good_ras`. A
+written file always records its geometry, with the flag set.
 
 **Metadata.** The MRI parameters of the footer (TR, flip angle, TE, TI,
 FoV) and the raw trailing tags are kept on the object and written back,

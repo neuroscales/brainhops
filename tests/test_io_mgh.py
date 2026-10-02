@@ -134,7 +134,7 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
 
     assert isinstance(image, MghImage)
     assert np.array_equal(np.asarray(image.data), data)
-    assert image.good_ras is True
+    assert image._good_ras is True
 
     header = nb.load(str(source)).header
     names = [x.output.name for x in image.transformations]
@@ -146,7 +146,7 @@ def test_read_matches_nibabel(tmp_path, name) -> None:  # noqa: ANN001
     assert np.allclose(scanner, header.get_vox2ras(), atol=1e-5)
     assert np.allclose(tkr, header.get_vox2ras_tkr(), atol=1e-5)
     assert np.allclose(image.vox2ras, header.get_vox2ras(), atol=1e-5)
-    assert np.allclose(image.vox2ras_tkr, header.get_vox2ras_tkr(), atol=1e-5)
+    assert np.allclose(image.vox2tkr, header.get_vox2ras_tkr(), atol=1e-5)
     assert not np.allclose(scanner, tkr)
 
     scaling = image.transformations[0]
@@ -159,13 +159,13 @@ def test_tkr_and_scanner_differ_by_a_ras_to_ras_rigid(tmp_path) -> None:  # noqa
     `Norig @ inv(Torig)`)."""
     source = _write(tmp_path, "vol.mgz", _data())
     image = io.images.load(source)
-    tkr2scanner = image.vox2ras @ np.linalg.inv(image.vox2ras_tkr)
+    tkr2scanner = image.vox2ras @ np.linalg.inv(image.vox2tkr)
     # The linear part is a rotation: the voxel size cancels out.
     linear = tkr2scanner[:3, :3]
     assert np.allclose(linear @ linear.T, np.eye(3), atol=1e-5)
     # The volume centre maps to c_ras in scanner RAS and to 0 in tkr RAS.
     centre = np.r_[np.asarray(image.shape[:3]) / 2, 1]
-    assert np.allclose(image.vox2ras_tkr @ centre, [0, 0, 0, 1], atol=1e-5)
+    assert np.allclose(image.vox2tkr @ centre, [0, 0, 0, 1], atol=1e-5)
     assert np.allclose(
         (image.vox2ras @ centre)[:3], image.header["Pxyz_c"], atol=1e-4
     )
@@ -228,9 +228,9 @@ def test_bad_ras_flag_uses_freesurfer_defaults(tmp_path) -> None:  # noqa: ANN00
     source.write_bytes(bytes(raw))
 
     image = io.images.load(source)
-    assert image.good_ras is False
+    assert image._good_ras is False
     assert image.voxel_size == (1.0, 1.0, 1.0)
-    assert np.allclose(image.vox2ras, image.vox2ras_tkr)
+    assert np.allclose(image.vox2ras, image.vox2tkr)
     assert mat2orient(image.vox2ras) == "LIA"
 
 
@@ -281,7 +281,9 @@ def test_from_bytes_and_fileobj(tmp_path) -> None:  # noqa: ANN001
     a = MghImage.from_bytes(raw)
     b = MghImage.from_bytes(gzip.decompress(raw))
     with open(source, "rb") as f:
+        # As for NIfTI, the voxels are read lazily from the open stream.
         c = MghImage.from_fileobj(f)
+        assert np.array_equal(np.asarray(c.data), _data())
     for image in (a, b, c):
         assert np.array_equal(np.asarray(image.data), _data())
         assert image.tags == TAGS
@@ -306,7 +308,7 @@ def test_round_trip(tmp_path, out) -> None:  # noqa: ANN001
     again = io.images.load(target)
     assert np.array_equal(np.asarray(again.data), _data())
     assert np.allclose(again.vox2ras, image.vox2ras, atol=1e-5)
-    assert np.allclose(again.vox2ras_tkr, image.vox2ras_tkr, atol=1e-5)
+    assert np.allclose(again.vox2tkr, image.vox2tkr, atol=1e-5)
     assert again.mri_params == pytest.approx(image.mri_params)
     assert again.tags == TAGS
     assert again.header.get_data_dtype() == np.dtype(">f4")
@@ -542,3 +544,99 @@ def test_a_remote_path_round_trips(tmp_path, name) -> None:  # noqa: ANN001
     assert np.array_equal(np.asarray(again.data), _data())
     assert np.allclose(again.vox2ras, image.vox2ras)
     assert again.tags == TAGS
+
+
+# ----------------------------------------------------------------------
+#   REVIEW FOLLOW-UPS
+# ----------------------------------------------------------------------
+
+_LTA = """\
+type      = 1 # LINEAR_RAS_TO_RAS
+nxforms   = 1
+mean      = 0.0000 0.0000 0.0000
+sigma     = 1.0000
+1 4 4
++1.000000  +0.000000  +0.000000  +2.000000
++0.000000  +1.000000  +0.000000  -3.000000
++0.000000  +0.000000  +1.000000  +4.000000
++0.000000  +0.000000  +0.000000  +1.000000
+src volume info
+valid = 1  # volume info valid
+filename = /subjects/bert/mri/orig.mgz
+volume = 4 5 6
+voxelsize = 1.0 1.0 1.0
+xras   = -1.0 0.0 0.0
+yras   = 0.0 0.0 -1.0
+zras   = 0.0 1.0 0.0
+cras   = 0.0 0.0 0.0
+dst volume info
+valid = 1  # volume info valid
+filename = /subjects/bert/mri/orig.mgz
+volume = 4 5 6
+voxelsize = 1.0 1.0 1.0
+xras   = -1.0 0.0 0.0
+yras   = 0.0 0.0 -1.0
+zras   = 0.0 1.0 0.0
+cras   = 0.0 0.0 0.0
+"""
+
+
+def test_the_freesurfer_hint_selects_mgh_and_lta(tmp_path) -> None:  # noqa: ANN001
+    """MGH and LTA share the FreeSurfer format base, whose `"freesurfer"`
+    hint selects both; each keeps its own hints too."""
+    from brainhops.io.base.freesurfer import FreesurferFormat
+    from brainhops.io.base.specs import format_hints
+    from brainhops.io.transformations.freesurfer.lta import (
+        LtaTransformation,
+    )
+
+    assert issubclass(MghImage, FreesurferFormat)
+    assert issubclass(LtaTransformation, FreesurferFormat)
+    assert {"freesurfer", "mgh", "mgz", "freesurfer.mgh"} <= set(
+        format_hints(MghImage)
+    )
+
+    volume = _write(tmp_path, "vol.mgz", _data())
+    lta = tmp_path / "reg.lta"
+    lta.write_text(_LTA)
+    assert type(io.load(volume, hint="freesurfer")) is MghImage
+    assert type(io.load(lta, hint="freesurfer")) is LtaTransformation
+    assert type(io.load(volume, hint="freesurfer.mgh")) is MghImage
+
+
+def test_conversion_does_not_carry_nibabel_objects(tmp_path) -> None:  # noqa: ANN001
+    """MGH and NIfTI both call their `nibabel` objects `image` and
+    `header`; converting one to the other copies the data model only."""
+    mgh = MghImage.from_file(_write(tmp_path, "vol.mgz", _data()))
+    nii = NiftiImage.from_instance(mgh)
+    assert nii.image is None and nii.header is None
+    assert np.array_equal(np.asarray(nii.data), _data())
+    back = MghImage.from_instance(nii)
+    assert back.image is None and back.header is None
+    # Within a format, they are still copied.
+    assert MghImage.from_instance(mgh).image is mgh.image
+
+
+class _Unseekable(_io.RawIOBase):
+    """A stream that can only be read forward, like a pipe."""
+
+    def __init__(self, data: bytes) -> None:
+        self._buffer = _io.BytesIO(data)
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return False
+
+    def readinto(self, b) -> int:  # noqa: ANN001
+        chunk = self._buffer.read(len(b))
+        b[: len(chunk)] = chunk
+        return len(chunk)
+
+
+def test_an_unseekable_stream_is_read(tmp_path) -> None:  # noqa: ANN001
+    raw = _write(tmp_path, "vol.mgz", _data(), tags=TAGS).read_bytes()
+    image = MghImage.from_fileobj(_Unseekable(raw))
+    assert np.array_equal(np.asarray(image.data), _data())
+    assert image.tags == TAGS

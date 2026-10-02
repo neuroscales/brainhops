@@ -35,9 +35,14 @@ Three coordinate systems derive from it:
 
 The functions take the geometry as plain values, so that each format
 reads it from wherever it stores it.
+
+Every FreeSurfer format -- MGH/MGZ images, LTA transforms, ... --
+derives from [`FreesurferFormat`][brainhops.io.base.freesurfer.
+FreesurferFormat], so that the `"freesurfer"` hint selects them all.
 """
 
 __all__ = [
+    "FreesurferFormat",
     "FS_DEFAULT_XRAS",
     "FS_DEFAULT_YRAS",
     "FS_DEFAULT_ZRAS",
@@ -58,6 +63,20 @@ _3Ints = tx.Tuple[int, int, int]
 _3Floats = tx.Tuple[float, float, float]
 _3Flips = tx.Tuple[tx.Literal[-1, 1], tx.Literal[-1, 1], tx.Literal[-1, 1]]
 _Vec = tx.Sequence[float]
+
+
+class FreesurferFormat:
+    """
+    A format of the FreeSurfer family, whatever it stores.
+
+    It is the shared base of the FreeSurfer image formats (MGH/MGZ) and
+    transformation formats (LTA), and carries the `"freesurfer"` hint
+    they all answer to. Each format adds its own hints (`"mgh"`,
+    `"lta"`, ...), which are then also reachable as `"freesurfer.mgh"`,
+    `"freesurfer.lta"`, ...
+    """
+
+    HINTS = ("freesurfer",)
 
 
 FS_DEFAULT_XRAS: _3Floats = (-1.0, 0.0, 0.0)

@@ -69,7 +69,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
     FreeSurfer-specific header content -- the MRI acquisition parameters
     of the footer, the raw `goodRASFlag` and the trailing tags -- is kept
     on the object ([`mri_params`][brainhops.io.base.mgh.MghParser.
-    mri_params], [`good_ras`][brainhops.io.base.mgh.MghParser.good_ras],
+    mri_params], the private `_good_ras` and
     [`tags`][brainhops.io.base.mgh.MghParser.tags]) and written back.
 
     !!! note "`goodRASFlag`"
@@ -213,7 +213,7 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 
     return [
         vox2phys,
-        _affine(image.vox2ras_tkr, _TKR),
+        _affine(image.vox2tkr, _TKR),
         _affine(image.vox2ras, _SCANNER),
     ]
 
