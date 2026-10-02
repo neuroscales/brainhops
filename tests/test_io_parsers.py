@@ -14,6 +14,7 @@ from brainhops.io.base._base import (
 from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
+    SnifferContentError,
     TextFileParser,
     TextFileParserWriter,
     preserve_position,
@@ -163,6 +164,23 @@ def test_reading_a_missing_file_raises_rather_than_returning_false(
 
 def test_sniffing_a_missing_file_scores_zero(tmp_path) -> None:  # noqa: ANN001
     assert Greeting.sniff_file(tmp_path / "absent.greet") == Confidence.NO
+
+
+def test_a_text_sniffer_scores_binary_content_zero(tmp_path) -> None:  # noqa: ANN001
+    """Content that does not decode as text is not a text format: a
+    sniffer says "no" rather than leak a `UnicodeDecodeError`."""
+    binary = b"\x00\x01HELLO\x9a\xff"
+    path = tmp_path / "binary.greet"
+    path.write_bytes(binary)
+
+    assert Greeting.sniff_bytes(binary) == Confidence.NO
+    assert Greeting.sniff(path) == Confidence.NO
+    with open(path, "rb") as f:
+        assert Greeting.sniff(f) == Confidence.NO
+    with pytest.raises(SnifferContentError):
+        Greeting.sniff(path, error=True)
+    with pytest.raises(SnifferContentError):
+        Greeting.sniff_bytes(binary, error=True)
 
 
 def test_writing_creates_a_file_that_did_not_exist(tmp_path) -> None:  # noqa: ANN001

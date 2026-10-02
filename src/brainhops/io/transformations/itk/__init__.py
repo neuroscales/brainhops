@@ -5,6 +5,7 @@ Readers and writers for ITK transformation formats.
 | --------------------------- | --------- | --------------------------- |
 | text (`.tfm`, `.txt`)       | `tfm`     | `TFMTransform`              |
 | HDF5 (`.h5`)                | `h5`      | `H5Transform`               |
+| binary MATLAB (`.mat`)      | `mat`     | `MatTransform`              |
 | NIfTI warp (`.nii[.gz]`)    | `nifti`   | `ITKNiftiDisplacementField` |
 
 ## ANTs
@@ -19,15 +20,13 @@ so they are ITK files, and every reader here also answers to
 - composite transforms, `<prefix>Composite.h5` and
   `<prefix>InverseComposite.h5`, are ITK HDF5 files;
 - B-spline (`BSpline.txt`) transforms, and the output of
-  `ConvertTransformFile` in text mode, are ITK text files.
+  `ConvertTransformFile` in text mode, are ITK text files;
+- linear transforms, `<prefix><n>GenericAffine.mat` (and `Rigid.mat`,
+  `Affine.mat`, `Similarity.mat`, `Translation.mat` and
+  `DerivedInitialMovingTranslation.mat`), are ITK binary MATLAB files.
 
 Not every ANTs output can be read yet:
 
-- linear transforms, `<prefix><n>GenericAffine.mat` (and `Rigid.mat`,
-  `Affine.mat`, `Similarity.mat`, `Translation.mat`), are ITK
-  transforms in ITK's binary MATLAB v4 container (`MatlabTransformIO`),
-  which no reader here decodes. `ConvertTransformFile` turns one into
-  the text format.
 - time-varying velocity fields, `<prefix><n>VelocityField.nii.gz`, are
   `(D + 1)`-dimensional vector images that must be integrated, not
   displacement fields.
@@ -42,10 +41,11 @@ __all__ = [
     "ITKStruct",
     "ITKTransform",
     "ITKTransformClass",
+    "mat",
     "tfm",
 ]
 
-from . import tfm
+from . import mat, tfm
 from ._common import (
     ITKAffineBase,
     ITKBlockBase,
