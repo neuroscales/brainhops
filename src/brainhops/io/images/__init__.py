@@ -10,7 +10,11 @@ __all__ = [
 ]
 
 # internals
-from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
+from brainhops._core.dependencies import (
+    HAS_NIBABEL,
+    HAS_PILLOW,
+    has_abczarr_driver,
+)
 
 from . import base, mrtrix
 from .base import FileBasedImage, WritableFileBasedImage, load, sniff
@@ -22,6 +26,12 @@ if HAS_NIBABEL:
     from . import freesurfer, nifti
 
     __all__ += ["freesurfer", "nifti"]
+
+# Raster images (PNG, JPEG, ...) are read and written with Pillow.
+if HAS_PILLOW:
+    from . import pillow
+
+    __all__ += ["pillow"]
 
 # The Zarr reader needs abczarr and at least one of its backend drivers.
 # abczarr alone cannot open a store, so the reader is registered only when a

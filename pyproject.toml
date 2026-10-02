@@ -34,6 +34,7 @@ h5py = ["h5py"]
 itk = ["brainhops[h5py]"]
 x5 = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
+pillow = ["pillow"]
 nifti = ["brainhops[nibabel]"]
 mgh = ["brainhops[nibabel]"]
 spm = ["brainhops[nifti]"]
@@ -61,6 +62,7 @@ zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
 io = [
     "brainhops[h5py]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
     "brainhops[zarr]",
 ]
 
@@ -71,6 +73,7 @@ test = [
     "brainhops[dask]",
     "brainhops[h5py]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
     "brainhops[zarr]"
 ]
 

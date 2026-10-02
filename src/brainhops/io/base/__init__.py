@@ -26,7 +26,10 @@ __all__ = [
     "register_parser",
 ]
 
-from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
+from brainhops._core.dependencies import (
+    HAS_NIBABEL,
+    has_abczarr_driver,
+)
 
 from . import freesurfer, mrtrix, parsers
 from ._base import (
