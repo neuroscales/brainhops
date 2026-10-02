@@ -8,7 +8,7 @@ import os
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Alias
+from bagof.magic import HIDE_IF_NONE, Alias, KwOnly
 
 # internals
 from brainhops._core import path
@@ -182,8 +182,8 @@ class AfniAffine(
     # volume: allow a few megabytes before turning a file down unread.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 16 << 20
 
-    _input: _systems.CoordinateSystem = _systems.LPSmm()
-    _output: _systems.CoordinateSystem = _systems.LPSmm()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
 
     afni_matrices: tx.Optional[ArrayLike] = None
     """The `(n, 3, 4)` matrices exactly as stored in the file, from the

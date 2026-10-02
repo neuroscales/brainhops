@@ -81,6 +81,23 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel.geometry": {
         "Geometry": ("transformations", "shape", "grid", "transformation"),
     },
+    "brainhops.io.transformations.afni._affine": {
+        "AfniAffine": (
+            "matrix",
+            "afni_matrices",
+            "volume",
+            "comment",
+            "base",
+            "source",
+        ),
+    },
+    "brainhops.io.transformations.afni._nifti": {
+        "AfniNiftiWarp": ("image", "header", "transformations"),
+    },
+    "brainhops.io.transformations.afni._warp": {
+        "AfniBrikWarp": ("transformations", "header", "dataobj"),
+        "AfniWarp": ("transformations",),
+    },
     "brainhops.io.transformations.base._base": {
         "FileBasedTransformation": (),
         "WritableFileBasedTransformation": (),
