@@ -329,7 +329,7 @@ class FileSniffer:
             filename = path.Path(filename)
 
         if isinstance(filename, path.PathLike):
-            if not filename.exists():
+            if not path.exists(filename):
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -640,7 +640,7 @@ class FileParser(FileSniffer):
         if isinstance(filename, str):
             filename = path.Path(filename)
 
-        if not filename.exists():
+        if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open(cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)

@@ -5,6 +5,7 @@ import io as _io
 import pytest
 import typing_extensions as tx
 
+from brainhops._core.path import exists
 from brainhops.io.base._base import (
     FileBasedObject,
     TextFileBasedObject,
@@ -164,6 +165,18 @@ def test_reading_a_missing_file_raises_rather_than_returning_false(
 
 def test_sniffing_a_missing_file_scores_zero(tmp_path) -> None:  # noqa: ANN001
     assert Greeting.sniff_file(tmp_path / "absent.greet") == Confidence.NO
+
+
+def test_a_name_too_long_to_look_up_is_a_missing_file() -> None:
+    """
+    Content handed over where a path was expected used to escape as an
+    `OSError: File name too long` from the file system.
+    """
+    content = "HELLO world\n" * 100
+    assert not exists(content)
+    assert Greeting.sniff_file(content) == Confidence.NO
+    with pytest.raises(ParserExistsError):
+        Greeting.from_file(content)
 
 
 def test_a_text_sniffer_scores_binary_content_zero(tmp_path) -> None:  # noqa: ANN001
