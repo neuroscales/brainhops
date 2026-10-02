@@ -489,3 +489,36 @@ def test_sniff_reports_an_ambiguity_with_the_same_hints(root: type) -> None:
     message = str(info.value)
     assert 'hint="raw"' in message
     assert 'hint="cooked"' in message
+
+
+def test_a_format_without_a_docstring_is_not_described() -> None:
+    """
+    A data model without a docstring is given one that only lists its
+    fields, under an `Attributes` heading. That describes nothing, so
+    the message names the format without a description.
+    """
+    from brainhops.io.base._dispatch import _ambiguity_message, _describe
+    from brainhops.io.transformations.nifti.base import (
+        NiftiBasedTransformation,
+    )
+
+    class Undocumented(NiftiBasedTransformation):
+        HINTS = ("undocumented",)
+
+    class Documented(NiftiBasedTransformation):
+        """A documented format.
+
+        More detail.
+        """
+
+        HINTS = ("documented",)
+
+    # The generated docstring is the class's own, not an inherited one.
+    assert "Attributes" in Undocumented.__dict__["__doc__"]
+    assert _describe(Undocumented) == ""
+    assert _describe(Documented) == "A documented format"
+
+    message = _ambiguity_message("file 'x.nii'", [Undocumented, Documented])
+    assert "Attributes" not in message
+    assert '  - Undocumented: hint="undocumented"' in message
+    assert '  - Documented (A documented format): hint="documented"' in message

@@ -626,11 +626,23 @@ def _describe(cls: type) -> str:
     The first paragraph of the class's own docstring, on one line and
     without its final full stop. A docstring inherited from a base class
     describes the base, not this format, so it is not used.
+
+    A data model without a docstring of its own is given one that lists
+    its fields under an `Attributes` heading. A paragraph that opens with
+    a section heading, underlined with dashes, describes nothing, so no
+    description is given.
+
+    `bagof` writes that generated list into the class's own `__doc__`,
+    after the docstring the class was written with, so the two cannot be
+    told apart by where they live -- only by the heading.
     """
     doc = cls.__dict__.get("__doc__")
     if not isinstance(doc, str) or not doc.strip():
         return ""
     paragraph = inspect.cleandoc(doc).split("\n\n", 1)[0]
+    lines = paragraph.splitlines()
+    if len(lines) > 1 and set(lines[1].strip()) == {"-"}:
+        return ""
     return " ".join(paragraph.split()).rstrip(".")
 
 
