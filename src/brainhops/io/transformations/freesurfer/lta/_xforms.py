@@ -31,7 +31,7 @@ from brainhops.io.transformations.base import (
 
 # local
 from ._enums import LTAType, LTAValidity
-from ._matrix_utils import _get_phys2phys, _get_vox2vox
+from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
 from ._struct import LTAStruct
 from ._systems import LTACoordinateSystem, LTAPhysicalSystem, LTAVoxelSystem
 
@@ -405,7 +405,7 @@ class LTATransformationRASToRAS(LTATransformation):
         it has been set explicitly."""
         if getattr(self, "_matrix", None) is not None:
             return self._matrix
-        return _get_phys2phys(self.struct)[:-1]
+        return _get_ras2ras(self.struct)[:-1]
 
     @input.setter
     def input(self, value: LTACoordinateSystem) -> None:
