@@ -323,13 +323,18 @@ def test_ras_dispatch_follows_the_orientations() -> None:
 
 
 def test_a_physical_system_needs_physical_axes() -> None:
-    with pytest.raises(ValueError, match="must have axes"):
-        cs.PhysicalCoordinateSystem()
-    with pytest.raises(ValueError, match="must have axes"):
-        cs.PhysicalCoordinateSystem(axes=[])
-    with pytest.raises(ValueError, match="unit that measures"):
+    # A physical system may be open, or leave a unit unspecified (the
+    # maintainer's decision on #112), and has then nothing to refuse:
+    # `PhysicalCoordinateSystem()` is `[...]`, and `[]` has no axis.
+    assert cs.PhysicalCoordinateSystem().axes == [...]
+    assert cs.PhysicalCoordinateSystem(axes=[]).ndim == 0
+    # It never counts samples.
+    with pytest.raises(ValueError, match="counts samples"):
+        cs.PhysicalCoordinateSystem(axes=_oriented("RAS", "sample"))
+    # The millimetre systems are in millimetres, and nothing else.
+    with pytest.raises(ValueError, match="in millimetres"):
         cs.RASmm(axes=_oriented("RAS"))
-    with pytest.raises(ValueError, match="unit that measures"):
+    with pytest.raises(ValueError, match="counts samples"):
         cs.RASmm(axes=_oriented("RAS", "sample"))
 
 

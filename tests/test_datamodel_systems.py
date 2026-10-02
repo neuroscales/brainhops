@@ -37,6 +37,7 @@ from brainhops.datamodel.systems import (
     PixelCoordinateSystem,
     RASCoordinateSystem,
     RASmm,
+    RSAmm,
     SpatialCoordinateSystem,
     SpatialCoordinateSystem2D,
     SpatialCoordinateSystem3D,
@@ -118,6 +119,7 @@ OPEN_CLASSES = [
     CS,
     SpatialCoordinateSystem,
     ArrayCoordinateSystem,
+    PhysicalCoordinateSystem,
 ]
 
 
@@ -1050,7 +1052,7 @@ def test_an_open_system_keeps_the_class_it_was_called_as(
         _systems._is3d,
         _systems._is_spatial,
         _systems._is_array,
-        _systems._is_physical,
+        _systems._is_mm,
         _systems._is_anat("RAS"),
     ],
     ids=lambda p: p.__name__,
@@ -1141,50 +1143,141 @@ def test_restrict_and_embed_build_what_their_axes_select() -> None:
 # ----------------------------------------------------------------------
 #   PHYSICAL SYSTEMS
 # ----------------------------------------------------------------------
-# A physical system vouches for a physical unit on every one of its
-# axes. `...` is not an axis without a unit: it stands for axes about
-# which nothing is known, their units included, so a physical system is
-# always closed, and an open one is refused for being open.
+# A generic physical system takes, on every axis, a physical unit of the
+# axis's kind or no unit yet (`None`), and may be open; it never takes the
+# sample. The millimetre systems are in millimetres, and nothing else.
 
 
 @pytest.mark.parametrize(
     "axes",
     [
+        [...],
+        [],
         [*_ras(MM), ...],
         [..., TimeAxis(unit="s")],
         [R(unit=MM), ..., S(unit=MM)],
+        [R(), A(unit="cm")],
+        [Axis(unit="s"), SpaceAxis(unit="um")],
+        [R(), ..., TimeAxis()],
     ],
-    ids=["end", "start", "middle"],
+    ids=[
+        "unknown",
+        "empty",
+        "end",
+        "start",
+        "middle",
+        "unspecified-unit",
+        "other-units",
+        "open-and-unspecified",
+    ],
 )
-def test_a_physical_system_refuses_ellipsis_as_an_open_system(
+def test_a_physical_system_takes_open_axes_and_unspecified_units(
     axes: list,
 ) -> None:
-    with pytest.raises(ValueError, match="lists every one of its axes") as e:
+    system = PhysicalCoordinateSystem(axes=axes)
+    assert type(system) is PhysicalCoordinateSystem
+    assert list(system.axes) == axes
+
+
+def test_a_physical_system_with_no_axes_given() -> None:
+    for system in (
+        PhysicalCoordinateSystem(),
+        PhysicalCoordinateSystem(axes=None),
+    ):
+        assert system.axes == [...] and system.ndim is None
+
+
+@pytest.mark.parametrize(
+    "axes",
+    [
+        [R(unit=MM), A(unit=SAMPLE)],
+        [..., SpaceAxis(unit=SAMPLE)],
+        [TimeAxis(unit=SAMPLE)],
+    ],
+)
+def test_a_physical_system_refuses_the_sample(axes: list) -> None:
+    with pytest.raises(ValueError, match="counts samples"):
         PhysicalCoordinateSystem(axes=axes)
-    # It is refused as an open system, not as an axis without a unit.
-    assert "carries" not in str(e.value)
-    assert "close the system first" in str(e.value)
 
 
-def test_a_physical_system_refuses_unknown_axes() -> None:
-    # `[...]`, the default, states no axis, and is refused as a system
-    # without axes, as `[]` is.
-    for axes in ([...], [], (...,)):
-        with pytest.raises(ValueError, match="must have axes"):
-            PhysicalCoordinateSystem(axes=axes)
-    with pytest.raises(ValueError, match="must have axes"):
-        PhysicalCoordinateSystem()
+def test_a_physical_system_takes_a_unit_of_the_axis_kind_only() -> None:
+    # The type of the axis refuses a unit of another kind before the
+    # system sees it.
+    with pytest.raises(ConversionError, match="SpaceAxis.unit"):
+        PhysicalCoordinateSystem(axes=[SpaceAxis(unit="s")])
+    with pytest.raises(ConversionError, match="TimeAxis.unit"):
+        PhysicalCoordinateSystem(axes=[TimeAxis(unit="mm")])
 
 
-def test_a_physical_system_still_refuses_an_axis_without_a_unit() -> None:
-    for unit in (None, SAMPLE):
-        with pytest.raises(ValueError, match="carries"):
-            PhysicalCoordinateSystem(axes=[R(unit=MM), A(unit=unit)])
+def test_no_array_pixel_or_voxel_system_is_physical() -> None:
+    for cls in SYSTEM_CLASSES:
+        if issubclass(cls, ArrayCoordinateSystem):
+            assert not issubclass(cls, PhysicalCoordinateSystem), cls
+    physical = {
+        cls
+        for cls in SYSTEM_CLASSES
+        if issubclass(cls, PhysicalCoordinateSystem)
+    }
+    assert physical == {PhysicalCoordinateSystem, RASmm, LPSmm, RSAmm}
 
 
-def test_a_closed_physical_system_is_built() -> None:
-    system = PhysicalCoordinateSystem(axes=[R(unit=MM), TimeAxis(unit="s")])
-    assert system.ndim == 2
+@pytest.mark.parametrize(
+    "cls", [RASmm, LPSmm, RSAmm], ids=lambda c: c.__name__
+)
+@pytest.mark.parametrize(
+    "unit", [None, "m", "cm", "um", SAMPLE], ids=lambda u: str(u)
+)
+def test_a_millimetre_system_refuses_any_other_unit(
+    cls: type, unit: tx.Optional[str]
+) -> None:
+    axes = [type(axis)(unit=unit) for axis in cls().axes]
+    with pytest.raises(ValueError, match="in millimetres|counts samples"):
+        cls(axes=axes)
+    # A single axis in another unit is enough.
+    mixed = list(cls().axes)
+    mixed[1] = type(mixed[1])(unit=unit)
+    with pytest.raises(ValueError, match="in millimetres|counts samples"):
+        cls(axes=mixed)
+
+
+@pytest.mark.parametrize(
+    "cls", [RASmm, LPSmm, RSAmm], ids=lambda c: c.__name__
+)
+def test_a_millimetre_system_defaults_to_millimetres(cls: type) -> None:
+    for system in (cls(), cls(axes=None)):
+        assert all(str(axis.unit) == "millimeter" for axis in system.axes)
+    # ... and is fixed to three axes: `...` is refused there, as in every
+    # fixed-dimension system.
+    with pytest.raises(ConversionError):
+        cls(axes=[*cls().axes[:2], ...])
+
+
+@pytest.mark.parametrize(
+    "unit, expected",
+    [
+        (MM, RASmm),
+        (None, RASCoordinateSystem),
+        ("m", RASCoordinateSystem),
+        ("cm", RASCoordinateSystem),
+        (SAMPLE, RASCoordinateSystem),
+    ],
+    ids=lambda v: str(v) if not isinstance(v, type) else v.__name__,
+)
+def test_only_millimetres_select_a_millimetre_system(
+    unit: tx.Optional[str], expected: type
+) -> None:
+    # There is no physical RAS system for another unit, so RAS axes in
+    # metres are an `RASCoordinateSystem`, as unit-less ones are.
+    assert type(CS(axes=_ras(unit))) is expected
+    assert type(RASCoordinateSystem(axes=_ras(unit))) is expected
+    # Mixed units select no millimetre system either.
+    mixed = [R(unit=MM), A(unit=MM), S(unit=unit)]
+    assert type(CS(axes=mixed)) is expected
+
+
+def test_a_physical_system_in_another_unit_stays_physical() -> None:
+    system = PhysicalCoordinateSystem(axes=_ras("cm"))
+    assert type(system) is PhysicalCoordinateSystem
     assert type(PhysicalCoordinateSystem(axes=_ras(MM))) is RASmm
 
 

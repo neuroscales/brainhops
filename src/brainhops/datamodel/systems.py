@@ -83,7 +83,7 @@ from bagof.magic import ConvertTo, fields, replace
 from . import axes as _axes
 from .axes import Axis, SpaceAxis
 from .base import DataModelBase
-from .units import is_physicalunit, is_sampleunit
+from .units import Unit, is_physicalunit, is_sampleunit
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
@@ -983,7 +983,8 @@ def _all(
 
 _is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
 _is_array = _all(lambda axis: is_sampleunit(axis.unit), "_is_array")
-_is_physical = _all(lambda axis: is_physicalunit(axis.unit), "_is_physical")
+_MILLIMETRE = Unit("mm")
+_is_mm = _all(lambda axis: axis.unit is _MILLIMETRE, "_is_mm")
 
 
 def _both(
@@ -1378,63 +1379,67 @@ class CoordinateSystem3D(CoordinateSystem, on={"axes": _is3d}):
 class PhysicalCoordinateSystem(CoordinateSystem):
     """A coordinate system whose coordinates measure physical quantities.
 
-    It has at least one axis, and every axis carries a unit, and a
-    *meaningful* one: not `None`, which leaves the unit unspecified, and
-    not [`SampleUnit`][], which says the coordinates count samples of an
-    array. A system that declares itself physical therefore always has a
-    conversion factor to another physical system of the same kind, and
-    reversing one of its axes is a sign flip rather than the origin shift
-    a sampled axis needs.
+    Every axis it states is measured in a physical unit, or in a unit not
+    yet specified (`None`): a millimetre or a second, never
+    [`SampleUnit`][], which says the coordinates count the samples of an
+    array. So reversing one of its axes is a sign flip, never the origin
+    shift a sampled axis needs, and a conversion factor to another
+    physical system of the same kind exists as soon as the units are all
+    given.
+
+    The unit of an axis is of the kind its axis measures: a spatial axis
+    takes a unit of space and a time axis a unit of time. The type of the
+    axis already enforces that -- `SpaceAxis(unit="s")` is refused -- so
+    this class only refuses the sample.
+
+    It may be open, and its units may be unspecified, since neither says
+    anything non-physical: `...` stands for axes about which nothing is
+    known, and `None` for a unit about which nothing is. A system with no
+    axis at all, `[]`, has nothing to refuse either. No array, pixel or
+    voxel system is a physical one: their axes count samples.
 
     This is a base to inherit deliberately rather than a dispatch target:
-    a physical spatial system is selected as a spatial one, and the
-    concrete systems that are physical by construction -- [`RASmm`][],
-    [`LPSmm`][], [`RSAmm`][] -- compose it in. Their own constraint is
-    what dispatch selects them on; this class checks every instance, so
-    building one directly with an unspecified or sampled axis is refused
-    too.
+    a physical spatial system is selected as a spatial one. The concrete
+    systems that are physical by construction -- [`RASmm`][],
+    [`LPSmm`][], [`RSAmm`][] -- compose it in, and are stricter: they are
+    in millimetres, on every axis. Their own constraint is what dispatch
+    selects them on, so axes in RAS order in centimetres, or with no
+    unit, build an `RASCoordinateSystem`, and built by name, `RASmm`
+    refuses them.
 
-    A physical system is always closed. Its axes may not hold `...`:
-    `...` is not an axis without a unit, but it stands for axes about
-    which nothing is known -- their units included -- and a physical
-    system vouches for the unit of every axis it has. Such a system is
-    refused with its own message, which says to close it first.
-    `PhysicalCoordinateSystem()`, whose axes default to `[...]`, states
-    no axis at all, and is refused as a system without axes.
+    !!! example
+        ```pycon
+        >>> PhysicalCoordinateSystem(axes=[SpaceAxis(unit="mm"), ...]).ndim
+        >>> PhysicalCoordinateSystem(axes=[R(), A(unit="cm")]).ndim
+        2
+        >>> mm = [R(unit="mm"), A(unit="mm"), S(unit="mm")]
+        >>> type(PhysicalCoordinateSystem(axes=mm)).__name__
+        'RASmm'
+        >>> type(CoordinateSystem(axes=[R(), A(), S()])).__name__
+        'RASCoordinateSystem'
+        ```
     """
 
     def __post_init__(self) -> None:
         super().__post_init__()
         name = type(self).__name__
-        if all(axis is ... for axis in self.axes):
-            # No axis at all, or only `[...]` (the default), which states
-            # none.
-            raise ValueError(
-                f"{name} is a physical coordinate system, so it must have "
-                f"axes, and every one of them must carry a physical unit. "
-                f"It was given {list(self.axes)!r}."
-            )
-        if any(axis is ... for axis in self.axes):
-            # `...` is not an axis without a unit: it stands for axes about
-            # which nothing is known, the unit included. The class could
-            # not then vouch for a conversion factor on every axis, so a
-            # physical system lists every axis it has.
-            raise ValueError(
-                f"{name} is a physical coordinate system, so it lists "
-                f"every one of its axes, each with a physical unit. Its "
-                f"axes {list(self.axes)!r} hold `...`, which stands for "
-                f"axes whose units are unknown: close the system first "
-                f"(`expand`), or build a non-physical one."
-            )
         for axis in self.axes:
-            if is_physicalunit(getattr(axis, "unit", None)):
+            if axis is ...:
                 continue
+            unit = getattr(axis, "unit", None)
+            if unit is None or is_physicalunit(unit):
+                continue
+            what = (
+                "counts samples (its unit is `'sample'`), which says it "
+                "indexes an array"
+                if is_sampleunit(unit)
+                else f"carries {unit!r}, which measures nothing"
+            )
             raise ValueError(
-                f"{name} is a physical coordinate system, so every one of "
-                f"its axes must carry a unit that measures something. The "
-                f"axis {axis.name or axis.type!r} carries {axis.unit!r}: "
-                f"`None` leaves the unit unspecified, and `'sample'` says "
-                f"the axis indexes an array."
+                f"{name} is a physical coordinate system, so none of its "
+                f"axes counts samples: each is measured in a physical unit, "
+                f"or in one not yet given (`None`). The axis "
+                f"{axis.name or axis.type!r} {what}."
             )
 
 
@@ -1709,13 +1714,40 @@ class RSACoordinateSystem(
 # ----------------------------------------------------------------------
 #   PHYSICAL ANATOMICAL SPACES
 # ----------------------------------------------------------------------
-# These shorthands are the physical anatomical systems -- the millimetre
-# spaces that nearly every file format means when it writes an anatomical
-# affine -- and they inherit [`PhysicalCoordinateSystem`][], so an axis of
-# theirs can never be left without a unit. Each is selected on its own
-# orientation *and* a physical unit on every axis: the orientation is what
-# its anatomical parent already checks, and checking it again keeps
-# `PhysicalCoordinateSystem(axes=<LPS axes in mm>)` from reaching `RASmm`.
+# These shorthands are the millimetre anatomical systems -- the spaces
+# that nearly every file format means when it writes an anatomical affine.
+# Each is in millimetres, and nothing else: every axis is measured in mm,
+# not in another unit of length (which would need the data rescaled, not
+# the system relabelled), and not in a unit left unspecified. Each is
+# selected on its own orientation *and* the millimetre on every axis: the
+# orientation is what its anatomical parent already checks, and checking
+# it again keeps `PhysicalCoordinateSystem(axes=<LPS axes in mm>)` from
+# reaching `RASmm`. RAS axes in another unit, or with no unit, build an
+# `RASCoordinateSystem` -- there is no physical RAS system for another
+# unit to select -- or, from `PhysicalCoordinateSystem`, stay one.
+
+
+class _Millimetres(PhysicalCoordinateSystem):
+    """A physical coordinate system in millimetres, on every axis.
+
+    Building one with an axis in another unit, or with none, is refused:
+    the class says what the unit is.
+    """
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for axis in self.axes:
+            if axis is ... or axis.unit is _MILLIMETRE:
+                continue
+            name = type(self).__name__
+            raise ValueError(
+                f"{name} is in millimetres, so every one of its axes is "
+                f"measured in mm. The axis {axis.name or axis.type!r} "
+                f"carries {axis.unit!r}. Build an "
+                f"{type(self).__mro__[1].__name__} (or a "
+                f"PhysicalCoordinateSystem) for axes in another unit, or "
+                f"with none."
+            )
 
 
 def _mm(axis: tx.Type[Axis]) -> Axis:
@@ -1724,8 +1756,8 @@ def _mm(axis: tx.Type[Axis]) -> Axis:
 
 class RASmm(
     RASCoordinateSystem,
-    PhysicalCoordinateSystem,
-    on={"axes": _both(_is_anat("RAS"), _is_physical)},
+    _Millimetres,
+    on={"axes": _both(_is_anat("RAS"), _is_mm)},
 ):
     """[`RASCoordinateSystem`][] in millimetres."""
 
@@ -1739,8 +1771,8 @@ class RASmm(
 
 class LPSmm(
     LPSCoordinateSystem,
-    PhysicalCoordinateSystem,
-    on={"axes": _both(_is_anat("LPS"), _is_physical)},
+    _Millimetres,
+    on={"axes": _both(_is_anat("LPS"), _is_mm)},
 ):
     """[`LPSCoordinateSystem`][] in millimetres."""
 
@@ -1754,8 +1786,8 @@ class LPSmm(
 
 class RSAmm(
     RSACoordinateSystem,
-    PhysicalCoordinateSystem,
-    on={"axes": _both(_is_anat("RSA"), _is_physical)},
+    _Millimetres,
+    on={"axes": _both(_is_anat("RSA"), _is_mm)},
 ):
     """[`RSACoordinateSystem`][] in millimetres."""
 
