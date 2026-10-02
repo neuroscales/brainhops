@@ -59,7 +59,6 @@ zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
 io = [
-    "brainhops[itk]",
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[zarr]",
@@ -70,7 +69,6 @@ test = [
     "pytest",
     "pytest-cov",
     "brainhops[dask]",
-    "brainhops[itk]",
     "brainhops[h5py]",
     "brainhops[nibabel]",
     "brainhops[zarr]"
