@@ -1131,7 +1131,7 @@ def _write_brik(header: AfniHeader, data: tx.Any, brik: tx.Any) -> None:
 # ----------------------------------------------------------------------
 
 
-class AfniParser(DataModelBase, AfniFormat, BinaryFileParserWriter):
+class AfniParser(AfniFormat, DataModelBase, BinaryFileParserWriter):
     """
     Base class for objects that are encoded by an AFNI dataset
     (`.HEAD` + `.BRIK`).
