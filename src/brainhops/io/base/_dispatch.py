@@ -23,6 +23,7 @@ import typing_extensions as tx
 from bagof.magic import fields
 
 # internals
+from brainhops._core import path
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -130,7 +131,7 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     if isinstance(other, os.DirEntry):
         # A directory entry is a local path, but `str()` gives its repr.
         text = other.path
-    elif isinstance(other, (str, PathLike)):
+    elif isinstance(other, (str, path.PathLike)):
         text = str(other)
     else:
         text = getattr(other, "name", None)
