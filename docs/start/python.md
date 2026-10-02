@@ -160,3 +160,28 @@ specification, with additional flexibility:
 - Additional transformations are available. For example, non-matrix
   representations of some affine subgroups (quaternions, lie algebra, ...)
   are implemented in `brainhops`.
+
+### Operators
+
+A transformation that maps a space to itself has an inverse, a square, a
+principal square root, an exponential and a principal logarithm. Each is a
+method, and each is lazy, like the inverse: the result is computed when it
+is applied, computed or converted, and a typed result stays an instance
+of the family it belongs to (the square root of a `Rotation` is a
+`Rotation`).
+
+```python
+half = xform.sqrt()  # the half-transformation: half @ half == xform
+twice = xform.square()  # xform @ xform
+warp = velocity.exp()  # integrate a stationary velocity field
+expr = a.inverse() @ b.sqrt() @ c.exp()
+result = expr.compute()
+```
+
+The exponential reads a transformation as the stationary velocity field of
+its displacement, `v(x) = T(x) - x`: a `DisplacementField` is the velocity
+it stores, in voxels, and is integrated by scaling and squaring, while an
+affine `x -> M x + t` has the flow of `x -> (M - I) x + t`. The logarithm
+is its inverse. A transformation outside an operator's domain, such as a
+reflection under `sqrt` or `log`, raises a `DomainError` rather than
+returning a complex or non-principal result.
