@@ -10,16 +10,19 @@ a given file was read by a given parser.
 __all__ = ["Source", "parse", "sniff"]
 
 # stdlib
+import os
+import posixpath
+import re
 from collections.abc import Iterable
 from io import BytesIO, StringIO
-from os import PathLike, fspath
+from os import PathLike
+from urllib.parse import urlsplit
 
 # dependencies
 import typing_extensions as tx
 from bagof.magic import fields
 
 # internals
-from brainhops._core import path
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -98,7 +101,7 @@ class Source:
     @property
     def name(self) -> tx.Optional[str]:
         """The file name, if the input is a named file."""
-        return file_name(self.other)
+        return _to_filename(self.other)
 
     def __repr__(self) -> str:
         """Describe the source by its file name, or as plain content when
@@ -107,21 +110,53 @@ class Source:
         return f"file {name!r}" if name else "input content"
 
 
-def file_name(other: tx.Any) -> tx.Optional[str]:
+def _to_filename(other: tx.Any) -> tx.Optional[str]:
     """
     The base name of the file `other` names, or `None` if it names none.
 
     A path names its file, and an open file object names the file it was
     opened from. Content, and a stream with no name, name nothing.
+
+    The name is read from the text of the path, and storage is never
+    touched. `os.fspath` is not used: it raises on a remote path, and
+    downloads a cloud path to a local cache. Every path object we know of
+    gives its location, local or remote, as `str()`.
+
+    A URL names the file at the end of its path. A query and a fragment
+    are not part of that path, so `https://host/x.nii.gz?token=...` names
+    `x.nii.gz`, and the last link of an fsspec chain
+    (`simplecache::s3://...`) is the file.
     """
-    if isinstance(other, PathLike):
-        other = fspath(other)
-    if not isinstance(other, str):
-        other = getattr(other, "name", None)
-        if not isinstance(other, str):
+    if isinstance(other, os.DirEntry):
+        # A directory entry is a local path, but `str()` gives its repr.
+        text = other.path
+    elif isinstance(other, (str, PathLike)):
+        text = str(other)
+    else:
+        text = getattr(other, "name", None)
+        if not isinstance(text, str):
             return None
-    # Trailing slashes matter for directory-based formats (.zarr)
-    return path.Path(other.rstrip("/")).name
+    return _base_name(text)
+
+
+# A URL scheme of two characters or more, so that a Windows drive letter
+# such as `C:` is not read as one.
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
+
+
+def _base_name(text: str) -> str:
+    """The last component of a local path or of the path of a URL."""
+    if "::" in text and "://" in text:
+        # An fsspec chain: the last link is the file, the others are
+        # layers over it (caches, archives).
+        text = text.rsplit("::", 1)[-1]
+    if _SCHEME.match(text):
+        # The name is in the path of the URL, not in its query or
+        # fragment, which may hold slashes and dots of their own.
+        text = urlsplit(text).path
+        # Trailing slashes matter for directory-based formats (.zarr)
+        return posixpath.basename(text.rstrip("/"))
+    return os.path.basename(text.rstrip("/" + os.sep))
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:

@@ -18,7 +18,7 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._base import WritableFileBasedObject
-from brainhops.io.base._dispatch import _match_name, _tiers, file_name
+from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     FileSniffer,
@@ -78,7 +78,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         If no registered format claims the file name, or none of those
         that do can hold `obj`, or the chosen format cannot write it.
     """
-    name = file_name(file)
+    name = _to_filename(file)
     if name is None:
         if isinstance(obj, WritableFileBasedObject):
             obj.save(file, **kwargs)
