@@ -165,7 +165,9 @@ class FileBasedObject(FileParser):
         `file`, in any supported form, is its own."""
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
-        return sniff(file, cls._REGISTRY, "sniff", error, f"{file}", **kwargs)
+        return sniff(
+            Source(file), cls._REGISTRY, "sniff", error, f"{file}", **kwargs
+        )
 
     @classmethod
     def sniff_file(
@@ -180,7 +182,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
-            file, cls._REGISTRY, "sniff_file", error, f"file: {file}", **kwargs
+            Source(file),
+            cls._REGISTRY,
+            "sniff_file",
+            error,
+            f"file: {file}",
+            **kwargs,
         )
 
     @classmethod
@@ -196,7 +203,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_fileobj(file, error=error, **kwargs)
         return sniff(
-            file,
+            Source(file),
             cls._REGISTRY,
             "sniff_fileobj",
             error,
@@ -217,7 +224,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_content(content, error=error, **kwargs)
         return sniff(
-            content,
+            Source.content(content),
             cls._REGISTRY,
             "sniff_content",
             error,
@@ -238,7 +245,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_bytes(content, error=error, **kwargs)
         return sniff(
-            content,
+            Source.content(content),
             cls._REGISTRY,
             "sniff_bytes",
             error,
@@ -259,7 +266,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_text(text, error=error, **kwargs)
         return sniff(
-            text, cls._REGISTRY, "sniff_text", error, "input text", **kwargs
+            Source.content(text),
+            cls._REGISTRY,
+            "sniff_text",
+            error,
+            "input text",
+            **kwargs,
         )
 
     @classmethod
@@ -275,7 +287,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_lines(lines, error=error, **kwargs)
         return sniff(
-            lines, cls._REGISTRY, "sniff_lines", error, "input lines", **kwargs
+            Source.content(lines),
+            cls._REGISTRY,
+            "sniff_lines",
+            error,
+            "input lines",
+            **kwargs,
         )
 
     @classmethod
@@ -291,7 +308,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_line(line, error=error, **kwargs)
         return sniff(
-            line, cls._REGISTRY, "sniff_line", error, "input line", **kwargs
+            Source.content(line),
+            cls._REGISTRY,
+            "sniff_line",
+            error,
+            "input line",
+            **kwargs,
         )
 
     # ---- from --------------------------------------------------------
@@ -332,7 +354,11 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
         return parse(
-            Source(file), cls._REGISTRY, "from_file", "sniff_file", **kwargs
+            Source(file),
+            cls._REGISTRY,
+            "from_file",
+            "sniff_file",
+            **kwargs,
         )
 
     @classmethod
@@ -359,7 +385,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_content(content, **kwargs)
         return parse(
-            Source(content),
+            Source.content(content),
             cls._REGISTRY,
             "from_content",
             "sniff_content",
@@ -374,7 +400,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_bytes(content, **kwargs)
         return parse(
-            Source(content),
+            Source.content(content),
             cls._REGISTRY,
             "from_bytes",
             "sniff_bytes",
@@ -389,7 +415,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_text(text, **kwargs)
         return parse(
-            Source(text),
+            Source.content(text),
             cls._REGISTRY,
             "from_text",
             "sniff_text",
@@ -404,7 +430,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_lines(lines, **kwargs)
         return parse(
-            Source(lines),
+            Source.content(lines),
             cls._REGISTRY,
             "from_lines",
             "sniff_lines",
@@ -419,7 +445,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_line(line, **kwargs)
         return parse(
-            Source(line),
+            Source.content(line),
             cls._REGISTRY,
             "from_line",
             "sniff_line",

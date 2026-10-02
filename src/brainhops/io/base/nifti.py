@@ -125,7 +125,37 @@ _NIFTI_INTENT_NONE = 0
 """Intent code of a plain image: no specialized interpretation."""
 
 _NIFTI_INTENT_DISPVECT = 1006
-"""Intent code that marks a NIfTI file as a displacement or vector field."""
+"""
+Intent code of a field of displacement vectors.
+
+The NIfTI-1 standard reserves it "specifically for displacements", and
+ITK 5.4 and later reads a three-component `DISPVECT` image as RAS
+displacements in millimetres. brainhops reads it the same way, and
+writes it only for displacement fields.
+"""
+
+_NIFTI_INTENT_VECTOR = 1007
+"""
+Intent code of a generic vector image.
+
+The NIfTI-1 standard reserves it "for any other type of vector" than a
+displacement. brainhops writes its fields of RAS coordinates with it,
+as SPM writes its `y_` deformations (coordinate maps), and ITK writes it
+for every vector image unless told otherwise, so it is also the code of
+ITK's (LPS) displacement fields. It says nothing about the frame its
+vectors are in; the intent name `"Mapping"` (see below) marks the RAS
+coordinate maps.
+"""
+
+_NIFTI_INTENT_NAME_MAPPING = "Mapping"
+"""
+The intent name SPM gives a field of coordinates (`y_` files).
+
+brainhops writes it next to `VECTOR` on a field of RAS coordinates, so
+the file says what its vectors are, not only that they are vectors. ITK's
+`NiftiImageIO` never writes an intent name, so neither ITK nor ANTs
+files carry it, and it also tells such a map from an ITK (LPS) field.
+"""
 
 
 _NIFTI_XCODES = {
@@ -194,6 +224,16 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
         if isinstance(header, nb.Nifti1Image):
             header = header.header
         return int(header["intent_code"])
+    except Exception:
+        return None
+
+
+def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
+    """The intent name of a NIfTI header, or `None` if unreadable."""
+    try:
+        if isinstance(header, nb.Nifti1Image):
+            header = header.header
+        return str(header.get_intent()[2])
     except Exception:
         return None
 

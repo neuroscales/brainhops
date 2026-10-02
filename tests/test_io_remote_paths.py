@@ -22,7 +22,7 @@ from brainhops.io.base._base import (
     WritableTextFileBasedObject,
     register_format,
 )
-from brainhops.io.base._dispatch import _to_filename
+from brainhops.io.base._dispatch import Source, _to_filename
 from brainhops.io.base.parsers import ParserError
 
 
@@ -121,6 +121,18 @@ def test_local_paths_and_open_files_are_named(tmp_path) -> None:  # noqa: ANN001
 def test_content_and_unnamed_streams_name_nothing() -> None:
     assert _to_filename(b"bytes") is None
     assert _to_filename(_io.BytesIO()) is None
+
+
+def test_a_source_names_its_path_and_never_its_content() -> None:
+    # A path, local or remote, is named from its text, and a remote one
+    # is never made local.
+    assert Source("https://host/x.nii.gz?token=abc").name == "x.nii.gz"
+    assert Source(RemotePath("s3://bucket/x.nii.gz")).name == "x.nii.gz"
+    assert RemotePath.fspath_calls == 0
+    # Text held in memory names nothing, even when it reads like a path.
+    assert Source.content("s3://bucket/x.nii.gz").name is None
+    assert Source.content("x.nii.gz").name is None
+    assert Source.content(b"x.nii.gz").name is None
 
 
 # ----------------------------------------------------------------------

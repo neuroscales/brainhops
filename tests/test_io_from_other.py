@@ -22,7 +22,7 @@ from brainhops.io.images import FileBasedImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
+    NiftiRASDisplacementField,
     NiftiVoxelToRAS,
 )
 
@@ -64,8 +64,9 @@ def test_a_dispatcher_reads_a_path_in_the_format_it_finds(tmp_path) -> None:  # 
 
 def test_a_transformation_dispatcher_reads_a_path(tmp_path) -> None:  # noqa: ANN001
     source = _write_field(tmp_path / "field.nii")
+    # Intent code 1006 (displacement vector) is read as a displacement.
     field = FileBasedTransformation.from_other(source)
-    assert isinstance(field, NiftiRASCoordinatesField)
+    assert isinstance(field, NiftiRASDisplacementField)
 
 
 def test_an_open_file_is_read(tmp_path) -> None:  # noqa: ANN001
