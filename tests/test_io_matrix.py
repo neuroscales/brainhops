@@ -19,24 +19,35 @@ import scipy.io
 
 from brainhops.datamodel import systems
 from brainhops.io.base import arrays
-from brainhops.io.base.parsers import Confidence, ParserContentError
+from brainhops.io.base.parsers import (
+    BinaryFileParser,
+    Confidence,
+    ParserContentError,
+    TextFileParser,
+)
 from brainhops.io.transformations import FileBasedTransformation, load, sniff
 from brainhops.io.transformations.matrix import (
+    CsvMatrixAffine,
     Mat73MatrixAffine,
+    MatLegacyMatrixAffine,
     MatMatrixAffine,
     MatrixAffine,
     NpyMatrixAffine,
     NpzMatrixAffine,
-    TextMatrixAffine,
+    TsvMatrixAffine,
+    TxtMatrixAffine,
 )
 
 data_dir = Path(__file__).parent / "data"
 
+# The registered readers: one per container (and MATLAB version).
 CONCRETE = (
-    TextMatrixAffine,
+    TxtMatrixAffine,
+    CsvMatrixAffine,
+    TsvMatrixAffine,
     NpyMatrixAffine,
     NpzMatrixAffine,
-    MatMatrixAffine,
+    MatLegacyMatrixAffine,
     Mat73MatrixAffine,
 )
 
@@ -66,32 +77,107 @@ def _homog(xform):  # noqa: ANN001, ANN202
 # ----------------------------------------------------------------------
 
 
+def _rows(sep, matrix=A):  # noqa: ANN001, ANN202
+    return "\n".join(sep.join(f"{v:.17g}" for v in row) for row in matrix)
+
+
 @pytest.mark.parametrize(
-    "text",
+    "cls, name, text",
     [
-        "\n".join(" ".join(f"{v:.17g}" for v in row) for row in A),
-        "\n".join(",".join(f"{v:.17g}" for v in row) for row in A),
-        "\n".join("\t".join(f"{v:.17g}" for v in row) for row in A),
-        "# a comment\n\n"
-        + "\n".join(
-            " ".join(f"{v:.17g}" for v in row) + "  # trailing" for row in A
-        )
-        + "\n",
+        (TxtMatrixAffine, "affine.txt", _rows(" ")),
+        (TxtMatrixAffine, "affine.txt", _rows("\t")),
+        (TxtMatrixAffine, "affine.txt", _rows(" \t  ")),
+        (TxtMatrixAffine, "affine.dat", _rows(" ")),
+        (TxtMatrixAffine, "affine.1D", "# AFNI-style\n" + _rows("  ")),
+        (CsvMatrixAffine, "affine.csv", _rows(",")),
+        (CsvMatrixAffine, "affine.csv", _rows(", ")),
+        (TsvMatrixAffine, "affine.tsv", _rows("\t")),
+        (
+            TxtMatrixAffine,
+            "affine.txt",
+            "# a comment\n\n"
+            + "\n".join(
+                " ".join(f"{v:.17g}" for v in row) + "  # trailing"
+                for row in A
+            )
+            + "\n",
+        ),
     ],
-    ids=["spaces", "commas", "tabs", "comments"],
+    ids=[
+        "txt-spaces",
+        "txt-tabs",
+        "txt-mixed",
+        "dat",
+        "1D",
+        "csv",
+        "csv-padded",
+        "tsv",
+        "txt-comments",
+    ],
 )
-def test_text(tmp_path, text) -> None:  # noqa: ANN001
-    path = tmp_path / "affine.txt"
+def test_text(tmp_path, cls, name, text) -> None:  # noqa: ANN001
+    path = tmp_path / name
     path.write_text(text)
-    xform = TextMatrixAffine.from_file(path)
+    xform = cls.from_file(path)
     assert np.allclose(_homog(xform), A)
     assert xform.CONTAINER == "text"
+    # dispatch picks the same reader, from the name
+    assert sniff(path) is cls
+    assert type(load(path)) is cls
+
+
+@pytest.mark.parametrize(
+    "cls, text",
+    [
+        (TxtMatrixAffine, _rows(",")),
+        (CsvMatrixAffine, _rows(" ")),
+        (CsvMatrixAffine, _rows("\t")),
+        (TsvMatrixAffine, _rows(" ")),
+        (TsvMatrixAffine, _rows(",")),
+    ],
+)
+def test_text_separator_is_strict(cls, text) -> None:  # noqa: ANN001
+    """Each text reader reads its own separator only."""
+    assert cls.sniff_text(text) == Confidence.NO
+    with pytest.raises(ParserContentError):
+        cls.from_text(text)
+
+
+@pytest.mark.parametrize(
+    "sep, cls",
+    [(" ", TxtMatrixAffine), ("\t", TsvMatrixAffine), (",", CsvMatrixAffine)],
+)
+def test_unnamed_text_goes_to_one_reader(sep, cls) -> None:  # noqa: ANN001
+    """Without a file name, each content has one reader: CSV needs a
+    comma, TSV a tab, and whitespace text yields tab-separated content to
+    TSV, so the three never tie."""
+    content = _rows(sep).encode()
+    scores = {c: c.sniff_bytes(content) for c in CONCRETE}
+    assert {c for c, score in scores.items() if score} == {cls}
+    assert type(load(content, hint="matrix")) is cls
+
+
+def test_name_beats_signature(tmp_path) -> None:  # noqa: ANN001
+    """A `.txt` holding tabs is still a `.txt`, and a single-column
+    `.csv` (no comma) still a `.csv`: the signature is only asked for
+    when the name says nothing."""
+    path = tmp_path / "affine.txt"
+    path.write_text(_rows("\t"))
+    assert TxtMatrixAffine.sniff(path) == Confidence.LIKELY
+    assert sniff(path) is TxtMatrixAffine
+    assert TxtMatrixAffine.sniff_bytes(path.read_bytes()) == Confidence.NO
+
+    path = tmp_path / "column.csv"
+    path.write_text("1\n2\n3\n")
+    assert arrays.CsvArrayParser.sniff(path) == Confidence.LIKELY
+    assert arrays.CsvArrayParser.sniff_bytes(b"1\n2\n3\n") == Confidence.NO
+    assert arrays.TxtArrayParser.sniff_bytes(b"1\n2\n3\n") > Confidence.NO
 
 
 def test_text_from_string_content() -> None:
     text = "\n".join(" ".join(str(v) for v in row) for row in A)
-    assert np.allclose(_homog(TextMatrixAffine.from_text(text)), A)
-    assert np.allclose(_homog(TextMatrixAffine.from_bytes(text.encode())), A)
+    assert np.allclose(_homog(TxtMatrixAffine.from_text(text)), A)
+    assert np.allclose(_homog(TxtMatrixAffine.from_bytes(text.encode())), A)
 
 
 def test_npy(tmp_path) -> None:  # noqa: ANN001
@@ -190,8 +276,8 @@ def test_fileobj(tmp_path) -> None:  # noqa: ANN001
 
 def test_shapes_3d() -> None:
     linear = A[:3, :3]
-    assert np.allclose(_homog(TextMatrixAffine.from_text(_text(A[:3]))), A)
-    xform = TextMatrixAffine.from_text(_text(linear))
+    assert np.allclose(_homog(TxtMatrixAffine.from_text(_text(A[:3]))), A)
+    xform = TxtMatrixAffine.from_text(_text(linear))
     expected = np.eye(4)
     expected[:3, :3] = linear
     assert np.allclose(_homog(xform), expected)
@@ -199,12 +285,12 @@ def test_shapes_3d() -> None:
 
 def test_shapes_2d() -> None:
     a2 = np.array([[0.0, -1.0, 3.0], [1.0, 0.0, 4.0], [0.0, 0.0, 1.0]])
-    xform = TextMatrixAffine.from_text(_text(a2[:2]))
+    xform = TxtMatrixAffine.from_text(_text(a2[:2]))
     assert np.allclose(_homog(xform), a2)
     assert isinstance(xform.input, systems.CoordinateSystem2D)
     # (3, 3) is 3-D linear by default, 2-D homogeneous with ndim=2.
-    assert _homog(TextMatrixAffine.from_text(_text(a2))).shape == (4, 4)
-    xform = TextMatrixAffine.from_text(_text(a2), ndim=2)
+    assert _homog(TxtMatrixAffine.from_text(_text(a2))).shape == (4, 4)
+    xform = TxtMatrixAffine.from_text(_text(a2), ndim=2)
     assert np.allclose(_homog(xform), a2)
 
 
@@ -212,15 +298,15 @@ def test_shapes_2d() -> None:
 def test_bad_shapes(shape) -> None:  # noqa: ANN001
     text = _text(np.ones(shape))
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(text)
-    assert TextMatrixAffine.sniff_text(text) == Confidence.NO
+        TxtMatrixAffine.from_text(text)
+    assert TxtMatrixAffine.sniff_text(text) == Confidence.NO
 
 
 def test_projective_matrix_is_refused() -> None:
     bad = A.copy()
     bad[3, 0] = 0.5
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(_text(bad))
+        TxtMatrixAffine.from_text(_text(bad))
 
 
 def _text(matrix):  # noqa: ANN001, ANN202
@@ -233,7 +319,7 @@ def _text(matrix):  # noqa: ANN001, ANN202
 
 
 def test_defaults() -> None:
-    xform = TextMatrixAffine.from_text(_text(A))
+    xform = TxtMatrixAffine.from_text(_text(A))
     assert (xform.vector, xform.direction, xform.index_base) == (
         "column",
         "forward",
@@ -245,37 +331,37 @@ def test_defaults() -> None:
 
 
 def test_row_vector_convention() -> None:
-    xform = TextMatrixAffine.from_text(_text(A.T), vector="row")
+    xform = TxtMatrixAffine.from_text(_text(A.T), vector="row")
     assert np.allclose(_homog(xform), A)
     # a (4, 3) row-vector matrix is a (3, 4) column-vector one
-    xform = TextMatrixAffine.from_text(_text(A[:3].T), vector="row")
+    xform = TxtMatrixAffine.from_text(_text(A[:3].T), vector="row")
     assert np.allclose(_homog(xform), A)
     assert np.allclose(np.asarray(xform.raw_matrix), A[:3].T)
 
 
 def test_inverse_direction() -> None:
-    xform = TextMatrixAffine.from_text(_text(A), direction="inverse")
+    xform = TxtMatrixAffine.from_text(_text(A), direction="inverse")
     assert np.allclose(_homog(xform), np.linalg.inv(A))
     assert xform.direction == "inverse"
 
 
 def test_spaces() -> None:
-    xform = TextMatrixAffine.from_text(_text(A), input="voxel", output="ras")
+    xform = TxtMatrixAffine.from_text(_text(A), input="voxel", output="ras")
     assert isinstance(xform.input, systems.VoxelCoordinateSystem)
     assert isinstance(xform.output, systems.RASCoordinateSystem)
-    xform = TextMatrixAffine.from_text(_text(A), input="lps", output="lps")
+    xform = TxtMatrixAffine.from_text(_text(A), input="lps", output="lps")
     assert isinstance(xform.output, systems.LPSCoordinateSystem)
     custom = systems.FVoxelCoordinateSystem()
-    xform = TextMatrixAffine.from_text(_text(A), input=custom)
+    xform = TxtMatrixAffine.from_text(_text(A), input=custom)
     assert xform.input is custom
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(_text(A), input="nowhere")
+        TxtMatrixAffine.from_text(_text(A), input="nowhere")
 
 
 def test_one_based_voxel_to_world() -> None:
     """A MATLAB/SPM voxel-to-world matrix maps index 1 to where a 0-based
     one maps index 0."""
-    xform = TextMatrixAffine.from_text(
+    xform = TxtMatrixAffine.from_text(
         _text(A), input="voxel", output="ras", index_base=1
     )
     assert xform.index_base == (1, 0)
@@ -284,7 +370,7 @@ def test_one_based_voxel_to_world() -> None:
 
 
 def test_one_based_voxel_to_voxel() -> None:
-    xform = TextMatrixAffine.from_text(
+    xform = TxtMatrixAffine.from_text(
         _text(A), input="voxel", output="voxel", index_base=1
     )
     point0 = np.array([2.0, 3.0, 4.0])
@@ -292,7 +378,7 @@ def test_one_based_voxel_to_voxel() -> None:
         _apply(_homog(xform), point0), _apply(A, point0 + 1) - 1
     )
     # per-endpoint bases
-    xform = TextMatrixAffine.from_text(
+    xform = TxtMatrixAffine.from_text(
         _text(A), input="voxel", output="voxel", index_base=(0, 1)
     )
     assert np.allclose(_apply(_homog(xform), point0), _apply(A, point0) - 1)
@@ -300,9 +386,9 @@ def test_one_based_voxel_to_voxel() -> None:
 
 def test_one_based_needs_a_voxel_space() -> None:
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(_text(A), index_base=1)
+        TxtMatrixAffine.from_text(_text(A), index_base=1)
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(
+        TxtMatrixAffine.from_text(
             _text(A), input="voxel", output="ras", index_base=(1, 1)
         )
 
@@ -310,7 +396,7 @@ def test_one_based_needs_a_voxel_space() -> None:
 def test_conventions_compose_in_documented_order() -> None:
     """Transpose, then invert, then shift indices."""
     raw = np.linalg.inv(A).T  # row-vector, inverse
-    xform = TextMatrixAffine.from_text(
+    xform = TxtMatrixAffine.from_text(
         _text(raw),
         vector="row",
         direction="inverse",
@@ -330,7 +416,7 @@ def test_images_place_voxel_spaces_in_world() -> None:
     src = nb.Nifti1Image(np.zeros((4, 4, 4), np.float32), src_aff)
     tgt = nb.Nifti1Image(np.zeros((4, 4, 4), np.float32), tgt_aff)
     vox2vox = A
-    xform = TextMatrixAffine.from_text(_text(vox2vox), source=src, target=tgt)
+    xform = TxtMatrixAffine.from_text(_text(vox2vox), source=src, target=tgt)
     assert isinstance(xform.input, systems.RASCoordinateSystem)
     assert isinstance(xform.output, systems.RASCoordinateSystem)
     expected = tgt_aff @ vox2vox @ np.linalg.inv(src_aff)
@@ -338,7 +424,7 @@ def test_images_place_voxel_spaces_in_world() -> None:
 
     # an image cannot place a non-voxel endpoint
     with pytest.raises(ParserContentError):
-        TextMatrixAffine.from_text(_text(A), input="ras", source=src)
+        TxtMatrixAffine.from_text(_text(A), input="ras", source=src)
 
 
 def test_brainhops_image_places_voxel_space() -> None:
@@ -353,7 +439,7 @@ def test_brainhops_image_places_voxel_space() -> None:
     image = SingleScaleImage(
         data=np.zeros((2, 2, 2)), transformations=[vox2world]
     )
-    xform = TextMatrixAffine.from_text(_text(A), output="lps", source=image)
+    xform = TxtMatrixAffine.from_text(_text(A), output="lps", source=image)
     assert isinstance(xform.input, systems.LPSCoordinateSystem)
     assert np.allclose(
         _homog(xform), A @ np.linalg.inv(np.diag([2.0, 3.0, 4.0, 1.0]))
@@ -368,7 +454,7 @@ def test_load_passes_conventions(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_inverse_of_loaded_matrix() -> None:
-    xform = TextMatrixAffine.from_text(_text(A), input="voxel", output="ras")
+    xform = TxtMatrixAffine.from_text(_text(A), input="voxel", output="ras")
     inverse = xform.inverse().compute()
     assert np.allclose(_homog(inverse), np.linalg.inv(A))
     assert isinstance(inverse.input, systems.RASCoordinateSystem)
@@ -380,17 +466,26 @@ def test_inverse_of_loaded_matrix() -> None:
 
 
 def test_sniff_is_weak() -> None:
-    assert TextMatrixAffine.sniff_text(_text(A)) == Confidence.WEAK
-    assert TextMatrixAffine.sniff_text("not a matrix") == Confidence.NO
-    assert TextMatrixAffine.sniff_text("1 2\n3") == Confidence.NO
+    assert TxtMatrixAffine.sniff_text(_text(A)) == Confidence.WEAK
+    assert TxtMatrixAffine.sniff_text("not a matrix") == Confidence.NO
+    assert TxtMatrixAffine.sniff_text("1 2\n3") == Confidence.NO
 
 
-@pytest.mark.parametrize("ext", [".txt", ".csv", ".tsv", ".dat"])
-def test_text_extension_beats_flirt(tmp_path, ext) -> None:  # noqa: ANN001
+@pytest.mark.parametrize(
+    "ext, sep, cls",
+    [
+        (".txt", " ", TxtMatrixAffine),
+        (".dat", " ", TxtMatrixAffine),
+        (".1D", " ", TxtMatrixAffine),
+        (".csv", ",", CsvMatrixAffine),
+        (".tsv", "\t", TsvMatrixAffine),
+    ],
+)
+def test_text_extension_beats_flirt(tmp_path, ext, sep, cls) -> None:  # noqa: ANN001
     path = tmp_path / f"affine{ext}"
-    np.savetxt(path, A, delimiter="," if ext == ".csv" else " ")
-    assert sniff(path) is TextMatrixAffine
-    assert isinstance(load(path), TextMatrixAffine)
+    np.savetxt(path, A, delimiter=sep)
+    assert sniff(path) is cls
+    assert isinstance(load(path), cls)
 
 
 def test_flirt_mat_stays_flirt(tmp_path) -> None:  # noqa: ANN001
@@ -403,7 +498,7 @@ def test_flirt_mat_stays_flirt(tmp_path) -> None:  # noqa: ANN001
     assert isinstance(load(path), FlirtTransform)
     # ... but the matrix reader can be asked for explicitly
     xform = load(path, hint="matrix")
-    assert isinstance(xform, TextMatrixAffine)
+    assert isinstance(xform, TxtMatrixAffine)
     assert np.allclose(_homog(xform), A, atol=1e-6)
 
 
@@ -423,7 +518,7 @@ def test_itk_tfm_as_txt_stays_itk(tmp_path) -> None:  # noqa: ANN001
 
     path = tmp_path / "affine.txt"
     shutil.copy(data_dir / "itk_affine3d.tfm", path)
-    assert TextMatrixAffine.sniff(path) == Confidence.NO
+    assert TxtMatrixAffine.sniff(path) == Confidence.NO
     assert sniff(path) is TfmTransform
 
 
@@ -449,7 +544,13 @@ def _write_all(tmp_path):  # noqa: ANN001, ANN202
     files = {}
     path = tmp_path / "affine.txt"
     np.savetxt(path, A)
-    files[TextMatrixAffine] = path
+    files[TxtMatrixAffine] = path
+    path = tmp_path / "affine.csv"
+    np.savetxt(path, A, delimiter=",")
+    files[CsvMatrixAffine] = path
+    path = tmp_path / "affine.tsv"
+    np.savetxt(path, A, delimiter="\t")
+    files[TsvMatrixAffine] = path
     path = tmp_path / "affine.npy"
     np.save(path, A)
     files[NpyMatrixAffine] = path
@@ -458,7 +559,7 @@ def _write_all(tmp_path):  # noqa: ANN001, ANN202
     files[NpzMatrixAffine] = path
     path = tmp_path / "affine_v5.mat"
     scipy.io.savemat(path, {"M": A})
-    files[MatMatrixAffine] = path
+    files[MatLegacyMatrixAffine] = path
     path = tmp_path / "affine_v73.mat"
     _savemat73(path, M=A)
     files[Mat73MatrixAffine] = path
@@ -474,6 +575,11 @@ def test_each_class_reads_only_its_container(tmp_path) -> None:  # noqa: ANN001
                 assert np.allclose(_homog(cls.from_file(path)), A)
             else:
                 assert cls.sniff(path) == Confidence.NO, (cls, path)
+                if (cls, reader) == (TxtMatrixAffine, TsvMatrixAffine):
+                    # tabs are whitespace: asked to, `.txt` reads a TSV
+                    # (but leaves it to TSV in dispatch)
+                    cls.from_file(path)
+                    continue
                 with pytest.raises(ParserContentError):
                     cls.from_file(path)
         # dispatch agrees, with or without the "matrix" hint
@@ -485,19 +591,28 @@ def test_mat_v4_is_not_text() -> None:
     buffer = io.BytesIO()
     scipy.io.savemat(buffer, {"M": A}, format="4")
     content = buffer.getvalue()
+    assert MatLegacyMatrixAffine.sniff_bytes(content) == Confidence.WEAK
     assert MatMatrixAffine.sniff_bytes(content) == Confidence.WEAK
-    assert TextMatrixAffine.sniff_bytes(content) == Confidence.NO
+    for cls in (TxtMatrixAffine, CsvMatrixAffine, TsvMatrixAffine):
+        assert cls.sniff_bytes(content) == Confidence.NO
+        with pytest.raises(ParserContentError):
+            cls.from_bytes(content)
     assert MatMatrixAffine.sniff_text(_text(A)) == Confidence.NO
+    assert MatLegacyMatrixAffine.sniff_text(_text(A)) == Confidence.NO
 
 
 @pytest.mark.parametrize(
     "hint, cls",
     [
-        ("matrix.txt", TextMatrixAffine),
+        ("matrix.txt", TxtMatrixAffine),
+        ("matrix.csv", CsvMatrixAffine),
+        ("matrix.tsv", TsvMatrixAffine),
         ("matrix.npy", NpyMatrixAffine),
         ("matrix.npz", NpzMatrixAffine),
-        ("matrix.mat", MatMatrixAffine),
-        ("matrix.mat73", Mat73MatrixAffine),
+        ("matrix.mat", MatLegacyMatrixAffine),
+        ("matrix.mat", Mat73MatrixAffine),
+        ("matrix.mat.73", Mat73MatrixAffine),
+        ("mat.73", Mat73MatrixAffine),
         ("affine.matrix.npy", NpyMatrixAffine),
     ],
 )
@@ -506,7 +621,7 @@ def test_container_hints(tmp_path, hint, cls) -> None:  # noqa: ANN001
     assert type(load(files[cls], hint=hint)) is cls
     # a container hint does not read another container
     other = files[
-        TextMatrixAffine if cls is not TextMatrixAffine else NpyMatrixAffine
+        TxtMatrixAffine if cls is not TxtMatrixAffine else NpyMatrixAffine
     ]
     with pytest.raises(ParserContentError):
         load(other, hint=hint)
@@ -517,7 +632,7 @@ def test_container_hint_overrides_extension(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "affine.mat"
     np.savetxt(path, A)
     xform = load(path, hint="matrix.txt")
-    assert type(xform) is TextMatrixAffine
+    assert type(xform) is TxtMatrixAffine
 
 
 def test_base_is_abstract(tmp_path) -> None:  # noqa: ANN001
@@ -541,15 +656,87 @@ def test_array_parsers_are_generic() -> None:
     np.save(buffer, np.arange(24.0).reshape(2, 3, 4))
     name, array = arrays.NpyArrayParser.read_array(buffer.getvalue())
     assert name is None and array.shape == (2, 3, 4)
-    name, array = arrays.TextArrayParser.read_array(["1 2 3", "4 5 6"])
+    # the text base is lenient about separators; its readers are not
+    name, array = arrays.TextArrayParser.read_array(["1 2;3", "4,5\t6"])
+    assert array.shape == (2, 3)
+    name, array = arrays.CsvArrayParser.read_array(["1, 2,3", "4,5 , 6"])
     assert array.shape == (2, 3)
     expected = {
-        arrays.TextArrayParser: ("txt",),
-        arrays.NpyArrayParser: ("npy",),
-        arrays.NpzArrayParser: ("npz",),
-        arrays.MatArrayParser: ("mat",),
-        arrays.Mat73ArrayParser: ("mat73",),
+        arrays.TxtArrayParser: (("txt",), (".txt", ".dat", ".1D")),
+        arrays.CsvArrayParser: (("csv",), (".csv",)),
+        arrays.TsvArrayParser: (("tsv",), (".tsv",)),
+        arrays.NpyArrayParser: (("npy",), (".npy",)),
+        arrays.NpzArrayParser: (("npz",), (".npz",)),
+        arrays.MatArrayParser: (("mat",), (".mat",)),
+        arrays.Mat73ArrayParser: (("mat73", "73"), (".mat",)),
     }
-    for parser, hints in expected.items():
-        assert parser.HINTS == hints
-        assert parser.EXTENSIONS
+    for parser, (hints, extensions) in expected.items():
+        assert parser.__dict__["HINTS"] == hints
+        assert parser.EXTENSIONS == extensions
+    # the legacy reader adds no hint of its own
+    assert "HINTS" not in arrays.MatLegacyArrayParser.__dict__
+    assert arrays.MatLegacyArrayParser.HINTS == ("mat",)
+    assert not arrays.TextArrayParser.EXTENSIONS
+    assert "HINTS" not in arrays.TextArrayParser.__dict__
+
+
+def test_text_parsers_reuse_text_plumbing() -> None:
+    """The text readers are `TextFileParser`s, the binary ones
+    `BinaryFileParser`s: undecodable bytes are not text."""
+    for parser in (arrays.TxtArrayParser, arrays.CsvArrayParser):
+        assert issubclass(parser, TextFileParser)
+        assert not issubclass(parser, BinaryFileParser)
+        assert parser._READ_MODE == "rt"
+        assert parser.sniff_bytes(b"\xff\xfe1 2\n") == Confidence.NO
+        assert parser.sniff_bytes(b"1 2\x00\n3 4") == Confidence.NO
+    for parser in (arrays.NpyArrayParser, arrays.MatArrayParser):
+        assert issubclass(parser, BinaryFileParser)
+        assert parser._READ_MODE == "rb"
+
+
+@pytest.mark.parametrize(
+    "fmt, variant",
+    [
+        ("4", MatLegacyMatrixAffine),
+        ("5", MatLegacyMatrixAffine),
+        ("7.3", Mat73MatrixAffine),
+    ],
+)
+def test_mat_dispatcher(tmp_path, fmt, variant) -> None:  # noqa: ANN001
+    """`MatMatrixAffine` reads every MATLAB version: its score is the
+    best of its variants', and it returns an object of the variant whose
+    container the file is."""
+    path = tmp_path / "affine.mat"
+    if fmt == "7.3":
+        _savemat73(path, M=A)
+    else:
+        scipy.io.savemat(path, {"M": A}, format=fmt)
+    other = (set(MatMatrixAffine.VARIANTS) - {variant}).pop()
+    assert MatMatrixAffine.sniff(path) == variant.sniff(path) > 0
+    assert other.sniff(path) == Confidence.NO
+    xform = MatMatrixAffine.from_file(path)
+    assert type(xform) is variant
+    assert np.allclose(_homog(xform), A)
+    with pytest.raises(ParserContentError):
+        other.from_file(path)
+    # the generic parser dispatches the same way
+    content = path.read_bytes()
+    assert arrays.MatArrayParser.variant(content).__name__ == (
+        "MatLegacyArrayParser" if fmt != "7.3" else "Mat73ArrayParser"
+    )
+    _, array = arrays.MatArrayParser.read_array(content)
+    assert np.allclose(array, A)
+    # dispatch never sees a tie between the dispatcher and a variant
+    assert sniff(path) is variant
+    assert type(load(path, hint="mat")) is variant
+
+
+def test_mat_dispatcher_is_not_registered() -> None:
+    """Only the variants are registered: the dispatcher would compete
+    with its own subclasses for the same files."""
+    assert MatMatrixAffine not in FileBasedTransformation._REGISTRY
+    assert not MatLegacyMatrixAffine.variants()
+    assert not Mat73MatrixAffine.variants()
+    with pytest.raises(ParserContentError):
+        MatMatrixAffine.from_text(_text(A))
+    assert MatMatrixAffine.sniff_text(_text(A)) == Confidence.NO

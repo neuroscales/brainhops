@@ -15,11 +15,14 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.arrays import (
     ArrayParser,
+    CsvArrayParser,
     Mat73ArrayParser,
     MatArrayParser,
+    MatLegacyArrayParser,
     NpyArrayParser,
     NpzArrayParser,
-    TextArrayParser,
+    TsvArrayParser,
+    TxtArrayParser,
     is_numeric_array,
 )
 from brainhops.io.base.parsers import Confidence, ParserContentError
@@ -63,14 +66,21 @@ class MatrixAffine(
     container has its own registered subclass, which mixes in that
     container's [`ArrayParser`][brainhops.io.base.arrays.ArrayParser]:
 
-    - [`TextMatrixAffine`][]: delimited text (`.txt`, `.csv`, `.tsv`,
-      `.dat`, `.1D`); hint `"matrix.txt"`.
+    - [`TxtMatrixAffine`][]: whitespace-separated text (`.txt`, `.dat`,
+      `.1D`); hint `"matrix.txt"`.
+    - [`CsvMatrixAffine`][]: comma-separated text (`.csv`); hint
+      `"matrix.csv"`.
+    - [`TsvMatrixAffine`][]: tab-separated text (`.tsv`); hint
+      `"matrix.tsv"`.
     - [`NpyMatrixAffine`][]: NumPy `.npy`; hint `"matrix.npy"`.
     - [`NpzMatrixAffine`][]: NumPy `.npz`; hint `"matrix.npz"`.
-    - [`MatMatrixAffine`][]: MATLAB v4 and v5-v7 `.mat`, read with
-      `scipy.io`; hint `"matrix.mat"`.
+    - [`MatLegacyMatrixAffine`][]: MATLAB v4 and v5-v7 `.mat`, read
+      with `scipy.io`; hint `"matrix.mat"`.
     - [`Mat73MatrixAffine`][]: MATLAB v7.3 (HDF5) `.mat`, read with
-      `h5py`; hint `"matrix.mat73"`.
+      `h5py`; hints `"matrix.mat"`, `"mat.73"`, `"matrix.mat.73"`.
+
+    [`MatMatrixAffine`][] (hint `"matrix.mat"`) is their unregistered
+    parent: it reads any MATLAB version by dispatching to them.
 
     All of them answer to `hint="matrix"`, which then picks the
     container from the content. In a container that holds several
@@ -114,7 +124,8 @@ class MatrixAffine(
     a FLIRT `.mat` (a text `(4, 4)`), an ITK `.mat` (MATLAB v4), an ITK
     `.tfm` / `.txt` / `.h5`. The exception is a text matrix whose file
     name has a text-array extension (`.txt`, `.csv`, `.tsv`, `.dat`,
-    `.1D`), which scores `LIKELY` so it is not read as a FLIRT matrix.
+    `.1D`) matching its separator, which scores `LIKELY` so it is not
+    read as a FLIRT matrix.
     Files over 1 MiB are not sniffed. Pass `hint="matrix"` (or a
     container hint) to force these readers.
     """
@@ -193,16 +204,35 @@ class MatrixAffine(
 
 
 @register_format
-class TextMatrixAffine(TextArrayParser, MatrixAffine):
+class TxtMatrixAffine(TxtArrayParser, MatrixAffine):
     """
-    An affine stored as a bare matrix in a delimited text file.
-
-    One row per line, values separated by whitespace, tabs, commas or
-    semicolons, `#` starting a comment; blank lines are skipped. See
-    [`MatrixAffine`][] for the conventions.
+    An affine stored as a bare matrix in whitespace-separated text
+    (`.txt`, also `.dat` and AFNI-style `.1D`): one row per line, `#`
+    starting a comment, blank lines skipped. See [`MatrixAffine`][] for
+    the conventions.
     """
 
-    HINTS = TextArrayParser.HINTS
+    HINTS = TxtArrayParser.HINTS
+
+
+@register_format
+class CsvMatrixAffine(CsvArrayParser, MatrixAffine):
+    """
+    An affine stored as a bare matrix in comma-separated text (`.csv`).
+    See [`MatrixAffine`][] for the conventions.
+    """
+
+    HINTS = CsvArrayParser.HINTS
+
+
+@register_format
+class TsvMatrixAffine(TsvArrayParser, MatrixAffine):
+    """
+    An affine stored as a bare matrix in tab-separated text (`.tsv`).
+    See [`MatrixAffine`][] for the conventions.
+    """
+
+    HINTS = TsvArrayParser.HINTS
 
 
 @register_format
@@ -228,26 +258,39 @@ class NpzMatrixAffine(NpzArrayParser, MatrixAffine):
     HINTS = NpzArrayParser.HINTS
 
 
-@register_format
 class MatMatrixAffine(MatArrayParser, MatrixAffine):
     """
-    An affine stored as a bare matrix in a MATLAB v4 or v5-v7 `.mat`
-    file, read with `scipy.io`. Select the variable with `variable=`;
-    by default, the only 2-D numeric variable. See
-    [`MatrixAffine`][] for the conventions.
+    An affine stored as a bare matrix in a MATLAB `.mat` file of any
+    version. Select the variable with `variable=`; by default, the only
+    2-D numeric variable. See [`MatrixAffine`][] for the conventions.
+
+    It dispatches to [`MatLegacyMatrixAffine`][] (v4, v5-v7) or
+    [`Mat73MatrixAffine`][] (v7.3) by content, and returns an object of
+    that class. It is not registered itself: its two variants are, and
+    answer to its hint `"matrix.mat"`, so registering it too would only
+    put it in competition with its own subclasses.
     """
 
     HINTS = MatArrayParser.HINTS
 
 
 @register_format
-class Mat73MatrixAffine(Mat73ArrayParser, MatrixAffine):
+class MatLegacyMatrixAffine(MatLegacyArrayParser, MatMatrixAffine):
+    """
+    An affine stored as a bare matrix in a MATLAB v4 or v5-v7 `.mat`
+    file, read with `scipy.io`. See [`MatMatrixAffine`][].
+    """
+
+
+@register_format
+class Mat73MatrixAffine(Mat73ArrayParser, MatMatrixAffine):
     """
     An affine stored as a bare matrix in a MATLAB v7.3 (HDF5) `.mat`
-    file, read with `h5py`. Select the variable with `variable=`; by
-    default, the only 2-D numeric variable. v7.3 stores arrays
-    transposed, which is undone. See [`MatrixAffine`][]
-    for the conventions.
+    file, read with `h5py`. v7.3 stores arrays transposed, which is
+    undone. See [`MatMatrixAffine`][].
     """
 
     HINTS = Mat73ArrayParser.HINTS
+
+
+MatMatrixAffine.VARIANTS = (MatLegacyMatrixAffine, Mat73MatrixAffine)

@@ -4,9 +4,11 @@
 The file stores only the numbers; what they mean (spaces, index base,
 direction, vector convention) is given by the caller when reading. See
 [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine], the
-abstract base of one reader per container: [`TextMatrixAffine`][],
-[`NpyMatrixAffine`][], [`NpzMatrixAffine`][], [`MatMatrixAffine`][]
-(MATLAB v4-v7) and [`Mat73MatrixAffine`][] (MATLAB v7.3).
+abstract base of one reader per container: [`TxtMatrixAffine`][],
+[`CsvMatrixAffine`][], [`TsvMatrixAffine`][], [`NpyMatrixAffine`][],
+[`NpzMatrixAffine`][], and [`MatMatrixAffine`][], which dispatches to
+[`MatLegacyMatrixAffine`][] (MATLAB v4-v7) or [`Mat73MatrixAffine`][]
+(MATLAB v7.3).
 
 !!! example "Reading a 1-based voxel-to-voxel matrix saved by MATLAB"
     ```python
@@ -21,18 +23,24 @@ abstract base of one reader per container: [`TextMatrixAffine`][],
 
 __all__ = [
     "MatrixAffine",
-    "TextMatrixAffine",
+    "TxtMatrixAffine",
+    "CsvMatrixAffine",
+    "TsvMatrixAffine",
     "NpyMatrixAffine",
     "NpzMatrixAffine",
     "MatMatrixAffine",
+    "MatLegacyMatrixAffine",
     "Mat73MatrixAffine",
 ]
 
 from ._xform import (
+    CsvMatrixAffine,
     Mat73MatrixAffine,
+    MatLegacyMatrixAffine,
     MatMatrixAffine,
     MatrixAffine,
     NpyMatrixAffine,
     NpzMatrixAffine,
-    TextMatrixAffine,
+    TsvMatrixAffine,
+    TxtMatrixAffine,
 )

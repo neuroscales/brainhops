@@ -3,13 +3,22 @@ reader per container, each built on that container's generic array
 parser from [`brainhops.io.base.arrays`][brainhops.io.base.arrays], and
 all deriving from the abstract `MatrixAffine`, which is never registered:
 
-| Class               | Container                  | Extensions                            | Hint              |
-|---------------------|----------------------------|---------------------------------------|-------------------|
-| `TextMatrixAffine`  | delimited text             | `.txt`, `.csv`, `.tsv`, `.dat`, `.1D` | `"matrix.txt"`    |
-| `NpyMatrixAffine`   | NumPy `.npy`               | `.npy`                                | `"matrix.npy"`    |
-| `NpzMatrixAffine`   | NumPy `.npz`               | `.npz`                                | `"matrix.npz"`    |
-| `MatMatrixAffine`   | MATLAB v4, v5-v7 (`scipy`) | `.mat`                                | `"matrix.mat"`    |
-| `Mat73MatrixAffine` | MATLAB v7.3 (`h5py`)       | `.mat`                                | `"matrix.mat73"`  |
+| Class                   | Container                   | Extensions             | Hints                                 |
+|-------------------------|-----------------------------|------------------------|---------------------------------------|
+| `TxtMatrixAffine`       | whitespace-separated text   | `.txt`, `.dat`, `.1D`  | `"matrix.txt"`                        |
+| `CsvMatrixAffine`       | comma-separated text        | `.csv`                 | `"matrix.csv"`                        |
+| `TsvMatrixAffine`       | tab-separated text          | `.tsv`                 | `"matrix.tsv"`                        |
+| `NpyMatrixAffine`       | NumPy `.npy`                | `.npy`                 | `"matrix.npy"`                        |
+| `NpzMatrixAffine`       | NumPy `.npz`                | `.npz`                 | `"matrix.npz"`                        |
+| `MatLegacyMatrixAffine` | MATLAB v4, v5-v7 (`scipy`)  | `.mat`                 | `"matrix.mat"`                        |
+| `Mat73MatrixAffine`     | MATLAB v7.3 (`h5py`)        | `.mat`                 | `"matrix.mat"`, `"mat.73"`, `"matrix.mat.73"` |
+
+`MatMatrixAffine` (hint `"matrix.mat"`) is the parent of the two MATLAB
+readers. It is not registered (its variants are), but it can be used
+directly: it reads any MATLAB version and returns an object of the
+variant that matches the file. AFNI `.1D` and generic `.dat` files are
+whitespace-separated columns with `#` comments, so they are read by
+`TxtMatrixAffine`.
 
 `hint="matrix"` selects among all of them by content; a container hint
 selects one. The conventions are given when reading:
@@ -33,7 +42,9 @@ integer index = voxel centre).
 Because any small numeric table reads as a matrix, these readers score
 low and never take a file away from FLIRT (`.mat` text) or ITK (`.mat`
 v4, `.tfm`, `.h5`), except that a text matrix named `.txt`, `.csv`,
-`.tsv`, `.dat` or `.1D` is preferred to FLIRT. Use `hint="matrix"` (or a
+`.tsv`, `.dat` or `.1D` (with that file's separator) is preferred to
+FLIRT. Without a telling name, text content goes to one reader only: a
+comma makes it CSV, tab-separated values TSV, anything else TXT. Use `hint="matrix"` (or a
 container hint) to force them.
 
 # ::: brainhops.io.transformations.matrix
