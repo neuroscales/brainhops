@@ -6,11 +6,11 @@ from brainhops.io.transformations.base import (
 )
 
 
-class FSLTransformationFormat(TransformationFormat):
+class FslTransformationFormat(TransformationFormat):
     """A transformation stored in an FSL format."""
 
     HINTS = ("fsl",)
 
 
-class FSLAffineFormat(FSLTransformationFormat, AffineTransformationFormat):
+class FslAffineFormat(FslTransformationFormat, AffineTransformationFormat):
     """An affine transformation stored in an FSL format."""

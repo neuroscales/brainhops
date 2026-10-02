@@ -29,24 +29,24 @@ from brainhops.io.transformations.base import (  # noqa: E402
     FileBasedTransformation,
 )
 from brainhops.io.transformations.base.affines import (  # noqa: E402
-    LPSToVoxel,
-    VoxelToLPS,
+    LpsToVoxel,
+    VoxelToLps,
 )
 from brainhops.io.transformations.base.fields import (  # noqa: E402
-    LPSCoordinatesField,
+    LpsCoordinatesField,
 )
 from brainhops.io.transformations.itk._systems import (  # noqa: E402
     _make_system,
 )
 from brainhops.io.transformations.itk.nifti import (  # noqa: E402
-    ITKNiftiCoordinatesField,
-    ITKNiftiDisplacementField,
-    ITKNiftiField,
+    ItkNiftiCoordinatesField,
+    ItkNiftiDisplacementField,
+    ItkNiftiField,
 )
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASCoordinatesField,
-    NiftiRASDisplacementField,
-    NiftiVoxelToRAS,
+    NiftiRasCoordinatesField,
+    NiftiRasDisplacementField,
+    NiftiVoxelToRas,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -166,7 +166,7 @@ def itk_warp(tmp_path, ndim):  # noqa: ANN001, ANN201
 
 
 def test_the_field_maps_lps_to_lps(itk_warp, ndim) -> None:  # noqa: ANN001
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     assert field.input == _make_system(ndim)
     assert field.output == _make_system(ndim)
     assert len(field.input.axes) == ndim
@@ -175,16 +175,16 @@ def test_the_field_maps_lps_to_lps(itk_warp, ndim) -> None:  # noqa: ANN001
         field.displacement,
         field.voxel2lps,
     ]
-    assert isinstance(field.lps2voxel, LPSToVoxel)
+    assert isinstance(field.lps2voxel, LpsToVoxel)
     assert isinstance(field.displacement, xforms.DisplacementField)
-    assert isinstance(field.voxel2lps, VoxelToLPS)
+    assert isinstance(field.voxel2lps, VoxelToLps)
     np.testing.assert_allclose(field.voxel2lps.matrix, _vox2lps(ndim)[:-1])
 
 
 def test_the_endpoints_are_itks_spaces(itk_warp, ndim) -> None:  # noqa: ANN001
     """(L, P) in 2-D and `LPSmm` in 3-D, both in millimetres, and the
     pixel or voxel grid in between."""
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     world = field.input
     if ndim == 3:
         assert isinstance(world, systems.LPSmm)
@@ -202,21 +202,21 @@ def test_the_endpoints_are_itks_spaces(itk_warp, ndim) -> None:  # noqa: ANN001
 
 def test_the_grid_is_read_from_the_ras_header_as_lps(itk_warp, ndim) -> None:  # noqa: ANN001
     """The header is RAS; ITK's grid is the same one, expressed in LPS."""
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     np.testing.assert_allclose(
         field.lps2voxel.matrix, np.linalg.inv(_vox2lps(ndim))[:-1]
     )
 
 
 def test_the_singleton_axes_are_dropped(itk_warp, ndim) -> None:  # noqa: ANN001
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     shape = np.asarray(field.displacement.field).shape
     assert shape == (*SHAPES[ndim], ndim)
 
 
 def test_displacements_are_stored_in_voxel_units(itk_warp, ndim) -> None:  # noqa: ANN001
     """A `DisplacementField` adds its values in the units of its grid."""
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     linear = _vox2lps(ndim)[:ndim, :ndim]
     expected = _ramp(ndim) @ np.linalg.inv(linear).T
     np.testing.assert_allclose(
@@ -227,7 +227,7 @@ def test_displacements_are_stored_in_voxel_units(itk_warp, ndim) -> None:  # noq
 def test_itks_interpolation_is_kept(itk_warp) -> None:  # noqa: ANN001
     """ITK interpolates a displacement field linearly, and extends it with
     its nearest value."""
-    displacement = ITKNiftiDisplacementField.from_file(itk_warp).displacement
+    displacement = ItkNiftiDisplacementField.from_file(itk_warp).displacement
     assert displacement.order == 1
     assert displacement.bound == "nearest"
     assert not displacement.coeff
@@ -238,7 +238,7 @@ def test_a_file_that_is_not_in_itks_layout_is_refused(tmp_path) -> None:  # noqa
     path = tmp_path / "plain.nii.gz"
     nb.save(img, str(path))
     with pytest.raises(Exception, match="ITK field"):
-        ITKNiftiDisplacementField.from_file(path)
+        ItkNiftiDisplacementField.from_file(path)
 
 
 # ----------------------------------------------------------------------
@@ -253,7 +253,7 @@ def test_a_constant_lps_displacement_moves_ras_points_with_x_y_negated(
     """`u_lps = (1, 2[, 3])` is `(-1, -2[, 3])` in RAS, everywhere."""
     u = np.array([1.0, 2.0, 3.0])[:ndim]
     vectors = np.broadcast_to(u.astype("float32"), (*SHAPES[ndim], ndim))
-    field = ITKNiftiDisplacementField.from_file(
+    field = ItkNiftiDisplacementField.from_file(
         _write(tmp_path / "warp.nii.gz", vectors.copy())
     )
     # On and between the grid nodes alike.
@@ -270,7 +270,7 @@ def test_a_constant_lps_displacement_moves_ras_points_with_x_y_negated(
 def test_a_varying_lps_displacement_maps_every_node(itk_warp, ndim) -> None:  # noqa: ANN001
     """At each voxel: `x_lps -> x_lps + u_lps`, i.e.
     `x_ras -> x_ras + (-u_x, -u_y[, u_z])`."""
-    field = ITKNiftiDisplacementField.from_file(itk_warp)
+    field = ItkNiftiDisplacementField.from_file(itk_warp)
     points_ras = _all_nodes_ras(ndim)
     ramp = _ramp(ndim).reshape(-1, ndim)
     moved = _apply_ras(field, points_ras)
@@ -294,8 +294,8 @@ def test_a_3d_dispvect_file_holds_ras_vectors(tmp_path) -> None:  # noqa: ANN001
     ras = _write(tmp_path / "ras.nii.gz", _ramp(3) * _flip(3), DISPVECT)
     points = _all_nodes_ras(3)
     np.testing.assert_allclose(
-        _apply_ras(ITKNiftiDisplacementField.from_file(ras), points),
-        _apply_ras(ITKNiftiDisplacementField.from_file(lps), points),
+        _apply_ras(ItkNiftiDisplacementField.from_file(ras), points),
+        _apply_ras(ItkNiftiDisplacementField.from_file(lps), points),
         rtol=1e-5,
         atol=1e-4,
     )
@@ -307,8 +307,8 @@ def test_a_2d_dispvect_file_is_not_converted(tmp_path) -> None:  # noqa: ANN001
     lps = _write(tmp_path / "lps.nii.gz", _ramp(2), VECTOR)
     disp = _write(tmp_path / "disp.nii.gz", _ramp(2), DISPVECT)
     np.testing.assert_allclose(
-        ITKNiftiDisplacementField.from_file(disp).displacement.field,
-        ITKNiftiDisplacementField.from_file(lps).displacement.field,
+        ItkNiftiDisplacementField.from_file(disp).displacement.field,
+        ItkNiftiDisplacementField.from_file(lps).displacement.field,
     )
 
 
@@ -318,12 +318,12 @@ def test_coordinates_and_displacements_agree(tmp_path, ndim) -> None:  # noqa: A
     disp = _write(tmp_path / "disp.nii.gz", _ramp(ndim))
     positions = _grid_points(_vox2lps(ndim)) + _ramp(ndim)
     coords = _write(tmp_path / "coords.nii.gz", positions.astype("float32"))
-    disp = ITKNiftiDisplacementField.from_file(disp)
-    coords = ITKNiftiCoordinatesField.from_file(coords)
+    disp = ItkNiftiDisplacementField.from_file(disp)
+    coords = ItkNiftiCoordinatesField.from_file(coords)
     assert coords.input == _make_system(ndim)
     assert coords.output == _make_system(ndim)
-    assert isinstance(coords.lps2voxel, LPSToVoxel)
-    assert isinstance(coords.coordinates, LPSCoordinatesField)
+    assert isinstance(coords.lps2voxel, LpsToVoxel)
+    assert isinstance(coords.coordinates, LpsCoordinatesField)
     assert coords.coordinates.output == _make_system(ndim)
     points = _all_nodes_ras(ndim)
     np.testing.assert_allclose(
@@ -380,7 +380,7 @@ def _clamped_voxels(points_lps: np.ndarray) -> np.ndarray:
     ],
 )
 @pytest.mark.parametrize(
-    "cls", [ITKNiftiDisplacementField, ITKNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
 )
 @pytest.mark.parametrize("region", ["before", "after", "around", "centred"])
 def test_points_outside_the_grid_take_the_nearest_vector(
@@ -403,7 +403,7 @@ def test_points_outside_the_grid_take_the_nearest_vector(
     d = np.arange(ndim)
     ramp = (d + 1.0) + 0.1 * (d + 1) * voxels
     vox2lps = _vox2lps(ndim)
-    if cls is ITKNiftiCoordinatesField:
+    if cls is ItkNiftiCoordinatesField:
         vectors = _grid_points(vox2lps) + _ramp(ndim)
         world = voxels @ vox2lps[:ndim, :ndim].T + vox2lps[:ndim, ndim]
         expected = world + ramp
@@ -433,7 +433,7 @@ def test_a_dispvect_file_read_as_itk_coordinates_is_converted_to_lps(
     coords_ras = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "ras.nii.gz"
     _write(path, coords_ras, DISPVECT)
-    itk = ITKNiftiCoordinatesField.from_file(path)
+    itk = ItkNiftiCoordinatesField.from_file(path)
     np.testing.assert_allclose(
         np.asarray(itk.coordinates.field) * _flip(3), coords_ras, rtol=1e-6
     )
@@ -454,8 +454,8 @@ def test_an_itk_vector_file_is_ambiguous_without_a_hint(itk_warp) -> None:  # no
         io.transformations.load(itk_warp)
     with pytest.raises(AmbiguousFormatError):
         io.load(itk_warp)
-    assert ITKNiftiDisplacementField.sniff(itk_warp) == pytest.approx(
-        NiftiRASCoordinatesField.sniff(itk_warp)
+    assert ItkNiftiDisplacementField.sniff(itk_warp) == pytest.approx(
+        NiftiRasCoordinatesField.sniff(itk_warp)
     )
 
 
@@ -469,14 +469,14 @@ def test_a_vector_file_named_mapping_is_not_claimed(tmp_path, ndim) -> None:  # 
     img = nb.load(str(path))
     img.header.set_intent(VECTOR, name="Mapping")
     nb.save(img, str(path))
-    assert ITKNiftiDisplacementField.sniff(path) == 0
-    assert ITKNiftiCoordinatesField.sniff(path) == 0
+    assert ItkNiftiDisplacementField.sniff(path) == 0
+    assert ItkNiftiCoordinatesField.sniff(path) == 0
     sniffed = io.transformations.sniff(path)
     assert sniffed is not None
-    assert not issubclass(sniffed, ITKNiftiField)
-    assert not isinstance(io.transformations.load(path), ITKNiftiField)
+    assert not issubclass(sniffed, ItkNiftiField)
+    assert not isinstance(io.transformations.load(path), ItkNiftiField)
     loaded = io.transformations.load(path, hint="itk")
-    assert type(loaded) is ITKNiftiDisplacementField
+    assert type(loaded) is ItkNiftiDisplacementField
 
 
 def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  # noqa: ANN001
@@ -488,13 +488,13 @@ def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  
     """
     coords = (_grid_points(VOX2RAS[3]) + 1.5).astype("float32")
     path = tmp_path / "coords.nii.gz"
-    NiftiRASCoordinatesField(field=coords).save(path)
+    NiftiRasCoordinatesField(field=coords).save(path)
     header = nb.load(str(path)).header
     assert header.get_intent() == ("vector", (), "Mapping")
     assert header.get_data_shape() == (*SHAPES[3], 1, 3)
-    assert io.transformations.sniff(path) is NiftiRASCoordinatesField
-    assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
-    assert type(io.load(path)) is NiftiRASCoordinatesField
+    assert io.transformations.sniff(path) is NiftiRasCoordinatesField
+    assert type(io.transformations.load(path)) is NiftiRasCoordinatesField
+    assert type(io.load(path)) is NiftiRasCoordinatesField
 
     bare = _write(tmp_path / "bare.nii.gz", coords, VECTOR)
     assert nb.load(str(bare)).header.get_intent()[2] == ""
@@ -514,14 +514,14 @@ def test_a_brainhops_coordinates_field_loads_without_a_hint(tmp_path) -> None:  
 )
 def test_a_hint_selects_the_itk_displacement_reader(itk_warp, hint) -> None:  # noqa: ANN001
     loaded = io.transformations.load(itk_warp, hint=hint)
-    assert type(loaded) is ITKNiftiDisplacementField
-    assert type(io.load(itk_warp, hint=hint)) is ITKNiftiDisplacementField
+    assert type(loaded) is ItkNiftiDisplacementField
+    assert type(io.load(itk_warp, hint=hint)) is ItkNiftiDisplacementField
 
 
 @pytest.mark.parametrize("hint", ["itk.coordinates", "ants.coordinates"])
 def test_a_hint_selects_the_itk_coordinates_reader(itk_warp, hint) -> None:  # noqa: ANN001
     loaded = io.transformations.load(itk_warp, hint=hint)
-    assert type(loaded) is ITKNiftiCoordinatesField
+    assert type(loaded) is ItkNiftiCoordinatesField
 
 
 def test_a_hint_selects_the_ras_reader(tmp_path) -> None:  # noqa: ANN001
@@ -529,14 +529,14 @@ def test_a_hint_selects_the_ras_reader(tmp_path) -> None:  # noqa: ANN001
     since the ITK coordinates reader never claims a file on content."""
     path = _write(tmp_path / "warp.nii.gz", _ramp(3))
     loaded = io.transformations.load(path, hint="coordinates")
-    assert type(loaded) is NiftiRASCoordinatesField
+    assert type(loaded) is NiftiRasCoordinatesField
 
 
 @pytest.mark.parametrize(
     "intent, ras",
     [
-        (DISPVECT, NiftiRASDisplacementField),
-        (NONE, NiftiRASCoordinatesField),
+        (DISPVECT, NiftiRasDisplacementField),
+        (NONE, NiftiRasCoordinatesField),
     ],
 )
 def test_non_itk_intents_stay_with_the_ras_reader(
@@ -553,22 +553,22 @@ def test_non_itk_intents_stay_with_the_ras_reader(
     # ... but an explicit hint still reads them as ITK.
     for hint in ("itk", "ants"):
         loaded = io.transformations.load(path, hint=hint)
-        assert type(loaded) is ITKNiftiDisplacementField
+        assert type(loaded) is ItkNiftiDisplacementField
 
 
 def test_a_2d_field_without_itks_intent_is_not_claimed(tmp_path) -> None:  # noqa: ANN001
     """No RAS reader claims a two-component field either, so it stays the
     plain NIfTI affine it was before, and a hint still reaches it."""
     path = _write(tmp_path / "field.nii.gz", _ramp(2), NONE)
-    assert ITKNiftiDisplacementField.sniff(path) == 0
-    assert type(io.transformations.load(path)) is NiftiVoxelToRAS
+    assert ItkNiftiDisplacementField.sniff(path) == 0
+    assert type(io.transformations.load(path)) is NiftiVoxelToRas
     loaded = io.transformations.load(path, hint="itk")
-    assert type(loaded) is ITKNiftiDisplacementField
+    assert type(loaded) is ItkNiftiDisplacementField
 
 
 def test_fsl_intents_are_not_claimed(tmp_path) -> None:  # noqa: ANN001
     path = _write(tmp_path / "field.nii.gz", _ramp(3), FNIRT)
-    assert ITKNiftiDisplacementField.sniff(path) == 0
+    assert ItkNiftiDisplacementField.sniff(path) == 0
 
 
 @pytest.mark.parametrize(
@@ -586,11 +586,11 @@ def test_other_layouts_are_not_claimed(tmp_path, shape) -> None:  # noqa: ANN001
     img.header.set_intent(VECTOR)
     path = tmp_path / "field.nii.gz"
     nb.save(img, str(path))
-    assert ITKNiftiDisplacementField.sniff(path) == 0
+    assert ItkNiftiDisplacementField.sniff(path) == 0
 
 
 def test_coordinates_are_never_claimed_on_content(itk_warp) -> None:  # noqa: ANN001
-    assert ITKNiftiCoordinatesField.sniff(itk_warp) == 0
+    assert ItkNiftiCoordinatesField.sniff(itk_warp) == 0
 
 
 # ----------------------------------------------------------------------
@@ -652,7 +652,7 @@ def test_the_ants_hint_resolves_as_the_itk_hint(tmp_path) -> None:  # noqa: ANN0
 
 def test_itks_encoding_is_written(itk_warp, tmp_path, ndim) -> None:  # noqa: ANN001
     out = tmp_path / "out.nii.gz"
-    ITKNiftiDisplacementField.from_file(itk_warp).to_file(out)
+    ItkNiftiDisplacementField.from_file(itk_warp).to_file(out)
     img = nb.load(str(out))
     layout = (*SHAPES[ndim], *(1,) * (3 - ndim), 1, ndim)
     assert img.shape == layout
@@ -670,7 +670,7 @@ def test_itks_encoding_is_written(itk_warp, tmp_path, ndim) -> None:  # noqa: AN
 def test_a_dispvect_file_is_written_back_as_lps_vectors(tmp_path) -> None:  # noqa: ANN001
     path = _write(tmp_path / "ras.nii.gz", _ramp(3) * _flip(3), DISPVECT)
     out = tmp_path / "out.nii.gz"
-    ITKNiftiDisplacementField.from_file(path).to_file(out)
+    ItkNiftiDisplacementField.from_file(path).to_file(out)
     img = nb.load(str(out))
     assert int(img.header["intent_code"]) == VECTOR
     np.testing.assert_allclose(
@@ -679,11 +679,11 @@ def test_a_dispvect_file_is_written_back_as_lps_vectors(tmp_path) -> None:  # no
 
 
 @pytest.mark.parametrize(
-    "cls", [ITKNiftiDisplacementField, ITKNiftiCoordinatesField]
+    "cls", [ItkNiftiDisplacementField, ItkNiftiCoordinatesField]
 )
 def test_the_fields_round_trip(tmp_path, cls, ndim) -> None:  # noqa: ANN001
     vectors = _ramp(ndim)
-    if cls is ITKNiftiCoordinatesField:
+    if cls is ItkNiftiCoordinatesField:
         vectors = (_grid_points(_vox2lps(ndim)) + vectors).astype("float32")
     path = _write(tmp_path / "in.nii.gz", vectors)
     out = tmp_path / "out.nii.gz"
@@ -713,13 +713,13 @@ def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # n
     vox2lps = _vox2lps(ndim)
     world = _make_system(ndim)
     vectors = _ramp(ndim)
-    field = ITKNiftiDisplacementField(
+    field = ItkNiftiDisplacementField(
         transformations=[
-            LPSToVoxel(matrix=np.linalg.inv(vox2lps)[:-1], input=world),
+            LpsToVoxel(matrix=np.linalg.inv(vox2lps)[:-1], input=world),
             xforms.DisplacementField(
                 field=vectors @ np.linalg.inv(vox2lps[:ndim, :ndim]).T
             ),
-            VoxelToLPS(matrix=vox2lps[:-1], output=world),
+            VoxelToLps(matrix=vox2lps[:-1], output=world),
         ]
     )
     assert field.input == world
@@ -738,9 +738,9 @@ def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # n
 
 def test_spline_coefficients_are_not_written() -> None:
     voxel = systems.VoxelCoordinateSystem()
-    field = ITKNiftiDisplacementField(
+    field = ItkNiftiDisplacementField(
         transformations=[
-            LPSToVoxel(matrix=np.eye(4)[:3]),
+            LpsToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
                 field=np.zeros((*SHAPES[3], 3)),
                 input=voxel,
@@ -748,7 +748,7 @@ def test_spline_coefficients_are_not_written() -> None:
                 order=3,
                 coeff=True,
             ),
-            VoxelToLPS(matrix=np.eye(4)[:3]),
+            VoxelToLps(matrix=np.eye(4)[:3]),
         ]
     )
     with pytest.raises(WriterError):
@@ -820,7 +820,7 @@ def test_points_move_where_itk_moves_them(tmp_path, ndim) -> None:  # noqa: ANN0
         ]
     )
 
-    ours = ITKNiftiDisplacementField.from_file(path)
+    ours = ItkNiftiDisplacementField.from_file(path)
     np.testing.assert_allclose(
         _apply(ours, points), itk_map(path, points), atol=1e-4
     )

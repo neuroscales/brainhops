@@ -231,7 +231,7 @@ def test_format_hint_selects_reader_without_a_matching_extension(
 
     transform = load_transform(str(path), hint="flirt")
 
-    assert type(transform).__name__ == "FLIRTTransform"
+    assert type(transform).__name__ == "FlirtTransform"
     np.testing.assert_array_equal(transform.flirt_matrix, np.eye(4))
 
 
@@ -249,8 +249,8 @@ def test_io_dispatch_accepts_singular_and_union_hints(
     singular = io.transformations.load(str(path), hint="flirt")
     union = io.transformations.load(str(path), hint=("flirt", "fnirt"))
 
-    assert type(singular).__name__ == "FLIRTTransform"
-    assert type(union).__name__ == "FLIRTTransform"
+    assert type(singular).__name__ == "FlirtTransform"
+    assert type(union).__name__ == "FlirtTransform"
 
 
 def test_flirt_options_load_nested_images_without_a_top_level_hint(
@@ -268,7 +268,7 @@ def test_flirt_options_load_nested_images_without_a_top_level_hint(
         f"{matrix}|ref:[{reference}|nifti]|mov:[{moving}]"
     )
 
-    assert type(transform).__name__ == "FLIRTTransform"
+    assert type(transform).__name__ == "FlirtTransform"
     assert type(transform.reference).__name__ == "NiftiImage"
     assert type(transform.moving).__name__ == "NiftiImage"
     assert transform.matrix.shape == (3, 4)

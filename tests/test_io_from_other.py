@@ -22,8 +22,8 @@ from brainhops.io.images import FileBasedImage  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage  # noqa: E402
 from brainhops.io.transformations import FileBasedTransformation  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
-    NiftiRASDisplacementField,
-    NiftiVoxelToRAS,
+    NiftiRasDisplacementField,
+    NiftiVoxelToRas,
 )
 
 DATA = np.arange(24, dtype="float32").reshape(2, 3, 4)
@@ -66,7 +66,7 @@ def test_a_transformation_dispatcher_reads_a_path(tmp_path) -> None:  # noqa: AN
     source = _write_field(tmp_path / "field.nii")
     # Intent code 1006 (displacement vector) is read as a displacement.
     field = FileBasedTransformation.from_other(source)
-    assert isinstance(field, NiftiRASDisplacementField)
+    assert isinstance(field, NiftiRasDisplacementField)
 
 
 def test_an_open_file_is_read(tmp_path) -> None:  # noqa: ANN001
@@ -133,8 +133,8 @@ def test_a_mapping_with_an_unknown_key_is_refused() -> None:
 
 def test_an_instance_of_the_data_model_is_copied_into_the_format() -> None:
     affine = Affine(matrix=np.diag([2.0, 3.0, 4.0, 1.0])[:3])
-    nifti = NiftiVoxelToRAS.from_other(affine)
-    assert isinstance(nifti, NiftiVoxelToRAS)
+    nifti = NiftiVoxelToRas.from_other(affine)
+    assert isinstance(nifti, NiftiVoxelToRas)
     np.testing.assert_allclose(nifti.matrix, affine.matrix)
 
     image = NiftiImage.from_other(SingleScaleImage(data=DATA))

@@ -3,7 +3,7 @@ from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 
 
-class RASToWarpField(_xforms.Affine):
+class RasToWarpField(_xforms.Affine):
     """Affine from reference world (RAS) space to a FNIRT warp grid.
 
     The warp grid is the grid on which a FNIRT warp field is stored. For a
@@ -16,7 +16,7 @@ class RASToWarpField(_xforms.Affine):
     _input: _systems.CoordinateSystem = _systems.RASmm()
 
 
-class WarpFieldToRAS(_xforms.Affine):
+class WarpFieldToRas(_xforms.Affine):
     """Affine from a FNIRT warp grid to moving world (RAS) space.
 
     This affine carries the warped position, expressed on the warp grid,

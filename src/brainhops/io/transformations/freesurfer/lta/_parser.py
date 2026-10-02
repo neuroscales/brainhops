@@ -24,15 +24,15 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 
 
 # ----------------------------------------------------------------------
-#   Parser classes with public methods inherited by LTAStruct
+#   Parser classes with public methods inherited by LtaStruct
 # ----------------------------------------------------------------------
 
 
-class LTAParser(Magic, TextFileParserWriter):
+class LtaParser(Magic, TextFileParserWriter):
     """Mixin that gives a class the ability to sniff, read and write itself
     in LTA format.
 
-    `LTAStruct` and the blocks it is made of inherit their `sniff*`,
+    `LtaStruct` and the blocks it is made of inherit their `sniff*`,
     `from_*` and `to_*` methods from this class. It follows the shared
     parser contract of [`TextFileParserWriter`][]:
     the front doors are `load`, `save`, `to_bytes` and `to_fileobj`, and
@@ -40,7 +40,7 @@ class LTAParser(Magic, TextFileParserWriter):
     `from_lines` and `to_lines`.
 
     A struct is read field by field, in declaration order: a field whose
-    type is itself an `LTAParser` reads its own block of lines, and any
+    type is itself an `LtaParser` reads its own block of lines, and any
     other field reads one `key = value(s)` line (or one `value(s)` line,
     in a block that has no keys). Comments (`# ...`) and blank lines are
     skipped.
@@ -154,7 +154,7 @@ class LTAParser(Magic, TextFileParserWriter):
             lines = peekable_lines(lines)
         for field in fields(cls):
             key = field.name if cls._HAS_KEYS else None
-            parse = LTAFieldParser(key, field.type)
+            parse = LtaFieldParser(key, field.type)
             setattr(obj, field.name, parse(lines))
         return obj
 
@@ -175,7 +175,7 @@ class LTAParser(Magic, TextFileParserWriter):
         for field in fields(type(self)):
             value = getattr(self, field.name)
             key = field.name if self._HAS_KEYS else None
-            write = LTAFieldWriter(key, **kwargs)
+            write = LtaFieldWriter(key, **kwargs)
             yield from write(value)
 
     def to_text(self, **kwargs) -> str:
@@ -191,7 +191,7 @@ class LTAParser(Magic, TextFileParserWriter):
         return super().to_text(**kwargs) + "\n"
 
 
-class VolumeInfoParser(LTAParser):
+class VolumeInfoParser(LtaParser):
     """Parses the volume-geometry block of an LTA file.
 
     A volume-geometry block opens with a `"<NAME> volume info"` header
@@ -240,7 +240,7 @@ class VolumeInfoParser(LTAParser):
         yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
 
 
-class MatrixParser(LTAParser):
+class MatrixParser(LtaParser):
     """Parses the affine matrix block of an LTA file.
 
     The block opens with a line giving the element count and the number
@@ -313,7 +313,7 @@ class MatrixParser(LTAParser):
 # ----------------------------------------------------------------------
 
 
-class LTAFieldParser:
+class LtaFieldParser:
     """Reads a single field of an LTA struct from a line, or a block of
     lines, of an LTA file.
 
@@ -346,7 +346,7 @@ class LTAFieldParser:
         types = self.type
 
         # If field is a struct, defer
-        if isinstance(types, type) and issubclass(types, LTAParser):
+        if isinstance(types, type) and issubclass(types, LtaParser):
             value = types.from_lines(lines)
             if value is None and not self.optional:
                 raise ValueError(
@@ -392,7 +392,7 @@ class LTAFieldParser:
             return value
 
 
-class LTAFieldWriter:
+class LtaFieldWriter:
     """Writes a single field of an LTA struct as a line, or a block of
     lines, of an LTA file.
 
@@ -415,7 +415,7 @@ class LTAFieldWriter:
         """Yield the line, or lines, that represent `value`."""
         if value is None:
             return
-        if isinstance(value, LTAParser):
+        if isinstance(value, LtaParser):
             yield from value.to_lines(**kwargs)
         elif self.key:
             kwargs = {**self.kwargs, **kwargs}

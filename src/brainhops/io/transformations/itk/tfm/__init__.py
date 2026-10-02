@@ -104,9 +104,9 @@ affine transformations.
 
 # ruff: enable[E501]
 __all__ = [
-    "TFMTransform",
-    "TFMTransformParser",
+    "TfmTransform",
+    "TfmTransformParser",
 ]
 
-from ._parser import TFMTransformParser
-from ._xform import TFMTransform
+from ._parser import TfmTransformParser
+from ._xform import TfmTransform

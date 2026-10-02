@@ -3,10 +3,10 @@ Readers and writers for ITK transformation formats.
 
 | Format                      | Module    | Reader                      |
 | --------------------------- | --------- | --------------------------- |
-| text (`.tfm`, `.txt`)       | `tfm`     | `TFMTransform`              |
+| text (`.tfm`, `.txt`)       | `tfm`     | `TfmTransform`              |
 | HDF5 (`.h5`)                | `h5`      | `H5Transform`               |
 | binary MATLAB (`.mat`)      | `mat`     | `MatTransform`              |
-| NIfTI warp (`.nii[.gz]`)    | `nifti`   | `ITKNiftiDisplacementField` |
+| NIfTI warp (`.nii[.gz]`)    | `nifti`   | `ItkNiftiDisplacementField` |
 
 ## ANTs
 
@@ -34,27 +34,27 @@ Not every ANTs output can be read yet:
 """
 
 __all__ = [
-    "ITKAffineBase",
-    "ITKBlockBase",
-    "ITKDisplacementBase",
-    "ITKPrecision",
-    "ITKStruct",
-    "ITKTransform",
-    "ITKTransformClass",
+    "ItkAffineBase",
+    "ItkBlockBase",
+    "ItkDisplacementBase",
+    "ItkPrecision",
+    "ItkStruct",
+    "ItkTransform",
+    "ItkTransformClass",
     "mat",
     "tfm",
 ]
 
 from . import mat, tfm
 from ._common import (
-    ITKAffineBase,
-    ITKBlockBase,
-    ITKDisplacementBase,
-    ITKPrecision,
-    ITKStruct,
-    ITKTransformClass,
+    ItkAffineBase,
+    ItkBlockBase,
+    ItkDisplacementBase,
+    ItkPrecision,
+    ItkStruct,
+    ItkTransformClass,
 )
-from ._xform import ITKTransform
+from ._xform import ItkTransform
 
 # The h5 reader needs h5py, which is optional. It is imported only when
 # h5py is available, mirroring how the transformations package imports

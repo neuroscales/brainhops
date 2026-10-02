@@ -3,7 +3,7 @@ Tests for reading and writing FreeSurfer LTA files.
 
 LTA is a registered text format: `io.load`, `io.transformations.load`
 and `from_other` read a `.lta` file, found by its extension or by its
-content, and `io.save` writes one. `LTAStruct` and `LTATransformation`
+content, and `io.save` writes one. `LtaStruct` and `LtaTransformation`
 follow the shared parser contract (`load`, `save`, `to_bytes`,
 `to_fileobj`, ...).
 
@@ -35,15 +35,15 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.transformations import FileBasedTransformation
 from brainhops.io.transformations.freesurfer.lta import (
-    LTAPhysicalSystem,
-    LTAStruct,
-    LTATransformation,
-    LTATransformationPhysToPhys,
-    LTATransformationRASToRAS,
-    LTATransformationVoxToVox,
-    LTAType,
-    LTAValidity,
-    LTAVoxelSystem,
+    LtaPhysicalSystem,
+    LtaStruct,
+    LtaTransformation,
+    LtaTransformationPhysToPhys,
+    LtaTransformationRasToRas,
+    LtaTransformationVoxToVox,
+    LtaType,
+    LtaValidity,
+    LtaVoxelSystem,
 )
 
 # ----------------------------------------------------------------------
@@ -59,8 +59,8 @@ MATRIX = (
     (0.0, 0.0, 0.0, 1.0),
 )
 
-SRC = LTAStruct.SrcVolumeInfo(
-    valid=LTAValidity.VOLUME_INFO_VALID,
+SRC = LtaStruct.SrcVolumeInfo(
+    valid=LtaValidity.VOLUME_INFO_VALID,
     filename="src.nii.gz",
     volume=(10, 12, 14),
     voxelsize=(1.0, 2.0, 3.0),
@@ -69,8 +69,8 @@ SRC = LTAStruct.SrcVolumeInfo(
     zras=(0.0, 1.0, 0.0),
     cras=(1.0, 2.0, 3.0),
 )
-DST = LTAStruct.DstVolumeInfo(
-    valid=LTAValidity.VOLUME_INFO_VALID,
+DST = LtaStruct.DstVolumeInfo(
+    valid=LtaValidity.VOLUME_INFO_VALID,
     filename="dst.nii.gz",
     volume=(8, 9, 10),
     voxelsize=(2.0, 2.0, 2.0),
@@ -116,33 +116,33 @@ fscale 0.100000
 
 # Every LTA type the reader supports, with the systems it reads.
 TYPES = [
-    (LTAType.LINEAR_VOX_TO_VOX, LTAVoxelSystem),
-    (LTAType.LINEAR_RAS_TO_RAS, _systems.RASmm),
-    (LTAType.LINEAR_PHYSVOX_TO_PHYSVOX, LTAPhysicalSystem),
-    (LTAType.LINEAR_RSA_TO_RSA, _systems.RSAmm),
+    (LtaType.LINEAR_VOX_TO_VOX, LtaVoxelSystem),
+    (LtaType.LINEAR_RAS_TO_RAS, _systems.RASmm),
+    (LtaType.LINEAR_PHYSVOX_TO_PHYSVOX, LtaPhysicalSystem),
+    (LtaType.LINEAR_RSA_TO_RSA, _systems.RSAmm),
 ]
 TYPE_IDS = ["vox", "ras", "physvox", "rsa"]
 
 # The views, each with the type it is written as once its matrix and
 # systems are set explicitly.
 VIEWS = [
-    (LTATransformationVoxToVox, LTAType.LINEAR_VOX_TO_VOX),
-    (LTATransformationPhysToPhys, LTAType.LINEAR_PHYSVOX_TO_PHYSVOX),
-    (LTATransformationRASToRAS, LTAType.LINEAR_RAS_TO_RAS),
+    (LtaTransformationVoxToVox, LtaType.LINEAR_VOX_TO_VOX),
+    (LtaTransformationPhysToPhys, LtaType.LINEAR_PHYSVOX_TO_PHYSVOX),
+    (LtaTransformationRasToRas, LtaType.LINEAR_RAS_TO_RAS),
 ]
 VIEW_IDS = ["vox", "phys", "ras"]
 
 
-def _struct(lta_type: LTAType = LTAType.LINEAR_RAS_TO_RAS) -> LTAStruct:
-    return LTAStruct(
+def _struct(lta_type: LtaType = LtaType.LINEAR_RAS_TO_RAS) -> LtaStruct:
+    return LtaStruct(
         type=lta_type,
-        affine=LTAStruct.Affine(matrix=MATRIX),
+        affine=LtaStruct.Affine(matrix=MATRIX),
         src=SRC,
         dst=DST,
     )
 
 
-def _write(tmp_path: Path, struct: LTAStruct, name: str = "x.lta") -> Path:
+def _write(tmp_path: Path, struct: LtaStruct, name: str = "x.lta") -> Path:
     file = tmp_path / name
     struct.save(file)
     return file
@@ -154,55 +154,55 @@ def _write(tmp_path: Path, struct: LTAStruct, name: str = "x.lta") -> Path:
 
 
 @pytest.mark.parametrize("lta_type", [t for t, _ in TYPES], ids=TYPE_IDS)
-def test_a_struct_round_trips_through_text(lta_type: LTAType) -> None:
+def test_a_struct_round_trips_through_text(lta_type: LtaType) -> None:
     # Regression: `to_text` raised an `AttributeError` about
     # `__struct_fields__`, and `from_text` did too.
     struct = _struct(lta_type)
     text = struct.to_text()
     assert text.startswith("type")
     assert text.endswith("\n")
-    assert LTAStruct.from_text(text) == struct
+    assert LtaStruct.from_text(text) == struct
 
 
 def test_a_struct_without_volumes_round_trips() -> None:
-    struct = LTAStruct(
-        type=LTAType.LINEAR_RAS_TO_RAS,
-        affine=LTAStruct.Affine(matrix=MATRIX),
+    struct = LtaStruct(
+        type=LtaType.LINEAR_RAS_TO_RAS,
+        affine=LtaStruct.Affine(matrix=MATRIX),
     )
-    back = LTAStruct.from_text(struct.to_text())
+    back = LtaStruct.from_text(struct.to_text())
     assert back == struct
     assert back.src is None and back.dst is None
 
 
 def test_the_matrix_is_written_at_full_precision() -> None:
-    back = LTAStruct.from_text(_struct().to_text())
+    back = LtaStruct.from_text(_struct().to_text())
     assert back.affine.matrix == MATRIX
 
 
 def test_a_struct_follows_the_parser_contract(tmp_path) -> None:  # noqa: ANN001
     struct = _struct()
     # bytes, with or without an encoding
-    assert LTAStruct.from_bytes(struct.to_bytes()) == struct
+    assert LtaStruct.from_bytes(struct.to_bytes()) == struct
     data = struct.to_bytes(encoding="latin-1")
-    assert LTAStruct.from_bytes(data, encoding="latin-1") == struct
+    assert LtaStruct.from_bytes(data, encoding="latin-1") == struct
     # an open file object
     buffer = _io.StringIO()
     struct.to_fileobj(buffer)
     buffer.seek(0)
-    assert LTAStruct.load(buffer) == struct
+    assert LtaStruct.load(buffer) == struct
     # a path, through `save` and `load`
     struct.save(tmp_path / "x.lta")
-    assert LTAStruct.load(tmp_path / "x.lta") == struct
-    assert LTAStruct.load(str(tmp_path / "x.lta")) == struct
+    assert LtaStruct.load(tmp_path / "x.lta") == struct
+    assert LtaStruct.load(str(tmp_path / "x.lta")) == struct
     # lines
-    assert LTAStruct.from_lines(struct.to_lines()) == struct
+    assert LtaStruct.from_lines(struct.to_lines()) == struct
 
 
 def test_a_freesurfer_file_is_read() -> None:
     # Comments, a commented type, `valid = 1  # ...` and the trailing
     # `subject` and `fscale` lines are all things FreeSurfer writes.
-    struct = LTAStruct.from_text(FREESURFER)
-    assert struct.type is LTAType.LINEAR_RAS_TO_RAS
+    struct = LtaStruct.from_text(FREESURFER)
+    assert struct.type is LtaType.LINEAR_RAS_TO_RAS
     assert struct.sigma == 1.0
     assert struct.affine.matrix[0] == (1.0, 0.0, 0.0, 2.0)
     assert struct.src.filename == "/subjects/bert/mri/orig.mgz"
@@ -215,7 +215,7 @@ def test_a_freesurfer_file_is_read() -> None:
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cls", [LTAStruct, LTATransformation])
+@pytest.mark.parametrize("cls", [LtaStruct, LtaTransformation])
 def test_lta_content_is_sniffed(cls: type) -> None:
     text = _struct().to_text()
     assert cls.sniff_text(text) == Confidence.LIKELY
@@ -225,7 +225,7 @@ def test_lta_content_is_sniffed(cls: type) -> None:
     assert cls.sniff_text(FREESURFER) == Confidence.LIKELY
 
 
-@pytest.mark.parametrize("cls", [LTAStruct, LTATransformation])
+@pytest.mark.parametrize("cls", [LtaStruct, LtaTransformation])
 def test_other_content_is_not_sniffed(cls: type) -> None:
     assert cls.sniff_text("1 0 0 0\n0 1 0 0\n") == Confidence.NO
     assert cls.sniff_text("") == Confidence.NO
@@ -233,7 +233,7 @@ def test_other_content_is_not_sniffed(cls: type) -> None:
         cls.sniff_text("1 0 0 0\n", error=True)
 
 
-@pytest.mark.parametrize("cls", [LTAStruct, LTATransformation])
+@pytest.mark.parametrize("cls", [LtaStruct, LtaTransformation])
 def test_binary_content_is_not_sniffed(cls: type, tmp_path) -> None:  # noqa: ANN001
     # A binary file sharing the `.lta` extension does not decode as text,
     # which is a "no" from the text sniffer rather than an error.
@@ -250,9 +250,9 @@ def test_binary_content_is_not_sniffed(cls: type, tmp_path) -> None:  # noqa: AN
 
 def test_a_file_is_sniffed_by_its_content_alone(tmp_path) -> None:  # noqa: ANN001
     file = _write(tmp_path, _struct(), "transform.txt")
-    assert LTATransformation.sniff(file) == Confidence.LIKELY
-    assert io.sniff(file) is LTATransformation
-    assert type(io.load(file)) is LTATransformation
+    assert LtaTransformation.sniff(file) == Confidence.LIKELY
+    assert io.sniff(file) is LtaTransformation
+    assert type(io.load(file)) is LtaTransformation
 
 
 def test_content_given_as_a_str_is_a_path(tmp_path) -> None:  # noqa: ANN001
@@ -260,13 +260,13 @@ def test_content_given_as_a_str_is_a_path(tmp_path) -> None:  # noqa: ANN001
     # failed with `OSError: File name too long`. A `str` names a path, so
     # content is a file that does not exist.
     text = _struct().to_text()
-    assert LTAStruct.sniff(text) == Confidence.NO
-    assert LTATransformation.sniff(text) == Confidence.NO
+    assert LtaStruct.sniff(text) == Confidence.NO
+    assert LtaTransformation.sniff(text) == Confidence.NO
     with pytest.raises(FileNotFoundError):
-        LTAStruct.sniff(text, error=True)
+        LtaStruct.sniff(text, error=True)
     with pytest.raises(FileNotFoundError):
-        LTAStruct.from_filename(text)
-    assert LTAStruct.sniff(tmp_path / "missing.lta") == Confidence.NO
+        LtaStruct.from_filename(text)
+    assert LtaStruct.sniff(tmp_path / "missing.lta") == Confidence.NO
 
 
 # ----------------------------------------------------------------------
@@ -278,11 +278,11 @@ def test_lta_is_a_registered_writable_format() -> None:
     from brainhops.io import FileBasedObject, WritableFileBasedObject
     from brainhops.io.transformations import WritableFileBasedTransformation
 
-    assert LTATransformation in FileBasedObject._REGISTRY
-    assert LTATransformation in FileBasedTransformation._REGISTRY
-    assert LTATransformation in WritableFileBasedObject._REGISTRY
-    assert LTATransformation in WritableFileBasedTransformation._REGISTRY
-    assert LTATransformation.EXTENSIONS == (".lta",)
+    assert LtaTransformation in FileBasedObject._REGISTRY
+    assert LtaTransformation in FileBasedTransformation._REGISTRY
+    assert LtaTransformation in WritableFileBasedObject._REGISTRY
+    assert LtaTransformation in WritableFileBasedTransformation._REGISTRY
+    assert LtaTransformation.EXTENSIONS == (".lta",)
     # The views read the same files exactly as well, so registering them
     # too would make every `.lta` an ambiguity.
     for view, _ in VIEWS:
@@ -295,8 +295,8 @@ def test_lta_is_a_registered_writable_format() -> None:
         io.load,
         io.transformations.load,
         FileBasedTransformation.from_other,
-        LTATransformation.from_other,
-        LTATransformation.load,
+        LtaTransformation.from_other,
+        LtaTransformation.load,
     ],
     ids=["io.load", "transformations.load", "from_other", "own", "own.load"],
 )
@@ -304,12 +304,12 @@ def test_lta_is_a_registered_writable_format() -> None:
 def test_every_type_is_read_through_dispatch(
     tmp_path,  # noqa: ANN001
     load: tx.Callable,
-    lta_type: LTAType,
+    lta_type: LtaType,
     system: type,
 ) -> None:
     file = _write(tmp_path, _struct(lta_type))
     xform = load(file)
-    assert type(xform) is LTATransformation
+    assert type(xform) is LtaTransformation
     assert xform.struct == _struct(lta_type)
     assert isinstance(xform.input, system)
     assert isinstance(xform.output, system)
@@ -333,7 +333,7 @@ def test_lta_declares_its_hints() -> None:
 
     # The FreeSurfer family carries "freesurfer", the format "lta", and
     # the affine family "affine"; they compose into dotted hints.
-    assert format_hints(LTATransformation) >= set(HINTS)
+    assert format_hints(LtaTransformation) >= set(HINTS)
 
 
 @pytest.mark.parametrize("hint", HINTS)
@@ -342,16 +342,16 @@ def test_a_structured_source_is_read_with_a_hint(tmp_path, hint: str) -> None:  
 
     file = _write(tmp_path, _struct(), "transform.txt")
     xform = io.load(SourceSpec(path=str(file), hints=(hint,)))
-    assert type(xform) is LTATransformation
+    assert type(xform) is LtaTransformation
 
 
 @pytest.mark.parametrize("hint", HINTS)
 def test_a_hint_selects_the_lta_reader(tmp_path, hint: str) -> None:  # noqa: ANN001
     file = _write(tmp_path, _struct(), "transform.txt")
-    assert io.sniff(file, hint=hint) is LTATransformation
-    assert type(io.load(file, hint=hint)) is LTATransformation
+    assert io.sniff(file, hint=hint) is LtaTransformation
+    assert type(io.load(file, hint=hint)) is LtaTransformation
     assert type(io.transformations.load(file, hint=hint)) is (
-        LTATransformation
+        LtaTransformation
     )
 
 
@@ -359,7 +359,7 @@ def test_a_freesurfer_file_is_read_through_dispatch(tmp_path) -> None:  # noqa: 
     file = tmp_path / "reg.lta"
     file.write_text(FREESURFER)
     xform = io.load(file)
-    assert type(xform) is LTATransformation
+    assert type(xform) is LtaTransformation
     assert isinstance(xform.input, _systems.RASmm)
     np.testing.assert_array_equal(xform.matrix[:, -1], [2.0, -3.0, 4.0])
 
@@ -372,7 +372,7 @@ def test_a_freesurfer_file_is_read_through_dispatch(tmp_path) -> None:  # noqa: 
 @pytest.mark.parametrize("lta_type, system", TYPES, ids=TYPE_IDS)
 def test_every_type_round_trips_through_save(
     tmp_path,  # noqa: ANN001
-    lta_type: LTAType,
+    lta_type: LtaType,
     system: type,
 ) -> None:
     first = _write(tmp_path, _struct(lta_type), "first.lta")
@@ -390,13 +390,13 @@ def test_every_type_round_trips_through_save(
 @pytest.mark.parametrize("lta_type, system", TYPES, ids=TYPE_IDS)
 def test_every_type_round_trips_once_rebuilt(
     tmp_path,  # noqa: ANN001
-    lta_type: LTAType,
+    lta_type: LtaType,
     system: type,
 ) -> None:
     # Setting the matrix and the systems explicitly makes the writer build
     # the struct from them, rather than write the one it was read from.
     xform = io.load(_write(tmp_path, _struct(lta_type)))
-    rebuilt = LTATransformation(
+    rebuilt = LtaTransformation(
         matrix=xform.matrix, input=xform.input, output=xform.output
     )
     assert rebuilt.to_struct() is not rebuilt.struct
@@ -405,7 +405,7 @@ def test_every_type_round_trips_once_rebuilt(
     assert back.struct.type is lta_type
     np.testing.assert_array_equal(back.matrix, xform.matrix)
     assert isinstance(back.input, system)
-    if system in (LTAVoxelSystem, LTAPhysicalSystem):
+    if system in (LtaVoxelSystem, LtaPhysicalSystem):
         # The geometry is that of the systems.
         assert back.struct.src == SRC
         assert back.struct.dst == DST
@@ -418,8 +418,8 @@ def test_every_type_round_trips_once_rebuilt(
 def test_a_view_round_trips(
     tmp_path,  # noqa: ANN001
     view: type,
-    written: LTAType,
-    lta_type: LTAType,
+    written: LtaType,
+    lta_type: LtaType,
 ) -> None:
     file = _write(tmp_path, _struct(lta_type))
     xform = view.load(file)
@@ -445,8 +445,8 @@ def test_a_view_round_trips(
     assert back.struct.type is written
     np.testing.assert_allclose(back.matrix, xform.matrix, atol=1e-12)
     np.testing.assert_allclose(
-        LTATransformationRASToRAS.load(tmp_path / "rebuilt.lta").matrix,
-        LTATransformationRASToRAS.load(file).matrix,
+        LtaTransformationRasToRas.load(tmp_path / "rebuilt.lta").matrix,
+        LtaTransformationRasToRas.load(file).matrix,
         atol=1e-12,
     )
 
@@ -454,8 +454,8 @@ def test_a_view_round_trips(
 def test_the_ras_view_of_a_ras_file_is_its_matrix(tmp_path) -> None:  # noqa: ANN001
     # Regression: the RAS-to-RAS view computed a physical-to-physical
     # matrix.
-    file = _write(tmp_path, _struct(LTAType.LINEAR_RAS_TO_RAS))
-    xform = LTATransformationRASToRAS.load(file)
+    file = _write(tmp_path, _struct(LtaType.LINEAR_RAS_TO_RAS))
+    xform = LtaTransformationRasToRas.load(file)
     np.testing.assert_allclose(xform.matrix, np.asarray(MATRIX)[:-1])
 
 
@@ -465,19 +465,19 @@ def test_the_ras_view_of_an_rsa_file_reorders_its_axes(tmp_path) -> None:  # noq
     # RAS.
     matrix = np.eye(4)
     matrix[:3, 3] = [1.0, 2.0, 3.0]
-    struct = LTAStruct(
-        type=LTAType.LINEAR_RSA_TO_RSA,
-        affine=LTAStruct.Affine(matrix=tuple(map(tuple, matrix))),
+    struct = LtaStruct(
+        type=LtaType.LINEAR_RSA_TO_RSA,
+        affine=LtaStruct.Affine(matrix=tuple(map(tuple, matrix))),
         src=SRC,
         dst=DST,
     )
-    xform = LTATransformationRASToRAS.load(_write(tmp_path, struct))
+    xform = LtaTransformationRasToRas.load(_write(tmp_path, struct))
     np.testing.assert_allclose(xform.matrix[:, 3], [1.0, 3.0, 2.0])
     np.testing.assert_allclose(xform.matrix[:, :3], np.eye(3))
 
 
 def test_a_transformation_follows_the_parser_contract(tmp_path) -> None:  # noqa: ANN001
-    xform = LTATransformation.from_struct(_struct())
+    xform = LtaTransformation.from_struct(_struct())
     text = _struct().to_text()
     assert xform.to_text() == text
     assert xform.to_bytes() == text.encode()
@@ -487,13 +487,13 @@ def test_a_transformation_follows_the_parser_contract(tmp_path) -> None:  # noqa
     assert buffer.getvalue() == text
     xform.save(tmp_path / "x.lta")
     assert (tmp_path / "x.lta").read_text() == text
-    assert LTATransformation.from_bytes(text.encode()).struct == _struct()
-    assert LTATransformation.from_text(text).struct == _struct()
+    assert LtaTransformation.from_bytes(text.encode()).struct == _struct()
+    assert LtaTransformation.from_text(text).struct == _struct()
 
 
 def test_a_transformation_is_saved_to_an_unnamed_file() -> None:
     buffer = _io.StringIO()
-    io.save(LTATransformation.from_struct(_struct()), buffer)
+    io.save(LtaTransformation.from_struct(_struct()), buffer)
     assert buffer.getvalue() == _struct().to_text()
 
 
@@ -512,15 +512,15 @@ def test_keyword_options_override_the_file(tmp_path) -> None:  # noqa: ANN001
 @pytest.mark.parametrize(
     "system, lta_type",
     [
-        (_systems.RASmm, LTAType.LINEAR_RAS_TO_RAS),
-        (_systems.RSAmm, LTAType.LINEAR_RSA_TO_RSA),
+        (_systems.RASmm, LtaType.LINEAR_RAS_TO_RAS),
+        (_systems.RSAmm, LtaType.LINEAR_RSA_TO_RSA),
     ],
     ids=["ras", "rsa"],
 )
 def test_an_anatomical_affine_is_saved_as_lta(
     tmp_path,  # noqa: ANN001
     system: type,
-    lta_type: LTAType,
+    lta_type: LtaType,
 ) -> None:
     matrix = np.asarray(MATRIX)[:-1]
     affine = Affine(matrix, input=system(), output=system())
@@ -535,12 +535,12 @@ def test_an_anatomical_affine_is_saved_as_lta(
 
 
 def test_an_affine_between_lta_voxel_systems_is_saved_as_lta(tmp_path) -> None:  # noqa: ANN001
-    src = LTAVoxelSystem.from_struct(SRC)
-    dst = LTAVoxelSystem.from_struct(DST)
+    src = LtaVoxelSystem.from_struct(SRC)
+    dst = LtaVoxelSystem.from_struct(DST)
     affine = Affine(np.asarray(MATRIX)[:-1], input=src, output=dst)
     io.save(affine, tmp_path / "x.lta")
     back = io.load(tmp_path / "x.lta")
-    assert back.struct.type is LTAType.LINEAR_VOX_TO_VOX
+    assert back.struct.type is LtaType.LINEAR_VOX_TO_VOX
     assert (back.struct.src, back.struct.dst) == (SRC, DST)
 
 
@@ -595,25 +595,25 @@ def test_from_is_deprecated_but_still_reads(tmp_path) -> None:  # noqa: ANN001
     with pytest.deprecated_call():
         # Regression: multi-line text failed with `OSError: File name too
         # long`, from looking it up as a path.
-        assert LTAStruct.from_(text) == struct
+        assert LtaStruct.from_(text) == struct
     with pytest.deprecated_call():
-        assert LTAStruct.from_(str(file)) == struct
+        assert LtaStruct.from_(str(file)) == struct
     with pytest.deprecated_call():
-        assert LTAStruct.from_(file) == struct
+        assert LtaStruct.from_(file) == struct
     with pytest.deprecated_call():
-        assert LTAStruct.from_(text.encode()) == struct
+        assert LtaStruct.from_(text.encode()) == struct
     with pytest.deprecated_call():
-        assert LTAStruct.from_(text.splitlines()) == struct
+        assert LtaStruct.from_(text.splitlines()) == struct
     with pytest.deprecated_call():
-        assert LTATransformation.from_(struct).struct is struct
+        assert LtaTransformation.from_(struct).struct is struct
     with pytest.deprecated_call():
-        assert LTATransformation.from_(text).struct == struct
+        assert LtaTransformation.from_(text).struct == struct
 
 
 def test_from_warns_once_in_terms_of_its_own_class() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        LTATransformation.from_(_struct().to_text())
+        LtaTransformation.from_(_struct().to_text())
     messages = [str(w.message) for w in caught]
     assert len(messages) == 1
-    assert messages[0].startswith("LTATransformation.from_()")
+    assert messages[0].startswith("LtaTransformation.from_()")

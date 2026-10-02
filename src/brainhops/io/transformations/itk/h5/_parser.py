@@ -26,7 +26,7 @@ from brainhops.io.base.parsers import (
 )
 
 # locals
-from .._common import ITKStruct, ITKTransformClass
+from .._common import ItkStruct, ItkTransformClass
 
 # typing
 _H5Like = tx.Union[
@@ -277,7 +277,7 @@ class H5TransformParser(
             # Parse transform type
             xtype = _readstr(nodes[node]["TransformType"])
             xtype, prec, ndim_inp, ndim_out = xtype.split("_")
-            xtype = ITKTransformClass(xtype)
+            xtype = ItkTransformClass(xtype)
             ndim_inp, ndim_out = int(ndim_inp), int(ndim_out)
 
             if xtype == "CompositeTransform":
@@ -326,7 +326,7 @@ class H5TransformParser(
                     parameters = parameters.to_dask(keep_open=keep_open)
 
             blocks.append(
-                ITKStruct(
+                ItkStruct(
                     type=xtype,
                     precision=prec,
                     ndim_input=ndim_inp,
