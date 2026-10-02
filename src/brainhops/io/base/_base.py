@@ -11,9 +11,11 @@ __all__ = [
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import Field, fields
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     BinaryFileParser,
@@ -587,6 +589,63 @@ class _FileBasedModelMixin:
                 f"argument(s)."
             )
         return cls.load(other, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        The data model copies the fields both classes share, by name.
+        A field that a file format declares for its own use -- such as
+        the `nibabel` `image` and `header` of the NIfTI and MGH formats
+        -- is only copied from an object of that same format: from any
+        other object, a field of the same name holds something else
+        (a NIfTI image is no MGH image), so this class's default is
+        kept instead. Saving a NIfTI image to MGH, or the converse,
+        therefore converts the data model only, and the format-specific
+        state is rebuilt by the writer.
+        """
+        for field in _foreign_format_fields(cls, other):
+            if field.factory is True:
+                default = field.default()
+            else:
+                default = field.default
+            kwargs.setdefault(field.public_name, default)
+        return super().from_instance(other, *args, **kwargs)
+
+
+def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
+    """
+    The fields of `cls` that only file formats declare, and that `other`
+    does not inherit from any of the formats that declare them.
+
+    A field is format-specific when every data model of the MRO that
+    declares it is a file parser; one that a plain data model declares
+    too (`data`, `transformations`, ...) is shared by every format.
+    """
+    if isinstance(other, cls):
+        return []
+    shared: tx.Set[str] = set()
+    owners: tx.Dict[str, tx.List[type]] = {}
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        names = [field.name for field in fields(klass)]
+        if issubclass(klass, FileParser):
+            for name in names:
+                owners.setdefault(name, []).append(klass)
+        else:
+            shared.update(names)
+    no_default = Field().default
+    return [
+        field
+        for field in fields(cls)
+        if field.init
+        and field.kw
+        and field.name not in shared
+        and field.default is not no_default
+        and not any(isinstance(other, k) for k in owners.get(field.name, ()))
+    ]
 
 
 def _is_file_or_content(other: tx.Any) -> bool:
