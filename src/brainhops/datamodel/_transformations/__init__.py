@@ -25,6 +25,11 @@ __all__ = [
     "InverseAffine",
     "InverseDisplacementField",
     "InverseCoordinatesField",
+    # operators
+    "Sqrt",
+    "Exp",
+    "Log",
+    "UNARY_OPERATORS",
     # meta
     "Bijection",
     "SubspaceTransformation",
@@ -51,6 +56,7 @@ __all__ = [
     "LossyConversionError",
     "CompositionError",
     "AdaptationError",
+    "DomainError",
 ]
 
 # Registration into registries
@@ -86,6 +92,7 @@ from .errors import (
     AdaptationError,
     CompositionError,
     ConversionError,
+    DomainError,
     LossyConversionError,
 )
 from .inverse import (
@@ -102,5 +109,6 @@ from .inverse import (
 from .meta import Bijection, Projection, SubspaceTransformation
 from .modes import ModeLike
 from .multiscale import Multiscale, MultiscaleField
+from .operators import UNARY_OPERATORS, Exp, Log, Sqrt
 from .sequence import ImmutableSequence, MutableSequence, Sequence
 from .simplify import SimplifyLike, SimplifyPolicy, SimplifyTable

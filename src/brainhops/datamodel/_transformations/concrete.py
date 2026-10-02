@@ -17,6 +17,7 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import NoPolymorphError
 
 # core
 from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
@@ -33,6 +34,7 @@ from .check import is_kind
 from .modes import ModeLike
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
+from .utils import require_endomorphism
 
 
 class ConcreteTransformation(Transformation):
@@ -141,6 +143,41 @@ class ConcreteTransformation(Transformation):
             obj = obj.compute(**kwargs)
         return obj
 
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        return self._operate(registries.SQRT, "square root", compute, kwargs)
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        return self._operate(registries.EXP, "exponential", compute, kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        return self._operate(registries.LOG, "logarithm", compute, kwargs)
+
+    def _operate(
+        self,
+        front_door: type,
+        operator: str,
+        compute: bool,
+        kwargs: tx.Dict[str, tx.Any],
+    ) -> Transformation:
+        # The shared `sqrt()`, `exp()` and `log()` of every forward type
+        # whose operator is a typed lazy wrapper. The front door builds the
+        # wrapper of this transform's family, and refuses a family that has
+        # none; the wrapper computes its parameter only when it is read.
+        require_endomorphism(self, operator)
+        if self._is_unparameterized():
+            # An unset parameter reads as the identity, which each of these
+            # operators fixes. There is nothing to defer.
+            obj = self
+        else:
+            try:
+                obj = front_door(self)
+            except NoPolymorphError:
+                raise NotImplementedError(
+                    f"The {operator} of a {type(self).__name__} is not "
+                    "implemented."
+                ) from None
+        return obj.compute(**kwargs) if compute else obj
+
     def _is_unparameterized(self) -> bool:
         # Whether every parameter this transform is defined by is unset.
         return all(
@@ -198,6 +235,32 @@ class DisplacementField(TransformationField):
     Both the input and output spaces correspond to the underlying grid.
     """
 
+    # --- methods ------------------------------------------------------
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        if (
+            not isinstance(self, registries.EXP)
+            and not self._is_unparameterized()
+        ):
+            raise NotImplementedError(
+                "The square root of a displacement field is implemented only "
+                "for a field built as an exponential: `v.exp().sqrt()` is "
+                "`exp(v / 2)`. A general field has no principal square root "
+                "that brainhops computes."
+            )
+        return super().sqrt(compute, **kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        # An exponential overrides this with its velocity.
+        if not self._is_unparameterized():
+            raise NotImplementedError(
+                "The logarithm of a displacement field is implemented only "
+                "for a field built as an exponential: `v.exp().log()` is "
+                "`v`. A general field has no principal logarithm, and the "
+                "iterative approximations of one are not computed here."
+            )
+        return super().log(compute, **kwargs)
+
 
 class CoordinatesField(TransformationField):
     """
@@ -206,6 +269,23 @@ class CoordinatesField(TransformationField):
     The input space corresponds to the regular grid on which the
     coordinates are defined.
     """
+
+    # --- methods ------------------------------------------------------
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        raise NotImplementedError(_COORDINATES_OPERATOR.format("square root"))
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        raise NotImplementedError(_COORDINATES_OPERATOR.format("exponential"))
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        raise NotImplementedError(_COORDINATES_OPERATOR.format("logarithm"))
+
+
+_COORDINATES_OPERATOR = (
+    "The {} of a coordinates field is not implemented. A velocity, or a "
+    "map to take the square root of, is stored as a DisplacementField."
+)
 
 
 class CartesianField(CoordinatesField):
@@ -257,6 +337,22 @@ class CartesianField(CoordinatesField):
         # to defer, so `compute` changes nothing.
         cls = type(self)
         return cls(shape=self.shape, input=self.output, output=self.input)
+
+    # A grid is the identity map, which every operator fixes. It is
+    # returned as is, rather than as an `Identity`, because it is also the
+    # sampling domain.
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "square", compute, kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "square root", compute, kwargs)
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "exponential", compute, kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "logarithm", compute, kwargs)
 
 
 @kinds.Affine
@@ -404,6 +500,17 @@ class Translation(ConcreteTransformation):
         ),
     ] = None
 
+    # --- methods ------------------------------------------------------
+
+    # A translation is the flow of the constant velocity it translates by,
+    # so it is its own exponential and its own logarithm.
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "exponential", compute, kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "logarithm", compute, kwargs)
+
 
 @kinds.Identity
 class Identity(ConcreteTransformation):
@@ -418,6 +525,31 @@ class Identity(ConcreteTransformation):
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         cls = type(self)
         return cls(input=self.output, output=self.input)
+
+    # The identity is fixed by every operator.
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "square", compute, kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "square root", compute, kwargs)
+
+    def exp(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "exponential", compute, kwargs)
+
+    def log(self, compute: bool = False, **kwargs) -> Transformation:
+        return _fixed_point(self, "logarithm", compute, kwargs)
+
+
+def _fixed_point(
+    t: Transformation,
+    operator: str,
+    compute: bool,
+    kwargs: tx.Dict[str, tx.Any],
+) -> Transformation:
+    # The result of an operator that leaves `t` unchanged.
+    require_endomorphism(t, operator)
+    return t.compute(**kwargs) if compute else t
 
 
 # ----------------------------------------------------------------------

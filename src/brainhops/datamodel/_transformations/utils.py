@@ -86,6 +86,40 @@ def with_endpoints(
     return t.to(**edits) if edits else t
 
 
+def require_endomorphism(t: "Transformation", operator: str) -> None:
+    """Refuse a transformation that does not map a space to itself.
+
+    Squaring a transformation composes it with itself, and its square
+    root, exponential and logarithm are defined through such compositions,
+    so each of them needs a transformation whose output lives where its
+    input does. A transformation fails that test when its two systems
+    disagree (see [`systems_disagree`][]) or when it states different
+    numbers of input and output axes (see [`axis_counts`][]). What is not
+    stated is never a reason to refuse, and nothing is materialized.
+
+    Raises
+    ------
+    DomainError
+        If `t` does not map a space to itself.
+    """
+    from .errors import DomainError
+
+    kind = type(t).__name__
+    if systems_disagree(t.input, t.output):
+        raise DomainError(
+            f"The {operator} of a transformation is defined only when it "
+            f"maps a space to itself, but this {kind} maps {t.input} to "
+            f"{t.output}."
+        )
+    ni, no = axis_counts(t)
+    if ni is not None and no is not None and ni != no:
+        raise DomainError(
+            f"The {operator} of a transformation is defined only when it "
+            f"maps a space to itself, but this {kind} maps {ni} axes to "
+            f"{no} axes."
+        )
+
+
 def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
     """A plain list of integer axis indices (empty for `None`).
 
@@ -111,6 +145,7 @@ def axis_counts(
     * a field: the last dimension of a displacement field, the spatial rank
       and last dimension of a coordinates field, the rank of a grid;
     * a lazy inverse: its forward's counts, swapped;
+    * a lazy square root, exponential or logarithm: its forward's counts;
     * a sequence: its ends, reading past any leading (or trailing) member
       that preserves the dimension without stating it;
     * the declared input and output systems.
@@ -136,6 +171,7 @@ def axis_counts(
         Translation,
     )
     from .inverse import Inverse
+    from .operators import Operation
     from .sequence import Sequence
 
     if not isinstance(t, Transformation):
@@ -147,6 +183,11 @@ def axis_counts(
         # `InverseScaling` is also a `Scaling`.
         if t.forward is not None:
             no, ni = axis_counts(t.forward)
+    elif isinstance(t, Operation):
+        # Likewise for a lazy operator, which maps a space to itself: its
+        # counts are its forward's, read without materializing it.
+        if t.forward is not None:
+            ni, no = axis_counts(t.forward)
     elif isinstance(t, Sequence):
         ni, no = _sequence_ends(list(t.transformations or []))
     elif isinstance(t, (Affine, Linear)):

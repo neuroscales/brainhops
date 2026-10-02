@@ -56,7 +56,7 @@ from .concrete import (
     Translation,
     is_identity,
 )
-from .errors import ConversionError
+from .errors import ConversionError, DomainError
 from .inverse import Inverse
 from .meta import (
     Bijection,
@@ -65,6 +65,7 @@ from .meta import (
     _same_axes,
 )
 from .multiscale import MultiscaleField
+from .operators import Operation
 from .sequence import Sequence, _unnest
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
@@ -161,6 +162,38 @@ def _(t: Inverse, policy: SimplifyTable) -> Transformation:
     if isinstance(simplified, Identity):
         return Identity(input=t.input, output=t.output)
     return _with_endpoints(simplified.inverse(), t)
+
+
+@simplifier
+def _(t: Operation, policy: SimplifyTable) -> Transformation:
+    """Simplify what an operator wraps, without ever resolving it.
+
+    As for an inverse, resolving an operator is computation, which is
+    [`Operation.compute`][]'s job. Simplifying the forward can still
+    collapse the whole wrapper, because every operator fixes the identity,
+    or make it cheaper: the wrapper is rebuilt through the simplified
+    forward's own method, so it becomes the typed wrapper of whatever
+    family the forward turned into. A forward whose operator is refused is
+    left wrapped as it was, since a simplifier never raises.
+    """
+    if policy.resolve(t) is NONE:
+        return t
+    forward = t.forward
+    simplified = _simplify(forward, policy=policy)
+    if simplified is forward:
+        return t
+    if isinstance(simplified, Identity):
+        return Identity(input=t.input, output=t.output)
+    try:
+        rebuilt = getattr(simplified, t._method)()
+    except (DomainError, NotImplementedError):
+        return t
+    if type(rebuilt) is type(t):
+        # The wrapper's own options, such as the number of squaring steps of
+        # a field exponential, survive the rebuild.
+        options = {name: getattr(t, name) for name in t.metadata_fields}
+        rebuilt = rebuilt.to(**options) if options else rebuilt
+    return _with_endpoints(rebuilt, t)
 
 
 @simplifier
