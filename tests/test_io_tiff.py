@@ -23,7 +23,6 @@ from brainhops.datamodel.images import (  # noqa: E402
     SingleScaleImage,
 )
 from brainhops.datamodel.transformations import Affine, Scaling  # noqa: E402
-from brainhops.io.base import raster  # noqa: E402
 from brainhops.io.base import tiff as backend  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
@@ -31,6 +30,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     WriterError,
 )
 from brainhops.io.images import load  # noqa: E402
+from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
 from brainhops.io.images.tiff import (  # noqa: E402
     TiffImage,
     TiffMultiScaleImage,

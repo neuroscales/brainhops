@@ -7,8 +7,8 @@ selects a series and a pyramid level, reads its pixels -- memory-mapped,
 lazily, or eagerly -- and gathers what the file says about the size of a
 pixel. It knows nothing of coordinate systems or transformations, which
 are the business of the shared raster conventions in
-[`brainhops.io.base.raster`][]. It mirrors
-[`brainhops.io.base.pillow`][], the backend the TIFF reader falls back on
+`brainhops.io.images.base._utils_raster`. It mirrors
+`brainhops.io.images.pillow._utils`, the backend the TIFF reader falls back on
 when tifffile is not installed.
 
 ## Dialects
@@ -40,7 +40,7 @@ A size that is absent, or is a placeholder, is *unknown* and is left out.
 tifffile reports missing resolution tags as 1 pixel per inch, so their
 absence is detected from the tags themselves; a resolution in inches or
 centimetres equal to 72 or 96 dpi, or to one pixel per unit, is a
-placeholder (see [`is_default_dpi`][brainhops.io.base.raster.is_default_dpi]).
+placeholder (see `is_default_dpi`).
 """
 
 __all__ = [
@@ -77,8 +77,8 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops._core.dependencies import tifffile
-from brainhops.io.base import raster
 from brainhops.io.base.parsers import ParserContentError
+from brainhops.io.images.base import _utils_raster as raster
 
 EXTENSIONS: tx.Tuple[str, ...] = (
     ".tif",

@@ -38,8 +38,6 @@ nav = [
         "api/io/base/freesurfer.md",
         "api/io/base/mgh.md",
         "api/io/base/zarr.md",
-        "api/io/base/raster.md",
-        "api/io/base/pillow.md",
         "api/io/base/tiff.md",
       ]},
       {"images" = [

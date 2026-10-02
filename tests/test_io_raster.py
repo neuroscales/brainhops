@@ -1,10 +1,10 @@
 """
 Tests for the conventions shared by headerless raster image formats.
 
-`brainhops.io.base.raster` is backend-agnostic: it turns a C-ordered
-array, its storage axes and whatever pixel size a file records into the
-F-ordered data and the pixel-to-physical scaling every raster reader
-returns, and back again for writers.
+`brainhops.io.images.base._utils_raster` is backend-agnostic: it turns a
+C-ordered array, its storage axes and whatever pixel size a file records
+into the F-ordered data and the pixel-to-physical scaling every raster
+reader returns, and back again for writers.
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
 from brainhops.datamodel.units import is_sampleunit
-from brainhops.io.base import raster
+from brainhops.io.images.base import _utils_raster as raster
 
 # ----------------------------------------------------------------------
 #   AXES

@@ -22,7 +22,6 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
-from brainhops.io.base import raster
 from brainhops.io.base import tiff as backend
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
@@ -36,6 +35,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import _utils_raster as raster
 
 # ----------------------------------------------------------------------
 #   CONSTANTS
@@ -892,8 +892,8 @@ class TiffImage(
 
     The data is one level (by default, the full resolution) of one series
     (by default, the first) of the file, F-ordered: the spatial axes
-    `x, y[, z]` first, then time, then channels, then anything else (see
-    [`brainhops.io.base.raster`][]). The only transformation is a scaling
+    `x, y[, z]` first, then time, then channels, then anything else.
+    The only transformation is a scaling
     (with a translation when the file records an origin) from the pixel
     system to a `"physical"` system; it is the identity, in no unit, when
     the pixel size is unknown.
@@ -1115,7 +1115,7 @@ class TiffImage(
                 "read (with Pillow). Install tifffile (pip install "
                 "brainhops[tiff]) to read other series or pyramid levels."
             )
-        from brainhops.io.base.pillow import read_pillow
+        from brainhops.io.images.pillow._utils import read_pillow
 
         if source.filename is not None:
             file: tx.Any = source.filename

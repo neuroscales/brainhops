@@ -5,8 +5,8 @@ This is the Pillow *backend*: it turns a file into a C-ordered `numpy`
 array plus a description of its axes and its resolution, and back. It
 knows nothing of coordinate systems or transformations, which are the
 business of the shared raster conventions in
-[`brainhops.io.base.raster`][]. Keeping the two apart lets any raster
-reader -- the Pillow image reader, or a TIFF reader that falls back on
+`brainhops.io.images.base._utils_raster`. Keeping the two apart lets any
+raster reader -- the Pillow image reader, or a TIFF reader that falls back on
 Pillow when tifffile is not installed -- decode with Pillow and still
 follow the same conventions.
 
@@ -45,6 +45,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Magic
 from PIL import Image, UnidentifiedImageError
 
 # internals
@@ -113,8 +114,13 @@ DPI_FORMATS: tx.FrozenSet[str] = frozenset({"PNG", "JPEG", "BMP", "TIFF"})
 _PALETTE_MODES = ("P", "PA")
 
 
-class PillowRaster(tx.NamedTuple):
-    """One decoded frame of a raster file."""
+class PillowRaster(Magic, frozen=True, eq=False):
+    """
+    One decoded frame of a raster file.
+
+    Equality is identity: comparing two frames would compare their
+    arrays element-wise.
+    """
 
     array: np.ndarray
     """The pixels, C-ordered: `(rows, columns)` or `(rows, columns,
@@ -181,7 +187,7 @@ def sniff_pillow(
     formats : Sequence[str], optional
         The Pillow formats to consider. By default, those recognizable
         from their content
-        ([`SNIFF_FORMATS`][brainhops.io.base.pillow.SNIFF_FORMATS]).
+        (`SNIFF_FORMATS`).
 
     Returns
     -------
@@ -329,7 +335,7 @@ def read_pillow(
         decoded as `RGB` or `RGBA`.
     palette : bool
         Look up the colours of a palette image (see
-        [`pillow_to_array`][brainhops.io.base.pillow.pillow_to_array]).
+        `pillow_to_array`).
     formats : Sequence[str], optional
         The Pillow formats to try. By default, all of them.
 
@@ -572,7 +578,7 @@ def encode_pillow(
     dpi : (float, float), optional
         The resolution to record, `(x, y)` in dots per inch. It is passed
         on only to the formats that can store one
-        ([`DPI_FORMATS`][brainhops.io.base.pillow.DPI_FORMATS]).
+        (`DPI_FORMATS`).
     **options
         Passed on to Pillow's `Image.save`, e.g. `quality=95` for JPEG.
 

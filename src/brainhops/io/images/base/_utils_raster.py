@@ -19,11 +19,11 @@ array and a description of its axes, and this module does the rest.
 2. **Axis order.** A decoding library returns a C-ordered array, whose
    last axis changes fastest -- `(rows, columns)`, or `(y, x)`, for a
    plain image. Readers return a *view* of that array transposed into the
-   brainhops order ([`to_canonical`][brainhops.io.base.raster.to_canonical])
+   brainhops order (`to_canonical`)
    -- the spatial axes first, fastest first (`x, y[, z]`), then time, then
    the channel axis, then anything else -- without copying it, as nibabel
    does for NIfTI. Writers transpose back
-   ([`to_storage`][brainhops.io.base.raster.to_storage]).
+   (`to_storage`).
 3. **Row 0 is at the top.** The first row of a raster file is the top of
    the picture, so `y` points *down*. This is documented, not encoded: the
    reader attaches no orientation to its axes.
@@ -41,7 +41,7 @@ array and a description of its axes, and this module does the rest.
    physical axes have no unit (`None`, "unspecified"). A physical size is
    never invented.
 7. **Overrides.** Every reader takes the keywords `pixel_size` and `unit`
-   ([`resolve_pixel_size`][brainhops.io.base.raster.resolve_pixel_size]),
+   (`resolve_pixel_size`),
    which take precedence over the file's metadata.
 
 ## Building a reader on this module
@@ -64,11 +64,11 @@ interval on the `"t"` axis, say. Each level of a multiscale pyramid is
 built the same way, with its own sizes.
 
 A writer does the converse: it finds the canonical axes of the image
-([`image_axes`][brainhops.io.base.raster.image_axes]), transposes the data
+(`image_axes`), transposes the data
 into its storage order
-([`to_storage`][brainhops.io.base.raster.to_storage]) and reads the pixel
+(`to_storage`) and reads the pixel
 size back from the preferred transformation
-([`physical_pixel_size`][brainhops.io.base.raster.physical_pixel_size]),
+(`physical_pixel_size`),
 which is `None` when the size is unknown or the transformation is more
 than a scaling.
 """
@@ -310,7 +310,7 @@ def to_canonical(
         The array, as the decoding library returns it.
     axes : str | Sequence[Axis]
         Its storage axes, slowest first (see
-        [`storage_axes`][brainhops.io.base.raster.storage_axes]).
+        `storage_axes`).
 
     Returns
     -------
@@ -339,7 +339,7 @@ def storage_permutation(
     Each storage axis is matched to an axis of `axes` with the same name
     or, failing that, to the first one left of the same type (so an
     unnamed spatial axis still matches `X`). This is the converse of
-    [`canonical_permutation`][brainhops.io.base.raster.canonical_permutation]
+    `canonical_permutation`
     for a writer that has a fixed storage order, such as `"YXS"`.
 
     Parameters
@@ -448,7 +448,7 @@ def image_axes(
     transformation, when that system lists exactly one axis per dimension.
     Otherwise, they are not known, and `None` is returned so that the
     writer can apply its own default (see
-    [`default_axes`][brainhops.io.base.raster.default_axes]).
+    `default_axes`).
     """
     axes = getattr(system, "axes", None)
     if axes is None:
@@ -668,9 +668,9 @@ def raster_transformations(
 
     The list holds a single
     [`Scaling`][brainhops.datamodel.transformations.Scaling] from the index
-    space ([`pixel_system`][brainhops.io.base.raster.pixel_system]) to the
+    space (`pixel_system`) to the
     physical space
-    ([`physical_system`][brainhops.io.base.raster.physical_system]). An
+    (`physical_system`). An
     axis listed in `scales` is scaled by its size and measured in its unit;
     any other axis is scaled by one and has no unit. So an image whose size
     is unknown gets the identity, onto a space with no units: one pixel is
@@ -682,7 +682,7 @@ def raster_transformations(
         The axes of the image, in the brainhops order.
     scales : Mapping[str, AxisScale], optional
         The size and unit of a sample, by axis name (see
-        [`resolve_pixel_size`][brainhops.io.base.raster.resolve_pixel_size]).
+        `resolve_pixel_size`).
 
     Returns
     -------
@@ -794,7 +794,7 @@ def physical_pixel_size(
 def is_default_dpi(dpi: tx.Any) -> bool:
     """
     Whether a resolution is a placeholder that says nothing about the
-    pixel size (see [`DEFAULT_DPIS`][brainhops.io.base.raster.DEFAULT_DPIS]).
+    pixel size (see `DEFAULT_DPIS`).
 
     A pair is a placeholder when both of its values are. A missing,
     zero, negative or non-finite resolution is a placeholder too.

@@ -26,9 +26,8 @@ hyperstack -- that tifffile assembles from its pages, each with the axes
 it reads from the file's metadata (`TZCYXS`, ...). The reader returns one
 series (`series=`, the first by default) transposed to the brainhops order
 -- a view, not a copy -- so that the spatial axes `x, y[, z]` come first,
-then time `t`, then channels `c`, then any other axis (see
-[`brainhops.io.base.raster`][]). An RGB image is `(x, y, c)`; an ImageJ
-hyperstack `TZCYX` is `(x, y, z, t, c)`.
+then time `t`, then channels `c`, then any other axis. An RGB image is
+`(x, y, c)`; an ImageJ hyperstack `TZCYX` is `(x, y, z, t, c)`.
 
 The pixels are read when `image.data` is first accessed, not when the
 image is loaded:

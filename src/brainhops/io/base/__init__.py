@@ -14,7 +14,6 @@ __all__ = [
     "sniff",
     "mrtrix",
     "parsers",
-    "raster",
     "freesurfer",
     "register_format",
     "ImageSpec",
@@ -29,12 +28,10 @@ __all__ = [
 
 from brainhops._core.dependencies import (
     HAS_NIBABEL,
-    HAS_PILLOW,
-    HAS_TIFFFILE,
     has_abczarr_driver,
 )
 
-from . import freesurfer, mrtrix, parsers, raster
+from . import freesurfer, mrtrix, parsers
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
@@ -62,16 +59,6 @@ if HAS_NIBABEL:
     from . import mgh, nifti
 
     __all__ += ["mgh", "nifti"]
-
-if HAS_PILLOW:
-    from . import pillow
-
-    __all__ += ["pillow"]
-
-if HAS_TIFFFILE:
-    from . import tiff
-
-    __all__ += ["tiff"]
 
 # The Zarr store adapter needs abczarr and at least one backend driver.
 # abczarr alone cannot open a store, so the adapter is exposed only when a
