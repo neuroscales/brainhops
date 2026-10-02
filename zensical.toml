@@ -33,12 +33,15 @@ nav = [
         "api/io/base/index.md",
         "api/io/base/parsers.md",
         "api/io/base/nifti.md",
+        "api/io/base/freesurfer.md",
+        "api/io/base/mgh.md",
         "api/io/base/zarr.md",
       ]},
       {"images" = [
         "api/io/images/index.md",
         "api/io/images/base.md",
         "api/io/images/nifti.md",
+        {"freesurfer.mgh" = "api/io/images/mgh.md"},
         "api/io/images/zarr.md",
       ]},
       {"transformations" = [
