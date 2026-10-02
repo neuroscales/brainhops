@@ -98,21 +98,30 @@ class Source:
     @property
     def name(self) -> tx.Optional[str]:
         """The file name, if the input is a named file."""
-        other = self.other
-        if isinstance(other, PathLike):
-            other = fspath(other)
-        if not isinstance(other, str):
-            other = getattr(other, "name", None)
-            if not isinstance(other, str):
-                return None
-        # Trailing slashes matter for directory-based formats (.zarr)
-        return path.Path(other.rstrip("/")).name
+        return file_name(self.other)
 
     def __repr__(self) -> str:
         """Describe the source by its file name, or as plain content when
         it has none."""
         name = self.name
         return f"file {name!r}" if name else "input content"
+
+
+def file_name(other: tx.Any) -> tx.Optional[str]:
+    """
+    The base name of the file `other` names, or `None` if it names none.
+
+    A path names its file, and an open file object names the file it was
+    opened from. Content, and a stream with no name, name nothing.
+    """
+    if isinstance(other, PathLike):
+        other = fspath(other)
+    if not isinstance(other, str):
+        other = getattr(other, "name", None)
+        if not isinstance(other, str):
+            return None
+    # Trailing slashes matter for directory-based formats (.zarr)
+    return path.Path(other.rstrip("/")).name
 
 
 def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
