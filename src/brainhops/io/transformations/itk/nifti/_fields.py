@@ -136,7 +136,7 @@ def _homogeneous(xform: _xforms.Transformation) -> np.ndarray:
     return matrix
 
 
-class ITKNiftiField(_xforms.Sequence, NiftiBasedTransformation):
+class ITKNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """
     A field stored in an ITK NIfTI vector image, from LPS to LPS.
 
@@ -149,6 +149,10 @@ class ITKNiftiField(_xforms.Sequence, NiftiBasedTransformation):
     The same code reads 2-D and 3-D fields: the dimension is read off the
     header, and the endpoints are the ITK spaces of that dimension --
     (L, P) in 2-D and `LPSmm` in 3-D, both in millimetres.
+
+    The chain is made of named slots, so the field is an
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
+    editing it in place raises `TypeError`.
 
     Abstract: it is not decorated with `@register_format`, so it never
     takes part in dispatch.
