@@ -12,6 +12,7 @@ __all__ = [
     "load",
     "save",
     "sniff",
+    "afni",
     "mrtrix",
     "parsers",
     "freesurfer",
@@ -31,7 +32,7 @@ from brainhops._core.dependencies import (
     has_abczarr_driver,
 )
 
-from . import freesurfer, mrtrix, parsers
+from . import afni, freesurfer, mrtrix, parsers
 from ._base import (
     BinaryFileBasedObject,
     FileBasedObject,
