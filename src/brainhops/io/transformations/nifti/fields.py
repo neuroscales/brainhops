@@ -43,6 +43,12 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         and nothing else in the registry should outrank it. FSL intent
         codes are left to the FSL readers, which decode them, rather than
         claimed here.
+
+        A `VECTOR` (1007) file in ITK's `(X, Y, Z, 1, 3)` layout is
+        claimed just as certainly by the ITK reader, which reads its
+        vectors as LPS: nothing in the header says which frame they are
+        in, so the two tie and a hint decides. See
+        [`brainhops.io.transformations.itk.nifti`][].
         """
         intent = _nifti_intent(header)
         if intent in _NIFTI_FIELD_INTENTS and intent not in _NIFTI_FSL_INTENTS:

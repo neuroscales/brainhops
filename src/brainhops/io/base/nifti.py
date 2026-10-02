@@ -127,6 +127,15 @@ _NIFTI_INTENT_NONE = 0
 _NIFTI_INTENT_DISPVECT = 1006
 """Intent code that marks a NIfTI file as a displacement or vector field."""
 
+_NIFTI_INTENT_VECTOR = 1007
+"""
+Intent code of a generic vector image.
+
+ITK writes it for every vector image unless told otherwise, so it is
+also the code of ITK's (LPS) displacement fields. It says nothing about
+the frame its vectors are in.
+"""
+
 
 _NIFTI_XCODES = {
     0: "unknown",
