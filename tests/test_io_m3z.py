@@ -321,7 +321,7 @@ def test_chain_shape(tmp_path: Path) -> None:
     assert isinstance(ras2node, RASToVoxel)
     assert isinstance(field, xforms.CoordinatesField)
     assert isinstance(vox2ras, VoxelToRAS)
-    assert int(field.order) == 1
+    assert int(field.degree) == 1
 
 
 def test_nodes_map_to_their_positions(tmp_path: Path) -> None:

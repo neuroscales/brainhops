@@ -201,8 +201,8 @@ class NiftiRASDisplacementField(
 
     HINTS = ("displacements",)
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -290,7 +290,7 @@ class NiftiRASDisplacementField(
         return ras_displacement_chain(
             self._ras_vectors(),
             self._vox2ras(),
-            order=self.order,
+            degree=self.degree,
             bound=self.bound,
         )
 

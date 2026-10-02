@@ -228,7 +228,7 @@ def test_itks_interpolation_is_kept(itk_warp) -> None:  # noqa: ANN001
     """ITK interpolates a displacement field linearly, and extends it with
     its nearest value."""
     displacement = ItkNiftiDisplacementField.from_file(itk_warp).displacement
-    assert displacement.order == 1
+    assert displacement.degree == 1
     assert displacement.bound == "nearest"
     assert not displacement.coeff
 
@@ -745,7 +745,7 @@ def test_spline_coefficients_are_not_written() -> None:
                 field=np.zeros((*SHAPES[3], 3)),
                 input=voxel,
                 output=voxel,
-                order=3,
+                degree=3,
                 coeff=True,
             ),
             VoxelToLPS(matrix=np.eye(4)[:3]),

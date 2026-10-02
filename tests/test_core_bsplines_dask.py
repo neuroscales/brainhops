@@ -34,7 +34,7 @@ from brainhops._core.bsplines import (  # noqa: E402
 from brainhops._core.dask_ndimage import _SPLINE_POLES, _halo  # noqa: E402
 
 BOUNDS = ["nearest", "reflect", "mirror", "grid-wrap", "wrap", "constant", 2.5]
-ORDERS = [0, 1, 2, 3, 4, 5]
+DEGREES = [0, 1, 2, 3, 4, 5]
 SHAPE = (7, 8, 9)
 """The spatial shape of the input: small, and no two axes alike."""
 
@@ -63,30 +63,30 @@ def _coords() -> np.ndarray:
 
 
 @pytest.mark.parametrize("coeff", [False, True])
-@pytest.mark.parametrize("order", ORDERS)
+@pytest.mark.parametrize("degree", DEGREES)
 @pytest.mark.parametrize("bound", BOUNDS, ids=str)
 @pytest.mark.parametrize(
     "chunks", [(2, 7, 8, 9), (1, 3, 4, 4)], ids=["one-chunk", "chunked"]
 )
 def test_dask_samples_outside_the_grid_as_numpy_does(
     bound,  # noqa: ANN001
-    order: int,
+    degree: int,
     coeff: bool,
     chunks: tuple,
 ) -> None:
     values, coords = _input(), _coords()
-    expected = pull(values, coords, order, bound, coeff)
+    expected = pull(values, coords, degree, bound, coeff)
     lazy = pull(
         da.from_array(values, chunks=chunks),
         da.from_array(coords, chunks=(1, 5, 6, 3)),
-        order,
+        degree,
         bound,
         coeff,
     )
     assert isinstance(lazy, da.Array)
     # scipy approximates its `reflect` prefilter near the edges of a short
     # axis, and the window computes it exactly: see the test below.
-    atol = 1e-4 if bound == "reflect" and not coeff and order > 2 else 1e-12
+    atol = 1e-4 if bound == "reflect" and not coeff and degree > 2 else 1e-12
     np.testing.assert_allclose(
         np.asarray(lazy.compute()), expected, rtol=1e-7, atol=atol
     )
@@ -121,17 +121,17 @@ def test_dask_sampling_is_deterministic() -> None:
     )
 
 
-@pytest.mark.parametrize("order", [2, 3, 4, 5])
+@pytest.mark.parametrize("degree", [2, 3, 4, 5])
 @pytest.mark.parametrize("bound", ["reflect", "mirror", "grid-wrap"])
 @pytest.mark.parametrize("size", [7, 20])
 def test_the_window_prefilter_is_exact(
-    order: int, bound: str, size: int
+    degree: int, bound: str, size: int
 ) -> None:
     """
     The window samples the spline of the extended signal, here computed on
     an extension long enough that its own ends weigh nothing. scipy's
     `reflect` prefilter is approximate near the edges of a short axis --
-    about 2e-6 at order five on 7 samples -- and the window is not.
+    about 2e-6 at degree five on 7 samples -- and the window is not.
     """
     from scipy.ndimage import map_coordinates, spline_filter1d
 
@@ -150,19 +150,19 @@ def test_the_window_prefilter_is_exact(
             period - (1 if bound == "reflect" else 0) - index,
             index,
         )
-    coeff = spline_filter1d(values[index], order, mode="mirror")
+    coeff = spline_filter1d(values[index], degree, mode="mirror")
     exact = map_coordinates(
-        coeff, [points + pad], order=order, prefilter=False, mode="mirror"
+        coeff, [points + pad], order=degree, prefilter=False, mode="mirror"
     )
     lazy = pull(
-        da.from_array(values, chunks=4), points[:, None], order, bound, False
+        da.from_array(values, chunks=4), points[:, None], degree, bound, False
     )
     np.testing.assert_allclose(np.asarray(lazy.compute()), exact, atol=1e-10)
 
 
 def test_the_halo_leaves_out_only_negligible_samples() -> None:
-    for order, pole in _SPLINE_POLES.items():
-        assert pole ** _halo(order) < 1e-12
+    for degree, pole in _SPLINE_POLES.items():
+        assert pole ** _halo(degree) < 1e-12
     assert _halo(0) == _halo(1) == 0
 
 
@@ -184,14 +184,14 @@ LARGE = (300, 400, 500)
 """A volume far larger than the windows its blocks should read."""
 
 
-@pytest.mark.parametrize("order", [1, 3, 5])
+@pytest.mark.parametrize("degree", [1, 3, 5])
 @pytest.mark.parametrize(
     "bound", ["nearest", "reflect", "mirror", "grid-wrap", "constant"]
 )
 @pytest.mark.parametrize("where", ["inside", "before", "after", "edge"])
 def test_a_block_reads_a_window_around_its_stencils(
     reads,  # noqa: ANN001
-    order: int,
+    degree: int,
     bound: str,
     where: str,
 ) -> None:
@@ -211,9 +211,9 @@ def test_a_block_reads_a_window_around_its_stencils(
     }[where]
     points = low + rng.uniform(0, span, size=(4, 4, 4, 3))
     volume = da.random.default_rng(5).random(LARGE, chunks=100)
-    pull(volume, points, order, bound, False).compute()
+    pull(volume, points, degree, bound, False).compute()
     assert reads
-    limit = span + 2 * (_halo(order) + order // 2 + 2) + 24
+    limit = span + 2 * (_halo(degree) + degree // 2 + 2) + 24
     for block in reads:
         for used in block:
             assert used.size <= limit
@@ -241,7 +241,7 @@ def test_points_outside_a_constant_boundary_read_nothing(reads) -> None:  # noqa
 def test_a_point_that_is_not_finite_maps_to_nan() -> None:
     """
     scipy returns `cval`, NaN or an edge sample for such a point,
-    depending on the mode and order; none of it is a position. The other
+    depending on the mode and degree; none of it is a position. The other
     points of the same block are sampled as usual.
     """
     values, coords = _input(), _coords()
@@ -282,7 +282,7 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("order", [2, 3, 5])
+@pytest.mark.parametrize("degree", [2, 3, 5])
 @pytest.mark.parametrize(
     "bound",
     ["nearest", "reflect", "mirror", "grid-wrap", "wrap", 2.5],
@@ -291,7 +291,7 @@ def test_numpy_coordinates_are_sampled_in_blocks(reads) -> None:  # noqa: ANN001
 @pytest.mark.parametrize("chunks", [(4, 5, 6), (2, 3, 3)], ids=["4", "2"])
 def test_dask_coefficients_are_scipys(
     bound,  # noqa: ANN001
-    order: int,
+    degree: int,
     chunks: tuple,
 ) -> None:
     """
@@ -300,9 +300,9 @@ def test_dask_coefficients_are_scipys(
     and the `wrap` mode, which `dask_image` refuses.
     """
     values = np.random.default_rng(11).standard_normal((2, 12, 14, 16))
-    expected = value2coeff(values, order, bound, ndim=3)
+    expected = value2coeff(values, degree, bound, ndim=3)
     lazy = value2coeff(
-        da.from_array(values, chunks=(1, *chunks)), order, bound, ndim=3
+        da.from_array(values, chunks=(1, *chunks)), degree, bound, ndim=3
     )
     assert lazy.chunks == da.from_array(values, chunks=(1, *chunks)).chunks
     # scipy approximates its `reflect` extension -- `nearest` prefilters
@@ -311,13 +311,13 @@ def test_dask_coefficients_are_scipys(
     np.testing.assert_allclose(np.asarray(lazy), expected, atol=atol)
 
 
-@pytest.mark.parametrize("order", [2, 3, 5])
+@pytest.mark.parametrize("degree", [2, 3, 5])
 @pytest.mark.parametrize("bound", ["reflect", "mirror", "grid-wrap"])
-def test_dask_coefficients_round_trip(order: int, bound: str) -> None:
+def test_dask_coefficients_round_trip(degree: int, bound: str) -> None:
     values = np.random.default_rng(12).standard_normal((12, 14, 16))
     lazy = da.from_array(values, chunks=5)
-    coeff = value2coeff(lazy, order, bound)
-    back = coeff2value(coeff, order, bound)
+    coeff = value2coeff(lazy, degree, bound)
+    back = coeff2value(coeff, degree, bound)
     assert isinstance(back, da.Array)
     np.testing.assert_allclose(np.asarray(back), values, atol=1e-9)
 
@@ -345,18 +345,18 @@ def test_a_coefficient_chunk_reads_its_neighbours_only() -> None:
     }
 
 
-@pytest.mark.parametrize("order", [0, 1])
+@pytest.mark.parametrize("degree", [0, 1])
 @pytest.mark.parametrize("lazy", [False, True], ids=["numpy", "dask"])
-def test_orders_zero_and_one_are_their_own_coefficients(
-    order: int, lazy: bool
+def test_degrees_zero_and_one_are_their_own_coefficients(
+    degree: int, lazy: bool
 ) -> None:
     values = np.random.default_rng(13).standard_normal((5, 6, 7))
     array = da.from_array(values, chunks=3) if lazy else values
     for convert in (value2coeff, coeff2value):
-        out = convert(array, order, "mirror")
+        out = convert(array, degree, "mirror")
         assert out is not array
         np.testing.assert_array_equal(np.asarray(out), values)
-        assert convert(array, order, "mirror", inplace=True) is array
+        assert convert(array, degree, "mirror", inplace=True) is array
 
 
 def test_the_dask_backend_needs_only_dask() -> None:

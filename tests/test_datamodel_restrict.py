@@ -46,7 +46,7 @@ def _sub(inner: object, in_axes: list, out_axes: list = None) -> object:
 def _warp(ndim: int) -> DisplacementField:
     rng = np.random.default_rng(0)
     shape = (3,) * ndim + (ndim,)
-    return DisplacementField(field=rng.normal(size=shape), order=1)
+    return DisplacementField(field=rng.normal(size=shape), degree=1)
 
 
 def _matrix(t: object) -> np.ndarray:

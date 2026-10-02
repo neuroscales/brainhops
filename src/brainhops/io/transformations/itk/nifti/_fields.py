@@ -398,8 +398,8 @@ class ItkNiftiDisplacementField(ItkNiftiField):
             return Confidence.NO
         return Confidence.CERTAIN
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -434,7 +434,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 field=field,
                 input=voxel,
                 output=voxel,
-                order=self.order,
+                degree=self.degree,
                 bound=self.bound,
             ),
             VoxelToLPS(matrix=vox2lps, input=voxel, output=world),
