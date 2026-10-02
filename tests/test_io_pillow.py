@@ -24,22 +24,22 @@ from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.transformations import Scaling  # noqa: E402
 from brainhops.datamodel.units import is_sampleunit  # noqa: E402
-from brainhops.io.base import raster  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserContentError,
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.base.pillow import (  # noqa: E402
+from brainhops.io.images import load  # noqa: E402
+from brainhops.io.images.base import _utils_raster as raster  # noqa: E402
+from brainhops.io.images.pillow import PillowImage  # noqa: E402
+from brainhops.io.images.pillow._utils import (  # noqa: E402
     array_to_pillow,
     format_for_name,
     pillow_dpi,
     read_pillow,
     sniff_pillow,
 )
-from brainhops.io.images import load  # noqa: E402
-from brainhops.io.images.pillow import PillowImage  # noqa: E402
 
 RNG = np.random.default_rng(0)
 GREY = RNG.integers(0, 256, (7, 12), dtype=np.uint8)  # rows, columns

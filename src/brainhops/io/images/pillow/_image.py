@@ -9,7 +9,6 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.io.base import raster
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
@@ -18,7 +17,9 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.base.pillow import (
+from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import _utils_raster as raster
+from brainhops.io.images.pillow._utils import (
     EXTENSIONS,
     array_to_pillow,
     can_write,
@@ -27,7 +28,6 @@ from brainhops.io.base.pillow import (
     read_pillow,
     sniff_pillow,
 )
-from brainhops.io.images.base import WritableFileBasedImage
 
 _DpiLike = tx.Union[None, bool, float, tx.Sequence[float]]
 

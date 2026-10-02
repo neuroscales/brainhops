@@ -18,8 +18,7 @@ save(image, "photo.jpg", quality=95)
 Pillow decodes an image into rows of pixels, `(rows, columns[,
 samples])`. The reader returns that array transposed to the brainhops
 order -- a view, not a copy -- so that `data[x, y]` is the pixel in
-column `x` and row `y`, as for every image in brainhops (see
-[`brainhops.io.base.raster`][]):
+column `x` and row `y`, as for every image in brainhops:
 
 | Pillow mode                     | `data`                                |
 | ------------------------------- | ------------------------------------- |
