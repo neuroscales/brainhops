@@ -6,7 +6,7 @@ formats), #175 (zarr-vectors) and the per-category format issues
 (points, streamlines, meshes). Decisions still open are listed under
 [Open questions](#open-questions).
 
-This memo proposes a data model for *vector objects*: point clouds,
+This memo proposes a data model for *vector objects*: points (point clouds),
 polylines (streamlines), skeletons, triangle surface meshes and
 tetrahedral volume meshes. It aims for three things:
 
@@ -14,7 +14,7 @@ tetrahedral volume meshes. It aims for three things:
    vertices in their native coordinate system and carries a list of
    native-to-world transformations, exactly as an image stores voxels
    and carries voxel-to-world transformations. The same names
-   (`transformations`, `transformation`, `__call__`, `reslice`,
+   (`transformations`, `transformation`, `coordinates`, `__call__`, `reslice`,
    `__getitem__`, `to_singlescale`, `load`/`save`) mean the same thing
    wherever that is possible, and differ in a documented way where the
    geometry forces it.
@@ -27,6 +27,36 @@ tetrahedral volume meshes. It aims for three things:
    geometric simplification (zarr-vectors coarsening, neuroglancer mesh
    LODs) or a sub-sample of the objects (neuroglancer annotation spatial
    levels).
+
+---
+
+## 0. Vocabulary
+
+The same handful of concepts goes by different names in every field and
+format. This memo uses the names in the first column.
+
+| Concept (this memo) | Meaning | zarr-vectors | neuroglancer | TRX / nibabel | VTK / meshio | trimesh / GIFTI |
+|---|---|---|---|---|---|---|
+| **vertex** | a point with coordinates in the native space | vertex | vertex / position | position / point | point | vertex / pointset entry |
+| **cell** | a group of `k` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = k`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
+| **cell width** `k` | number of vertices in a cell | `link_width` | — | — | cell size | 3 |
+| **simplex / polygon** | cell is a convex hull (tet) or an ordered loop (quad) | not distinguished (see §2) | — | — | cell type (`VTK_TETRA` vs `VTK_QUAD`) | — |
+| **oriented** | vertex order inside a cell is meaningful | `directed` | — | — | — | winding |
+| **piece** | a list of vertices (and their cells) that belongs to one object | fragment | fragment (mesh octree node) | one streamline | — | — |
+| **object** | a logical entity: one streamline, one neuron, one surface | object | segment / annotation | streamline | — | one mesh |
+| **id** | the object a piece belongs to | object id | segment id / annotation id | streamline index | — | — |
+| **group** | a named set of objects | group | — | group | — | label |
+| **vertex / cell / piece attribute** | data attached to each vertex, cell or piece | vertex / link / fragment attribute | vertex attribute, annotation property | dpv / — / dps (dpg per group) | point_data / cell_data / field_data | vertex / face attributes |
+| **native space** | the coordinate system the vertices are stored in | level coordinates | model space (before `transform`) | RAS mm (TRX), voxmm (TRK) | — | `coords` |
+| **chunk** | a box of the native space, the unit of storage | chunk | chunk / octree node / spatial cell | — | — | — |
+| **level** | one resolution of a pyramid | level | level of detail / spatial index level | — | — | — |
+
+**CSR** ("compressed sparse row", the sparse-matrix layout) is how a
+list of variable-length lists is stored as two flat arrays: `members`
+holds every list end to end, and `offsets` (length `P + 1`) says where
+each list starts, so list `p` is `members[offsets[p]:offsets[p+1]]`. TRX
+`offsets`, nibabel `ArraySequence._offsets`, VTK's `connectivity` +
+`offsets`, and zarr-vectors' fragment ranges are all this layout.
 
 ---
 
@@ -71,84 +101,127 @@ vertices as a transformation would leak all of that.
 ```
 Vectors                          (abstract; ≈ Image)
 ├── SingleScaleVectors           (abstract; ≈ SingleScaleImage)
-│   ├── PointCloud               cells: none (each vertex is its own object)
-│   ├── Polylines                cells: implicit edges i → i+1 inside a piece
-│   │   └── Streamlines          alias / thin subclass, tractography vocabulary
-│   ├── Skeleton                 cells: explicit edges (M, 2); trees / graphs
-│   └── Mesh                     cells: explicit simplices (M, k)
-│       ├── SurfaceMesh          k = 3 (triangles)
-│       └── VolumeMesh           k = 4 (tetrahedra)
+│   ├── Points                   cells: implicit, one per vertex (k = 1)
+│   ├── Lines                    cells: edges (M, 2); lines / trees / graphs
+│   │   ├── Polylines            cells: implicit edges i → i+1 inside a piece
+│   │   │   └── Streamlines      alias / thin subclass, tractography vocabulary
+│   │   └── Skeletons            cells: explicit edges (M, 2); trees / graphs
+│   │       └── Skeleton         thin subclass, ensures a single object
+│   └── Meshes                   cells: explicit (M, k)
+│       ├── SurfaceMeshes        polygons: k = 3 (triangles) or 4 (quads)
+│       │   └── SurfaceMesh      thin subclass, ensures a single object
+│       └── VolumeMeshes         simplices: k = 4 (tetrahedra)
+│           └── VolumeMesh       thin subclass, ensures a single object
 └── MultiScaleVectors[T]         (≈ MultiScaleImage; levels of one type T)
 ```
 
-Every single-scale class is a *simplicial complex*: vertices plus cells
-of a fixed width `k` (1 = point, 2 = edge, 3 = triangle, 4 = tet). This
-is the same notion as zarr-vectors' `link_width` and lets one
-implementation of cropping, attribute handling and topology bookkeeping
-serve all types. A subclass only says how its cells are stored
-(implicit for points and polylines, explicit for the rest) and what its
-intrinsic dimension is.
+Plural classes are collections of objects (what a file usually holds);
+the singular subclasses only add the check that there is one object, so
+that `SurfaceMesh` can be used where a function needs "a surface".
+
+Every single-scale class is vertices plus cells of a fixed width `k`.
+Two flags say what a cell is:
+
+- `cell_kind`: `"simplex"` (the convex hull of its vertices: point,
+  edge, triangle, tetrahedron) or `"polygon"` (a closed loop through its
+  vertices, in order: triangle, quad). The two only differ for `k >= 4`,
+  which is what separates a quad from a tetrahedron.
+- `oriented`: whether the order of a cell's vertices carries meaning
+  (a directed edge, the winding of a face, the handedness of a tet) or
+  is arbitrary.
+
+This lets one implementation of cropping, attributes and topology
+bookkeeping serve every type. A subclass only says how its cells are
+stored (implicit for points and polylines, explicit for the rest), and
+fixes `k` and `cell_kind`.
 
 Parametric shapes (neuroglancer `AXIS_ALIGNED_BOUNDING_BOX`,
 `ELLIPSOID`) are **out of scope** for this memo: they are not closed
 under nonlinear transformations, so they do not fit "store natively,
 transform lazily". A later `Annotations` class can hold them and offer
 `to_mesh()`; neuroglancer `POINT`, `LINE` and `POLYLINE` annotations map
-onto `PointCloud`, `Skeleton` (or `Polylines`) here.
+onto `Points`, `Lines` (or `Polylines`) here.
 
 ### 2.1 Fields of a single-scale object
 
-Every type uses the same layout: vertices grouped into **pieces** by a
-CSR `offsets` array, an object id per piece, and (for types with
-explicit cells) cells grouped by piece the same way.
+Using the vocabulary of §0: vertices and cells, grouped into **pieces**,
+each piece tagged with the **id** of the object it belongs to.
 
 ```python
 class SingleScaleVectors(Vectors):
     # (N, D) float, native coordinates
     vertices: Optional[ArrayProtocol]
-    # (P + 1,) CSR pieces over vertices
+    # (M, k) int, indices into `vertices`; derived when implicit
+    cells: Optional[ArrayProtocol] = None
+    # pieces: offsets (P + 1,) into `members` (or into `vertices` when
+    # `members` is None); members (L,) vertex indices, possibly shared
     offsets: Optional[ArrayProtocol] = None
+    members: Optional[ArrayProtocol] = None
     # (P,) object id of each piece
     ids: Optional[ArrayProtocol] = None
     # native -> world, last preferred
     transformations: List[Transformation] = ()
-    # each (N, ...), (P, ...); kinds: see 4.4
+    # each (N, ...), (M, ...), (P, ...); kinds: see 4.4
     vertex_attributes: Dict[str, ArrayProtocol] = {}
+    cell_attributes: Dict[str, ArrayProtocol] = {}
     piece_attributes: Dict[str, ArrayProtocol] = {}
     attribute_kinds: Dict[str, AttributeKind] = {}
-
-
-# base of Skeleton and Mesh
-class _ExplicitCells(SingleScaleVectors):
-    # (M, k) int, indices into the global vertex array
-    cells: Optional[ArrayProtocol] = None
-    # (P + 1,) CSR pieces over cells
-    cell_offsets: Optional[ArrayProtocol] = None
-    # each (M, ...)
-    cell_attributes: Dict[str, ArrayProtocol] = {}
 ```
+
+`cells` lives on the base class. For `Points` and `Polylines` it is a
+derived, read-only property (`arange(N)[:, None]`, and the `i → i+1`
+pairs inside each piece), so code that walks cells needs no special
+case. `Lines` exposes it as `edges` and `SurfaceMeshes` as `faces`, as
+aliases; the field itself is called `cells` because a tetrahedron's
+`faces` would be its triangles (VTK and meshio say `cells` too).
 
 | Class | A piece is | Cells |
 |---|---|---|
-| `PointCloud` | one point (`offsets = arange(N + 1)` by default) | none |
-| `Polylines` | one polyline run | implicit edges `i → i+1` inside the piece |
-| `Skeleton` | one connected component / stored fragment | `cells: (M, 2)` |
-| `SurfaceMesh`, `VolumeMesh` | one connected component / stored fragment | `cells: (M, 3)` / `(M, 4)` |
+| `Points` | one point (one piece per vertex by default) | implicit, `k = 1` |
+| `Polylines` | one polyline run; the order of its members is the line | implicit edges `i → i+1` inside the piece |
+| `Skeletons` | one connected component / stored fragment | `cells: (M, 2)`, usually `oriented` (parent → child) |
+| `SurfaceMeshes` | one connected component / stored fragment | `cells: (M, 3)` or `(M, 4)`, polygons |
+| `VolumeMeshes` | one connected component / stored fragment | `cells: (M, 4)`, simplices |
 
-Defaults keep simple cases simple: `offsets=None` means one piece holding
-every vertex (one point per piece for `PointCloud`), and `ids=None` means
-`arange(P)`. Cell indices refer to the global vertex array, zero-based;
-their dtype is preserved from the store, default `int64`. Vertex dtype is
-preserved too (`float32` for neuroglancer after dequantization).
+**Pieces and contiguity.** A piece is a *list* of vertex indices, stored
+in CSR form (§0): piece `p` is `members[offsets[p]:offsets[p+1]]`.
 
-`ids` separate *pieces* from *objects*. A streamline cut in two by a
-crop becomes two pieces with the same id, so per-object data (`dps` in
-TRX vocabulary) still refers to the right object. `piece_attributes` is
-indexed by piece and duplicated on split, so it stays a plain array
-aligned with `offsets`; `unique(ids)` gives the objects. This is
-zarr-vectors' model: a *fragment* is a run of an object's vertices, and
-the object manifest lists fragments. Neuroglancer annotation
-`relationships` become piece attributes.
+- When `members` is `None`, piece `p` is the contiguous run
+  `vertices[offsets[p]:offsets[p+1]]`. This is the common case (TRX,
+  TRK, TCK, GIFTI, one mesh per file) and costs nothing.
+- When `members` is given, pieces can be non-contiguous and can
+  **share** vertices: a vertex may belong to several pieces, and so to
+  several objects. This is zarr-vectors' explicit fragment mode, where two
+  fragments may list the same vertex rows, and where fragments can be
+  shared between objects (`shared_fragments`).
+- An object is non-contiguous whenever it has several pieces; nothing
+  else is needed for that.
+
+A store's chunk-local fragments are always *stitched* by the reader into
+pieces of this global form, so chunks never show through the API.
+`v.contiguous()` returns an equivalent object with `members=None`,
+duplicating shared vertices; it is what a writer for a contiguous-only
+format (TRX) calls. Shared membership is never silently dropped
+otherwise.
+
+Cells belong to pieces through their vertices: a cell is in a piece when
+all its vertices are. A cell whose vertices are shared by two pieces
+belongs to both, which is also how zarr-vectors attaches links to
+fragments.
+
+**Defaults.** `offsets=None` means one piece holding every vertex (one
+point per piece for `Points`), and `ids=None` means `arange(P)`. Cell
+and member indices are zero-based; their dtype is preserved from the
+store, default `int64`. Vertex dtype is preserved too (`float32` for
+neuroglancer after dequantization).
+
+**Pieces vs objects.** `ids` separate *pieces* from *objects*. A
+streamline cut in two by a crop becomes two pieces with the same id, so
+per-object data (`dps` in TRX vocabulary) still refers to the right
+object. `piece_attributes` is indexed by piece and duplicated on split,
+so it stays a plain array aligned with `offsets`; `unique(ids)` gives
+the objects. Neuroglancer annotation `relationships` become piece
+attributes.
 
 `vertices` is optional for the same reason `SingleScaleImage.data` is:
 a reader derives it lazily. Arrays follow `ArrayProtocol` (numpy, dask,
@@ -156,9 +229,9 @@ cupy, torch), like image data.
 
 **Dimensions.** `D` (native dimension, `ndim`) may differ from the
 world dimension. 2-D data (histology ROIs, slice contours) is supported;
-a cell width must satisfy `k <= D + 1`, so `VolumeMesh` needs `D >= 3`.
+a simplex needs `k <= D + 1`, so `VolumeMeshes` needs `D >= 3`.
 
-### 2.2 Array-like API (parity with `Image`)
+### 2.3 Array-like API (parity with `Image`)
 
 | Image | Vectors | Note |
 |---|---|---|
@@ -170,7 +243,7 @@ a cell width must satisfy `k <= D + 1`, so `VolumeMesh` needs `D >= 3`.
 | `grid` | — | see `bounds` |
 | `geometry` | `bounds` | axis-aligned box of the vertices, native space (§5) |
 
-`len(vectors)` is the number of pieces (points for a `PointCloud`), and
+`len(vectors)` is the number of pieces (points for `Points`), and
 iteration yields pieces, matching nibabel's `ArraySequence`.
 
 ---
@@ -209,20 +282,34 @@ not acceptable. **Proposal:** move them to a private mixin
 (`datamodel/_placed.py`, name to bikeshed) used by images and vectors
 alike. That refactor is a prerequisite and can land on its own.
 
-### 3.3 World coordinates
+### 3.3 World coordinates: `coordinates()`, shared with images
 
 ```python
-# (N, D') vertices in the preferred world space
-v.world()
+# (N, D') vertex coordinates in the preferred world space
+v.coordinates()
 # in the output space of another transformation in the list
-v.world(space="RASmm")
+v.coordinates(space="RASmm")
+
+# the same on an image: (*shape, D') world coordinates of voxel centres
+img.coordinates()
 ```
 
-`world()` is `_apply_to_points(v.transformation, v.vertices)` (§1), so
-nonlinear transformations are applied by the composers that already
-exist. There is deliberately no `world(T)`: a transformation argument
+The image concept this matches is not `reslice` but the coordinates of
+its samples: for an image, the world position of every voxel centre, i.e.
+`img.geometry` computed into a `CoordinatesField`; for vectors, the world
+position of every vertex. Both return an array, both leave the object
+unchanged, and the method is proposed on both classes under one name.
+The vector version is `_apply_to_points(v.transformation, v.vertices)`
+(§1), so nonlinear transformations are applied by the composers that
+already exist.
+
+`coordinates()` returns an array; `reslice()` (§4.3) returns a new
+object whose *native* coordinates have changed. `v.reslice()` with no
+target is the object whose vertices are `v.coordinates()`.
+
+There is deliberately no `coordinates(T)`: a transformation argument
 would run *native → X*, the opposite of `v(T)` in §4.1. Moving to
-another space is `v(T).world()`.
+another space is `v(T).coordinates()`.
 
 ---
 
@@ -264,7 +351,7 @@ coordinates in grid units, so the world-to-voxel affine must be composed
 in first. A per-point fixed-point / Newton solve, cheaper for few
 points, is **new work** (a composer for `Inverse*Field` evaluated at
 points), not an existing path. The API requirement is only that
-`v(T).world()` works when `T` contains a field; the docstrings say
+`v(T).coordinates()` works when `T` contains a field; the docstrings say
 plainly that a field transform makes vectors costlier than images (and
 the other way round for a field defined in the other direction).
 
@@ -291,6 +378,14 @@ result.transformations = [target]
 | `Transformation` | its input space |
 | `Geometry` / `Image` | the image's voxel space (e.g. tracts in voxel indices for a TRK writer) |
 | `Vectors` | the other object's native space |
+
+There is no `Geometry` for vectors. An image geometry is a grid (a
+`shape`) plus a transformation, because an image needs to know *where*
+to sample. Vertices are not resampled, so all `reslice` needs from the
+target is a transformation whose input space becomes the new native
+space. A `Geometry` or `Image` is accepted for convenience and only its
+transformation is used; its grid matters only to `crop` (§5.3). No new
+class is needed.
 
 So `reslice` is the eager counterpart of `__call__`, exactly as for
 images, and "baking" a transform is `v(T).reslice()`. Like
@@ -382,7 +477,7 @@ geometry outside the requested region and it is cheap (a vertex mask
 plus a cell mask). `"exact"` is the only mode that creates vertices; it
 can come later. Vertex, cell and piece attributes are subset with the
 same masks, kept cells are **renumbered** to the kept vertices, `offsets`
-and `cell_offsets` are rebuilt (a piece split by the region becomes
+and `members` are rebuilt (a piece split by the region becomes
 several pieces), and `ids` keep provenance.
 
 ### 5.3 Regions in other spaces
@@ -397,7 +492,7 @@ several pieces), and `ids` keep provenance.
   voxel box `[-½, shape-½)` of its grid, placed by its transformation.
 
 A world-space region is not an axis-aligned box in native space. The
-test is done on transformed vertices (`world(space)` then box test, or,
+test is done on transformed vertices (`coordinates(space)` then box test, or,
 for a `Geometry`, `geometry.transformation.inverse()` applied to world
 vertices then voxel-box test). For chunked stores the chunk pre-filter
 needs a native-space bound of the region: exact (box of the mapped
@@ -540,10 +635,10 @@ are the only overlap). Suggested order of work, matching #130 / #175:
 1. zarr-vectors (read/write, multiscale, chunked region reads) — the
    reference for the design, since it covers every type here.
 2. TRX, TRK, TCK (streamlines; via nibabel where possible).
-3. GIFTI and FreeSurfer surfaces (`SurfaceMesh`).
+3. GIFTI and FreeSurfer surfaces (`SurfaceMeshes`).
 4. neuroglancer precomputed: skeletons, multilod meshes, annotations
    (read first; Draco decoding is an optional dependency).
-5. meshio-backed volume meshes (`VolumeMesh`).
+5. meshio-backed volume meshes (`VolumeMeshes`).
 
 The zarr-vectors spec is a draft and its package is alpha; readers pin
 a version and keep the spec-to-model mapping in one module.
@@ -562,6 +657,16 @@ a version and keep the spec-to-model mapping in one module.
   natural next steps and both reduce to operations this design provides
   (`reslice` onto an image's geometry, then gather/scatter).
 - **Parametric annotations** (boxes, ellipsoids), see §2.
+- **Fields as vectors.** A `CoordinatesField` (Cartesian or not) or a
+  displacement field converts naturally into vectors:
+  `Points.from_field(f)` (one vertex per grid node, at its mapped
+  position), `VolumeMeshes.from_field(f)` (the grid split into
+  tetrahedra in index space, as the inversion code in
+  `_ext/invfield` does, with the vertices moved by the field) and, for
+  2-D fields, `SurfaceMeshes.from_field(f)`. Useful to look at a
+  deformation, to check for folding (negative tet volume), and as the
+  push-forward used by inversion. A natural follow-up once the classes
+  exist.
 - **Writing multiscale pyramids** (building LODs). Reading pyramids is
   in scope; generating them is a separate tool.
 
@@ -575,7 +680,7 @@ a version and keep the spec-to-model mapping in one module.
    `reslice` as an alias. Recommendation: keep `reslice`.
 2. **`__array__` returning native vertices.** Convenient, but
    `np.asarray(v)` silently ignoring the transformations may surprise.
-   Alternative: no `__array__`, explicit `v.vertices` / `v.world()`.
+   Alternative: no `__array__`, explicit `v.vertices` / `v.coordinates()`.
    Recommendation: keep it, as images do the same with `data`.
 3. **Default `crop` mode.** `"inner"` (proposed) vs `"object"`, which is
    what tractography users usually mean by "streamlines in a ROI".
@@ -587,6 +692,13 @@ a version and keep the spec-to-model mapping in one module.
    differs from `img[3:7]` by half a voxel. Should `__getitem__` warn
    once when every bound is an integer and the native space is a voxel
    space? Proposed: no warning, docstring only.
-6. **Mixed-type stores.** A zarr-vectors store may declare several
+6. **How a quad is told apart from a tet.** Proposed: `cell_kind`
+   (`"simplex"` / `"polygon"`) plus `oriented`, rather than one
+   "ordered" flag (§2, and the PR discussion). zarr-vectors has
+   `directed` but nothing that separates a width-4 quad from a width-4
+   tet, so the zarr-vectors reader needs `geometry_types` or our own
+   metadata to decide. Mixed triangle/quad meshes (two cell blocks, as
+   in meshio) are out of scope for now.
+7. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
    `load(..., type=...)`?
