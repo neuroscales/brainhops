@@ -249,6 +249,19 @@ metadata:
 
 ```
 
+An image holds its own metadata: one made from another (`replace()`,
+`from_other`, `metadata=`) gets a copy, which shares the record but can
+be edited on its own:
+
+```python
+>>> from bagof.magic import replace
+>>> resampled = replace(bold, data=np.ones((4, 5, 6, 10), "float32"))
+>>> resampled.metadata.description = "resampled"
+>>> bold.metadata.description
+'resting state, run 1, denoised'
+
+```
+
 ## BIDS sidecars
 
 A BIDS JSON sidecar reads into `Metadata`, and `Metadata` writes one.
@@ -313,7 +326,10 @@ is the `nibabel` header, also available as `metadata.header`.
 
 A *derived* field is read from the header, but on save the image's own
 geometry wins, and a value that disagrees with it is reported as
-approximated. NIfTI has no free-form store, so `extra` is unsupported.
+approximated. The repetition time is the time step of the image, so a
+4-D image keeps it through a read and a save; an image whose geometry has
+no time step (one built in memory) stores the field's value there. NIfTI
+has no free-form store, so `extra` is unsupported.
 
 Transformations keep their metadata through a read and a save as images
 do, and the readers that need them (FSL FNIRT, NiftyReg) still read
@@ -390,18 +406,23 @@ same fields:
 NIfTI has no place for the echo time, the inversion time, the flip angle
 or the history, so saving the scan as NIfTI loses them, and the report says
 so (a 3-D NIfTI image has no time axis to hold the repetition time
-either):
+either). The save converts the image to NIfTI, then writes it; it warns
+once, with one report for both:
 
 ```python
 >>> with warnings.catch_warnings(record=True) as caught:
 ...     warnings.simplefilter("always")
 ...     io.save(edited, os.path.join(tmp, "T1.nii.gz"))
->>> for w in caught:
-...     print(sorted(w.message.report.lost))
-['echo_time', 'flip_angle', 'history', 'inversion_time']
-['repetition_time']
+>>> len(caught)
+1
+>>> sorted(caught[0].message.report.lost)
+['echo_time', 'flip_angle', 'history', 'inversion_time', 'repetition_time']
 
 ```
+
+The tags follow the whole volume, so reading them decompresses an MGZ file
+to its end. They are read, and `history` decoded, only when it is first
+used: loading an MGZ file reads the header and the footer only.
 
 Going through format-agnostic metadata keeps them all, and a BIDS sidecar
 holds them in BIDS units, ready to sit next to the NIfTI file:
@@ -434,7 +455,10 @@ written.
 | `display_range` | `omero.channels[*].window` | when every channel shares it |
 | `extra` | the other group attributes | |
 
-OME-Zarr has no unit for the values, so `data_unit` is unsupported. A
+OME-Zarr has no unit for the values, so `data_unit` is unsupported. Every
+channel needs a display window: one that nothing gives (no display range)
+is written as the range of the values of the smallest level, and reported
+as approximated. A
 pyramid of a two-channel stain, with its channel names and colors:
 
 ```python
@@ -539,22 +563,25 @@ x5 metadata becomes a BIDS sidecar through `Metadata`, losing nothing:
 ```
 
 A NIfTI displacement field holds only a description of all this. Making
-one from the field of the x5 file converts its metadata, and reports the
-rest:
+one from the x5 file (or from its field) converts its metadata, and
+reports the rest:
 
 ```python
 >>> from brainhops.io.transformations.nifti import NiftiRASDisplacementField
 >>> with warnings.catch_warnings(record=True) as caught:
 ...     warnings.simplefilter("always")
-...     warp = NiftiRASDisplacementField.from_other(
-...         x5.transformations[0], metadata=x5.metadata
-...     )
+...     warp = NiftiRASDisplacementField.from_other(x5)
 >>> warp.metadata.description
 'sub-01 T1w to MNI'
 >>> sorted(caught[0].message.report.lost)
 ['extra', 'generated_by', 'input_space', 'output_space']
 
 ```
+
+The field of a file of one node carries the metadata of the node too
+(a copy), so `NiftiRASDisplacementField.from_other(x5.transformations[0])`
+converts it the same way. The nodes of a chain of several keep their own
+JSON, and their fields carry nothing.
 
 ITK `.tfm` and `.mat` files store a bare chain of parameters, and no
 metadata at all, so everything is lost:

@@ -7,13 +7,19 @@ Builds on the io model (`FileBasedImage`, `FileBasedTransformation`,
 where `Magic` polymorphism does and does not fit. Decisions are tagged
 `M1`..`M13` and collected at the end, followed by the open questions.
 
-> **Prototype note.** Phase 1 is prototyped on this branch: the framework
-> (`brainhops/datamodel/metadata.py`), the BIDS sidecar codec
+> **Prototype note.** The prototype on this branch covers the framework
+> (`brainhops/datamodel/metadata.py`, whose module docstring documents
+> the per-format hooks), the BIDS sidecar codec
 > (`brainhops/io/metadata/bids.py`), the `metadata` field on `Image` and
-> `Transformation`, and `NiftiMetadata` for `NiftiImage` and every
-> NIfTI-based transformation. The user guide is `docs/start/metadata.md`.
-> Deviations are recorded in notes like this one, at the section they
-> concern.
+> `Transformation`, and the formats of batches 2, 4 and 5 that exercise
+> the design most: `NiftiMetadata` (`NiftiImage` and every NIfTI-based
+> transformation), `MghMetadata`, `X5Metadata`, the ITK and FLIRT
+> classes, and `ZarrMetadata`/`OmeZarrMetadata`. The user guide is
+> `docs/start/metadata.md`. Deviations are recorded in notes like this
+> one, at the section they concern; three decisions changed after a
+> review of the prototype (M6: a geometry hook for derived fields, and a
+> lazy record part; M9/M10: metadata is copied, not aliased, and a
+> single-block file puts its metadata on the block too).
 
 The problem, in one sentence: every file format keeps its non-spatial
 metadata under a different name and type (`header`, `keyval`, `tags`,
@@ -435,14 +441,35 @@ record; edit the record only for what the vocabulary does not cover*.
 > `check_writable(*, image=None)`. A writer passes its own fresh record to
 > `write_raw` (NIfTI builds a new header from the data model, copies the
 > safe slots of `raw` onto it, then encodes the changes), so
-> `_raw_or_default()` is only the fallback.
+> `_raw_or_default()` is only the fallback. `check_writable` encodes over
+> what a format's `_check_record(image)` hook returns, the record its
+> writer would start from (NIfTI: the record reshaped to the data), so
+> that a value-dependent check (slice timing against the shape, the
+> time step) reads the same state as a real write. A writer keyword that
+> must win over the record whatever the snapshot says (MGH `tr=`) is
+> passed as `write_raw(..., force=("repetition_time",))`: still no
+> second sentinel. A parser given a record and a `metadata` that is not
+> that record's (an explicit `metadata=`, or one carried by
+> `replace(image, header=...)`) holds `metadata.with_record(raw)`: the
+> new record decoded, with the fields that changed in the metadata set
+> over it as changes. Whether the metadata's record *is* the parser's
+> is an identity test (the NIfTI header, the MGH header, the x5
+> `(header, node)` pair); a Zarr record is rebuilt on each read, so the
+> metadata remembers the node it was read from. A `_decode` that returns
+> a value for a field its format does not support is a bug, and
+> `from_raw` raises `TypeError` rather than drop the value unreported.
 
 **Snapshot lifetime.** `_decoded` is a real `Magic` field (private name,
 like `Transformation._input`), excluded from `repr` and `eq` and never
 set by users, so it survives everything the record survives:
 `replace()` and `copy` carry it (a `replace(description="x")` therefore
 changes exactly one field), pickling keeps it, and same-format
-`from_instance` copies it next to `raw`. Cross-format `from_instance`
+`from_instance` copies it next to `raw`. When an image or a
+transformation is copied (`replace(image, data=...)`, same-class
+`from_other`), its metadata is *copied*, not aliased (M10): the copy
+shares `raw` and gets its own snapshot and `extra`, so the snapshot
+still describes the shared record, and editing the copy's fields never
+edits the original's. Cross-format `from_instance`
 resets it to empty next to the reset `raw`, and `derive()` keeps it
 next to the kept `raw` (section 9). It is filled once, by the reader,
 with `copy.deepcopy` of the decoded values (the `extra` dict and the
@@ -464,9 +491,17 @@ def _encode(self, raw, changed: dict, *, image=None, report) -> raw: ...  # None
 data model: diffusion b-vector frames, slice timing expansion from
 `slice_code` (needs the slice axis length), AFNI per-brick checks, and
 the geometry-derived fields below. Decoding is eager on read (records
-are small; a read metadata object is complete when `repr`-ed). The
-record stays lazy only where it is today (the NIfTI header is parsed
-when the image is).
+are small; a read metadata object is complete when `repr`-ed), with one
+exception: **a lazy record part**. Where part of the record is expensive
+to reach and few users need it (the MGH tags follow the whole volume, so
+reading them decompresses an MGZ to its end), the record holds a loader
+for that part, and `_decode` returns the fields that need it as
+`Lazy(load)`: such a field is decoded on first access (attribute,
+`repr`, `==`, `changed_fields()`, a conversion) or before an assignment,
+and joins the snapshot then, so the change-detecting write is unchanged.
+A load that never touches them stays as cheap as before the metadata
+existed. The record otherwise stays lazy only where it is today (the
+NIfTI header is parsed when the image is).
 
 ### 6.1 Naming: `raw`, not `struct`
 
@@ -491,11 +526,20 @@ writable in that format. It is declared with `derived=("repetition_time",
 ...)` next to `supports=`, and:
 
 - `_decode` fills it from the record (so it reads naturally);
-- on write, the data model wins: `_encode` ignores a changed value and
-  records it under `report.approximated[name] = "derived from <what>"`
-  when it differs from what the geometry gives (NIfTI write with
+- on write, the data model wins, through a **geometry hook**,
+  `_geometry(image) -> {field: value}`: the values the data model gives
+  for the derived fields (NIfTI: the time step of the image, the scale
+  of its time axis, as `repetition_time`). The writer stores the data
+  model's value (NIfTI writes the time step as `pixdim[4]`), and
+  `write_raw` takes a changed derived field out of `changed` before
+  `_encode` sees it, recording it under `report.approximated[name] =
+  "derived from the data model (...)"` when it differs (NIfTI write with
   `repetition_time=2.0` on a 1.5 s time axis says so instead of silently
-  writing 1.5), and stays silent when they agree;
+  writing 1.5), silently when they agree. Only a derived field the data
+  model says nothing about (an image with no physical time axis) reaches
+  `_encode`, which may store it (NIfTI: as the time step) or report it.
+  The comparison is never against the record, which the writer has
+  rebuilt from the data model anyway;
 - `from_instance` *into* such a format copies the value anyway, so a
   later `check_writable()` can compare it with the geometry; whether
   the value is then approximated is decided at write, where the
@@ -507,7 +551,14 @@ writable in that format. It is declared with `derived=("repetition_time",
 > is the world space's name, which the writer takes from the data model),
 > so `derived=("repetition_time", "intent", "space")`. `intent` is
 > written from the field only when the writer set no intent and the
-> intent does not retype the axes.
+> intent does not retype the axes. `NiftiMetadata._geometry` gives only
+> `repetition_time` (the first scaling whose output has a time axis with
+> a physical unit, as the NIfTI and MGH readers build it); `intent` and
+> `space` are still compared with the header the writer built from the
+> data model, which is the same thing for them. A first prototype
+> compared `repetition_time` with the fresh header (whose `pixdim[4]` is
+> always 1) and wrote no time step, so a 4-D file's TR came back as 1.0
+> with a clean report; the hook is what fixed it.
 
 ## 7. Conversion and loss reporting (M7)
 
@@ -564,7 +615,13 @@ class ConversionReport(Magic):
 > written into `values["extra"]`; the classmethod cannot otherwise reach
 > the object being built. `on_loss=` reaches `io.save` as a writer option
 > (`NiftiImage.save(path, on_loss="raise")`), popped before the header
-> overrides.
+> overrides. **One warning per save:** `io.save` of an object that is not
+> of the file's format converts it first (the field converter reports),
+> then writes (the writer reports); it runs both under its own `on_loss`
+> and inside `one_loss_warning`, which collects the reports the policy
+> would warn about and warns once, with the reports merged
+> (`ConversionReport.merge`). Two explicit calls (`from_other`, then
+> `save`) still warn once each.
 
 Policy, from least to most strict: `"ignore"`, `"warn"` (default: one
 `MetadataLossWarning` per conversion or write carrying the report, not
@@ -648,7 +705,12 @@ def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
 > **Prototype note.** `derive` gains `volumes_changed=False`, the flag
 > that "the volume count changed and no selection is known" needs.
 > `display_range` and `data_unit` are one value for all volumes, so a
-> selection keeps them. Nothing calls `derive` yet (follow-up PR).
+> selection keeps them. The only caller so far is the OME-Zarr reader
+> (each level gets `derive(grid_changed=level > 0)`). Writers do not call
+> it on a conversion yet (the first item of the list below): a converted
+> object carries the converted values with an empty snapshot, which
+> writes the same thing for the fields the prototype formats hold; the
+> data-model operations are a follow-up PR.
 
 - `file`-scoped fields are kept, except `creation_time` (cleared) and
   `history`, to which `step` (a short string such as
@@ -699,10 +761,21 @@ Where it is called:
   memory has `metadata=None`; each block keeps its own. A writer of a
   single-block format (LTA, FLIRT, x5 node) takes the metadata of the
   block it writes; `moving`/`fixed` of a chain are those of its ends when
-  they agree with the chain's endpoints and `None` otherwise.
+  they agree with the chain's endpoints and `None` otherwise. The
+  converse holds on read: **a single-block file puts its metadata on the
+  block too**. A reader that maps a file to a `Sequence` (x5) holds the
+  metadata on the sequence (it is the file's), and, when the file is one
+  block (one x5 node), gives that block a copy as well, so that the
+  natural call on the block (`NiftiRASDisplacementField.from_other(
+  x5.transformations[0])`) carries it, converted and reported, without a
+  `metadata=` argument. The blocks of a chain of several carry nothing.
+  A call on the sequence itself is covered by `DataModelBase.from_other`,
+  which passes the `metadata` of a data model it hands to a constructor
+  (section 10).
 - **Data-model operations** (`resample`, channel selection, cropping)
   call `derive` in a follow-up PR; until then the field is copied by
-  `replace()`, which is no worse than today.
+  `replace()` (a copy, not the same object: section 10), which is no
+  worse than today.
 
 ## 10. Datamodel field (M10) and the `metadata_fields` clash (M11)
 
@@ -736,6 +809,22 @@ conversion is what reports loss, so `MrtrixImage.from_other(nifti_image)`
 warns about the fields NIfTI carried that MRtrix cannot, with no code in
 `MrtrixImage` itself.
 
+**Copied, not aliased.** The field converter also *copies* a metadata
+object that already is of the field's class: two images or
+transformations never hold the same metadata object. `replace(image,
+data=...)`, a same-class `from_other`, and `metadata=m` each give the new
+object its own copy, which shares `raw` (as the header was shared before
+metadata existed) but has its own snapshot and `extra`. Users are told
+to edit `image.metadata` in place, so sharing would make "resample, then
+edit the copy's description" edit the original too. A conversion builds
+a new object anyway. When an object of another family is handed to a
+constructor (`NiftiRASDisplacementField.from_other(x5_sequence)`, which
+`from_other` passes positionally, since a `Sequence` is not in the
+field's family), `DataModelBase.from_other` passes its `metadata` too,
+when the class has the field and the caller gave none, so the field
+converts and reports it. This is the only place the data model base
+knows of the field, and it changes nothing else of `from_other`.
+
 > **Prototype note.** `NoEq()`/`NoRepr()` exist in `bagof.magic`, and the
 > root field is also `KwOnly()`, so it never shifts a positional argument
 > (`SingleScaleImage(data)`, `Affine(matrix, input, output)`): it lands
@@ -753,7 +842,12 @@ warns about the fields NIfTI carried that MRtrix cannot, with no code in
 > `ItkNiftiField`, `SpmCoordinatesField`), a test checks every registered
 > NIfTI format, and the writer converts a foreign metadata object anyway.
 > The `metadata_fields` -> `encoding_fields` rename is not done in the
-> prototype: nothing needs it yet.
+> prototype: nothing needs it yet. Every `metadata` field, the roots'
+> and the narrowed ones, is written with `metadata_annotation(hint, doc,
+> default=...)`, which carries the copying converter as an explicit
+> `ConvertTo`: it applies on the plain-`Magic` parsers too (x5, FLIRT),
+> so a metadata assigned after construction is converted on every
+> format, not only on the classes with `convert=True`.
 
 **Name clash.** `Transformation.metadata_fields` means "meta-attributes
 that define the encoding" (`order`, `bound`, `coeff`). It is renamed
@@ -828,10 +922,13 @@ unchanged; FNIRT/NiftyReg/SPM keep reading `intent_p*` from `raw`.
 > existing `like=` behaviour. A slice timing that matches no NIfTI order
 > is lost *and* clears the record's slice fields (the user's value
 > replaced them). Header floats are single precision and are decoded as
-> the shortest decimal (`0.3`, not `0.30000001`). Known limitation, not
-> introduced here: the image writer does not store the time step
-> (`pixdim[4]` is written as 1), so the derived `repetition_time` of a
-> 4-D image reads back as 1.0 after a save.
+> the shortest decimal (`0.3`, not `0.30000001`). The image writer stores
+> the data model's time step as `pixdim[4]` (in the header's time unit,
+> seconds when it has none), so a 4-D image keeps its `repetition_time`
+> through a read and a save (6.2); an image with no physical time axis
+> gets the field's value there instead. `NiftiParser` reads the header
+> again when it is not the metadata's record (`replace(image,
+> header=h)`), keeping the changed fields (`with_record`).
 
 **MRtrix (key/value format).**
 
@@ -928,12 +1025,18 @@ for a JSON-capable node.
 > a field set on the chain is reported lost on save. The writer encodes
 > the changed fields into the node they were read from; a transformation
 > whose chain was reassigned (or built in memory) and encodes a single
-> node gets all its fields written into that node. An untouched read
+> node gets all its fields written into that node. The block decoded
+> from the node the metadata is that of gets a copy of it (as generic
+> `Metadata`, the block's field type) when it is decoded, so
+> `from_other(block)` carries it (section 9); a chain's blocks carry
+> nothing. An untouched read
 > writes every node as read, so the JSON string round-trips unchanged.
 > `save(on_loss=)` is popped by the writer. The parser syncs in
 > `__post_init__` through `io/transformations/base/_metadata.py`
-> (`sync_metadata`, which also converts metadata given to a class whose
-> fields do not convert, and `metadata_field`, the narrowed annotation).
+> (`sync_metadata`, which keeps a metadata whose record is the parser's
+> and otherwise uses `with_record`, and `metadata_field`, the narrowed
+> annotation, whose converter converts on these plain-`Magic` parsers
+> too).
 >
 > **Prototype note (ITK, FLIRT).** `ItkMetadata` (`format="itk"`) is an
 > `OpaqueMetadata` subclass for `.tfm` and `.mat`; the `.mat` writer
@@ -979,14 +1082,19 @@ for a JSON-capable node.
 > length, the other legacy tags none); writing it replaces the command-line
 > tags in place and keeps every other tag, and over tags that do not parse
 > it is reported as lost. `MghParser` syncs the metadata in `__post_init__`
-> and when `header` or `tags` are assigned; reading the tags is therefore
-> eager on load (an MGZ is decompressed once more), where it was lazy. The
-> writer keeps the footer of the record, then `like=`, then the changed
-> fields; `tr=`/`te=`/`ti=`/`flip_angle=` (still in ms and radians) are
-> routed through the metadata as forced changes on a copy (so they win
-> even over `like=` and over a value equal to the one read, and a zero
-> clears the slot), while `fov=` and other header names still patch the
-> header last. No deprecation warning yet.
+> and when `header` or `tags` are assigned, but the tags stay lazy (6, a
+> lazy record part): `MghRecord` holds a loader for them, `history` is
+> decoded as `Lazy`, and a load reads the header and footer only (a first
+> prototype read the tags on load, a third of the load time of a 38 MB
+> MGZ). The record and the image share one read of the tags. The writer
+> keeps the footer of the record, then `like=`, then the changed fields;
+> `tr=`/`te=`/`ti=`/`flip_angle=` (still in ms and radians) are set on a
+> copy and passed as `write_raw(force=...)` (so they win even over
+> `like=` and over a value equal to the one read, and a zero clears the
+> slot), while `fov=` and other header names still patch the header
+> last. As for NIfTI, `like=` sits *under* a changed field but *over* an
+> unchanged one, which keeps the record's value only where `like=` has
+> none. No deprecation warning yet.
 
 > **Prototype note (Zarr).** `OmeZarrMetadata` and `ZarrMetadata` live in
 > `brainhops/io/images/zarr/_metadata.py`. The OME-Zarr record is
@@ -998,7 +1106,14 @@ for a JSON-capable node.
 > derived from the `c` axis: they are what `omero` says, and a
 > `display_range` with no channels writes one white channel per entry of
 > the channel axis. A window is required per channel; when nothing gives
-> one it is the range of the data type (0..1 for floats). `data_unit` is
+> one, its `start`/`end` are the range of the values of the smallest
+> level (cheap to read; `min`/`max` are the range of the data type), and
+> it is reported as approximated under `channels` (a first prototype
+> wrote the range of the data type silently, which renders a 12-bit
+> `uint16` image black). A Zarr record is rebuilt from the attributes on
+> each read, so the metadata remembers the node it was read from (a
+> handle, not pickled), and a parser reads the attributes again when
+> its node is not that one. `data_unit` is
 > **unsupported** (OME-Zarr has no intensity unit, and inventing an
 > `omero` key was not worth it); a `Channel.unit` and a non-opaque alpha
 > are reported as approximated. The writer keeps the multiscale `name`,
@@ -1093,6 +1208,16 @@ fails CI; (d) a value-dependent loss test per format with such a rule
 per-brick list) asserting the exact `lost`/`approximated` entries;
 (e) deprecated aliases and keywords warn and still work.
 
+> **Prototype note.** The matrix test (c) is
+> `tests/test_io_metadata_matrix.py`, over every prototype format: the
+> conversion of the fully populated fixture loses exactly
+> `unsupported_fields`, the way back to `Metadata` loses nothing, and
+> where a fresh record can hold the values (NIfTI, MGH, x5, Zarr, ITK
+> `.h5`; OME-Zarr through a real save) they are written and read back,
+> derived fields aside. A format class that is not in its table fails
+> it. The writer keywords of M13 (`like=`, MGH `tr=`...) keep working
+> without a `DeprecationWarning` in the prototype.
+
 ## Decisions
 
 - **M1** Geometry, axes, spatial/temporal units, transformations, the
@@ -1116,8 +1241,12 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
 - **M6** Overlay with change detection: a common field wins only when
   it differs from its read-time snapshot (a `Magic` field that survives `replace`/`derive`); `None` clears the slot; record edits survive. The
   record field is `raw`, with a per-format read alias. Geometry-derived
-  fields (`derived=`) are read-only for that format and reported as
-  `approximated` when they disagree with the data model.
+  fields (`derived=`) are read-only for that format: a geometry hook
+  (`_geometry(image)`) gives the data model's value, which the writer
+  stores, and a changed value that disagrees with it is reported as
+  `approximated` (never compared with the record). Decoding is eager,
+  except for a lazy record part (MGH tags), whose fields are decoded on
+  first access (`Lazy`).
 - **M7** `ConversionReport`; class-level support is the lower bound,
   `_encode` adds value-dependent `lost`/`approximated`; `on_loss` =
   `ignore`/`warn` (default)/`raise`; one aggregated warning; `_import`
@@ -1126,9 +1255,12 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   BIDS JSON sidecar is a codec on `Metadata`.
 - **M9** `derive(grid_changed, volumes, step)` driven by scope; a
   multiscale level holds a derived copy, never the pyramid's object;
-  composition does not merge.
+  composition does not merge; a single-block file puts its metadata on
+  the block as well as on the file object.
 - **M10** `metadata: Optional[Metadata]` on `Image` and `Transformation`,
-  narrowed and made mandatory by each format class.
+  narrowed and made mandatory by each format class. The field copies
+  (sharing `raw`), never aliases: `replace()`, same-class `from_other`
+  and `metadata=` give the new object its own metadata.
 - **M11** `Transformation.metadata_fields` becomes `encoding_fields`,
   alias kept one minor release.
 - **M12** Seven PRs, framework first, deprecated aliases for one minor
