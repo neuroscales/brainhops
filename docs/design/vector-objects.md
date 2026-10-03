@@ -273,7 +273,7 @@ every shape into `G`, `L`, `W` and the index dimension is determined.
 - In the dense form `members` carries the batch axes, so dense labels may
   differ per frame. In the boxed form only `indices` and `lengths` do;
   an explicit member list shared by all frames is enough for every
-  example here (open question 6).
+  example here (open question 7).
 
 **Flags.**
 
@@ -500,6 +500,75 @@ the data). `GridElements(axes=("x", "y", "z"), cell="kuhn")` gives six
 tetrahedra per grid cube without storing them; their signed volumes show
 folding. The same field read with *raster* axes and no components would
 be an image: points and images are the two ends of one model (§9).
+
+### 2.8 Ragged layouts and backends
+
+**Logical vs physical.** Many axes are ragged: points per frame, vertices
+per chunk, vertices per streamline. The model describes them logically
+(an index axis with `valid`, or a boxed label), and three physical
+layouts carry them:
+
+| Layout | Storage | Good for |
+|---|---|---|
+| **padded** | `(*outer, Lmax, ...)` + `valid` (mask or `lengths`) | nd raster layouts (examples F, G, I, J); fully vectorised on every backend |
+| **packed** | flat `content (N, ...)` + `offsets (P + 1,)`, or nd `indices` + `lengths` | flat collections (TRX, meshes); compact, one buffer, memory-mappable |
+| **nested** | an outer array of inner arrays | user code and per-chunk readers; converted on the way in |
+
+Packed is the default in memory for flat data and padded for nd raster
+data. Nested is accepted from user code and from chunk-native readers
+and converted (pad ↔ pack ↔ nest are cheap and lossless). The packed
+form is already in the model: a boxed label over a flat axis is exactly
+`offsets` (§2.3), and stacked boxed labels are awkward-array's nested
+`ListOffsetArray`.
+
+**No storage wrapper; a view for convenience.** The datamodel stores the
+raw arrays as fields (`members`, `indices`, `lengths`, `valid`, the
+vertex `data`), never an "array of arrays" object. Plain arrays
+serialise, load lazily, chunk in dask and move between backends without
+a second source of truth, and multi-level raggedness is already the
+composition of labels. For users, a label exposes a thin, read-only
+view over its target:
+
+```python
+tracts = v.fragments.view(v.vertices)  # nibabel-ArraySequence-like
+len(tracts)  # number of fragments
+tracts[17]  # (L_17, D) array of vertices
+tracts[mask]  # a smaller view (same buffers, new offsets)
+tracts.lengths, tracts.pad(fill=nan), tracts.reduce("mean")
+```
+
+The view owns nothing: it holds references to the arrays and delegates
+to private functional helpers (`_ragged.py`), which are also what the
+datamodel itself calls.
+
+**Helpers.** A handful of operations cover everything: `lengths`,
+`segment_ids` (`repeat(arange(P), lengths)`), `segment_reduce` (segment
+ids + `bincount` / scatter-add), `take` (gather whole lists, rebuild
+offsets with `cumsum`), `mask_items` (filter, recount), `pad` / `pack`.
+Each is written once against the array module returned by
+`get_array_backend`, so numpy and cupy share the code. Data-dependent
+sizes (masking, `Lmax`) force a host sync on cupy; operations that
+produce them are grouped.
+
+**dask: chunks aligned with lists.** `offsets` (or `indices` and
+`lengths`) stay eager, on the host: they describe the graph and hold one
+integer per list. `content` is chunked along the item axis so that **no
+list straddles a chunk boundary**, with chunks
+`((n_0, n_1, ...), (D,))`, each `n_b` the length of a run of whole lists.
+Readers produce this directly (one chunk per stored chunk, or per batch
+of streamlines); other arrays are rechunked once to list boundaries.
+Then element-wise operations (`push`) stay element-wise, per-list
+operations are `map_blocks` over local offsets with results chunked by
+the number of lists per block, and item masks give unknown (`nan`) chunk
+sizes until `compute_chunk_sizes()` is called once.
+
+**dask over cupy** is the same graph with cupy blocks
+(`meta=cupy.empty((0, D))`). Offsets stay numpy on the host; each block
+moves its local offsets to the device, and its kernels take their module
+from the block. This needs one addition to `backends.py`: the block
+module of a dask array (read from its `_meta`), since
+`get_array_backend` returns `dask.array` for both dask-over-numpy and
+dask-over-cupy today.
 
 ---
 
@@ -978,10 +1047,14 @@ a version and keep the spec-to-model mapping in one module.
 4. **`__array__` returning native components.** Convenient, but
    `np.asarray(v)` silently ignoring the transformations and the raster
    axes may surprise. Alternative: no `__array__`.
-5. **Mixed-type stores.** A zarr-vectors store may declare several
+5. **Optional awkward-array backend.** awkward (and dask-awkward) work
+   on the packed layout natively. Conversions to and from them are
+   nearly copy-free; is it worth an optional backend, or only
+   `to_awkward()` / `from_awkward()`?
+6. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
    `load(..., type=...)`?
-6. **Per-frame explicit members.** In the boxed form `members` has no
+7. **Per-frame explicit members.** In the boxed form `members` has no
    batch axes, so an explicit member list cannot differ per frame
    (§2.3); the dense form can. Nothing in the examples needs it; adding
    `batch` to boxed `members` is possible later.
