@@ -330,6 +330,103 @@ do, and the readers that need them (FSL FNIRT, NiftyReg) still read
 
 ```
 
+### Transformations: x5, ITK and FLIRT
+
+| Format | Metadata class | What it stores |
+|---|---|---|
+| x5 (`.x5`) | [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata] | every field, in the JSON `Metadata` of the node |
+| ITK `.h5` | [`ItkH5Metadata`][brainhops.io.transformations.itk.ItkH5Metadata] | `generated_by`, from `/ITKVersion` |
+| ITK `.tfm`, `.mat` | [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata] | nothing |
+| FSL FLIRT `.mat` | [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata] | nothing; `moving` and `fixed` in memory only |
+
+An x5 node stores its metadata as a JSON object: each field under its BIDS
+key (`Description`, `GeneratedBy`), or under its name in `CamelCase` when
+BIDS has none (`History`, `Moving`, `Fixed`, `InputSpace`, `OutputSpace`).
+The other keys are `extra`. The record of the metadata is the pair
+`(header, node)`. Here is a displacement field written as nitransforms
+writes one:
+
+```python
+>>> import h5py, json
+>>> with h5py.File(os.path.join(tmp, "warp.x5"), "w") as f:
+...     f.attrs["Format"], f.attrs["Version"] = "X5", np.uint16(1)
+...     node = f.create_group("TransformGroup/0")
+...     node.attrs["Type"], node.attrs["SubType"] = "nonlinear", "densefield"
+...     node.attrs["Representation"] = "displacements"
+...     node.attrs["Metadata"] = json.dumps({
+...         "Description": "sub-01 T1w to MNI",
+...         "GeneratedBy": [{"Name": "fMRIPrep", "Version": "24.1.0"}],
+...         "InputSpace": "T1w",
+...         "OutputSpace": "MNI152NLin2009cAsym",
+...         "WrittenBy": "NiTransforms 25.1.0",
+...     })
+...     _ = node.create_dataset("Transform", data=np.zeros((3, 4, 5, 3)))
+...     domain = node.create_group("Domain")
+...     _ = domain.create_dataset("Size", data=[3, 4, 5])
+...     _ = domain.create_dataset("Mapping", data=np.eye(4))
+>>> x5 = io.load(os.path.join(tmp, "warp.x5"))
+>>> x5.metadata.description, x5.metadata.output_space
+('sub-01 T1w to MNI', 'MNI152NLin2009cAsym')
+>>> x5.metadata.extra
+{'WrittenBy': 'NiTransforms 25.1.0'}
+>>> x5.metadata.node is x5.nodes[0]
+True
+
+```
+
+A file read and saved again keeps the JSON of every node as it was; an
+edited field is written into it. The metadata is that of the node the
+transformation was read from: a chain of several nodes has none of its
+own, and each node keeps its JSON (composition does not merge).
+
+x5 metadata becomes a BIDS sidecar through `Metadata`, losing nothing:
+
+```python
+>>> convert(x5.metadata, Metadata)[0].to_bids()["OutputSpace"]
+'MNI152NLin2009cAsym'
+
+```
+
+A NIfTI displacement field holds only a description of all this. Making
+one from the field of the x5 file converts its metadata, and reports the
+rest:
+
+```python
+>>> from brainhops.io.transformations.nifti import NiftiRASDisplacementField
+>>> with warnings.catch_warnings(record=True) as caught:
+...     warnings.simplefilter("always")
+...     warp = NiftiRASDisplacementField.from_other(
+...         x5.transformations[0], metadata=x5.metadata
+...     )
+>>> warp.metadata.description
+'sub-01 T1w to MNI'
+>>> sorted(caught[0].message.report.lost)
+['extra', 'generated_by', 'input_space', 'output_space']
+
+```
+
+ITK `.tfm` and `.mat` files store a bare chain of parameters, and no
+metadata at all, so everything is lost:
+
+```python
+>>> from brainhops.io.transformations.itk import ItkMetadata
+>>> itk, report = convert(x5.metadata, ItkMetadata, on_loss="ignore")
+>>> print(report)  # doctest: +ELLIPSIS
+Metadata conversion x5 -> itk: lost extra=..., description='sub-01 T1w to MNI', generated_by=..., input_space='T1w', output_space='MNI152NLin2009cAsym'.
+>>> itk.description
+UNSUPPORTED
+
+```
+
+An ITK `.h5` file records the version of ITK that wrote it, read as
+`generated_by`. The blocks of an ITK chain (or composite) have no metadata
+of their own.
+
+A FLIRT matrix stores nothing either. When the moving and reference
+images given to the reader were read from files, their paths are
+`moving` and `fixed`; a `.mat` file has no place for them, so a write
+would lose them.
+
 <!--
   Later phases append one subsection per format here (MGH, Zarr, ITK,
   x5, FLIRT, ...), with the same shape: what the format stores, a table

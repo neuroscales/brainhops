@@ -908,6 +908,46 @@ with `raw = (X5Header, X5Node)`, `description`/`history`/`generated_by`
 in the node's `Metadata` JSON, `extra` in `attrs`, and `supports=ALL`
 for a JSON-capable node.
 
+> **Prototype note (x5).** `X5Metadata` lives in
+> `io/transformations/x5/_metadata.py`, with `supports=ALL`. Every
+> vocabulary field is stored in the node's JSON `Metadata` under its BIDS
+> sidecar key, or its name in `CamelCase` when BIDS has none (the
+> sidecar codec's own naming, so an x5 node's JSON *is* a sidecar);
+> `extra` is the other JSON keys only. Node `attrs` stay in the record
+> and are written back as read, not mirrored into `extra`.
+> `input_space`/`output_space` are the JSON keys `InputSpace`/
+> `OutputSpace`: `Domain.Coordinates` is not decoded, because the two
+> implementations write the kind of coordinates there (`"cartesian"`),
+> not a space label. **Where the metadata sits:** the reader maps a
+> file to one `X5Transform` (a `Sequence`) whose blocks are data model
+> transformations, so the metadata is on the `X5Transform`, and it is
+> that of *the node it reads* when it reads a single node (a `position`,
+> a one-node chain, or a file with no chain). For a chain of several
+> nodes, composition does not merge: the record is `(header, None)`,
+> nothing is decoded, every node keeps its JSON and writes it back, and
+> a field set on the chain is reported lost on save. The writer encodes
+> the changed fields into the node they were read from; a transformation
+> whose chain was reassigned (or built in memory) and encodes a single
+> node gets all its fields written into that node. An untouched read
+> writes every node as read, so the JSON string round-trips unchanged.
+> `save(on_loss=)` is popped by the writer. The parser syncs in
+> `__post_init__` through `io/transformations/base/_metadata.py`
+> (`sync_metadata`, which also converts metadata given to a class whose
+> fields do not convert, and `metadata_field`, the narrowed annotation).
+>
+> **Prototype note (ITK, FLIRT).** `ItkMetadata` (`format="itk"`) is an
+> `OpaqueMetadata` subclass for `.tfm` and `.mat`; the `.mat` writer
+> reports any field set after construction (`on_loss=` popped). The `.h5`
+> class is `ItkH5Metadata` (`format="itk-h5"`): `/ITKVersion` is
+> `generated_by = (GeneratedBy("ITK", version),)`, and an encode keeps
+> only the `ITK` entry (others lost); there is no `.h5` writer yet. ITK
+> blocks keep `metadata=None`. `FlirtMetadata` (`format="flirt"`) is an
+> `OpaqueMetadata` subclass with `supports=("moving", "fixed")`: they are
+> the paths of the `moving`/`reference` images the reader was given
+> (`get_filename()` of a `nibabel` image, or of a NIfTI image's
+> `image`), decoded at construction, and always reported lost by
+> `check_writable` (there is no FLIRT writer).
+
 **Everything else.**
 
 | Format | `raw` | `supports=` (highlights) | `extra` store / notes |
