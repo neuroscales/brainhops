@@ -1,3 +1,6 @@
+# stdlib
+import copy
+
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
@@ -17,6 +20,7 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import SampleUnit
@@ -30,7 +34,9 @@ from brainhops.io.base.zarr import (
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.images.zarr._ome import (
+    NORMALIZED_VERSION,
     OmeImageError,
+    build_ome,
     common_transformations,
     intrinsic_name,
     level_transformation,
@@ -40,11 +46,25 @@ from brainhops.io.images.zarr._ome import (
     resolve_world_names,
     resolve_write_version,
     system_axes,
-    write_multiscale,
+    write_image_metadata,
 )
 from brainhops.io.transformations.zarr import _map
 
-from ._image import ZarrImage
+from ._image import (
+    ZarrImage,
+    merge_explicit,
+    metadata_field,
+    node_attributes,
+    write_attributes,
+)
+from ._metadata import OmeZarrMetadata, OmeZarrRecord
+
+_OME_METADATA_DOC = """
+    The metadata of the pyramid: its name, and the channels and display
+    window of `omero`, with the multiscale, `omero` and the other group
+    attributes as its record (`metadata.raw`). See
+    [`OmeZarrMetadata`][brainhops.io.images.zarr.OmeZarrMetadata].
+"""
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
@@ -56,7 +76,18 @@ class OmeZarrLevel(ZarrImage):
     The level holds the array handle and permutes it into the brainhops
     order only when its data is read, so opening a pyramid does not read
     any level.
+
+    Its `metadata` is a copy of the pyramid's, derived for the level
+    (`derive(grid_changed=level > 0)`): editing it does not edit the
+    pyramid, whose metadata is the one written.
     """
+
+    metadata: metadata_field(OmeZarrMetadata, _OME_METADATA_DOC)
+
+    def _sync_metadata(self) -> None:
+        # A level is given a derived copy of the pyramid's metadata; the
+        # attributes of its array are not the pyramid's.
+        pass
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -88,6 +119,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
 
     # ---- attributes --------------------------------------------------
+
+    metadata: metadata_field(OmeZarrMetadata, _OME_METADATA_DOC)
 
     _axes: tx.Annotated[
         tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
@@ -163,6 +196,30 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # levels directly in world space, so the list is empty and
         # `transformation` is the identity.
         return list(self._layout["commons"])
+
+    # ---- metadata ----------------------------------------------------
+
+    def __post_init__(self) -> None:
+        parent = getattr(super(), "__post_init__", None)
+        if parent is not None:
+            parent()
+        self._sync_metadata()
+
+    def _sync_metadata(self) -> None:
+        """
+        Read the metadata of the pyramid from its group, when it has not
+        been read yet, and give each level a derived copy of it.
+        """
+        node = self.node
+        metadata = self.metadata
+        if node is None or (metadata is not None and metadata.raw is not None):
+            return
+        record = OmeZarrRecord.from_attributes(self.ome, node_attributes(node))
+        self.metadata = metadata = merge_explicit(
+            OmeZarrMetadata, metadata, record, self
+        )
+        for index, level in enumerate(self._layout["images"]):
+            level.metadata = metadata.derive(grid_changed=index > 0)
 
     # ---- load --------------------------------------------------------
 
@@ -330,7 +387,14 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         version: tx.Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Write the pyramid into an opened Zarr group, and return it."""
+        """
+        Write the pyramid into an opened Zarr group, and return it.
+
+        The metadata of the pyramid (not that of its levels) is written:
+        the multiscale name, `omero` and the other group attributes; what
+        it cannot hold is reported according to `on_loss`.
+        """
+        on_loss = kwargs.pop("on_loss", None)
         node = _as_node(node)
         if not isinstance(node, ZarrGroup):
             raise WriterError(
@@ -412,7 +476,45 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         commons = list(zip(worlds, entries))
 
         resolved = resolve_write_version(version, self._ome_version, rich)
-        write_multiscale(node, storage_axes, levels, commons, None, resolved)
+        built = build_ome(
+            storage_axes, levels, commons, None, NORMALIZED_VERSION
+        )
+        record = self._write_record(built.multiscales[0], on_loss)
+        write_image_metadata(node, record.multiscale, record.omero, resolved)
+        before = getattr(self.metadata, "raw", None)
+        write_attributes(
+            node, record.attrs, before.attrs if before is not None else None
+        )
+
+    def _write_record(
+        self, multiscale: tx.Any, on_loss: tx.Any
+    ) -> OmeZarrRecord:
+        """
+        The record to write: the multiscale built from the levels, with
+        the name, type and downsampling metadata of the record that was
+        read, then the changed fields of the metadata over it.
+        """
+        metadata = self.metadata
+        if metadata is None:
+            metadata = OmeZarrMetadata()
+        elif not isinstance(metadata, OmeZarrMetadata):
+            metadata = OmeZarrMetadata.from_other(metadata)
+        before = metadata.raw
+        block = multiscale.to_json()
+        if before is not None and before.multiscale is not None:
+            kept = before.multiscale.to_json()
+            for key in ("name", "type", "metadata"):
+                if key in kept:
+                    block[key] = kept[key]
+        target = OmeZarrRecord(
+            type(multiscale).from_json(block),
+            copy.deepcopy(before.omero) if before is not None else None,
+            copy.deepcopy(before.attrs) if before is not None else None,
+        )
+        report = ConversionReport(source=metadata.format, target="ome-zarr")
+        target = metadata.write_raw(target, image=self, report=report)
+        apply_loss_policy(report, on_loss, stacklevel=5)
+        return target
 
     def to_store(
         self,

@@ -606,13 +606,33 @@ def build_ome(
     return ome
 
 
-def write_multiscale(
+def write_image_metadata(
     node: ZarrGroup,
-    axes: tx.Sequence[Axis],
-    levels: tx.Sequence[_Level],
-    commons: tx.Sequence[tx.Tuple[str, _Entry]],
-    name: tx.Optional[str],
+    multiscale: Multiscale,
+    omero: tx.Optional[tx.Dict[str, tx.Any]],
     version: str,
 ) -> None:
-    """Write an image pyramid's OME metadata onto a group through abczarr."""
-    node.ome = build_ome(axes, levels, commons, name, version)
+    """
+    Write an image pyramid's OME metadata onto a group: one 0.6
+    multiscale, converted to `version`, and the `omero` block.
+
+    `omero` is written as JSON, next to the multiscales in the envelope of
+    the version (under `"ome"` from 0.5 on, at the top level in 0.4),
+    rather than through the typed model, which does not keep nested
+    free-form keys such as `rdefs`.
+    """
+    ome = _v06.OME.from_json(
+        {"version": NORMALIZED_VERSION, "multiscales": [multiscale.to_json()]}
+    )
+    if version != NORMALIZED_VERSION:
+        ome = ome.to_version(version)
+    node.ome = ome
+    if omero is None:
+        return
+    block = node.attrs.get("ome")
+    if isinstance(block, tx.Mapping):
+        block = dict(block)
+        block["omero"] = omero
+        node.attrs["ome"] = block
+    else:
+        node.attrs["omero"] = omero

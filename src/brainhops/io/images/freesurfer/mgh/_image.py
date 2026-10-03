@@ -1,3 +1,6 @@
+# stdlib
+import math
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -7,12 +10,14 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import MilliMeter, MilliSecond
 from brainhops.io.base._base import register_format
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
+from brainhops.io.base._mgh_metadata import MghRecord
+from brainhops.io.base.mgh import _MRI_PARAMS, MghMetadata, MghParser
 from brainhops.io.base.nifti import (
     _scale_spatial,
     _unit_scale,
@@ -123,16 +128,31 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         `UnrepresentableTransformationError`.
 
         The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
-        `fov`) are copied from this image's header, then from `like` when
-        it is given (a path to an MGH/MGZ file, a `nibabel` MGH image or
-        header, or another object read from MGH), then from the keyword
-        arguments. `dtype` sets the stored voxel type. Without it, the
-        array's type is kept when MGH can store it (uint8, int16, int32,
-        float32), and otherwise converted to the nearest one MGH can:
-        booleans to uint8, other floats to float32, other integers to
-        int16 or int32. Integers that int32 cannot hold raise
+        `fov`) are copied from the record of the file this image was read
+        from (`metadata.raw`), then from `like` when it is given (a path
+        to an MGH/MGZ file, a `nibabel` MGH image or header, or another
+        object read from MGH). The fields of `metadata` changed since the
+        read are written over them (all of them for metadata built in
+        memory or converted from another format), and what MGH cannot
+        hold is reported according to `on_loss` (`"ignore"`, `"warn"` or
+        `"raise"`; the policy in effect by default).
+
+        The keyword arguments `tr`, `te`, `ti` (ms) and `flip_angle`
+        (radians) set the matching metadata fields
+        (`repetition_time`, ... in seconds and degrees) and win over
+        everything else; any other keyword, such as `fov`, sets that
+        header field last. `dtype` sets the stored voxel type. Without
+        it, the array's type is kept when MGH can store it (uint8, int16,
+        int32, float32), and otherwise converted to the nearest one MGH
+        can: booleans to uint8, other floats to float32, other integers
+        to int16 or int32. Integers that int32 cannot hold raise
         `WriterError`.
         """
+        return self._to_nibabel_and_tags(like, **overrides)[0]
+
+    def _to_nibabel_and_tags(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Tuple[_mgh.MGHImage, bytes]:
         data = self.data
         if data is None:
             raise WriterError(
@@ -146,21 +166,95 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
             )
 
         overrides = dict(overrides)
+        on_loss = overrides.pop("on_loss", None)
         dtype = overrides.pop("dtype", None)
         dtype = _mgh_dtype(data, dtype)
+        metadata = _writable_metadata(self.metadata, overrides)
 
+        record = metadata.raw
+        base = record.header if record is not None else self.header
         header = _mgh.MGHHeader()
-        for source in (self.header, _like_header(like)):
+        for source in (base, _like_header(like)):
             if source is None:
                 continue
             for name in _MRI_PARAMS:
                 header[name] = source[name]
+        tags = record.tags if record is not None else (self.tags or b"")
+        report = ConversionReport(source=metadata.format, target="mgh")
+        target = metadata.write_raw(
+            MghRecord(header, tags), image=self, report=report
+        )
+        apply_loss_policy(report, on_loss, stacklevel=4)
+        header = target.header
         for name, value in overrides.items():
             header[name] = value
         header.set_data_dtype(dtype)
 
         vox2ras = _scanner_matrix(self.transformations)
-        return _mgh.MGHImage(data, vox2ras, header=header)
+        return _mgh.MGHImage(data, vox2ras, header=header), target.tags
+
+
+# The footer keywords of the writer, routed through the metadata: keyword
+# -> (vocabulary field, factor from the keyword's unit to the field's).
+_LEGACY_KEYWORDS = {
+    "tr": ("repetition_time", 1e-3),
+    "te": ("echo_time", 1e-3),
+    "ti": ("inversion_time", 1e-3),
+    "flip_angle": ("flip_angle", None),  # radians -> degrees
+}
+
+
+def _writable_metadata(
+    metadata: tx.Any, overrides: tx.Dict[str, tx.Any]
+) -> MghMetadata:
+    """
+    The `MghMetadata` to write: the image's own (converted from another
+    format if need be), with the footer keywords popped from `overrides`
+    set over it, as changes.
+    """
+    if metadata is None:
+        metadata = MghMetadata()
+    elif not isinstance(metadata, MghMetadata):
+        metadata = MghMetadata.from_other(metadata)
+    values = {}
+    for keyword, (name, factor) in _LEGACY_KEYWORDS.items():
+        if keyword not in overrides:
+            continue
+        value = overrides.pop(keyword)
+        if value is None or not float(value):
+            values[name] = None
+        elif factor is None:
+            values[name] = math.degrees(float(value))
+        else:
+            values[name] = float(value) * factor
+    if not values:
+        return metadata
+    metadata = replace(metadata, **values)
+    # A keyword always wins: it counts as a change even when it equals
+    # the value that was read (a zero clears the slot).
+    decoded = dict(metadata._decoded)
+    for key, value in values.items():
+        decoded.pop(key, None)
+        if value is None:
+            decoded[key] = _FORCE_CLEAR
+    metadata._decoded = decoded
+    return metadata
+
+
+class _ForceClear:
+    """A snapshot value that differs from everything, so that a field
+    set to `None` counts as a change."""
+
+    def __eq__(self, other: object) -> bool:
+        return other is self
+
+    def __ne__(self, other: object) -> bool:
+        return other is not self
+
+    __hash__ = object.__hash__
+
+
+_FORCE_CLEAR = _ForceClear()
 
 
 # ----------------------------------------------------------------------
