@@ -1,6 +1,6 @@
 """
-The metadata of Zarr images: [`ZarrMetadata`][] for a plain array, and
-[`OmeZarrMetadata`][] for an OME-Zarr multiscale pyramid.
+The metadata of Zarr images: `ZarrMetadata` for a plain array, and
+`OmeZarrMetadata` for an OME-Zarr multiscale pyramid.
 
 **Plain Zarr.** A plain array has no metadata convention, only free-form
 attributes. The vocabulary is stored as a BIDS-style sidecar (the keys of
@@ -10,7 +10,7 @@ attributes of the array. Everything but the diffusion fields (which are
 not sidecar keys) is supported. The record (`raw`) is the dict of the
 array's attributes.
 
-**OME-Zarr.** The record is an [`OmeZarrRecord`][]: the typed `abczarr`
+**OME-Zarr.** The record is an `OmeZarrRecord`: the typed `abczarr`
 multiscale (normalised to 0.6), the `omero` block as JSON, and the group
 attributes that are not OME metadata. What the vocabulary covers:
 
@@ -313,7 +313,7 @@ class OmeZarrMetadata(
 ):
     """
     The metadata of an OME-Zarr multiscale pyramid; its record is an
-    [`OmeZarrRecord`][] (the multiscale, `omero` and the other group
+    `OmeZarrRecord` (the multiscale, `omero` and the other group
     attributes).
 
     `multiscale` and `omero` are the parts of the record under their

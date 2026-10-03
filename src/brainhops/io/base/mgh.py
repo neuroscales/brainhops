@@ -118,7 +118,8 @@ MghMetadataField = tx.Annotated[
         seconds and degrees) and the command-line history of the trailing
         tags, with the header and the tags as its record
         (`metadata.raw`). A field set here is written over the record on
-        save; see [`MghMetadata`][brainhops.io.images.freesurfer.MghMetadata].
+        save; see
+        [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
         """
     ),
     Factory(MghMetadata),

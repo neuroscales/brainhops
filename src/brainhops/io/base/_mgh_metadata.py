@@ -1,8 +1,8 @@
 """
-The metadata of MGH/MGZ files: [`MghMetadata`][], the metadata of
+The metadata of MGH/MGZ files: `MghMetadata`, the metadata of
 `MghImage`.
 
-Its record (`raw`) is an [`MghRecord`][]: the `nibabel` header, which
+Its record (`raw`) is an `MghRecord`: the `nibabel` header, which
 holds the footer of MRI acquisition parameters, and the raw bytes of the
 trailing tags. What the vocabulary covers:
 
@@ -230,7 +230,7 @@ class MghMetadata(
     ),
 ):
     """
-    The metadata of an MGH/MGZ file; its record is an [`MghRecord`][]
+    The metadata of an MGH/MGZ file; its record is an `MghRecord`
     (the `nibabel` header and the trailing tags).
 
     `header` and `tags` are the parts of the record under their familiar
