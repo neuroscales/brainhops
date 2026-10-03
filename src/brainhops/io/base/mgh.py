@@ -41,6 +41,7 @@ __all__ = [
 ]
 
 # stdlib
+import functools
 import gzip
 import struct
 from io import BytesIO
@@ -48,7 +49,6 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, KwOnly, NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -58,6 +58,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata import metadata_annotation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base._mgh_metadata import MghMetadata, MghRecord
 from brainhops.io.base.freesurfer import (
@@ -110,23 +111,17 @@ _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 
 # The `metadata` field of every MGH-based class.
-MghMetadataField = tx.Annotated[
+MghMetadataField = metadata_annotation(
     MghMetadata,
-    tx.Doc(
-        """
-        The metadata of the file: the MRI parameters of the footer (in
-        seconds and degrees) and the command-line history of the trailing
-        tags, with the header and the tags as its record
-        (`metadata.raw`). A field set here is written over the record on
-        save; see
-        [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
-        """
-    ),
-    Factory(MghMetadata),
-    KwOnly(),
-    NoRepr(),
-    NoEq(),
-]
+    """
+    The metadata of the file: the MRI parameters of the footer (in
+    seconds and degrees) and the command-line history of the trailing
+    tags, with the header and the tags as its record (`metadata.raw`).
+    A field set here is written over the record on save; see
+    [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
+    """,
+    default=MghMetadata,
+)
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
@@ -219,32 +214,44 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
 
     def _sync_metadata(self, force: bool = False) -> None:
         """
-        Read the metadata from the header and the tags, when it has not
-        been read yet (or, with `force`, again).
+        Read the metadata from the header and the tags, when the header
+        is not its record yet (or, with `force`, again).
 
-        Fields given explicitly in a `metadata` without a record win over
-        the decoded ones, and count as changes on write.
+        The tags are not read here: the record reads them on first use
+        (see `MghRecord`), and so does `history`. A `metadata` given
+        along with the header (explicitly, or carried over by
+        `replace(image, header=...)`) keeps the fields that changed in
+        it, over the decoded ones (see `FormatMetadata.with_record`).
         """
         header = self.header
         metadata = self.metadata
-        if header is None or (
-            not force and metadata is not None and metadata.raw is not None
+        if header is None:
+            return
+        record = getattr(metadata, "raw", None)
+        if (
+            not force
+            and isinstance(record, MghRecord)
+            and record.header is header
         ):
             return
-        record = MghRecord(header, self.tags)
-        decoded = MghMetadata.from_raw(record, image=self)
-        if force or metadata is None:
-            self.metadata = decoded
-            return
-        values = {}
-        for name in MghMetadata.vocabulary_fields + ("extra",):
-            value = getattr(metadata, name, None)
-            if value is None:
-                value = getattr(decoded, name, None)
-            values[name] = value
-        self.metadata = MghMetadata(
-            raw=record, decoded=decoded._decoded, **values
+        record = MghRecord(
+            header, getattr(self, "_tags", None), loader=self._tags_loader()
         )
+        if force or metadata is None:
+            self.metadata = MghMetadata.from_raw(record, image=self)
+        else:
+            self.metadata = metadata.with_record(record, image=self)
+
+    def _tags_loader(self) -> tx.Optional[tx.Callable[[], bytes]]:
+        """What reads the tags from the file the image was loaded from,
+        or `None` when it was not loaded from a file."""
+        if self.image is None or self.header is None:
+            return None
+        holder = self.image.file_map.get("image")
+        filename = getattr(holder, "filename", None)
+        if not filename:
+            return None
+        return functools.partial(_read_tags_file, filename, self.header)
 
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
@@ -274,15 +281,13 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         """
         if getattr(self, "_tags", None) is not None:
             return self._tags
-        tags = b""
-        filename = None
-        if self.image is not None and self.header is not None:
-            holder = self.image.file_map.get("image")
-            filename = getattr(holder, "filename", None)
-        if filename:
-            with open(filename, "rb") as f:
-                stream = open_compressed(f)
-                tags = _read_tags(stream, self.header)
+        record = getattr(self.metadata, "raw", None)
+        if isinstance(record, MghRecord) and record.header is self.header:
+            # Read once, by the record of the metadata.
+            tags = record.tags
+        else:
+            loader = self._tags_loader()
+            tags = loader() if loader is not None else b""
         self._tags = tags
         return tags
 
@@ -636,6 +641,12 @@ def _seekable(fileobj: tx.IO) -> bool:
         return bool(fileobj.seekable())
     except Exception:
         return False
+
+
+def _read_tags_file(filename: str, header: _mgh.MGHHeader) -> bytes:
+    """Read the raw bytes after the footer of an MGH or MGZ file."""
+    with open(filename, "rb") as f:
+        return _read_tags(open_compressed(f), header)
 
 
 def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:

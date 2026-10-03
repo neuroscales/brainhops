@@ -29,13 +29,17 @@ NUL-terminated string. `history` is decoded only when the whole tag
 stream parses; otherwise the tags are kept verbatim and `history` is
 unknown (and a new value cannot be written: it is reported as lost).
 Writing `history` replaces the command-line tags and keeps every other
-tag as it was.
+tag as it was. The tags sit after the whole volume, so a record read
+from a file reads them lazily, and `history` is decoded on first access
+(see [`Lazy`][brainhops.datamodel.metadata.Lazy]): a load that never
+touches it never decompresses an MGZ to its end.
 """
 
 __all__ = ["MghMetadata", "MghRecord"]
 
 # stdlib
 import copy
+import functools
 import math
 import struct
 
@@ -46,7 +50,7 @@ from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
-from brainhops.datamodel.metadata import ConversionReport, FormatMetadata
+from brainhops.datamodel.metadata import ConversionReport, FormatMetadata, Lazy
 
 # FreeSurfer tag ids (`utils/tags.h`).
 TAG_OLD_COLORTABLE = 1
@@ -72,18 +76,55 @@ class MghRecord:
     """
     The record of an MGH file: its `nibabel` header (footer included)
     and the raw bytes of the trailing tags.
+
+    The tags follow the whole volume, so reading them decompresses an
+    MGZ to its end. A record read from a file therefore holds a `loader`
+    instead, and reads the tags the first time `tags` is used (only
+    `history` needs them).
     """
 
-    __slots__ = ("header", "tags")
+    __slots__ = ("header", "_tags", "_loader")
 
     def __init__(
-        self, header: tx.Optional[_mgh.MGHHeader] = None, tags: bytes = b""
+        self,
+        header: tx.Optional[_mgh.MGHHeader] = None,
+        tags: tx.Optional[bytes] = b"",
+        *,
+        loader: tx.Optional[tx.Callable[[], bytes]] = None,
     ) -> None:
         self.header = _mgh.MGHHeader() if header is None else header
-        self.tags = bytes(tags or b"")
+        if tags is None and loader is None:
+            tags = b""
+        self._tags = None if tags is None else bytes(tags)
+        self._loader = None if tags is not None else loader
+
+    @property
+    def tags(self) -> bytes:
+        """The raw trailing tags, read on first use when they are lazy."""
+        if self._tags is None:
+            loader, self._loader = self._loader, None
+            self._tags = bytes(loader() or b"") if loader else b""
+        return self._tags
+
+    @tags.setter
+    def tags(self, value: tx.Optional[bytes]) -> None:
+        self._tags = bytes(value or b"")
+        self._loader = None
+
+    @property
+    def tags_loaded(self) -> bool:
+        """Whether the tags have been read (or were given)."""
+        return self._tags is not None
 
     def __deepcopy__(self, memo: tx.Dict) -> "MghRecord":
-        return MghRecord(self.header.copy(), self.tags)
+        return MghRecord(self.header.copy(), self._tags, loader=self._loader)
+
+    def __getstate__(self) -> tx.Tuple[tx.Any, ...]:
+        return (self.header, self.tags)
+
+    def __setstate__(self, state: tx.Tuple[tx.Any, ...]) -> None:
+        self.header, self._tags = state
+        self._loader = None
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MghRecord):
@@ -95,7 +136,8 @@ class MghRecord:
     __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
-        return f"MghRecord(header=..., tags={len(self.tags)} bytes)"
+        tags = f"{len(self._tags)} bytes" if self._tags is not None else "lazy"
+        return f"MghRecord(header=..., tags={tags})"
 
 
 # ----------------------------------------------------------------------
@@ -218,6 +260,10 @@ def _degrees(radians: tx.Any) -> float:
     return exact
 
 
+def _lazy_history(raw: MghRecord) -> tx.Optional[tx.Tuple[str, ...]]:
+    return decode_history(raw.tags)
+
+
 class MghMetadata(
     FormatMetadata,
     on={"format": "mgh"},
@@ -284,7 +330,12 @@ class MghMetadata(
                 out[name] = _degrees(raw.header[slot])
             else:
                 out[name] = round(value * factor, 12)
-        out["history"] = decode_history(raw.tags)
+        if raw.tags_loaded:
+            out["history"] = decode_history(raw.tags)
+        else:
+            # Decoded on first access: reading the tags reads the file
+            # to its end (see `MghRecord`).
+            out["history"] = Lazy(functools.partial(_lazy_history, raw))
         return out
 
     def _encode(

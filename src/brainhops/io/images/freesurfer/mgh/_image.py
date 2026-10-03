@@ -169,7 +169,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         on_loss = overrides.pop("on_loss", None)
         dtype = overrides.pop("dtype", None)
         dtype = _mgh_dtype(data, dtype)
-        metadata = _writable_metadata(self.metadata, overrides)
+        metadata, force = _writable_metadata(self.metadata, overrides)
 
         record = metadata.raw
         base = record.header if record is not None else self.header
@@ -182,7 +182,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         tags = record.tags if record is not None else (self.tags or b"")
         report = ConversionReport(source=metadata.format, target="mgh")
         target = metadata.write_raw(
-            MghRecord(header, tags), image=self, report=report
+            MghRecord(header, tags), image=self, report=report, force=force
         )
         apply_loss_policy(report, on_loss, stacklevel=4)
         header = target.header
@@ -206,11 +206,13 @@ _LEGACY_KEYWORDS = {
 
 def _writable_metadata(
     metadata: tx.Any, overrides: tx.Dict[str, tx.Any]
-) -> MghMetadata:
+) -> tx.Tuple[MghMetadata, tx.Tuple[str, ...]]:
     """
-    The `MghMetadata` to write: the image's own (converted from another
+    The `MghMetadata` to write, and the fields to write whatever the
+    snapshot says: the image's own metadata (converted from another
     format if need be), with the footer keywords popped from `overrides`
-    set over it, as changes.
+    set over it. A keyword always wins: it is written even when it
+    equals the value that was read, and a zero clears the slot.
     """
     if metadata is None:
         metadata = MghMetadata()
@@ -228,33 +230,8 @@ def _writable_metadata(
         else:
             values[name] = float(value) * factor
     if not values:
-        return metadata
-    metadata = replace(metadata, **values)
-    # A keyword always wins: it counts as a change even when it equals
-    # the value that was read (a zero clears the slot).
-    decoded = dict(metadata._decoded)
-    for key, value in values.items():
-        decoded.pop(key, None)
-        if value is None:
-            decoded[key] = _FORCE_CLEAR
-    metadata._decoded = decoded
-    return metadata
-
-
-class _ForceClear:
-    """A snapshot value that differs from everything, so that a field
-    set to `None` counts as a change."""
-
-    def __eq__(self, other: object) -> bool:
-        return other is self
-
-    def __ne__(self, other: object) -> bool:
-        return other is not self
-
-    __hash__ = object.__hash__
-
-
-_FORCE_CLEAR = _ForceClear()
+        return metadata, ()
+    return replace(metadata, **values), tuple(values)
 
 
 # ----------------------------------------------------------------------

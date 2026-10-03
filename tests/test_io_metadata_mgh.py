@@ -307,10 +307,22 @@ def test_saving_mgh_as_nifti_reports_the_loss(scan, tmp_path) -> None:  # noqa: 
     image = io.load(scan)
     with pytest.warns(MetadataLossWarning) as caught:
         io.save(image, tmp_path / "out.nii.gz")
-    lost = set()
-    for warning in caught:
-        lost |= set(warning.message.report.lost)
-    assert {"echo_time", "flip_angle", "history"} <= lost
+    # One save, one warning: the conversion's report and the write's.
+    assert len(caught) == 1
+    report = caught[0].message.report
+    assert (report.source, report.target) == ("mgh", "nifti")
+    assert set(report.lost) == {
+        "echo_time",
+        "flip_angle",
+        "history",
+        "inversion_time",
+        "repetition_time",  # a 3-D NIfTI image has no time axis
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        io.save(image, tmp_path / "quiet.nii.gz", on_loss="ignore")
+    with pytest.raises(MetadataLossError):
+        io.save(image, tmp_path / "loud.nii.gz", on_loss="raise")
 
 
 def test_nifti_to_mgh(tmp_path) -> None:  # noqa: ANN001
@@ -373,3 +385,54 @@ def test_a_nifti_image_becomes_an_mgh_image(tmp_path) -> None:  # noqa: ANN001
     with metadata_loss_policy("ignore"):
         mgh = MghImage.from_instance(nifti)
     assert type(mgh.metadata) is MghMetadata
+
+
+# ----------------------------------------------------------------------
+#   LAZY TAGS
+# ----------------------------------------------------------------------
+
+
+def test_the_tags_are_read_lazily(scan, monkeypatch) -> None:  # noqa: ANN001
+    from brainhops.io.base import mgh
+
+    reads = []
+    read = mgh._read_tags_file
+
+    def counting(*args):  # noqa: ANN002, ANN202
+        reads.append(1)
+        return read(*args)
+
+    monkeypatch.setattr(mgh, "_read_tags_file", counting)
+    image = io.load(scan)
+    meta = image.metadata
+    # The footer is in the header: no need for the tags.
+    assert meta.repetition_time == 2.3
+    assert not meta.raw.tags_loaded
+    assert reads == []
+    assert meta.history == (
+        "mri_convert in.nii orig.mgz",
+        "mri_normalize orig.mgz T1.mgz",
+    )
+    assert meta.changed_fields() == {}
+    # Read once, for the metadata and the image alike.
+    assert image.tags == meta.raw.tags
+    assert reads == [1]
+
+
+def test_lazy_tags_survive_an_untouched_save(scan, tmp_path) -> None:  # noqa: ANN001
+    io.load(scan).save(tmp_path / "out.mgz")
+    assert io.load(tmp_path / "out.mgz").tags == io.load(scan).tags
+
+
+def test_a_new_header_is_read_again_through_replace(scan) -> None:  # noqa: ANN001
+    from bagof.magic import replace
+
+    image = io.load(scan)
+    image.metadata.echo_time = 0.004
+    header = image.header.copy()
+    header["tr"] = 1000.0
+    other = replace(image, header=header)
+    assert other.metadata.raw.header is other.header
+    assert other.metadata.repetition_time == 1.0
+    assert other.metadata.echo_time == 0.004
+    assert image.metadata.repetition_time == 2.3
