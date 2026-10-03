@@ -149,10 +149,9 @@ def test_case1_a_read_then_save_keeps_the_header(scan, tmp_path) -> None:  # noq
     assert float(h["slice_duration"]) == 0.25
     assert [e.get_content() for e in h.extensions] == [b"a comment"]
     back, read = io.load(out).metadata, io.load(scan).metadata
-    # The time step is geometry, which the image writer does not store
-    # (`pixdim[4]` is written as 1): `repetition_time` derives from it.
-    assert back.repetition_time == 1.0
-    back.repetition_time = read.repetition_time
+    # The time step is geometry: the writer stores the data model's.
+    assert float(h["pixdim"][4]) == 2.0
+    assert back.repetition_time == 2.0
     assert back == read
 
 
@@ -530,3 +529,76 @@ def test_the_user_guide_runs() -> None:
         optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE,
     )
     assert result.failed == 0
+
+
+# ----------------------------------------------------------------------
+#   THE TIME STEP, COPIES AND NEW HEADERS
+# ----------------------------------------------------------------------
+
+
+def test_an_untouched_4d_round_trip_keeps_the_repetition_time(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    path = _write_scan(
+        tmp_path / "scan.nii", pixdim=[1, 2, 2, 2.5, 1.5, 1, 1, 1]
+    )
+    image = io.load(path)
+    assert image.metadata.repetition_time == 1.5
+    assert not image.metadata.check_writable(image=image).lossy
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MetadataLossWarning)
+        image.save(tmp_path / "out.nii")
+    assert float(_header(tmp_path / "out.nii")["pixdim"][4]) == 1.5
+    assert io.load(tmp_path / "out.nii").metadata.repetition_time == 1.5
+
+
+def test_the_data_model_time_step_wins(scan, tmp_path) -> None:  # noqa: ANN001
+    image = io.load(scan)
+    image.metadata.repetition_time = 3.0
+    with pytest.warns(MetadataLossWarning) as caught:
+        image.save(tmp_path / "out.nii")
+    assert set(caught[0].message.report.approximated) == {"repetition_time"}
+    assert io.load(tmp_path / "out.nii").metadata.repetition_time == 2.0
+
+
+def test_check_writable_agrees_with_a_save(tmp_path) -> None:  # noqa: ANN001
+    # An image with no physical time axis: the field is the time step.
+    image = NiftiImage(data=np.zeros((2, 3, 4, 5), "float32"))
+    image.metadata.repetition_time = 2.0
+    assert not image.metadata.check_writable(image=image).lossy
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MetadataLossWarning)
+        image.save(tmp_path / "out.nii")
+    assert io.load(tmp_path / "out.nii").metadata.repetition_time == 2.0
+    flat = NiftiImage(data=np.zeros((2, 3, 4), "float32"))
+    flat.metadata.repetition_time = 2.0
+    assert set(flat.metadata.check_writable(image=flat).lost) == {
+        "repetition_time"
+    }
+
+
+def test_replace_copies_the_metadata(scan) -> None:  # noqa: ANN001
+    from bagof.magic import replace
+
+    image = io.load(scan)
+    copied = replace(image, data=np.ones(SHAPE, "float32"))
+    copied.metadata.description = "edited copy"
+    assert image.metadata.description == "a bold run"
+    assert copied.metadata.raw is image.metadata.raw
+    other = NiftiImage.from_other(image)
+    assert other.metadata is not image.metadata
+    assert other.metadata == image.metadata
+
+
+def test_replace_with_a_new_header_reads_it_again(scan) -> None:  # noqa: ANN001
+    from bagof.magic import replace
+
+    image = io.load(scan)
+    image.metadata.display_range = (1.0, 2.0)
+    header = nb.Nifti1Header()
+    header["descrip"] = b"another file"
+    other = replace(image, header=header)
+    assert other.metadata.raw is other.header
+    assert other.metadata.description == "another file"
+    # What changed in the metadata carries over, as a change.
+    assert other.metadata.changed_fields() == {"display_range": (1.0, 2.0)}

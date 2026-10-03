@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, KwOnly, NoEq, NoRepr, replace
+from bagof.magic import replace
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
@@ -24,7 +24,11 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    apply_loss_policy,
+    metadata_annotation,
+)
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
@@ -40,7 +44,13 @@ from brainhops.io.base._geometry import (
     ras_conversion,
     reduce_to_affine,
 )
-from brainhops.io.base._nifti_metadata import NiftiMetadata, copy_record
+from brainhops.io.base._nifti_metadata import (
+    NiftiMetadata,
+    _shape,
+    copy_record,
+    set_time_step,
+    time_step,
+)
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
@@ -249,22 +259,17 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
 # The `metadata` field of every NIfTI-based class. It is declared again
 # on `NiftiBasedTransformation`: there, `Transformation` comes before
 # `NiftiParser` in the MRO, and its generic declaration would win.
-NiftiMetadataField = tx.Annotated[
+NiftiMetadataField = metadata_annotation(
     NiftiMetadata,
-    tx.Doc(
-        """
-        The metadata of the file: the common vocabulary decoded from
-        the header (description, display range, slice timing, ...),
-        with the header itself as its record (`metadata.raw`). A
-        field set here is written over the header on save; see
-        [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata].
-        """
-    ),
-    Factory(NiftiMetadata),
-    KwOnly(),
-    NoRepr(),
-    NoEq(),
-]
+    """
+    The metadata of the file: the common vocabulary decoded from the
+    header (description, display range, slice timing, ...), with the
+    header itself as its record (`metadata.raw`). A field set here is
+    written over the header on save; see
+    [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata].
+    """,
+    default=NiftiMetadata,
+)
 
 
 class NiftiParser(DataModelBase, BinaryFileParserWriter):
@@ -357,32 +362,22 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
 
     def _sync_metadata(self) -> None:
         """
-        Read the metadata from the header, when it has not been read yet.
+        Read the metadata from the header, when it is not its record yet.
 
         An object built from a header (or a `nibabel` image) holds the
-        metadata decoded from it, with the header as its record. Fields
-        given explicitly in a `metadata` without a record win over the
-        decoded ones, and count as changes on write.
+        metadata decoded from it, with the header as its record. A
+        `metadata` given along with it (explicitly, or carried over by
+        `replace(image, header=...)`) keeps the fields that changed in
+        it, over the decoded ones, and they count as changes on write
+        (see `FormatMetadata.with_record`).
         """
         header = self.header
         metadata = self.metadata
-        if header is None or (
-            metadata is not None and metadata.raw is not None
-        ):
+        if header is None or (metadata is not None and metadata.raw is header):
             return
-        decoded = NiftiMetadata.from_raw(header, image=self)
         if metadata is None:
-            self.metadata = decoded
-            return
-        values = {}
-        for name in NiftiMetadata.vocabulary_fields + ("extra",):
-            value = getattr(metadata, name, None)
-            if value is None:
-                value = getattr(decoded, name, None)
-            values[name] = value
-        self.metadata = NiftiMetadata(
-            raw=header, decoded=decoded._decoded, **values
-        )
+            metadata = NiftiMetadata()
+        self.metadata = metadata.with_record(header, image=self)
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -1373,6 +1368,10 @@ def _image_with_geometry(
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
+    # The time step is geometry: the data model's, never the record's.
+    step = time_step(transformations)
+    if step is not None and len(_shape(image.header)) >= 4:
+        set_time_step(image.header, step)
     _apply_metadata(image, owner, like, overrides)
     _apply_overrides(image, overrides)
     return image

@@ -13,12 +13,15 @@ Its record (`raw`) is the `nibabel` header. What the vocabulary covers:
 | `slice_encoding_direction` | `dim_info` (no polarity) |
 | `phase_encoding_direction` | `dim_info` (no polarity) |
 | `slice_timing` | `slice_code`, `slice_start`, `slice_end`, `slice_duration` |
-| `repetition_time` (derived) | `pixdim[4]` |
+| `repetition_time` (derived) | `pixdim[4]` (the time step) |
 | `intent` (derived) | `intent_code` |
 | `space` (derived) | `sform_code` / `qform_code` |
 
 The derived fields are views of geometry that the writer takes from the
 data model; a value that disagrees with it is reported, not written.
+`repetition_time` is the time step of the image (the scale of its time
+axis, `time_step`), which the writer stores as `pixdim[4]`; only an image
+whose data model has no time step gets the field's value there.
 NIfTI has no free-form store, so `extra` is unsupported (open question 7
 of the design memo).
 
@@ -41,10 +44,12 @@ import typing_extensions as tx
 from bagof.magic import NoEq, NoRepr
 
 # internals
+from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
     FormatMetadata,
 )
+from brainhops.datamodel.units import is_physicalunit, is_timeunit
 
 # NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
 _XCODES = {
@@ -237,11 +242,29 @@ class NiftiMetadata(
         if "slice_timing" in changed:
             _encode_slice_timing(h, changed["slice_timing"], report)
         if "repetition_time" in changed:
-            _check_repetition_time(h, changed["repetition_time"], report)
+            # Only when the data model has no time step (see `_geometry`).
+            _encode_repetition_time(h, changed["repetition_time"], report)
         if "intent" in changed:
             _encode_intent(h, changed["intent"], image, report)
         if "space" in changed:
             _check_space(h, changed["space"], report)
+        return h
+
+    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
+        if not isinstance(image, Image):
+            return {}
+        return {"repetition_time": time_step(image.transformations)}
+
+    def _check_record(self, image: tx.Any) -> nb.Nifti1Header:
+        # The writer's header has the shape of the data, whatever the
+        # record says.
+        h = self._raw_or_default()
+        shape = _data_shape(image) if isinstance(image, Image) else None
+        if shape and shape != _shape(h):
+            try:
+                h.set_data_shape(shape)
+            except Exception:
+                pass
         return h
 
     def _derive_raw(
@@ -351,21 +374,74 @@ def _encode_slice_timing(
         report.lost["slice_timing"] = tuple(value)
 
 
-def _check_repetition_time(
+def _encode_repetition_time(
     h: nb.Nifti1Header, value: tx.Optional[float], report: ConversionReport
 ) -> None:
+    """Write a repetition time the data model says nothing about (an
+    image with no physical time axis) as the time step, `pixdim[4]`."""
     if value is None:
         return
-    shape = _shape(h)
-    if len(shape) < 4:
+    if len(_shape(h)) < 4:
         report.lost["repetition_time"] = value
         return
-    scale = _time_scale(h)
-    step = float(h["pixdim"][4]) * (scale or 1.0)
-    if not np.isclose(step, value):
-        report.approximated["repetition_time"] = (
-            f"derived from the time axis (pixdim[4] = {step:g} s)"
-        )
+    set_time_step(h, value)
+
+
+def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
+    """Store a time step, in seconds, as `pixdim[4]`, in the time unit of
+    the header (seconds when it has none)."""
+    space, time = h.get_xyzt_units()
+    if time not in _TIME_UNITS:
+        h.set_xyzt_units(space, "sec")
+        time = "sec"
+    h["pixdim"][4] = float(seconds) / _TIME_UNITS[time]
+
+
+def time_step(
+    transformations: tx.Optional[tx.Iterable[tx.Any]],
+) -> tx.Optional[float]:
+    """
+    The time step of an image, in seconds, as its data model gives it:
+    the scale of the time axis of the first scaling (voxel to physical
+    space, as the NIfTI and MGH readers build it) whose output has a
+    time axis with a physical time unit. `None` when there is none.
+    """
+    for xform in transformations or ():
+        scale = getattr(xform, "scale", None)
+        output = getattr(xform, "output", None)
+        if scale is None or output is None:
+            continue
+        axes = [
+            axis
+            for axis in (getattr(output, "axes", None) or ())
+            if axis is not Ellipsis
+        ]
+        for index, axis in enumerate(axes):
+            if getattr(axis, "type", None) != "time":
+                continue
+            unit = getattr(axis, "unit", None)
+            if not (is_physicalunit(unit) and is_timeunit(unit)):
+                break
+            scale = np.ravel(np.asarray(scale, dtype=float))
+            if index < scale.size and scale[index] > 0:
+                return float(scale[index]) * float(unit.scale)
+            break
+    return None
+
+
+def _data_shape(image: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
+    """The shape of the data of an image, without reading the data."""
+    data = image.__dict__.get("_data")
+    if data is None:
+        nib = getattr(image, "image", None)
+        if nib is not None and hasattr(nib, "shape"):
+            return tuple(int(d) for d in nib.shape)
+        try:
+            data = image.data
+        except Exception:
+            return None
+    shape = getattr(data, "shape", None)
+    return None if shape is None else tuple(int(d) for d in shape)
 
 
 def _encode_intent(
