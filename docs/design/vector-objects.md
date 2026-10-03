@@ -2,7 +2,8 @@
 
 **Status:** design only, no code. Second draft, rewritten after the
 first review round on #249 around an nd data model (raster and index
-axes, elements and labels as nd relations). Relates to #130 (general
+axes, elements and labels as nd relations), reviewed by Fable and
+corrected. Relates to #130 (general
 vector formats), #175 (zarr-vectors) and the per-category format
 issues. Decisions still open are listed under
 [Open questions](#open-questions).
@@ -116,7 +117,7 @@ different dtypes (§2.6).
 ```
 Vectors[E]
 ├── vertices: Vertices          the points, on nd array axes
-├── elements: E | None          nd relation: fixed-width tuples of vertices
+├── elements: E | (E, ...) | None   nd relation(s): fixed-width tuples of vertices
 ├── labels: {name: Labels}      nd relations: fragments, objects, groups, …
 └── transformations: [...]      native -> world, last preferred
 ```
@@ -192,15 +193,19 @@ mixed dtypes such as a categorical coordinate stored as integer codes;
 ### 2.3 `Elements`
 
 An element is an ordered tuple of `E` vertices, addressed by nd index.
+Every array axis of a relation (elements or labels) is **named**, so that
+shapes are never guessed:
 
 ```
 class Elements(Magic, polymorphic=True):
     data:        (*G, *M, E[, len(axes)]) int | (*G, *M, E)[axes]
-    axes:        tuple of vertex array-axis names the indices address
+    axes:        names of the vertex array axes the indices address
+    batch:       names of the vertex free axes that G lines up with = ()
+    own_axes:    names of the element axes M = ("element",)
     dim:         int        topological dimension
     directed:    bool = False
     attributes:  (*G, *M, AE) | (*G, *M)[fields]   optional
-    valid:       (*G, *M) bool | lengths            optional
+    valid:       (*G, *M) bool | lengths (*G, *M[:-1])   optional
 ```
 
 - **`axes`** names the vertex array axes that the indices address. The
@@ -213,18 +218,28 @@ class Elements(Magic, polymorphic=True):
 - **Width.** `E` is `shape[-2]` for the plain nd form and `shape[-1]`
   otherwise (one index axis, or structured). Dispatch to `Edges`,
   `Triangles`, `Quads`, `Tetrahedra` is on `(dim, E)`.
-- **Broadcasting.** The vertex array axes *not* in `axes` are the
-  element's **free axes**. The element array's leading batch axes `G`
-  broadcast against the free axes, numpy-style (aligned on the right,
-  missing or size-1 axes are shared). So one `(M, 3)` triangle array
+- **Batch axes.** The vertex array axes *not* in `axes` are the element's
+  **free axes**. `batch` names the free axes that the leading `len(batch)`
+  dimensions `G` line up with, one to one and by name; every free axis not
+  in `batch` is shared. So one `(M, 3)` triangle array with `batch = ()`
   serves every frame of a `(T, N, 3)` time series (shared topology), and
-  a `(Z, M, 2)` edge array gives every slice its own edges.
+  a `(Z, M, 2)` edge array with `batch = ("z",)` gives every slice its own
+  edges. A `G` dimension of size 1 is shared too. With `batch` and
+  `own_axes` named, the split of the shape into `G`, `M`, `E` and the
+  index dimension is always determined.
 - **Crossing batch items.** An element that joins vertices from
   different frames or slices simply includes that raster axis in
   `axes`: a division edge from `(t, n)` to `(t + 1, m)` is
   `axes = ("t", "n")`, one row `[[t, n], [t + 1, m]]`.
-- **`M`**, the element's own axes, are usually `(M,)`, but may be nd
-  (example L, a structured grid of quads).
+- **`M`**, the element's own axes, are usually one axis, `("element",)`.
+  They may be nd when the elements are themselves laid out on a grid,
+  for example a stored quad mesh of a `H × W` vertex grid,
+  `Quads.data (H - 1, W - 1, 4, 2)` with `axes = ("i", "j")` and
+  `own_axes = ("ci", "cj")`. Naming them is what lets a label address
+  elements (open question 6).
+- **`valid`** works as for vertices: a mask over `(*G, *M)`, or
+  `lengths (*G, *M[:-1])`, counted along the last element axis (one count
+  per chunk in example K).
 - **`directed`** (the zarr-vectors name): the order of an element's
   vertices carries meaning. An edge has a direction (parent → child); a
   face has a winding (which side its normal points to); a tetrahedron has
@@ -232,6 +247,9 @@ class Elements(Magic, polymorphic=True):
   `VolumeMeshes` promises every tet has positive signed volume in native
   space (the VTK / Gmsh convention), which is what makes folding visible
   after a deformation and gives boundary triangles an outward winding.
+- **Several blocks.** `elements` may be a tuple of blocks of the same
+  `dim` (tracks plus divisions in example F, intra- plus cross-chunk links
+  in example K, triangles plus quads).
 
 **Implicit elements** are generated on demand and store no `data`:
 
@@ -251,8 +269,10 @@ Fragments, objects and groups are all labels, one level above the next.
 
 ```
 class Labels(Magic, Generic[T]):
-    of:          str = "vertices"        what is labelled
-    axes:        tuple of axis names of the target addressed by indices
+    of:          str = "vertices"           what is labelled
+    axes:        names of the target axes addressed by indices
+    batch:       names of the target free axes that G lines up with = ()
+    own_axes:    names of the label axes L = ("label",)
     members:     (*K[, len(axes)]) | None   nd indices into the target; None = identity
     indices:     (*G, *L[, ndim(members)])  start of each label, an nd index into members
     lengths:     (*G, *L[, ndim(members)])  extent of each label; optional iff ndim(members) == 1
@@ -260,36 +280,43 @@ class Labels(Magic, Generic[T]):
     exclusive:   bool = False
     names:       (*L,) | None
     attributes:  (*G, *L, A) | (*G, *L)[fields]   optional
+    valid:       (*G, *L) bool | lengths (*G, *L[:-1])  optional
 
-class Fragments(Labels[Vertices]):  of = "vertices";  ordered = True
-class Objects(Labels[Fragments]):   of = "fragments"
-class Groups(Labels[Objects]):      of = "objects"
+class Fragments(Labels[Vertices]):  of = "vertices";   own_axes = ("fragment",); ordered = True
+class Objects(Labels[Fragments]):   of = "fragments";  own_axes = ("object",)
+class Groups(Labels[Objects]):      of = "objects";    own_axes = ("group",)
 ```
 
 - **A label is a box of `members`.** Label `p` is
   `members[indices[p] : indices[p] + lengths[p]]`, an nd box, read in C
   order when `ordered`. `ndim(members)` is `len(K)` when `members` is
   given, and `len(axes)` when it is `None` (the target's own index space
-  is used directly).
+  is used directly). Invalid members inside a box are skipped; they do
+  not break the order or split the label (a track with a missing frame
+  stays one fragment).
 - **`lengths` is optional only when `members` is 1-D**: labels are then
   CSR runs and each length is the distance to the next start, as in TRX
   `offsets`.
 - **`members` is an indirection.** It may reorder, repeat (a vertex
   shared by two fragments, or a fragment shared by two objects, as
   zarr-vectors allows) or gather non-contiguous members. A label that is
-  not a box of the target is a box (a run) of a 1-D `members`.
-- **nd and broadcasting** work as for elements: indices are nd over
-  `axes`, and the label's batch axes `G` broadcast against the target's
-  free axes.
+  not a box of the target is a box (a run) of a 1-D `members`. `members`
+  has no batch axes, so an explicit member list cannot differ per frame;
+  per-frame labels use `indices` and `lengths` with `batch`.
+- **Named axes, as for elements.** `axes` names the target axes the
+  indices address: vertex array axes for fragments, the target label's
+  `own_axes` for objects and groups (`Objects.axes = ("fragment",)` by
+  default). `batch` and `own_axes` fix the split of every shape.
+- **Identity.** `Objects.identity(n)` is "one object per fragment", the
+  usual case for streamlines; `Objects.from_ids(ids)` builds a labeling
+  from a plain column of ids.
 - **Flags.** `ordered`: the order of the members matters (fragments:
   yes, the polyline follows it; groups: no). `exclusive`: every member
   has exactly one label (a partition). Neither can be assumed: shared
   fragments and overlapping TRX groups exist.
 - **Lookup both ways.** The stored form is label → members. The reverse
   map, member → label(s), is derived and cached, and it is what makes
-  `v.objects[17]` or `v.groups["CST"]` a lookup. A one-to-one labeling
-  (one object per fragment) can be built from a plain column of ids:
-  `Objects.from_ids(ids)`.
+  `v.objects[17]` or `v.groups["CST"]` a lookup.
 - **Composition.** Object → vertices is fragments composed with objects,
   a product of two relations; group → vertices adds one more.
 - **Attributes** live on the label they belong to: per fragment
@@ -324,7 +351,7 @@ reader derives it on first access. Arrays follow `ArrayProtocol`
 |---|---|---|
 | `data` | `vertices.data` | |
 | `shape` | `shape` | the vertex array axes `A` |
-| `ndim` | `ndim` | dimension of the native space: raster axes + components |
+| `ndim` | `ndim` | dimension of the native space: raster axes + components (so `len(v.shape) != v.ndim` in general; open question 1) |
 | `dtype` | `dtype` | component dtype |
 | `__array__` | `__array__` | `vertices.data`, native coordinates; the docstring says so |
 | `geometry` | `bounds` | box of the native space covered (§5.4) |
@@ -363,7 +390,7 @@ Elements are `Singular`; no labels.
 `vertices.data (N, 3)`; `fragments`: `indices (P,)` = TRX `offsets`,
 `lengths` derived (1-D, CSR); elements `SequentialEdges(along="fragments")`;
 `objects` = one per fragment; `groups`: TRX groups, `members (K,)`
-object indices, `indices (G,)`, overlapping, `exclusive = False`. dpv,
+object indices, `indices (NG,)`, overlapping, `exclusive = False`. dpv,
 dps, dpg are vertex, object and group attributes.
 
 **C. Cortical surface (GIFTI, FreeSurfer).** `TriangleMeshes`.
@@ -388,9 +415,10 @@ frame. The native system is `(t, x, y, z)`.
 - If slot `n` is a stable identity, track `n` is the box
   `indices = (0, n)`, `lengths = (T, 1)` of fragments over `("t", "n")`:
   `fragments.indices (N, 2)`, `lengths (N, 2)`, `ordered` along `t`.
-  Track edges are `SequentialEdges(along="t")`, broadcast over `n`.
-- Cell divisions add explicit edges across frames:
-  `Edges.data (M, 2, 2)` with `axes = ("t", "n")`, one row
+  Track edges are `SequentialEdges(along="t")`, shared over `n`; an edge
+  exists only between two valid vertices.
+- Cell divisions add explicit edges across frames, as a second element
+  block: `Edges.data (M, 2, 2)` with `axes = ("t", "n")`, one row
   `[[t, n], [t + 1, m]]` per division. Lineage trees are objects over the
   track fragments.
 - A time-varying motion correction `T(t, x)` is a transformation of
@@ -401,8 +429,8 @@ frame. The native system is `(t, x, y, z)`.
 Contours drawn on `Z` sections: `vertices.data (Z, N, 2)`,
 `axes = [SpaceAxis("z") raster, IndexAxis("n")]`, components `(x, y)`,
 `valid` given as `lengths (Z,)`.
-- Per-slice contour edges: `Edges.data (Z, M, 2)`, `axes = ("n",)`; the
-  batch axis `Z` lines up with the free axis `z`, `valid lengths (Z,)`.
+- Per-slice contour edges: `Edges.data (Z, M, 2)`, `axes = ("n",)`,
+  `batch = ("z",)`, `valid lengths (Z,)`.
 - A surface lofted between consecutive sections: `Triangles.data (M, 3, 2)`,
   `axes = ("z", "n")`.
 - An oblique-sectioning affine that mixes `z` into `(x, y)` is pushed
@@ -411,13 +439,14 @@ Contours drawn on `Z` sections: `vertices.data (Z, N, 2)`,
 
 **H. A deforming surface: shared topology.** `TriangleMeshes`.
 `vertices.data (T, N, 3)` with raster `t`, one `elements.data (M, 3)`
-with `axes = ("n",)`, broadcast over every frame.
+with `axes = ("n",)` and `batch = ()`, shared by every frame.
 
 **I. Multi-channel localisation microscopy: a categorical raster axis.**
 `Points`.
 `vertices.data (C, N, 2)`, `axes = [ChannelAxis("c", names=[...]) raster,
 IndexAxis("n")]`, `valid lengths (C,)`. `v["GFP", 0:10, 0:10]` selects one
-channel and a continuous box, as `img["GFP", ...]` would.
+channel and a continuous box. `ChannelAxis` has no `names` today; adding
+them is part of the `IndexAxis` work (open question 2).
 
 **J. Raster space, sparse time.** `Points`.
 Spike times on a `X × Y` electrode array: `vertices.data (X, Y, K, 1)`,
@@ -433,10 +462,13 @@ The store layout itself, exposed lazily without stitching:
 - Fragments in range mode are boxes inside one chunk:
   `indices (F, 4) = (cx, cy, cz, k0)`, `lengths (F, 4) = (1, 1, 1, count)`.
   Explicit-list fragments use `members (R, 4)`, nd indices that may
-  repeat (shared vertices).
+  repeat (shared vertices). `members` is then 1-D (`K = (R,)`), so
+  `indices (F,)` are plain CSR starts and `lengths` is optional: the
+  `ndim(members)` rule at work. A store that mixes both modes is read in
+  the explicit form, ranges becoming runs of `members`.
 - Intra-chunk links: `elements.data (Cx, Cy, Cz, M, E)`, `axes = ("k",)`,
-  batch axes lined up with the chunk axes, `valid lengths (Cx, Cy, Cz)`:
-  one link block per chunk, as in `links/0/0.0.0`.
+  `batch = ("cx", "cy", "cz")`, `valid lengths (Cx, Cy, Cz)`: one link
+  block per chunk, as in `links/0/0.0.0`.
 - Cross-chunk links: a second element block with `axes = ("cx", "cy",
   "cz", "k")` and `data (M, E, 4)`.
 - Objects are labels over fragments (the object manifests), groups are
@@ -444,9 +476,6 @@ The store layout itself, exposed lazily without stitching:
 - A region read is first a slice of the chunk axes (cheap, like an image
   crop), then the exact vertex test. `stitch()` turns this into the flat
   form of examples A–E.
-
-  Mixing intra- and cross-chunk links needs `elements` to hold more than
-  one block; see open question 6.
 
 **L. A deformation field as a mesh.** `VolumeMeshes`.
 A coordinates field of shape `(X, Y, Z, 3)` is a vertex array with three
@@ -549,13 +578,11 @@ def push(self, target=None, *, copy=False) -> Self    # new object
 def push_(self, target=None) -> Self                  # in place
 ```
 
-`push` moves the vertices into the native space of `target` and returns
-an object whose transformation is `target`:
+`push` moves the vertices into the native space of `target`:
 
 ```
-x = (raster coordinates, components)        native coordinates
+x = (raster coordinates, continuous components)    native coordinates
 y = (target.inverse() @ self.transformation)(x)
-result.transformations = [target]
 ```
 
 | `target` | Result's native space |
@@ -568,29 +595,47 @@ result.transformations = [target]
 There is no vector `Geometry`: an image geometry carries a grid because
 an image must know where to resample, and vertices are not resampled.
 
-**Raster axes stay raster** only if the transformation keeps them on a
-grid. `push` factors the transformation into axis groups
-(`compute(factor=True)`) and requires that the output raster axes depend
-on the input raster axes alone, through an axis-aligned affine (a
-permutation, scaling and shift). That affine is kept as the result's
-raster transformation, and the components are computed per vertex,
-where they may depend on the raster coordinates (example F: a
-time-varying motion correction). Anything else raises, naming the
-offending axis, and the user calls `v.sparsify("z")` first, which turns
-a raster axis into an index axis plus one more component (example G).
-`densify(component)` is the inverse when a component takes values on a
-grid.
+**Components are moved eagerly, raster axes lazily.** The raster axes
+stay a grid only if the transformation keeps them on one. `push` factors
+the transformation into axis groups (`compute(factor=True)`) and requires
+that the output raster axes depend on the input raster axes alone,
+through an axis-aligned affine `A` (a permutation, scaling and shift).
+The array index of a raster axis does not change, so `A` is not applied
+to anything: it stays in the result's transformation, which is
+
+```
+result.transformations = [target @ (A ⊕ Id_components)]
+```
+
+and is `target` exactly when `A` is the identity. The components are
+computed per vertex, and may depend on the raster coordinates (example
+F: a time-varying motion correction). A transformation that mixes
+components into a raster axis raises, naming the axis; the user calls
+`v.sparsify("z")` first, which turns the raster axis into an index axis
+plus one more component without changing any index (example G).
+`densify(component)` is the inverse for a component whose values lie on
+a grid: it adds a new leading raster axis, pads the vertices into it
+(`valid` lengths), and rewrites element and label indices to address it.
+
+**Categorical axes are left out.** A `ChannelAxis`, raster or
+component, is removed from `x` before composing and reattached after; a
+transformation that names such an axis must be the identity on it.
 
 `push_` writes into `vertices.data` and raises when it cannot: the
 output dimension differs, the component dtype is not floating point, the
-data are lazy, file-backed or shared with another object.
+data are lazy, file-backed or shared with another object, or `A`
+permutes or flips raster axes (which would transpose or reverse the
+array).
 
 Topology is carried over unchanged. Geometric attributes are transformed
 with the local Jacobian `J` of the pushed transformation: attributes
 tagged `vector` by `J`, `normal` by `J^{-T}` (renormalized); untagged
-attributes are copied. Directed elements of an orientation-reversing
-push have their vertex order flipped, so that windings and tet volumes
-keep their sign.
+attributes are copied. When the pushed transformation is affine with a
+negative determinant, directed elements with `dim >= 2` have their
+vertex order flipped, so that windings and tet volumes keep their sign.
+Nothing is flipped for edges, whose direction is semantic
+(parent → child), nor per element under a nonlinear transformation:
+there a local reversal is a fold, which must stay visible.
 
 `Vectors.pull` is left out for now. Its natural meaning, sampling a
 target image at the vertices (image → vertex attribute), is listed in
@@ -626,11 +671,30 @@ v[BoundingBox(lower, upper)]
 `__getitem__` indexes the native coordinate system, in its order: raster
 axes first, then components.
 
-**On raster axes** it behaves exactly like `Image.__getitem__`: integers
-(which drop the axis), slices with steps, negative indices from the end,
+**On raster axes** it extends `Image.__getitem__`: integers (which drop
+the axis), slices with steps, negative indices from the end, and, new,
 names on a categorical axis. The vertex array is sliced along that axis
-and the transformations are updated through `_index2transform`, so the
-world placement is unchanged.
+and the transformations are updated through `_index2transform` (which
+takes `int | slice | None` today; name lookup resolves to an int first),
+so the world placement is unchanged.
+
+Slicing a raster axis also slices every relation that refers to it:
+
+- **Integer index `t = i`.** In a relation whose `axes` include `t`, only
+  rows whose `t` index equals `i` in *every* reference are kept, and the
+  `t` column is dropped from the indices (`axes` shrinks; a `(M, 2, 2)`
+  block over `("t", "n")` becomes `(M', 2)` over `("n",)`). A relation
+  with `t` in `batch` is indexed at `i` along that batch dimension
+  (`(Z, M, 2)` with `batch = ("z",)` becomes `(M, 2)` under `v[3]`).
+  Shared relations are unchanged. In example F, `v[5]` keeps the
+  centroids of frame 5, every division edge disappears (none lies
+  within one frame), every track becomes a one-vertex fragment and
+  `SequentialEdges(along="t")` becomes empty.
+- **Slice `start:stop:step`.** References along `t` are renumbered
+  `(i − start) // step`, and rows referring to a frame that is not kept
+  are dropped (elements) or skip that member (ordered labels, which are
+  not split by it). Batch dimensions are sliced in lockstep.
+- **`isel` on index axes** follows the same two rules.
 
 **On components** the space is continuous:
 
@@ -663,7 +727,7 @@ by name.
 `__getitem__` is `crop(box)` with the default mode:
 
 ```python
-def crop(self, region, *, mode="inner", space=None, compact=True): ...
+def crop(self, region, *, mode="inner", space=None, compact=None): ...
 ```
 
 | `mode` | Kept vertices | Kept elements | Polylines effect |
@@ -679,14 +743,26 @@ kept when its vertices are (mode-dependent); a label loses the members
 that were dropped; an `ordered` label whose run is broken becomes several
 labels with the same parent (a split streamline stays one object).
 `"exact"` is the only mode that creates vertices; it can come later.
+The modes apply to the component bounds; raster indices always slice
+exactly, as for images, so `"outer"` and `"object"` never bring back a
+frame that the raster index left out.
 
 **Masking vs compacting.** With `compact=False` the crop only updates
 the `valid` masks: the nd layout, the boxes of the labels and the
 indices of the elements are untouched, which is what a chunk-native or
-raster layout wants (examples F, K). With `compact=True` (the default
-for flat layouts) dropped vertices are removed, element indices are
-renumbered, and a label whose box now has holes becomes a run of an
-explicit 1-D `members`.
+raster layout wants (examples F, K). Holes in a box never split a label.
+With `compact=True` dropped vertices are removed, element indices are
+renumbered, an `ordered` label is split into its maximal runs (in C
+order), and a surviving label that is no longer a box becomes a run of
+an explicit 1-D `members`. The pieces of a split label keep the same
+parent in the level above (a split streamline is still one object);
+their `names` are copied and a `part` attribute numbers them.
+`compact=None` (the default) compacts when every vertex array axis is
+an index axis and there is only one of them (flat layouts), and masks
+otherwise. On an nd layout, compaction only removes hyperslabs that are
+entirely invalid: removing one cell from a single frame of `(T, N, 3)`
+would shift the slots of that frame only and break the identity of
+slot `n` across frames.
 
 ### 5.3 Regions in other spaces
 
@@ -868,26 +944,25 @@ a version and keep the spec-to-model mapping in one module.
 
 1. **Name of the component count.** `Vertices.ncomponents` is used here
    for `D` (the explicit coordinates), and `ndim` for the full native
-   dimension (raster axes + components). Alternatives:
-   `embedding_dim`, `ncoords`.
-2. **`IndexAxis`.** A new axis type that is never part of a coordinate
-   system. Does it belong in `axes.py`, or should vertex array axes be
-   described by a separate, lighter structure?
-3. **Broadcast alignment.** Elements and labels align their batch axes
-   with the target's free axes on the right, numpy-style. Alignment by
-   name (each batch axis names the free axis it matches) is more explicit
-   and allows reordering; it costs one more field.
-4. **Default `crop` mode.** `"inner"` (proposed) vs `"object"`, which is
+   dimension (raster axes + components), which differs from
+   `len(shape)` (the array axes). Alternatives: `embedding_dim`,
+   `ncoords`.
+2. **`IndexAxis`, and names on `ChannelAxis`.** `IndexAxis` is a new
+   axis type that is never part of a coordinate system; `ChannelAxis`
+   needs category `names` (example I). Do both belong in `axes.py`, or
+   should vertex array axes be described by a lighter structure?
+3. **Default `crop` mode.** `"inner"` (proposed) vs `"object"`, which is
    what tractography users usually mean by "streamlines in a ROI".
-5. **`__array__` returning native components.** Convenient, but
+4. **`__array__` returning native components.** Convenient, but
    `np.asarray(v)` silently ignoring the transformations and the raster
    axes may surprise. Alternative: no `__array__`.
-6. **Several element blocks.** Example K (intra- plus cross-chunk links)
-   and mixed triangle/quad meshes need `elements` to hold more than one
-   block. Proposed: `elements` may be a tuple of blocks of the same `dim`.
-7. **Mixed-type stores.** A zarr-vectors store may declare several
+5. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
    `load(..., type=...)`?
-8. **Labels over elements.** Gmsh physical groups and zarr-vectors
-   `link_fragments` label elements, not vertices. `Labels(of="elements")`
-   is the obvious extension; is it needed in the first version?
+6. **Labels over elements.** Gmsh physical groups and zarr-vectors
+   `link_fragments` label elements, not vertices.
+   `Labels(of="elements", axes=own_axes)` is the obvious extension, now
+   that element axes are named; is it needed in the first version?
+7. **Per-frame explicit members.** `members` has no batch axes, so an
+   explicit member list cannot differ per frame (§2.4). Nothing in the
+   examples needs it; adding `batch` to `members` is possible later.
