@@ -47,11 +47,11 @@ format. This memo uses the names in the first column.
 | **component** | one explicit coordinate stored per vertex (`x`, `y`, `z`, …) | vertex column | — | xyz | point coordinate | coordinate |
 | **raster axis** | an array axis whose index *is* a coordinate (time frames, slices, channels) | — | — | — | — | — |
 | **index axis** | an array axis that only enumerates vertices (no coordinate meaning) | row in a chunk; chunk grid | — | point index | point id | vertex index |
-| **element** | an ordered tuple of `E` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = E`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
+| **element** | an atomic, ordered label of `E` vertices: point, edge, triangle, quad, tetrahedron | link (`link_width = E`) | edge (skeleton), triangle (mesh) | implicit edge | cell (with a cell type) | face / triangle |
 | **element width** `E` | number of vertices in an element | `link_width` | — | — | cell size | 3 |
 | **topological dimension** `dim` | 0 point, 1 edge, 2 surface element, 3 volume element | — | — | — | cell dimension | — |
 | **directed** | the order of an element's vertices carries meaning | `directed` | — | — | — | winding |
-| **label** | a named, ordered or unordered set of members of a lower level | — | — | — | — | label |
+| **label** | a set of members of a lower level (vertices or other labels), possibly ordered; elements, fragments, objects and groups are labels | — | — | — | — | label |
 | **fragment** | a label over vertices: a run of vertices belonging to one object | fragment | fragment (mesh octree node) | one streamline | — | — |
 | **object** | a label over fragments: one streamline, one neuron, one surface | object | segment / annotation | streamline | — | one mesh |
 | **group** | a label over objects | group | — | group | — | label |
@@ -64,7 +64,7 @@ format. This memo uses the names in the first column.
 of variable-length lists as two flat arrays: the members of every list
 end to end, and the start of each list. TRX `offsets`, nibabel's
 `ArraySequence`, VTK's `connectivity` + `offsets` and zarr-vectors'
-fragment ranges are all this layout. Labels (§2.4) generalise it to nd:
+fragment ranges are all this layout. Labels (§2.3) generalise it to nd:
 a start nd-index and an nd extent per label.
 
 ---
@@ -117,8 +117,8 @@ different dtypes (§2.6).
 ```
 Vectors[E]
 ├── vertices: Vertices          the points, on nd array axes
-├── elements: E | (E, ...) | None   nd relation(s): fixed-width tuples of vertices
-├── labels: {name: Labels}      nd relations: fragments, objects, groups, …
+├── labels: {name: Labels}      nd relations over vertices or over other labels:
+│                                 elements (E), fragments, objects, groups, …
 └── transformations: [...]      native -> world, last preferred
 ```
 
@@ -190,157 +190,173 @@ the common, fast case) or structured (one field per component, for
 mixed dtypes such as a categorical coordinate stored as integer codes;
 §2.6).
 
-### 2.3 `Elements`
+### 2.3 `Labels`: one relation for elements, fragments, objects, groups
 
-An element is an ordered tuple of `E` vertices, addressed by nd index.
-Every array axis of a relation (elements or labels) is **named**, so that
-shapes are never guessed:
-
-```
-class Elements(Magic, polymorphic=True):
-    data:        (*G, *M, E[, len(axes)]) int | (*G, *M, E)[axes]
-    axes:        names of the vertex array axes the indices address
-    batch:       names of the vertex free axes that G lines up with = ()
-    own_axes:    names of the element axes M = ("element",)
-    dim:         int        topological dimension
-    directed:    bool = False
-    attributes:  (*G, *M, AE) | (*G, *M)[fields]   optional
-    valid:       (*G, *M) bool | lengths (*G, *M[:-1])   optional
-```
-
-- **`axes`** names the vertex array axes that the indices address. The
-  default is the last index axis, which covers every flat layout.
-- **nd indices.** Each vertex reference is an nd index over `axes`. The
-  trailing index dimension is present only when `len(axes) > 1`, so the
-  common case stays `(M, 3)`; with a structured dtype the fields are
-  named after `axes` instead. Indices are never linearised: an index into
-  a 2-D layout is a pair.
-- **Width.** `E` is `shape[-2]` for the plain nd form and `shape[-1]`
-  otherwise (one index axis, or structured). Dispatch to `Edges`,
-  `Triangles`, `Quads`, `Tetrahedra` is on `(dim, E)`.
-- **Batch axes.** The vertex array axes *not* in `axes` are the element's
-  **free axes**. `batch` names the free axes that the leading `len(batch)`
-  dimensions `G` line up with, one to one and by name; every free axis not
-  in `batch` is shared. So one `(M, 3)` triangle array with `batch = ()`
-  serves every frame of a `(T, N, 3)` time series (shared topology), and
-  a `(Z, M, 2)` edge array with `batch = ("z",)` gives every slice its own
-  edges. A `G` dimension of size 1 is shared too. With `batch` and
-  `own_axes` named, the split of the shape into `G`, `M`, `E` and the
-  index dimension is always determined.
-- **Crossing batch items.** An element that joins vertices from
-  different frames or slices simply includes that raster axis in
-  `axes`: a division edge from `(t, n)` to `(t + 1, m)` is
-  `axes = ("t", "n")`, one row `[[t, n], [t + 1, m]]`.
-- **`M`**, the element's own axes, are usually one axis, `("element",)`.
-  They may be nd when the elements are themselves laid out on a grid,
-  for example a stored quad mesh of a `H × W` vertex grid,
-  `Quads.data (H - 1, W - 1, 4, 2)` with `axes = ("i", "j")` and
-  `own_axes = ("ci", "cj")`. Naming them is what lets a label address
-  elements (open question 6).
-- **`valid`** works as for vertices: a mask over `(*G, *M)`, or
-  `lengths (*G, *M[:-1])`, counted along the last element axis (one count
-  per chunk in example K).
-- **`directed`** (the zarr-vectors name): the order of an element's
-  vertices carries meaning. An edge has a direction (parent → child); a
-  face has a winding (which side its normal points to); a tetrahedron has
-  a handedness, the sign of `det[v1 − v0, v2 − v0, v3 − v0]`. A directed
-  `VolumeMeshes` promises every tet has positive signed volume in native
-  space (the VTK / Gmsh convention), which is what makes folding visible
-  after a deformation and gives boundary triangles an outward winding.
-- **Several blocks.** `elements` may be a tuple of blocks of the same
-  `dim` (tracks plus divisions in example F, intra- plus cross-chunk links
-  in example K, triangles plus quads).
-
-**Implicit elements** are generated on demand and store no `data`:
-
-| Class | Elements |
-|---|---|
-| `Singular` | one per vertex (`dim = 0`) |
-| `SequentialEdges(along=...)` | `i → i + 1` along an array axis, or along the members of each fragment |
-| `GridElements(axes=..., cell=...)` | the quads / hexahedra / Kuhn tetrahedra of a grid of index axes (example L) |
-
-`edges` (on `Graphs`) and `faces` (on `SurfaceMeshes`) are aliases of
-`elements`.
-
-### 2.4 `Labels`: fragments, objects, groups
-
-A label is a set of members of a lower level, possibly ordered.
-Fragments, objects and groups are all labels, one level above the next.
+Everything above the vertices is the same kind of thing: a **label** is
+a set of members of a lower level, possibly ordered. An element is a
+label of `E` vertices; a fragment is a label of vertices; an object is a
+label of fragments; a group is a label of objects. They differ only in
+how their members are stored and in a few flags, so one class defines
+them all.
 
 ```
 class Labels(Magic, Generic[T]):
-    of:          str = "vertices"           what is labelled
-    axes:        names of the target axes addressed by indices
+    of:          str = "vertices"        what is labelled
+    axes:        names of the target axes the member indices address
     batch:       names of the target free axes that G lines up with = ()
     own_axes:    names of the label axes L = ("label",)
-    members:     (*K[, len(axes)]) | None   nd indices into the target; None = identity
-    indices:     (*G, *L[, ndim(members)])  start of each label, an nd index into members
-    lengths:     (*G, *L[, ndim(members)])  extent of each label; optional iff ndim(members) == 1
+
+    # members, in one of three forms (below)
+    members:     dense: (*G, *L, W[, len(axes)]) | boxed: (*K[, len(axes)]) | None
+    indices:     boxed only: (*G, *L[, ndim(members)])  start of each label
+    lengths:     boxed only: (*G, *L[, ndim(members)])  extent; optional iff ndim(members) == 1
+
     ordered:     bool = False
+    directed:    bool = False
     exclusive:   bool = False
+    atomic:      bool = False
     names:       (*L,) | None
     attributes:  (*G, *L, A) | (*G, *L)[fields]   optional
-    valid:       (*G, *L) bool | lengths (*G, *L[:-1])  optional
-
-class Fragments(Labels[Vertices]):  of = "vertices";   own_axes = ("fragment",); ordered = True
-class Objects(Labels[Fragments]):   of = "fragments";  own_axes = ("object",)
-class Groups(Labels[Objects]):      of = "objects";    own_axes = ("group",)
+    valid:       (*G, *L) bool | lengths (*G, *L[:-1])   optional
 ```
 
-- **A label is a box of `members`.** Label `p` is
-  `members[indices[p] : indices[p] + lengths[p]]`, an nd box, read in C
-  order when `ordered`. `ndim(members)` is `len(K)` when `members` is
-  given, and `len(axes)` when it is `None` (the target's own index space
-  is used directly). Invalid members inside a box are skipped; they do
-  not break the order or split the label (a track with a missing frame
-  stays one fragment).
-- **`lengths` is optional only when `members` is 1-D**: labels are then
-  CSR runs and each length is the distance to the next start, as in TRX
-  `offsets`.
-- **`members` is an indirection.** It may reorder, repeat (a vertex
-  shared by two fragments, or a fragment shared by two objects, as
-  zarr-vectors allows) or gather non-contiguous members. A label that is
-  not a box of the target is a box (a run) of a 1-D `members`. `members`
-  has no batch axes, so an explicit member list cannot differ per frame;
-  per-frame labels use `indices` and `lengths` with `batch`.
-- **Named axes, as for elements.** `axes` names the target axes the
-  indices address: vertex array axes for fragments, the target label's
-  `own_axes` for objects and groups (`Objects.axes = ("fragment",)` by
-  default). `batch` and `own_axes` fix the split of every shape.
-- **Identity.** `Objects.identity(n)` is "one object per fragment", the
-  usual case for streamlines; `Objects.from_ids(ids)` builds a labeling
-  from a plain column of ids.
-- **Flags.** `ordered`: the order of the members matters (fragments:
-  yes, the polyline follows it; groups: no). `exclusive`: every member
-  has exactly one label (a partition). Neither can be assumed: shared
-  fragments and overlapping TRX groups exist.
-- **Lookup both ways.** The stored form is label → members. The reverse
-  map, member → label(s), is derived and cached, and it is what makes
-  `v.objects[17]` or `v.groups["CST"]` a lookup.
-- **Composition.** Object → vertices is fragments composed with objects,
-  a product of two relations; group → vertices adds one more.
-- **Attributes** live on the label they belong to: per fragment
-  (duplicated when a crop splits a fragment), per object (TRX `dps`,
-  zarr-vectors `object_attributes`), per group (TRX `dpg`). Neuroglancer
-  `segment_properties` are object attributes and `relationships` are a
-  label over objects of another store.
+**Three storage forms.**
 
-`Vectors.labels` is a dict. `fragments`, `objects` and `groups` are
-well-known keys exposed as properties; any other labeling (a
-parcellation, FreeSurfer annotation labels on surface vertices) is
-another entry. A categorical attribute column and a label are two forms
-of the same information: the column is the cheap forward form, the label
-adds names, per-label attributes and the reverse index. Either converts
-into the other.
+| Form | Stored | Label `p` is | Used by |
+|---|---|---|---|
+| **implicit** | nothing | generated from the target's layout | `Singular`, `SequentialEdges`, `GridElements`, `Objects.identity(n)` |
+| **dense** | `members (*G, *L, W[, len(axes)])` | `members[p, :]`, exactly `W` members | elements (`W = E`), fixed-length fragments |
+| **boxed** | `indices`, `lengths`, optional `members (*K, ...)` | `members[indices[p] : indices[p] + lengths[p]]`, an nd box | fragments, objects, groups, polygons of varying size |
+
+- **Dense** is the `(M, 3)` triangle array. The width `W` is the axis
+  after the label axes, and nothing else is stored.
+- **Boxed** generalises CSR to nd. When `members` is `None` the box is
+  taken in the target's own index space (`ndim(members) = len(axes)`),
+  so a track over `("t", "n")` is `indices = (0, n)`,
+  `lengths = (T, 1)`. When `members` is given, `ndim(members) = len(K)`.
+  `lengths` is optional only when `members` is 1-D: labels are then CSR
+  runs and each length is the distance to the next start, as in TRX
+  `offsets`. `members` is an indirection: it may reorder, repeat (a
+  vertex shared by two fragments, or a fragment by two objects, as
+  zarr-vectors allows) or gather non-contiguous members. A label that is
+  not a box of the target is a run of a 1-D `members`.
+- A box is read in C order when `ordered`. Invalid members inside a box
+  are skipped; they do not break the order or split the label (a track
+  with a missing frame stays one fragment).
+
+**nd indices.** Each member reference is an nd index over `axes`. The
+trailing index dimension is present only when `len(axes) > 1`, so the
+common cases stay `(M, 3)` and `(P,)`; with a structured dtype the
+fields are named after `axes` instead. Indices are never linearised: an
+index into a 2-D layout is a pair.
+
+**Named axes.** `axes` names the target axes the indices address: vertex
+array axes for elements and fragments (default: the last index axis,
+which covers every flat layout), the target label's `own_axes` for
+objects and groups (`Objects.axes = ("fragment",)`). The target axes
+*not* in `axes` are the label's **free axes**; `batch` names the free
+axes that the leading dimensions `G` line up with, one to one and by
+name, and every free axis not in `batch` is shared (as is a `G`
+dimension of size 1). With `batch` and `own_axes` named, the split of
+every shape into `G`, `L`, `W` and the index dimension is determined.
+
+- One `(M, 3)` triangle array with `batch = ()` serves every frame of a
+  `(T, N, 3)` time series (shared topology); a `(Z, M, 2)` edge array
+  with `batch = ("z",)` gives every slice its own edges.
+- A label that joins members from different frames or slices includes
+  that raster axis in `axes`: a division edge from `(t, n)` to
+  `(t + 1, m)` is `axes = ("t", "n")`, one row `[[t, n], [t + 1, m]]`.
+- The label axes `L` are usually one axis, but may be nd when the labels
+  themselves lie on a grid, for example a stored quad mesh of a `H × W`
+  vertex grid, `members (H - 1, W - 1, 4, 2)` with `axes = ("i", "j")`
+  and `own_axes = ("ci", "cj")`.
+- In the dense form `members` carries the batch axes, so dense labels may
+  differ per frame. In the boxed form only `indices` and `lengths` do;
+  an explicit member list shared by all frames is enough for every
+  example here (open question 6).
+
+**Flags.**
+
+- `ordered`: the order of the members is structural. A polyline follows
+  its fragment; an element's vertex order defines the cell (a quad is a
+  loop through its vertices in order). Groups are unordered.
+- `directed` (implies `ordered`, the zarr-vectors name): reversing the
+  order changes the meaning. An edge has a direction (parent → child); a
+  face has a winding (which side its normal points to); a tetrahedron
+  has a handedness, the sign of `det[v1 − v0, v2 − v0, v3 − v0]`. A
+  directed `VolumeMeshes` promises every tet has positive signed volume
+  in native space (the VTK / Gmsh convention), which makes folding
+  visible after a deformation and gives boundary triangles an outward
+  winding.
+- `exclusive`: every member has exactly one label (a partition).
+  Shared fragments and overlapping TRX groups mean it cannot be assumed.
+- `atomic`: the label exists whole or not at all. An element is atomic
+  (a triangle that lost a vertex is gone); a fragment is not (it loses
+  members, and splits when compacted). This is the only thing cropping
+  needs to know (§5.2).
+
+**Lookup and composition.** The stored form is label → members. The
+reverse map, member → label(s), is derived and cached, and it is what
+makes `v.objects[17]` or `v.groups["CST"]` a lookup. Object → vertices is
+fragments composed with objects, a product of two relations; group →
+vertices adds one more. `Objects.identity(n)` is "one object per
+fragment"; `Objects.from_ids(ids)` builds a labeling from a plain column
+of ids.
+
+**Attributes** live on the label they belong to: per element (VTK
+`cell_data`), per fragment (duplicated when a crop splits a fragment),
+per object (TRX `dps`, zarr-vectors `object_attributes`), per group (TRX
+`dpg`). Neuroglancer `segment_properties` are object attributes and
+`relationships` are a label over objects of another store.
+
+### 2.4 The standard labels
+
+```
+Labels[T]
+├── Elements(Labels[Vertices])     dense, ordered, atomic; own_axes = ("element",); + dim
+│   ├── Singular                   implicit, W = 1, dim 0
+│   ├── Edges                      W = 2, dim 1
+│   │   └── SequentialEdges        implicit: i → i+1 along an axis or a fragment
+│   ├── SurfaceElements            dim 2
+│   │   ├── Triangles, Quads       W = 3, 4
+│   │   └── Polygons               boxed: varying size (VTK_POLYGON)
+│   ├── VolumeElements             dim 3
+│   │   └── Tetrahedra             W = 4
+│   └── GridElements               implicit: quads / hexahedra / Kuhn tets of a grid
+├── Fragments(Labels[Vertices])    boxed, ordered; own_axes = ("fragment",)
+├── Objects(Labels[Fragments])     own_axes = ("object",)
+└── Groups(Labels[Objects])        own_axes = ("group",)
+```
+
+`Elements` adds one field to `Labels`, `dim`, and fixes `ordered` and
+`atomic` to `True`. Dispatch to `Edges`, `Triangles`, `Quads`,
+`Tetrahedra` is on `(dim, W)`: a quad and a tetrahedron both have
+`W = 4` and differ in `dim`. Because elements are labels, a label over
+elements (Gmsh physical groups, zarr-vectors `link_fragments`) is just
+`Labels(of="elements", axes=("element",))`, and a mesh of polygons of
+varying size is the boxed form of `SurfaceElements`, not a new concept.
+
+`Vectors.labels` is a dict holding all of them. `elements`, `fragments`,
+`objects` and `groups` are well-known keys exposed as properties
+(`edges` on `Graphs` and `faces` on `SurfaceMeshes` alias `elements`);
+any other labeling (a parcellation, FreeSurfer annotation labels on
+surface vertices) is another entry. Several element blocks (tracks plus
+divisions in example F, intra- plus cross-chunk links in example K,
+triangles plus quads) are a tuple under `elements`, all of the same
+`dim`. A categorical attribute column and a label are two forms of the
+same information: the column is the cheap forward form, the label adds
+names, per-label attributes and the reverse index. Either converts into
+the other.
 
 ### 2.5 `Vectors`
 
 ```
 class Vectors(Magic, Generic[E]):
     vertices:         Vertices
-    elements:         E | None = None
-    labels:           dict[str, Labels] = {}
+    labels:           dict[str, Labels] = {}   "elements" is an E (or a tuple of E)
     transformations:  list[Transformation] = ()
+
+    elements, fragments, objects, groups -> labels[...]
 ```
 
 `vertices` is lazy for the same reason `SingleScaleImage.data` is: a
@@ -394,16 +410,16 @@ object indices, `indices (NG,)`, overlapping, `exclusive = False`. dpv,
 dps, dpg are vertex, object and group attributes.
 
 **C. Cortical surface (GIFTI, FreeSurfer).** `TriangleMeshes`.
-`vertices.data (N, 3)`, `elements.data (M, 3)`, `dim = 2`,
+`vertices.data (N, 3)`, `elements.members (M, 3)`, `dim = 2`,
 `directed = True` (winding). A FreeSurfer annotation is a label over
 vertices with names and colours as label attributes.
 
 **D. Tetrahedral mesh (Gmsh, meshio).** `TetrahedralMeshes`.
-`elements.data (M, 4)`, `dim = 3`, `directed = True`. Physical groups
-are labels over elements' vertices (or, later, over elements).
+`elements.members (M, 4)`, `dim = 3`, `directed = True`. Physical groups
+are labels over elements: `Labels(of="elements", axes=("element",))`.
 
 **E. Skeletons (neuroglancer).** `Graphs`.
-`vertices.data (N, 3)`, `elements.data (M, 2)`, `directed = True`
+`vertices.data (N, 3)`, `elements.members (M, 2)`, `directed = True`
 (parent → child); one fragment per segment, `objects` named by segment
 id; `radius` a vertex attribute.
 
@@ -418,7 +434,7 @@ frame. The native system is `(t, x, y, z)`.
   Track edges are `SequentialEdges(along="t")`, shared over `n`; an edge
   exists only between two valid vertices.
 - Cell divisions add explicit edges across frames, as a second element
-  block: `Edges.data (M, 2, 2)` with `axes = ("t", "n")`, one row
+  block: `Edges.members (M, 2, 2)` with `axes = ("t", "n")`, one row
   `[[t, n], [t + 1, m]]` per division. Lineage trees are objects over the
   track fragments.
 - A time-varying motion correction `T(t, x)` is a transformation of
@@ -429,16 +445,16 @@ frame. The native system is `(t, x, y, z)`.
 Contours drawn on `Z` sections: `vertices.data (Z, N, 2)`,
 `axes = [SpaceAxis("z") raster, IndexAxis("n")]`, components `(x, y)`,
 `valid` given as `lengths (Z,)`.
-- Per-slice contour edges: `Edges.data (Z, M, 2)`, `axes = ("n",)`,
+- Per-slice contour edges: `Edges.members (Z, M, 2)`, `axes = ("n",)`,
   `batch = ("z",)`, `valid lengths (Z,)`.
-- A surface lofted between consecutive sections: `Triangles.data (M, 3, 2)`,
+- A surface lofted between consecutive sections: `Triangles.members (M, 3, 2)`,
   `axes = ("z", "n")`.
 - An oblique-sectioning affine that mixes `z` into `(x, y)` is pushed
   without leaving the raster; one that mixes `(x, y)` into `z` needs
   `sparsify("z")` first (§4.3).
 
 **H. A deforming surface: shared topology.** `TriangleMeshes`.
-`vertices.data (T, N, 3)` with raster `t`, one `elements.data (M, 3)`
+`vertices.data (T, N, 3)` with raster `t`, one `elements.members (M, 3)`
 with `axes = ("n",)` and `batch = ()`, shared by every frame.
 
 **I. Multi-channel localisation microscopy: a categorical raster axis.**
@@ -466,11 +482,11 @@ The store layout itself, exposed lazily without stitching:
   `indices (F,)` are plain CSR starts and `lengths` is optional: the
   `ndim(members)` rule at work. A store that mixes both modes is read in
   the explicit form, ranges becoming runs of `members`.
-- Intra-chunk links: `elements.data (Cx, Cy, Cz, M, E)`, `axes = ("k",)`,
+- Intra-chunk links: `elements.members (Cx, Cy, Cz, M, E)`, `axes = ("k",)`,
   `batch = ("cx", "cy", "cz")`, `valid lengths (Cx, Cy, Cz)`: one link
   block per chunk, as in `links/0/0.0.0`.
 - Cross-chunk links: a second element block with `axes = ("cx", "cy",
-  "cz", "k")` and `data (M, E, 4)`.
+  "cz", "k")` and `members (M, E, 4)`.
 - Objects are labels over fragments (the object manifests), groups are
   labels over objects.
 - A region read is first a slice of the chunk axes (cheap, like an image
@@ -738,10 +754,16 @@ def crop(self, region, *, mode="inner", space=None, compact=None): ...
 | `"exact"` | inside, plus new vertices on the boundary | elements clipped by the region, attributes interpolated | fragments end exactly on the boundary |
 
 The rule is the same for every type: cropping decides which vertices are
-kept, and that decision **propagates up the relations**. An element is
-kept when its vertices are (mode-dependent); a label loses the members
-that were dropped; an `ordered` label whose run is broken becomes several
-labels with the same parent (a split streamline stays one object).
+kept, and that decision **propagates up the labels**, level by level,
+with one rule that only looks at the `atomic` flag:
+
+- an **atomic** label (an element) is kept when all its members are
+  (`"inner"`) or when any is (`"outer"`, which then brings its other
+  members back);
+- a **non-atomic** label (a fragment, object or group) loses the members
+  that were dropped, disappears when it has none left, and, when
+  `ordered` and compacted, splits into several labels with the same
+  parent (a split streamline stays one object).
 `"exact"` is the only mode that creates vertices; it can come later.
 The modes apply to the component bounds; raster indices always slice
 exactly, as for images, so `"outer"` and `"object"` never bring back a
@@ -959,10 +981,7 @@ a version and keep the spec-to-model mapping in one module.
 5. **Mixed-type stores.** A zarr-vectors store may declare several
    `geometry_types`. Load as a dict of objects by type, or require
    `load(..., type=...)`?
-6. **Labels over elements.** Gmsh physical groups and zarr-vectors
-   `link_fragments` label elements, not vertices.
-   `Labels(of="elements", axes=own_axes)` is the obvious extension, now
-   that element axes are named; is it needed in the first version?
-7. **Per-frame explicit members.** `members` has no batch axes, so an
-   explicit member list cannot differ per frame (§2.4). Nothing in the
-   examples needs it; adding `batch` to `members` is possible later.
+6. **Per-frame explicit members.** In the boxed form `members` has no
+   batch axes, so an explicit member list cannot differ per frame
+   (§2.3); the dense form can. Nothing in the examples needs it; adding
+   `batch` to boxed `members` is possible later.
