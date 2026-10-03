@@ -44,6 +44,11 @@ from ._struct import (
 )
 
 
+def _same_x5(a: tx.Tuple[tx.Any, ...], b: tx.Tuple[tx.Any, ...]) -> bool:
+    """Whether two x5 records are the same `(header, node)` pair."""
+    return len(a) == len(b) and all(x is y for x, y in zip(a, b))
+
+
 class X5TransformParser(
     Magic,
     Hdf5ParserWriter,
@@ -89,7 +94,9 @@ class X5TransformParser(
             parent()
         index = self._metadata_index() if self.nodes else None
         node = None if index is None else self.nodes[index]
-        sync_metadata(self, X5Metadata, (self.header, node), image=self)
+        sync_metadata(
+            self, X5Metadata, (self.header, node), image=self, same=_same_x5
+        )
 
     def _metadata_index(self) -> tx.Optional[int]:
         """The node the metadata is that of: the single node read, or
@@ -279,11 +286,23 @@ class X5Transform(
         The transformation that node `index` encodes.
 
         It is decoded once, and the same object is returned afterwards,
-        which is how the writer recognises it.
+        which is how the writer recognises it. The node the metadata is
+        that of (a single node read) gives its block a copy of it, as
+        it is when the block is decoded.
         """
         blocks = self.__dict__.setdefault("_x5_blocks", {})
         if index not in blocks:
-            blocks[index] = node_to_transformation(self.nodes[index])
+            block = node_to_transformation(self.nodes[index])
+            if (
+                self.metadata is not None
+                and index == self._metadata_index()
+                and hasattr(block, "metadata")
+            ):
+                # A single-node file: the metadata is the node's, so the
+                # block carries it too (a copy, as the data model's own
+                # metadata), and `from_other(block)` converts it.
+                block.metadata = self.metadata
+            blocks[index] = block
         return blocks[index]
 
     @smartproperty(cache=True)

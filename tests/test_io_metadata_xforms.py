@@ -283,6 +283,59 @@ def test_x5_to_nifti_field(warp_x5: Path, tmp_path: Path) -> None:
     assert field.metadata.description == "sub-01 T1w to MNI"
 
 
+@pytest.mark.parametrize("which", ["file", "block"])
+def test_x5_to_nifti_field_carries_the_metadata(
+    warp_x5: Path,
+    which: str,  # noqa: ANN001
+) -> None:
+    xform = io.load(warp_x5)
+    source = xform if which == "file" else xform.transformations[0]
+    with pytest.warns(MetadataLossWarning) as caught:
+        field = NiftiRASDisplacementField.from_other(source)
+    assert len(caught) == 1
+    assert set(caught[0].message.report.lost) == {
+        "extra",
+        "generated_by",
+        "input_space",
+        "output_space",
+        "history",
+        "moving",
+        "fixed",
+    }
+    assert type(field.metadata) is NiftiMetadata
+    assert field.metadata.description == "sub-01 T1w to MNI"
+
+
+def test_a_single_node_block_holds_a_copy_of_the_metadata(
+    warp_x5: Path, tmp_path: Path
+) -> None:
+    xform = io.load(warp_x5)
+    block = xform.transformations[0]
+    assert block.metadata == convert(xform.metadata, Metadata)[0]
+    block.metadata.description = "edited block"
+    assert xform.metadata.description == "sub-01 T1w to MNI"
+    # A chain of several nodes has no metadata of its own: nor do they.
+    path = _write_x5(
+        tmp_path / "chain.x5",
+        [("linear", {"Description": "a"}), ("linear", {"Description": "b"})],
+        chains=((0, 1),),
+    )
+    chain = io.load(path)
+    assert [b.metadata for b in chain.transformations] == [None, None]
+
+
+def test_metadata_given_later_is_converted_by_every_parser() -> None:
+    parser = X5TransformParser()
+    parser.metadata = Metadata(description="later")
+    assert type(parser.metadata) is X5Metadata
+    flirt = FlirtMatrixParser(flirt_matrix=np.eye(4))
+    flirt.metadata = Metadata(moving="m.nii")
+    assert type(flirt.metadata) is FlirtMetadata
+    with pytest.warns(MetadataLossWarning):
+        flirt.metadata = Metadata(description="lost")
+    assert flirt.metadata.description is UNSUPPORTED
+
+
 # ----------------------------------------------------------------------
 #   ITK
 # ----------------------------------------------------------------------

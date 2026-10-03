@@ -4,10 +4,9 @@ __all__ = ["metadata_field", "sync_metadata"]
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import Factory, KwOnly, NoEq, NoRepr
 
 # internals
-from brainhops.datamodel.metadata import FormatMetadata
+from brainhops.datamodel.metadata import FormatMetadata, metadata_annotation
 
 
 def metadata_field(klass: tx.Type[FormatMetadata], doc: str) -> tx.Any:
@@ -18,9 +17,7 @@ def metadata_field(klass: tx.Type[FormatMetadata], doc: str) -> tx.Any:
     It must be declared on the class itself or on its first base (see
     [`brainhops.datamodel.metadata`][]).
     """
-    return tx.Annotated[
-        klass, tx.Doc(doc), Factory(klass), KwOnly(), NoRepr(), NoEq()
-    ]
+    return metadata_annotation(klass, doc, default=klass)
 
 
 def sync_metadata(
@@ -29,30 +26,28 @@ def sync_metadata(
     raw: tx.Any,
     *,
     image: tx.Any = None,
+    same: tx.Optional[tx.Callable[[tx.Any, tx.Any], bool]] = None,
 ) -> None:
     """
-    Read the metadata of `obj` from the record `raw`, when it has not
-    been read yet (called from a parser's `__post_init__`).
+    Read the metadata of `obj` from the record `raw`, when it is not its
+    record yet (called from a parser's `__post_init__`).
 
-    Fields given explicitly in a `metadata` without a record win over
-    the decoded ones, and count as changes on write.
+    A metadata whose record is `raw` already (by identity, or by `same`)
+    is kept as it is. Otherwise the record is decoded, and the fields
+    that changed in the metadata given (explicitly, or carried over by
+    `replace()`) are set over the decoded ones, as changes (see
+    `FormatMetadata.with_record`). A record of `None` is decoded every
+    time: there is nothing to tell whether it was read already. The
+    field converts what it is given (`metadata_field`), so `metadata`
+    is already of `klass` here.
     """
     metadata = obj.metadata
-    if metadata is not None and not isinstance(metadata, klass):
-        # A class that does not convert its fields: convert (and report)
-        # here, as the field converter would.
-        metadata = klass.from_other(metadata)
-    if metadata is not None and metadata.raw is not None:
-        obj.metadata = metadata
-        return
-    decoded = klass.from_raw(raw, image=image)
+    if metadata is not None and raw is not None:
+        held = metadata.raw
+        if held is raw or (
+            same is not None and held is not None and same(held, raw)
+        ):
+            return
     if metadata is None:
-        obj.metadata = decoded
-        return
-    values = {}
-    for name in klass.vocabulary_fields + ("extra",):
-        value = getattr(metadata, name, None)
-        if value is None or (name == "extra" and not value):
-            value = getattr(decoded, name, None)
-        values[name] = value
-    obj.metadata = klass(raw=raw, decoded=decoded._decoded, **values)
+        metadata = klass()
+    obj.metadata = metadata.with_record(raw, image=image)
