@@ -330,6 +330,157 @@ do, and the readers that need them (FSL FNIRT, NiftyReg) still read
 
 ```
 
+### MGH / MGZ
+
+[`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata] is the
+metadata of `MghImage`. Its record is the `nibabel` header, whose footer
+holds the MRI acquisition parameters, and the raw trailing tags.
+FreeSurfer stores times in milliseconds and the flip angle in radians; the
+metadata holds them in BIDS units.
+
+| Field | Record | Notes |
+|---|---|---|
+| `repetition_time` | footer `tr` | ms -> s; zero means unknown |
+| `echo_time` | footer `te` | ms -> s |
+| `inversion_time` | footer `ti` | ms -> s |
+| `flip_angle` | footer `flip_angle` | rad -> deg |
+| `history` | the command-line tags | only when the tags parse |
+
+The field of view stays in the record, and MGH has no free-form store,
+so `extra` is unsupported. Let us write a T1-weighted scan, as
+`mri_convert` would, with its acquisition parameters and the command that
+made it:
+
+```python
+>>> import gzip, struct
+>>> from nibabel.freesurfer.mghformat import MGHImage
+>>> mgh = MGHImage(np.zeros((4, 5, 6), "float32"), np.eye(4))
+>>> mgh.header["tr"], mgh.header["te"], mgh.header["ti"] = 2300, 2.98, 900
+>>> mgh.header["flip_angle"] = np.deg2rad(9)
+>>> nb.save(mgh, os.path.join(tmp, "T1.mgz"))
+>>> command = b"mri_convert T1.nii.gz T1.mgz\0"
+>>> tag = struct.pack(">iq", 3, len(command)) + command  # TAG_CMDLINE
+>>> with open(os.path.join(tmp, "T1.mgz"), "rb") as f:
+...     content = gzip.decompress(f.read()) + tag
+>>> with open(os.path.join(tmp, "T1.mgz"), "wb") as f:
+...     _ = f.write(gzip.compress(content))
+>>> t1 = io.load(os.path.join(tmp, "T1.mgz"))
+>>> t1.metadata.repetition_time, t1.metadata.echo_time, t1.metadata.flip_angle
+(2.3, 0.00298, 9.0)
+>>> t1.metadata.history
+('mri_convert T1.nii.gz T1.mgz',)
+
+```
+
+A field you set is written back in FreeSurfer's units, and the tags that
+are not command lines are kept. The writer's `tr=`, `te=`, `ti=` and
+`flip_angle=` keywords (in milliseconds and radians, as before) set the
+same fields:
+
+```python
+>>> t1.metadata.echo_time = 0.0035
+>>> t1.metadata.history += ("recon-all -s bert",)
+>>> t1.save(os.path.join(tmp, "T1_edited.mgz"))
+>>> edited = io.load(os.path.join(tmp, "T1_edited.mgz"))
+>>> round(edited.mri_params["te"], 3), edited.metadata.history
+(3.5, ('mri_convert T1.nii.gz T1.mgz', 'recon-all -s bert'))
+
+```
+
+NIfTI has no place for the echo time, the inversion time, the flip angle
+or the history, so saving the scan as NIfTI loses them, and the report says
+so (a 3-D NIfTI image has no time axis to hold the repetition time
+either):
+
+```python
+>>> with warnings.catch_warnings(record=True) as caught:
+...     warnings.simplefilter("always")
+...     io.save(edited, os.path.join(tmp, "T1.nii.gz"))
+>>> for w in caught:
+...     print(sorted(w.message.report.lost))
+['echo_time', 'flip_angle', 'history', 'inversion_time']
+['repetition_time']
+
+```
+
+Going through format-agnostic metadata keeps them all, and a BIDS sidecar
+holds them in BIDS units, ready to sit next to the NIfTI file:
+
+```python
+>>> generic, report = convert(edited.metadata, Metadata)
+>>> report.lossy
+False
+>>> sidecar = generic.to_bids()
+>>> sidecar["RepetitionTime"], sidecar["EchoTime"], sidecar["FlipAngle"]
+(2.3, 0.0035, 9.0)
+>>> sidecar["InversionTime"], sidecar["History"]
+(0.9, ['mri_convert T1.nii.gz T1.mgz', 'recon-all -s bert'])
+
+```
+
+### Zarr and OME-Zarr
+
+[`OmeZarrMetadata`][brainhops.io.images.zarr.OmeZarrMetadata] is the
+metadata of an OME-Zarr pyramid (`OmeZarrImage`). Its record is the
+multiscale (as `abczarr` reads it), the `omero` rendering settings and the
+other attributes of the group. There is one metadata object per pyramid:
+each level holds a copy derived from it, and the pyramid's is the one
+written.
+
+| Field | Record | Notes |
+|---|---|---|
+| `name` | multiscale `name` | |
+| `channels` | `omero.channels` | `label`, `color`, `window` |
+| `display_range` | `omero.channels[*].window` | when every channel shares it |
+| `extra` | the other group attributes | |
+
+OME-Zarr has no unit for the values, so `data_unit` is unsupported. A
+pyramid of a two-channel stain, with its channel names and colors:
+
+```python
+>>> from brainhops.datamodel.axes import ChannelAxis, SpaceAxis
+>>> from brainhops.datamodel.metadata import Channel
+>>> from brainhops.io.images.zarr import OmeZarrImage, OmeZarrMetadata
+>>> stain = OmeZarrImage(
+...     images=[SingleScaleImage(np.zeros((8, 8, 4, 2), "uint16"))],
+...     axes=[SpaceAxis("x"), SpaceAxis("y"), SpaceAxis("z"), ChannelAxis("c")],
+...     metadata=OmeZarrMetadata(
+...         name="slide 3",
+...         channels=(
+...             Channel(name="DAPI", color="0000FF", display_range=(0, 900)),
+...             Channel(name="GFP", color="00FF00", display_range=(0, 500)),
+...         ),
+...     ),
+... )
+>>> stain.save(os.path.join(tmp, "stain.ome.zarr"))
+>>> stain = io.load(os.path.join(tmp, "stain.ome.zarr"))
+>>> stain.metadata.name, [c.name for c in stain.metadata.channels]
+('slide 3', ['DAPI', 'GFP'])
+>>> stain.metadata.channels[0]
+Channel(name='DAPI', color='0000FFFF', display_range=(0.0, 900.0))
+
+```
+
+The channel names go through format-agnostic metadata as they are, and
+NIfTI, which has no channel names, reports them:
+
+```python
+>>> generic, report = convert(stain.metadata, Metadata)
+>>> [c.name for c in generic.channels], report.lossy
+(['DAPI', 'GFP'], False)
+>>> _, report = convert(stain.metadata, NiftiMetadata, on_loss="ignore")
+>>> sorted(report.lost)
+['channels', 'name']
+
+```
+
+A plain Zarr array (`ZarrImage`) has no metadata convention, only
+attributes:
+[`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata] stores the
+vocabulary as a BIDS sidecar under the attribute `"brainhops"`, so every
+field but the diffusion ones survives, and `extra` maps to the other
+attributes.
+
 <!--
   Later phases append one subsection per format here (MGH, Zarr, ITK,
   x5, FLIRT, ...), with the same shape: what the format stores, a table

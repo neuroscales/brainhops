@@ -927,6 +927,49 @@ for a JSON-capable node.
 | FLIRT, matrix text | — | `OpaqueMetadata`; FLIRT adds `moving`/`fixed` (reader needs them, never stored, always `lost` on write with a reason) | none |
 | M3Z | `M3zStruct` | `moving`/`fixed` (`image`/`atlas` fnames) | byte-exact otherwise |
 
+> **Prototype note (MGH).** `MghMetadata` lives in
+> `brainhops/io/base/_mgh_metadata.py`, next to the MGH parser, and is
+> re-exported from `io.images.freesurfer`. Its record is `MghRecord(header,
+> tags)`. Zero in a footer slot reads as `None`; the flip angle is decoded
+> as the shortest decimal of degrees that stores the same single-precision
+> radians (`9.0`, not `9.0000004`). `repetition_time` is not derived: MGH
+> stores the TR as a scalar, whatever the time axis. `history` comes from
+> the `TAG_CMDLINE` tags (id 3, `int64` length, NUL-terminated), and only
+> when the whole tag stream parses (`TAG_OLD_MGH_XFORM` has an `int32`
+> length, the other legacy tags none); writing it replaces the command-line
+> tags in place and keeps every other tag, and over tags that do not parse
+> it is reported as lost. `MghParser` syncs the metadata in `__post_init__`
+> and when `header` or `tags` are assigned; reading the tags is therefore
+> eager on load (an MGZ is decompressed once more), where it was lazy. The
+> writer keeps the footer of the record, then `like=`, then the changed
+> fields; `tr=`/`te=`/`ti=`/`flip_angle=` (still in ms and radians) are
+> routed through the metadata as forced changes on a copy (so they win
+> even over `like=` and over a value equal to the one read, and a zero
+> clears the slot), while `fov=` and other header names still patch the
+> header last. No deprecation warning yet.
+
+> **Prototype note (Zarr).** `OmeZarrMetadata` and `ZarrMetadata` live in
+> `brainhops/io/images/zarr/_metadata.py`. The OME-Zarr record is
+> `OmeZarrRecord(multiscale, omero, attrs)`: the typed 0.6 `Multiscale`,
+> but `omero` as plain JSON, read from the group attributes, because the
+> typed `abczarr` model turns nested free-form keys into `True` (`rdefs`
+> does not survive `Omero.from_json(...).to_json()`); it is written back
+> as JSON into the envelope of the written version. `channels` are not
+> derived from the `c` axis: they are what `omero` says, and a
+> `display_range` with no channels writes one white channel per entry of
+> the channel axis. A window is required per channel; when nothing gives
+> one it is the range of the data type (0..1 for floats). `data_unit` is
+> **unsupported** (OME-Zarr has no intensity unit, and inventing an
+> `omero` key was not worth it); a `Channel.unit` and a non-opaque alpha
+> are reported as approximated. The writer keeps the multiscale `name`,
+> `type` and downsampling `metadata` of the record. Levels get
+> `derive(grid_changed=level > 0)` when the pyramid is read; a pyramid
+> built in memory keeps the levels it was given. For plain Zarr the
+> generic option was taken: `ZarrMetadata` (format `"zarr"`) stores the
+> vocabulary as a BIDS sidecar (the codec of `to_bids`) under the array
+> attribute `"brainhops"`, `extra` is the other attributes, and the
+> diffusion fields are unsupported (they are not sidecar keys).
+
 Future formats (GIFTI/CIFTI, TRK/TCK/TRX, CZI/LIF/ND2, Bruker, MRC,
 FITS, MetaImage, BrainVoyager, Interfile, EEG coordsystem, NetCDF) each
 add one class and, if they bring a concept two of them share, one
