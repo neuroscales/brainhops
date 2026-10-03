@@ -1,6 +1,10 @@
+# stdlib
+import copy
+
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
+from bagof.magic import Factory, KwOnly, NoEq, NoRepr
 
 # internals
 from brainhops._core.dependencies import da
@@ -10,6 +14,11 @@ from brainhops._core.typing import ArrayProtocol
 # backends
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    FormatMetadata,
+    apply_loss_policy,
+)
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -23,6 +32,63 @@ from brainhops.io.base.zarr import (
     _as_node,
 )
 from brainhops.io.images.base import WritableFileBasedImage
+
+from ._metadata import ZarrMetadata
+
+
+def metadata_field(cls: tx.Type[FormatMetadata], doc: str) -> tx.Any:
+    """The annotation of the narrowed `metadata` field of a Zarr class."""
+    return tx.Annotated[
+        cls, tx.Doc(doc), Factory(cls), KwOnly(), NoRepr(), NoEq()
+    ]
+
+
+def merge_explicit(
+    cls: tx.Type[FormatMetadata],
+    metadata: tx.Optional[FormatMetadata],
+    record: tx.Any,
+    image: tx.Any = None,
+) -> FormatMetadata:
+    """
+    The metadata of a record that was just read, with the fields given
+    explicitly in `metadata` (without a record) over the decoded ones;
+    they count as changes on write.
+    """
+    decoded = cls.from_raw(record, image=image)
+    if metadata is None:
+        return decoded
+    values = {}
+    for name in cls.vocabulary_fields + ("extra",):
+        value = getattr(metadata, name, None)
+        if value is None or (name == "extra" and not value):
+            value = getattr(decoded, name, None)
+        values[name] = value
+    return cls(raw=record, decoded=decoded._decoded, **values)
+
+
+def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
+    """The attributes of a node, as plain JSON."""
+    try:
+        attrs = node.attrs
+        return {key: attrs[key] for key in attrs}
+    except Exception:
+        return {}
+
+
+def write_attributes(
+    node: tx.Any,
+    attrs: tx.Mapping[str, tx.Any],
+    before: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+) -> None:
+    """Write `attrs` onto a node, and remove the keys of `before` (the
+    record that was read) that are no longer in it."""
+    current = node_attributes(node)
+    for key in before or {}:
+        if key not in attrs and key in current:
+            del node.attrs[key]
+    for key, value in attrs.items():
+        if current.get(key) != value:
+            node.attrs[key] = value
 
 
 @register_format
@@ -41,6 +107,49 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
+
+    metadata: metadata_field(
+        ZarrMetadata,
+        """
+        The metadata of the array: the vocabulary, stored as a sidecar
+        under its attribute `"brainhops"`, and its other attributes as
+        `extra`; the attributes are the record (`metadata.raw`). See
+        [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata].
+        """,
+    )
+
+    def __post_init__(self) -> None:
+        parent = getattr(super(), "__post_init__", None)
+        if parent is not None:
+            parent()
+        self._sync_metadata()
+
+    def _sync_metadata(self) -> None:
+        """Read the metadata from the attributes of the array, when it
+        has not been read yet."""
+        node = self.node
+        metadata = self.metadata
+        if node is None or (metadata is not None and metadata.raw is not None):
+            return
+        self.metadata = merge_explicit(
+            ZarrMetadata, metadata, node_attributes(node), self
+        )
+
+    def _write_metadata(self, node: tx.Any, on_loss: tx.Any) -> None:
+        metadata = self.metadata
+        if metadata is None:
+            return
+        if not isinstance(metadata, ZarrMetadata):
+            metadata = ZarrMetadata.from_other(metadata)
+        before = metadata.raw
+        report = ConversionReport(source=metadata.format, target="zarr")
+        record = metadata.write_raw(
+            copy.deepcopy(before) if before is not None else {},
+            image=self,
+            report=report,
+        )
+        apply_loss_policy(report, on_loss, stacklevel=4)
+        write_attributes(node, record, before)
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -94,6 +203,13 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     # --- save ---------------------------------------------------------
 
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
+        """
+        Write the image into an opened Zarr array, and return it.
+
+        The metadata is written into the attributes of the array; what it
+        cannot hold is reported according to `on_loss`.
+        """
+        on_loss = kwargs.pop("on_loss", None)
         wrapped = _as_node(node)
         data = self.data
         if not isinstance(wrapped, ZarrArray):
@@ -103,6 +219,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             )
         if data is not None:
             wrapped[...] = data
+        self._write_metadata(wrapped, on_loss)
         return wrapped
 
     def to_store(self, location: StoreLike, **kwargs) -> None:
@@ -115,6 +232,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         if node is not None:
             self.to_node(node, **kwargs)
             return
+        on_loss = kwargs.pop("on_loss", None)
         data = self.data
         if data is not None:
-            create(location, data=data, overwrite=True, **kwargs)
+            node = create(location, data=data, overwrite=True, **kwargs)
+            self._write_metadata(node, on_loss)
