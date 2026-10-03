@@ -5,7 +5,6 @@ onto a new geometry."""
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.numpy import DTypeLike
-from bagof.magic import KwOnly, NoEq, NoRepr
 
 # core
 from brainhops._core.affines import axis_scales
@@ -19,7 +18,7 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase
 from .geometry import Geometry
-from .metadata import Metadata
+from .metadata import Metadata, metadata_annotation
 from .transformations import (
     CartesianField,
     Identity,
@@ -33,21 +32,18 @@ class Image(DataModelBase):
     # Keyword-only, so that it never takes the place of a positional
     # argument of a subclass (`SingleScaleImage(data)`), and out of `repr`
     # and `==`: two images are equal when their data and geometry are.
-    metadata: tx.Annotated[
+    metadata: metadata_annotation(
         tx.Optional[Metadata],
-        tx.Doc(
-            """
-            Non-spatial metadata (description, acquisition parameters,
-            provenance, ...), format-agnostic. A file format narrows it to
-            its own `FormatMetadata` subclass, which converts (and reports
-            what is lost) when an image changes format. See
-            [`brainhops.datamodel.metadata`][].
-            """
-        ),
-        KwOnly(),
-        NoRepr(),
-        NoEq(),
-    ] = None
+        """
+        Non-spatial metadata (description, acquisition parameters,
+        provenance, ...), format-agnostic. A file format narrows it to
+        its own `FormatMetadata` subclass, which converts (and reports
+        what is lost) when an image changes format. An image holds its
+        own copy: metadata given to it (`metadata=`, `replace()`,
+        `from_other`) is copied, never shared. See
+        [`brainhops.datamodel.metadata`][].
+        """,
+    ) = None
 
     # --- array API ----------------------------------------------------
 

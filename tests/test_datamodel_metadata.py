@@ -37,9 +37,11 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     ALL,
     Channel,
+    Lazy,
     apply_loss_policy,
     convert,
     get_metadata_loss_policy,
+    one_loss_warning,
 )
 from brainhops.datamodel.transformations import Affine, Translation
 
@@ -727,3 +729,216 @@ def test_replace_carries_the_metadata() -> None:
     assert replace(affine, matrix=2 * np.eye(3)[:2]).metadata.description == (
         "a"
     )
+
+
+def test_replace_and_from_other_copy_the_metadata() -> None:
+    image = SingleScaleImage(
+        np.zeros((2, 3)), metadata=Metadata(description="a", extra={"k": 1})
+    )
+    copied = replace(image, data=np.ones((2, 3)))
+    assert copied.metadata is not image.metadata
+    copied.metadata.description = "edited copy"
+    copied.metadata.extra["k"] = 2
+    assert image.metadata.description == "a"
+    assert image.metadata.extra == {"k": 1}
+    other = SingleScaleImage.from_other(image)
+    assert other.metadata is not image.metadata
+    assert other.metadata == image.metadata
+    given = Metadata(description="given")
+    affine = Affine(np.eye(3)[:2], metadata=given)
+    assert affine.metadata is not given
+
+
+def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
+    meta = DictMetadata.from_raw({"desc": "read", "Lab": "x"})
+    other = meta.copy()
+    assert other.raw is meta.raw
+    assert other == meta
+    other.description = "changed"
+    other._decoded["description"] = "forged"
+    assert meta.changed_fields() == {}
+    assert meta._decoded["description"] == "read"
+
+
+def test_the_hub_and_opaque_have_no_record() -> None:
+    for cls in (Metadata, OpaqueMetadata):
+        assert cls().raw is None
+        with pytest.raises(TypeError):
+            cls(raw={"a": 1})
+
+
+def test_a_decoder_may_not_return_an_unsupported_field() -> None:
+    class Wrong(
+        FormatMetadata, on={"format": "test-wrong"}, supports=("description",)
+    ):
+        format: tx.Literal["test-wrong"] = "test-wrong"
+
+        @classmethod
+        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+            return {"description": "d", "echo_time": 0.03}
+
+    with pytest.raises(TypeError, match="echo_time"):
+        Wrong.from_raw({})
+
+
+# ----------------------------------------------------------------------
+#   A NEW RECORD, FORCED FIELDS, DERIVED FIELDS
+# ----------------------------------------------------------------------
+
+
+def test_with_record_keeps_the_changes_over_a_new_record() -> None:
+    meta = DictMetadata.from_raw({"desc": "old", "cal": (0, 1), "A": 1})
+    meta.description = "mine"
+    meta.display_range = None
+    meta.extra = {"A": 1, "B": 2}
+    new = meta.with_record({"desc": "new", "cal": (2, 3), "C": 3})
+    assert new.description == "mine"
+    assert new.display_range is None
+    assert new.extra == {"C": 3, "B": 2}
+    assert new.changed_fields() == {
+        "description": "mine",
+        "display_range": None,
+        "extra": {"B": 2},
+    }
+
+
+def test_force_writes_a_field_equal_to_the_snapshot() -> None:
+    meta = DictMetadata.from_raw({"desc": "read"})
+    meta.raw["desc"] = "record edit"
+    assert meta.write_raw(dict(meta.raw))["desc"] == "record edit"
+    forced = meta.write_raw(dict(meta.raw), force=("description",))
+    assert forced["desc"] == "read"
+    meta.description = None
+    assert "desc" not in meta.write_raw(dict(meta.raw), force=("description",))
+
+
+class GeoMetadata(
+    FormatMetadata,
+    on={"format": "test-geo"},
+    supports=("repetition_time",),
+    derived=("repetition_time",),
+):
+    """A format whose `repetition_time` is the image's time step (the
+    image is a number here), or the record's when it has none."""
+
+    format: tx.Literal["test-geo"] = "test-geo"
+
+    @classmethod
+    def _default_raw(cls) -> dict:
+        return {}
+
+    def _geometry(self, image) -> dict:  # noqa: ANN001
+        return {"repetition_time": image}
+
+    def _encode(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
+        if "repetition_time" in changed:
+            raw["tr"] = changed["repetition_time"]
+        return raw
+
+
+def test_a_derived_field_the_data_model_gives_is_not_encoded() -> None:
+    meta = GeoMetadata(repetition_time=2.0)
+    report = ConversionReport()
+    assert meta.write_raw(image=2.0, report=report) == {}
+    assert not report.lossy
+    report = ConversionReport()
+    assert meta.write_raw(image=1.5, report=report) == {}
+    assert set(report.approximated) == {"repetition_time"}
+    # The data model says nothing: the value is the format's to write.
+    assert meta.write_raw(image=None) == {"tr": 2.0}
+    assert meta.check_writable(image=1.5).approximated
+
+
+# ----------------------------------------------------------------------
+#   LAZY FIELDS
+# ----------------------------------------------------------------------
+
+_LOADS = []
+
+
+def _load_history() -> tuple:
+    _LOADS.append(1)
+    return ("cmd a", "cmd b")
+
+
+class LazyMetadata(
+    FormatMetadata,
+    on={"format": "test-lazy"},
+    supports=("description", "history"),
+):
+    """A format whose `history` sits in a lazy part of the record."""
+
+    format: tx.Literal["test-lazy"] = "test-lazy"
+
+    @classmethod
+    def _default_raw(cls) -> dict:
+        return {}
+
+    @classmethod
+    def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+        return {"description": raw.get("desc"), "history": Lazy(_load_history)}
+
+    def _encode(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
+        if "history" in changed:
+            raw["history"] = changed["history"]
+        return raw
+
+
+def test_a_lazy_field_is_decoded_on_first_access() -> None:
+    _LOADS.clear()
+    meta = LazyMetadata.from_raw({"desc": "d"})
+    copied = meta.copy()
+    assert _LOADS == []
+    assert meta.description == "d"
+    assert meta.history == ("cmd a", "cmd b")
+    assert meta.history == ("cmd a", "cmd b")
+    assert _LOADS == [1]
+    assert meta.changed_fields() == {}
+    # The copy waits for its own read.
+    assert copied.changed_fields() == {}
+    assert _LOADS == [1, 1]
+
+
+def test_assigning_a_lazy_field_snapshots_it_first() -> None:
+    meta = LazyMetadata.from_raw({})
+    meta.history = None
+    assert meta.changed_fields() == {"history": None}
+    meta = pickle.loads(pickle.dumps(LazyMetadata.from_raw({})))
+    assert meta.history == ("cmd a", "cmd b")
+
+
+# ----------------------------------------------------------------------
+#   ONE WARNING
+# ----------------------------------------------------------------------
+
+
+def test_one_loss_warning_merges_the_reports() -> None:
+    with pytest.warns(MetadataLossWarning) as caught:
+        # `stacklevel=1`: this function (2 would be its caller).
+        with one_loss_warning(stacklevel=1):
+            apply_loss_policy(ConversionReport(source="a", lost={"x": 1}))
+            apply_loss_policy(
+                ConversionReport(target="b", approximated={"y": "z"})
+            )
+            apply_loss_policy(ConversionReport(lost={"q": 1}), "ignore")
+    assert len(caught) == 1
+    report = caught[0].message.report
+    assert (report.source, report.target) == ("a", "b")
+    assert report.lost == {"x": 1} and report.approximated == {"y": "z"}
+    assert caught[0].filename == __file__
+    with pytest.raises(MetadataLossError):
+        with one_loss_warning():
+            apply_loss_policy(ConversionReport(lost={"x": 1}), "raise")
+
+
+def test_from_other_carries_the_metadata_of_another_family() -> None:
+    affine = Affine(np.eye(4)[:3], metadata=Metadata(description="mine"))
+
+    class Holder(DataModelBase):
+        inner: tx.Any = None
+        metadata: tx.Optional[Metadata] = None
+
+    held = Holder.from_other(affine)
+    assert held.inner is affine
+    assert held.metadata.description == "mine"
+    assert Holder.from_other(affine, metadata=None).metadata is None

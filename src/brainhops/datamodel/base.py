@@ -116,6 +116,11 @@ class DataModelBase(
         parent that is not a data model (such as a plain `object`), is
         passed to the constructor.
 
+        A data model passed to the constructor gives its `metadata` too,
+        when it has some and this class has a `metadata` field (and none
+        is given): the field converts it, and reports what this class
+        cannot hold, as `from_instance` would.
+
         Unlike [`from_dict`][brainhops.datamodel.base.DataModelBase.from_dict],
         a dictionary with a key that matches no field of this class is
         refused with a [`TypeError`][] naming the keys, so that a
@@ -131,7 +136,27 @@ class DataModelBase(
         elif isinstance(other, DataModelBase) and _same_family(cls, other):
             return cls.from_instance(other, *args, **kwargs)
         else:
+            if isinstance(other, DataModelBase):
+                _carry_metadata(cls, other, kwargs)
             return cls(other, *args, **kwargs)
+
+
+def _carry_metadata(cls: type, other: tx.Any, kwargs: tx.Dict) -> None:
+    """
+    Pass the `metadata` of `other` to the constructor of `cls`, when
+    `other` has some, `cls` takes it and the caller gave none: an image
+    or a transformation built from an object of another family (an x5
+    chain as a NIfTI field) keeps it, converted by the field.
+    """
+    if "metadata" in kwargs:
+        return
+    metadata = getattr(other, "metadata", None)
+    if metadata is None:
+        return
+    for field in fields(cls):
+        if field.name == "metadata" and field.init:
+            kwargs["metadata"] = metadata
+            return
 
 
 # A value read from nowhere: the source carries nothing for the field.

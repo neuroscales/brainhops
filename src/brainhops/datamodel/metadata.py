@@ -46,6 +46,10 @@ class MyMetadata(
 
     def _encode(self, raw, changed, *, image=None, report) -> MyRecord: ...
 
+    def _geometry(self, image) -> dict: ...
+
+    def _check_record(self, image) -> MyRecord: ...
+
     @classmethod
     def _import(cls, other, values, *, report) -> None: ...
 
@@ -60,15 +64,23 @@ The hooks are all optional, and all private:
   default to `UNSUPPORTED`; `unsupported_fields` lists them on the class.
 - `derived=` (class keyword): supported fields that are, for this format,
   a view of geometry the data model owns (NIfTI `repetition_time` is
-  `pixdim[4]`). They are decoded on read; on write, `_encode` reports a
-  value that disagrees with the geometry under `report.approximated`
-  instead of writing it. `derived_fields` lists them.
+  the time step, `pixdim[4]`). They are decoded on read. On write, the
+  value the data model gives (`_geometry`) is what the writer stores:
+  a changed field that disagrees with it is reported under
+  `report.approximated` and never reaches `_encode`, one that agrees is
+  dropped silently, and only a field the data model says nothing about
+  is left to `_encode`. `derived_fields` lists them.
 - `_default_raw() -> raw`: a fresh, empty record, for an object built in
   memory (or converted from another format). Defaults to `None`.
 - `_decode(raw, *, image=None) -> dict`: record to common fields, on
   read. Returns vocabulary field names (and `"extra"`) to values; `None`
-  values may be left out. `image` is the data model object (image or
-  transformation) the record belongs to, for fields that need it.
+  values may be left out, and a value for a field the format does not
+  support is a bug (`from_raw` raises `TypeError`). `image` is the data
+  model object (image or transformation) the record belongs to, for
+  fields that need it. A field whose decoding would read a lazy part of
+  the record (the MGH tags, after the whole compressed volume) may be
+  returned as [`Lazy`][brainhops.datamodel.metadata.Lazy]`(load)`: it is
+  decoded on first access (or assignment), and joins the snapshot then.
 - `_encode(raw, changed, *, image=None, report) -> raw`: common fields
   to record, on write. `raw` is the record to write over (already a
   copy, or the writer's own fresh record) and `changed` holds only the
@@ -77,6 +89,15 @@ The hooks are all optional, and all private:
   `changed["extra"]` is a per-key diff whose `None` values remove a key.
   Value-dependent loss goes in `report` (`report.lost[name] = value`,
   `report.approximated[name] = reason`). Returns the record to write.
+- `_geometry(image) -> dict`: the values the data model gives for the
+  derived fields (NIfTI: `{"repetition_time": <time step>}`), `None`
+  where it says nothing. Defaults to `{}`.
+- `_check_record(image) -> raw`: the record
+  [`check_writable`][brainhops.datamodel.metadata.FormatMetadata.check_writable]
+  encodes over: what the writer would pass to `write_raw` (NIfTI: the
+  record, reshaped to the data of `image`), so that a value-dependent
+  check reads the same state as a real write. Defaults to a copy of
+  the record, or a default one.
 - `_import(other, values, *, report) -> None`: called by `from_instance`
   with the source object, the values about to be passed to the
   constructor, and the report. A format may *recover* a loss here, for
@@ -89,20 +110,46 @@ The hooks are all optional, and all private:
 
 A reader builds the object with
 [`from_raw`][brainhops.datamodel.metadata.FormatMetadata.from_raw],
-which decodes the record and keeps the read-time snapshot. A writer
-builds its record, calls
+which decodes the record and keeps the read-time snapshot; a parser
+given a record and a `metadata` that is not that record's (explicit, or
+carried by `replace()`) uses
+[`with_record`][brainhops.datamodel.metadata.FormatMetadata.with_record],
+which decodes the new record and keeps the changes. A writer builds its
+record, calls
 [`write_raw`][brainhops.datamodel.metadata.FormatMetadata.write_raw] with
-it and a report, and hands the report to
+it and a report (and `force=` for a writer keyword that must win over
+the record, such as MGH `tr=`), and hands the report to
 [`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy].
+`io.save` wraps a conversion and the write that follows in
+[`one_loss_warning`][brainhops.datamodel.metadata.one_loss_warning], so
+that one save warns once.
 
 **The `metadata` field of a format class.** `Image` and `Transformation`
 declare `metadata: Optional[Metadata]` (keyword-only, out of `repr` and
 `==`). A format narrows it to its own class, with a default factory,
-which is what makes a change of format convert (and report). `bagof`
-takes a field from the *first* base that has it, so the narrowed
-declaration must sit on the class itself or on its first base: a
-transformation format whose first base is a data model transformation
-must declare it again (see `NiftiBasedTransformation`).
+which is what makes a change of format convert (and report). Both are
+written with
+[`metadata_annotation`][brainhops.datamodel.metadata.metadata_annotation],
+whose converter also converts on a class that does not convert its
+fields (a plain `Magic` parser), and *copies* a metadata object that is
+already of the field's class
+([`copy`][brainhops.datamodel.metadata.FormatMetadata.copy]: the record
+is shared, the snapshot and `extra` are not): two objects never hold
+the same metadata, so editing the result of `replace()` or `from_other`
+never edits the original. `bagof` takes a field from the *first* base
+that has it, so the narrowed declaration must sit on the class itself
+or on its first base: a transformation format whose first base is a
+data model transformation must declare it again (see
+`NiftiBasedTransformation`). `DataModelBase.from_other` passes the
+`metadata` of a data model it hands to a constructor (an x5 chain made
+into a NIfTI field), so the field converts it and reports the loss.
+
+**Unused so far.** Some of the surface has no producer in the
+prototype formats yet, and is kept for the formats the design memo
+plans: `ConversionReport.passed_through` and the `_import` hook (for a
+key/value format, MRtrix or NRRD, that moves what it has no slot for
+into its free-form store), and `ConversionReport.merge` outside
+`one_loss_warning`.
 """
 
 __all__ = [
@@ -128,6 +175,10 @@ __all__ = [
     "get_metadata_loss_policy",
     "apply_loss_policy",
     "convert",
+    "collect_loss_reports",
+    "one_loss_warning",
+    "Lazy",
+    "metadata_annotation",
 ]
 
 # stdlib
@@ -135,11 +186,13 @@ import contextlib
 import contextvars
 import copy
 import datetime
+import math
 import warnings
 
 # externals
 import typing_extensions as tx
-from bagof.magic import Factory, Field, NoEq, NoRepr, fields
+from bagof.converters import Converter
+from bagof.magic import ConvertTo, Factory, Field, KwOnly, NoEq, NoRepr, fields
 
 # internals
 from .base import DataModelBase
@@ -192,6 +245,29 @@ A vocabulary value: a value, `None` (unknown) or `UNSUPPORTED`.
 
 ALL = "all"
 """`supports=ALL` declares that a format can store every field."""
+
+
+class Lazy:
+    """
+    A value that `_decode` returns for a field whose decoding would read
+    a lazy part of the record (the trailing tags of an MGZ, which sit
+    after the whole compressed volume).
+
+    `load` is called, with no argument, the first time the field is read
+    (an attribute access, `repr`, `==`, `changed_fields()`, a copy into
+    another format...). Its value then joins the read-time snapshot, as
+    if it had been decoded with the rest. A `load` that reads a file
+    should be picklable (a module-level function or a `functools.partial`
+    of one), so that metadata still waiting for it can be pickled.
+    """
+
+    __slots__ = ("load",)
+
+    def __init__(self, load: tx.Callable[[], tx.Any]) -> None:
+        self.load = load
+
+    def __repr__(self) -> str:
+        return f"Lazy({self.load!r})"
 
 
 # ----------------------------------------------------------------------
@@ -439,8 +515,60 @@ def apply_loss_policy(
         return report
     if policy == "raise":
         raise MetadataLossError(report)
+    collected = _COLLECTED.get()
+    if collected is not None:
+        # Inside `one_loss_warning`: warned once, merged, at its end.
+        collected.append(report)
+        return report
     warnings.warn(MetadataLossWarning(report), stacklevel=stacklevel + 1)
     return report
+
+
+_Reports = tx.Optional[tx.List[ConversionReport]]
+
+# The reports collected by `collect_loss_reports`, when one is active.
+_COLLECTED: "contextvars.ContextVar[_Reports]" = contextvars.ContextVar(
+    "brainhops_metadata_loss_reports", default=None
+)
+
+
+@contextlib.contextmanager
+def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
+    """
+    Collect, instead of warning them, the reports that the conversions
+    and writes in this block would warn about. Under the `"raise"`
+    policy a loss still raises where it happens.
+    """
+    reports: tx.List[ConversionReport] = []
+    token = _COLLECTED.set(reports)
+    try:
+        yield reports
+    finally:
+        _COLLECTED.reset(token)
+
+
+@contextlib.contextmanager
+def one_loss_warning(*, stacklevel: int = 2) -> tx.Iterator[None]:
+    """
+    Merge the warnings of the conversions and writes in this block into
+    one [`MetadataLossWarning`][], issued when the block ends.
+
+    `io.save` uses it, so that a save that converts the object into the
+    format of the file (saving an MGH image as NIfTI) and then writes it
+    warns once, with one report. Only warnings are merged: under the
+    `"raise"` policy a loss raises where it happens, and nothing is
+    warned if the block raises. `stacklevel=2` points the warning at
+    the caller of the function that holds the block.
+    """
+    with collect_loss_reports() as reports:
+        yield
+    if reports:
+        merged = ConversionReport(
+            source=reports[0].source, target=reports[-1].target
+        )
+        for report in reports:
+            merged.merge(report)
+        apply_loss_policy(merged, "warn", stacklevel=stacklevel + 2)
 
 
 # ----------------------------------------------------------------------
@@ -502,6 +630,7 @@ class _FormatMetadataMeta(type(DataModelBase)):
         cls = super().__new__(metacls, name, bases, namespace, **kwargs)
         if "__magic_discard__" in name:
             return cls
+        _wrap_setattr(cls)
         if not own_repr:
             # `bagof` writes a `__repr__` for every class; this one also
             # hides `UNSUPPORTED` and an empty `extra`, or a format that
@@ -529,6 +658,28 @@ class _FormatMetadataMeta(type(DataModelBase)):
                 getattr(cls, "derived_fields", frozenset()) - unsupported
             )
         return cls
+
+
+def _wrap_setattr(cls: type) -> None:
+    """
+    Make assigning a field whose decoding was deferred (see `Lazy`)
+    decode it first, so that the read-time snapshot holds the value the
+    assignment replaces (`history = None` then clears the record's).
+    `bagof` writes a `__setattr__` for every class, so it is wrapped on
+    each one.
+    """
+    inner = cls.__dict__.get("__setattr__")
+    if inner is None or getattr(inner, "_loads_pending", False):
+        return
+
+    def __setattr__(self: tx.Any, name: str, value: tx.Any) -> None:
+        pending = self.__dict__.get("_pending")
+        if pending and name in pending:
+            self._load_pending(name)
+        inner(self, name, value)
+
+    __setattr__._loads_pending = True  # type: ignore[attr-defined]
+    cls.__setattr__ = __setattr__
 
 
 def _declare_supports(
@@ -596,6 +747,14 @@ class _hybridmethod:
     def __get__(self, obj: tx.Any, owner: type) -> tx.Callable:
         target = owner if obj is None else obj
         return self.func.__get__(target, owner)
+
+
+def _agrees(value: tx.Any, given: tx.Any) -> bool:
+    """Whether a value agrees with what the data model gives (numbers
+    within single-precision rounding)."""
+    if isinstance(value, (int, float)) and isinstance(given, (int, float)):
+        return math.isclose(value, given, rel_tol=1e-6, abs_tol=1e-9)
+    return not _differs(value, given)
 
 
 def _differs(a: tx.Any, b: tx.Any) -> bool:
@@ -959,6 +1118,36 @@ class FormatMetadata(
                     f"refused."
                 )
 
+    def __getattribute__(self, name: str) -> tx.Any:
+        # A field whose decoding was deferred (see `Lazy`) is unset on
+        # the instance (its class default would be read instead): it is
+        # decoded now, once.
+        if name[:1] != "_":
+            state = object.__getattribute__(self, "__dict__")
+            if name not in state:
+                pending = state.get("_pending")
+                if pending and name in pending:
+                    return self._load_pending(name)
+        return object.__getattribute__(self, name)
+
+    def _load_pending(self, name: str) -> tx.Any:
+        value = self.__dict__["_pending"].pop(name)()
+        if value is UNSUPPORTED:
+            value = None
+        setattr(self, name, value)
+        value = self.__dict__.get(name)
+        if value is not None:
+            self._decoded[name] = copy.deepcopy(value)
+        return value
+
+    def __getstate__(self) -> tx.Dict[str, tx.Any]:
+        # `_source` (what a format whose record is rebuilt on each read,
+        # Zarr, read it from: a store node) is a handle, not state, and
+        # is not pickled nor deep-copied; `copy()` keeps it.
+        state = dict(self.__dict__)
+        state.pop("_source", None)
+        return state
+
     @classmethod
     def from_raw(
         cls, raw: tx.Any, *, image: tx.Any = None, **values: tx.Any
@@ -969,24 +1158,98 @@ class FormatMetadata(
         The record is decoded into the common fields (`_decode`), and
         what was decoded is kept as the read-time snapshot, so that an
         untouched field keeps the record's value when it is written back.
-        Keyword arguments set fields over the decoded values (they then
-        count as changes).
+        A field decoded as [`Lazy`][brainhops.datamodel.metadata.Lazy] is
+        decoded on first access instead. Keyword arguments set fields
+        over the decoded values (they then count as changes).
+
+        Raises
+        ------
+        TypeError
+            If `_decode` returned a value for a field this format does
+            not support: a bug of the format, which would otherwise drop
+            the value without a report.
         """
-        decoded = {
-            key: value
-            for key, value in cls._decode(raw, image=image).items()
-            if value is not None
-            and value is not UNSUPPORTED
-            and key not in cls.unsupported_fields
-        }
+        decoded: tx.Dict[str, tx.Any] = {}
+        lazy: tx.Dict[str, tx.Callable[[], tx.Any]] = {}
+        for key, value in cls._decode(raw, image=image).items():
+            if value is None or value is UNSUPPORTED:
+                continue
+            if key in cls.unsupported_fields:
+                raise TypeError(
+                    f"{cls.__name__}._decode returned {key}={value!r}, "
+                    f"but {cls.__name__} does not support {key!r}."
+                )
+            if isinstance(value, Lazy):
+                lazy[key] = value.load
+            else:
+                decoded[key] = value
         obj = cls(raw=raw, **decoded)
         # Snapshot the *converted* values, so that a decoded list held as
         # a tuple does not count as a change.
         obj._decoded = {
             key: copy.deepcopy(getattr(obj, key)) for key in decoded
         }
+        if lazy:
+            for key in lazy:
+                # Unset, so that the first read decodes it.
+                obj.__dict__.pop(key, None)
+            obj.__dict__["_pending"] = lazy
         for key, value in values.items():
             setattr(obj, key, value)
+        return obj
+
+    def copy(self) -> tx.Self:
+        """
+        A copy of this metadata, sharing its record.
+
+        The record (`raw`) is shared, as `replace()` shares it; the
+        snapshot and `extra` are copied, so editing the copy never edits
+        this object. This is what an image or a transformation holds
+        when it is given metadata that another object holds already
+        (`replace()`, `from_other`, `metadata=`). A field still waiting
+        to be decoded (see `Lazy`) stays so in both.
+        """
+        new = copy.copy(self)
+        if "_source" in self.__dict__:
+            new.__dict__["_source"] = self.__dict__["_source"]
+        new.__dict__["_decoded"] = dict(self._decoded)
+        extra = self.__dict__.get("extra")
+        if isinstance(extra, dict):
+            new.__dict__["extra"] = dict(extra)
+        pending = self.__dict__.get("_pending")
+        if pending:
+            new.__dict__["_pending"] = dict(pending)
+        return new
+
+    def with_record(self, raw: tx.Any, *, image: tx.Any = None) -> tx.Self:
+        """
+        The metadata of another record, keeping the changes made here.
+
+        `raw` is decoded (`from_raw`), and every field that changed since
+        this object was read (`changed_fields()`: all the fields that
+        are set, for an object built in memory) is set over the decoded
+        values, as a change. `extra` is merged key by key. This is what
+        an object given a new record holds (`replace(image,
+        header=...)`), and what `metadata=` given along with a record
+        becomes.
+        """
+        changed = {
+            key: value
+            for key, value in self.changed_fields().items()
+            if key not in type(self).unsupported_fields
+        }
+        extra = changed.pop("extra", None)
+        obj = type(self).from_raw(raw, image=image)
+        for key, value in changed.items():
+            setattr(obj, key, value)
+        if extra:
+            merged = dict(obj.extra or {})
+            for key, value in extra.items():
+                if value is None:
+                    merged.pop(key, None)
+                else:
+                    merged[key] = value
+            obj.extra = merged
         return obj
 
     # --- capabilities -------------------------------------------------
@@ -1039,6 +1302,7 @@ class FormatMetadata(
         *,
         image: tx.Any = None,
         report: tx.Optional[ConversionReport] = None,
+        force: tx.Collection[str] = (),
     ) -> tx.Any:
         """
         Encode the common fields over a record, and return the record.
@@ -1047,14 +1311,23 @@ class FormatMetadata(
         record, already filled with what it keeps from `self.raw`. When
         it is `None`, a copy of `self.raw` (or a default record) is used.
         Only the fields that changed since the read are encoded (see
-        [`changed_fields`][brainhops.datamodel.metadata.FormatMetadata.changed_fields]).
-        A field this format does not support but that was assigned after
-        construction is recorded as lost in `report`, as are the
-        value-dependent losses `_encode` finds.
+        [`changed_fields`][brainhops.datamodel.metadata.FormatMetadata.changed_fields]),
+        and the fields named in `force`, whether they changed or not (a
+        writer keyword that must win over the record, such as MGH `tr=`;
+        a `None` there clears the slot).
+
+        A derived field (`derived=`) for which the data model gives a
+        value (`_geometry`) is not encoded: the data model's value is
+        what the writer stores, and a changed value that disagrees with
+        it is reported as approximated. A field this format does not
+        support but that was assigned after construction is recorded as
+        lost in `report`, as are the value-dependent losses `_encode`
+        finds.
         """
         if report is None:
             report = ConversionReport(source=self.format, target=self.format)
-        for name in type(self).unsupported_fields:
+        unsupported = type(self).unsupported_fields
+        for name in unsupported:
             value = getattr(self, name, None)
             if value is not None and value is not UNSUPPORTED:
                 report.lost[name] = value
@@ -1063,21 +1336,50 @@ class FormatMetadata(
         changed = {
             key: value
             for key, value in self.changed_fields().items()
-            if key not in type(self).unsupported_fields
+            if key not in unsupported
         }
+        for name in force:
+            if name in _VOCABULARY and name != "extra":
+                if name not in unsupported:
+                    changed[name] = getattr(self, name)
+        self._check_derived(changed, image, report)
         return self._encode(raw, changed, image=image, report=report)
+
+    def _check_derived(
+        self,
+        changed: tx.Dict[str, tx.Any],
+        image: tx.Any,
+        report: ConversionReport,
+    ) -> None:
+        """Take out of `changed` the derived fields the data model gives,
+        and report those that disagree with it."""
+        names = sorted(type(self).derived_fields & changed.keys())
+        if image is None or not names:
+            return
+        geometry = self._geometry(image)
+        for name in names:
+            given = geometry.get(name)
+            if given is None:
+                continue
+            value = changed.pop(name)
+            if value is not None and not _agrees(value, given):
+                report.approximated[name] = (
+                    f"derived from the data model ({_short(given)})"
+                )
 
     def check_writable(self, *, image: tx.Any = None) -> ConversionReport:
         """
         What a write of this object would lose, without writing it.
 
         Class-level declarations are the lower bound of loss; this runs
-        the encoder on a scratch record, so value-dependent losses (an
-        over-long description, an irregular slice timing) are included.
-        Pass the image (or transformation) for the fields that need it.
+        the encoder on a scratch record (the one the format's writer
+        would start from, see `_check_record`), so value-dependent
+        losses (an over-long description, an irregular slice timing) are
+        included. Pass the image (or transformation) for the fields that
+        need it.
         """
         report = ConversionReport(source=self.format, target=self.format)
-        self.write_raw(self._raw_or_default(), image=image, report=report)
+        self.write_raw(self._check_record(image), image=image, report=report)
         return report
 
     def _raw_or_default(self) -> tx.Any:
@@ -1107,6 +1409,23 @@ class FormatMetadata(
     ) -> tx.Any:
         """Common fields to record. Default: the record is unchanged."""
         return raw
+
+    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
+        """
+        The values the data model gives for the derived fields (NIfTI:
+        the time step of the image as `repetition_time`). A field left
+        out, or `None`, is one the data model says nothing about: its
+        changed value is then left to `_encode`. Default: nothing.
+        """
+        return {}
+
+    def _check_record(self, image: tx.Any) -> tx.Any:
+        """
+        The record `check_writable` encodes over: what the writer of
+        this format would pass to `write_raw` for `image`. Default: a
+        copy of the record, or a default one.
+        """
+        return self._raw_or_default()
 
     @classmethod
     def _import(
@@ -1342,6 +1661,10 @@ class Metadata(FormatMetadata, on={"format": "generic"}, supports=ALL):
         tx.Literal["generic"], tx.Doc("Always `'generic'`.")
     ] = "generic"
 
+    raw: tx.Annotated[
+        None, tx.Doc("Always `None`: no record."), NoRepr(), NoEq()
+    ] = None
+
     @classmethod
     def from_bids(cls, sidecar: tx.Any) -> "Metadata":
         """
@@ -1379,6 +1702,57 @@ class OpaqueMetadata(FormatMetadata, on={"format": "opaque"}, supports=()):
     format: tx.Annotated[
         tx.Literal["opaque"], tx.Doc("Always `'opaque'`.")
     ] = "opaque"
+
+    raw: tx.Annotated[
+        None, tx.Doc("Always `None`: no record."), NoRepr(), NoEq()
+    ] = None
+
+
+class _Copied:
+    """
+    The converter of a `metadata` field: converts what it is given into
+    the field's type, as `bagof` would, and copies a metadata object
+    that already is of that type (`FormatMetadata.copy`), so that two
+    images or transformations never hold the same one.
+    """
+
+    def __init__(self, hint: tx.Any) -> None:
+        self.hint = hint
+        self._convert: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None
+
+    def __call__(self, value: tx.Any) -> tx.Any:
+        if self._convert is None:
+            self._convert = Converter.get(self.hint)
+        out = self._convert(value)
+        if out is value and isinstance(out, FormatMetadata):
+            out = out.copy()
+        return out
+
+
+def metadata_annotation(
+    hint: tx.Any, doc: str, *, default: tx.Any = None
+) -> tx.Any:
+    """
+    The annotation of a `metadata` field: `hint` (a `FormatMetadata`
+    subclass, or `Optional` of one), keyword-only, out of `repr` and
+    `==`, converted on assignment (even on a class that does not convert
+    its fields) and copied rather than shared.
+
+    `default` is a `FormatMetadata` subclass to build the default from
+    (a format's narrowed field), or `None` for a `None` default (the data
+    model roots). A narrowed field must be declared on the class itself
+    or on its first base (see the module documentation).
+    """
+    extras: tx.List[tx.Any] = [
+        tx.Doc(doc),
+        ConvertTo(_Copied(hint)),
+        KwOnly(),
+        NoRepr(),
+        NoEq(),
+    ]
+    if default is not None:
+        extras.append(Factory(default))
+    return tx.Annotated[(hint, *extras)]
 
 
 def _metadata_class(target: tx.Any) -> tx.Type[FormatMetadata]:

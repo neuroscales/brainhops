@@ -11,6 +11,7 @@ them can hold it.
 __all__ = ["save"]
 
 # stdlib
+import contextlib
 import inspect
 
 # dependencies
@@ -20,6 +21,13 @@ from bagof.magic import fields
 # internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata import (
+    MetadataLossError,
+    apply_loss_policy,
+    collect_loss_reports,
+    metadata_loss_policy,
+    one_loss_warning,
+)
 from brainhops.io.base._base import WritableFileBasedObject
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
@@ -72,6 +80,9 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         format, and is written in that format.
     **kwargs
         Format-specific options, passed on to the chosen format's `save`.
+        `on_loss` (`"ignore"`, `"warn"`, `"raise"`) also governs the
+        metadata the conversion to that format cannot hold: a save that
+        converts, then writes, warns at most once, with one report.
 
     Raises
     ------
@@ -117,19 +128,31 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
+    # The conversion converts the metadata too (and reports what the
+    # format cannot hold), under the save's own `on_loss`; its report
+    # and the write's are warned as one.
+    on_loss = kwargs.get("on_loss")
     for tier in _tiers(holders):
         writers = []
         for fmt in tier:
             try:
-                writers.append((fmt, fmt.from_instance(obj)))
+                with _policy(on_loss), collect_loss_reports() as reports:
+                    converted = fmt.from_instance(obj)
+                writers.append((fmt, converted, reports))
+            except MetadataLossError:
+                raise
             except Exception as e:  # noqa: BLE001
                 reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
         if len(writers) > 1:
             raise AmbiguousFormatError(
-                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
+                _ambiguity_message(name, obj, [fmt for fmt, _, _ in writers])
             )
         if writers:
-            writers[0][1].save(file, **kwargs)
+            _, converted, reports = writers[0]
+            with one_loss_warning(stacklevel=2):
+                for report in reports:
+                    apply_loss_policy(report, "warn")
+                converted.save(file, **kwargs)
             return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
@@ -140,6 +163,12 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         f"Build the format you want with its `from_other` and save "
         f"that.{detail}"
     )
+
+
+def _policy(on_loss: tx.Optional[str]) -> tx.ContextManager[None]:
+    if on_loss is None:
+        return contextlib.nullcontext()
+    return metadata_loss_policy(on_loss)
 
 
 def _model(cls: type) -> tx.Optional[type]:
