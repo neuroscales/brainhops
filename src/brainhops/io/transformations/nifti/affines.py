@@ -9,7 +9,8 @@ import typing_extensions as tx
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
-    _apply_like,
+    NiftiMetadataField,
+    _apply_metadata,
     _apply_overrides,
     _new_nifti,
     _NiftiObject,
@@ -72,7 +73,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         data = np.zeros((1, 1, 1), dtype="float32")
         code = self._xform_code()
         image = _new_nifti(data, matrix)
-        _apply_like(image, like)
+        _apply_metadata(image, self, like, overrides, intent=False)
         image.header.set_sform(matrix, code=code)
         image.header.set_qform(matrix, code=code)
         _apply_overrides(image, overrides)
@@ -93,6 +94,10 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
         `NiftiVoxelToRAS.inverse()`.
     """
 
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
+
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
@@ -109,7 +114,9 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
-            return NiftiVoxelToRAS(image=self.image, header=self.header)
+            return NiftiVoxelToRAS(
+                image=self.image, header=self.header, metadata=self.metadata
+            )
         return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:
@@ -127,6 +134,10 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
 
     HINTS = ("nifti",)
 
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
+
     @property
     def matrix(self) -> tx.Optional[np.ndarray]:
         """The affine matrix of the transformation."""
@@ -143,7 +154,9 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_matrix", None) is None:
-            return NiftiRASToVoxel(image=self.image, header=self.header)
+            return NiftiRASToVoxel(
+                image=self.image, header=self.header, metadata=self.metadata
+            )
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 
     def _voxel_to_ras_matrix(self) -> np.ndarray:

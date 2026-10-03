@@ -27,7 +27,8 @@ from brainhops.io.base.nifti import (
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
-    _apply_like,
+    NiftiMetadataField,
+    _apply_metadata,
     _apply_overrides,
     _new_nifti,
     _nifti_intent,
@@ -58,6 +59,10 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     """
 
     HINTS = ("coordinates",)
+
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
 
     @classmethod
     def _score_nibabel(cls, header: _NiftiObject) -> float:
@@ -168,7 +173,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         image.header.set_intent(
             _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
         )
-        _apply_like(image, like)
+        _apply_metadata(image, self, like, overrides, intent=False)
         _apply_overrides(image, overrides)
         return image
 
@@ -202,6 +207,10 @@ class NiftiRASDisplacementField(
     """
 
     HINTS = ("displacements",)
+
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
 
     order: tx.ClassVar[int] = 1
     """The spline order used to interpolate the field."""
@@ -337,6 +346,6 @@ class NiftiRASDisplacementField(
         vectors = backend.expand_dims(vectors, axis=3)
         image = _new_nifti(vectors, vox2ras)
         image.header.set_intent(_NIFTI_INTENT_DISPVECT)
-        _apply_like(image, like)
+        _apply_metadata(image, self, like, overrides, intent=False)
         _apply_overrides(image, overrides)
         return image

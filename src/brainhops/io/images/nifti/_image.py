@@ -107,11 +107,19 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
         read from NIfTI. The geometry always comes from this image, never
         from the template.
 
-        Keyword arguments override header fields after the derived values
-        and after `like`, so an explicit value always wins. `dtype` sets the
-        stored data type, `intent` the intent code, and `descrip` the
-        description. The array's own data type is kept unless `dtype` is
-        given.
+        The header of the file this image was read from is the base for
+        the non-encoding fields (`descrip`, `aux_file`, `cal_*`, `slice_*`,
+        extensions, ...), and the fields of `metadata` that were changed
+        since the read are written over it, after `like`. What cannot be
+        written (an 81-byte description, an irregular slice timing) is
+        reported according to `on_loss` (`"ignore"`, `"warn"` or
+        `"raise"`; the policy in effect by default).
+
+        Keyword arguments override header fields after the derived values,
+        `like` and the metadata, so an explicit value always wins. `dtype`
+        sets the stored data type, `intent` the intent code, and `descrip`
+        the description. The array's own data type is kept unless `dtype`
+        is given.
         """
         data = self.data
         if data is None:
@@ -124,6 +132,7 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
             self.transformations,
             like=like,
             overrides=overrides,
+            owner=self,
         )
 
 

@@ -26,7 +26,7 @@ from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
-    _apply_like,
+    _apply_metadata,
     _apply_overrides,
     _new_nifti,
     _nifti_intent,
@@ -396,7 +396,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         header["intent_p1"] = kind
         for matrix in extensions:
             header.extensions.append(_extension(matrix))
-        _apply_like(image, like)
+        _apply_metadata(image, self, like, overrides, intent=False)
         _apply_overrides(image, overrides)
         return image
 
@@ -699,7 +699,9 @@ class NiftyRegVelocity(NiftyRegField):
             else nb.Nifti1Image
         )
         image = image_cls(self.data, None, header=header)
-        _apply_like(image, like)
+        _apply_metadata(
+            image, self, like, overrides, intent=False, record=False
+        )
         _apply_overrides(image, overrides)
         return image
 

@@ -7,6 +7,7 @@ import typing_extensions as tx
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
+    NiftiMetadataField,
     _NiftiObject,
 )
 from brainhops.io.transformations.base.affines import RASToVoxel
@@ -30,6 +31,10 @@ class SpmCoordinatesField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """
 
     HINTS = ("spm",)
+
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
 
     PREFIXES: tx.ClassVar[tx.Tuple[str, ...]] = ("y_", "iy_")
     """
