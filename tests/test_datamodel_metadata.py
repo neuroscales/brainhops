@@ -679,3 +679,51 @@ def test_times_are_iso_strings() -> None:
     assert meta.acquisition_time.year == 2020
     assert meta.to_bids() == {"AcquisitionTime": "2020-01-02T03:04:05"}
 
+
+# ----------------------------------------------------------------------
+#   THE DATA MODEL FIELD
+# ----------------------------------------------------------------------
+
+
+def test_the_roots_carry_an_optional_keyword_only_field() -> None:
+    image = SingleScaleImage(np.zeros((2, 3)))
+    assert image.metadata is None
+    signature = inspect.signature(SingleScaleImage)
+    assert list(signature.parameters)[:2] == ["data", "transformations"]
+    assert (
+        signature.parameters["metadata"].kind is inspect.Parameter.KEYWORD_ONLY
+    )
+    affine = Affine(np.eye(4)[:3])
+    assert affine.metadata is None
+    assert list(inspect.signature(Translation).parameters)[-1] == "metadata"
+
+
+def test_the_field_converts_to_generic_metadata() -> None:
+    image = SingleScaleImage(
+        np.zeros((2, 3)), metadata={"description": "from a dict"}
+    )
+    assert type(image.metadata) is Metadata
+    assert image.metadata.description == "from a dict"
+    lite = LiteMetadata(description="d")
+    affine = Affine(np.eye(4)[:3], metadata=lite)
+    assert type(affine.metadata) is Metadata
+    assert affine.metadata.description == "d"
+
+
+def test_the_field_is_out_of_eq_and_repr() -> None:
+    a = SingleScaleImage(np.zeros(2), metadata=Metadata(description="a"))
+    b = SingleScaleImage(np.zeros(2), metadata=Metadata(description="b"))
+    assert "metadata" not in repr(a)
+    x = Affine(np.eye(3)[:2], metadata=Metadata(description="a"))
+    assert "metadata" not in repr(x)
+    for cls in (SingleScaleImage, Affine):
+        field = next(f for f in fields(cls) if f.name == "metadata")
+        assert not field.eq and not field.repr
+    assert a.metadata != b.metadata
+
+
+def test_replace_carries_the_metadata() -> None:
+    affine = Affine(np.eye(3)[:2], metadata=Metadata(description="a"))
+    assert replace(affine, matrix=2 * np.eye(3)[:2]).metadata.description == (
+        "a"
+    )

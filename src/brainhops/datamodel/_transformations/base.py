@@ -1,11 +1,13 @@
 # dependencies
 import typing_extensions as tx
+from bagof.magic import KwOnly, NoEq, NoRepr
 
 # api
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
@@ -102,6 +104,24 @@ class Transformation(DataModelBase, reverse=True):
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    # Keyword-only, so that it never shifts the positional arguments of a
+    # subclass, and out of `repr` and `==`: two transformations are equal
+    # when they map the same coordinates the same way.
+    metadata: tx.Annotated[
+        tx.Optional[Metadata],
+        tx.Doc(
+            """
+            Non-spatial metadata (description, provenance, the moving and
+            fixed images of a registration, ...), format-agnostic. A file
+            format narrows it to its own `FormatMetadata` subclass. See
+            [`brainhops.datamodel.metadata`][].
+            """
+        ),
+        KwOnly(),
+        NoRepr(),
+        NoEq(),
+    ] = None
 
     # --- methods ------------------------------------------------------
 
