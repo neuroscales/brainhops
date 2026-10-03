@@ -511,3 +511,22 @@ def test_fnirt_keeps_reading_intent_p_from_the_header() -> None:
     assert warp.metadata.intent == "fnirt disp field"
     assert float(warp.header["intent_p1"]) == 1.0
     assert warp.metadata.raw is warp.header
+
+
+# ----------------------------------------------------------------------
+#   USER GUIDE
+# ----------------------------------------------------------------------
+
+
+def test_the_user_guide_runs() -> None:
+    """`docs/start/metadata.md` is a runnable doctest."""
+    import doctest
+    from pathlib import Path
+
+    page = Path(__file__).parents[1] / "docs" / "start" / "metadata.md"
+    result = doctest.testfile(
+        str(page),
+        module_relative=False,
+        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE,
+    )
+    assert result.failed == 0

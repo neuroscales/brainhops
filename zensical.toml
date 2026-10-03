@@ -5,6 +5,7 @@ nav = [
     "index.md",
      {"Command-line interface" = "start/cli.md"},
      {"Python interface" = "start/python.md"},
+     {"Metadata" = "start/metadata.md"},
   ]},
   {"Command-line API" = [
     "cli/index.md",
@@ -26,6 +27,7 @@ nav = [
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
       "api/datamodel/kinds.md",
+      "api/datamodel/metadata.md",
     ]},
     {"io" = [
       "api/io/index.md",
@@ -77,6 +79,7 @@ nav = [
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         "api/io/transformations/zarr.md",
       ]},
+      {"metadata" = "api/io/metadata.md"},
       {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [

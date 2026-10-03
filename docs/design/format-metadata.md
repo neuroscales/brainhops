@@ -1,11 +1,19 @@
 # Design: format metadata and cross-format metadata conversion
 
-Status: design only, no code (draft PR #287). Answers #233. Builds on the
-io model (`FileBasedImage`, `FileBasedTransformation`,
+Status: design, with a phase-1 prototype (draft PR #287). Answers #233.
+Builds on the io model (`FileBasedImage`, `FileBasedTransformation`,
 `from_other`/`from_instance` in `io/base/_base.py`), on `DataModelBase`
 (#97, `bagof.magic`), and on the units memo (`units-polymorphism.md`) for
 where `Magic` polymorphism does and does not fit. Decisions are tagged
 `M1`..`M13` and collected at the end, followed by the open questions.
+
+> **Prototype note.** Phase 1 is prototyped on this branch: the framework
+> (`brainhops/datamodel/metadata.py`), the BIDS sidecar codec
+> (`brainhops/io/metadata/bids.py`), the `metadata` field on `Image` and
+> `Transformation`, and `NiftiMetadata` for `NiftiImage` and every
+> NIfTI-based transformation. The user guide is `docs/start/metadata.md`.
+> Deviations are recorded in notes like this one, at the section they
+> concern.
 
 The problem, in one sentence: every file format keeps its non-spatial
 metadata under a different name and type (`header`, `keyval`, `tags`,
@@ -151,6 +159,14 @@ Mrtrix` loses exactly what `Nifti -> Mrtrix` loses); `OpaqueMetadata` is
 the base of the formats that store nothing (FLIRT `.mat`, matrix text,
 ITK `.tfm`/`.mat`), where every field is unsupported and a read-then-save
 loses nothing because nothing is there.
+
+> **Prototype note.** `raw` is excluded from `==` as well as from `repr`:
+> two metadata objects are equal when their vocabulary and `extra` are.
+> The snapshot is the field `_decoded` (constructor keyword `decoded=`).
+> An unknown `format` builds the base `FormatMetadata` (which, like
+> `Metadata`, supports every field and has no record) rather than
+> `Metadata`: falling back to a sibling would need a catch-all `on=`
+> predicate.
 
 ## 4. Vocabulary (M3)
 
@@ -338,6 +354,22 @@ Rules:
   registers one identity converter for `Unsupported` with
   `register_converter`, as `DataModelConverter` already does.
 
+> **Prototype note.** Three deviations here.
+> (1) `supports=` and `derived=` are read by a metaclass,
+> `_FormatMetadataMeta(type(DataModelBase))`, not by `__init_subclass__`:
+> `bagof` builds the fields *before* `__init_subclass__` runs and does not
+> forward class keywords to it. The metaclass redeclares each unsupported
+> field in the class namespace (annotation + `= UNSUPPORTED`) before
+> `MetaMagic` sees it, which is exactly the hand-written spelling, so the
+> keyword stays sugar. It runs only for `FormatMetadata` subclasses (no
+> metaclass is added to any io class).
+> (2) `repr` *hides* `UNSUPPORTED` (and an empty `extra`), like `None`:
+> with the full vocabulary a NIfTI object printed 28 `UNSUPPORTED`
+> entries for 9 real ones. `unsupported_fields` and `supports(name)` (a
+> method that works on the class and on an instance) show capabilities.
+> (3) `Maybe[T]` needs no converter registration: `bagof`'s union
+> converter lets an `Unsupported` instance through untouched.
+
 ## 6. Precedence: raw record versus common fields (M6)
 
 Answer to issue question 5. Two models were weighed:
@@ -392,6 +424,18 @@ record; edit the record only for what the vocabulary does not cover*.
    and NRRD rule), so there is no second sentinel.
 
 `extra` is compared key by key against its snapshot in the same way.
+
+> **Prototype note.** The helpers are public and named for what they do:
+> `FormatMetadata.from_raw(raw, *, image=None, **values)` (reader: decode,
+> then snapshot the *converted* values, so a decoded list held as a tuple
+> is not a change), `changed_fields()` (the diff above, with `extra` as a
+> per-key diff whose `None` removes a key), `write_raw(raw=None, *,
+> image=None, report=None)` (writer: reports assigned-but-unsupported
+> fields as lost, then calls `_encode` with the changes) and
+> `check_writable(*, image=None)`. A writer passes its own fresh record to
+> `write_raw` (NIfTI builds a new header from the data model, copies the
+> safe slots of `raw` onto it, then encodes the changes), so
+> `_raw_or_default()` is only the fallback.
 
 **Snapshot lifetime.** `_decoded` is a real `Magic` field (private name,
 like `Transformation._input`), excluded from `repr` and `eq` and never
@@ -459,6 +503,12 @@ writable in that format. It is declared with `derived=("repetition_time",
 
 `derived_fields` is exposed next to `unsupported_fields`.
 
+> **Prototype note.** For NIfTI, `space` is derived too (the sform code
+> is the world space's name, which the writer takes from the data model),
+> so `derived=("repetition_time", "intent", "space")`. `intent` is
+> written from the field only when the writer set no intent and the
+> intent does not retype the axes.
+
 ## 7. Conversion and loss reporting (M7)
 
 Answer to issue question 3. Conversion is the data model's own path:
@@ -501,6 +551,21 @@ class ConversionReport(Magic):
     def __str__(self): ...                              # one readable paragraph
 ```
 
+> **Prototype note.** As specified, with a `lossy` property and
+> `merge()`. `MetadataLossError` derives from `Exception`, not
+> `ValueError`: `DataModelConverter` turns a `TypeError`/`ValueError`
+> raised during an implicit conversion into a `bagof` conversion error,
+> and a refused loss must surface as itself. The policy is a context
+> variable, `apply_loss_policy(report, on_loss=None)` is the one place a
+> report is acted on (writers call it), and `convert` is exported from
+> `brainhops.datamodel` as `convert_metadata` (the transformation
+> `convert` already exists). `_import` receives the constructor values,
+> `_import(other, values, *, report)`, so that a recovered loss can be
+> written into `values["extra"]`; the classmethod cannot otherwise reach
+> the object being built. `on_loss=` reaches `io.save` as a writer option
+> (`NiftiImage.save(path, on_loss="raise")`), popped before the header
+> overrides.
+
 Policy, from least to most strict: `"ignore"`, `"warn"` (default: one
 `MetadataLossWarning` per conversion or write carrying the report, not
 one per field), `"raise"` (`MetadataLossError`). It is a keyword on
@@ -524,6 +589,13 @@ vocabulary fields through their `Bids(...)` name (units already match),
 `extra`. `diffusion_bvalues/bvectors` are not sidecar keys; a separate
 `to_bvals_bvecs(image)` rotates them into voxel axes. Wiring sidecars
 into `io.load`/`io.save` (`sidecar=True`) is open question 8.
+
+> **Prototype note.** A vocabulary field with no BIDS key is written
+> under its name in CamelCase (`display_range` as `"DisplayRange"`), so
+> that a sidecar written by brainhops reads back whole; `channels` is a
+> list of objects with CamelCase keys, times are ISO strings. `to_bids`
+> takes `on_loss=` and reports the diffusion fields as lost.
+> `from_bids` also takes a JSON string or an open file.
 
 ## 8. Where `bagof.magic` is used, and where it is not (M4)
 
@@ -572,6 +644,11 @@ tags, through one method:
 def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
     """Metadata for an object derived from this one. Always a new object."""
 ```
+
+> **Prototype note.** `derive` gains `volumes_changed=False`, the flag
+> that "the volume count changed and no selection is known" needs.
+> `display_range` and `data_unit` are one value for all volumes, so a
+> selection keeps them. Nothing calls `derive` yet (follow-up PR).
 
 - `file`-scoped fields are kept, except `creation_time` (cleared) and
   `history`, to which `step` (a short string such as
@@ -659,6 +736,25 @@ conversion is what reports loss, so `MrtrixImage.from_other(nifti_image)`
 warns about the fields NIfTI carried that MRtrix cannot, with no code in
 `MrtrixImage` itself.
 
+> **Prototype note.** `NoEq()`/`NoRepr()` exist in `bagof.magic`, and the
+> root field is also `KwOnly()`, so it never shifts a positional argument
+> (`SingleScaleImage(data)`, `Affine(matrix, input, output)`): it lands
+> last in every signature. `_foreign_format_fields` needed no change:
+> `Image`/`Transformation` declare the field, so it is shared.
+> **Pitfall for format classes:** `bagof` takes an inherited field from
+> the *first* base that has it (each base carries its whole field table),
+> so the narrowed declaration must be on the class itself or on its first
+> base. `NiftiImage(NiftiParser, ...)` gets it from `NiftiParser`, but in
+> `NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation)`
+> the first base carries `Transformation`'s generic field. The NIfTI
+> transformations therefore declare `metadata: NiftiMetadataField` again
+> (`NiftiBasedTransformation`, `NiftiRASCoordinatesField`,
+> `NiftiRASDisplacementField`, `NiftiRASToVoxel`, `NiftiVoxelToRAS`,
+> `ItkNiftiField`, `SpmCoordinatesField`), a test checks every registered
+> NIfTI format, and the writer converts a foreign metadata object anyway.
+> The `metadata_fields` -> `encoding_fields` rename is not done in the
+> prototype: nothing needs it yet.
+
 **Name clash.** `Transformation.metadata_fields` means "meta-attributes
 that define the encoding" (`order`, `bound`, `coeff`). It is renamed
 `encoding_fields`, with a `metadata_fields` class property that returns
@@ -714,6 +810,28 @@ there is one, which is the NIfTI round-trip improvement: `slice_*`,
 `xyzt_units`, dtype and `scl_*` are still overridden from the data model
 and writer options. `NiftiBasedTransformation` reuses `NiftiMetadata`
 unchanged; FNIRT/NiftyReg/SPM keep reading `intent_p*` from `raw`.
+
+> **Prototype note (NIfTI).** `NiftiMetadata` lives in
+> `brainhops/io/base/_nifti_metadata.py`, next to the shared NIfTI parser
+> (`io/base/nifti.py`), and is re-exported from `io.images.nifti` and
+> `io.transformations.nifti`. `supports=` drops `generated_by` (NIfTI has
+> no slot for it) and `space` is derived (6.2). `NiftiParser` syncs the
+> metadata from the header in `__post_init__` (and when `header` is
+> assigned): an explicit `metadata=` without a record keeps its values over
+> the decoded ones. The writers build their header as before, then
+> `_apply_metadata` applies, lowest precedence first: the safe slots of
+> the record (`descrip`, `aux_file`, `cal_*`, `dim_info`, `slice_*` when
+> the slice axis kept its length, a non-structural intent for images, and
+> the extensions unless the writer added its own), then `like=` exactly as
+> before, then the changed common fields, then `**overrides`. So `like=`
+> sits above the record but below an explicit edit, which keeps the
+> existing `like=` behaviour. A slice timing that matches no NIfTI order
+> is lost *and* clears the record's slice fields (the user's value
+> replaced them). Header floats are single precision and are decoded as
+> the shortest decimal (`0.3`, not `0.30000001`). Known limitation, not
+> introduced here: the image writer does not store the time step
+> (`pixdim[4]` is written as 1), so the derived `repetition_time` of a
+> 4-D image reads back as 1.0 after a save.
 
 **MRtrix (key/value format).**
 
