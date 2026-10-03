@@ -52,9 +52,9 @@ from brainhops.io.transformations.zarr import _map
 
 from ._image import (
     ZarrImage,
-    merge_explicit,
     metadata_field,
     node_attributes,
+    sync_record,
     write_attributes,
 )
 from ._metadata import OmeZarrMetadata, OmeZarrRecord
@@ -207,16 +207,26 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
 
     def _sync_metadata(self) -> None:
         """
-        Read the metadata of the pyramid from its group, when it has not
-        been read yet, and give each level a derived copy of it.
+        Read the metadata of the pyramid from its group, when it was not
+        read from this group yet, and give each level a derived copy of
+        it.
         """
         node = self.node
         metadata = self.metadata
-        if node is None or (metadata is not None and metadata.raw is not None):
+        if node is None or (
+            metadata is not None
+            and metadata.raw is not None
+            and metadata.__dict__.get("_source") is node
+        ):
             return
-        record = OmeZarrRecord.from_attributes(self.ome, node_attributes(node))
-        self.metadata = metadata = merge_explicit(
-            OmeZarrMetadata, metadata, record, self
+        self.metadata = metadata = sync_record(
+            OmeZarrMetadata,
+            metadata,
+            node,
+            lambda: OmeZarrRecord.from_attributes(
+                self.ome, node_attributes(node)
+            ),
+            self,
         )
         for index, level in enumerate(self._layout["images"]):
             level.metadata = metadata.derive(grid_changed=index > 0)

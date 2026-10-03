@@ -263,20 +263,44 @@ def _color_out(
     return color
 
 
-def _default_window(image: tx.Any) -> tx.Dict[str, float]:
-    """The display window of a channel nothing says anything about: the
-    range of the data type (0..1 for floats)."""
-    dtype = None
+def _default_window(
+    image: tx.Any, report: tx.Optional[ConversionReport] = None
+) -> tx.Dict[str, float]:
+    """
+    The display window of a channel nothing says anything about.
+
+    OME-Zarr requires one. The window (`start`, `end`) is the range of
+    the values of the smallest level (cheap to read), and the allowed
+    range (`min`, `max`) that of the data type (of the values, for
+    floats); with no data, both are the range of the data type (0..1
+    for floats). It is reported as approximated in `report`, under
+    `"channels"`: nothing in the metadata gave it.
+    """
+    dtype = data = None
     try:
         dtype = np.dtype(image.images[0].data.dtype)
+        data = np.asarray(image.images[-1].data)
     except Exception:
         pass
-    if dtype is not None and dtype.kind in "iu":
-        info = np.iinfo(dtype)
+    if dtype is not None and dtype.kind in "iub":
+        info = np.iinfo(np.uint8 if dtype.kind == "b" else dtype)
         lo, hi = float(info.min), float(info.max)
     else:
         lo, hi = 0.0, 1.0
-    return {"min": lo, "max": hi, "start": lo, "end": hi}
+    start, end, where = lo, hi, "the range of the data type"
+    if data is not None and data.size:
+        values = data[np.isfinite(data)] if data.dtype.kind == "f" else data
+        if values.size:
+            start, end = float(values.min()), float(values.max())
+            where = "the range of the values of the smallest level"
+            if dtype is None or dtype.kind not in "iub":
+                lo, hi = start, end
+    if report is not None:
+        report.approximated["channels"] = (
+            f"display window not given, written as {where} "
+            f"({start:g}..{end:g})"
+        )
+    return {"min": lo, "max": hi, "start": start, "end": end}
 
 
 def _channel_count(image: tx.Any) -> int:
@@ -296,8 +320,14 @@ def _window(
     base: tx.Mapping[str, tx.Any],
     display_range: tx.Optional[tx.Tuple[float, float]],
     image: tx.Any,
+    report: ConversionReport,
 ) -> tx.Dict[str, float]:
-    window = dict(base) if base else _default_window(image)
+    if base:
+        window = dict(base)
+    else:
+        # A display range gives the window: only invented without one.
+        invented = report if display_range is None else None
+        window = _default_window(image, invented)
     if display_range is not None:
         start, end = (float(v) for v in display_range)
         window["start"], window["end"] = start, end
@@ -449,6 +479,7 @@ class OmeZarrMetadata(
                     base.get("window") or {},
                     channel.display_range or common,
                     image,
+                    report,
                 )
                 if channel.unit is not None:
                     report.approximated["channels"] = (
@@ -469,7 +500,7 @@ class OmeZarrMetadata(
                 ]
             for entry in entries:
                 entry["window"] = _window(
-                    entry.get("window") or {}, common, image
+                    entry.get("window") or {}, common, image, report
                 )
         omero["channels"] = entries
         raw.omero = omero

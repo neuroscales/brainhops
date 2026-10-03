@@ -190,11 +190,21 @@ def test_a_shared_window_is_the_display_range(tmp_path) -> None:  # noqa: ANN001
     assert [c.color for c in meta.channels] == ["FFFFFFFF", "FFFFFFFF"]
 
 
-def test_a_window_nothing_gives_is_the_dtype_range(tmp_path) -> None:  # noqa: ANN001
+def test_a_window_nothing_gives_is_the_data_range_and_reported(
+    tmp_path,  # noqa: ANN001
+) -> None:
     path = str(tmp_path / "p.zarr")
-    _pyramid(OmeZarrMetadata(channels=(Channel(), Channel()))).save(path)
+    pyramid = _pyramid(OmeZarrMetadata(channels=(Channel(), Channel())))
+    data = np.asarray(pyramid.images[-1].data)
+    with pytest.warns(MetadataLossWarning) as caught:
+        pyramid.save(path)
+    assert set(caught[0].message.report.approximated) == {"channels"}
     window = _attrs(path)["ome"]["omero"]["channels"][0]["window"]
-    assert (window["start"], window["end"]) == (0.0, 65535.0)
+    assert (window["start"], window["end"]) == (
+        float(data.min()),
+        float(data.max()),
+    )
+    assert (window["min"], window["max"]) == (0.0, 65535.0)
 
 
 # ----------------------------------------------------------------------

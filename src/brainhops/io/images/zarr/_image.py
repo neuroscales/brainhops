@@ -4,7 +4,6 @@ import copy
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
-from bagof.magic import Factory, KwOnly, NoEq, NoRepr
 
 # internals
 from brainhops._core.dependencies import da
@@ -18,6 +17,7 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     FormatMetadata,
     apply_loss_policy,
+    metadata_annotation,
 )
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
@@ -38,32 +38,38 @@ from ._metadata import ZarrMetadata
 
 def metadata_field(cls: tx.Type[FormatMetadata], doc: str) -> tx.Any:
     """The annotation of the narrowed `metadata` field of a Zarr class."""
-    return tx.Annotated[
-        cls, tx.Doc(doc), Factory(cls), KwOnly(), NoRepr(), NoEq()
-    ]
+    return metadata_annotation(cls, doc, default=cls)
 
 
-def merge_explicit(
+def sync_record(
     cls: tx.Type[FormatMetadata],
     metadata: tx.Optional[FormatMetadata],
-    record: tx.Any,
+    node: tx.Any,
+    read: tx.Callable[[], tx.Any],
     image: tx.Any = None,
 ) -> FormatMetadata:
     """
-    The metadata of a record that was just read, with the fields given
-    explicitly in `metadata` (without a record) over the decoded ones;
-    they count as changes on write.
+    The metadata of an object read from `node`.
+
+    A Zarr record is rebuilt from the attributes of the node on each
+    read, so the metadata remembers the node its record was read from:
+    a metadata read from `node` already (as `replace()` carries it) is
+    kept as it is. Otherwise the record is read (`read()`) and decoded,
+    and the fields that changed in `metadata` (all of them for one
+    built in memory) are set over the decoded ones, as changes (see
+    `FormatMetadata.with_record`).
     """
-    decoded = cls.from_raw(record, image=image)
+    if (
+        metadata is not None
+        and metadata.raw is not None
+        and metadata.__dict__.get("_source") is node
+    ):
+        return metadata
     if metadata is None:
-        return decoded
-    values = {}
-    for name in cls.vocabulary_fields + ("extra",):
-        value = getattr(metadata, name, None)
-        if value is None or (name == "extra" and not value):
-            value = getattr(decoded, name, None)
-        values[name] = value
-    return cls(raw=record, decoded=decoded._decoded, **values)
+        metadata = cls()
+    synced = metadata.with_record(read(), image=image)
+    synced.__dict__["_source"] = node
+    return synced
 
 
 def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
@@ -126,13 +132,16 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
 
     def _sync_metadata(self) -> None:
         """Read the metadata from the attributes of the array, when it
-        has not been read yet."""
+        was not read from this array yet."""
         node = self.node
-        metadata = self.metadata
-        if node is None or (metadata is not None and metadata.raw is not None):
+        if node is None:
             return
-        self.metadata = merge_explicit(
-            ZarrMetadata, metadata, node_attributes(node), self
+        self.metadata = sync_record(
+            ZarrMetadata,
+            self.metadata,
+            node,
+            lambda: node_attributes(node),
+            self,
         )
 
     def _write_metadata(self, node: tx.Any, on_loss: tx.Any) -> None:
