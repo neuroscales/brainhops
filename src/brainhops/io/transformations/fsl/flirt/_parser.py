@@ -20,6 +20,13 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
+from brainhops.io.transformations.base._metadata import (
+    metadata_field,
+    sync_metadata,
+)
+
+# locals
+from ._metadata import FlirtMetadata
 
 # The moving and reference images may be a nibabel header or image, or a
 # brainhops image. This is the type FLIRT accepts for either of them.
@@ -54,6 +61,22 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     ] = None
     """The reference image, a nibabel image or header, or a brainhops
     image."""
+
+    metadata: metadata_field(
+        FlirtMetadata,
+        """
+        The paths of the moving and reference images, when they were
+        read from files (`moving`, `fixed`). A `.mat` file stores no
+        metadata. See
+        [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
+        """,
+    )
+
+    def __post_init__(self) -> None:
+        parent = getattr(super(), "__post_init__", None)
+        if parent is not None:
+            parent()
+        sync_metadata(self, FlirtMetadata, None, image=self)
 
     # --- sniff --------------------------------------------------------
 

@@ -15,6 +15,7 @@ from brainhops._core.streams import preserve_position
 
 # io
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -23,6 +24,7 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
+from brainhops.io.transformations.base._metadata import metadata_field
 
 # locals
 from .._common import (
@@ -31,6 +33,7 @@ from .._common import (
     ItkTransformClass,
     _application_order,
 )
+from .._metadata import ItkMetadata
 from .._systems import _make_system
 
 # constants
@@ -87,6 +90,15 @@ class MatTransformParser(
     are stored straight into the `transformations` of the sequence that
     this parser is mixed into.
     """
+
+    metadata: metadata_field(
+        ItkMetadata,
+        """
+        None: an ITK `.mat` file stores no metadata, so every field is
+        unsupported. See
+        [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
+        """,
+    )
 
     # --- sniff --------------------------------------------------------
 
@@ -268,6 +280,7 @@ class MatTransformParser(
             If the transformation is not a single block, or not an ITK
             block or an affine between ITK's spaces.
         """
+        _check_metadata(self, kwargs.pop("on_loss", None))
         if byteorder == "=":
             byteorder = "<" if sys.byteorder == "little" else ">"
         if byteorder not in _BYTE_ORDERS:
@@ -292,6 +305,19 @@ class MatTransformParser(
 # ---------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------
+
+
+def _check_metadata(obj: tx.Any, on_loss: tx.Optional[str]) -> None:
+    """Report the metadata a `.mat` file cannot store (all of it)."""
+    metadata = getattr(obj, "metadata", None)
+    if metadata is None:
+        return
+    report = ConversionReport(source=metadata.format, target="itk")
+    if isinstance(metadata, ItkMetadata):
+        metadata.write_raw(None, report=report)
+    else:
+        report.lost.update(ItkMetadata._convert_from(metadata)[1].lost)
+    apply_loss_policy(report, on_loss, stacklevel=4)
 
 
 def _reject(error: tx.Union[bool, tx.Type[Exception]], message: str) -> float:

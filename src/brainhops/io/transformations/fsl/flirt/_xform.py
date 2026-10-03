@@ -10,10 +10,12 @@ from brainhops.datamodel import transformations as _xforms
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import FileBasedTransformation
+from brainhops.io.transformations.base._metadata import metadata_field
 
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
 from .._repr import stored_repr
+from ._metadata import FlirtMetadata
 from ._parser import FlirtMatrixParser
 
 
@@ -45,6 +47,18 @@ class FlirtTransform(
     # raise. Naming the raw field here keeps `_is_unparameterized()` (and so
     # `inverse()`) off that path.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
+
+    # Declared again here: the first base is not a data model, and
+    # `Affine` would otherwise give its generic `metadata`.
+    metadata: metadata_field(
+        FlirtMetadata,
+        """
+        The paths of the moving and reference images, when they were
+        read from files (`moving`, `fixed`). A `.mat` file stores no
+        metadata. See
+        [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
+        """,
+    )
 
     _input: _systems.CoordinateSystem = _systems.RASmm()
     _output: _systems.CoordinateSystem = _systems.RASmm()

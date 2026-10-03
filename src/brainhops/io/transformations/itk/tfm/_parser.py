@@ -18,8 +18,10 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
+from brainhops.io.transformations.base._metadata import metadata_field
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
+from .._metadata import ItkMetadata
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -51,6 +53,15 @@ class TfmTransformParser(
     are stored straight into the `transformations` of the sequence that
     this parser is mixed into.
     """
+
+    metadata: metadata_field(
+        ItkMetadata,
+        """
+        None: an ITK `.tfm` file stores no metadata, so every field is
+        unsupported. See
+        [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
+        """,
+    )
 
     # --- sniff --------------------------------------------------------
 

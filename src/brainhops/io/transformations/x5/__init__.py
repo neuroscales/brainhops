@@ -144,11 +144,16 @@ as `Sequence([t0, t1, t2])`. Which nodes are read is described in
 
 ## Metadata
 
-The datamodel holds no metadata. The JSON `Metadata` of every node --
-and its `Domain`, `Inverse`, `Jacobian` and other attributes -- is kept,
-as read, on the reader (`X5Transform.nodes`, `X5Transform.header`), and
-written back. A transformation built from scratch is written with no
-metadata.
+The JSON `Metadata` of the node a transformation is read from is decoded
+into its `metadata`, an [`X5Metadata`][]: every vocabulary field under
+its BIDS key (or its name in `CamelCase`), the other keys in `extra`. A
+chain of several nodes has no metadata of its own (composition does not
+merge): each node keeps its JSON, and writes it back. The JSON of every
+node -- and its `Domain`, `Inverse`, `Jacobian` and other attributes --
+is kept, as read, on the reader (`X5Transform.nodes`,
+`X5Transform.header`), and written back unchanged unless the metadata
+was edited. A transformation built from scratch that encodes a single
+node writes its metadata into that node.
 
 ## Not supported
 
@@ -173,11 +178,13 @@ __all__ = [
     "X5DisplacementField",
     "X5Domain",
     "X5Header",
+    "X5Metadata",
     "X5Node",
     "X5Transform",
     "X5TransformParser",
 ]
 
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
+from ._metadata import X5Metadata
 from ._struct import X5Domain, X5Header, X5Node
 from ._xform import X5Transform, X5TransformParser

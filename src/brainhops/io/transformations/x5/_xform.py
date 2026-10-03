@@ -15,6 +15,7 @@ from brainhops._core.properties import smartproperty
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
 
 # io
 from brainhops.io.base._base import register_format
@@ -25,9 +26,14 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
 )
 from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base._metadata import (
+    metadata_field,
+    sync_metadata,
+)
 
 # locals
 from ._blocks import node_to_transformation, transformation_to_nodes
+from ._metadata import X5Metadata
 from ._struct import (
     X5_VERSION,
     X5Header,
@@ -65,6 +71,38 @@ class X5TransformParser(
 
     file: tx.Optional[h5py.File] = None
     """The open HDF5 file, when read with `keep_open=True`."""
+
+    metadata: metadata_field(
+        X5Metadata,
+        """
+        The metadata of the node the transformation was read from,
+        decoded from its JSON `Metadata`, with `(header, node)` as its
+        record. A chain of several nodes has none of its own: its
+        nodes keep theirs, and write them back. See
+        [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata].
+        """,
+    )
+
+    def __post_init__(self) -> None:
+        parent = getattr(super(), "__post_init__", None)
+        if parent is not None:
+            parent()
+        index = self._metadata_index() if self.nodes else None
+        node = None if index is None else self.nodes[index]
+        sync_metadata(self, X5Metadata, (self.header, node), image=self)
+
+    def _metadata_index(self) -> tx.Optional[int]:
+        """The node the metadata is that of: the single node read, or
+        `None` for a chain of several (composition does not merge)."""
+        if self.position is not None:
+            return int(self.position)
+        if self.chain is not None:
+            chain = self.header.chains[self.chain]
+        elif self.header.chains:
+            chain = self.header.chains[0]
+        else:
+            return 0
+        return chain[0] if len(chain) == 1 else None
 
     # --- sniff --------------------------------------------------------
 
@@ -138,14 +176,19 @@ class X5TransformParser(
     # --- to -----------------------------------------------------------
 
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
-        header, nodes = self.to_struct()
+        on_loss = kwargs.pop("on_loss", None)
+        report = ConversionReport(target="x5")
+        header, nodes = self.to_struct(report=report)
+        apply_loss_policy(report, on_loss, stacklevel=4)
         return lambda h5file: write_x5(h5file, header, nodes)
 
     def to_h5(self, h5file: h5py.File, **kwargs) -> None:
         """Write this transformation into an empty HDF5 file."""
         self._h5_writer(**kwargs)(h5file)
 
-    def to_struct(self) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+    def to_struct(
+        self, report: tx.Optional[ConversionReport] = None
+    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
         """The header and the nodes that encode this object."""
         return self.header, list(self.nodes)
 
@@ -256,17 +299,27 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def to_struct(self) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+    def to_struct(
+        self, report: tx.Optional[ConversionReport] = None
+    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
         """
         The header and the nodes that encode this transformation.
+
+        The metadata is written into the JSON `Metadata` of the node it
+        belongs to (see `X5Metadata`); what cannot be written is
+        recorded in `report`.
 
         Raises
         ------
         UnrepresentableTransformationError
             If an element of the chain cannot be encoded in X5.
         """
+        if report is None:
+            report = ConversionReport(target="x5")
         if getattr(self, "_transformations", None) is None:
-            return self.header, list(self.nodes)
+            nodes = list(self.nodes)
+            index = self._metadata_index() if nodes else None
+            return self.header, self._write_metadata(nodes, index, report)
 
         blocks = self.__dict__.get("_x5_blocks", {})
         reused = {id(block): index for index, block in blocks.items()}
@@ -288,4 +341,30 @@ class X5Transform(
         header = replace(
             self.header, chains=chains, legacy=False, version=version
         )
-        return header, nodes
+        index = 0 if len(nodes) == 1 else None
+        return header, self._write_metadata(nodes, index, report)
+
+    def _write_metadata(
+        self,
+        nodes: tx.List[X5Node],
+        index: tx.Optional[int],
+        report: ConversionReport,
+    ) -> tx.List[X5Node]:
+        """Encode the metadata into node `index` (`None`: a chain of
+        several nodes, which has no node of its own)."""
+        metadata = self.metadata
+        if metadata is None:
+            return nodes
+        if not isinstance(metadata, X5Metadata):
+            metadata = X5Metadata.from_other(metadata)
+        report.source = metadata.format
+        node = None if index is None else nodes[index]
+        if node is None or metadata.node is not node:
+            # Not the node it was read from: everything is written.
+            metadata = replace(metadata, decoded={})
+        _, node = metadata.write_raw(
+            (self.header, node), image=self, report=report
+        )
+        if index is not None:
+            nodes[index] = node
+        return nodes
