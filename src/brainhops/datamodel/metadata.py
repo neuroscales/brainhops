@@ -259,6 +259,7 @@ from bagof.magic import (
 )
 
 # internals
+from brainhops._core.compat import own_annotations
 from brainhops._core.properties import Lazy, LazyField
 
 from .base import DataModelBase
@@ -1167,8 +1168,7 @@ _GROUP_CLASSES = (
 )
 
 GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {
-    group: tuple(group.__dict__.get("__annotations__", {}))
-    for group in _GROUP_CLASSES
+    group: tuple(own_annotations(group)) for group in _GROUP_CLASSES
 }
 """Each vocabulary group class, and the names of its fields."""
 
@@ -1356,7 +1356,7 @@ def _declare_supports(
             f"{name}: supports= names {sorted(unknown)}, which are not "
             f"vocabulary fields; expected some of {sorted(_VOCABULARY)}."
         )
-    annotations = dict(namespace.get("__annotations__", {}))
+    annotations = own_annotations(namespace)
     for field_name, (hint, default) in _VOCABULARY.items():
         if field_name in annotations or field_name in namespace:
             # Written out in the class body: the body wins.
@@ -1369,6 +1369,10 @@ def _declare_supports(
         else:
             annotations[field_name] = _unsupported_hint(field_name)
             namespace[field_name] = UNSUPPORTED
+    # On Python 3.14+ the body's annotations come as a lazy annotate
+    # function; it is replaced by the plain dict, as up to 3.13.
+    for key in ("__annotate__", "__annotate_func__"):
+        namespace.pop(key, None)
     namespace["__annotations__"] = annotations
     return supported
 
@@ -1770,16 +1774,16 @@ class Metadata(
 # The vocabulary, read off the class that declares it.
 for _name in ("extra",) + VOCABULARY:
     _field = next(f for f in fields(Metadata) if f.name == _name)
-    _owner = next(
-        c
+    _hint = next(
+        own_annotations(c)[_name]
         for c in Metadata.__mro__
-        if _name in c.__dict__.get("__annotations__", {})
+        if _name in own_annotations(c)
     )
     _VOCABULARY[_name] = (
-        _owner.__annotations__[_name],
+        _hint,
         _FACTORY if _name == "extra" else _field.default,
     )
-del _name, _field, _owner
+del _name, _field, _hint
 _set_capabilities(Metadata)
 
 
