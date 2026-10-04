@@ -115,7 +115,7 @@ _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 # The `metadata` field of every MGH-based class.
 MghMetadataField = MetadataField[
     MghMetadata,
-    Factory(MghMetadata),
+    Factory(),
     tx.Doc(
         """
         The metadata of the file: the MRI parameters of the footer (in

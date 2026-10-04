@@ -79,7 +79,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
 
     metadata: MetadataField[
         ZarrMetadata,
-        Factory(ZarrMetadata),
+        Factory(),
         tx.Doc(
             """
             The metadata of the array: the vocabulary, stored as a sidecar

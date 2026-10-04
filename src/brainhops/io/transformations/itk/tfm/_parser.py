@@ -57,7 +57,7 @@ class TfmTransformParser(
 
     metadata: MetadataField[
         ItkMetadata,
-        Factory(ItkMetadata),
+        Factory(),
         tx.Doc(
             """
             None: an ITK `.tfm` file stores no metadata, so every field is

@@ -80,7 +80,7 @@ class H5TransformParser(
 
     metadata: MetadataField[
         ItkH5Metadata,
-        Factory(ItkH5Metadata),
+        Factory(),
         tx.Doc(
             """
             The metadata of the file: the version of ITK that wrote it

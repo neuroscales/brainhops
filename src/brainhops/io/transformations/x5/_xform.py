@@ -82,7 +82,7 @@ class X5TransformParser(
 
     metadata: MetadataField[
         X5Metadata,
-        Factory(X5Metadata),
+        Factory(),
         tx.Doc(
             """
             The metadata of the node the transformation was read from,

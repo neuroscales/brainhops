@@ -96,7 +96,7 @@ class MatTransformParser(
 
     metadata: MetadataField[
         ItkMetadata,
-        Factory(ItkMetadata),
+        Factory(),
         tx.Doc(
             """
             None: an ITK `.mat` file stores no metadata, so every field is

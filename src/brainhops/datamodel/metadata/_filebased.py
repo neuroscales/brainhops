@@ -57,7 +57,7 @@ class FileBasedMetadata(Metadata):
         ),
         NoRepr(),
         NoEq(),
-        Factory(dict),
+        Factory(),
     ]
 
     # --- reading ------------------------------------------------------

@@ -54,7 +54,7 @@ class FlirtTransform(
     # `Affine` would otherwise give its generic `metadata`.
     metadata: MetadataField[
         FlirtMetadata,
-        Factory(FlirtMetadata),
+        Factory(),
         tx.Doc(
             """
             The paths of the moving and reference images, when they were

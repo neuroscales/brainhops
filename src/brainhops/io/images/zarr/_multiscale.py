@@ -62,7 +62,7 @@ from ._metadata import OmeZarrMetadata, OmeZarrRaw
 
 _OME_METADATA_FIELD = MetadataField[
     OmeZarrMetadata,
-    Factory(OmeZarrMetadata),
+    Factory(),
     tx.Doc(
         """
         The metadata of the pyramid: its name, and the channels and

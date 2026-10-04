@@ -63,7 +63,7 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
 
     metadata: MetadataField[
         FlirtMetadata,
-        Factory(FlirtMetadata),
+        Factory(),
         tx.Doc(
             """
             The paths of the moving and reference images, when they were

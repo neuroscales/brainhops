@@ -1274,9 +1274,7 @@ def test_a_format_class_given_to_the_generic_field_is_converted() -> None:
 
 def test_metadata_field_is_an_annotation() -> None:
     class Holder(Magic):
-        meta: MetadataField[
-            LiteMetadata, Factory(LiteMetadata), tx.Doc("Some metadata.")
-        ]
+        meta: MetadataField[LiteMetadata, Factory(), tx.Doc("Some metadata.")]
 
     field = next(f for f in fields(Holder) if f.name == "meta")
     assert not field.repr and not field.eq and field.kw

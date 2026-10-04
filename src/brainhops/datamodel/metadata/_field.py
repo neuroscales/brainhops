@@ -26,7 +26,7 @@ class MetadataField:
     ```python
     metadata: MetadataField[tx.Optional[Metadata], tx.Doc("...")] = None
     metadata: MetadataField[
-        NiftiMetadata, Factory(NiftiMetadata), tx.Doc("...")
+        NiftiMetadata, Factory(), tx.Doc("...")
     ]
     ```
 

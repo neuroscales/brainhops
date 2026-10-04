@@ -284,7 +284,7 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
 # `NiftiParser` in the MRO, and its generic declaration would win.
 NiftiMetadataField = MetadataField[
     NiftiMetadata,
-    Factory(NiftiMetadata),
+    Factory(),
     tx.Doc(
         """
         The metadata of the file: the common vocabulary decoded from the

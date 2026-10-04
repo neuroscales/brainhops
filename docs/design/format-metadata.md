@@ -173,7 +173,7 @@ class Metadata(
     """Common vocabulary + extras; the root, and the generic metadata."""
 
     format: str = "generic"  # discriminant, a real field (M4)
-    extra: Maybe[tx.Dict[str, tx.Any]] = Factory(dict)
+    extra: Maybe[tx.Dict[str, tx.Any]] = Factory(dict)  # not inferred: a union
     # supported_fields / unsupported_fields / lazy_fields:
     # ClassVars computed from the class keywords (M5, 6, 6.2)
 
@@ -186,7 +186,7 @@ class Metadata(
 class FileBasedMetadata(Metadata):  # mirrors FileBasedImage
     raw: NoRepr[NoEq[tx.Any]] = None  # format-private record (M6)
     # read-time snapshot, field name -> decoded value
-    _snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory(dict)
+    _snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory()
 
     @classmethod
     def from_raw(cls, raw, *, image=None, **values) -> tx.Self: ...
@@ -565,7 +565,7 @@ of what it decoded as the *snapshot*. On write, a common field is
 encoded over the record only when it differs from the snapshot:
 
 ```python
-_snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory(dict)  # name -> value
+_snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory()  # name -> value
 
 
 def update_raw(self, raw=None, *, image=None, on_loss=None, force=()):
@@ -842,8 +842,8 @@ gives the exact figure for a given instance and image.
 class ConversionReport(Magic):
     source: str
     target: str
-    lost: tx.Dict[str, tx.Any] = Factory(dict)  # field -> value dropped
-    approximated: tx.Dict[str, str] = Factory(dict)  # field -> what changed
+    lost: tx.Dict[str, tx.Any] = Factory()  # field -> value dropped
+    approximated: tx.Dict[str, str] = Factory()  # field -> what changed
     passed_through: tx.Tuple[str, ...] = ()  # extras moved to a store
 
     def raise_if_lossy(self): ...
@@ -1091,7 +1091,7 @@ prototype the field is written
 (`MetadataField[hint, *annotations]` is `Annotated[hint,
 ConvertTo(_EnsureCopy(hint)), KwOnly(), NoRepr(), NoEq(),
 *annotations]`), and a format narrows it as
-`MetadataField[NiftiMetadata, Factory(NiftiMetadata), tx.Doc("...")]`. Putting it on
+`MetadataField[NiftiMetadata, Factory(), tx.Doc("...")]`. Putting it on
 the data model rather than only on the file-based mixins is what lets
 `from_instance` copy it by name as a *shared* field (not a foreign
 format field), and lets an in-memory `Affine` or a resampled image carry
@@ -1382,7 +1382,7 @@ for a JSON-capable node.
 > which keeps a metadata whose raw record is the parser's and otherwise
 > uses `update_from_raw`; every parser uses it: NIfTI, MGH, Zarr,
 > OME-Zarr, x5, FLIRT, ITK `.h5`); the narrowed field is
-> `MetadataField[X5Metadata, Factory(X5Metadata), ...]`, whose converter
+> `MetadataField[X5Metadata, Factory(), ...]`, whose converter
 > converts on these plain-`Magic` parsers too.
 >
 > **Prototype note (ITK, FLIRT).** `ItkMetadata` (`format="itk"`) is an

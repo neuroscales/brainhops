@@ -115,6 +115,8 @@ class Metadata(
             "any free-form store a format has."
         ),
         Scope(FILE),
+        # Not `Factory()`: inferred from `Maybe[...]`, a union with
+        # `None`, the default would be `None`.
         Factory(dict),
     ]
 
