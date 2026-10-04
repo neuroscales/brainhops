@@ -20,7 +20,7 @@ attributes that are not OME metadata. What the vocabulary covers:
 | `channels` | `omero.channels`: `label`, `color`, `window.start`/`end` |
 | `display_range` | `omero.channels[*].window.start`/`end` |
 | `extra` | the other group attributes |
-| `data_type` (derived) | the data type of the arrays |
+| `data_type` (from the data) | the data type of the arrays |
 
 An omero color (`RRGGBB`) reads as an RGBA string (`RRGGBBFF`). The
 display range is read when every channel shares it, and written to every
@@ -29,7 +29,7 @@ it is the range of the data type (0 to 1 for floats). OME-Zarr has no
 unit for the values, so `data_unit` is unsupported, and the unit of a
 channel is dropped (approximated).
 
-In both, `data_type` is derived (see `derived=`): it is the data type of
+In both, `data_type` is derived (see `_geometry`): it is the data type of
 the array that was read, and a writer stores the array as it is, so a
 `data_type` that disagrees with it is reported as approximated.
 
@@ -140,7 +140,6 @@ class ZarrMetadata(
         TransformMetadata,
         "extra",
     ),
-    derived=("data_type",),
 ):
     """
     The metadata of a plain Zarr array: the vocabulary as a sidecar under
@@ -388,7 +387,6 @@ class OmeZarrMetadata(
     FileBasedMetadata,
     on={"format": "ome-zarr"},
     supports=("name", "channels", "display_range", "extra", "data_type"),
-    derived=("data_type",),
 ):
     """
     The metadata of an OME-Zarr multiscale pyramid; its raw record is an

@@ -9,7 +9,7 @@ from ..base import DataModelBase
 
 class _MetadataMeta(type(DataModelBase)):
     """
-    Passes the `supports=`, `derived=` and `lazy=` class keywords of a
+    Passes the `supports=` and `lazy=` class keywords of a
     `Metadata` subclass to `Metadata._declare` and `Metadata._finish`.
 
     A class hook cannot read them: `bagof` refuses class keywords it does
@@ -26,17 +26,15 @@ class _MetadataMeta(type(DataModelBase)):
         bases: tx.Tuple[type, ...],
         namespace: tx.Dict[str, tx.Any],
         supports: tx.Any = None,
-        derived: tx.Optional[tx.Iterable[str]] = None,
         lazy: tx.Optional[tx.Iterable[str]] = None,
         **kwargs: tx.Any,
     ) -> type:
         parent = next((b for b in bases if isinstance(b, metacls)), None)
         if parent is None:
             # `Metadata` itself, whose capabilities are in its body.
-            if (supports, derived, lazy) != (None, None, None):
+            if (supports, lazy) != (None, None):
                 raise TypeError(
-                    f"{name}: supports=, derived= and lazy= are for "
-                    f"Metadata subclasses."
+                    f"{name}: supports= and lazy= are for Metadata subclasses."
                 )
             return super().__new__(metacls, name, bases, namespace, **kwargs)
         if supports is not None:
@@ -44,5 +42,5 @@ class _MetadataMeta(type(DataModelBase)):
         cls = super().__new__(metacls, name, bases, namespace, **kwargs)
         if "__magic_discard__" not in name:
             # Not one of the transient classes `bagof` builds.
-            cls._finish(derived, lazy)
+            cls._finish(lazy)
         return cls

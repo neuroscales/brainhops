@@ -25,7 +25,6 @@ class MyMetadata(
     FileBasedMetadata,
     on={"format": "my"},  # polymorphic discriminant
     supports=(ProvenanceMetadata, "echo_time"),  # everything else UNSUPPORTED
-    derived=(),  # fields the geometry owns
     lazy=("history",),  # fields decoded on first access
 ):
     format: tx.Literal["my"] = "my"
@@ -65,14 +64,6 @@ name (`header`, `tags`, `node`) is a plain property over `raw`.
   refused at construction. `supported_fields` lists what the class
   stores, `unsupported_fields` the rest. A new vocabulary field is
   unsupported by every format until one opts in.
-- `derived=`: supported fields that are, for this format, a view of
-  geometry the data model owns (NIfTI `repetition_time` is the time
-  step, `pixdim[4]`). They are decoded on read. On write, the value the
-  data model gives (`_geometry`) is what the writer stores: a changed
-  field that disagrees with it is reported under `report.approximated`
-  and never reaches `_encode`, one that agrees is dropped silently, and
-  only a field the data model says nothing about is left to `_encode`.
-  `derived_fields` lists them.
 - `lazy=`: supported fields whose decoding would read a lazy part of the
   raw record (the MGH tags, after the whole compressed volume). Each
   gets a [`LazyField`][brainhops._core.properties.LazyField]
@@ -90,7 +81,7 @@ All the hooks are optional, and all private.
 | `_default_raw()` | an object built in memory | a fresh raw record |
 | `_decode(raw, *, image)` | `from_raw` | the vocabulary values of a raw record |
 | `_encode(raw, changed, *, image, report)` | `update_raw` | the raw record to write |
-| `_geometry(image)` | `update_raw` | the data model's values of the derived fields |
+| `_geometry(image)` | `update_raw` | the fields the data model owns, and their values |
 | `_check_raw(image)` | `check_writable` | the raw record a writer starts from |
 | `_import(other, values, *, report)` | `to`, `from_other` | recovered losses |
 | `_derive_raw(raw, *, grid_changed, volumes)` | `derive` | a scrubbed raw record |
@@ -113,9 +104,16 @@ All the hooks are optional, and all private.
   `changed["extra"]` is a per-key diff whose `None` values remove a key.
   Value-dependent loss goes in `report` (`report.lost[name] = value`,
   `report.approximated[name] = reason`). Returns the raw record to write.
-- `_geometry(image) -> dict`: the values the data model gives for the
-  derived fields (NIfTI: `{"repetition_time": <time step>}`), `None`
-  where it says nothing. Defaults to `{}`.
+- `_geometry(image) -> dict`: the fields that are, for this format, a
+  view of geometry the data model owns, and the values it gives for them
+  (NIfTI: `{"repetition_time": <time step>}`, `pixdim[4]`). This is the
+  single source of truth of the *derived* fields: they are decoded on
+  read like any other, but on write the data model's value is what the
+  writer stores. A changed field that disagrees with it is reported
+  under `report.approximated` and never reaches `_encode`, one that
+  agrees is dropped silently, and only a field the data model says
+  nothing about (left out, or `None`) is left to `_encode`. Defaults to
+  `{}`.
 - `_check_raw(image) -> raw`: the raw record
   [`check_writable`][brainhops.datamodel.metadata.FileBasedMetadata.check_writable]
   encodes over: what the writer would pass to `update_raw` (NIfTI: the

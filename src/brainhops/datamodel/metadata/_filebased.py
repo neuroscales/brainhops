@@ -221,10 +221,11 @@ class FileBasedMetadata(Metadata):
         writer keyword that must win over the record, such as MGH `tr=`;
         a `None` there clears the slot).
 
-        A derived field (`derived=`) for which the data model gives a
-        value (`_geometry`) is not encoded: the data model's value is
-        what the writer stores, and a changed value that disagrees with
-        it is reported as approximated. A field this format does not
+        A field for which the data model gives a value (`_geometry`: a
+        view of geometry, such as the NIfTI repetition time) is not
+        encoded: the data model's value is what the writer stores, and a
+        changed value that disagrees with it is reported as
+        approximated. A field this format does not
         support but that was assigned after construction is recorded as
         lost in `report`, as are the value-dependent losses `_encode`
         finds.
@@ -256,15 +257,12 @@ class FileBasedMetadata(Metadata):
         image: tx.Any,
         report: ConversionReport,
     ) -> None:
-        """Take out of `changed` the derived fields the data model gives,
-        and report those that disagree with it."""
-        names = sorted(type(self).derived_fields & changed.keys())
-        if image is None or not names:
+        """Take out of `changed` the fields the data model gives values
+        for (`_geometry`), and report those that disagree with it."""
+        if image is None or not changed:
             return
-        geometry = self._geometry(image)
-        for name in names:
-            given = geometry.get(name)
-            if given is None:
+        for name, given in self._geometry(image).items():
+            if given is None or name not in changed:
                 continue
             value = changed.pop(name)
             if value is not None and not _agrees(value, given):
@@ -317,8 +315,11 @@ class FileBasedMetadata(Metadata):
 
     def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
         """
-        The values the data model gives for the derived fields (NIfTI:
-        the time step of the image as `repetition_time`). A field left
+        The fields that are, for this format, a view of geometry the data
+        model owns, and the values it gives for them (NIfTI: the time
+        step of the image as `repetition_time`). This is what makes a
+        field derived: on write, the data model's value wins, and a
+        changed value that disagrees with it is reported. A field left
         out, or `None`, is one the data model says nothing about: its
         changed value is then left to `_encode`. Default: nothing.
         """

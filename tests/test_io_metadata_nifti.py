@@ -107,11 +107,6 @@ def test_the_record_is_the_header(scan) -> None:  # noqa: ANN001
 
 
 def test_capabilities() -> None:
-    assert NiftiMetadata.derived_fields == {
-        "repetition_time",
-        "intent",
-        "space",
-    }
     assert not NiftiMetadata.supports("extra")
     assert not NiftiMetadata.supports("echo_time")
     assert NiftiMetadata.supports("slice_timing")

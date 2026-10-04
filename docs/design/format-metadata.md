@@ -169,7 +169,7 @@ class Metadata(
 
     format: str = "generic"  # discriminant, a real field (M4)
     extra: Maybe[tx.Dict[str, tx.Any]] = Factory(dict)
-    # supported_fields / unsupported_fields / derived_fields / lazy_fields:
+    # supported_fields / unsupported_fields / lazy_fields:
     # ClassVars computed from the class keywords (M5, 6, 6.2)
 
     def to(self, cls=None, *, on_loss=None, report=None, **values): ...  # M7
@@ -387,8 +387,8 @@ order; endianness stays in the raw record. BIDS has no key for it; the
 name follows NIfTI/MRtrix "datatype". It is `grid`-scoped, so that
 `derive(grid_changed=True)` clears it (a resampled label map is not
 forced back to `uint8`), while a crop or a volume selection keeps it. It
-is not `derived=` (the data model does not own it), except where the
-format stores no element type but the array's own (Zarr, OME-Zarr).
+is not geometry-derived (the data model does not own it), except where
+the format stores no element type but the array's own (Zarr, OME-Zarr).
 
 > **Prototype note.** `data_type` is wired for NIfTI (`datatype`), MGH
 > (`type`; a type it cannot store is approximated by the nearest) and
@@ -522,7 +522,7 @@ Rules:
   `register_converter`, as `DataModelConverter` already does.
 
 > **Prototype note.** Three deviations here.
-> (1) `supports=`, `derived=` and `lazy=` are read by a metaclass,
+> (1) `supports=` and `lazy=` are read by a metaclass,
 > `_MetadataMeta(type(DataModelBase))` (an adaptor to the classmethods
 > `Metadata._declare` and `Metadata._finish`), not by `__init_subclass__`:
 > `bagof` builds the fields *before* `__init_subclass__` runs and does not
@@ -724,13 +724,13 @@ Some vocabulary fields are, *for one format*, a view of geometry the
 data model owns: NIfTI `repetition_time` (`pixdim[4]`), NIfTI `intent`
 (the code that types the vector axis), OME-Zarr `channels` when they
 come from the `c` axis. Such a field is neither unsupported nor freely
-writable in that format. It is declared with `derived=("repetition_time",
-...)` next to `supports=`, and:
+writable in that format. It is a supported field for which the format's
+**geometry hook** gives a value, and:
 
 - `_decode` fills it from the record (so it reads naturally);
-- on write, the data model wins, through a **geometry hook**,
+- on write, the data model wins, through the geometry hook,
   `_geometry(image) -> {field: value}`: the values the data model gives
-  for the derived fields (NIfTI: the time step of the image, the scale
+  for the fields that are views of its geometry (NIfTI: the time step of the image, the scale
   of its time axis, as `repetition_time`). The writer stores the data
   model's value (NIfTI writes the time step as `pixdim[4]`), and
   `update_raw` takes a changed derived field out of `changed` before
@@ -747,7 +747,13 @@ writable in that format. It is declared with `derived=("repetition_time",
   the value is then approximated is decided at write, where the
   geometry is known.
 
-`derived_fields` is exposed next to `supported_fields`.
+> **Prototype note.** A first prototype also declared these fields with
+> a class keyword, `derived=(...)`, exposed as `derived_fields`. It
+> decided nothing that `_geometry` did not: a field the hook gives no
+> value for reached `_encode` anyway, so NIfTI's `intent` and `space`
+> entries were documentation only, and possibly wrong. The keyword
+> went; `_geometry` is the single source of truth (a field is derived
+> when the hook gives a value for it).
 
 **The element type (`data_type`).** A writer stores the data with this
 precedence: an explicit `dtype=` writer option, then `metadata.data_type`
@@ -771,9 +777,10 @@ writers call.
 > other way round; the "same kind" condition keeps the common case (an
 > unchanged type round-trips) without either surprise.
 
-> **Prototype note.** For NIfTI, `space` is derived too (the sform code
-> is the world space's name, which the writer takes from the data model),
-> so `derived=("repetition_time", "intent", "space")`. `intent` is
+> **Prototype note.** For NIfTI, `space` follows the geometry too (the
+> sform code is the world space's name, which the writer takes from the
+> data model), but through `_encode`, which compares it with the codes
+> the writer set. `intent` is
 > written from the field only when the writer set no intent and the
 > intent does not retype the axes. `NiftiMetadata._geometry` gives only
 > `repetition_time` (the first scaling whose output has a time axis with
@@ -928,8 +935,8 @@ question 8.
   assigned to a field typed `NiftiMetadata` comes from `convert=True`
   plus the `DataModelConverter`, which already routes through
   `from_other`.
-- **A metaclass** (`_MetadataMeta`) passes `supports=`/`derived=`/
-  `lazy=` (M5, 6, 6.2) to `Metadata`: `bagof` refuses class keywords it
+- **A metaclass** (`_MetadataMeta`) passes `supports=`/`lazy=` (M5, 6)
+  to `Metadata`: `bagof` refuses class keywords it
   does not know and builds the fields before `__init_subclass__` runs.
   It is an adaptor only: it calls the classmethod `Metadata._declare`
   (which completes the namespace) before `bagof` builds the class, and
@@ -1135,7 +1142,7 @@ that define the encoding" (`order`, `bound`, `coeff`). It is renamed
 ## 11. Format sketches
 
 Base class and sentinel are in sections 3 and 5. A format writes
-`supports=`, optionally `derived=`, `_decode`, `_encode`, optionally
+`supports=`, `_decode`, `_encode`, optionally `_geometry` and
 `_import`.
 
 **NIfTI (image format, nibabel record).**
@@ -1146,8 +1153,7 @@ class NiftiMetadata(
     supports=("description", "intent", "space", "display_range", "slice_timing",
               "slice_encoding_direction", "phase_encoding_direction", "sources",
               "generated_by", "repetition_time", "data_type"),
-    derived=("repetition_time", "intent"),          # pixdim[4], axis-typing code
-):
+):  # `_geometry` gives `repetition_time` (pixdim[4], the time step)
     format: tx.Literal["nifti"] = "nifti"
     raw: NoRepr[NoEq[tx.Optional[nb.Nifti1Header]]] = None
     # extra, channels, history, echo_time, ... are UNSUPPORTED (no store; OQ 7)
@@ -1502,7 +1508,7 @@ from the old value, with a `DeprecationWarning` naming the replacement:
 
 1. *Framework* (~1,500): `brainhops/datamodel/metadata.py`
    (`Metadata`, `FileBasedMetadata`, `OpaqueMetadata`, the vocabulary
-   groups, `UNSUPPORTED`/`Maybe`, `supports=`/`derived=`/`lazy=`, the
+   groups, `UNSUPPORTED`/`Maybe`, `supports=`/`lazy=`, the
    vocabulary with `Bids`/`Scope` annotations, `ConversionReport` +
    policies, `to`, `derive`);
    `brainhops/io/metadata/bids.py` (sidecar codec); the `metadata` field
@@ -1590,8 +1596,8 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   image references are `moving`/`fixed`; `sources` is BIDS provenance.
 - **M4** `Magic` is used for the vocabulary fields (on mixins), for
   `from_other`/`from_instance` conversion, and for polymorphic
-  construction on a real `format` field (`pin+narrow`); a metaclass for
-  `supports=`/`derived=`/`lazy=`; not for the sentinel or the raw
+  construction on a real `format` field (`pin+narrow`); a metaclass
+  adaptor for `supports=`/`lazy=`; not for the sentinel or the raw
   record types.
 - **M5** `UNSUPPORTED` singleton; `Maybe[T]`; declared compactly with
   `supports=(...)` (names or groups; everything else unsupported), which
@@ -1601,11 +1607,11 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   copied across.
 - **M6** Overlay with change detection: a common field wins only when
   it differs from its read-time snapshot (a `Magic` field holding a
-  generic `Metadata`, which survives `replace`/`derive`); `None` clears
+  `dict` of the decoded values, which survives `replace`/`derive`); `None` clears
   the slot; raw record edits survive. The raw record field is `raw`,
   with a per-format read alias, and every name says "raw" (`from_raw`,
   `update_from_raw`, `update_raw`, `MghRaw`). Geometry-derived fields
-  (`derived=`) are read-only for that format: a geometry hook
+  are read-only for that format: a geometry hook
   (`_geometry(image)`) gives the data model's value, which the writer
   stores, and a changed value that disagrees with it is reported as
   `approximated` (never compared with the raw record). Decoding is

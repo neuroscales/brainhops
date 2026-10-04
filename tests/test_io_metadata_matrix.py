@@ -157,6 +157,13 @@ def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa
         assert getattr(back, name) == expected, name
 
 
+# The fields each format derives from the geometry of the data model.
+_GEOMETRY = {
+    NiftiMetadata: {"repetition_time", "intent", "space"},
+    ZarrMetadata: {"data_type"},
+}
+
+
 @pytest.mark.parametrize(
     "cls",
     [cls for cls, record in FORMATS.items() if record is not None],
@@ -171,9 +178,10 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
         # Only the ITK version is recorded: the fixture names ITK alone.
         assert back.generated_by == FULL["generated_by"]
         return
-    # Derived fields are geometry, which a bare record does not hold.
+    # Fields that are views of geometry (see `_geometry`), which a bare
+    # record does not hold.
     expected = set(VOCABULARY) & cls.supported_fields
-    expected -= cls.derived_fields
+    expected -= _GEOMETRY.get(cls, set())
     assert not report.lost
     for name in sorted(expected):
         assert getattr(back, name) == getattr(HUB, name), name

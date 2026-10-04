@@ -3,7 +3,7 @@ Tests for the format-agnostic metadata framework
 (`brainhops.datamodel.metadata`), on synthetic formats.
 
 What is checked: the `UNSUPPORTED` sentinel; the class hierarchy and the
-vocabulary groups; the `supports=`/`derived=`/`lazy=` class keywords; the
+vocabulary groups; the `supports=`/`lazy=` class keywords; the
 typed terms (enums, units, data types, encoding directions); the read-time
 snapshot and the change-detecting write (cases 1-4 of section 6 of the
 design memo); `to()`, conversion loss reports and the loss policies;
@@ -80,7 +80,6 @@ class LiteMetadata(
     FileBasedMetadata,
     on={"format": "test-lite"},
     supports=("description", "slice_timing", "history", "extra"),
-    derived=("slice_timing",),
 ):
     """A format that stores three fields and free-form keys."""
 
@@ -240,7 +239,7 @@ def test_repr_hides_none_and_unsupported() -> None:
 
 
 # ----------------------------------------------------------------------
-#   supports= / derived=
+#   supports=
 # ----------------------------------------------------------------------
 
 
@@ -250,7 +249,6 @@ def test_supports_lists_what_a_format_stores() -> None:
     assert LiteMetadata.supported_fields == supported
     # The complement is derived from the declaration.
     assert LiteMetadata.unsupported_fields == vocabulary - supported
-    assert LiteMetadata.derived_fields == {"slice_timing"}
     assert Metadata.supported_fields == vocabulary
     assert Metadata.unsupported_fields == frozenset()
     assert FileBasedMetadata.supported_fields == vocabulary
@@ -290,8 +288,6 @@ def test_a_subclass_inherits_and_may_change_its_capabilities() -> None:
     assert not Widens.supports("slice_timing")
     assert Widens(echo_time=0.03).echo_time == 0.03
     assert Widens().echo_time is None
-    # `derived=` is narrowed to what the subclass supports.
-    assert Widens.derived_fields == frozenset()
 
 
 def test_a_field_may_be_declared_unsupported_by_hand() -> None:
@@ -312,15 +308,6 @@ def test_wrong_declarations_are_refused() -> None:
     with pytest.raises(TypeError, match="not vocabulary"):
 
         class Typo(FileBasedMetadata, supports=("descr",)):
-            pass
-
-    with pytest.raises(TypeError, match="derived"):
-
-        class NotStored(
-            FileBasedMetadata,
-            supports=("description",),
-            derived=("echo_time",),
-        ):
             pass
 
 
@@ -851,7 +838,6 @@ class GeoMetadata(
     FileBasedMetadata,
     on={"format": "test-geo"},
     supports=("repetition_time",),
-    derived=("repetition_time",),
 ):
     """A format whose `repetition_time` is the image's time step (the
     image is a number here), or the record's when it has none."""

@@ -89,14 +89,6 @@ class Metadata(
         ),
     ] = frozenset()
 
-    derived_fields: tx.Annotated[
-        tx.ClassVar[tx.FrozenSet[str]],
-        tx.Doc(
-            "The vocabulary fields that this format derives from the "
-            "geometry of the data model (read-only on write)."
-        ),
-    ] = frozenset()
-
     lazy_fields: tx.Annotated[
         tx.ClassVar[tx.FrozenSet[str]],
         tx.Doc("The vocabulary fields decoded on first access."),
@@ -437,17 +429,13 @@ class Metadata(
         namespace["__annotations__"] = annotations
 
     @classmethod
-    def _finish(
-        cls,
-        derived: tx.Optional[tx.Iterable[str]] = None,
-        lazy: tx.Optional[tx.Iterable[str]] = None,
-    ) -> None:
+    def _finish(cls, lazy: tx.Optional[tx.Iterable[str]] = None) -> None:
         """
         Set the capabilities of a class once `bagof` has built it: its
         `supported_fields` (the fields whose default is not
-        `UNSUPPORTED`), `unsupported_fields`, `derived_fields` and
-        `lazy_fields` (declared, or inherited and narrowed to what it
-        supports), and a `LazyField` descriptor per lazy field.
+        `UNSUPPORTED`), `unsupported_fields` and `lazy_fields` (`lazy=`,
+        or the inherited ones it still supports), and a `LazyField`
+        descriptor per lazy field.
         """
         supported = frozenset(
             field.name
@@ -456,12 +444,16 @@ class Metadata(
         )
         cls.supported_fields = supported
         cls.unsupported_fields = frozenset(_FIELDS) - supported
-        cls.derived_fields = _declared(
-            cls, "derived", derived, cls.derived_fields, supported
-        )
-        cls.lazy_fields = _declared(
-            cls, "lazy", lazy, cls.lazy_fields, supported - {"extra"}
-        )
+        if lazy is None:
+            cls.lazy_fields = cls.lazy_fields & supported
+        else:
+            cls.lazy_fields = frozenset(lazy)
+            wrong = cls.lazy_fields - (supported - {"extra"})
+            if wrong:
+                raise TypeError(
+                    f"{cls.__name__} declares lazy={sorted(wrong)}, which "
+                    f"are not vocabulary fields it supports."
+                )
         for field in fields(cls):
             # Installed on every class that has a lazy field: a subclass
             # that redeclares the field (`supports=`) hides its parent's.
@@ -515,27 +507,6 @@ def _supported_names(
             f"vocabulary fields; expected some of {sorted(_FIELDS)}."
         )
     return frozenset(names)
-
-
-def _declared(
-    cls: type,
-    keyword: str,
-    names: tx.Optional[tx.Iterable[str]],
-    inherited: tx.FrozenSet[str],
-    allowed: tx.FrozenSet[str],
-) -> tx.FrozenSet[str]:
-    """The fields of a `derived=` or `lazy=` declaration (or, without
-    one, the inherited ones the class still supports)."""
-    if names is None:
-        return frozenset(inherited) & allowed
-    names = frozenset(names)
-    wrong = names - allowed
-    if wrong:
-        raise TypeError(
-            f"{cls.__name__} declares {keyword}={sorted(wrong)}, which are "
-            f"not vocabulary fields it supports."
-        )
-    return names
 
 
 def _declared_hint(name: str) -> tx.Any:

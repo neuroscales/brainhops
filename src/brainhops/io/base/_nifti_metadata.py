@@ -15,15 +15,17 @@ covers:
 | `phase_encoding_direction` | `dim_info` (a voxel axis, no polarity) |
 | `slice_timing` | `slice_code`, `slice_start`, `slice_end`, `slice_duration` |
 | `repetition_time` (derived) | `pixdim[4]` (the time step) |
-| `intent` (derived) | `intent_code` |
-| `space` (derived) | `sform_code` / `qform_code` |
+| `intent` (from the axes) | `intent_code` |
+| `space` (from the geometry) | `sform_code` / `qform_code` |
 | `data_type` | `datatype` (the writer's, see below) |
 
-The derived fields are views of geometry that the writer takes from the
-data model; a value that disagrees with it is reported, not written.
-`repetition_time` is the time step of the image (the scale of its time
-axis, `time_step`), which the writer stores as `pixdim[4]`; only an image
-whose data model has no time step gets the field's value there.
+`repetition_time`, `intent` and `space` are views of geometry that the
+writer takes from the data model; a value that disagrees with it is
+reported, not written. `repetition_time` is the time step of the image
+(the scale of its time axis, `time_step`), which the writer stores as
+`pixdim[4]` (`_geometry` gives it); only an image whose data model has no
+time step gets the field's value there. `intent` and `space` are checked
+against the codes the writer set from the axes and the world space.
 NIfTI has no free-form store, so `extra` is unsupported (open question 7
 of the design memo).
 
@@ -141,7 +143,6 @@ class NiftiMetadata(
         "sources",
         "repetition_time",
     ),
-    derived=("repetition_time", "intent", "space"),
 ):
     """
     The metadata of a NIfTI file; its raw record is the `nibabel` header.
