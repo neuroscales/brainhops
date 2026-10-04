@@ -248,60 +248,6 @@ class Metadata(
         apply_loss_policy(report, stacklevel=3)
         return obj
 
-    @classmethod
-    def _convert_from(
-        cls,
-        other: "Metadata",
-        args: tx.Tuple[tx.Any, ...] = (),
-        kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
-    ) -> tx.Tuple["Metadata", ConversionReport]:
-        """`from_instance`, returning the report instead of acting on it."""
-        kwargs = dict(kwargs or {})
-        same = _fits(other, cls)
-        # A copy keeps the most specific class.
-        target = type(other) if same else cls
-        report = ConversionReport(
-            source=_format_name(other), target=_format_name(target)
-        )
-        values = other._format_state() if same else {}
-        unsupported = target.unsupported_fields
-        for name in _FIELDS:
-            value = getattr(other, name, None)
-            if value is None or value is UNSUPPORTED:
-                continue
-            if name == "extra":
-                if not value:
-                    continue
-                value = dict(value)
-            if name in unsupported:
-                report.lost[name] = value
-                continue
-            values[name] = value
-        target._import(other, values, report=report)
-        values.update(kwargs)
-        return target(*args, **values), report
-
-    @classmethod
-    def _import(
-        cls,
-        other: "Metadata",
-        values: tx.Dict[str, tx.Any],
-        *,
-        report: ConversionReport,
-    ) -> None:
-        """
-        Recover losses of a conversion into this class: a hook for the
-        key/value formats (MRtrix, NRRD), whose free-form store can hold
-        what they have no slot for.
-
-        Called by `to` and `from_instance` with the source object, the
-        values about to be passed to the constructor (`values`, edited in
-        place) and the report, whose `lost` already lists what this class
-        cannot store. A format recovers a loss by moving the value into
-        `values["extra"]`, removing it from `report.lost` and adding its
-        name to `report.passed_through`. Default: nothing is recovered.
-        """
-
     # --- propagation --------------------------------------------------
 
     def derive(
@@ -346,6 +292,92 @@ class Metadata(
         )
         return type(self)(**values)
 
+    # --- BIDS ---------------------------------------------------------
+
+    @classmethod
+    def from_bids(cls, sidecar: tx.Any) -> "Metadata":
+        """
+        Read a BIDS JSON sidecar: a mapping, a JSON string, or a path.
+
+        Keys that name a vocabulary field (through its BIDS key) fill
+        that field; every other key lands in `extra`. The result is
+        generic `Metadata`.
+        """
+        from brainhops.io.metadata.bids import from_bids
+
+        return from_bids(sidecar)
+
+    def to_bids(
+        self, *, on_loss: tx.Optional[LossPolicy] = None
+    ) -> tx.Dict[str, tx.Any]:
+        """
+        The BIDS JSON sidecar (a JSON-serialisable `dict`) of this
+        metadata. The diffusion fields are not sidecar keys, and are
+        reported as lost, as is an encoding direction BIDS cannot write
+        (one that is not along a voxel axis).
+        """
+        from brainhops.io.metadata.bids import to_bids
+
+        return to_bids(self, on_loss=on_loss)
+
+    # --- conversion hook (key/value formats) --------------------------
+
+    @classmethod
+    def _import(
+        cls,
+        other: "Metadata",
+        values: tx.Dict[str, tx.Any],
+        *,
+        report: ConversionReport,
+    ) -> None:
+        """
+        Recover losses of a conversion into this class: a hook for the
+        key/value formats (MRtrix, NRRD), whose free-form store can hold
+        what they have no slot for.
+
+        Called by `to` and `from_instance` with the source object, the
+        values about to be passed to the constructor (`values`, edited in
+        place) and the report, whose `lost` already lists what this class
+        cannot store. A format recovers a loss by moving the value into
+        `values["extra"]`, removing it from `report.lost` and adding its
+        name to `report.passed_through`. Default: nothing is recovered.
+        """
+
+    # --- internals ----------------------------------------------------
+
+    @classmethod
+    def _convert_from(
+        cls,
+        other: "Metadata",
+        args: tx.Tuple[tx.Any, ...] = (),
+        kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
+    ) -> tx.Tuple["Metadata", ConversionReport]:
+        """`from_instance`, returning the report instead of acting on it."""
+        kwargs = dict(kwargs or {})
+        same = _fits(other, cls)
+        # A copy keeps the most specific class.
+        target = type(other) if same else cls
+        report = ConversionReport(
+            source=_format_name(other), target=_format_name(target)
+        )
+        values = other._format_state() if same else {}
+        unsupported = target.unsupported_fields
+        for name in _FIELDS:
+            value = getattr(other, name, None)
+            if value is None or value is UNSUPPORTED:
+                continue
+            if name == "extra":
+                if not value:
+                    continue
+                value = dict(value)
+            if name in unsupported:
+                report.lost[name] = value
+                continue
+            values[name] = value
+        target._import(other, values, report=report)
+        values.update(kwargs)
+        return target(*args, **values), report
+
     def _derive_values(
         self,
         *,
@@ -377,34 +409,6 @@ class Metadata(
         besides the fields (`FileBasedMetadata`: the raw record and the
         snapshot). None here."""
         return {}
-
-    # --- BIDS ---------------------------------------------------------
-
-    @classmethod
-    def from_bids(cls, sidecar: tx.Any) -> "Metadata":
-        """
-        Read a BIDS JSON sidecar: a mapping, a JSON string, or a path.
-
-        Keys that name a vocabulary field (through its BIDS key) fill
-        that field; every other key lands in `extra`. The result is
-        generic `Metadata`.
-        """
-        from brainhops.io.metadata.bids import from_bids
-
-        return from_bids(sidecar)
-
-    def to_bids(
-        self, *, on_loss: tx.Optional[LossPolicy] = None
-    ) -> tx.Dict[str, tx.Any]:
-        """
-        The BIDS JSON sidecar (a JSON-serialisable `dict`) of this
-        metadata. The diffusion fields are not sidecar keys, and are
-        reported as lost, as is an encoding direction BIDS cannot write
-        (one that is not along a voxel axis).
-        """
-        from brainhops.io.metadata.bids import to_bids
-
-        return to_bids(self, on_loss=on_loss)
 
     # --- class keywords (see `_MetadataMeta`) -------------------------
 

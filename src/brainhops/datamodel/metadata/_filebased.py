@@ -87,25 +87,7 @@ class FileBasedMetadata(Metadata):
             `supports=` (or `lazy=`) disagree, and which would otherwise
             drop the value without a report.
         """
-        decoded: tx.Dict[str, tx.Any] = {}
-        pending: tx.Dict[str, Lazy] = {}
-        for key, value in cls._decode(raw, image=image).items():
-            if value is None or value is UNSUPPORTED:
-                continue
-            if key not in cls.supported_fields:
-                raise TypeError(
-                    f"{cls.__name__}._decode returned {key}={value!r}, "
-                    f"but {cls.__name__} does not support {key!r}."
-                )
-            if isinstance(value, Lazy):
-                if key not in cls.lazy_fields:
-                    raise TypeError(
-                        f"{cls.__name__}._decode returned a Lazy {key!r}, "
-                        f"which is not one of its lazy= fields."
-                    )
-                pending[key] = value
-            else:
-                decoded[key] = value
+        decoded, pending = cls._checked_decode(raw, image)
         obj = cls(raw=raw, **decoded)
         # Snapshot the *converted* values, so that a decoded list held as
         # a tuple does not count as a change.
@@ -118,19 +100,6 @@ class FileBasedMetadata(Metadata):
         for key, value in values.items():
             setattr(obj, key, value)
         return obj
-
-    def copy(self) -> tx.Self:
-        """
-        A copy of this metadata, sharing its raw record.
-
-        The raw record (`raw`) is shared, as `replace()` shares it; the
-        snapshot and `extra` are copied, so editing the copy never edits
-        this object. A field still waiting to be decoded (see `lazy=`)
-        stays so in both.
-        """
-        new = super().copy()
-        new.__dict__["_snapshot"] = dict(self._snapshot)
-        return new
 
     def update_from_raw(self, raw: tx.Any, *, image: tx.Any = None) -> tx.Self:
         """
@@ -154,13 +123,7 @@ class FileBasedMetadata(Metadata):
         for key, value in changed.items():
             setattr(obj, key, value)
         if extra:
-            merged = dict(obj.extra or {})
-            for key, value in extra.items():
-                if value is None:
-                    merged.pop(key, None)
-                else:
-                    merged[key] = value
-            obj.extra = merged
+            obj.extra = _apply_diff(obj.extra or {}, extra)
         return obj
 
     # --- the change-detecting write -----------------------------------
@@ -241,25 +204,6 @@ class FileBasedMetadata(Metadata):
         self._check_derived(changed, image, report)
         return self._encode(raw, changed, image=image, report=report)
 
-    def _check_derived(
-        self,
-        changed: tx.Dict[str, tx.Any],
-        image: tx.Any,
-        report: ConversionReport,
-    ) -> None:
-        """Take out of `changed` the fields the data model gives values
-        for (`_geometry`), and report those that disagree with it."""
-        if image is None or not changed:
-            return
-        for name, given in self._geometry(image).items():
-            if given is None or name not in changed:
-                continue
-            value = changed.pop(name)
-            if value is not None and not _agrees(value, given):
-                report.approximated[name] = (
-                    f"derived from the data model ({_short(given)})"
-                )
-
     def check_writable(self, *, image: tx.Any = None) -> ConversionReport:
         """
         What a write of this object would lose, without writing it.
@@ -275,10 +219,20 @@ class FileBasedMetadata(Metadata):
         self.update_raw(self._check_raw(image), image=image, report=report)
         return report
 
-    def _raw_or_default(self) -> tx.Any:
-        if self.raw is not None:
-            return copy.deepcopy(self.raw)
-        return self._default_raw()
+    # --- copies -------------------------------------------------------
+
+    def copy(self) -> tx.Self:
+        """
+        A copy of this metadata, sharing its raw record.
+
+        The raw record (`raw`) is shared, as `replace()` shares it; the
+        snapshot and `extra` are copied, so editing the copy never edits
+        this object. A field still waiting to be decoded (see `lazy=`)
+        stays so in both.
+        """
+        new = super().copy()
+        new.__dict__["_snapshot"] = dict(self._snapshot)
+        return new
 
     # --- per-format hooks ---------------------------------------------
 
@@ -339,7 +293,58 @@ class FileBasedMetadata(Metadata):
         """
         return copy.deepcopy(raw)
 
-    # --- propagation --------------------------------------------------
+    # --- internals ----------------------------------------------------
+
+    @classmethod
+    def _checked_decode(
+        cls, raw: tx.Any, image: tx.Any
+    ) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, Lazy]]:
+        """`_decode`, split into the values and the lazy ones, and
+        checked against the declarations of the class (see `from_raw`)."""
+        decoded: tx.Dict[str, tx.Any] = {}
+        pending: tx.Dict[str, Lazy] = {}
+        for key, value in cls._decode(raw, image=image).items():
+            if value is None or value is UNSUPPORTED:
+                continue
+            if key not in cls.supported_fields:
+                raise TypeError(
+                    f"{cls.__name__}._decode returned {key}={value!r}, "
+                    f"but {cls.__name__} does not support {key!r}."
+                )
+            if not isinstance(value, Lazy):
+                decoded[key] = value
+            elif key in cls.lazy_fields:
+                pending[key] = value
+            else:
+                raise TypeError(
+                    f"{cls.__name__}._decode returned a Lazy {key!r}, "
+                    f"which is not one of its lazy= fields."
+                )
+        return decoded, pending
+
+    def _check_derived(
+        self,
+        changed: tx.Dict[str, tx.Any],
+        image: tx.Any,
+        report: ConversionReport,
+    ) -> None:
+        """Take out of `changed` the fields the data model gives values
+        for (`_geometry`), and report those that disagree with it."""
+        if image is None or not changed:
+            return
+        for name, given in self._geometry(image).items():
+            if given is None or name not in changed:
+                continue
+            value = changed.pop(name)
+            if value is not None and not _agrees(value, given):
+                report.approximated[name] = (
+                    f"derived from the data model ({_short(given)})"
+                )
+
+    def _raw_or_default(self) -> tx.Any:
+        if self.raw is not None:
+            return copy.deepcopy(self.raw)
+        return self._default_raw()
 
     def _derive_values(
         self,
@@ -404,6 +409,20 @@ def _extra_diff(
         if key not in after:
             diff[key] = None
     return diff
+
+
+def _apply_diff(
+    mapping: tx.Mapping[str, tx.Any], diff: tx.Mapping[str, tx.Any]
+) -> tx.Dict[str, tx.Any]:
+    """A copy of `mapping` with an `extra` diff applied (`None` removes
+    a key)."""
+    out = dict(mapping)
+    for key, value in diff.items():
+        if value is None:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
 
 
 def _agrees(value: tx.Any, given: tx.Any) -> bool:
