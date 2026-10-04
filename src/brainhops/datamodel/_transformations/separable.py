@@ -58,7 +58,7 @@ def pull_separable(
     data: tx.Any,
     seq: Transformation,
     *,
-    order: int,
+    degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
     copy: bool = False,
@@ -92,8 +92,8 @@ def pull_separable(
     seq : Transformation
         The transformation from the output grid to the data coordinates,
         before it is computed.
-    order : {0..5}
-        The interpolation order.
+    degree : {0..5}
+        The spline degree.
     bound : str or float
         The boundary condition, as accepted by
         [`pull`][brainhops._core.bsplines.pull].
@@ -117,7 +117,7 @@ def pull_separable(
     array-like
         The resliced data, of the shape of the output grid.
     """
-    opt = dict(order=order, bound=bound, coeff=coeff)
+    opt = dict(degree=degree, bound=bound, coeff=coeff)
     steps = _plan(tuple(data.shape), seq, **opt)
     if steps is None:
         # The monolithic pull writes into an array it allocates, so its
@@ -268,7 +268,7 @@ def _classify(
     group: dict,
     shape: tx.Tuple[int, ...],
     data_shape: tx.Tuple[int, ...],
-    order: int,
+    degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
     grid_system: tx.Optional[tx.Any],
@@ -301,15 +301,15 @@ def _classify(
         unit = abs(abs(scale) - 1.0) == 0.0 and integer_shift
         # The gather returns the input sample itself. That matches the
         # monolithic pull only when the pull returns the same sample. With
-        # spline coefficients at order two or above the pull returns the
+        # spline coefficients at degree two or above the pull returns the
         # reconstruction of the coefficients, not the raw coefficient, and
         # scipy's `reflect` prefilter is not exactly interpolating above
-        # order one. For a continuous axis those cases take the weight-matrix
+        # degree one. For a continuous axis those cases take the weight-matrix
         # path instead, which reproduces the reconstruction exactly.
-        gather = order <= 1 or (not coeff and bound != "reflect")
+        gather = degree <= 1 or (not coeff and bound != "reflect")
         # A discrete axis holds no value between its samples, so a
         # whole-sample map along it is always an exact gather. It must never
-        # be interpolated or blended across, even at order two and above
+        # be interpolated or blended across, even at degree two and above
         # where the monolithic pull would mix its samples.
         kind = "gather" if unit and (gather or discrete) else "matrix"
 
@@ -333,7 +333,7 @@ def _classify(
             grid_axes[0],
             scale,
             shift,
-            order,
+            degree,
             bound,
             coeff,
             data_shape,
@@ -344,7 +344,7 @@ def _classify(
         # sampled with the batched pull instead. The result is the same as
         # the weight-matrix path.
         step["run"] = _make_pull(
-            inner, data_axes, grid_axes, shape, order, bound, coeff
+            inner, data_axes, grid_axes, shape, degree, bound, coeff
         )
     return step
 
@@ -399,7 +399,7 @@ def _check_discrete(
 
 
 def _order_steps(
-    steps: tx.List[dict], order: int, coeff: bool
+    steps: tx.List[dict], degree: int, coeff: bool
 ) -> tx.List[dict]:
     # Order the steps so the intermediate arrays stay small. The steps act
     # on disjoint axes and commute, so ordering changes only the cost. A
@@ -421,8 +421,8 @@ def _order_steps(
             # so its per-element cost times the ratio is the output size.
             c = float(n_in)
         else:
-            c = float((order + 1) ** k)
-        a = k * order if (order > 1 and not coeff) else 0
+            c = float((degree + 1) ** k)
+        a = k * degree if (degree > 1 and not coeff) else 0
         step["_r"] = r
         step["_w"] = a + c * r
 
@@ -441,7 +441,7 @@ def _order_steps(
 def _plan(
     data_shape: tx.Tuple[int, ...],
     seq: Transformation,
-    order: int,
+    degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> tx.Optional[tx.List[dict]]:
@@ -467,7 +467,7 @@ def _plan(
             group,
             tuple(grid.shape),
             tuple(data_shape),
-            order,
+            degree,
             bound,
             coeff,
             grid.output,
@@ -475,7 +475,7 @@ def _plan(
         )
         for group in groups
     ]
-    return _order_steps(steps, order, coeff)
+    return _order_steps(steps, degree, coeff)
 
 
 # ----------------------------------------------------------------------
@@ -528,7 +528,7 @@ def _make_gather(
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
-        # Order-0 weights turn each output coordinate into the single input
+        # Degree-0 weights turn each output coordinate into the single input
         # sample it lands on. A row that sums to zero fell outside the grid
         # under a constant boundary, and takes the fill value.
         # FOLLOW-UP: `spline_matrix` builds an `n_in x n_in` identity to
@@ -561,7 +561,7 @@ def _make_matrix(
     g: int,
     scale: float,
     shift: float,
-    order: int,
+    degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
     data_shape: tx.Tuple[int, ...],
@@ -574,7 +574,7 @@ def _make_matrix(
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = ab.arange(n_out) * scale + shift
-        weights = spline_matrix(n_in, coords, order, bound, coeff)
+        weights = spline_matrix(n_in, coords, degree, bound, coeff)
         out = ab.moveaxis(
             ab.tensordot(arr, weights, axes=([axis], [1])), -1, axis
         )
@@ -597,7 +597,7 @@ def _make_pull(
     data_axes: tx.List[int],
     grid_axes: tx.List[int],
     shape: tx.Tuple[int, ...],
-    order: int,
+    degree: int,
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> tx.Callable:
@@ -612,7 +612,7 @@ def _make_pull(
     def run(arr: tx.Any, labels: tx.List[tx.Any]) -> tx.Tuple[tx.Any, list]:
         coords = Sequence(transformations=chain).compute().field
         positions = [labels.index(("data", d)) for d in data_axes]
-        moved = pull_axes(arr, coords, positions, order, bound, coeff)
+        moved = pull_axes(arr, coords, positions, degree, bound, coeff)
         used = set(positions)
         remaining = [labels[i] for i in range(len(labels)) if i not in used]
         labels = remaining + [("grid", g) for g in grid_axes]

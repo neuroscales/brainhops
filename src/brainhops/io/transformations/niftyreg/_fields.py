@@ -32,6 +32,7 @@ from brainhops.io.base.nifti import (
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
+    _nifti_vector_field,
     _NiftiObject,
 )
 from brainhops.io.base.parsers import (
@@ -236,8 +237,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     Abstract: it is not decorated with `@register_format`.
     """
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """The boundary condition used outside of the field of view."""
@@ -298,8 +299,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         backend = get_array_backend(data)
         data = backend.asarray(data)
         shape = tuple(int(d) for d in data.shape)
-        if len(shape) == 5 and shape[3] == 1:
-            data = data[:, :, :, 0, :]
+        data = _nifti_vector_field(data)
         if data.ndim != _NDIM + 1 or int(data.shape[-1]) != _NDIM:
             raise ParserContentError(
                 f"A three-dimensional NiftyReg field is stored as a "
@@ -317,7 +317,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         return ras_displacement_chain(
             self._displacements(vox2world),
             vox2world,
-            order=self.order,
+            degree=self.degree,
             bound=self.bound,
             coeff=self.coeff,
         )
@@ -494,8 +494,8 @@ class NiftyRegDeformationField(NiftyRegSequence):
 # ----------------------------------------------------------------------
 
 
-_GRID_ORDER = {CUB_SPLINE_GRID: 3, LIN_SPLINE_GRID: 1}
-"""The B-spline order of each kind of control-point grid."""
+_GRID_DEGREE = {CUB_SPLINE_GRID: 3, LIN_SPLINE_GRID: 1}
+"""The B-spline degree of each kind of control-point grid."""
 
 
 @register_format
@@ -530,9 +530,9 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
     the displacement of the nearest control point (`get_GridValues`),
     which the `nearest` boundary condition on the coefficients
     reproduces. A linear grid is a field of linearly interpolated
-    positions on the control points, read the same way at order 1.
+    positions on the control points, read the same way at degree 1.
 
-    The chain is that of [`NiftyRegSequence`][], with order 3 and
+    The chain is that of [`NiftyRegSequence`][], with degree 3 and
     coefficients. When the header carries an affine in its extensions
     (as the grids of a symmetric registration do), NiftyReg applies it
     to the reference position before the spline
@@ -549,22 +549,22 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
 
     @property
-    def order(self) -> int:
-        """The B-spline order of the grid: 3, or 1 for a linear grid."""
+    def degree(self) -> int:
+        """The B-spline degree of the grid: 3, or 1 for a linear grid."""
         if self.header is not None:
             kind = _niftyreg_type(self.header)
-            if kind in _GRID_ORDER:
-                return _GRID_ORDER[kind]
+            if kind in _GRID_DEGREE:
+                return _GRID_DEGREE[kind]
         chain = getattr(self, "_transformations", None)
         if chain:
-            return int(chain[-2].order)
+            return int(chain[-2].degree)
         return 3
 
     @property
     def coeff(self) -> bool:
         """Whether the grid holds spline coefficients: so it does, at any
-        order above one (at order one, coefficients are values)."""
-        return self.order > 1
+        degree above one (at degree one, coefficients are values)."""
+        return self.degree > 1
 
     def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
         positions = self._stored_vectors()
@@ -605,15 +605,15 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             affine = homogeneous_matrix(chain[0], self._WHAT, _NDIM)
             extensions.append(affine)
             chain = chain[1:]
-        order = int(getattr(chain[1], "order", 3)) if len(chain) == 3 else 3
-        kinds = {order: kind for kind, order in _GRID_ORDER.items()}
-        if order not in kinds:
+        degree = int(getattr(chain[1], "degree", 3)) if len(chain) == 3 else 3
+        kinds = {degree: kind for kind, degree in _GRID_DEGREE.items()}
+        if degree not in kinds:
             raise WriterError(
                 f"NiftyReg stores cubic (3) and linear (1) control-point "
-                f"grids, not grids of order {order}."
+                f"grids, not grids of degree {degree}."
             )
         vox2world, vectors = split_ras_displacement_chain(
-            chain, self._WHAT, ndim=_NDIM, coeff=order > 1
+            chain, self._WHAT, ndim=_NDIM, coeff=degree > 1
         )
         backend = get_array_backend(vectors)
         grid = voxel_grid_coordinates(
@@ -621,7 +621,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
         )
         positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
         return self._write(
-            positions, vox2world, kinds[order], like, extensions, **overrides
+            positions, vox2world, kinds[degree], like, extensions, **overrides
         )
 
 

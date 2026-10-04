@@ -44,8 +44,8 @@ from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
 from brainhops.io.transformations.zarr._axes import _to_axis
 
-#: The brainhops spline order each OME interpolation name maps to.
-_INTERPOLATION_ORDER = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
+#: The brainhops spline degree each OME interpolation name maps to.
+_INTERPOLATION_DEGREE = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
 
 #: The placement of one level: its array path with the OME coordinate
 #: transformation that places it, ready for the metadata.
@@ -235,13 +235,13 @@ def _make_read_field(
             # just dimension names. Match those names against the image axes
             # to find the component axis.
             data = _field_from_names(raw, field_node, store_axes, kind, path)
-        order = _INTERPOLATION_ORDER.get(
+        degree = _INTERPOLATION_DEGREE.get(
             getattr(transform, "interpolation", None), 1
         )
         field_cls = (
             DisplacementField if kind == "displacements" else CoordinatesField
         )
-        return field_cls(field=data, order=order)
+        return field_cls(field=data, degree=degree)
 
     return read_field
 

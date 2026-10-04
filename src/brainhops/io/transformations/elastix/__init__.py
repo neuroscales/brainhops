@@ -72,7 +72,7 @@ are not transforms.
 | `AffineTransform`            | `M` row-major, `t` (D² + D)                    | `AffineTransform`         |
 | `AffineLogTransform`         | `log M` row-major, `t` (D² + D)                | `AffineTransform`, `M = expm(log M)` |
 | `AffineDTITransform`         | angles, shears, scales, `t` (7 / 12)           | `AffineTransform`         |
-| `BSplineTransform`, `RecursiveBSplineTransform` | coefficients (D x grid)     | `BSplineTransform`, of order `BSplineTransformSplineOrder` |
+| `BSplineTransform`, `RecursiveBSplineTransform` | coefficients (D x grid)     | `BSplineTransform`, of degree `BSplineTransformSplineOrder` |
 
   The center is `CenterOfRotationPoint` (world coordinates). Maps that
   carry ITK's own `ITKTransformParameters` / `ITKTransformFixedParameters`
@@ -148,7 +148,7 @@ The fixed-image geometry and the other parameters of the map are kept.
 
 Verified against transformix (ITK-Elastix 0.25.4): every
 transform above in 2-D and 3-D where elastix has it, both Euler angle
-orders, B-splines of orders 1, 2 and 3 with a non-zero `GridIndex` and an
+orders, B-splines of degrees 1, 2 and 3 with a non-zero `GridIndex` and an
 oblique `GridDirection`, non-symmetric fixed-image directions, two- and
 three-link chains (including the deprecated key), and the TOML syntax --
 see `tests/data/elastix/generate_elastix_fixtures.py`. The source

@@ -1,7 +1,7 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory
+from bagof.magic import Factory, KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
@@ -65,8 +65,8 @@ class FlirtTransform(
         ),
     ]
 
-    _input: _systems.CoordinateSystem = _systems.RASmm()
-    _output: _systems.CoordinateSystem = _systems.RASmm()
+    _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+    _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
     # `matrix` is computed on demand from the raw FLIRT matrix and the two
     # image geometries, so it is not a stored, constructor-taken field

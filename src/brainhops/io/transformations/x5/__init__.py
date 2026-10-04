@@ -118,10 +118,10 @@ nitransforms maps a RAS point `x` to `x + sum_k c_k B3(i(x) - k)`
 (`nonlinear.py`, `_map_xyz`), where `i(x)` are the coordinates of `x`
 in the grid of knots, and `B3` is the tensor product of centred cubic
 B-splines (`interp/bspline.py`, `_cubic_bspline`); only knots that
-exist contribute, so coefficients beyond the grid are zero. The order
+exist contribute, so coefficients beyond the grid are zero. The degree
 is not stored: nitransforms evaluates cubics only. This is the chain
 RAS to knot voxel, a `DisplacementField` of coefficients (`coeff=True`,
-order 3, zero boundary) rotated into knot units, knot voxel to RAS --
+degree 3, zero boundary) rotated into knot units, knot voxel to RAS --
 the same chain as a dense field of displacements, and the same
 knot-grid convention as an ITK `BSplineTransform`
 ([`brainhops.io.transformations.itk`][]), whose fixed parameters place

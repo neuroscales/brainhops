@@ -179,7 +179,7 @@ class SingleScaleImage(Image):
         geometry: tx.Optional[
             tx.Union[tx.Self, Geometry, Transformation]
         ] = None,
-        order: int = 1,
+        degree: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -199,8 +199,8 @@ class SingleScaleImage(Image):
             output image. Otherwise, the current shape of the image is used.
 
             If it is `None`, the image is resampled onto its own grid.
-        order : {0..5}
-            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        degree : {0..5}
+            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
         bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
             The boundary condition. If a string, one of:
             - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -229,7 +229,7 @@ class SingleScaleImage(Image):
         Image
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
 
         # Guess geometry of output image
         if geometry is None:
@@ -423,7 +423,7 @@ class MultiScaleImage(Image):
         geometry: tx.Optional[
             tx.Union[Image, Geometry, Transformation]
         ] = None,
-        order: int = 1,
+        degree: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -449,8 +449,8 @@ class MultiScaleImage(Image):
             If provided, it is used to compute the geometry of each
             level in the output pyramid. If not provided, this function
             returns a single-scale image instead.
-        order : {0..5}
-            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        degree : {0..5}
+            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
         bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
             The boundary condition. If a string, one of:
             - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -479,7 +479,7 @@ class MultiScaleImage(Image):
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),

@@ -57,12 +57,12 @@ def _(t: Transformation, **kwargs) -> Transformation:
 def _(t: DisplacementField, **kwargs) -> DisplacementField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get("coeff", t.coeff):
-            field = coeff2value_field(t.field, order=t.order, bound=t.bound)
+            field = coeff2value_field(t.field, degree=t.degree, bound=t.bound)
             kwargs["field"] = field
         elif not t.coeff and kwargs.get("coeff", t.coeff):
-            order = kwargs.get("order", t.order)
+            degree = kwargs.get("degree", t.degree)
             bound = kwargs.get("bound", t.bound)
-            field = value2coeff_field(t.field, order=order, bound=bound)
+            field = value2coeff_field(t.field, degree=degree, bound=bound)
             kwargs["field"] = field
     return smart_replace(t, **kwargs)
 
@@ -71,12 +71,12 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
 def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
     if "field" not in kwargs and t.field is not None:
         if t.coeff and not kwargs.get("coeff", t.coeff):
-            field = coeff2value_field(t.field, order=t.order, bound=t.bound)
+            field = coeff2value_field(t.field, degree=t.degree, bound=t.bound)
             kwargs["field"] = field
         if not t.coeff and kwargs.get("coeff", t.coeff):
-            order = kwargs.get("order", t.order)
+            degree = kwargs.get("degree", t.degree)
             bound = kwargs.get("bound", t.bound)
-            field = value2coeff_field(t.field, order=order, bound=bound)
+            field = value2coeff_field(t.field, degree=degree, bound=bound)
             kwargs["field"] = field
     return smart_replace(t, **kwargs)
 

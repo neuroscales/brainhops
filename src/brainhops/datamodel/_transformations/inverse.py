@@ -439,7 +439,7 @@ class InverseDisplacementField(
 ):
     """The inverse of a [`DisplacementField`][], resolved on demand.
 
-    The wrapper reports the `order`, `bound` and `coeff` of the forward
+    The wrapper reports the `degree`, `bound` and `coeff` of the forward
     field, and the inverse field it materializes preserves them. A field
     of spline coefficients is inverted by re-fitting, and its inverse is
     itself a field of coefficients.
@@ -452,7 +452,7 @@ class InverseDisplacementField(
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
         "field",
-        "order",
+        "degree",
         "bound",
         "coeff",
     )
@@ -468,7 +468,7 @@ class InverseDisplacementField(
     # Declare derived fields as classvar to exclude them from `__init__`
 
     field: Derived[tx.Optional[ArrayProtocol]]
-    order: Derived[InterpolationOrder]
+    degree: Derived[InterpolationOrder]
     bound: Derived[tx.Union[BoundaryCondition, float]]
     coeff: Derived[bool]
 
@@ -478,13 +478,13 @@ class InverseDisplacementField(
         return _inv_disp(
             forward.field,
             coeff=forward.coeff,
-            order=forward.order,
+            degree=forward.degree,
             bound=forward.bound,
         )
 
     @property
-    def order(self) -> InterpolationOrder:
-        return self.forward.order
+    def degree(self) -> InterpolationOrder:
+        return self.forward.degree
 
     @property
     def bound(self) -> tx.Union[BoundaryCondition, float]:
@@ -502,7 +502,7 @@ class InverseCoordinatesField(
 ):
     """The inverse of a [`CoordinatesField`][], resolved on demand.
 
-    The wrapper reports the `order`, `bound` and `coeff` of the forward
+    The wrapper reports the `degree`, `bound` and `coeff` of the forward
     field, and the inverse field it materializes preserves them. A field of
     spline coefficients is inverted by re-fitting, and its inverse is
     itself a field of coefficients.
@@ -530,7 +530,7 @@ class InverseCoordinatesField(
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
         "field",
-        "order",
+        "degree",
         "bound",
         "coeff",
     )
@@ -546,7 +546,7 @@ class InverseCoordinatesField(
     # Declare derived fields as classvar to exclude them from `__init__`
 
     field: Derived[tx.Optional[ArrayProtocol]]
-    order: Derived[InterpolationOrder]
+    degree: Derived[InterpolationOrder]
     bound: Derived[tx.Union[BoundaryCondition, float]]
     coeff: Derived[bool]
 
@@ -556,13 +556,13 @@ class InverseCoordinatesField(
         return _inv_coords(
             forward.field,
             coeff=forward.coeff,
-            order=forward.order,
+            degree=forward.degree,
             bound=forward.bound,
         )
 
     @property
-    def order(self) -> InterpolationOrder:
-        return self.forward.order
+    def degree(self) -> InterpolationOrder:
+        return self.forward.degree
 
     @property
     def bound(self) -> tx.Union[BoundaryCondition, float]:
