@@ -8,7 +8,7 @@ import math
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo
+from bagof.magic import ConvertTo, replace
 
 # internals
 from ..base import DataModelBase
@@ -128,38 +128,25 @@ class EncodingDirection(DataModelBase):
         if not math.isclose(norm, 1.0, rel_tol=1e-12):
             self.vector = tuple(float(v) for v in vector / norm)
 
-    @classmethod
-    def from_bids(cls, value: str) -> "EncodingDirection":
-        """The direction of a BIDS string (`"i"`, `"j-"`, `"k"`), in
-        voxel axes."""
-        return cls(_bids_vector(value))
-
-    def axis(self) -> tx.Optional[tx.Tuple[int, int]]:
-        """`(index, sign)` of the voxel axis this direction is aligned
-        with, or `None` (another space, or an oblique direction)."""
+    def to_bids(self) -> tx.Optional[str]:
+        """The BIDS string of this direction (`"j-"`), or `None` when it
+        is not along one of the first three voxel axes (another space, or
+        an oblique direction)."""
         if self.space is not None:
             return None
         vector = np.asarray(self.vector, dtype=float)
         index = int(np.argmax(np.abs(vector)))
-        if not math.isclose(abs(vector[index]), 1.0, abs_tol=1e-6):
+        if index >= len(_AXES) or not math.isclose(
+            abs(vector[index]), 1.0, abs_tol=1e-6
+        ):
             return None
-        return index, (1 if vector[index] > 0 else -1)
-
-    def to_bids(self) -> tx.Optional[str]:
-        """The BIDS string of this direction (`"j-"`), or `None` when it
-        is not aligned with one of the first three voxel axes."""
-        axis = self.axis()
-        if axis is None or axis[0] >= len(_AXES):
-            return None
-        index, sign = axis
-        return _AXES[index] + ("-" if sign < 0 else "")
+        return _AXES[index] + ("-" if vector[index] < 0 else "")
 
     def transform(self, linear: tx.Any) -> "EncodingDirection":
         """The direction after a linear map of its space (`linear`, a
         matrix from the old axes to the new ones)."""
         matrix = np.asarray(linear, dtype=float)
-        vector = matrix @ np.asarray(self.vector, dtype=float)
-        return EncodingDirection(tuple(vector), space=self.space)
+        return replace(self, vector=tuple(matrix @ np.asarray(self.vector)))
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
@@ -172,10 +159,6 @@ class EncodingDirection(DataModelBase):
         if self.space != other.space or len(self.vector) != len(other.vector):
             return False
         return bool(np.allclose(self.vector, other.vector, atol=1e-9))
-
-    def __ne__(self, other: object) -> bool:
-        equal = self.__eq__(other)
-        return equal if equal is NotImplemented else not equal
 
     __hash__ = None  # type: ignore[assignment]
 

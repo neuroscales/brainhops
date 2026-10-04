@@ -1142,17 +1142,16 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
     assert direction.vector == (0.0, -1.0, 0.0)
     assert direction.space is None
     assert direction.to_bids() == "j-"
-    assert direction.axis() == (1, -1)
     assert direction == "j-" and direction != "j"
     assert repr(direction) == "EncodingDirection('j-')"
-    assert EncodingDirection.from_bids("k") == EncodingDirection((0, 0, 2))
+    assert EncodingDirection("k") == EncodingDirection((0, 0, 2))
     with pytest.raises(ValueError):
         EncodingDirection("x")
     with pytest.raises(ValueError):
         EncodingDirection((0, 0, 0))
     oblique = EncodingDirection((1, 1, 0))
     assert oblique.vector == pytest.approx((2**-0.5, 2**-0.5, 0.0))
-    assert oblique.to_bids() is None and oblique.axis() is None
+    assert oblique.to_bids() is None
     world = EncodingDirection((0, 1, 0), space="scanner")
     assert world.space is Space.scanner and world.to_bids() is None
 
