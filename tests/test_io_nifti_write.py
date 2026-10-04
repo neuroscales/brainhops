@@ -30,7 +30,6 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     Scaling,
     Sequence,
 )
-from brainhops.datamodel.units import SpaceUnit  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
@@ -385,7 +384,7 @@ def test_a_non_nifti_unit_is_scaled_to_a_valid_one(tmp_path) -> None:  # noqa: A
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
-            replace(axis, unit=SpaceUnit("centimeter"))
+            replace(axis, unit="centimeter")
             for axis in RASCoordinateSystem().axes
         ],
     )
@@ -566,7 +565,7 @@ def test_the_unit_scale_comes_from_the_preferred_transform(tmp_path) -> None:  #
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
-            replace(axis, unit=SpaceUnit("centimeter"))
+            replace(axis, unit="centimeter")
             for axis in RASCoordinateSystem().axes
         ],
     )
@@ -666,7 +665,7 @@ def test_nifti_axes_are_copies_of_the_module_templates() -> None:
 )
 def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
     """The axes read from a header are voxel axes: they count samples."""
-    from brainhops.datamodel.units import SampleUnit
+    from brainhops.datamodel.units import IndexUnit
     from brainhops.io.base.nifti import _nifti_to_axes
 
     image = nb.Nifti1Image(np.zeros(shape, dtype="float32"), np.eye(4))
@@ -674,4 +673,4 @@ def test_nifti_axes_count_samples(shape: tuple, intent: object) -> None:
         image.header.set_intent(intent)
     axes = _nifti_to_axes(image.header)
     assert len(axes) == len(shape)
-    assert all(isinstance(axis.unit, SampleUnit) for axis in axes)
+    assert all(isinstance(axis.unit, IndexUnit) for axis in axes)

@@ -3,7 +3,7 @@
 import pytest
 
 from brainhops.datamodel.systems import FVoxelCoordinateSystem
-from brainhops.datamodel.units import SampleUnit, Unit
+from brainhops.datamodel.units import IndexUnit, Unit
 from brainhops.io.transformations.freesurfer.lta import (
     LtaPhysicalSystem,
     LtaScaledSystem,
@@ -16,7 +16,7 @@ from brainhops.io.transformations.freesurfer.lta._xforms import (
 )
 
 _SYSTEMS = [
-    (LtaVoxelSystem, SampleUnit()),
+    (LtaVoxelSystem, IndexUnit()),
     (LtaScaledSystem, Unit("mm")),
     (LtaPhysicalSystem, Unit("mm")),
 ]

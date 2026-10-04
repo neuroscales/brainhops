@@ -634,7 +634,7 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
 # monolithic `compute()` can embed their subspaces; the normal form's
 # trailing permutation is applied by hand (see above).
 _XYZ = CoordinateSystem(
-    name="voxel", axes=[SpaceAxis(name=n, unit="sample") for n in "xyz"]
+    name="voxel", axes=[SpaceAxis(name=n, unit="index") for n in "xyz"]
 )
 _SHAPE = (4, 5, 6)
 

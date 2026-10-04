@@ -68,31 +68,31 @@ _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
 
 # The axes of a NIfTI array, by position. They are the axes of its voxel
-# space, so they count samples (`SampleUnit`): reversing one shifts its
+# space, so they count samples (`IndexUnit`): reversing one shifts its
 # origin by one less than its extent. A reader that builds a physical space
 # from them gives them its own unit.
-_SAMPLE = "sample"
+_INDEX = "index"
 _NIFTI_AXES = [
-    Axis("x", "space", unit=_SAMPLE),
-    Axis("y", "space", unit=_SAMPLE),
-    Axis("z", "space", unit=_SAMPLE),
-    Axis("t", "time", unit=_SAMPLE),
-    Axis("c", "channel", unit=_SAMPLE),
-    Axis("dim5", unit=_SAMPLE),
-    Axis("dim6", unit=_SAMPLE),
+    Axis("x", "space", unit=_INDEX),
+    Axis("y", "space", unit=_INDEX),
+    Axis("z", "space", unit=_INDEX),
+    Axis("t", "time", unit=_INDEX),
+    Axis("c", "channel", unit=_INDEX),
+    Axis("dim5", unit=_INDEX),
+    Axis("dim6", unit=_INDEX),
 ]
 _FLAT_AXES = {
     # number of points / vertices / triangles / ...
-    0: Axis("n", unit=_SAMPLE),
-    1: Axis("x", unit=_SAMPLE),
-    2: Axis("y", unit=_SAMPLE),
-    3: Axis("z", unit=_SAMPLE),
+    0: Axis("n", unit=_INDEX),
+    1: Axis("x", unit=_INDEX),
+    2: Axis("y", unit=_INDEX),
+    3: Axis("z", unit=_INDEX),
 }
-_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_SAMPLE)}
-_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_SAMPLE)}
-_AXES_DISP = {4: Axis("c", "displacement", unit=_SAMPLE)}
+_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_INDEX)}
+_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_INDEX)}
+_AXES_DISP = {4: Axis("c", "displacement", unit=_INDEX)}
 _NIFTI_SPECIFIC_AXES = {
-    1004: {5: Axis("k", "channel", unit=_SAMPLE)},  # GENMATRIX
+    1004: {5: Axis("k", "channel", unit=_INDEX)},  # GENMATRIX
     1006: _AXES_DISP,  # DISPVECT
     1008: _FLAT_AXES_CHANNEL,  # POINTSET
     1009: _FLAT_AXES_CHANNEL,  # TRIANGLE
@@ -949,7 +949,7 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
     Axes that are deemed irrelevant by the intent code are given a name
     of `None`. Every axis is an axis of the voxel space, so its unit is
-    the sample.
+    the index unit.
     """
 
     ndim = len(header.get_data_shape())

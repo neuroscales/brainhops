@@ -67,7 +67,6 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
-from brainhops.datamodel.units import SampleUnit
 
 # The physical anatomical axes, in millimetres. `R`/`A`/`S` fix a direction
 # and leave the metric unspecified, which is a different thing -- an array
@@ -200,7 +199,7 @@ def test_an_unspecified_anatomical_system_bridges_to_millimetres() -> None:
 
 def test_a_sample_matched_to_a_physical_unit_raises() -> None:
     sampled = CoordinateSystem(
-        axes=[SpaceAxis(name="x", unit="sample", orientation=LeftToRight())]
+        axes=[SpaceAxis(name="x", unit="index", orientation=LeftToRight())]
     )
     world = CoordinateSystem(axes=[LeftToRightAxis(name="x", unit="mm")])
     for source, target in ((sampled, world), (world, sampled)):
@@ -218,7 +217,7 @@ def _oriented_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 
@@ -814,7 +813,7 @@ def _oriented_named_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 
@@ -1643,7 +1642,7 @@ def test_embedding_in_voxel_axes_keeps_the_extent_offset() -> None:
     # The axes of a voxel system count samples, so a subset rebuilt from
     # them is still read as array-index, and reversing x maps index i to
     # 3 - i rather than to -i.
-    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "sample")
+    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "index")
     np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
     np.testing.assert_array_equal(matrix[:4, 4], [3, 0, 0, 0])
 

@@ -736,7 +736,7 @@ def test_write_dask_data(tmp_path: Path) -> None:
 def test_write_refusals(tmp_path: Path) -> None:
     with pytest.raises(WriterError, match="no data"):
         TiffImage().to_bytes()
-    axes = [raster.Axis(n, "space", unit="sample") for n in "abcd"]
+    axes = [raster.Axis(n, "space", unit="index") for n in "abcd"]
     image = _image(np.zeros((2, 2, 2, 2), np.uint8), axes=axes)
     with pytest.raises(WriterError, match="three spatial"):
         TiffImage.from_instance(image).to_bytes()

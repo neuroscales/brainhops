@@ -3,3 +3,5 @@ pytest-cov
 h5py
 nibabel
 dask
+pint>=0.21; python_version < '3.9'
+pint>=0.24; python_version >= '3.9'

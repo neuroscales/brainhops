@@ -185,7 +185,7 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     # would read the wrong voxels.
     system = CoordinateSystem(
         name="voxel",
-        axes=[SpaceAxis(name=name, unit="sample") for name in "xyz"],
+        axes=[SpaceAxis(name=name, unit="index") for name in "xyz"],
     )
     data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     img = SingleScaleImage(

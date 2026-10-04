@@ -438,7 +438,7 @@ class MincParser(DataModelBase, BinaryFileParser):
 def _axis(name: str) -> Axis:
     """The voxel axis that a MINC dimension stands for."""
     axis_name, axis_type = _AXES.get(name, (name, None))
-    return Axis(axis_name, axis_type, unit="sample")
+    return Axis(axis_name, axis_type, unit="index")
 
 
 def _score(score: float, error: tx.Union[bool, tx.Type[Exception]]) -> float:

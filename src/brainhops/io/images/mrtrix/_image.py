@@ -29,7 +29,7 @@ from brainhops.io.base.mrtrix import (
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
-_SAMPLE = "sample"
+_INDEX = "index"
 _MM = "millimeter"
 _SPATIAL = ("x", "y", "z")
 _ORIENTATION = {
@@ -53,9 +53,9 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
     axes = []
     for i in range(ndim):
         if i < 3:
-            axes.append(Axis(_SPATIAL[i], "space", unit=_SAMPLE))
+            axes.append(Axis(_SPATIAL[i], "space", unit=_INDEX))
         else:
-            axes.append(Axis(f"dim{i}", unit=_SAMPLE))
+            axes.append(Axis(f"dim{i}", unit=_INDEX))
     return axes
 
 

@@ -18,7 +18,6 @@ from brainhops.datamodel.metadata import (
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
-from brainhops.datamodel.units import MilliMeter, MilliSecond
 from brainhops.io.base._base import register_format
 from brainhops.io.base._mgh_metadata import MghRaw
 from brainhops.io.base.mgh import _MRI_PARAMS, MghMetadata, MghParser
@@ -256,7 +255,7 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 
     # >> Physical space: the same axes, in mm (and ms for the frames,
     # when the repetition time is known -- it is never invented).
-    units = {"space": MilliMeter(), "time": MilliSecond() if tr > 0 else None}
+    units = {"space": "mm", "time": "ms" if tr > 0 else None}
     phys_axes = [replace(axis, unit=units.get(axis.type)) for axis in axes]
     phys_space = CoordinateSystem(name=_PHYSICAL, axes=phys_axes)
 
