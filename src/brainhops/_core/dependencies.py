@@ -33,7 +33,11 @@ _DEPENDENCIES = (
     ("dkndi", "brainhops._core.dask_ndimage", "HAS_DASK_NDIMAGE"),
 )
 
-_LAZY_NAMES = tuple(name for names in _DEPENDENCIES for name in names)
+# Each of the three spellings of a dependency, mapped to its entry, so
+# that `__getattr__` looks a name up rather than scanning the table.
+_BY_NAME = {name: entry for entry in _DEPENDENCIES for name in entry}
+
+_LAZY_NAMES = tuple(_BY_NAME)
 
 # The top-level modules that make a submodule importable. A flag is
 # answered from the specs of top-level modules, without importing them,
@@ -54,15 +58,19 @@ def __getattr__(name: str) -> tx.Any:
     # native library is missing, a broken install): the failure surfaces
     # where the module is first used, which reads it through its alias
     # and finds `None`.
-    for alias, qualname, flag in _DEPENDENCIES:
-        if name == flag:
-            modules = _INSTALLED_WITH.get(qualname, (qualname,))
-            available = globals()[flag] = all(map(_find_spec, modules))
-            return available
-        if name in (alias, qualname):
-            return _lazy_import(globals(), name, qualname, alias)
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    #
+    # This runs only when `name` is not yet in the module's namespace, and
+    # both flags and modules are stored there once answered, so each name
+    # is looked up here at most once.
+    entry = _BY_NAME.get(name)
+    if entry is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    alias, qualname, flag = entry
+    if name == flag:
+        modules = _INSTALLED_WITH.get(qualname, (qualname,))
+        available = globals()[flag] = all(map(_find_spec, modules))
+        return available
+    return _lazy_import(globals(), name, qualname, alias)
 
 
 # The backends of abczarr's own drivers, by top-level module, with the
