@@ -310,6 +310,16 @@ def test_wrong_declarations_are_refused() -> None:
         class Typo(FileBasedMetadata, supports=("descr",)):
             pass
 
+    with pytest.raises(TypeError, match="_geometry"):
+
+        class Derived(FileBasedMetadata, derived=("description",)):
+            pass
+
+    with pytest.raises(TypeError, match="typo_kw"):
+
+        class Misspelt(FileBasedMetadata, typo_kw=1):
+            pass
+
 
 def test_polymorphic_construction_on_format() -> None:
     meta = Metadata(format="test-lite", description="x")
