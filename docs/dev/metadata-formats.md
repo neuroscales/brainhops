@@ -144,7 +144,12 @@ which decodes the raw record and keeps the read-time snapshot. A parser
 given a raw record and a `metadata` that is not that record's (explicit,
 or carried by `replace()`) uses
 [`update_from_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_from_raw],
-which decodes the new raw record and keeps the changes.
+which decodes the new raw record and keeps the changes. A parser does
+both in one call from its `__post_init__`,
+`sync_metadata(self, MyMetadata, raw, image=self)`
+(`brainhops/io/metadata/_sync.py`): `same=` tells whether the metadata
+holds the parser's record already (default: by identity), and `read=`
+replaces `raw` for a record rebuilt from a store on each read (Zarr).
 
 A writer builds its raw record, calls
 [`update_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_raw]

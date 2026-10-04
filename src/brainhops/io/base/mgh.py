@@ -84,6 +84,7 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
+from brainhops.io.metadata._sync import sync_metadata
 
 MGH_HEADER_SIZE = 284
 """Size in bytes of the fixed MGH header; the voxels start right after."""
@@ -228,23 +229,23 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         it, over the decoded ones (see `FileBasedMetadata.update_from_raw`).
         """
         header = self.header
-        metadata = self.metadata
         if header is None:
             return
-        record = getattr(metadata, "raw", None)
-        if (
-            not force
-            and isinstance(record, MghRaw)
-            and record.header is header
-        ):
+
+        def read() -> MghRaw:
+            tags = getattr(self, "_tags", None)
+            return MghRaw(header, tags, loader=self._tags_loader())
+
+        if force:
+            self.metadata = MghMetadata.from_raw(read(), image=self)
             return
-        record = MghRaw(
-            header, getattr(self, "_tags", None), loader=self._tags_loader()
+        sync_metadata(
+            self,
+            MghMetadata,
+            read=read,
+            same=lambda held: getattr(held, "header", None) is header,
+            image=self,
         )
-        if force or metadata is None:
-            self.metadata = MghMetadata.from_raw(record, image=self)
-        else:
-            self.metadata = metadata.update_from_raw(record, image=self)
 
     def _tags_loader(self) -> tx.Optional[tx.Callable[[], bytes]]:
         """What reads the tags from the file the image was loaded from,

@@ -1365,9 +1365,10 @@ for a JSON-capable node.
 > nothing. An untouched read
 > writes every node as read, so the JSON string round-trips unchanged.
 > `save(on_loss=)` is popped by the writer. The parser syncs in
-> `__post_init__` through `io/transformations/base/_metadata.py`
-> (`sync_metadata`, which keeps a metadata whose raw record is the
-> parser's and otherwise uses `update_from_raw`); the narrowed field is
+> `__post_init__` through `io/metadata/_sync.py` (`sync_metadata`,
+> which keeps a metadata whose raw record is the parser's and otherwise
+> uses `update_from_raw`; every parser uses it: NIfTI, MGH, Zarr,
+> OME-Zarr, x5, FLIRT, ITK `.h5`); the narrowed field is
 > `MetadataField[X5Metadata, Factory(X5Metadata), ...]`, whose converter
 > converts on these plain-`Magic` parsers too.
 >

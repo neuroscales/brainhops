@@ -15,7 +15,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     ConversionReport,
-    FileBasedMetadata,
     MetadataField,
     apply_loss_policy,
 )
@@ -32,33 +31,9 @@ from brainhops.io.base.zarr import (
     _as_node,
 )
 from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.metadata._sync import sync_metadata
 
 from ._metadata import ZarrMetadata, ZarrRaw
-
-
-def sync_record(
-    cls: tx.Type[FileBasedMetadata],
-    metadata: tx.Optional[FileBasedMetadata],
-    node: tx.Any,
-    read: tx.Callable[[], tx.Any],
-    image: tx.Any = None,
-) -> FileBasedMetadata:
-    """
-    The metadata of an object read from `node`.
-
-    A Zarr raw record is rebuilt from the attributes of the node on each
-    read, so it remembers the node it was read from (`raw.node`): a
-    metadata read from `node` already (as `replace()` carries it) is
-    kept as it is. Otherwise the raw record is read (`read()`)
-    and decoded, and the fields that changed in `metadata` (all of them
-    for one built in memory) are set over the decoded ones, as changes
-    (see `FileBasedMetadata.update_from_raw`).
-    """
-    if metadata is not None and getattr(metadata.raw, "node", None) is node:
-        return metadata
-    if metadata is None:
-        metadata = cls()
-    return metadata.update_from_raw(read(), image=image)
 
 
 def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
@@ -126,15 +101,14 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         """Read the metadata from the attributes of the array, when it
         was not read from this array yet."""
         node = self.node
-        if node is None:
-            return
-        self.metadata = sync_record(
-            ZarrMetadata,
-            self.metadata,
-            node,
-            lambda: ZarrRaw(node_attributes(node), node),
-            self,
-        )
+        if node is not None:
+            sync_metadata(
+                self,
+                ZarrMetadata,
+                read=lambda: ZarrRaw(node_attributes(node), node),
+                same=lambda held: held.node is node,
+                image=self,
+            )
 
     def _write_metadata(self, node: tx.Any, on_loss: tx.Any) -> None:
         metadata = self.metadata

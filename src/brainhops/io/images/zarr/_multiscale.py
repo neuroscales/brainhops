@@ -51,12 +51,12 @@ from brainhops.io.images.zarr._ome import (
     system_axes,
     write_image_metadata,
 )
+from brainhops.io.metadata._sync import sync_metadata
 from brainhops.io.transformations.zarr import _map
 
 from ._image import (
     ZarrImage,
     node_attributes,
-    sync_record,
     write_attributes,
 )
 from ._metadata import OmeZarrMetadata, OmeZarrRaw
@@ -220,21 +220,17 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         it.
         """
         node = self.node
-        metadata = self.metadata
-        if node is None or (
-            metadata is not None
-            and getattr(metadata.raw, "node", None) is node
-        ):
-            return
-        self.metadata = metadata = sync_record(
+        if node is None or not sync_metadata(
+            self,
             OmeZarrMetadata,
-            metadata,
-            node,
-            lambda: OmeZarrRaw.from_attributes(
+            read=lambda: OmeZarrRaw.from_attributes(
                 self.ome, node_attributes(node), node
             ),
-            self,
-        )
+            same=lambda held: held.node is node,
+            image=self,
+        ):
+            return
+        metadata = self.metadata
         for index, level in enumerate(self._layout["images"]):
             derived = metadata.derive(grid_changed=index > 0)
             # The levels of a pyramid share the data type of its arrays.

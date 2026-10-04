@@ -30,10 +30,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
+from brainhops.io.metadata._sync import sync_metadata
 from brainhops.io.transformations.base import WritableFileBasedTransformation
-from brainhops.io.transformations.base._metadata import (
-    sync_metadata,
-)
 
 # locals
 from ._blocks import node_to_transformation, transformation_to_nodes
@@ -101,8 +99,13 @@ class X5TransformParser(
             parent()
         index = self._metadata_index() if self.nodes else None
         node = None if index is None else self.nodes[index]
+        record = (self.header, node)
         sync_metadata(
-            self, X5Metadata, (self.header, node), image=self, same=_same_x5
+            self,
+            X5Metadata,
+            record,
+            same=lambda held: _same_x5(held, record),
+            image=self,
         )
 
     def _metadata_index(self) -> tx.Optional[int]:

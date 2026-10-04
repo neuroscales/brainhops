@@ -62,6 +62,7 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
+from brainhops.io.metadata._sync import sync_metadata
 
 # typing
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
@@ -396,13 +397,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         it, over the decoded ones, and they count as changes on write
         (see `FileBasedMetadata.update_from_raw`).
         """
-        header = self.header
-        metadata = self.metadata
-        if header is None or (metadata is not None and metadata.raw is header):
-            return
-        if metadata is None:
-            metadata = NiftiMetadata()
-        self.metadata = metadata.update_from_raw(header, image=self)
+        if self.header is not None:
+            sync_metadata(self, NiftiMetadata, self.header, image=self)
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:

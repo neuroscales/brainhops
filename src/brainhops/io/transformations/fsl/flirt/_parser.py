@@ -22,9 +22,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
-from brainhops.io.transformations.base._metadata import (
-    sync_metadata,
-)
+from brainhops.io.metadata._sync import sync_metadata
 
 # locals
 from ._metadata import FlirtMetadata
