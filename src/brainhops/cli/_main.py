@@ -1,21 +1,23 @@
 """The command-line entry point and its subcommand dispatcher.
 
 `build_parser` assembles the top-level parser and registers every
-subcommand, from the descriptions in `_commands`. `main` parses the
-arguments, calls the selected command and turns a `CliError` into a
-message on standard error and a non-zero exit code. The module that runs
-a command is imported only once that command is selected.
+subcommand. `main` parses the arguments, calls the selected command and
+turns a `CliError` into a message on standard error and a non-zero exit
+code.
+
+Building the parser imports no more than `argparse`: the ``reslice``
+command, which needs the data model and the file formats, is imported
+only when it runs (see `_reslice_parser`).
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 
 import typing_extensions as tx
 
-from ._commands import COMMANDS, Command
+from . import _compose, _convert, _reslice_parser
 from ._errors import CliError
 
 
@@ -29,29 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="command",
         metavar="<command>",
     )
-    for command in COMMANDS:
-        _add_command(subparsers, command)
-    return parser
-
-
-def _add_command(
-    subparsers: argparse._SubParsersAction,
-    command: Command,
-) -> argparse.ArgumentParser:
-    """Register a subcommand, which imports its module only to run."""
-    parser = subparsers.add_parser(
-        command.name,
-        help=command.help,
-        description=command.description,
-    )
-    for argument in command.arguments:
-        parser.add_argument(*argument.flags, **argument.options)
-
-    def run(args: argparse.Namespace) -> int:
-        module = importlib.import_module(command.module, __package__)
-        return module.run(args)
-
-    parser.set_defaults(func=run)
+    _reslice_parser.add_parser(subparsers)
+    _compose.add_parser(subparsers)
+    _convert.add_parser(subparsers)
     return parser
 
 

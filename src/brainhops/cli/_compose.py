@@ -18,9 +18,6 @@ part of the library yet, and on the chosen operation surface. It is
 registered so that ``brainhops compose --help`` describes the intended
 behaviour, and so that the argument names can settle before the operation
 is built.
-
-Its arguments are declared in `brainhops.cli._commands`, so that the
-parser is built without importing this module.
 """
 
 from __future__ import annotations
@@ -28,6 +25,37 @@ from __future__ import annotations
 import argparse
 
 from ._errors import CliError
+
+
+def add_parser(
+    subparsers: argparse._SubParsersAction,
+) -> argparse.ArgumentParser:
+    """Register the ``compose`` subcommand and its arguments."""
+    parser = subparsers.add_parser(
+        "compose",
+        help="Combine transformations into a single transformation.",
+        description=(
+            "Combine several transformations into one and write the "
+            "result. Not implemented yet."
+        ),
+    )
+    parser.add_argument(
+        "transforms",
+        nargs="*",
+        metavar="FILE",
+        help=(
+            "Transformation files to combine, in composition order. The "
+            "last file listed is applied first."
+        ),
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="Path to write the combined transformation to.",
+    )
+    parser.set_defaults(func=run)
+    return parser
 
 
 def run(args: argparse.Namespace) -> int:

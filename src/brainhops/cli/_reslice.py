@@ -25,8 +25,8 @@ usually of this kind. Such a file must be inverted before it can be used
 as a push transform here. A pipe-separated operator on the transform
 value does exactly that: ``path/to/warp.nii.gz|inv``.
 
-Its arguments are declared in `brainhops.cli._commands`, so that the
-parser is built without importing this module.
+Its arguments are declared in `_reslice_parser`, so that the parser is
+built without importing this module.
 """
 
 from __future__ import annotations
