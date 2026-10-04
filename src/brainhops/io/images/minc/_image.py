@@ -10,7 +10,12 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
-from brainhops.datamodel.units import SpaceUnit, TimeUnit, Unit
+from brainhops.datamodel.units import (
+    SpaceUnit,
+    TimeUnit,
+    Unit,
+    is_physicalunit,
+)
 from brainhops.io.base._base import register_format
 from brainhops.io.base.minc import MincDimension, MincParser
 from brainhops.io.images.base import FileBasedImage
@@ -139,7 +144,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
         except ValueError:
             unit = None
         if unit is not None and (
-            not isinstance(unit, kind) or type(unit).name is None
+            not isinstance(unit, kind) or not is_physicalunit(unit)
         ):
             unit = None
     if unit is None and axis_type == "space":
