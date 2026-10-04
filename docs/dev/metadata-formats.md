@@ -155,8 +155,9 @@ which decodes the new raw record and keeps the changes. A parser does
 both in one call from its `__post_init__`,
 `sync_metadata(self, MyMetadata, raw, image=self)`
 (`brainhops/io/metadata/_sync.py`): `same=` tells whether the metadata
-holds the parser's record already (default: by identity), and `read=`
-replaces `raw` for a record rebuilt from a store on each read (Zarr).
+holds the parser's record already (default: by identity), `raw` may be
+a function that reads the record, called only when needed (Zarr, MGH),
+and `force=True` decodes it afresh.
 
 A writer builds its raw record, calls
 [`update_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_raw]

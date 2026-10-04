@@ -105,7 +105,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             sync_metadata(
                 self,
                 ZarrMetadata,
-                read=lambda: ZarrRaw(node_attributes(node), node),
+                lambda: ZarrRaw(node_attributes(node), node),
                 same=lambda held: held.node is node,
                 image=self,
             )

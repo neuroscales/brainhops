@@ -223,7 +223,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         if node is None or not sync_metadata(
             self,
             OmeZarrMetadata,
-            read=lambda: OmeZarrRaw.from_attributes(
+            lambda: OmeZarrRaw.from_attributes(
                 self.ome, node_attributes(node), node
             ),
             same=lambda held: held.node is node,

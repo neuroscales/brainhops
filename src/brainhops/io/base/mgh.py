@@ -236,14 +236,12 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
             tags = getattr(self, "_tags", None)
             return MghRaw(header, tags, loader=self._tags_loader())
 
-        if force:
-            self.metadata = MghMetadata.from_raw(read(), image=self)
-            return
         sync_metadata(
             self,
             MghMetadata,
-            read=read,
+            read,
             same=lambda held: getattr(held, "header", None) is header,
+            force=force,
             image=self,
         )
 
