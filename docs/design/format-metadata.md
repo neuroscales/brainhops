@@ -1688,6 +1688,12 @@ these:
   format's `_geometry` gives a value for it. `_derive_raw` defaults to a
   copy of the record. The Zarr records carry the node they were read
   from, so the base knows no format.
+- **Writers** start from `FileBasedMetadata.writable(metadata)`: the
+  metadata in the writer's class and a report seeded with the
+  conversion's losses, with no policy applied, so that one write gives
+  one report and one warning. A metadata class refuses a class keyword
+  it does not read (a leftover `derived=` included), where `bagof`
+  would ignore it.
 - **M7: the policy surface** is `on_loss=`, `apply_loss_policy`,
   `metadata_loss_policy` and `collect_loss_reports` (with
   `ConversionReport.merged`); `one_loss_warning` and
