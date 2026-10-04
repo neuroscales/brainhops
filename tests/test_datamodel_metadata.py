@@ -433,7 +433,7 @@ def test_the_snapshot_survives_replace_copy_and_pickle() -> None:
         copy.deepcopy(meta),
         pickle.loads(pickle.dumps(meta)),
     ):
-        assert other._decoded == meta._decoded
+        assert other._snapshot == meta._snapshot
     assert replace(meta, description="x").changed_fields() == {
         "description": "x"
     }
@@ -490,9 +490,9 @@ def test_the_record_travels_only_within_a_format() -> None:
     meta = _read()
     other, _ = _to(meta, Metadata)
     assert type(other) is Metadata
-    assert not hasattr(other, "raw") and not hasattr(other, "_decoded")
+    assert not hasattr(other, "raw") and not hasattr(other, "_snapshot")
     same = DictMetadata.from_other(meta)
-    assert same.raw is meta.raw and same._decoded == meta._decoded
+    assert same.raw is meta.raw and same._snapshot == meta._snapshot
     # A copy keeps the most specific class.
     assert type(FileBasedMetadata.from_other(meta)) is DictMetadata
 
@@ -647,7 +647,7 @@ def test_derive_keeps_the_record_and_clears_through_it() -> None:
     )
     derived = meta.derive(grid_changed=True)
     assert type(derived) is DictMetadata
-    assert derived._decoded == meta._decoded
+    assert derived._snapshot == meta._snapshot
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
     # The cleared field differs from the snapshot: it is cleared on write.
     assert derived.changed_fields()["slice_timing"] is None
@@ -788,9 +788,9 @@ def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
     assert other.raw is meta.raw
     assert other == meta
     other.description = "changed"
-    other._decoded.description = "forged"
+    other._snapshot["description"] = "forged"
     assert meta.changed_fields() == {}
-    assert meta._decoded.description == "read"
+    assert meta._snapshot["description"] == "read"
 
 
 def test_the_hub_and_opaque_have_no_record() -> None:
@@ -997,8 +997,8 @@ def test_the_hierarchy_mirrors_the_images() -> None:
         assert issubclass(Metadata, group)
     # Only a file-based class has a raw record and a snapshot.
     names = {f.name for f in fields(Metadata)}
-    assert "raw" not in names and "_decoded" not in names
-    assert {"raw", "_decoded"} <= {f.name for f in fields(FileBasedMetadata)}
+    assert "raw" not in names and "_snapshot" not in names
+    assert {"raw", "_snapshot"} <= {f.name for f in fields(FileBasedMetadata)}
 
 
 def test_the_vocabulary_is_the_groups_in_order() -> None:

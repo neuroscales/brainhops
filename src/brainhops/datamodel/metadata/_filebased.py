@@ -9,7 +9,7 @@ import math
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr
+from bagof.magic import Factory, NoEq, NoRepr
 
 # internals
 from brainhops._core.properties import Lazy
@@ -45,19 +45,20 @@ class FileBasedMetadata(Metadata):
         NoEq(),
     ] = None
 
-    _decoded: tx.Annotated[
-        tx.Optional[Metadata],
+    _snapshot: tx.Annotated[
+        tx.Dict[str, tx.Any],
         tx.Doc(
             """
-            The read-time snapshot: what the reader decoded from `raw`,
-            as generic `Metadata` (`None` for an object built in memory).
-            A common field is written over the raw record only when it
+            The read-time snapshot: field name -> the value the reader
+            decoded from `raw` (empty for an object built in memory). A
+            common field is written over the raw record only when it
             differs from it. Filled by the reader; never set by hand.
             """
         ),
         NoRepr(),
         NoEq(),
-    ] = None
+        Factory(dict),
+    ]
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         # `_source` (what a format whose raw record is rebuilt on each
@@ -116,9 +117,9 @@ class FileBasedMetadata(Metadata):
         obj = cls(raw=raw, **decoded)
         # Snapshot the *converted* values, so that a decoded list held as
         # a tuple does not count as a change.
-        obj._decoded = Metadata(
-            **{key: copy.deepcopy(getattr(obj, key)) for key in decoded}
-        )
+        obj._snapshot = {
+            key: copy.deepcopy(getattr(obj, key)) for key in decoded
+        }
         for key, value in pending.items():
             # Injected as is (no conversion): the first read loads it.
             obj.__dict__[key] = value
@@ -138,7 +139,7 @@ class FileBasedMetadata(Metadata):
         new = super().copy()
         if "_source" in self.__dict__:
             new.__dict__["_source"] = self.__dict__["_source"]
-        new.__dict__["_decoded"] = _copy_snapshot(self._decoded)
+        new.__dict__["_snapshot"] = dict(self._snapshot)
         return new
 
     def update_from_raw(self, raw: tx.Any, *, image: tx.Any = None) -> tx.Self:
@@ -185,13 +186,13 @@ class FileBasedMetadata(Metadata):
         compared key by key: its entry is the per-key diff, where `None`
         removes a key.
         """
-        snapshot = self._decoded
+        snapshot = self._snapshot
         changed: tx.Dict[str, tx.Any] = {}
         for name in _VOCABULARY:
             value = getattr(self, name, None)
             if value is UNSUPPORTED:
                 continue
-            before = getattr(snapshot, name, None)
+            before = snapshot.get(name)
             if name == "extra":
                 diff = _extra_diff(before, value)
                 if diff:
@@ -368,7 +369,7 @@ class FileBasedMetadata(Metadata):
         values["raw"] = self._derive_raw(
             self.raw, grid_changed=grid_changed, volumes=volumes
         )
-        values["decoded"] = _copy_snapshot(self._decoded)
+        values["snapshot"] = dict(self._snapshot)
         return type(self)(**values)
 
 
@@ -443,10 +444,6 @@ def preferred_dtype(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
-
-
-def _copy_snapshot(snapshot: tx.Optional[Metadata]) -> tx.Optional[Metadata]:
-    return None if snapshot is None else snapshot.copy()
 
 
 def _extra_diff(

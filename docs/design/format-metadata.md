@@ -180,7 +180,8 @@ class Metadata(
 
 class FileBasedMetadata(Metadata):  # mirrors FileBasedImage
     raw: NoRepr[NoEq[tx.Any]] = None  # format-private record (M6)
-    _decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None  # read-time snapshot
+    # read-time snapshot, field name -> decoded value
+    _snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory(dict)
 
     @classmethod
     def from_raw(cls, raw, *, image=None, **values) -> tx.Self: ...
@@ -214,8 +215,8 @@ paths it keeps as `moving`/`fixed` (lost, and reported, on write), so
 > **Prototype note.** `raw` is excluded from `==` as well as from `repr`
 > (`NoRepr[NoEq[tx.Any]]`, or `Annotated[..., NoRepr(), NoEq()]`): two
 > metadata objects are equal when their vocabulary and `extra` are. The
-> snapshot is the field `_decoded` (constructor keyword `decoded=`), a
-> generic `Metadata` (section 6). A first prototype had a base
+> snapshot is the field `_snapshot` (constructor keyword `snapshot=`),
+> a `dict` of the decoded values (section 6). A first prototype had a base
 > `FormatMetadata` with `raw` and the snapshot, and `Metadata` as one of
 > its subclasses; the review of PR #287 inverted that, as above, so
 > that the generic metadata carries no raw record and an unknown format
@@ -556,24 +557,20 @@ of what it decoded as the *snapshot*. On write, a common field is
 encoded over the record only when it differs from the snapshot:
 
 ```python
-_decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = (
-    None  # snapshot, a generic Metadata
-)
+_snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory(dict)  # name -> value
 
 
 def update_raw(self, raw=None, *, image=None, report=None, force=()):
     raw = self._raw_or_default() if raw is None else raw
     changed = {
-        k: v
-        for k, v in self._vocab_items()
-        if v != getattr(self._decoded, k, None)
+        k: v for k, v in self._vocab_items() if v != self._snapshot.get(k)
     }
     return self._encode(raw, changed, image=image, report=report)
 ```
 
 The record is never re-decoded at write time: the snapshot is the
 reference, and it says what the user was shown. An object built in
-memory or converted from another format has no snapshot (and a
+memory or converted from another format has an empty snapshot (and a
 default record), so every non-`None` field counts as a change, which is
 what a fresh record needs. Four cases follow, and they are the rule the
 user has to know: *untouched means "keep the record's"; a common field
@@ -638,12 +635,12 @@ it fires when a format's `_decode` and its `supports=` disagree, a bug
 of the format class that would otherwise drop the value without a
 report.
 
-**Snapshot lifetime.** `_decoded` is a real `Magic` field (private name,
-like `Transformation._input`), excluded from `repr` and `eq` and never
-set by users, holding a generic `Metadata` (`None` for an object built
-in memory): it is what the reader decoded, which is exactly a frozen
-format-agnostic view of the raw record, and `None` in it means "not
-decoded, or decoded as `None`". It survives everything the raw record
+**Snapshot lifetime.** `_snapshot` is a real `Magic` field (private
+name, like `Transformation._input`), excluded from `repr` and `eq` and
+never set by users, holding a `dict` of field name to decoded value
+(empty for an object built in memory): it is what the reader decoded,
+a frozen view of the raw record, and a missing key means "not decoded,
+or decoded as `None`". It survives everything the raw record
 survives:
 `replace()` and `copy` carry it (a `replace(description="x")` therefore
 changes exactly one field), pickling keeps it, and same-format
@@ -653,7 +650,7 @@ transformation is copied (`replace(image, data=...)`, same-class
 shares `raw` and gets its own snapshot and `extra`, so the snapshot
 still describes the shared record, and editing the copy's fields never
 edits the original's. Cross-format `from_instance`
-resets it to `None` next to the reset `raw`, and `derive()` keeps it
+resets it to `{}` next to the reset `raw`, and `derive()` keeps it
 next to the kept `raw` (section 9). It is filled once, by the reader,
 with `copy.deepcopy` of the decoded values (the `extra` dict and the
 tuples in it are mutable or shared; the nibabel header is in `raw`, not

@@ -387,7 +387,7 @@ class X5Transform(
         node = None if index is None else nodes[index]
         if node is None or metadata.node is not node:
             # Not the node it was read from: everything is written.
-            metadata = replace(metadata, decoded={})
+            metadata = replace(metadata, snapshot={})
         _, node = metadata.update_raw(
             (self.header, node), image=self, report=report
         )

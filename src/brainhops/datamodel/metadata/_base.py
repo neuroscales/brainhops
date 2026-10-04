@@ -170,9 +170,9 @@ def _unsupported_as_none(value: tx.Any) -> tx.Any:
 def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
     """A lazy field, once loaded, joins the read-time snapshot, as if it
     had been decoded with the rest."""
-    snapshot = obj.__dict__.get("_decoded")
+    snapshot = obj.__dict__.get("_snapshot")
     if value is not None and snapshot is not None:
-        setattr(snapshot, name, copy.deepcopy(value))
+        snapshot[name] = copy.deepcopy(value)
 
 
 def _declare_supports(
@@ -472,7 +472,7 @@ class Metadata(
         kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
     ) -> tx.Tuple["Metadata", ConversionReport]:
         """`from_instance`, returning the report instead of acting on it."""
-        from ._filebased import FileBasedMetadata, _copy_snapshot
+        from ._filebased import FileBasedMetadata
 
         kwargs = dict(kwargs or {})
         same = _fits(other, cls)
@@ -484,7 +484,7 @@ class Metadata(
         values: tx.Dict[str, tx.Any] = {}
         if same and isinstance(other, FileBasedMetadata):
             values["raw"] = other.raw
-            values["decoded"] = _copy_snapshot(other._decoded)
+            values["snapshot"] = dict(other._snapshot)
         unsupported = target.unsupported_fields
         for name in _VOCABULARY:
             value = getattr(other, name, None)
