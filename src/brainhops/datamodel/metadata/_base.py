@@ -16,7 +16,7 @@ from brainhops._core.compat import own_annotations
 from brainhops._core.properties import LazyField
 
 from ..base import DataModelBase
-from ._meta import _MetadataMeta
+from ._meta import MetadataMeta
 from ._report import ConversionReport, LossPolicy, apply_loss_policy
 from ._sentinel import ALL, UNSUPPORTED, Maybe
 from ._terms import EncodingDirection, GeneratedBy
@@ -45,7 +45,7 @@ class Metadata(
     DisplayMetadata,
     MicroscopyMetadata,
     TransformMetadata,
-    metaclass=_MetadataMeta,
+    metaclass=MetadataMeta,
     polymorphic=True,
     kw_only=True,
     repr=False,
@@ -143,7 +143,7 @@ class Metadata(
             and not field.var
         ]
         parts = []
-        for name in own + list(_FIELDS):
+        for name in own + list(FIELDS):
             value = getattr(self, name, None)
             if value is None or value is UNSUPPORTED:
                 continue
@@ -177,7 +177,7 @@ class Metadata(
         `UNSUPPORTED` where an instance cannot store a field: test
         `meta.name is UNSUPPORTED` for that.
         """
-        if name not in _FIELDS:
+        if name not in FIELDS:
             raise KeyError(f"{name!r} is not a vocabulary field.")
         return name in cls.supported_fields
 
@@ -354,7 +354,7 @@ class Metadata(
     ) -> tx.Tuple["Metadata", ConversionReport]:
         """`from_instance`, returning the report instead of acting on it."""
         kwargs = dict(kwargs or {})
-        same = _fits(other, cls)
+        same = fits(other, cls)
         # A copy keeps the most specific class.
         target = type(other) if same else cls
         report = ConversionReport(
@@ -362,7 +362,7 @@ class Metadata(
         )
         values = other._format_state() if same else {}
         unsupported = target.unsupported_fields
-        for name in _FIELDS:
+        for name in FIELDS:
             value = getattr(other, name, None)
             if value is None or value is UNSUPPORTED:
                 continue
@@ -390,7 +390,7 @@ class Metadata(
         """The constructor values of `derive`: a field rule
         (`_DERIVE_RULES`) where there is one, else its scope's."""
         values: tx.Dict[str, tx.Any] = {}
-        for name in _FIELDS:
+        for name in FIELDS:
             value = getattr(self, name, None)
             if value is UNSUPPORTED or name in self.unsupported_fields:
                 continue
@@ -410,7 +410,7 @@ class Metadata(
         snapshot). None here."""
         return {}
 
-    # --- class keywords (see `_MetadataMeta`) -------------------------
+    # --- class keywords (see `MetadataMeta`) -------------------------
 
     @classmethod
     def _declare(
@@ -429,7 +429,7 @@ class Metadata(
         """
         supported = _supported_names(name, supports)
         annotations = own_annotations(namespace)
-        for field in _FIELDS:
+        for field in FIELDS:
             if field in annotations or field in namespace:
                 continue
             hint = _declared_hint(field)
@@ -458,10 +458,10 @@ class Metadata(
         supported = frozenset(
             field.name
             for field in fields(cls)
-            if field.name in _FIELDS and field.default is not UNSUPPORTED
+            if field.name in FIELDS and field.default is not UNSUPPORTED
         )
         cls.supported_fields = supported
-        cls.unsupported_fields = frozenset(_FIELDS) - supported
+        cls.unsupported_fields = frozenset(FIELDS) - supported
         if lazy is None:
             cls.lazy_fields = cls.lazy_fields & supported
         else:
@@ -491,7 +491,7 @@ class Metadata(
 #   PRIVATE
 # ----------------------------------------------------------------------
 
-_FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
+FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
 """The fields `supports=` speaks of, in the order reports list them."""
 
 
@@ -505,7 +505,7 @@ def _supported_names(
                 f"{name}: supports= takes a sequence of field names or "
                 f"vocabulary groups, or ALL, not {supports!r}."
             )
-        return frozenset(_FIELDS)
+        return frozenset(FIELDS)
     names: tx.Set[str] = set()
     for item in supports:
         if not isinstance(item, type):
@@ -518,11 +518,11 @@ def _supported_names(
                 f"vocabulary group; expected one of "
                 f"{[g.__name__ for g in GROUPS]}."
             )
-    unknown = names - frozenset(_FIELDS)
+    unknown = names - frozenset(FIELDS)
     if unknown:
         raise TypeError(
             f"{name}: supports= names {sorted(unknown)}, which are not "
-            f"vocabulary fields; expected some of {sorted(_FIELDS)}."
+            f"vocabulary fields; expected some of {sorted(FIELDS)}."
         )
     return frozenset(names)
 
@@ -559,7 +559,7 @@ def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
         snapshot[name] = copy.deepcopy(value)
 
 
-def _fits(value: tx.Any, cls: type) -> bool:
+def fits(value: tx.Any, cls: type) -> bool:
     """Whether a metadata object is one of `cls` already: of the class
     itself, or of a subclass of a format class (generic `Metadata` holds
     generic metadata only)."""

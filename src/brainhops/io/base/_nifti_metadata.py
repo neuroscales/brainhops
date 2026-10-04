@@ -59,6 +59,7 @@ from brainhops.datamodel.metadata import (
     EncodingDirection,
     FileBasedMetadata,
 )
+from brainhops.datamodel.metadata._terms import AXES
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 
 # NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
@@ -77,9 +78,6 @@ _STRUCTURAL_INTENTS = frozenset(
     {1004, 1006, 1008, 1009, 2001, 2002, 2003, 2004, 2005}
     | {2006, 2007, 2008, 2009}
 )
-
-
-_AXES = "ijk"
 
 
 # Seconds per NIfTI time unit.
@@ -169,10 +167,10 @@ class NiftiMetadata(
             pass
 
         freq, phase, slice_ = h.get_dim_info()
-        if phase is not None and phase < len(_AXES):
-            out["phase_encoding_direction"] = _AXES[phase]
-        if slice_ is not None and slice_ < len(_AXES):
-            out["slice_encoding_direction"] = _AXES[slice_]
+        if phase is not None and phase < len(AXES):
+            out["phase_encoding_direction"] = AXES[phase]
+        if slice_ is not None and slice_ < len(AXES):
+            out["slice_encoding_direction"] = AXES[slice_]
             out["slice_timing"] = _decode_slice_timing(h)
 
         shape = _shape(h)
@@ -370,7 +368,7 @@ def _encode_dim_info(
             return
         if bids.endswith("-"):
             report.approximated[name] = "polarity dropped (dim_info)"
-        dims[position] = _AXES.index(bids[0])
+        dims[position] = AXES.index(bids[0])
     h.set_dim_info(*dims)
 
 

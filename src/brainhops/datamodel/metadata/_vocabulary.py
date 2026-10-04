@@ -44,10 +44,10 @@ from ._terms import (
     Channel,
     EncodingDirection,
     GeneratedBy,
-    _direction,
-    _dtype,
-    _term,
-    _unit,
+    direction,
+    dtype,
+    term,
+    unit,
 )
 
 FILE = "file"
@@ -161,7 +161,7 @@ class ProvenanceMetadata(_VocabularyGroup):
         ),
         Bids("SpatialReference"),
         Scope(FILE),
-        ConvertTo(_term(Space)),
+        ConvertTo(term(Space)),
     ] = None
 
     intent: tx.Annotated[
@@ -171,7 +171,7 @@ class ProvenanceMetadata(_VocabularyGroup):
             "an `Intent`)."
         ),
         Scope(FILE),
-        ConvertTo(_term(Intent)),
+        ConvertTo(term(Intent)),
     ] = None
 
 
@@ -224,7 +224,7 @@ class MRIMetadata(_VocabularyGroup):
         ),
         Bids("Manufacturer"),
         Scope(ACQUISITION),
-        ConvertTo(_term(Manufacturer)),
+        ConvertTo(term(Manufacturer)),
     ] = None
 
     manufacturers_model_name: tx.Annotated[
@@ -256,7 +256,7 @@ class MRIMetadata(_VocabularyGroup):
         ),
         Bids("PhaseEncodingDirection"),
         Scope(GRID),
-        ConvertTo(_direction),
+        ConvertTo(direction),
     ] = None
 
     total_readout_time: tx.Annotated[
@@ -281,7 +281,7 @@ class MRIMetadata(_VocabularyGroup):
         ),
         Bids("SliceEncodingDirection"),
         Scope(GRID),
-        ConvertTo(_direction),
+        ConvertTo(direction),
     ] = None
 
     slice_timing: tx.Annotated[
@@ -354,7 +354,7 @@ class DisplayMetadata(_VocabularyGroup):
             "(`Unit.symbol`), which parses back to the same unit."
         ),
         Scope(VOLUME),
-        ConvertTo(_unit),
+        ConvertTo(unit),
     ] = None
 
     data_type: tx.Annotated[
@@ -367,7 +367,7 @@ class DisplayMetadata(_VocabularyGroup):
             "and a `dtype=` writer option wins over it."
         ),
         Scope(GRID),
-        ConvertTo(_dtype),
+        ConvertTo(dtype),
     ] = None
 
 
@@ -393,14 +393,14 @@ class MicroscopyMetadata(_VocabularyGroup):
         Maybe[tx.Union[IlluminationType, str]],
         tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
         Scope(ACQUISITION),
-        ConvertTo(_term(IlluminationType)),
+        ConvertTo(term(IlluminationType)),
     ] = None
 
     contrast_method: tx.Annotated[
         Maybe[tx.Union[ContrastMethod, str]],
         tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
         Scope(ACQUISITION),
-        ConvertTo(_term(ContrastMethod)),
+        ConvertTo(term(ContrastMethod)),
     ] = None
 
 
@@ -426,14 +426,14 @@ class TransformMetadata(_VocabularyGroup):
         Maybe[tx.Union[Space, str]],
         tx.Doc("Label of the space a transformation maps from."),
         Scope(FILE),
-        ConvertTo(_term(Space)),
+        ConvertTo(term(Space)),
     ] = None
 
     output_space: tx.Annotated[
         Maybe[tx.Union[Space, str]],
         tx.Doc("Label of the space a transformation maps to."),
         Scope(FILE),
-        ConvertTo(_term(Space)),
+        ConvertTo(term(Space)),
     ] = None
 
 

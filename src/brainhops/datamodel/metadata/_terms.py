@@ -11,12 +11,15 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core.enum import term
+from brainhops._core.enum import term as enum_term
 
 from ..base import DataModelBase
 from ..enums import Space
 from ..units import Unit
 from ._sentinel import UNSUPPORTED
+
+AXES = "ijk"
+"""The voxel axes of a BIDS direction, in order."""
 
 
 class GeneratedBy(DataModelBase):
@@ -89,7 +92,7 @@ class EncodingDirection(DataModelBase):
             "The coordinate system of `vector`: `None` for the image's "
             "voxel axes, or the label of a world space."
         ),
-        ConvertTo(term(Space)),
+        ConvertTo(enum_term(Space)),
     ] = None
 
     def __post_init__(self) -> None:
@@ -113,11 +116,11 @@ class EncodingDirection(DataModelBase):
             return None
         vector = np.asarray(self.vector, dtype=float)
         index = int(np.argmax(np.abs(vector)))
-        if index >= len(_AXES) or not math.isclose(
+        if index >= len(AXES) or not math.isclose(
             abs(vector[index]), 1.0, abs_tol=1e-6
         ):
             return None
-        return _AXES[index] + ("-" if vector[index] < 0 else "")
+        return AXES[index] + ("-" if vector[index] < 0 else "")
 
     def transform(self, linear: tx.Any) -> "EncodingDirection":
         """The direction after a linear map of its space (`linear`, a
@@ -159,10 +162,10 @@ def _passes(value: tx.Any) -> bool:
     return value is None or value is UNSUPPORTED
 
 
-def _term(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
-    """The converter of a vocabulary field with known terms (`term`),
-    which lets `UNSUPPORTED` through."""
-    convert = term(enum)
+def term(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
+    """The converter of a vocabulary field with known terms
+    (`brainhops._core.enum.term`), which lets `UNSUPPORTED` through."""
+    convert = enum_term(enum)
 
     def converter(value: tx.Any) -> tx.Any:
         return value if value is UNSUPPORTED else convert(value)
@@ -170,7 +173,7 @@ def _term(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
     return converter
 
 
-def _unit(value: tx.Any) -> tx.Any:
+def unit(value: tx.Any) -> tx.Any:
     """A unit name the units module parses, as a `Unit`; a name it
     cannot parse stays a string, so that a file's own spelling survives."""
     if _passes(value) or isinstance(value, Unit):
@@ -183,7 +186,7 @@ def _unit(value: tx.Any) -> tx.Any:
     raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
 
 
-def _dtype(value: tx.Any) -> tx.Any:
+def dtype(value: tx.Any) -> tx.Any:
     """A numpy data type, in native byte order: the byte order is
     storage encoding, never metadata (M1)."""
     if _passes(value):
@@ -191,7 +194,7 @@ def _dtype(value: tx.Any) -> tx.Any:
     return np.dtype(value).newbyteorder("=")
 
 
-def _direction(value: tx.Any) -> tx.Any:
+def direction(value: tx.Any) -> tx.Any:
     """The converter of an encoding direction field: a BIDS string, a
     vector, a mapping (`vector`/`space`, or the JSON `Vector`/`Space`)."""
     if _passes(value) or isinstance(value, EncodingDirection):
@@ -206,14 +209,11 @@ def _direction(value: tx.Any) -> tx.Any:
 def _bids_vector(value: str) -> tx.Tuple[float, ...]:
     """The unit vector of a BIDS direction (`"i"`, `"j-"`, `"k"`)."""
     axis = value[:-1] if value.endswith("-") else value
-    if len(axis) != 1 or axis not in _AXES:
+    if len(axis) != 1 or axis not in AXES:
         raise ValueError(
             f"A BIDS direction is one of 'i', 'j', 'k', optionally "
             f"followed by '-', not {value!r}."
         )
-    vector = [0.0] * len(_AXES)
-    vector[_AXES.index(axis)] = -1.0 if value.endswith("-") else 1.0
+    vector = [0.0] * len(AXES)
+    vector[AXES.index(axis)] = -1.0 if value.endswith("-") else 1.0
     return tuple(vector)
-
-
-_AXES = "ijk"

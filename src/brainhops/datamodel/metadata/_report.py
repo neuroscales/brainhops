@@ -101,7 +101,7 @@ class ConversionReport(DataModelBase):
             return f"Metadata conversion {where}: nothing lost."
         parts = []
         if self.lost:
-            items = ", ".join(f"{k}={_short(v)}" for k, v in self.lost.items())
+            items = ", ".join(f"{k}={short(v)}" for k, v in self.lost.items())
             parts.append(f"lost {items}")
         if self.approximated:
             items = ", ".join(
@@ -217,7 +217,7 @@ def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
 # ----------------------------------------------------------------------
 
 
-def _short(value: tx.Any, width: int = 40) -> str:
+def short(value: tx.Any, width: int = 40) -> str:
     if isinstance(value, enum.Enum):
         # A known term reads as the term (`'scanner'`).
         value = value.value

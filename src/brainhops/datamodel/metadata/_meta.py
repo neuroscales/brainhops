@@ -11,7 +11,7 @@ from ..base import DataModelBase
 _BAGOF_KEYWORDS = frozenset(Options._DEFAULTS) | {"on", "priority"}
 
 
-class _MetadataMeta(type(DataModelBase)):
+class MetadataMeta(type(DataModelBase)):
     """
     Passes the `supports=` and `lazy=` class keywords of a
     `Metadata` subclass to `Metadata._declare` and `Metadata._finish`.

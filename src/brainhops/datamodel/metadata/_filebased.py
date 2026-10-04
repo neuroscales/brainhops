@@ -14,8 +14,8 @@ from bagof.magic import Factory, NoEq, NoRepr
 from brainhops._core.compare import differs
 from brainhops._core.properties import Lazy
 
-from ._base import _FIELDS, Metadata
-from ._report import ConversionReport, _short
+from ._base import FIELDS, Metadata
+from ._report import ConversionReport, short
 from ._sentinel import UNSUPPORTED
 
 
@@ -141,7 +141,7 @@ class FileBasedMetadata(Metadata):
         """
         snapshot = self._snapshot
         changed: tx.Dict[str, tx.Any] = {}
-        for name in _FIELDS:
+        for name in FIELDS:
             value = getattr(self, name, None)
             if value is UNSUPPORTED:
                 continue
@@ -198,7 +198,7 @@ class FileBasedMetadata(Metadata):
             if key not in unsupported
         }
         for name in force:
-            if name in _FIELDS and name != "extra":
+            if name in FIELDS and name != "extra":
                 if name not in unsupported:
                     changed[name] = getattr(self, name)
         self._check_derived(changed, image, report)
@@ -338,7 +338,7 @@ class FileBasedMetadata(Metadata):
             value = changed.pop(name)
             if value is not None and not _agrees(value, given):
                 report.approximated[name] = (
-                    f"derived from the data model ({_short(given)})"
+                    f"derived from the data model ({short(given)})"
                 )
 
     def _raw_or_default(self) -> tx.Any:

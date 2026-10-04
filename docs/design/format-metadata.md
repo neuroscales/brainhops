@@ -525,7 +525,7 @@ Rules:
 
 > **Prototype note.** Three deviations here.
 > (1) `supports=` and `lazy=` are read by a metaclass,
-> `_MetadataMeta(type(DataModelBase))` (an adaptor to the classmethods
+> `MetadataMeta(type(DataModelBase))` (an adaptor to the classmethods
 > `Metadata._declare` and `Metadata._finish`), not by `__init_subclass__`:
 > `bagof` builds the fields *before* `__init_subclass__` runs and does not
 > forward class keywords to it. The metaclass redeclares each unsupported
@@ -941,7 +941,7 @@ question 8.
   assigned to a field typed `NiftiMetadata` comes from `convert=True`
   plus the `DataModelConverter`, which already routes through
   `from_other`.
-- **A metaclass** (`_MetadataMeta`) passes `supports=`/`lazy=` (M5, 6)
+- **A metaclass** (`MetadataMeta`) passes `supports=`/`lazy=` (M5, 6)
   to `Metadata`: `bagof` refuses class keywords it
   does not know and builds the fields before `__init_subclass__` runs.
   It is an adaptor only: it calls the classmethod `Metadata._declare`

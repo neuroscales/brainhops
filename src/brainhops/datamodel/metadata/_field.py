@@ -8,7 +8,7 @@ from bagof.converters import Converter
 from bagof.magic import ConvertTo, KwOnly, NoEq, NoRepr
 
 # internals
-from ._base import Metadata, _fits
+from ._base import Metadata, fits
 
 
 class MetadataField:
@@ -74,7 +74,7 @@ class _EnsureCopy:
         if (
             isinstance(value, Metadata)
             and target is not None
-            and not _fits(value, target)
+            and not fits(value, target)
         ):
             return target.from_instance(value)
         out = self._convert(value)
