@@ -6,21 +6,37 @@ programs that produced a file... Every file format stores these under its
 own names and units. brainhops reads them into one representation, so that
 they survive a change of format, and says so when they cannot.
 
-Every image and transformation has a `metadata` attribute:
+Every image and transformation has a `metadata` attribute. The metadata
+classes mirror the image classes (`Image`, `FileBasedImage`,
+`NiftiImage`):
 
 - objects built in memory hold a format-agnostic
   [`Metadata`][brainhops.datamodel.metadata.Metadata] (or `None`);
 - objects read from a file hold the metadata of their format, such as
-  [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata],
-  whose `raw` attribute is the format's own record (the `nibabel` header,
-  for NIfTI).
+  [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata], a
+  [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata]
+  whose `raw` attribute is the format's own raw record (the `nibabel`
+  header, for NIfTI).
 
 All metadata classes share one vocabulary of fields, named after the
 [BIDS](https://bids-specification.readthedocs.io) keys in snake case and
 stored in BIDS units: `repetition_time` is `RepetitionTime`, in seconds.
 A field holds a value, `None` (unknown), or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] (this format has
-no place to store it).
+no place to store it). The vocabulary comes in six groups, each a class
+that `Metadata` inherits:
+[`ProvenanceMetadata`][brainhops.datamodel.metadata.ProvenanceMetadata]
+(description, history, space, ...),
+[`MRIMetadata`][brainhops.datamodel.metadata.MRIMetadata] (repetition
+time, slice timing, ...),
+[`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
+(`bvalues`, `bvectors`),
+[`DisplayMetadata`][brainhops.datamodel.metadata.DisplayMetadata]
+(display range, channels, unit and type of the values),
+[`MicroscopyMetadata`][brainhops.datamodel.metadata.MicroscopyMetadata]
+and
+[`TransformMetadata`][brainhops.datamodel.metadata.TransformMetadata]
+(`moving`, `fixed`, ...).
 
 The examples on this page run as they are. They write their files to a
 temporary directory:
@@ -60,13 +76,16 @@ The header is decoded into the common fields when the file is read:
 'resting state, run 1'
 >>> bold.metadata.slice_timing
 (0.0, 0.5, 1.0, 1.5, 2.0, 2.5)
->>> bold.metadata.slice_encoding_direction, bold.metadata.display_range
-('k', (0.0, 1000.0))
+>>> bold.metadata.display_range, bold.metadata.data_type
+((0.0, 1000.0), dtype('float32'))
 
 ```
 
-The header itself is the record of the metadata. It is still available as
-`bold.header`, and it is the same object:
+`data_type` is the type of the data in the file, which may differ from
+the type of the loaded array (a scaled integer file loads as floats).
+
+The header itself is the raw record of the metadata. It is still
+available as `bold.header`, and it is the same object:
 
 ```python
 >>> bold.metadata.raw is bold.header
@@ -82,8 +101,10 @@ UNSUPPORTED
 >>> from brainhops.io.images.nifti import NiftiMetadata
 >>> NiftiMetadata.supports("echo_time"), NiftiMetadata.supports("description")
 (False, True)
->>> sorted(NiftiMetadata.unsupported_fields)[:4]
-['acquisition_time', 'channels', 'contrast_method', 'creation_time']
+>>> sorted(NiftiMetadata.supported_fields)  # doctest: +NORMALIZE_WHITESPACE
+['data_type', 'description', 'display_range', 'intent',
+ 'phase_encoding_direction', 'repetition_time', 'slice_encoding_direction',
+ 'slice_timing', 'sources', 'space']
 
 ```
 
@@ -91,8 +112,12 @@ UNSUPPORTED
 
 Reading and saving again keeps the header: the description, the slice
 timing, the display range, the auxiliary file and the extensions are
-written back as they were read. Geometry, units, data type and intensity
-scaling are always taken from the image itself.
+written back as they were read. Geometry, units and intensity scaling are
+always taken from the image itself. The data is stored as `data_type`
+when its values are of that kind (integers as an integer type, floats as
+a float type), so a label map read as `uint8` is saved as `uint8`, but a
+resampled, floating point version of it is not rounded; a `dtype=` option
+of `save` wins over it.
 
 A field you set is written over the header; a field you set to `None` is
 cleared in it. A field you leave alone keeps the header's value, so an
@@ -123,32 +148,37 @@ b'sub-01_T1w.nii'
 ## Format-agnostic metadata
 
 [`Metadata`][brainhops.datamodel.metadata.Metadata] supports every field
-and has no record. It is what in-memory objects carry, and the hub through
-which formats convert.
-[`convert`][brainhops.datamodel.metadata.convert] (also available as
-`brainhops.datamodel.convert_metadata`) converts metadata into another
-class, and returns a report of what was lost:
+and has no raw record. It is what in-memory objects carry, and the hub
+through which formats convert. `to()` converts metadata into another
+class, as images and transformations convert; given a
+[`ConversionReport`][brainhops.datamodel.metadata.ConversionReport], it
+fills it with what was lost:
 
 ```python
->>> from brainhops.datamodel.metadata import convert
->>> generic, report = convert(bold.metadata, Metadata)
+>>> from brainhops.datamodel import ConversionReport
+>>> report = ConversionReport()
+>>> generic = bold.metadata.to(Metadata, report=report)
 >>> generic.description, generic.slice_timing
 ('resting state, run 1, denoised', (0.0, 0.5, 1.0, 1.5, 2.0, 2.5))
->>> generic.raw is None  # the record never leaves its format
-True
+>>> hasattr(generic, "raw")  # the raw record never leaves its format
+False
 >>> report.lossy
 False
 
 ```
 
-Converting back to NIfTI gives the same fields, without the record:
+Converting back to NIfTI gives the same fields, without the raw record:
 
 ```python
->>> back, report = convert(generic, NiftiMetadata)
+>>> report = ConversionReport()
+>>> back = generic.to(NiftiMetadata, report=report)
 >>> back == bold.metadata, report.lossy
 (True, False)
 
 ```
+
+The target may also be named by its format (`generic.to("nifti")`), and
+`to()` with no class makes a copy.
 
 Every class converts with `from_other` too, as the data model does:
 
@@ -166,7 +196,8 @@ approximately:
 
 ```python
 >>> scan = Metadata(description="T1w", echo_time=0.0029, flip_angle=8.0)
->>> nifti, report = convert(scan, NiftiMetadata, on_loss="ignore")
+>>> report = ConversionReport()
+>>> nifti = scan.to(NiftiMetadata, report=report)
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
 >>> print(report)
@@ -191,7 +222,7 @@ writing, and says what a save would lose:
 What happens to a report is the *loss policy*: `"ignore"`, `"warn"` (the
 default: one `MetadataLossWarning` per conversion or save, carrying the
 report) or `"raise"` (a `MetadataLossError`). It is the `on_loss=` option
-of `convert` and of `save`:
+of `to()` (the policy applies when no report is given) and of `save`:
 
 ```python
 >>> image.save(os.path.join(tmp, "long.nii"), on_loss="raise")
@@ -287,19 +318,70 @@ sidecar converts into a format like any other metadata. Here, NIfTI has
 no place for the echo time, nor for free-form keys such as the task name:
 
 ```python
->>> nifti, report = convert(meta, NiftiMetadata, on_loss="ignore")
+>>> report = ConversionReport()
+>>> nifti = meta.to(NiftiMetadata, report=report)
 >>> sorted(report.lost)
 ['echo_time', 'extra']
 
 ```
 
-And NIfTI metadata becomes a sidecar through `Metadata`:
+And NIfTI metadata becomes a sidecar (a field BIDS has no key for, such
+as the data type, is written under its name in `CamelCase`):
 
 ```python
->>> convert(bold.metadata, Metadata)[0].to_bids()["SliceTiming"]
-[0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+>>> sidecar = bold.metadata.to(Metadata).to_bids()
+>>> sidecar["SliceTiming"], sidecar["DataType"]
+([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], 'float32')
 
 ```
+
+## Terms, units and directions
+
+A free-text field with a list of known terms holds an enum member when its
+value is one of them, and the string otherwise:
+[`Space`][brainhops.datamodel.enums.Space] for `space`, `input_space` and
+`output_space` (the NIfTI space names and the BIDS templates),
+[`Intent`][brainhops.datamodel.enums.Intent] (the NIfTI intent names),
+[`Manufacturer`][brainhops.datamodel.enums.Manufacturer],
+[`IlluminationType`][brainhops.datamodel.enums.IlluminationType] and
+[`ContrastMethod`][brainhops.datamodel.enums.ContrastMethod]. A member is
+a string too:
+
+```python
+>>> term = Metadata(space="MNI152NLin6Asym", intent="my own intent")
+>>> term.space, term.space == "MNI152NLin6Asym"
+(<Space.MNI152NLin6Asym: 'MNI152NLin6Asym'>, True)
+>>> term.intent
+'my own intent'
+
+```
+
+`data_unit` is a [`Unit`][brainhops.datamodel.units.Unit] when the units
+module knows it, and its name otherwise (`"a.u."`).
+
+An encoding direction (`phase_encoding_direction`,
+`slice_encoding_direction`) is an
+[`EncodingDirection`][brainhops.datamodel.metadata.EncodingDirection]: a
+unit vector, by default in the voxel axes of the image, where the BIDS
+string `"j-"` stands for `(0, -1, 0)`. It compares equal to its BIDS
+string, and a resampling that maps the voxel axes keeps it, even when it
+is no longer along an axis (`derive(grid_changed=True, grid_map=...)`):
+
+```python
+>>> bold.metadata.slice_encoding_direction
+EncodingDirection('k')
+>>> bold.metadata.slice_encoding_direction == "k"
+True
+>>> swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
+>>> Metadata(phase_encoding_direction="j-").derive(
+...     grid_changed=True, grid_map=swap
+... ).phase_encoding_direction
+EncodingDirection('i-')
+
+```
+
+A format that can only store an axis (NIfTI `dim_info`, BIDS) reports a
+direction that is along none as lost.
 
 ## Formats
 
@@ -342,7 +424,7 @@ do, and the readers that need them (FSL FNIRT, NiftyReg) still read
 >>> nb.save(warp, os.path.join(tmp, "y_warp.nii.gz"))
 >>> field = io.load(os.path.join(tmp, "y_warp.nii.gz"), hint="coordinates")
 >>> field.metadata.description, field.metadata.intent
-('a coordinates field', 'vector')
+('a coordinates field', <Intent.vector: 'vector'>)
 
 ```
 
@@ -428,7 +510,8 @@ Going through format-agnostic metadata keeps them all, and a BIDS sidecar
 holds them in BIDS units, ready to sit next to the NIfTI file:
 
 ```python
->>> generic, report = convert(edited.metadata, Metadata)
+>>> report = ConversionReport()
+>>> generic = edited.metadata.to(Metadata, report=report)
 >>> report.lossy
 False
 >>> sidecar = generic.to_bids()
@@ -454,8 +537,11 @@ written.
 | `channels` | `omero.channels` | `label`, `color`, `window` |
 | `display_range` | `omero.channels[*].window` | when every channel shares it |
 | `extra` | the other group attributes | |
+| `data_type` | the data type of the arrays | derived from the data |
 
-OME-Zarr has no unit for the values, so `data_unit` is unsupported. Every
+OME-Zarr has no unit for the values, so `data_unit` is unsupported.
+`data_type` is the type of the arrays: a writer stores the array as it
+is, and reports a `data_type` that disagrees with it as approximated. Every
 channel needs a display window: one that nothing gives (no display range)
 is written as the range of the values of the smallest level, and reported
 as approximated. A
@@ -489,10 +575,12 @@ The channel names go through format-agnostic metadata as they are, and
 NIfTI, which has no channel names, reports them:
 
 ```python
->>> generic, report = convert(stain.metadata, Metadata)
+>>> report = ConversionReport()
+>>> generic = stain.metadata.to(Metadata, report=report)
 >>> [c.name for c in generic.channels], report.lossy
 (['DAPI', 'GFP'], False)
->>> _, report = convert(stain.metadata, NiftiMetadata, on_loss="ignore")
+>>> report = ConversionReport()
+>>> _ = stain.metadata.to(NiftiMetadata, report=report)
 >>> sorted(report.lost)
 ['channels', 'name']
 
@@ -502,8 +590,8 @@ A plain Zarr array (`ZarrImage`) has no metadata convention, only
 attributes:
 [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata] stores the
 vocabulary as a BIDS sidecar under the attribute `"brainhops"`, so every
-field but the diffusion ones survives, and `extra` maps to the other
-attributes.
+field but the diffusion ones survives (`data_type` is the array's, as for
+OME-Zarr), and `extra` maps to the other attributes.
 
 ### Transformations: x5, ITK and FLIRT
 
@@ -512,12 +600,12 @@ attributes.
 | x5 (`.x5`) | [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata] | every field, in the JSON `Metadata` of the node |
 | ITK `.h5` | [`ItkH5Metadata`][brainhops.io.transformations.itk.ItkH5Metadata] | `generated_by`, from `/ITKVersion` |
 | ITK `.tfm`, `.mat` | [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata] | nothing |
-| FSL FLIRT `.mat` | [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata] | nothing; `moving` and `fixed` in memory only |
+| FSL FLIRT `.mat` | [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata] | nothing in the file; `moving` and `fixed` in memory |
 
 An x5 node stores its metadata as a JSON object: each field under its BIDS
 key (`Description`, `GeneratedBy`), or under its name in `CamelCase` when
 BIDS has none (`History`, `Moving`, `Fixed`, `InputSpace`, `OutputSpace`).
-The other keys are `extra`. The record of the metadata is the pair
+The other keys are `extra`. The raw record of the metadata is the pair
 `(header, node)`. Here is a displacement field written as nitransforms
 writes one:
 
@@ -541,7 +629,7 @@ writes one:
 ...     _ = domain.create_dataset("Mapping", data=np.eye(4))
 >>> x5 = io.load(os.path.join(tmp, "warp.x5"))
 >>> x5.metadata.description, x5.metadata.output_space
-('sub-01 T1w to MNI', 'MNI152NLin2009cAsym')
+('sub-01 T1w to MNI', <Space.MNI152NLin2009cAsym: 'MNI152NLin2009cAsym'>)
 >>> x5.metadata.extra
 {'WrittenBy': 'NiTransforms 25.1.0'}
 >>> x5.metadata.node is x5.nodes[0]
@@ -557,7 +645,7 @@ own, and each node keeps its JSON (composition does not merge).
 x5 metadata becomes a BIDS sidecar through `Metadata`, losing nothing:
 
 ```python
->>> convert(x5.metadata, Metadata)[0].to_bids()["OutputSpace"]
+>>> x5.metadata.to(Metadata).to_bids()["OutputSpace"]
 'MNI152NLin2009cAsym'
 
 ```
@@ -588,7 +676,8 @@ metadata at all, so everything is lost:
 
 ```python
 >>> from brainhops.io.transformations.itk import ItkMetadata
->>> itk, report = convert(x5.metadata, ItkMetadata, on_loss="ignore")
+>>> report = ConversionReport()
+>>> itk = x5.metadata.to(ItkMetadata, report=report)
 >>> print(report)  # doctest: +ELLIPSIS
 Metadata conversion x5 -> itk: lost extra=..., description='sub-01 T1w to MNI', generated_by=..., input_space='T1w', output_space='MNI152NLin2009cAsym'.
 >>> itk.description
@@ -600,7 +689,8 @@ An ITK `.h5` file records the version of ITK that wrote it, read as
 `generated_by`. The blocks of an ITK chain (or composite) have no metadata
 of their own.
 
-A FLIRT matrix stores nothing either. When the moving and reference
-images given to the reader were read from files, their paths are
-`moving` and `fixed`; a `.mat` file has no place for them, so a write
-would lose them.
+A FLIRT matrix stores nothing either, but its metadata is not empty: when
+the moving and reference images given to the reader were read from
+files, their paths are `moving` and `fixed`. They are kept in memory (a
+copy or a conversion carries them); a `.mat` file has no place for them,
+so a write would lose them.
