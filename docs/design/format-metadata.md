@@ -1677,7 +1677,7 @@ these:
   public name is imported from the package, whose docstring is a short
   overview; the format author's manual is
   `docs/dev/metadata-formats.md`. Value helpers that are not about
-  metadata live in `_core` (`term`, `differs`, `float32_repr`); the
+  metadata live in `_core` (`to_enum`, `differs`, `float32_repr`); the
   JSON codec shared by BIDS, x5 and Zarr is `io/metadata/_json.py`, and
   the parsers' sync is `io/metadata/_sync.py`.
 - **M4: the metaclass is an adaptor.** It pops `supports=` and `lazy=`,

@@ -11,7 +11,7 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core.enum import term as enum_term
+from brainhops._core.enum import to_enum as _to_enum
 
 from ..base import DataModelBase
 from ..enums import SpaceEnum
@@ -92,7 +92,7 @@ class EncodingDirection(DataModelBase):
             "The coordinate system of `vector`: `None` for the image's "
             "voxel axes, or the label of a world space."
         ),
-        ConvertTo(enum_term(SpaceEnum)),
+        ConvertTo(_to_enum(SpaceEnum)),
     ] = None
 
     def __post_init__(self) -> None:
@@ -162,10 +162,10 @@ def _passes(value: tx.Any) -> bool:
     return value is None or value is UNSUPPORTED
 
 
-def term(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
+def to_enum(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
     """The converter of a vocabulary field with known terms
-    (`brainhops._core.enum.term`), which lets `UNSUPPORTED` through."""
-    convert = enum_term(enum)
+    (`brainhops._core.enum.to_enum`), which lets `UNSUPPORTED` through."""
+    convert = _to_enum(enum)
 
     def converter(value: tx.Any) -> tx.Any:
         return value if value is UNSUPPORTED else convert(value)

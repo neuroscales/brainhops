@@ -46,7 +46,7 @@ from ._terms import (
     GeneratedBy,
     direction,
     dtype,
-    term,
+    to_enum,
     unit,
 )
 
@@ -161,7 +161,7 @@ class ProvenanceMetadata(_VocabularyGroup):
         ),
         Bids("SpatialReference"),
         Scope(FILE),
-        ConvertTo(term(SpaceEnum)),
+        ConvertTo(to_enum(SpaceEnum)),
     ] = None
 
     intent: tx.Annotated[
@@ -171,7 +171,7 @@ class ProvenanceMetadata(_VocabularyGroup):
             "an `IntentEnum`)."
         ),
         Scope(FILE),
-        ConvertTo(term(IntentEnum)),
+        ConvertTo(to_enum(IntentEnum)),
     ] = None
 
 
@@ -224,7 +224,7 @@ class MRIMetadata(_VocabularyGroup):
         ),
         Bids("Manufacturer"),
         Scope(ACQUISITION),
-        ConvertTo(term(Manufacturer)),
+        ConvertTo(to_enum(Manufacturer)),
     ] = None
 
     manufacturers_model_name: tx.Annotated[
@@ -393,14 +393,14 @@ class MicroscopyMetadata(_VocabularyGroup):
         Maybe[tx.Union[IlluminationType, str]],
         tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
         Scope(ACQUISITION),
-        ConvertTo(term(IlluminationType)),
+        ConvertTo(to_enum(IlluminationType)),
     ] = None
 
     contrast_method: tx.Annotated[
         Maybe[tx.Union[ContrastMethod, str]],
         tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
         Scope(ACQUISITION),
-        ConvertTo(term(ContrastMethod)),
+        ConvertTo(to_enum(ContrastMethod)),
     ] = None
 
 
@@ -426,14 +426,14 @@ class TransformMetadata(_VocabularyGroup):
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps from."),
         Scope(FILE),
-        ConvertTo(term(SpaceEnum)),
+        ConvertTo(to_enum(SpaceEnum)),
     ] = None
 
     output_space: tx.Annotated[
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps to."),
         Scope(FILE),
-        ConvertTo(term(SpaceEnum)),
+        ConvertTo(to_enum(SpaceEnum)),
     ] = None
 
 
