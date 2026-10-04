@@ -36,6 +36,9 @@ from ._vocabulary import (
     TransformMetadata,
 )
 
+FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
+"""The fields `supports=` speaks of, in the order reports list them."""
+
 
 class Metadata(
     DataModelBase,
@@ -491,8 +494,108 @@ class Metadata(
 #   PRIVATE
 # ----------------------------------------------------------------------
 
-FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
-"""The fields `supports=` speaks of, in the order reports list them."""
+
+# The fields `derive` treats by name rather than by scope: field ->
+# `rule(value, step)`, the derived value.
+_DERIVE_RULES: tx.Dict[str, tx.Callable[[tx.Any, tx.Any], tx.Any]] = {
+    "creation_time": lambda value, step: None,  # a new object
+    "history": lambda value, step: _appended(value, step),
+    "generated_by": lambda value, step: _with_brainhops(value),
+    "extra": lambda value, step: dict(value or {}),
+    # One value for every volume: a selection keeps it.
+    "display_range": lambda value, step: value,
+    "data_unit": lambda value, step: value,
+}
+
+
+def _appended(history: tx.Any, step: tx.Optional[str]) -> tx.Any:
+    return history if step is None else tuple(history or ()) + (step,)
+
+
+def _with_brainhops(
+    generated_by: tx.Optional[tx.Tuple[GeneratedBy, ...]],
+) -> tx.Tuple[GeneratedBy, ...]:
+    entries = tuple(generated_by or ())
+    if any(getattr(g, "name", None) == "brainhops" for g in entries):
+        return entries
+    try:
+        from brainhops import __version__ as version
+    except ImportError:  # pragma: no cover
+        version = None
+    return entries + (GeneratedBy(name="brainhops", version=version),)
+
+
+def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
+    """A `grid` field after a grid change: an encoding direction in voxel
+    axes goes through `grid_map` when it is given (and fits), one in a
+    world space is kept; anything else is cleared."""
+    if not isinstance(value, EncodingDirection):
+        return None
+    if value.space is not None:
+        return value
+    if grid_map is None:
+        return None
+    matrix = np.asarray(grid_map, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] != len(value.vector):
+        return None
+    try:
+        return value.transform(matrix)
+    except ValueError:
+        return None
+
+
+def _select_volumes(
+    value: tx.Any,
+    volumes: tx.Optional[tx.Sequence[int]],
+    volumes_changed: bool,
+) -> tx.Any:
+    """A `volume` field after a change of volumes: indexed by the
+    selection when it is known, cleared when it is not."""
+    if volumes is not None:
+        try:
+            return tuple(value[i] for i in volumes)
+        except (IndexError, TypeError):
+            return None
+    return None if volumes_changed else value
+
+
+def fits(value: tx.Any, cls: type) -> bool:
+    """Whether a metadata object is one of `cls` already: of the class
+    itself, or of a subclass of a format class (generic `Metadata` holds
+    generic metadata only)."""
+    if type(value) is cls:
+        return True
+    return cls is not Metadata and isinstance(value, cls)
+
+
+def _format_name(obj: tx.Any) -> str:
+    if isinstance(obj, type):
+        for field in fields(obj):
+            if field.name == "format":
+                default = field.default
+                if isinstance(default, str):
+                    return default
+        return obj.__name__
+    return str(getattr(obj, "format", type(obj).__name__))
+
+
+def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
+    """The class a `to()` target names: a class, or a format name."""
+    if isinstance(target, type) and issubclass(target, Metadata):
+        return target
+    if isinstance(target, str):
+        if target == "generic":
+            return Metadata
+        stack = list(Metadata.__subclasses__())
+        while stack:
+            klass = stack.pop()
+            if _format_name(klass) == target:
+                return klass
+            stack.extend(klass.__subclasses__())
+        raise ValueError(f"No metadata class for the format {target!r}.")
+    raise TypeError(
+        f"Expected a Metadata subclass or a format name, got {target!r}."
+    )
 
 
 def _supported_names(
@@ -557,106 +660,3 @@ def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
     snapshot = obj.__dict__.get("_snapshot")
     if value is not None and snapshot is not None:
         snapshot[name] = copy.deepcopy(value)
-
-
-def fits(value: tx.Any, cls: type) -> bool:
-    """Whether a metadata object is one of `cls` already: of the class
-    itself, or of a subclass of a format class (generic `Metadata` holds
-    generic metadata only)."""
-    if type(value) is cls:
-        return True
-    return cls is not Metadata and isinstance(value, cls)
-
-
-def _with_brainhops(
-    generated_by: tx.Optional[tx.Tuple[GeneratedBy, ...]],
-) -> tx.Tuple[GeneratedBy, ...]:
-    entries = tuple(generated_by or ())
-    if any(getattr(g, "name", None) == "brainhops" for g in entries):
-        return entries
-    try:
-        from brainhops import __version__ as version
-    except ImportError:  # pragma: no cover
-        version = None
-    return entries + (GeneratedBy(name="brainhops", version=version),)
-
-
-def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
-    """A `grid` field after a grid change: an encoding direction in voxel
-    axes goes through `grid_map` when it is given (and fits), one in a
-    world space is kept; anything else is cleared."""
-    if not isinstance(value, EncodingDirection):
-        return None
-    if value.space is not None:
-        return value
-    if grid_map is None:
-        return None
-    matrix = np.asarray(grid_map, dtype=float)
-    if matrix.ndim != 2 or matrix.shape[1] != len(value.vector):
-        return None
-    try:
-        return value.transform(matrix)
-    except ValueError:
-        return None
-
-
-def _select_volumes(
-    value: tx.Any,
-    volumes: tx.Optional[tx.Sequence[int]],
-    volumes_changed: bool,
-) -> tx.Any:
-    """A `volume` field after a change of volumes: indexed by the
-    selection when it is known, cleared when it is not."""
-    if volumes is not None:
-        try:
-            return tuple(value[i] for i in volumes)
-        except (IndexError, TypeError):
-            return None
-    return None if volumes_changed else value
-
-
-def _appended(history: tx.Any, step: tx.Optional[str]) -> tx.Any:
-    return history if step is None else tuple(history or ()) + (step,)
-
-
-# The fields `derive` treats by name rather than by scope: field ->
-# `rule(value, step)`, the derived value.
-_DERIVE_RULES: tx.Dict[str, tx.Callable[[tx.Any, tx.Any], tx.Any]] = {
-    "creation_time": lambda value, step: None,  # a new object
-    "history": _appended,
-    "generated_by": lambda value, step: _with_brainhops(value),
-    "extra": lambda value, step: dict(value or {}),
-    # One value for every volume: a selection keeps it.
-    "display_range": lambda value, step: value,
-    "data_unit": lambda value, step: value,
-}
-
-
-def _format_name(obj: tx.Any) -> str:
-    if isinstance(obj, type):
-        for field in fields(obj):
-            if field.name == "format":
-                default = field.default
-                if isinstance(default, str):
-                    return default
-        return obj.__name__
-    return str(getattr(obj, "format", type(obj).__name__))
-
-
-def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
-    """The class a `to()` target names: a class, or a format name."""
-    if isinstance(target, type) and issubclass(target, Metadata):
-        return target
-    if isinstance(target, str):
-        if target == "generic":
-            return Metadata
-        stack = list(Metadata.__subclasses__())
-        while stack:
-            klass = stack.pop()
-            if _format_name(klass) == target:
-                return klass
-            stack.extend(klass.__subclasses__())
-        raise ValueError(f"No metadata class for the format {target!r}.")
-    raise TypeError(
-        f"Expected a Metadata subclass or a format name, got {target!r}."
-    )

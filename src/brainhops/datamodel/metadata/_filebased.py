@@ -350,22 +350,30 @@ class FileBasedMetadata(Metadata):
         self,
         *,
         grid_changed: bool,
+        grid_map: tx.Any,
         volumes: tx.Optional[tx.Sequence[int]],
-        **kwargs: tx.Any,
+        volumes_changed: bool,
+        step: tx.Optional[str],
     ) -> tx.Dict[str, tx.Any]:
         # The raw record and the snapshot are kept, so that a field
-        # `derive` cleared is cleared in the record on write, and
-        # `_derive_raw` scrubs what the vocabulary does not cover.
+        # `derive` cleared is cleared in the record on write; the record
+        # is the format's scrubbed copy (`_derive_raw`).
         values = super()._derive_values(
-            grid_changed=grid_changed, volumes=volumes, **kwargs
+            grid_changed=grid_changed,
+            grid_map=grid_map,
+            volumes=volumes,
+            volumes_changed=volumes_changed,
+            step=step,
         )
+        values.update(self._format_state())
         values["raw"] = self._derive_raw(
             self.raw, grid_changed=grid_changed, volumes=volumes
         )
-        values["snapshot"] = dict(self._snapshot)
         return values
 
     def _format_state(self) -> tx.Dict[str, tx.Any]:
+        """What a same-format copy carries besides the fields: the raw
+        record (shared) and the snapshot (copied)."""
         return {"raw": self.raw, "snapshot": dict(self._snapshot)}
 
 
