@@ -378,15 +378,15 @@ An encoding direction (`phase_encoding_direction`,
 `slice_encoding_direction`) is an
 [`EncodingDirection`][brainhops.datamodel.metadata.EncodingDirection]: a
 unit vector, by default in the voxel axes of the image, where the BIDS
-string `"j-"` stands for `(0, -1, 0)`. It compares equal to its BIDS
-string, and a resampling that maps the voxel axes keeps it, even when it
+string `"j-"` stands for `(0, -1, 0)` (`to_bids()` gives the string
+back), and a resampling that maps the voxel axes keeps it, even when it
 is no longer along an axis (`derive(grid_changed=True, grid_map=...)`):
 
 ```python
 >>> bold.metadata.slice_encoding_direction
 EncodingDirection('k')
->>> bold.metadata.slice_encoding_direction == "k"
-True
+>>> bold.metadata.slice_encoding_direction.to_bids()
+'k'
 >>> swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
 >>> Metadata(phase_encoding_direction="j-").derive(
 ...     grid_changed=True, grid_map=swap

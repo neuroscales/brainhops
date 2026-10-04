@@ -336,9 +336,13 @@ axis-aligned vector in voxel space, so (c) is chosen:
 `EncodingDirection(vector, space=None)`, where `space=None` means the
 image's voxel (array) axes, the BIDS frame, and a label (a `SpaceEnum`)
 means a world space. A BIDS string is accepted wherever a direction is
-(`metadata.phase_encoding_direction = "j-"` stores `(0, -1, 0)`), a
-direction compares equal to its BIDS string, and `to_bids()` gives the
-string back, or `None` when it is along no voxel axis. BIDS, MRtrix and
+(`metadata.phase_encoding_direction = "j-"` stores `(0, -1, 0)`), and
+`to_bids()` gives the string back, or `None` when it is along no voxel
+axis. Equality is `bagof`'s, field by field: there is no custom `__eq__`
+(an earlier one compared equal to the BIDS string and within a
+tolerance). Instead the vector is normalised on construction and its
+components within `1e-9` of 0 or +-1 are snapped, so that `(0, 0, 2)`,
+`"k"` and a `"k"` mapped through a permutation are the same tuple. BIDS, MRtrix and
 NIfTI `dim_info` store an axis: they round-trip an axis-aligned
 direction exactly (NIfTI drops the polarity, approximated, as before)
 and report any other one as lost. A JSON store (x5, plain Zarr) writes

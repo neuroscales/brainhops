@@ -12,6 +12,7 @@ from bagof.magic import ConvertTo, replace
 
 # internals
 from brainhops._core.enum import to_enum as _to_enum
+from brainhops._core.typing import ArrayLike
 
 from ..base import DataModelBase
 from ..enums import SpaceEnum
@@ -58,10 +59,24 @@ class Channel(DataModelBase):
 # ----------------------------------------------------------------------
 
 
-def _vector(value: tx.Any) -> tx.Tuple[float, ...]:
+def _vector(value: tx.Union[str, ArrayLike]) -> tx.Tuple[float, ...]:
     if isinstance(value, str):
         return _bids_vector(value)
     return tuple(float(v) for v in np.ravel(np.asarray(value, dtype=float)))
+
+
+# A component this close to 0 or to +-1, once normalised, is snapped to
+# it: a direction through a permutation or a flip of the axes, or a
+# rotation by a multiple of 90 degrees, is then exactly an axis, and
+# compares equal to it with the default (field by field) equality.
+_SNAP = 1e-9
+
+
+def _snapped(value: float) -> float:
+    for exact in (0.0, 1.0, -1.0):
+        if abs(value - exact) <= _SNAP:
+            return exact
+    return value
 
 
 class EncodingDirection(DataModelBase):
@@ -71,18 +86,25 @@ class EncodingDirection(DataModelBase):
 
     `space=None` means the image's own voxel (array) axes, the frame of
     BIDS `PhaseEncodingDirection`: `EncodingDirection("j-")` is
-    `EncodingDirection((0, -1, 0))`, and compares equal to `"j-"`. A
+    `EncodingDirection((0, -1, 0))` (compare with
+    `direction.to_bids() == "j-"`, or with `EncodingDirection("j-")`). A
     direction in voxel axes that is aligned with one of them reads and
     writes as a BIDS string (`to_bids()`); any other one (an oblique
     direction, after a resampling) is kept exactly, and the formats that
     can only store an axis report it as lost.
+
+    Two directions are equal when their fields are. The vector is
+    normalised on construction, and a component within `1e-9` of 0 or
+    +-1 is snapped to it, so that `(0, 0, 2)`, `"k"` and a `"k"` mapped
+    through a permutation of the axes are the same vector.
     """
 
     vector: tx.Annotated[
-        tx.Tuple[float, ...],
+        ArrayLike,
         tx.Doc(
-            "The direction, a unit vector (normalised on construction); "
-            "a BIDS string (`'j-'`) is accepted."
+            "The direction: an array-like vector (or a BIDS string, "
+            "`'j-'`), stored as a tuple of floats, normalised and with "
+            "its near-axis components snapped on construction."
         ),
         ConvertTo(_vector),
     ]
@@ -105,8 +127,7 @@ class EncodingDirection(DataModelBase):
             raise ValueError(
                 f"A direction is a non-zero vector, not {self.vector!r}."
             )
-        if not math.isclose(norm, 1.0, rel_tol=1e-12):
-            self.vector = tuple(float(v) for v in vector / norm)
+        self.vector = tuple(_snapped(float(v)) for v in vector / norm)
 
     def to_bids(self) -> tx.Optional[str]:
         """The BIDS string of this direction (`"j-"`), or `None` when it
@@ -122,25 +143,11 @@ class EncodingDirection(DataModelBase):
             return None
         return AXES[index] + ("-" if vector[index] < 0 else "")
 
-    def transform(self, linear: tx.Any) -> tx.Self:
+    def transform(self, linear: ArrayLike) -> tx.Self:
         """The direction after a linear map of its space (`linear`, a
         matrix from the old axes to the new ones)."""
         matrix = np.asarray(linear, dtype=float)
         return replace(self, vector=tuple(matrix @ np.asarray(self.vector)))
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, str):
-            try:
-                other = EncodingDirection(other)
-            except ValueError:
-                return False
-        if not isinstance(other, EncodingDirection):
-            return NotImplemented
-        if self.space != other.space or len(self.vector) != len(other.vector):
-            return False
-        return bool(np.allclose(self.vector, other.vector, atol=1e-9))
-
-    __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
         bids = self.to_bids()

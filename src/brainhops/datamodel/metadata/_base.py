@@ -11,6 +11,8 @@ import typing_extensions as tx
 from bagof.magic import Factory, fields
 
 # internals
+from brainhops._core.typing import ArrayLike
+
 from ..base import DataModelBase
 from ._meta import MetadataMeta
 from ._report import (
@@ -257,7 +259,7 @@ class Metadata(
         self,
         *,
         grid_changed: bool = False,
-        grid_map: tx.Any = None,
+        grid_map: tx.Optional[ArrayLike] = None,
         volumes: tx.Optional[tx.Sequence[int]] = None,
         volumes_changed: bool = False,
         step: tx.Optional[str] = None,

@@ -253,7 +253,7 @@ class MRIMetadata(_VocabularyGroup):
         Maybe[EncodingDirection],
         tx.Doc(
             "Phase-encoding direction: a unit vector, by default in voxel "
-            "axes (BIDS `'j-'` is accepted and compares equal)."
+            "axes (BIDS `'j-'` is accepted)."
         ),
         Bids("PhaseEncodingDirection"),
         Scope(GRID),
@@ -278,7 +278,7 @@ class MRIMetadata(_VocabularyGroup):
         Maybe[EncodingDirection],
         tx.Doc(
             "Slice-encoding direction: a unit vector, by default in voxel "
-            "axes (BIDS `'k'` is accepted and compares equal)."
+            "axes (BIDS `'k'` is accepted)."
         ),
         Bids("SliceEncodingDirection"),
         Scope(GRID),

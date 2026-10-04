@@ -1150,7 +1150,10 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
     assert direction.vector == (0.0, -1.0, 0.0)
     assert direction.space is None
     assert direction.to_bids() == "j-"
-    assert direction == "j-" and direction != "j"
+    assert direction == EncodingDirection((0, -1, 0))
+    assert direction != EncodingDirection("j")
+    # Equality is the fields': a direction is not its BIDS string.
+    assert direction != "j-"
     assert repr(direction) == "EncodingDirection('j-')"
     assert EncodingDirection("k") == EncodingDirection((0, 0, 2))
     with pytest.raises(ValueError):
@@ -1167,9 +1170,9 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
 def test_the_direction_fields_take_bids_strings() -> None:
     meta = Metadata(phase_encoding_direction="j-")
     assert isinstance(meta.phase_encoding_direction, EncodingDirection)
-    assert meta.phase_encoding_direction == "j-"
+    assert meta.phase_encoding_direction.to_bids() == "j-"
     meta.slice_encoding_direction = {"Vector": [0, 0, 1]}
-    assert meta.slice_encoding_direction == "k"
+    assert meta.slice_encoding_direction == EncodingDirection("k")
     assert meta.to_bids() == {
         "PhaseEncodingDirection": "j-",
         "SliceEncodingDirection": "k",
@@ -1192,7 +1195,7 @@ def test_derive_maps_a_direction_through_the_grid() -> None:
     )
     swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
     derived = meta.derive(grid_changed=True, grid_map=swap)
-    assert derived.phase_encoding_direction == "i-"
+    assert derived.phase_encoding_direction == EncodingDirection("i-")
     # A direction in a world space does not move with the grid.
     assert derived.slice_encoding_direction.space == "mni"
     # The slice timing is still cleared.

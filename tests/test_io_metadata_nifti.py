@@ -89,8 +89,8 @@ def test_the_header_is_decoded_into_the_vocabulary(scan) -> None:  # noqa: ANN00
     assert meta.sources == ("sub-01_T1w.nii",)
     assert meta.display_range == (0.0, 100.0)
     assert meta.repetition_time == 2.0
-    assert meta.phase_encoding_direction == "j"
-    assert meta.slice_encoding_direction == "k"
+    assert meta.phase_encoding_direction.to_bids() == "j"
+    assert meta.slice_encoding_direction.to_bids() == "k"
     assert meta.slice_timing == (0.0, 0.25, 0.5, 0.75, 1.0, 1.25)
     assert meta.space == "aligned"
     assert meta.data_type == np.float32
