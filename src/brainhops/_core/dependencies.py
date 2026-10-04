@@ -1,5 +1,6 @@
 # stdlib
 import importlib
+import importlib.util
 
 # dependencies
 import typing_extensions as tx
@@ -45,8 +46,38 @@ _LAZY_NAMES = (
     + _DASK_NDIMAGE
 )
 
+# The availability flags of top-level modules, which are answered from
+# the module's spec rather than by importing it: whether a dependency is
+# installed is asked at import time (to decide which formats exist), and
+# importing it just to find out is what makes `import brainhops` slow.
+# A dotted module has no such shortcut, since finding the spec of
+# `a.b` imports `a`, so its flag is still set by importing it.
+_SPEC_FLAGS = {
+    flag: qualname
+    for _, qualname, flag in (
+        _NIBABEL,
+        _H5PY,
+        _ABCZARR,
+        _PILLOW,
+        _TIFFFILE,
+        _OPENSLIDE,
+        _NUMPY,
+        _CUPY,
+        _DASK,
+        _SCIPY,
+    )
+}
+
 
 def __getattr__(name: str) -> tx.Any:
+
+    # An installed module may still fail to import (a binding whose native
+    # library is missing, a broken install), so its flag being `True` only
+    # says that it is installed. The failure surfaces where the module is
+    # first used, which reads it through its alias and finds `None`.
+    if name in _SPEC_FLAGS:
+        available = globals()[name] = _find_spec(_SPEC_FLAGS[name])
+        return available
 
     # ==================================================================
     #
@@ -121,6 +152,8 @@ def has_abczarr_driver() -> bool:
     being importable is not enough on its own. This returns `True` only when
     abczarr is present and at least one driver is available to it.
     """
+    if not __getattr__("HAS_ABCZARR"):
+        return False
     abczarr = __getattr__("abczarr")
     if abczarr is None:
         return False
@@ -139,6 +172,15 @@ def __dir__() -> tx.List[str]:
     though it does not exist.
     """
     return sorted(set(globals()) | set(_LAZY_NAMES))
+
+
+def _find_spec(qualname: str) -> bool:
+    """Whether a top-level module is installed, without importing it."""
+    try:
+        return importlib.util.find_spec(qualname) is not None
+    except (ImportError, ValueError):
+        # ValueError: a module already in `sys.modules` without a spec.
+        return False
 
 
 def _lazy_import(
@@ -207,7 +249,11 @@ def _lazy_import(
     # imported last would win.
     namespace[rootname] = root
     namespace[shortname] = leaf
-    namespace[uppername] = leaf is not None
+    # A top-level module's flag says whether it is installed, and is
+    # answered from its spec (see `_SPEC_FLAGS`); it is not overwritten
+    # here, so that it does not change with the order of the queries.
+    if uppername not in _SPEC_FLAGS:
+        namespace[uppername] = leaf is not None
 
     # The query is one of the names just written, except for a fully
     # qualified submodule, which is the leaf itself.
