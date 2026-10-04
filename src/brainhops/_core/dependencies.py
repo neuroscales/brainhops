@@ -1,6 +1,8 @@
 # stdlib
 import importlib
+import importlib.metadata
 import importlib.util
+import re
 
 # dependencies
 import typing_extensions as tx
@@ -51,7 +53,7 @@ _LAZY_NAMES = (
 # installed is asked at import time (to decide which formats exist), and
 # importing it just to find out is what makes `import brainhops` slow.
 # A dotted module has no such shortcut, since finding the spec of
-# `a.b` imports `a`, so its flag is still set by importing it.
+# `a.b` imports `a`; its flag is derived instead (see `_DERIVED_FLAGS`).
 _SPEC_FLAGS = {
     flag: qualname
     for _, qualname, flag in (
@@ -69,6 +71,34 @@ _SPEC_FLAGS = {
 }
 
 
+# The availability flags of submodules, which `find_spec` cannot answer
+# without importing their parent. Each is answered from what makes the
+# submodule importable instead:
+# - `dask.array` needs dask's "array" extra (numpy), which is read from
+#   dask's metadata (see `_has_extra`);
+# - `scipy.ndimage` is part of scipy;
+# - `cupyx` is a top-level package that ships in the cupy wheels;
+# - `brainhops._core.dask_ndimage` needs nothing beyond `dask.array`.
+def _has_dask_array() -> bool:
+    if not __getattr__("HAS_DASK"):
+        return False
+    has_extra = _has_extra("dask", "array")
+    if has_extra is None:
+        # No metadata to read: import it, as a last resort.
+        return __getattr__("da") is not None
+    return has_extra
+
+
+_DERIVED_FLAGS = {
+    "HAS_DASK_ARRAY": _has_dask_array,
+    "HAS_SCIPY_NDIMAGE": lambda: __getattr__("HAS_SCIPY"),
+    "HAS_CUPY_NDIMAGE": lambda: (
+        __getattr__("HAS_CUPY") and _find_spec("cupyx")
+    ),
+    "HAS_DASK_NDIMAGE": lambda: __getattr__("HAS_DASK_ARRAY"),
+}
+
+
 def __getattr__(name: str) -> tx.Any:
 
     # An installed module may still fail to import (a binding whose native
@@ -77,6 +107,10 @@ def __getattr__(name: str) -> tx.Any:
     # first used, which reads it through its alias and finds `None`.
     if name in _SPEC_FLAGS:
         available = globals()[name] = _find_spec(_SPEC_FLAGS[name])
+        return available
+
+    if name in _DERIVED_FLAGS:
+        available = globals()[name] = bool(_DERIVED_FLAGS[name]())
         return available
 
     # ==================================================================
@@ -183,6 +217,84 @@ def _find_spec(qualname: str) -> bool:
         return False
 
 
+# A requirement as `importlib.metadata.requires` lists it: a name, then
+# optionally extras, a version specifier, and a marker after `;`.
+_REQUIREMENT = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)"
+    r"\s*(?:\[(?P<extras>[^\]]*)\])?"
+    r"[^;]*(?:;(?P<marker>.*))?$"
+)
+_EXTRA_MARKER = r"^\s*\(?\s*extra\s*==\s*(['\"]){}\1\s*\)?\s*$"
+
+
+def _has_distribution(name: str) -> bool:
+    """Whether a distribution is installed, without importing it."""
+    # Older interpreters do not normalise the name they are asked for.
+    for spelling in {name, name.replace("-", "_"), name.replace("_", "-")}:
+        try:
+            importlib.metadata.distribution(spelling)
+            return True
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    return False
+
+
+def _has_extra(
+    dist: str, extra: str, _seen: tx.Optional[set] = None
+) -> tx.Optional[bool]:
+    """
+    Whether a distribution is installed with the requirements of an extra.
+
+    This reads the distribution's metadata and does not import anything.
+    It checks that each distribution the extra requires is installed, but
+    not its version.
+
+    Returns
+    -------
+    bool or None
+        `False` if the distribution declares extras but not this one.
+        `None` if this cannot be told from the metadata: the distribution
+        has none, or the extra requires something under a marker other
+        than the extra itself (`python_version`, `sys_platform`, ...),
+        which is not evaluated here.
+    """
+    _seen = set() if _seen is None else _seen
+    _seen.add((dist, extra))
+    try:
+        provided = importlib.metadata.metadata(dist).get_all("Provides-Extra")
+        requirements = importlib.metadata.requires(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if provided is not None and extra not in provided:
+        return False
+    marker_of_extra = re.compile(_EXTRA_MARKER.format(re.escape(extra)))
+    has_extra = True
+    for requirement in requirements or []:
+        match = _REQUIREMENT.match(requirement)
+        if not match:
+            return None
+        marker = match["marker"] or ""
+        if "extra" not in marker:
+            continue  # a requirement of the distribution itself
+        if not marker_of_extra.match(marker):
+            if re.search(r"(['\"])" + re.escape(extra) + r"\1", marker):
+                return None  # the extra, combined with another marker
+            continue  # another extra
+        name = match["name"]
+        if not _has_distribution(name):
+            return False
+        # An extra may require another extra (`dask[array]`).
+        for nested in filter(None, (match["extras"] or "").split(",")):
+            nested = nested.strip()
+            if (name, nested) in _seen:
+                continue
+            has_nested = _has_extra(name, nested, _seen)
+            if has_nested is None:
+                return None
+            has_extra = has_extra and has_nested
+    return has_extra
+
+
 def _lazy_import(
     namespace: tx.Dict[str, tx.Any],
     query: str,
@@ -252,7 +364,7 @@ def _lazy_import(
     # A top-level module's flag says whether it is installed, and is
     # answered from its spec (see `_SPEC_FLAGS`); it is not overwritten
     # here, so that it does not change with the order of the queries.
-    if uppername not in _SPEC_FLAGS:
+    if uppername not in _SPEC_FLAGS and uppername not in _DERIVED_FLAGS:
         namespace[uppername] = leaf is not None
 
     # The query is one of the names just written, except for a fully
