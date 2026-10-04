@@ -16,10 +16,19 @@ where `Magic` polymorphism does and does not fit. Decisions are tagged
 > transformation), `MghMetadata`, `X5Metadata`, the ITK and FLIRT
 > classes, and `ZarrMetadata`/`OmeZarrMetadata`. The user guide is
 > `docs/start/metadata.md`. Deviations are recorded in notes like this
-> one, at the section they concern; three decisions changed after a
-> review of the prototype (M6: a geometry hook for derived fields, and a
-> lazy record part; M9/M10: metadata is copied, not aliased, and a
-> single-block file puts its metadata on the block too).
+> one, at the section they concern. Two reviews of the prototype changed
+> decisions. The first: M6 (a geometry hook for derived fields, and a
+> lazy part of the raw record), M9/M10 (metadata is copied, not aliased,
+> and a single-block file puts its metadata on the block too). The second
+> (the inline review of PR #287): the class hierarchy is `Metadata` ->
+> `FileBasedMetadata` -> `<Fmt>Metadata` (M2), the vocabulary is
+> declared in six group mixins (M3), `supports=` gives
+> `supported_fields` (M5), lazy fields are descriptors (M6), one
+> vocabulary for the raw record (`from_raw`, `update_from_raw`,
+> `update_raw`; M6), conversion is `metadata.to(cls)` (M7), the field is
+> `MetadataField[...]` (M10), free-text fields with known terms are
+> enums, encoding directions are vectors, and the element type is
+> metadata (`data_type`, M1).
 
 The problem, in one sentence: every file format keeps its non-spatial
 metadata under a different name and type (`header`, `keyval`, `tags`,
@@ -85,10 +94,13 @@ represents is not metadata and never appears in the vocabulary:
 - transformations and coordinate systems, including the transform
   *kind* (ITK `type`, LTA `type`, M3Z `type`, x5 `Type`/`SubType`,
   elastix `Transform`), which the transformation class itself encodes;
-- storage encoding: dtype, byte order, intensity scaling (`scl_slope`,
+- storage encoding: byte order, intensity scaling (`scl_slope`,
   `BRICK_FLOAT_FACS`, MRtrix `scaling`, MINC `image-min/max`), layout,
-  compression, data file names. These are writer options or raw-struct
-  content, not descriptive metadata.
+  compression, data file names. These are writer options or raw-record
+  content, not descriptive metadata. The *element type* on disk is the
+  exception (`data_type`, section 4.4): it is a user-visible choice that
+  may differ from the type of the loaded array (a scaled `int16` file
+  loads as floats), so it is metadata; its byte order is not.
 
 The raw structure still *contains* these (a nibabel header has `pixdim`),
 and the writer still overrides them from the data model, exactly as
@@ -96,15 +108,18 @@ today. The vocabulary simply never exposes them.
 
 ## 3. Representation and layering (M2)
 
-Answer to issue question 1: both, in one object. A `FormatMetadata`
-instance has three layers:
+Answer to issue question 1: both, in one object, whose class hierarchy
+mirrors the images' (`Image` -> `FileBasedImage` -> `NiftiImage`). A
+file format's metadata has three layers:
 
-1. **Common vocabulary**: `Magic` fields on the base class, grouped as in
-   section 4, with BIDS names and units. Every subclass has them.
+1. **Common vocabulary**: `Magic` fields, declared in six group mixins
+   (section 4) that the root class `Metadata` inherits, with BIDS names
+   and units. Every metadata class has them.
 2. **Raw record** `raw`: one format-private field whose type is the
    format's faithful record (the nibabel `Nifti1Header`,
    `MrtrixHeader`, `LtaStruct`, ...). Read-then-write in the same format
-   goes through it. It is never copied across formats.
+   goes through it. It is never copied across formats. It is declared by
+   `FileBasedMetadata`, with the read-time snapshot (section 6).
 3. **Extras** `extra: Dict[str, Any]`: a free-form namespace for keys
    the vocabulary does not cover. It *is* copied across formats, into
    whatever free-form store the target has (MRtrix `keyval`, NRRD
@@ -121,58 +136,79 @@ generic `Metadata`, so everything format-agnostic lives in the data
 model, and only format subclasses live under io:
 
 - `brainhops/datamodel/metadata.py`: `Unsupported`/`UNSUPPORTED`,
-  `Maybe`, the `Bids`/`Scope` annotations, `FormatMetadata` (the
-  vocabulary base, with `raw`, `extra`, `from_instance`, `derive`,
-  `check_writable`), `Metadata` (generic, lossless), `OpaqueMetadata`
-  (generic, everything unsupported), `ConversionReport`, the loss
-  policies and `convert()`.
+  `Maybe`, the `Bids`/`Scope` annotations, the six vocabulary groups,
+  `Metadata` (the root and the generic, lossless metadata, with
+  `extra`, `to`, `derive` and the BIDS codec entry points),
+  `FileBasedMetadata` (`raw`, the snapshot, `from_raw`,
+  `update_from_raw`, `update_raw`, `check_writable` and the hooks),
+  `OpaqueMetadata` (nothing supported), `MetadataField`,
+  `ConversionReport` and the loss policies.
+- `brainhops/_core/properties.py`: `Lazy` and the `LazyField`
+  descriptor (section 6), next to `lazyproperty`.
+- `brainhops/datamodel/enums.py`: the enums of the known terms (section
+  4).
 - `brainhops/io/metadata/`: the BIDS sidecar codec (it reads files).
 - `brainhops/io/images/<fmt>/_metadata.py`,
   `brainhops/io/transformations/<fmt>/_metadata.py`: one
-  `<Fmt>Metadata` per format, next to its parser.
+  `<Fmt>Metadata(FileBasedMetadata)` per format, next to its parser.
 
 ```python
 # brainhops/datamodel/metadata.py
-class FormatMetadata(DataModelBase, polymorphic=True):
-    """Common vocabulary + one format's faithful record."""
+class Metadata(DataModelBase, ProvenanceMetadata, MRIMetadata,
+               DiffusionMetadata, DisplayMetadata, MicroscopyMetadata,
+               TransformMetadata, polymorphic=True, kw_only=True):
+    """Common vocabulary + extras; the root, and the generic metadata."""
 
-    format: tx.Literal["generic"] = "generic"   # discriminant, a real field (M4)
-    raw: tx.Any = Field(None, repr=False)        # format-private record (M6)
+    format: str = "generic"                      # discriminant, a real field (M4)
     extra: Maybe[tx.Dict[str, tx.Any]] = Factory(dict)
+    # supported_fields / unsupported_fields / derived_fields / lazy_fields:
+    # ClassVars computed from the class keywords (M5, 6, 6.2)
 
-    # --- common vocabulary (section 4), e.g. ---
-    description: Maybe[str] = None
-    repetition_time: Maybe[float] = None         # seconds (BIDS RepetitionTime)
-    ...
+    def to(self, cls=None, *, on_loss=None, report=None, **values): ...  # M7
+    def derive(self, *, grid_changed=False, grid_map=None, volumes=None,
+               step=None) -> tx.Self: ...                                # M9
 
-    def __init_subclass__(cls, supports=None, **kw): ...   # M5: expands to UNSUPPORTED defaults
+class FileBasedMetadata(Metadata):              # mirrors FileBasedImage
+    raw: NoRepr[NoEq[tx.Any]] = None            # format-private record (M6)
+    _decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None   # read-time snapshot
+
     @classmethod
-    def from_instance(cls, other, *args, **kwargs) -> tx.Self: ...   # M7
+    def from_raw(cls, raw, *, image=None, **values) -> tx.Self: ...
+    def update_from_raw(self, raw, *, image=None) -> tx.Self: ...
+    def update_raw(self, raw=None, *, image=None, report=None, force=()): ...
     def check_writable(self, *, image=None) -> "ConversionReport": ...  # M7
-    def derive(self, **changes) -> tx.Self: ...                        # M9
 
-class Metadata(FormatMetadata):             # nothing unsupported: the lossless hub
-    format: tx.Literal["generic"] = "generic"
-
-class OpaqueMetadata(FormatMetadata, supports=()):   # nothing supported (M5)
+class OpaqueMetadata(FileBasedMetadata, supports=()):   # nothing, anywhere (M5)
     format: tx.Literal["opaque"] = "opaque"
+    raw: None = None
 ```
 
-Two generic classes, because they are two different things: `Metadata`
-is what in-memory objects carry and what the BIDS sidecar codec reads
-and writes (no `raw`, nothing unsupported, so `Nifti -> Metadata ->
-Mrtrix` loses exactly what `Nifti -> Mrtrix` loses); `OpaqueMetadata` is
-the base of the formats that store nothing (FLIRT `.mat`, matrix text,
-ITK `.tfm`/`.mat`), where every field is unsupported and a read-then-save
-loses nothing because nothing is there.
+`Metadata` is the root *and* the generic instance: it is what in-memory
+objects carry and what the BIDS sidecar codec reads and writes (no
+`raw`, nothing unsupported, so `Nifti -> Metadata -> Mrtrix` loses
+exactly what `Nifti -> Mrtrix` loses), and it selects a format class on
+`format` (`Metadata(format="nifti")` builds a `NiftiMetadata`; an
+unknown format builds a `Metadata`). `FileBasedMetadata` is what a
+format subclasses: everything that needs a raw record lives there, so
+the generic metadata has none, not even a `None` one. `OpaqueMetadata`
+is the convenience base of the formats that keep nothing at all, not
+even in memory (ITK `.tfm`/`.mat`, matrix text): every field is
+unsupported and a read-then-save loses nothing because nothing is there.
+A format that keeps something, if only in memory, is a
+`FileBasedMetadata` with a `supports=` list: FLIRT's `.mat` stores no
+metadata, but the reader is given the moving and reference images, whose
+paths it keeps as `moving`/`fixed` (lost, and reported, on write), so
+`FlirtMetadata` is not opaque.
 
-> **Prototype note.** `raw` is excluded from `==` as well as from `repr`:
-> two metadata objects are equal when their vocabulary and `extra` are.
-> The snapshot is the field `_decoded` (constructor keyword `decoded=`).
-> An unknown `format` builds the base `FormatMetadata` (which, like
-> `Metadata`, supports every field and has no record) rather than
-> `Metadata`: falling back to a sibling would need a catch-all `on=`
-> predicate.
+> **Prototype note.** `raw` is excluded from `==` as well as from `repr`
+> (`NoRepr[NoEq[tx.Any]]`, or `Annotated[..., NoRepr(), NoEq()]`): two
+> metadata objects are equal when their vocabulary and `extra` are. The
+> snapshot is the field `_decoded` (constructor keyword `decoded=`), a
+> generic `Metadata` (section 6). A first prototype had a base
+> `FormatMetadata` with `raw` and the snapshot, and `Metadata` as one of
+> its subclasses; the review of PR #287 inverted that, as above, so
+> that the generic metadata carries no raw record and an unknown format
+> falls back to the root without a catch-all `on=` predicate.
 
 ## 4. Vocabulary (M3)
 
@@ -187,6 +223,42 @@ carries a `Scope` tag used by propagation (section 9): `file` (about this
 file), `acquisition` (invariant under resampling), `grid` (tied to the
 voxel grid), `volume` (one entry per volume/channel).
 
+**Groups.** Each subsection below is a `Magic` mixin that declares its
+fields, and nothing else: `ProvenanceMetadata` (4.1), `MRIMetadata`
+(4.2), `DiffusionMetadata` (4.3), `DisplayMetadata` (4.4),
+`MicroscopyMetadata` (4.5), `TransformMetadata` (4.6). `Metadata`
+inherits all six (the "all metadata" class), and a field is defined in
+exactly one group, never on `Metadata` itself. The groups are an
+organisational device, and the memo says so plainly. They buy one place
+per topic for the docs (each group is an API entry with its fields'
+`Doc`/`Bids`/`Scope`), `supports=(ProvenanceMetadata, "echo_time")` in a
+format declaration, and a per-group rule in the codecs (BIDS keeps
+`DiffusionMetadata` in `.bval`/`.bvec` files, not in the sidecar). They
+do not shrink a format class (every format still exposes every field, so
+that each can answer `UNSUPPORTED`), and they do not narrow types (`def
+f(m: DiffusionMetadata)` accepts any metadata). `VOCABULARY` (the field
+names, group by group) and `GROUPS` (group class -> its field names) are
+module constants.
+
+**Known terms.** A free-text field with a list of known terms is typed
+`Maybe[Union[<Enum>, str]]`: a known term is held as the enum member (a
+`StrEnum`, so it is still a string and compares equal to its value), any
+other string stays a string, so the vocabulary is documented without
+being closed. The enums live in `brainhops.datamodel.enums`: `Space`,
+`Intent`, `Manufacturer`, `IlluminationType`, `ContrastMethod`. Truly
+free text (`name`, `description`, `history`, file references) stays
+`str`.
+
+> **Prototype note.** `bagof` collects fields from `Magic` mixins, with
+> two constraints: a mixin must be a `Magic` subclass, and it must say
+> `convert=True` itself (a field keeps the options of the class that
+> declares it; the groups share a small base for that). Inherited fields
+> come out of `fields()` in *reverse* MRO order, so every loop over the
+> vocabulary (repr, `changed_fields`, `derive`, conversion, the codecs)
+> iterates `VOCABULARY`, never `fields(Metadata)`. `bagof` does not
+> coerce a string into the enum member of a `Union[Enum, str]` (a string
+> already satisfies the union), so those fields carry a small converter.
+
 ### 4.1 Core and provenance (`file`)
 
 | Field | Type / unit | BIDS | Native sources |
@@ -197,11 +269,14 @@ voxel grid), `volume` (one entry per volume/channel).
 | `generated_by` | tuple[GeneratedBy(name, version, description)] | `GeneratedBy` | TIFF `Software`, MRtrix `mrtrix_version`, ITK h5 `ITKVersion`, x5 `Format`/`Version`, AFNI `TYPESTRING` |
 | `creation_time` | datetime | — | TIFF `DateTime`, AFNI `IDCODE_DATE`, EXIF |
 | `sources` | tuple[str] | `Sources` | BIDS-style provenance inputs only: NIfTI `aux_file`, elastix `InitialTransformParameterFileName`, NRRD/MRtrix none |
-| `space` | str | `SpatialReference` | NIfTI `sform_code` name, AFNI `TEMPLATE_SPACE`, NRRD `space`, x5 `Domain.Coordinates` label |
-| `intent` | str (NIfTI intent names as the canonical vocabulary) | — | NIfTI `intent_code/name`, AFNI `BRICK_STATSYM`, NRRD `kinds` (non-spatial) |
+| `space` | `Space` or str | `SpatialReference` | NIfTI `sform_code` name, AFNI `TEMPLATE_SPACE`, NRRD `space`, x5 `Domain.Coordinates` label |
+| `intent` | `Intent` or str (the NIfTI intent names) | — | NIfTI `intent_code/name`, AFNI `BRICK_STATSYM`, NRRD `kinds` (non-spatial) |
 
 `space` is a *label* (`"MNI152NLin6Asym"`, `"scanner"`, `"orig"`); the
-coordinate system itself stays in the data model. `intent` is
+coordinate system itself stays in the data model. `Space` lists the
+NIfTI code names (`scanner`, `aligned`, `talairach`, `mni`, `template`),
+the BIDS standard templates and the BIDS non-standard spaces; `Intent`
+lists the NIfTI intent names as `nibabel` spells them. `intent` is
 descriptive; the NIfTI reader still reads `intent_code` from the raw
 record to type axes, and the writer derives the code from the axes first
 and from `intent` second (a *geometry-derived* field for NIfTI, section
@@ -217,11 +292,12 @@ and from `intent` second (a *geometry-derived* field for NIfTI, section
 | `inversion_time` | s | `InversionTime` | MGH `ti` (ms) |
 | `flip_angle` | deg | `FlipAngle` | MGH `flip_angle` (rad) |
 | `magnetic_field_strength` | T | `MagneticFieldStrength` | keyval only |
-| `manufacturer`, `manufacturers_model_name`, `institution_name` | str | same | TIFF `Make`/`Model`, OpenSlide `vendor`, OME Instrument |
+| `manufacturer` | `Manufacturer` or str | same | TIFF `Make`, OpenSlide `vendor`, OME Instrument |
+| `manufacturers_model_name`, `institution_name` | str | same | TIFF `Model`, OME Instrument |
 | `acquisition_time` | datetime | `AcquisitionTime` | OME `AcquisitionDate`, EXIF |
-| `phase_encoding_direction` (`grid`) | `"i"`..`"k-"` | same | MRtrix keyval, NIfTI `dim_info` |
+| `phase_encoding_direction` (`grid`) | `EncodingDirection` | same | MRtrix keyval, NIfTI `dim_info` |
 | `total_readout_time`, `effective_echo_spacing` | s | same | keyval |
-| `slice_encoding_direction` (`grid`) | `"i"`..`"k-"` | same | NIfTI `dim_info`, MRtrix keyval |
+| `slice_encoding_direction` (`grid`) | `EncodingDirection` | same | NIfTI `dim_info`, MRtrix keyval |
 | `slice_timing` (`grid`) | tuple[float] s | `SliceTiming` | NIfTI `slice_code/start/end/duration` (expanded), AFNI `TAXIS_OFFSETS`, MRtrix keyval |
 | `multiband_acceleration_factor` | int | same | MRtrix keyval |
 
@@ -231,12 +307,37 @@ sparse acquisition, and MGH/AFNI store the TR without any time axis.
 Formats that only have a time step treat `repetition_time` as
 geometry-derived (6.2).
 
+**Encoding directions.** Three representations were compared. (a) The
+BIDS strings `i`/`j`/`k` with an optional `-`: trivial codecs, but tied
+to the on-disk axis order, broken by any in-memory permutation or flip,
+and unable to say anything after a resampling that is not axis-aligned.
+(b) The axis names of the image's voxel system (`"-y"`): survives a
+permutation if the axis objects are kept, still axis-bound. (c) An
+oriented unit vector in a named coordinate system: survives any linear
+map, and the codecs snap it back to an axis. (b) is (c) with an
+axis-aligned vector in voxel space, so (c) is chosen:
+`EncodingDirection(vector, space=None)`, where `space=None` means the
+image's voxel (array) axes, the BIDS frame, and a label (a `Space`)
+means a world space. A BIDS string is accepted wherever a direction is
+(`metadata.phase_encoding_direction = "j-"` stores `(0, -1, 0)`), a
+direction compares equal to its BIDS string, and `to_bids()` gives the
+string back, or `None` when it is along no voxel axis. BIDS, MRtrix and
+NIfTI `dim_info` store an axis: they round-trip an axis-aligned
+direction exactly (NIfTI drops the polarity, approximated, as before)
+and report any other one as lost. A JSON store (x5, plain Zarr) writes
+it as `{"Vector": [...], "Space": ...}` and reads it back. The slice
+timing stays a tuple indexed along the slice encoding direction.
+
 ### 4.3 Diffusion (`volume`)
 
 | Field | Type / unit | Native sources |
 |---|---|---|
-| `diffusion_bvalues` | (N,) float, s/mm² | MRtrix `dw_scheme` col 4, NRRD `DWMRI_b-value` x gradient norms, BIDS `.bval` |
-| `diffusion_bvectors` | (N,3) float, unit vectors in **world (RAS) coordinates** | MRtrix `dw_scheme` cols 1-3 (already world), NRRD gradients via `measurement frame`, BIDS `.bvec` via the voxel-to-world rotation |
+| `bvalues` | (N,) float, s/mm² | MRtrix `dw_scheme` col 4, NRRD `DWMRI_b-value` x gradient norms, BIDS `.bval` |
+| `bvectors` | (N,3) float, unit vectors in **world (RAS) coordinates** | MRtrix `dw_scheme` cols 1-3 (already world), NRRD gradients via `measurement frame`, BIDS `.bvec` via the voxel-to-world rotation |
+
+The names carry no `diffusion_` prefix: no format we read has b-values or
+b-vectors of another kind (NRRD `DWMRI_b-value`, MRtrix `dw_scheme` and
+BIDS `.bval`/`.bvec` are all diffusion), and the group says the rest.
 
 The frame convention is the lossy spot in diffusion metadata; the
 codecs rotate into and out of world coordinates using the image's
@@ -248,24 +349,53 @@ affine, which is why `_decode`/`_encode` take the data model object too.
 |---|---|---|
 | `display_range` | (min, max) float | NIfTI `cal_min/max`, AFNI `BRICK_STATS` (first volume) |
 | `channels` | tuple[Channel(name, color, display_range, unit)] | AFNI `BRICK_LABS`, NRRD `labels`, ImageJ `Labels`/`LUTs`/`Ranges`, OME `Channel.Name/Color`, OME-Zarr `omero.channels` |
-| `data_unit` | str | NRRD `sample units`, OME channel unit, MINC `units` |
+| `data_unit` | `Unit` or str | NRRD `sample units`, OME channel unit, MINC `units` |
+| `data_type` (`grid`) | `numpy.dtype` (native order) | NIfTI `datatype`, MGH `type`, MRtrix/NRRD `datatype`/`type`, Zarr array `dtype`, ITK `precision` |
 
 `Channel.color` is an RGBA hex string; LUT arrays stay in `extra`.
+
+`data_unit` is a `Unit` when `brainhops.datamodel.units` knows the
+name, and the name otherwise: the units module knows time, length and
+sample units only (no intensity, angle, field or arbitrary units, and no
+compound units such as `"mm/s"`), and the codecs must round-trip NRRD
+`sample units: "mm/s"` and OME `"a.u."`, so `Maybe[Unit]` alone would
+refuse real files. A follow-up issue (to be opened) widens the units
+module (intensity, angle, magnetic field, compound units; `pint` is the
+obvious candidate); the field then narrows to `Unit` without a
+vocabulary change.
+
+`data_type` is the element type of the data as stored, which may differ
+from the type of the loaded array (a scaled `int16` file loads as
+floats). It is the type a reader saw, and the type a writer prefers
+(6.2). Its byte order is storage encoding (M1), so it is held in native
+order; endianness stays in the raw record. BIDS has no key for it; the
+name follows NIfTI/MRtrix "datatype". It is `grid`-scoped, so that
+`derive(grid_changed=True)` clears it (a resampled label map is not
+forced back to `uint8`), while a crop or a volume selection keeps it. It
+is not `derived=` (the data model does not own it), except where the
+format stores no element type but the array's own (Zarr, OME-Zarr).
+
+> **Prototype note.** `data_type` is wired for NIfTI (`datatype`), MGH
+> (`type`; a type it cannot store is approximated by the nearest) and
+> Zarr/OME-Zarr (derived from the arrays). ITK `precision` stays in the
+> raw record (`ItkStruct.precision`) for now; MRtrix and NRRD come with
+> their batch.
 
 ### 4.5 Microscopy (`acquisition`)
 
 Deliberately small until CZI/LIF/ND2/Imaris/BDV readers exist:
 `objective_magnification` (float; OpenSlide `objective-power`, OME
 `Objective.NominalMagnification`), `objective_numerical_aperture`,
-`illumination_type`/`contrast_method` as free strings. Everything else
-goes to `extra` until two formats agree on it.
+`illumination_type` and `contrast_method` (`IlluminationType` and
+`ContrastMethod`, the OME enumerations, or any other string).
+Everything else goes to `extra` until two formats agree on it.
 
 ### 4.6 Transformation-specific (`file`)
 
 | Field | Type | Native sources |
 |---|---|---|
 | `moving` / `fixed` | str (file reference) | LTA `src/dst filename`, M3Z `image/atlas fname`, FLIRT `src`/`ref` (user-given, never stored), ANTs convention |
-| `input_space` / `output_space` | str label | x5 `Domain.Coordinates`, LTA (derived from `type`), OME-Zarr coordinate system names |
+| `input_space` / `output_space` | `Space` or str label | x5 `Domain.Coordinates`, LTA (derived from `type`), OME-Zarr coordinate system names |
 
 `moving`/`fixed` are deliberately *not* `source`/`target`: the data model
 warns that brainhops' `input`/`output` are the inverse of the imaging
@@ -277,12 +407,14 @@ with images.
 
 Field of view (derived from geometry), intensity scaling and AFNI
 per-volume stats (raw), NIfTI `intent_p1..p3` (raw; FNIRT/NiftyReg read
-them from the record), ITK `precision` (encoding), elastix resampler keys
-(raw, written back by `transformation_to_map`), EXIF/ICC blobs
-(`extra["exif"]`, `extra["icc_profile"]`), OpenSlide
+them from the raw record), byte order and compression (encoding),
+elastix resampler keys (raw, written back by `transformation_to_map`),
+EXIF/ICC blobs (`extra["exif"]`, `extra["icc_profile"]`), OpenSlide
 `bounds`/`background_color`/associated images (`extra`), JP2 boxes (raw).
-Around 35 fields in all; adding one needs two formats that carry it
-natively, or one format plus a BIDS key.
+37 fields in all; adding one needs two formats that carry it natively,
+or one format plus a BIDS key, and it goes into one group. A first
+draft kept the element type out (ITK `precision` as "encoding"); it is
+`data_type` now (4.4).
 
 ## 5. The `UNSUPPORTED` sentinel (M5)
 
@@ -320,20 +452,25 @@ Rules:
 - **Declaration is class-level and compact.** Redeclaring ~30 defaults
   per format is not acceptable (LTA, ITK, FLIRT, MGH and Pillow support
   a handful of fields each). The class keyword `supports=` lists the
-  vocabulary fields a format can store; `FormatMetadata.__init_subclass__`
-  turns every other vocabulary field into one with default
+  vocabulary fields a format can store; the class machinery (a
+  metaclass, see the note below) turns every other vocabulary field into
+  one with default
   `UNSUPPORTED` (by rewriting the field default before `Magic` builds
-  the class, the same way `kinds.py` and `concrete.py` already hook
-  `__init_subclass__`/`__post_init__` on `Magic` classes). `supports`
-  is chosen over `unsupported=` because the short list is the honest
-  one for most formats, and because a vocabulary field added later is
-  unsupported everywhere until a format opts in, which is the safe
-  default. `MrtrixMetadata` and `Metadata` pass `supports=ALL`.
-  `FormatMetadata.unsupported_fields` (a `ClassVar` frozenset computed
-  at the same time) lets tests, docs and the sidecar codec list a
-  format's capabilities without an instance. A subclass may still
-  redeclare a single field with `= UNSUPPORTED` by hand; the keyword
-  is sugar, not a second mechanism.
+  the class). `supports` is chosen over `unsupported=` because the
+  short list is the honest one for most formats, and because a
+  vocabulary field added later is unsupported everywhere until a format
+  opts in, which is the safe default and what makes the vocabulary easy
+  to extend. It takes field names, vocabulary groups (all their fields:
+  `supports=(ProvenanceMetadata, "echo_time")`), or `ALL`
+  (`MrtrixMetadata`, `X5Metadata`); omitted, a subclass keeps its
+  parent's (`Metadata`, the root, supports everything). The
+  declaration gives `supported_fields`, a `ClassVar` frozenset of the
+  fields (and `"extra"`) the class stores, which lets tests, docs and
+  the codecs list a format's capabilities without an instance;
+  `unsupported_fields` is derived from it (the rest of the vocabulary),
+  and kept because every write loop needs the complement. A subclass may
+  still redeclare a single field with `= UNSUPPORTED` by hand; the
+  keyword is sugar, not a second mechanism.
 - **Per-instance is allowed where the capability really is
   per-instance.** `TiffMetadata` supports `channels` only in the OME and
   ImageJ dialects; its `__post_init__` sets `channels = UNSUPPORTED`
@@ -341,7 +478,7 @@ Rules:
   `kinds.py:559` does). `replace()` goes through `__init__`, so
   `__post_init__` runs again and the rule holds after a `replace(...,
   dialect="plain")`. `supports(name)` on an instance reads the instance;
-  `unsupported_fields` on a class reads the defaults.
+  `supported_fields` on a class reads the declaration.
 - **`UNSUPPORTED` never travels.** `from_instance` maps a source
   `UNSUPPORTED` to `None` on the target (the target may well support
   it). Only the target's own declaration produces loss.
@@ -361,17 +498,19 @@ Rules:
   `register_converter`, as `DataModelConverter` already does.
 
 > **Prototype note.** Three deviations here.
-> (1) `supports=` and `derived=` are read by a metaclass,
-> `_FormatMetadataMeta(type(DataModelBase))`, not by `__init_subclass__`:
+> (1) `supports=`, `derived=` and `lazy=` are read by a metaclass,
+> `_MetadataMeta(type(DataModelBase))`, not by `__init_subclass__`:
 > `bagof` builds the fields *before* `__init_subclass__` runs and does not
 > forward class keywords to it. The metaclass redeclares each unsupported
 > field in the class namespace (annotation + `= UNSUPPORTED`) before
 > `MetaMagic` sees it, which is exactly the hand-written spelling, so the
-> keyword stays sugar. It runs only for `FormatMetadata` subclasses (no
-> metaclass is added to any io class).
+> keyword stays sugar. It runs only for `Metadata` subclasses (no
+> metaclass is added to any io class). The vocabulary is a module
+> constant (`VOCABULARY`), not a class attribute: it is not
+> class-specific.
 > (2) `repr` *hides* `UNSUPPORTED` (and an empty `extra`), like `None`:
 > with the full vocabulary a NIfTI object printed 28 `UNSUPPORTED`
-> entries for 9 real ones. `unsupported_fields` and `supports(name)` (a
+> entries for 9 real ones. `supported_fields` and `supports(name)` (a
 > method that works on the class and on an instance) show capabilities.
 > (3) `Maybe[T]` needs no converter registration: `bagof`'s union
 > converter lets an `Unsupported` instance through untouched.
@@ -395,17 +534,18 @@ of what it decoded as the *snapshot*. On write, a common field is
 encoded over the record only when it differs from the snapshot:
 
 ```python
-_decoded: tx.Dict[str, tx.Any] = Field(Factory(dict), repr=False, eq=False)  # snapshot
+_decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None   # snapshot, a generic Metadata
 
-def _write(self, *, image=None, report):
-    raw = self._raw_or_default()
-    changed = {k: v for k, v in self._vocab_items() if v != self._decoded.get(k)}
+def update_raw(self, raw=None, *, image=None, report=None, force=()):
+    raw = self._raw_or_default() if raw is None else raw
+    changed = {k: v for k, v in self._vocab_items()
+               if v != getattr(self._decoded, k, None)}
     return self._encode(raw, changed, image=image, report=report)
 ```
 
 The record is never re-decoded at write time: the snapshot is the
 reference, and it says what the user was shown. An object built in
-memory or converted from another format has an empty snapshot (and a
+memory or converted from another format has no snapshot (and a
 default record), so every non-`None` field counts as a change, which is
 what a fresh record needs. Four cases follow, and they are the rule the
 user has to know: *untouched means "keep the record's"; a common field
@@ -431,37 +571,52 @@ record; edit the record only for what the vocabulary does not cover*.
 
 `extra` is compared key by key against its snapshot in the same way.
 
-> **Prototype note.** The helpers are public and named for what they do:
-> `FormatMetadata.from_raw(raw, *, image=None, **values)` (reader: decode,
-> then snapshot the *converted* values, so a decoded list held as a tuple
-> is not a change), `changed_fields()` (the diff above, with `extra` as a
-> per-key diff whose `None` removes a key), `write_raw(raw=None, *,
-> image=None, report=None)` (writer: reports assigned-but-unsupported
-> fields as lost, then calls `_encode` with the changes) and
-> `check_writable(*, image=None)`. A writer passes its own fresh record to
-> `write_raw` (NIfTI builds a new header from the data model, copies the
-> safe slots of `raw` onto it, then encodes the changes), so
-> `_raw_or_default()` is only the fallback. `check_writable` encodes over
-> what a format's `_check_record(image)` hook returns, the record its
-> writer would start from (NIfTI: the record reshaped to the data), so
-> that a value-dependent check (slice timing against the shape, the
-> time step) reads the same state as a real write. A writer keyword that
-> must win over the record whatever the snapshot says (MGH `tr=`) is
-> passed as `write_raw(..., force=("repetition_time",))`: still no
-> second sentinel. A parser given a record and a `metadata` that is not
-> that record's (an explicit `metadata=`, or one carried by
-> `replace(image, header=...)`) holds `metadata.with_record(raw)`: the
-> new record decoded, with the fields that changed in the metadata set
-> over it as changes. Whether the metadata's record *is* the parser's
-> is an identity test (the NIfTI header, the MGH header, the x5
-> `(header, node)` pair); a Zarr record is rebuilt on each read, so the
-> metadata remembers the node it was read from. A `_decode` that returns
-> a value for a field its format does not support is a bug, and
-> `from_raw` raises `TypeError` rather than drop the value unreported.
+**One word for the record: raw.** The helpers are public, on
+`FileBasedMetadata`, and all say "raw":
+
+| Method | What it does |
+|---|---|
+| `from_raw(raw, *, image=None, **values)` | build from a raw record just read: decode, then snapshot the *converted* values (a decoded list held as a tuple is not a change) |
+| `update_from_raw(raw, *, image=None)` | the metadata of a new raw record, keeping this object's changes |
+| `update_raw(raw=None, *, image=None, report=None, force=())` | encode the changes into a raw record, and return it |
+| `changed_fields()` | the diff above (`extra` as a per-key diff whose `None` removes a key) |
+| `check_writable(*, image=None)` | what a write would lose, from `update_raw` over `_check_raw(image)` |
+
+`update_raw` reports assigned-but-unsupported fields as lost, then calls
+`_encode` with the changes. A writer passes its own fresh raw record to
+it (NIfTI builds a new header from the data model, copies the safe slots
+of `raw` onto it, then encodes the changes), so `_raw_or_default()` is
+only the fallback. `check_writable` encodes over what a format's
+`_check_raw(image)` hook returns, the raw record its writer would start
+from (NIfTI: the header reshaped to the data), so that a value-dependent
+check (slice timing against the shape, the time step) reads the same
+state as a real write. A writer keyword that must win over the raw
+record whatever the snapshot says (MGH `tr=`) is passed as
+`update_raw(..., force=("repetition_time",))`: still no second sentinel.
+A parser given a raw record and a `metadata` that is not that record's
+(an explicit `metadata=`, or one carried by `replace(image,
+header=...)`) holds `metadata.update_from_raw(raw)`: the new raw record
+decoded, with the fields that changed in the metadata set over it as
+changes. Whether the metadata's raw record *is* the parser's is an
+identity test (the NIfTI header, the MGH header, the x5 `(header,
+node)` pair); a Zarr raw record is rebuilt on each read, so the metadata
+remembers the node it was read from. The per-format raw types are named
+for it too (`MghRaw`, `OmeZarrRaw`).
+
+`from_raw` raises `TypeError` when `_decode` returns a value for a field
+its class does not support (or a `Lazy` for a field that is not lazy).
+The raw record is always the format's own, so this never fires on data:
+it fires when a format's `_decode` and its `supports=` disagree, a bug
+of the format class that would otherwise drop the value without a
+report.
 
 **Snapshot lifetime.** `_decoded` is a real `Magic` field (private name,
 like `Transformation._input`), excluded from `repr` and `eq` and never
-set by users, so it survives everything the record survives:
+set by users, holding a generic `Metadata` (`None` for an object built
+in memory): it is what the reader decoded, which is exactly a frozen
+format-agnostic view of the raw record, and `None` in it means "not
+decoded, or decoded as `None`". It survives everything the raw record
+survives:
 `replace()` and `copy` carry it (a `replace(description="x")` therefore
 changes exactly one field), pickling keeps it, and same-format
 `from_instance` copies it next to `raw`. When an image or a
@@ -470,11 +625,12 @@ transformation is copied (`replace(image, data=...)`, same-class
 shares `raw` and gets its own snapshot and `extra`, so the snapshot
 still describes the shared record, and editing the copy's fields never
 edits the original's. Cross-format `from_instance`
-resets it to empty next to the reset `raw`, and `derive()` keeps it
+resets it to `None` next to the reset `raw`, and `derive()` keeps it
 next to the kept `raw` (section 9). It is filled once, by the reader,
 with `copy.deepcopy` of the decoded values (the `extra` dict and the
 tuples in it are mutable or shared; the nibabel header is in `raw`, not
-in the snapshot, and needs no copy). Losing it is therefore never
+in the snapshot, and needs no copy), and by a lazy field when it is
+loaded. Losing it is therefore never
 expected; if it ever is empty with a non-default record (a hand-built
 instance), the behaviour degrades to the plain overlay, which is still
 correct, only less faithful to record edits.
@@ -490,22 +646,36 @@ def _encode(self, raw, changed: dict, *, image=None, report) -> raw: ...  # None
 `image=` (or the transformation) is passed for the fields that need the
 data model: diffusion b-vector frames, slice timing expansion from
 `slice_code` (needs the slice axis length), AFNI per-brick checks, and
-the geometry-derived fields below. Decoding is eager on read (records
-are small; a read metadata object is complete when `repr`-ed), with one
-exception: **a lazy record part**. Where part of the record is expensive
-to reach and few users need it (the MGH tags follow the whole volume, so
-reading them decompresses an MGZ to its end), the record holds a loader
-for that part, and `_decode` returns the fields that need it as
-`Lazy(load)`: such a field is decoded on first access (attribute,
-`repr`, `==`, `changed_fields()`, a conversion) or before an assignment,
-and joins the snapshot then, so the change-detecting write is unchanged.
-A load that never touches them stays as cheap as before the metadata
-existed. The record otherwise stays lazy only where it is today (the
-NIfTI header is parsed when the image is).
+the geometry-derived fields below. Decoding is eager on read (raw
+records are small; a read metadata object is complete when `repr`-ed),
+with one exception: **a lazy part of the raw record**. Where part of the
+raw record is expensive to reach and few users need it (the MGH tags
+follow the whole volume, so reading them decompresses an MGZ to its
+end), the raw record holds a loader for that part, the format declares
+the fields that need it with `lazy=("history",)`, and `_decode` returns
+them as `Lazy(load)`. Each lazy field is a `LazyField` descriptor
+(`brainhops/_core/properties.py`, next to `lazyproperty`): the pending
+`Lazy` sits in the instance `__dict__`, and the descriptor decodes it on
+first access (attribute, `repr`, `==`, `changed_fields()`, a
+conversion) or before an assignment, through `setattr` (so the field
+converts it), then puts it in the snapshot, so the change-detecting
+write is unchanged. No other attribute access is intercepted. A load
+that never touches them stays as cheap as before the metadata existed.
+The raw record otherwise stays lazy only where it is today (the NIfTI
+header is parsed when the image is).
+
+> **Prototype note.** A first prototype overrode `__getattribute__` on
+> the base class and wrapped every `__setattr__`, keeping a private
+> `_pending` dict; the review asked for lazy properties instead. The
+> metaclass installs the descriptor after `bagof` built the class (it
+> keeps its own field table, so the constructor, the defaults, `fields()`
+> and `copy` are unaffected), and again on a subclass whose `supports=`
+> redeclares the field. `copy()` keeps a pending field pending (the
+> loader is shared).
 
 ### 6.1 Naming: `raw`, not `struct`
 
-The maintainer described the record as "(semi-)private", as nibabel's
+The maintainer described the raw record as "(semi-)private", as nibabel's
 `Nifti1Header` wraps its structured array. `struct` (the LTA name)
 sounds like a first-class field; `_raw` would hide it from `fields()`
 and `replace()`, which the same-format copy needs. The field is `raw`
@@ -514,7 +684,9 @@ what the vocabulary does not cover", and each format keeps its
 historical public name as a read accessor (`NiftiMetadata.header`,
 `MrtrixMetadata.keyval`, `LtaMetadata.struct`) returning `raw` or the
 relevant part of it. One name in the framework, a familiar alias per
-format.
+format, and the same word in the method names (`from_raw`,
+`update_from_raw`, `update_raw`, `_check_raw`, `_derive_raw`) and the
+raw types (`MghRaw`, `OmeZarrRaw`).
 
 ### 6.2 Geometry-derived fields
 
@@ -531,7 +703,7 @@ writable in that format. It is declared with `derived=("repetition_time",
   for the derived fields (NIfTI: the time step of the image, the scale
   of its time axis, as `repetition_time`). The writer stores the data
   model's value (NIfTI writes the time step as `pixdim[4]`), and
-  `write_raw` takes a changed derived field out of `changed` before
+  `update_raw` takes a changed derived field out of `changed` before
   `_encode` sees it, recording it under `report.approximated[name] =
   "derived from the data model (...)"` when it differs (NIfTI write with
   `repetition_time=2.0` on a 1.5 s time axis says so instead of silently
@@ -545,7 +717,29 @@ writable in that format. It is declared with `derived=("repetition_time",
   the value is then approximated is decided at write, where the
   geometry is known.
 
-`derived_fields` is exposed next to `unsupported_fields`.
+`derived_fields` is exposed next to `supported_fields`.
+
+**The element type (`data_type`).** A writer stores the data with this
+precedence: an explicit `dtype=` writer option, then `metadata.data_type`
+when the array's values are of its kind, then the array's own type. "Of
+its kind" means integers (booleans included) as an integer type, floats
+as a float type: a label map read as `uint8` and computed on as `int64`
+is written as `uint8` again, but a smoothed, floating point version of
+it is not quantised, and an integer image is not turned into floats. A
+`data_type` the writer does not use is reported as approximated when it
+was set (or converted) by hand, and dropped silently when it was only
+read (the data changed kind since). A format that cannot store it
+writes the nearest type it can (MGH: `uint8`, `int16`, `int32`,
+`float32`), reported as approximated. The rule is
+`brainhops.datamodel.metadata.preferred_dtype`, which the NIfTI and MGH
+writers call.
+
+> **Prototype note.** The plan was "`dtype=` > `data_type` > the array",
+> unconditionally. That would quantise a resampled label map as long as
+> data-model operations do not call `derive()` yet (section 9), and would
+> write an integer image read from a scaled file back as floats or the
+> other way round; the "same kind" condition keeps the common case (an
+> unchanged type round-trips) without either surprise.
 
 > **Prototype note.** For NIfTI, `space` is derived too (the sform code
 > is the world space's name, which the writer takes from the data model),
@@ -563,12 +757,15 @@ writable in that format. It is declared with `derived=("repetition_time",
 ## 7. Conversion and loss reporting (M7)
 
 Answer to issue question 3. Conversion is the data model's own path:
-`TargetMetadata.from_other(source)` → `from_instance`, as for images.
-`FormatMetadata.from_instance` does, in order:
+`TargetMetadata.from_other(source)` → `from_instance`, as for images,
+and, symmetric to images and transformations, `source.to(Target)`
+(section 7, below). `Metadata.from_instance` does, in order:
 
-1. Reset `raw` and the snapshot to the target's defaults (never copied across formats;
-   copied as-is when `isinstance(other, cls)`, exactly like
-   `_foreign_format_fields`).
+1. Reset `raw` and the snapshot to the target's defaults (never copied
+   across formats; copied as-is when `other` is already of the target
+   format class, exactly like `_foreign_format_fields`). Generic
+   `Metadata` holds generic metadata only: a `NiftiMetadata` converted
+   to `Metadata` loses its raw record, although it is a subclass.
 2. For each vocabulary field: source `UNSUPPORTED` → `None`; target
    declared unsupported and source value not `None` → recorded in the
    report under `lost`; else copied.
@@ -602,15 +799,26 @@ class ConversionReport(Magic):
     def __str__(self): ...                              # one readable paragraph
 ```
 
+**`to()`.** `metadata.to(cls=None, *, on_loss=None, report=None,
+**values)` is the explicit conversion, symmetric to
+`Transformation.to`: `cls` is a `Metadata` subclass or a format name
+(`"nifti"`, `"generic"`), `None` keeps the class (a copy with `**values`
+set, sharing the raw record within a format). Given a `report`, it
+fills it and leaves the loss policy to the caller (as `update_raw`
+does); otherwise, or when `on_loss` is given too, the policy applies.
+`from_instance` stays the `bagof` hook; `to` is sugar over it.
+
 > **Prototype note.** As specified, with a `lossy` property and
 > `merge()`. `MetadataLossError` derives from `Exception`, not
 > `ValueError`: `DataModelConverter` turns a `TypeError`/`ValueError`
 > raised during an implicit conversion into a `bagof` conversion error,
 > and a refused loss must surface as itself. The policy is a context
-> variable, `apply_loss_policy(report, on_loss=None)` is the one place a
-> report is acted on (writers call it), and `convert` is exported from
-> `brainhops.datamodel` as `convert_metadata` (the transformation
-> `convert` already exists). `_import` receives the constructor values,
+> variable, and `apply_loss_policy(report, on_loss=None)` is the one
+> place a report is acted on (writers call it). A first prototype had a
+> module-level `convert(source, target, *, on_loss) -> (target, report)`
+> (exported as `convert_metadata`); `to()` replaced it. A known term
+> reads as its string in a report (`space='scanner'`, not the enum
+> repr). `_import` receives the constructor values,
 > `_import(other, values, *, report)`, so that a recovered loss can be
 > written into `values["extra"]`; the classmethod cannot otherwise reach
 > the object being built. `on_loss=` reaches `io.save` as a writer option
@@ -627,8 +835,8 @@ Policy, from least to most strict: `"ignore"`, `"warn"` (default: one
 `MetadataLossWarning` per conversion or write carrying the report, not
 one per field), `"raise"` (`MetadataLossError`). It is a keyword on
 `io.save(obj, file, on_loss=...)`, on the explicit
-`brainhops.datamodel.metadata.convert(source, Target, on_loss=...) ->
-(target, report)`, and a context manager `metadata_loss_policy("raise")`
+`source.to(Target, on_loss=...)` (or `report=...` to get the report
+back), and a context manager `metadata_loss_policy("raise")`
 for the implicit conversions that `bagof`'s field converter triggers
 (assigning a `MrtrixMetadata` to a field typed `NiftiMetadata`).
 
@@ -643,44 +851,52 @@ NRRD standard fields, AFNI `_GENERATED`) silently skips them, as today.
 `Metadata.to_bids() -> dict` in `brainhops/io/metadata/bids.py`:
 vocabulary fields through their `Bids(...)` name (units already match),
 `generated_by` as the BIDS list of dicts, unknown keys to and from
-`extra`. `diffusion_bvalues/bvectors` are not sidecar keys; a separate
-`to_bvals_bvecs(image)` rotates them into voxel axes. Wiring sidecars
-into `io.load`/`io.save` (`sidecar=True`) is open question 8.
+`extra`. The `DiffusionMetadata` group (`bvalues`/`bvectors`) is not
+sidecar keys; a separate `to_bvals_bvecs(image)` rotates them into voxel
+axes. Wiring sidecars into `io.load`/`io.save` (`sidecar=True`) is open
+question 8.
 
 > **Prototype note.** A vocabulary field with no BIDS key is written
 > under its name in CamelCase (`display_range` as `"DisplayRange"`), so
 > that a sidecar written by brainhops reads back whole; `channels` is a
 > list of objects with CamelCase keys, times are ISO strings. `to_bids`
-> takes `on_loss=` and reports the diffusion fields as lost.
+> takes `on_loss=` and reports the diffusion fields as lost, and an
+> encoding direction along no voxel axis. A known term is written as its
+> string, `data_unit` as its unit name, `data_type` as its `numpy` name.
 > `from_bids` also takes a JSON string or an open file.
 
 ## 8. Where `bagof.magic` is used, and where it is not (M4)
 
-- **Common-vocabulary fields are `Magic` fields** on `FormatMetadata`,
-  which is a `DataModelBase` and so inherits `convert=True`,
+- **Common-vocabulary fields are `Magic` fields**, declared on six
+  `Magic` mixins (the groups, which say `convert=True` themselves) and
+  inherited by `Metadata`, a `DataModelBase` with `convert=True`,
   `mapping=False`, `repr=HIDE_IF_NONE`, `doc=True`. This is what gives
   `from_dict`/`from_other`/`replace`, documented fields, and a repr that
-  hides the ~30 `None`s.
+  hides the ~30 `None`s. `bagof` handles the multiple inheritance; its
+  one quirk is the reverse-MRO field order (section 4).
 - **`format` is a polymorphic discriminant, and a real field.** `on=`
   matches an init field (`ItkStruct.type`, `itk/_common.py:80-102`), so
   `format` is declared as a narrowly typed field with a default, not a
   `ClassVar`: `format: tx.Literal["nifti"] = "nifti"` on
-  `NiftiMetadata(FormatMetadata, on={"format": "nifti"})`. This is the
+  `NiftiMetadata(FileBasedMetadata, on={"format": "nifti"})`. This is the
   same shape as `OrientedAxis`/`AnatomicalAxis`: `DataModelBase` sets
   `pin_discriminant="pin+narrow"`, which composes with `polymorphic=True`
   (that is exactly the combination the `DataModelBase` docstring
   describes), so `NiftiMetadata(format="mrtrix")` raises and
-  `FormatMetadata(format="mrtrix", echo_time=0.03)` builds a
-  `MrtrixMetadata`. An unknown `format` falls back to the generic
-  `Metadata`. The value is the `FileSniffer.HINTS` string where a hint
+  `Metadata(format="mrtrix", echo_time=0.03)` builds a
+  `MrtrixMetadata`. An unknown `format` falls back to the root, the
+  generic `Metadata`. The value is the `FileSniffer.HINTS` string where a hint
   exists. Cheap to drop if unused (open question 5).
 - **Conversion is `from_other`/`from_instance`**, overridden once on the
   base (section 7). The implicit conversion when a `MrtrixMetadata` is
   assigned to a field typed `NiftiMetadata` comes from `convert=True`
   plus the `DataModelConverter`, which already routes through
   `from_other`.
-- **`__init_subclass__`** implements `supports=`/`derived=` (M5, 6.2),
-  as `concrete.py:59` does for `_reverseof`.
+- **A metaclass** (`_MetadataMeta`) implements `supports=`/`derived=`/
+  `lazy=` (M5, 6, 6.2): `bagof` builds the fields before
+  `__init_subclass__` runs.
+- **Descriptors** for the lazy fields (`LazyField`), installed on the
+  class after `bagof` built it.
 - **Not `Magic`:** the sentinel (a plain singleton, like `_ABSENT` in
   `datamodel/base.py`), nibabel headers (wrapped as they are inside
   `raw`), and the raw records that already exist as frozen `Magic`
@@ -698,7 +914,8 @@ Answer to issue question 4. Propagation is driven by the field `Scope`
 tags, through one method:
 
 ```python
-def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
+def derive(self, *, grid_changed=False, grid_map=None, volumes=None,
+           step=None) -> tx.Self:
     """Metadata for an object derived from this one. Always a new object."""
 ```
 
@@ -706,9 +923,10 @@ def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
 > that "the volume count changed and no selection is known" needs.
 > `display_range` and `data_unit` are one value for all volumes, so a
 > selection keeps them. The only caller so far is the OME-Zarr reader
-> (each level gets `derive(grid_changed=level > 0)`). Writers do not call
+> (each level gets `derive(grid_changed=level > 0)`, and keeps the
+> pyramid's `data_type`: its levels share it). Writers do not call
 > it on a conversion yet (the first item of the list below): a converted
-> object carries the converted values with an empty snapshot, which
+> object carries the converted values with no snapshot, which
 > writes the same thing for the fields the prototype formats hold; the
 > data-model operations are a follow-up PR.
 
@@ -718,11 +936,16 @@ def derive(self, *, grid_changed=False, volumes=None, step=None) -> tx.Self:
   brainhops entry once.
 - `acquisition`-scoped fields are kept.
 - `grid`-scoped fields (`slice_timing`, `slice_encoding_direction`,
-  `phase_encoding_direction`) are cleared when `grid_changed`. A pure
-  axis permutation or flip is not a grid change for the PE direction,
-  and the permutation that `Permutation`/`Projection` carry (compute-api
-  memo, A.9) remaps `"i"`/`"j-"`; everything else that touches the grid
-  clears them.
+  `phase_encoding_direction`, `data_type`) are cleared when
+  `grid_changed`, with one exception: given `grid_map`, the linear part
+  of the map from the old voxel axes to the new ones, an encoding
+  direction in voxel axes is pushed through it (`v' = normalize(grid_map
+  @ v)`, section 4.2) instead, so a permutation or flip remaps `"j-"`
+  and an oblique resampling keeps an oblique direction; a direction in
+  a named world space does not move with the grid. The slice timing is
+  still cleared. Without `grid_map`, the directions are cleared, as
+  before; the image-level call sites pass it once they have the
+  affine.
 - `volume`-scoped fields (`channels`, `diffusion_*`, per-volume
   `display_range`) are indexed by `volumes` (the selected volume
   indices) or cleared when the volume count changed and no selection is
@@ -791,7 +1014,13 @@ class Transformation(DataModelBase):
 
 (`eq=False` assuming `bagof.magic.Field` has a compare flag as
 `dataclasses.field` does; otherwise metadata is excluded from `__eq__`
-by the class `eq` hook. To verify in the framework PR.) Putting it on
+by the class `eq` hook. To verify in the framework PR.) In the
+prototype the field is written
+`MetadataField[tx.Optional[Metadata], tx.Doc("...")] = None`
+(`MetadataField[hint, *annotations]` is `Annotated[hint,
+ConvertTo(_EnsureCopy(hint)), KwOnly(), NoRepr(), NoEq(),
+*annotations]`), and a format narrows it as
+`MetadataField[NiftiMetadata, Factory(NiftiMetadata), tx.Doc("...")]`. Putting it on
 the data model rather than only on the file-based mixins is what lets
 `from_instance` copy it by name as a *shared* field (not a foreign
 format field), and lets an in-memory `Affine` or a resampled image carry
@@ -843,11 +1072,16 @@ knows of the field, and it changes nothing else of `from_other`.
 > NIfTI format, and the writer converts a foreign metadata object anyway.
 > The `metadata_fields` -> `encoding_fields` rename is not done in the
 > prototype: nothing needs it yet. Every `metadata` field, the roots'
-> and the narrowed ones, is written with `metadata_annotation(hint, doc,
-> default=...)`, which carries the copying converter as an explicit
-> `ConvertTo`: it applies on the plain-`Magic` parsers too (x5, FLIRT),
-> so a metadata assigned after construction is converted on every
-> format, not only on the classes with `convert=True`.
+> and the narrowed ones, is written with `MetadataField[...]`, whose
+> converter (`_EnsureCopy`) is an explicit `ConvertTo`: it applies on the
+> plain-`Magic` parsers too (x5, FLIRT), so a metadata assigned after
+> construction is converted on every format, not only on the classes
+> with `convert=True`. Since a format class is now a subclass of
+> `Metadata`, the converter also converts (and reports) a format's
+> metadata given to a field typed `Metadata`, which `bagof` would keep
+> as it is. A first prototype used a function,
+> `metadata_annotation(hint, doc, default=...)`, and named the converter
+> `_Copied`.
 
 **Name clash.** `Transformation.metadata_fields` means "meta-attributes
 that define the encoding" (`order`, `bound`, `coeff`). It is renamed
@@ -864,14 +1098,14 @@ Base class and sentinel are in sections 3 and 5. A format writes
 
 ```python
 class NiftiMetadata(
-    FormatMetadata, on={"format": "nifti"},
+    FileBasedMetadata, on={"format": "nifti"},
     supports=("description", "intent", "space", "display_range", "slice_timing",
               "slice_encoding_direction", "phase_encoding_direction", "sources",
-              "generated_by", "repetition_time"),
+              "generated_by", "repetition_time", "data_type"),
     derived=("repetition_time", "intent"),          # pixdim[4], axis-typing code
 ):
     format: tx.Literal["nifti"] = "nifti"
-    raw: tx.Optional[nb.Nifti1Header] = Field(None, repr=False)
+    raw: NoRepr[NoEq[tx.Optional[nb.Nifti1Header]]] = None
     # extra, channels, history, echo_time, ... are UNSUPPORTED (no store; OQ 7)
 
     @property
@@ -927,13 +1161,18 @@ unchanged; FNIRT/NiftyReg/SPM keep reading `intent_p*` from `raw`.
 > seconds when it has none), so a 4-D image keeps its `repetition_time`
 > through a read and a save (6.2); an image with no physical time axis
 > gets the field's value there instead. `NiftiParser` reads the header
-> again when it is not the metadata's record (`replace(image,
-> header=h)`), keeping the changed fields (`with_record`).
+> again when it is not the metadata's raw record (`replace(image,
+> header=h)`), keeping the changed fields (`update_from_raw`).
+> `data_type` is the header's `datatype` (`get_data_dtype()`), which the
+> image writer uses as in 6.2 (and builds the `nibabel` image with, so
+> that an `int64` array of a `uint8` label map can be written); an
+> encoding direction is written into `dim_info` as its axis (polarity
+> approximated, an oblique one lost).
 
 **MRtrix (key/value format).**
 
 ```python
-class MrtrixMetadata(FormatMetadata, on={"format": "mrtrix"}, supports=ALL):
+class MrtrixMetadata(FileBasedMetadata, on={"format": "mrtrix"}, supports=ALL):
     format: tx.Literal["mrtrix"] = "mrtrix"
     raw: MrtrixHeader = Factory(MrtrixHeader, repr=False)
     _BIDS_IN_KEYVAL = ("EchoTime", "RepetitionTime", "FlipAngle",
@@ -977,7 +1216,7 @@ rotation.
 
 ```python
 class LtaMetadata(
-    FormatMetadata, on={"format": "lta"},
+    FileBasedMetadata, on={"format": "lta"},
     supports=("moving", "fixed", "input_space", "output_space", "description", "history"),
 ):
     format: tx.Literal["lta"] = "lta"
@@ -1033,10 +1272,10 @@ for a JSON-capable node.
 > writes every node as read, so the JSON string round-trips unchanged.
 > `save(on_loss=)` is popped by the writer. The parser syncs in
 > `__post_init__` through `io/transformations/base/_metadata.py`
-> (`sync_metadata`, which keeps a metadata whose record is the parser's
-> and otherwise uses `with_record`, and `metadata_field`, the narrowed
-> annotation, whose converter converts on these plain-`Magic` parsers
-> too).
+> (`sync_metadata`, which keeps a metadata whose raw record is the
+> parser's and otherwise uses `update_from_raw`); the narrowed field is
+> `MetadataField[X5Metadata, Factory(X5Metadata), ...]`, whose converter
+> converts on these plain-`Magic` parsers too.
 >
 > **Prototype note (ITK, FLIRT).** `ItkMetadata` (`format="itk"`) is an
 > `OpaqueMetadata` subclass for `.tfm` and `.mat`; the `.mat` writer
@@ -1044,36 +1283,46 @@ for a JSON-capable node.
 > class is `ItkH5Metadata` (`format="itk-h5"`): `/ITKVersion` is
 > `generated_by = (GeneratedBy("ITK", version),)`, and an encode keeps
 > only the `ITK` entry (others lost); there is no `.h5` writer yet. ITK
-> blocks keep `metadata=None`. `FlirtMetadata` (`format="flirt"`) is an
-> `OpaqueMetadata` subclass with `supports=("moving", "fixed")`: they are
-> the paths of the `moving`/`reference` images the reader was given
-> (`get_filename()` of a `nibabel` image, or of a NIfTI image's
-> `image`), decoded at construction, and always reported lost by
-> `check_writable` (there is no FLIRT writer).
+> blocks keep `metadata=None`. `FlirtMetadata` (`format="flirt"`) is
+> *not* opaque: it is a `FileBasedMetadata` with `supports=("moving",
+> "fixed")` and no raw record (`raw: None`). They are the paths of the
+> `moving`/`reference` images the reader was given (`get_filename()` of a
+> `nibabel` image, or of a NIfTI image's `image`), decoded at
+> construction, kept by a copy or a conversion, and always reported lost
+> by `check_writable` (there is no FLIRT writer). A first prototype made
+> it an `OpaqueMetadata` subclass, which contradicted "opaque"; the
+> review moved it. ITK's `precision` stays in the raw record for now
+> (4.4).
 
 **Everything else.**
 
 | Format | `raw` | `supports=` (highlights) | `extra` store / notes |
 |---|---|---|---|
-| MGH | `MghStruct(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag) | none |
+| MGH | `MghRaw(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag, lazy), `data_type` (`type`) | none |
 | AFNI | `AfniHeader` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `_derive_raw` |
 | TIFF/OME/ImageJ | `TiffStruct` (renamed) + `ome_xml`/ImageJ dict | `name`, `description`, `generated_by`, `creation_time`, `manufacturer*`, `channels` (per instance by dialect) | ImageJ extras or plain tags; OME-XML round-trips whole, `_encode` patches `Name`/`Channel` only |
 | Pillow | `dict(info)` | `description`, `creation_time` | text chunks, `exif`, `icc_profile` |
 | OpenSlide (read-only) | — | `description`, `manufacturer`, `objective_magnification` | `properties` |
 | JP2 (open PR) | `Jpeg2000Header` | `description` (`comments`) | boxes |
-| OME-Zarr | abczarr `Multiscale` | `name`, `channels` (derived from the `c` axis count), `data_unit` from `omero` | the round-trip fix the inventory flags |
+| OME-Zarr | `OmeZarrRaw` (abczarr `Multiscale`, `omero`, attributes) | `name`, `channels`, `display_range`, `data_type` (derived from the arrays) | the other group attributes |
 | plain Zarr | — | generic `Metadata` serialised into `.zattrs["brainhops"]` | same |
 | MINC (read-only) | none kept | `history`, acquisition/patient/study variable attributes | the rest of them |
-| ITK tfm/mat | — | `OpaqueMetadata` subclass | none |
+| ITK tfm/mat | — | `OpaqueMetadata` subclass (nothing, anywhere) | none |
 | ITK h5 | small h5 header | `generated_by` (`ITKVersion`) | none |
 | Elastix | `parameter_map` | `sources` (`InitialTransformParameterFileName`) | the non-transform keys (today's "base map" rule) |
-| FLIRT, matrix text | — | `OpaqueMetadata`; FLIRT adds `moving`/`fixed` (reader needs them, never stored, always `lost` on write with a reason) | none |
+| FLIRT | — | `FileBasedMetadata` with `moving`/`fixed` (reader needs them, kept in memory, never stored, always `lost` on write) | none |
+| matrix text | — | `OpaqueMetadata` | none |
 | M3Z | `M3zStruct` | `moving`/`fixed` (`image`/`atlas` fnames) | byte-exact otherwise |
 
 > **Prototype note (MGH).** `MghMetadata` lives in
 > `brainhops/io/base/_mgh_metadata.py`, next to the MGH parser, and is
-> re-exported from `io.images.freesurfer`. Its record is `MghRecord(header,
-> tags)`. Zero in a footer slot reads as `None`; the flip angle is decoded
+> re-exported from `io.images.freesurfer`. Its raw record is
+> `MghRaw(header, tags)`: `nibabel` has no separate footer class (the
+> footer fields `tr`, `flip_angle`, `te`, `ti`, `fov` are part of
+> `MGHHeader`, whose `hf_dtype` is the header and the footer), so the
+> header is the footer's raw record too; the code here is for the tag
+> stream after the footer, which `nibabel` neither reads nor writes.
+> Zero in a footer slot reads as `None`; the flip angle is decoded
 > as the shortest decimal of degrees that stores the same single-precision
 > radians (`9.0`, not `9.0000004`). `repetition_time` is not derived: MGH
 > stores the TR as a scalar, whatever the time axis. `history` comes from
@@ -1083,22 +1332,25 @@ for a JSON-capable node.
 > tags in place and keeps every other tag, and over tags that do not parse
 > it is reported as lost. `MghParser` syncs the metadata in `__post_init__`
 > and when `header` or `tags` are assigned, but the tags stay lazy (6, a
-> lazy record part): `MghRecord` holds a loader for them, `history` is
-> decoded as `Lazy`, and a load reads the header and footer only (a first
+> lazy part of the raw record): `MghRaw` holds a loader for them,
+> `history` is a lazy field (`lazy=("history",)`), and a load reads the
+> header and footer only (a first
 > prototype read the tags on load, a third of the load time of a 38 MB
 > MGZ). The record and the image share one read of the tags. The writer
 > keeps the footer of the record, then `like=`, then the changed fields;
 > `tr=`/`te=`/`ti=`/`flip_angle=` (still in ms and radians) are set on a
-> copy and passed as `write_raw(force=...)` (so they win even over
+> copy and passed as `update_raw(force=...)` (so they win even over
 > `like=` and over a value equal to the one read, and a zero clears the
 > slot), while `fov=` and other header names still patch the header
 > last. As for NIfTI, `like=` sits *under* a changed field but *over* an
 > unchanged one, which keeps the record's value only where `like=` has
-> none. No deprecation warning yet.
+> none. No deprecation warning yet. `data_type` is the header's `type`;
+> the writer uses it as in 6.2, and a type MGH cannot store becomes the
+> nearest one (approximated).
 
 > **Prototype note (Zarr).** `OmeZarrMetadata` and `ZarrMetadata` live in
-> `brainhops/io/images/zarr/_metadata.py`. The OME-Zarr record is
-> `OmeZarrRecord(multiscale, omero, attrs)`: the typed 0.6 `Multiscale`,
+> `brainhops/io/images/zarr/_metadata.py`. The OME-Zarr raw record is
+> `OmeZarrRaw(multiscale, omero, attrs)`: the typed 0.6 `Multiscale`,
 > but `omero` as plain JSON, read from the group attributes, because the
 > typed `abczarr` model turns nested free-form keys into `True` (`rdefs`
 > does not survive `Omero.from_json(...).to_json()`); it is written back
@@ -1123,7 +1375,12 @@ for a JSON-capable node.
 > generic option was taken: `ZarrMetadata` (format `"zarr"`) stores the
 > vocabulary as a BIDS sidecar (the codec of `to_bids`) under the array
 > attribute `"brainhops"`, `extra` is the other attributes, and the
-> diffusion fields are unsupported (they are not sidecar keys).
+> diffusion fields are unsupported (they are not sidecar keys:
+> `supports=` names the four other groups and `"extra"`). In both,
+> `data_type` is derived from the arrays (a Zarr array stores its own
+> type, and the writer stores the array as it is), so a `data_type`
+> that disagrees with the array is reported as approximated, never
+> written; the levels of a pyramid keep the pyramid's.
 
 Future formats (GIFTI/CIFTI, TRK/TCK/TRX, CZI/LIF/ND2, Bruker, MRC,
 FITS, MetaImage, BrainVoyager, Interfile, EEG coordsystem, NetCDF) each
@@ -1145,7 +1402,7 @@ NiftiParser `header` property is the one alias kept permanently, without
 a warning (it is how nibabel users think).
 
 **Constructor and writer keywords (M13).** These are format-specific
-metadata inputs too, and each becomes `metadata=<FormatMetadata>` built
+metadata inputs too, and each becomes `metadata=<FileBasedMetadata>` built
 from the old value, with a `DeprecationWarning` naming the replacement:
 
 | Today | Where | Becomes |
@@ -1163,9 +1420,10 @@ from the old value, with a `DeprecationWarning` naming the replacement:
 **PR plan, in order.** Sizes are rough line counts including tests.
 
 1. *Framework* (~1,500): `brainhops/datamodel/metadata.py`
-   (`FormatMetadata`, `Metadata`, `OpaqueMetadata`,
-   `UNSUPPORTED`/`Maybe`, `supports=`/`derived=`, the vocabulary with
-   `Bids`/`Scope` annotations, `ConversionReport` + policies, `derive`);
+   (`Metadata`, `FileBasedMetadata`, `OpaqueMetadata`, the vocabulary
+   groups, `UNSUPPORTED`/`Maybe`, `supports=`/`derived=`/`lazy=`, the
+   vocabulary with `Bids`/`Scope` annotations, `ConversionReport` +
+   policies, `to`, `derive`);
    `brainhops/io/metadata/bids.py` (sidecar codec); the `metadata` field
    on `Image`/`Transformation`; the `encoding_fields` rename;
    `_FileBasedModelMixin.from_instance` taught that `metadata` is
@@ -1190,7 +1448,7 @@ from the old value, with a `DeprecationWarning` naming the replacement:
 
 **Tests.** The framework PR adds: sentinel semantics (identity, falsy,
 pickling, `Maybe` conversion, constructor refusal); `supports=` →
-`unsupported_fields` and per-instance `supports()`; `from_instance`
+`supported_fields` and per-instance `supports()`; `from_instance`
 loss accounting on two synthetic formats; policies (`ignore`/`warn`/
 `raise`, one warning per conversion); the change-detecting write
 (cases 1-4 of section 6, including clearing); `derive` for each scope and for a level;
@@ -1211,7 +1469,8 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
 > **Prototype note.** The matrix test (c) is
 > `tests/test_io_metadata_matrix.py`, over every prototype format: the
 > conversion of the fully populated fixture loses exactly
-> `unsupported_fields`, the way back to `Metadata` loses nothing, and
+> `unsupported_fields` (the complement of `supported_fields`), the way
+> back to `Metadata` loses nothing, and
 > where a fresh record can hold the values (NIfTI, MGH, x5, Zarr, ITK
 > `.h5`; OME-Zarr through a real save) they are written and read back,
 > derived fields aside. A format class that is not in its table fails
@@ -1221,46 +1480,75 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
 ## Decisions
 
 - **M1** Geometry, axes, spatial/temporal units, transformations, the
-  transform kind and storage encoding are never metadata.
-- **M2** One `FormatMetadata` per format: `Magic` vocabulary fields + a
-  format-private `raw` + an `extra` dict. Generic `Metadata` (lossless
-  hub) and `OpaqueMetadata` (everything unsupported) are distinct. The
-  format-agnostic part lives in `brainhops.datamodel.metadata`; format
-  classes and the sidecar codec under `io`.
-- **M3** Vocabulary = BIDS names in snake_case with BIDS units, ~35
-  fields in six groups, each tagged with a propagation scope. LTA/M3Z
+  transform kind and storage encoding (byte order, scaling, layout,
+  compression) are never metadata. The element type on disk is
+  (`data_type`): it is a user-visible choice that may differ from the
+  loaded array.
+- **M2** Three layers (`Magic` vocabulary fields, a format-private
+  `raw`, an `extra` dict) in a hierarchy that mirrors the images':
+  `Metadata` (the vocabulary and `extra`; the root, polymorphic on
+  `format`, and the generic, lossless hub) -> `FileBasedMetadata`
+  (`raw`, the read-time snapshot, the read/write hooks) ->
+  `<Fmt>Metadata`. `OpaqueMetadata` is a format that keeps nothing,
+  not even in memory (ITK `.tfm`/`.mat`, matrix text); a format that
+  keeps anything (FLIRT `moving`/`fixed`, in memory) is a
+  `FileBasedMetadata` with a `supports=` list. The format-agnostic part
+  lives in `brainhops.datamodel.metadata`; format classes and the
+  sidecar codec under `io`.
+- **M3** Vocabulary = BIDS names in snake_case with BIDS units, 37
+  fields declared in six group mixins (`ProvenanceMetadata`,
+  `MRIMetadata`, `DiffusionMetadata`, `DisplayMetadata`,
+  `MicroscopyMetadata`, `TransformMetadata`) that `Metadata` inherits,
+  each field tagged with a propagation scope; `VOCABULARY` and `GROUPS`
+  are module constants. A free-text field with known terms is
+  `Union[<Enum>, str]` (`Space`, `Intent`, `Manufacturer`,
+  `IlluminationType`, `ContrastMethod`); `data_unit` is a `Unit` when
+  known; encoding directions are `EncodingDirection` vectors (voxel axes
+  by default, BIDS strings accepted); `bvalues`/`bvectors`. LTA/M3Z
   image references are `moving`/`fixed`; `sources` is BIDS provenance.
-- **M4** `Magic` is used for the vocabulary fields, for `from_other`/
-  `from_instance` conversion, and for polymorphic construction on a
-  real `format` field (`pin+narrow`); `__init_subclass__` for
-  `supports=`/`derived=`; not for the sentinel or record types.
+- **M4** `Magic` is used for the vocabulary fields (on mixins), for
+  `from_other`/`from_instance` conversion, and for polymorphic
+  construction on a real `format` field (`pin+narrow`); a metaclass for
+  `supports=`/`derived=`/`lazy=`; not for the sentinel or the raw
+  record types.
 - **M5** `UNSUPPORTED` singleton; `Maybe[T]`; declared compactly with
-  `supports=(...)` (default unsupported), per-instance via
-  `__post_init__` where the capability is per-instance; refused at
-  construction, reported at write when assigned; never copied across.
+  `supports=(...)` (names or groups; everything else unsupported), which
+  gives `supported_fields` (`unsupported_fields` is derived from it);
+  per-instance via `__post_init__` where the capability is per-instance;
+  refused at construction, reported at write when assigned; never
+  copied across.
 - **M6** Overlay with change detection: a common field wins only when
-  it differs from its read-time snapshot (a `Magic` field that survives `replace`/`derive`); `None` clears the slot; record edits survive. The
-  record field is `raw`, with a per-format read alias. Geometry-derived
-  fields (`derived=`) are read-only for that format: a geometry hook
+  it differs from its read-time snapshot (a `Magic` field holding a
+  generic `Metadata`, which survives `replace`/`derive`); `None` clears
+  the slot; raw record edits survive. The raw record field is `raw`,
+  with a per-format read alias, and every name says "raw" (`from_raw`,
+  `update_from_raw`, `update_raw`, `MghRaw`). Geometry-derived fields
+  (`derived=`) are read-only for that format: a geometry hook
   (`_geometry(image)`) gives the data model's value, which the writer
   stores, and a changed value that disagrees with it is reported as
-  `approximated` (never compared with the record). Decoding is eager,
-  except for a lazy record part (MGH tags), whose fields are decoded on
-  first access (`Lazy`).
+  `approximated` (never compared with the raw record). Decoding is
+  eager, except for a lazy part of the raw record (MGH tags), whose
+  fields (`lazy=`) are `LazyField` descriptors decoded on first access.
+  A writer stores the data as `data_type` when the values are of its
+  kind; `dtype=` wins.
 - **M7** `ConversionReport`; class-level support is the lower bound,
   `_encode` adds value-dependent `lost`/`approximated`; `on_loss` =
   `ignore`/`warn` (default)/`raise`; one aggregated warning; `_import`
-  hook for recovery.
+  hook for recovery; `metadata.to(cls, *, on_loss, report)` is the
+  explicit conversion, symmetric to images and transformations.
 - **M8** `extra` passes unknown keys through to any free-form store;
   BIDS JSON sidecar is a codec on `Metadata`.
-- **M9** `derive(grid_changed, volumes, step)` driven by scope; a
-  multiscale level holds a derived copy, never the pyramid's object;
-  composition does not merge; a single-block file puts its metadata on
-  the block as well as on the file object.
+- **M9** `derive(grid_changed, grid_map, volumes, step)` driven by
+  scope (an encoding direction goes through `grid_map`); a multiscale
+  level holds a derived copy, never the pyramid's object; composition
+  does not merge; a single-block file puts its metadata on the block as
+  well as on the file object.
 - **M10** `metadata: Optional[Metadata]` on `Image` and `Transformation`,
-  narrowed and made mandatory by each format class. The field copies
-  (sharing `raw`), never aliases: `replace()`, same-class `from_other`
-  and `metadata=` give the new object its own metadata.
+  narrowed and made mandatory by each format class, all written
+  `MetadataField[hint, *annotations]`. The field copies (sharing `raw`),
+  never aliases: `replace()`, same-class `from_other` and `metadata=`
+  give the new object its own metadata; a format's metadata given to a
+  generic field is converted.
 - **M11** `Transformation.metadata_fields` becomes `encoding_fields`,
   alias kept one minor release.
 - **M12** Seven PRs, framework first, deprecated aliases for one minor
@@ -1290,13 +1578,14 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
    with NRRD and BIDS codecs rotating via the affine; or voxel-axis
    vectors (BIDS/FSL convention). Recommendation: world; it is the only
    frame that survives a reorientation without touching metadata.
-5. **Polymorphic `format` discriminant (M4).** Keep `FormatMetadata(
+5. **Polymorphic `format` discriminant (M4).** Keep `Metadata(
    format="nifti", ...)` dispatch, or make subclasses plain and
    construct them by name only. Recommendation: keep; it costs one line
    per class and matches `ItkStruct`.
-6. **`intent` vocabulary (M3).** NIfTI intent names as the canonical
-   set, or a smaller brainhops enum. Recommendation: NIfTI names in v1;
-   nothing else has a richer set and AFNI/NRRD map onto it.
+6. **`intent` vocabulary (M3).** *Closed:* the NIfTI intent names are
+   the canonical set, as the `Intent` enum (`Union[Intent, str]`, so an
+   unknown name is kept); nothing else has a richer set and AFNI/NRRD
+   map onto it.
 7. **NIfTI extras.** Unsupported (reported as lost), or written into a
    NIfTI extension (a JSON extension with a brainhops-chosen ecode) that
    only brainhops reads. Recommendation: unsupported in v1; an extension
