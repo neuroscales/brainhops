@@ -7,6 +7,11 @@ __all__ = [
     "OrientationType",
     "AnatomicalOrientationValue",
     "SimplifyPolicy",
+    "Space",
+    "Intent",
+    "Manufacturer",
+    "IlluminationType",
+    "ContrastMethod",
 ]
 
 from brainhops._core.enum import IntEnum, StrEnum
@@ -193,3 +198,199 @@ class AnatomicalOrientationValue(StrEnum):
     base_to_apex = "base-to-apex"
 # fmt: on
 # ruff: enable[E501]
+
+
+# ----------------------------------------------------------------------
+#   METADATA TERMS
+# ----------------------------------------------------------------------
+#
+# The known terms of the free-text fields of `brainhops.datamodel.metadata`.
+# A field typed `Union[<Enum>, str]` holds a member when its value is one
+# of these, and the string otherwise: the lists help consistency and
+# documentation, and do not close the vocabulary.
+
+
+# ruff: disable[E501]
+# fmt: off
+class Space(StrEnum):
+    """
+    Known labels of a world space (the `space`, `input_space` and
+    `output_space` metadata fields).
+
+    The NIfTI `sform_code`/`qform_code` names, then the BIDS template
+    identifiers (`SpatialReference`, the `space-` entity) most often met,
+    and the BIDS non-standard spaces.
+
+    | Name                  | Value                   | Source |
+    |-----------------------|-------------------------|--------|
+    | `scanner`             | `"scanner"`             | NIfTI code 1 (scanner-based anatomical coordinates) |
+    | `aligned`             | `"aligned"`             | NIfTI code 2 (aligned to another file) |
+    | `talairach`           | `"talairach"`           | NIfTI code 3 |
+    | `mni`                 | `"mni"`                 | NIfTI code 4 (MNI 152) |
+    | `template`            | `"template"`            | NIfTI code 5 (another template) |
+    | `MNI152Lin`, `MNI152NLin2009aAsym`, ... | the identifier | BIDS standard templates |
+    | `fsaverage`, `fsLR`, ... | the identifier       | BIDS surface templates |
+    | `orig`, `anat`, `T1w`, `individual`, ... | the identifier | BIDS non-standard spaces |
+    """
+
+    # NIfTI
+    scanner = "scanner"
+    aligned = "aligned"
+    talairach = "talairach"
+    mni = "mni"
+    template = "template"
+
+    # BIDS standard templates (volumes)
+    ICBM452AirSpace = "ICBM452AirSpace"
+    ICBM452Warp5Space = "ICBM452Warp5Space"
+    IXI549Space = "IXI549Space"
+    MNI152Lin = "MNI152Lin"
+    MNI152NLin2009aAsym = "MNI152NLin2009aAsym"
+    MNI152NLin2009aSym = "MNI152NLin2009aSym"
+    MNI152NLin2009bAsym = "MNI152NLin2009bAsym"
+    MNI152NLin2009bSym = "MNI152NLin2009bSym"
+    MNI152NLin2009cAsym = "MNI152NLin2009cAsym"
+    MNI152NLin2009cSym = "MNI152NLin2009cSym"
+    MNI152NLin6Asym = "MNI152NLin6Asym"
+    MNI152NLin6Sym = "MNI152NLin6Sym"
+    MNI305 = "MNI305"
+    MNIColin27 = "MNIColin27"
+    MNIInfant = "MNIInfant"
+    MNIPediatricAsym = "MNIPediatricAsym"
+    NMT31Sym = "NMT31Sym"
+    OASIS30AntsOASISAnts = "OASIS30AntsOASISAnts"
+    OASIS30Atropos = "OASIS30Atropos"
+    Talairach = "Talairach"
+    UNCInfant = "UNCInfant"
+
+    # BIDS standard templates (surfaces)
+    fsaverage = "fsaverage"
+    fsaverage3 = "fsaverage3"
+    fsaverage4 = "fsaverage4"
+    fsaverage5 = "fsaverage5"
+    fsaverage6 = "fsaverage6"
+    fsaveragesym = "fsaveragesym"
+    fsLR = "fsLR"
+    fsnative = "fsnative"
+
+    # BIDS non-standard spaces
+    orig = "orig"
+    anat = "anat"
+    T1w = "T1w"
+    T2w = "T2w"
+    individual = "individual"
+    study = "study"
+
+
+class Intent(StrEnum):
+    """
+    Known values of the `intent` metadata field: what the values of an
+    image are, as the NIfTI intent names (as `nibabel` spells them).
+
+    | Name | Value | NIfTI code |
+    |---|---|---|
+    | `correlation` .. `log10_p_value` | `"correlation"` .. `"log10 p value"` | 2-24 (statistics) |
+    | `estimate` | `"estimate"` | 1001 |
+    | `label` | `"label"` | 1002 |
+    | `neuroname` | `"neuroname"` | 1003 |
+    | `general_matrix`, `symmetric_matrix` | `"general matrix"`, `"symmetric matrix"` | 1004, 1005 |
+    | `displacement_vector`, `vector` | `"displacement vector"`, `"vector"` | 1006, 1007 |
+    | `pointset`, `triangle`, `quaternion`, `dimensionless` | the name | 1008-1011 |
+    | `time_series`, `node_index`, `rgb_vector`, `rgba_vector`, `shape` | the name with spaces | 2001-2005 |
+    | `fnirt_disp_field`, ... | `"fnirt disp field"`, ... | 2006-2009, 2018 (FSL) |
+    """
+
+    correlation = "correlation"
+    t_test = "t test"
+    f_test = "f test"
+    z_score = "z score"
+    chi2 = "chi2"
+    beta = "beta"
+    binomial = "binomial"
+    gamma = "gamma"
+    poisson = "poisson"
+    normal = "normal"
+    non_central_f_test = "non central f test"
+    non_central_chi2 = "non central chi2"
+    logistic = "logistic"
+    laplace = "laplace"
+    uniform = "uniform"
+    non_central_t_test = "non central t test"
+    weibull = "weibull"
+    chi = "chi"
+    inverse_gaussian = "inverse gaussian"
+    extreme_value_1 = "extreme value 1"
+    p_value = "p value"
+    log_p_value = "log p value"
+    log10_p_value = "log10 p value"
+    estimate = "estimate"
+    label = "label"
+    neuroname = "neuroname"
+    general_matrix = "general matrix"
+    symmetric_matrix = "symmetric matrix"
+    displacement_vector = "displacement vector"
+    vector = "vector"
+    pointset = "pointset"
+    triangle = "triangle"
+    quaternion = "quaternion"
+    dimensionless = "dimensionless"
+    time_series = "time series"
+    node_index = "node index"
+    rgb_vector = "rgb vector"
+    rgba_vector = "rgba vector"
+    shape = "shape"
+    fnirt_disp_field = "fnirt disp field"
+    fnirt_cubic_spline_coef = "fnirt cubic spline coef"
+    fnirt_dct_coef = "fnirt dct coef"
+    fnirt_quad_spline_coef = "fnirt quad spline coef"
+    topup_field = "topup field"
+# fmt: on
+# ruff: enable[E501]
+
+
+class Manufacturer(StrEnum):
+    """
+    Known values of the `manufacturer` metadata field (BIDS
+    `Manufacturer`), as the DICOM `Manufacturer` tag is usually
+    normalised by converters such as `dcm2niix`.
+    """
+
+    Siemens = "Siemens"
+    GE = "GE"
+    Philips = "Philips"
+    Canon = "Canon"
+    Toshiba = "Toshiba"
+    Hitachi = "Hitachi"
+    Bruker = "Bruker"
+    UIH = "UIH"
+    MRSolutions = "MRSolutions"
+
+
+class IlluminationType(StrEnum):
+    """
+    Known values of the `illumination_type` metadata field: the OME
+    `Channel.IlluminationType` enumeration.
+    """
+
+    Transmitted = "Transmitted"
+    Epifluorescence = "Epifluorescence"
+    Oblique = "Oblique"
+    NonLinear = "NonLinear"
+    Other = "Other"
+
+
+class ContrastMethod(StrEnum):
+    """
+    Known values of the `contrast_method` metadata field: the OME
+    `Channel.ContrastMethod` enumeration.
+    """
+
+    Brightfield = "Brightfield"
+    Phase = "Phase"
+    DIC = "DIC"
+    HoffmanModulation = "HoffmanModulation"
+    ObliqueIllumination = "ObliqueIllumination"
+    PolarizedLight = "PolarizedLight"
+    Darkfield = "Darkfield"
+    Fluorescence = "Fluorescence"
+    Other = "Other"
