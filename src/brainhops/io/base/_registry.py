@@ -12,7 +12,8 @@ what it needs installed. A `FormatEntry` stands for a format until it is
 needed, and is resolved (its module imported) then.
 
 Kept apart from `_base` and `_dispatch`, and free of any import beyond
-the standard library and `brainhops._core.dependencies`, so that the
+the standard library, `brainhops._core.dependencies` and
+`brainhops._core.properties`, so that the
 packages of each kind can declare their formats without importing the
 machinery that reads them.
 """
@@ -32,6 +33,9 @@ import importlib
 
 # dependencies
 import typing_extensions as tx
+
+# internals
+from brainhops._core.properties import lazyproperty, smartproperty
 
 # The keys of the dispatchers that the declared formats register into
 # (see `key_of`).
@@ -65,6 +69,19 @@ _KINDS = ("brainhops.io.images", "brainhops.io.transformations")
 def key_of(cls: type) -> str:
     """The name a class is declared under: `module:qualname`."""
     return f"{cls.__module__}:{cls.__qualname__}"
+
+
+def _from_class(name: str, doc: str) -> property:
+    """An attribute of the format class, or, until it is resolved, the
+    one its entry declares (stored as `_<name>`, in lower case)."""
+    declared = "_" + name.lower()
+
+    def fget(self: "FormatEntry") -> tx.Any:
+        if self._cls is not None:
+            return getattr(self._cls, name)
+        return getattr(self, declared)
+
+    return property(fget, doc=doc)
 
 
 class FormatEntry:
@@ -122,7 +139,6 @@ class FormatEntry:
         self.extra = extra
         self.check = check
         self._cls: tx.Optional[type] = None
-        self._usable: tx.Optional[bool] = None
         self.error: tx.Optional[Exception] = None
 
     @classmethod
@@ -148,37 +164,19 @@ class FormatEntry:
             return self._cls.__name__
         return self.qualname.rsplit(".", 1)[-1]
 
-    @property
+    @smartproperty(cache=True)
     def hints(self) -> tx.FrozenSet[str]:
-        """The hints the format answers to."""
-        if self._hints is None:
-            # Only a format registered without being declared has no
-            # hints of its own, and it is a class already.
-            from brainhops.io.base.specs import format_hints
+        """The hints the format answers to: those declared (`_hints`),
+        or, for a format registered without being declared, its class's."""
+        from brainhops.io.base.specs import format_hints
 
-            self._hints = format_hints(self._cls)
-        return self._hints
+        return format_hints(self._cls)
 
-    @property
-    def EXTENSIONS(self) -> tx.Tuple[str, ...]:
-        """The extensions the format declares."""
-        if self._cls is not None:
-            return self._cls.EXTENSIONS
-        return self._extensions
-
-    @property
-    def PREFIXES(self) -> tx.Tuple[str, ...]:
-        """The prefixes the format requires."""
-        if self._cls is not None:
-            return self._cls.PREFIXES
-        return self._prefixes
-
-    @property
-    def PRIORITY(self) -> int:
-        """The format's explicit priority."""
-        if self._cls is not None:
-            return self._cls.PRIORITY
-        return self._priority
+    EXTENSIONS = _from_class(
+        "EXTENSIONS", "The extensions the format declares."
+    )
+    PREFIXES = _from_class("PREFIXES", "The prefixes the format requires.")
+    PRIORITY = _from_class("PRIORITY", "The format's explicit priority.")
 
     @property
     def missing(self) -> tx.Optional[str]:
@@ -203,11 +201,15 @@ class FormatEntry:
             # A format module imports its dependency only once a file is
             # read, so its class may be registered without it.
             return self.missing is None
-        if self._usable is None:
-            self._usable = self.missing is None and (
-                self.check is None or bool(self.check())
-            )
         return self._usable
+
+    @lazyproperty
+    def _usable(self) -> bool:
+        """`available`, until the format is registered: asked once, as
+        `check` may be slow."""
+        return self.missing is None and (
+            self.check is None or bool(self.check())
+        )
 
     def resolve(self) -> tx.Optional[type]:
         """
