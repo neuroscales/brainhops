@@ -169,6 +169,20 @@ follows ([`collect_loss_reports`][brainhops.datamodel.metadata.collect_loss_repo
 and warns once, with
 [`ConversionReport.merged`][brainhops.datamodel.metadata.ConversionReport.merged].
 
+**JSON and key/value stores.** A format whose store is a JSON object or
+a set of key/value pairs (x5 node `Metadata`, Zarr attributes, and the
+MRtrix and NRRD headers to come) does not write its own codec:
+`brainhops/io/metadata/_json.py` holds the one BIDS sidecars use.
+`decode_object(obj, names)` splits an object into the values of the
+vocabulary fields `names` (read from their sidecar keys, BIDS keys or
+`CamelCase` names) and the other keys, which are `extra`;
+`encode_changes(obj, changed)` writes the changed fields back under
+their keys (`None` removes one), and `encode_extra(obj, diff, report=,
+reserved=)` applies the `extra` diff, reporting the keys the format
+keeps for itself as lost. `X5Metadata` is the shortest example. A
+key/value format that can hold what it has no slot for pairs this with
+the `_import` hook.
+
 ## The `metadata` field of a format class
 
 `Image` and `Transformation` declare `metadata: Optional[Metadata]`

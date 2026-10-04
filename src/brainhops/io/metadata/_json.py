@@ -6,7 +6,13 @@ attributes) share.
 A vocabulary field is stored under its *sidecar key*: its BIDS key
 (`"RepetitionTime"`), or, when BIDS has none, its name in `CamelCase`
 (`display_range` as `"DisplayRange"`). Every other key of the object is
-`extra`.
+`extra`. `GeneratedBy` is the BIDS list of objects (`Name`, `Version`,
+`Description`, `CodeURL`), and `channels` a list of objects with the
+`CamelCase` names of the `Channel` fields. Times are ISO 8601 strings.
+An encoding direction is its BIDS string (`"j-"`), or, when it has none,
+an object (`Vector`, `Space`). A known term (a `Space`, an `Intent`,
+...) is its string, a `data_unit` its unit symbol (`"ms"`, `"a.u."`), a
+`data_type` its `numpy` name (`"int16"`).
 """
 
 __all__ = [
@@ -89,6 +95,9 @@ def encode_extra(
     written as JSON. A key in `reserved` (one the format keeps for its
     own use) is not written, and is reported as lost.
     """
+    # Not `FileBasedMetadata`'s diff helper: this one also writes JSON
+    # and refuses the keys a format reserves, two things the data model
+    # knows nothing of.
     for key, value in diff.items():
         if key in reserved:
             report.lost[f"extra[{key!r}]"] = value

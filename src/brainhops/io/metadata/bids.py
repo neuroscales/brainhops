@@ -1,28 +1,14 @@
 """
 The BIDS JSON sidecar codec.
 
-A sidecar is a flat JSON object. A key that is the BIDS key of a
-vocabulary field (`"RepetitionTime"` for `repetition_time`, see the
-`Bids(...)` annotation of each field) fills that field, and the units
-already match (seconds, degrees, tesla). A vocabulary field that BIDS
-has no key for is written under its own name in `CamelCase`
-(`display_range` as `"DisplayRange"`), so that a sidecar written by
-brainhops reads back whole. Every other key lands in `extra`, and
-`extra` is written back key by key.
-
-`GeneratedBy` is the BIDS list of objects (`Name`, `Version`,
-`Description`, `CodeURL`), and `channels` a list of objects with the
-`CamelCase` names of [`Channel`][brainhops.datamodel.metadata.Channel]
-fields. Times are ISO 8601 strings. An encoding direction is its BIDS
-string (`"j-"`); one BIDS cannot write (along no voxel axis) is reported
-as lost by `to_bids`, and written as an object (`Vector`, `Space`) in the
-JSON stores of other formats (x5, Zarr), which read it back. A known
-term (a `Space`, an `Intent`, ...) is its string, a `data_unit` its unit
-symbol (`"ms"`, `"a.u."`), a `data_type` its `numpy` name (`"int16"`).
-The fields of the
+A sidecar is the vocabulary as a flat JSON object, in the form that
+`brainhops.io.metadata._json` writes and reads (BIDS keys, or a field's
+name in `CamelCase` where BIDS has none; every other key is `extra`).
+The units already match (seconds, degrees, tesla). The fields of the
 [`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
 group are not sidecar keys (BIDS keeps them in `.bval`/`.bvec` files, in
-voxel axes), so `to_bids` reports them as lost.
+voxel axes), and an encoding direction along no voxel axis has no BIDS
+string, so `to_bids` reports them as lost.
 """
 
 __all__ = ["from_bids", "to_bids"]
