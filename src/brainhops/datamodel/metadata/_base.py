@@ -1,0 +1,732 @@
+"""`Metadata`: the common vocabulary, the hub through which formats convert."""
+
+__all__ = ["Metadata"]
+
+# stdlib
+import copy
+import inspect
+
+# externals
+import numpy as np
+import typing_extensions as tx
+from bagof.magic import Factory, Field, fields
+
+# internals
+from brainhops._core.compat import own_annotations
+from brainhops._core.properties import LazyField
+
+from ..base import DataModelBase
+from ._report import ConversionReport, LossPolicy, apply_loss_policy
+from ._sentinel import ALL, UNSUPPORTED, Maybe
+from ._terms import EncodingDirection, GeneratedBy
+from ._vocabulary import (
+    FILE,
+    GRID,
+    GROUPS,
+    VOCABULARY,
+    VOLUME,
+    DiffusionMetadata,
+    DisplayMetadata,
+    MicroscopyMetadata,
+    MRIMetadata,
+    ProvenanceMetadata,
+    Scope,
+    TransformMetadata,
+)
+
+# The vocabulary, filled in once `Metadata` exists: field name ->
+# (annotation as declared, default when supported). `extra` is in it, so
+# that a format can opt out of free-form keys with `supports=`.
+_VOCABULARY: tx.Dict[str, tx.Tuple[tx.Any, tx.Any]] = {}
+
+# What a default is when the factory builds it.
+_FACTORY = object()
+
+
+# ----------------------------------------------------------------------
+#   CAPABILITIES: supports= / derived= / lazy=
+# ----------------------------------------------------------------------
+
+
+def _unsupported_hint(name: str) -> tx.Any:
+    """The annotation of a vocabulary field a format cannot store: the
+    declared one, without its default factory nor its converter."""
+    for field in fields(Metadata):
+        if field.name == name:
+            extras = []
+            if field.doc:
+                extras.append(tx.Doc(field.doc))
+            if isinstance(field.metadata, dict) and field.metadata:
+                extras.append(Field(metadata=dict(field.metadata)))
+            if not extras:
+                return field.type
+            return tx.Annotated[(field.type, *extras)]
+    raise KeyError(name)  # pragma: no cover
+
+
+class _MetadataMeta(type(DataModelBase)):
+    """
+    Reads the `supports=`, `derived=` and `lazy=` class keywords.
+
+    `bagof` builds a class's fields before `__init_subclass__` runs, and
+    does not forward class keywords to it, so the keywords are read here,
+    before the class body reaches `bagof`: every vocabulary field that a
+    class does not support is redeclared in its namespace with the
+    default `UNSUPPORTED`, which is exactly what writing `x: T =
+    UNSUPPORTED` in the class body does. The lazy fields get their
+    descriptor once the class is built.
+    """
+
+    def __new__(
+        metacls,
+        name: str,
+        bases: tx.Tuple[type, ...],
+        namespace: tx.Dict[str, tx.Any],
+        supports: tx.Optional[tx.Union[str, tx.Iterable[tx.Any]]] = None,
+        derived: tx.Optional[tx.Iterable[str]] = None,
+        lazy: tx.Optional[tx.Iterable[str]] = None,
+        **kwargs: tx.Any,
+    ) -> type:
+        own_repr = "__repr__" in namespace
+        if supports is not None:
+            _declare_supports(name, namespace, supports)
+        cls = super().__new__(metacls, name, bases, namespace, **kwargs)
+        if "__magic_discard__" in name:
+            return cls
+        if not own_repr:
+            # `bagof` writes a `__repr__` for every class; this one also
+            # hides `UNSUPPORTED` and an empty `extra`, or a format that
+            # stores three fields would print forty.
+            cls.__repr__ = _metadata_repr
+        if _VOCABULARY:
+            _set_capabilities(cls, derived, lazy)
+        elif derived is not None or lazy is not None:
+            raise TypeError(f"{name}: derived= and lazy= need a vocabulary.")
+        return cls
+
+
+def _set_capabilities(
+    cls: type,
+    derived: tx.Optional[tx.Iterable[str]] = None,
+    lazy: tx.Optional[tx.Iterable[str]] = None,
+) -> None:
+    name = cls.__name__
+    supported = frozenset(
+        field.name
+        for field in fields(cls)
+        if field.name in _VOCABULARY and field.default is not UNSUPPORTED
+    )
+    cls.supported_fields = supported
+    cls.unsupported_fields = frozenset(_VOCABULARY) - supported
+    if derived is not None:
+        derived = frozenset(derived)
+        wrong = derived - supported
+        if wrong:
+            raise TypeError(
+                f"{name} declares derived={sorted(wrong)}, which are "
+                f"not vocabulary fields it supports."
+            )
+        cls.derived_fields = derived
+    else:
+        cls.derived_fields = frozenset(
+            getattr(cls, "derived_fields", frozenset()) & supported
+        )
+    if lazy is not None:
+        lazy = frozenset(lazy)
+        wrong = lazy - (supported - {"extra"})
+        if wrong:
+            raise TypeError(
+                f"{name} declares lazy={sorted(wrong)}, which are not "
+                f"vocabulary fields it supports."
+            )
+        cls.lazy_fields = lazy
+    else:
+        cls.lazy_fields = frozenset(
+            getattr(cls, "lazy_fields", frozenset()) & supported
+        )
+    for field in fields(cls):
+        if field.name not in cls.lazy_fields:
+            continue
+        # Installed on every class that has a lazy field: a subclass
+        # that redeclares the field (`supports=`) hides its parent's.
+        if not isinstance(inspect.getattr_static(cls, field.name), LazyField):
+            setattr(
+                cls,
+                field.name,
+                LazyField(
+                    field.name,
+                    default=field.default,
+                    prepare=_unsupported_as_none,
+                    on_load=_join_snapshot,
+                ),
+            )
+
+
+def _unsupported_as_none(value: tx.Any) -> tx.Any:
+    return None if value is UNSUPPORTED else value
+
+
+def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
+    """A lazy field, once loaded, joins the read-time snapshot, as if it
+    had been decoded with the rest."""
+    snapshot = obj.__dict__.get("_decoded")
+    if value is not None and snapshot is not None:
+        setattr(snapshot, name, copy.deepcopy(value))
+
+
+def _declare_supports(
+    name: str,
+    namespace: tx.Dict[str, tx.Any],
+    supports: tx.Union[str, tx.Iterable[tx.Any]],
+) -> tx.FrozenSet[str]:
+    if not _VOCABULARY:
+        raise TypeError(f"{name}: supports= is only for Metadata subclasses.")
+    if isinstance(supports, str):
+        if supports != ALL:
+            raise TypeError(
+                f"{name}: supports= takes a sequence of field names or "
+                f"vocabulary groups, or ALL, not {supports!r}."
+            )
+        supported = frozenset(_VOCABULARY)
+    else:
+        names: tx.Set[str] = set()
+        for item in supports:
+            if isinstance(item, type):
+                if item not in GROUPS:
+                    raise TypeError(
+                        f"{name}: supports= names {item.__name__}, which "
+                        f"is not a vocabulary group; expected one of "
+                        f"{[g.__name__ for g in GROUPS]}."
+                    )
+                names.update(GROUPS[item])
+            else:
+                names.add(item)
+        supported = frozenset(names)
+    unknown = supported - frozenset(_VOCABULARY)
+    if unknown:
+        raise TypeError(
+            f"{name}: supports= names {sorted(unknown)}, which are not "
+            f"vocabulary fields; expected some of {sorted(_VOCABULARY)}."
+        )
+    annotations = own_annotations(namespace)
+    for field_name, (hint, default) in _VOCABULARY.items():
+        if field_name in annotations or field_name in namespace:
+            # Written out in the class body: the body wins.
+            continue
+        if field_name in supported:
+            # Redeclared as supported, in case a parent did not support it.
+            annotations[field_name] = hint
+            if default is not _FACTORY:
+                namespace[field_name] = default
+        else:
+            annotations[field_name] = _unsupported_hint(field_name)
+            namespace[field_name] = UNSUPPORTED
+    # On Python 3.14+ the body's annotations come as a lazy annotate
+    # function; it is replaced by the plain dict, as up to 3.13.
+    for key in ("__annotate__", "__annotate_func__"):
+        namespace.pop(key, None)
+    namespace["__annotations__"] = annotations
+    return supported
+
+
+def _metadata_repr(self: tx.Any) -> str:
+    parts = []
+    own = [
+        field
+        for field in fields(type(self))
+        if field.name not in _VOCABULARY or field.name == "extra"
+    ]
+    # `format` and a format's own fields first, then `extra`, then the
+    # vocabulary in its declared order (not `bagof`'s reverse MRO).
+    own.sort(key=lambda field: field.name == "extra")
+    names = [field.name for field in own if field.repr and not field.var]
+    for name in names + [n for n in VOCABULARY if n in _VOCABULARY]:
+        value = getattr(self, name, None)
+        if value is None or value is UNSUPPORTED:
+            continue
+        if name == "extra" and not value:
+            continue
+        parts.append(f"{name.lstrip('_')}={value!r}")
+    return f"{type(self).__name__}({', '.join(parts)})"
+
+
+class _hybridmethod:
+    """A method that also works on the class, binding the class."""
+
+    def __init__(self, func: tx.Callable) -> None:
+        self.func = func
+        self.__doc__ = func.__doc__
+
+    def __get__(self, obj: tx.Any, owner: type) -> tx.Callable:
+        target = owner if obj is None else obj
+        return self.func.__get__(target, owner)
+
+
+# ----------------------------------------------------------------------
+#   METADATA
+# ----------------------------------------------------------------------
+
+
+class Metadata(
+    DataModelBase,
+    ProvenanceMetadata,
+    MRIMetadata,
+    DiffusionMetadata,
+    DisplayMetadata,
+    MicroscopyMetadata,
+    TransformMetadata,
+    metaclass=_MetadataMeta,
+    polymorphic=True,
+    kw_only=True,
+):
+    """
+    Format-agnostic metadata: the common vocabulary, and `extra`.
+
+    This is what in-memory images and transformations carry, the hub
+    through which formats convert (`NiftiMetadata -> Metadata ->
+    MghMetadata` loses exactly what `NiftiMetadata -> MghMetadata`
+    loses), and what the BIDS sidecar codec reads and writes. Every
+    field is supported, and there is no raw record.
+
+    It is also the root of the metadata classes, selected on `format`:
+    `Metadata(format="nifti", ...)` builds a `NiftiMetadata` (once
+    `brainhops.io` is imported), and an unknown format builds a
+    `Metadata`. The vocabulary is declared by six groups (mixins), which
+    `Metadata` inherits: [`ProvenanceMetadata`][],
+    [`MRIMetadata`][], [`DiffusionMetadata`][], [`DisplayMetadata`][],
+    [`MicroscopyMetadata`][] and [`TransformMetadata`][]. Each field holds
+    a value, `None` (unknown) or `UNSUPPORTED` (a format has no slot for
+    it); see the module documentation for the formats' hooks.
+    """
+
+    # --- class attributes ---------------------------------------------
+
+    supported_fields: tx.Annotated[
+        tx.ClassVar[tx.FrozenSet[str]],
+        tx.Doc(
+            "The vocabulary fields (and `'extra'`) this class can store, "
+            "from its `supports=` declaration."
+        ),
+    ] = frozenset()
+
+    unsupported_fields: tx.Annotated[
+        tx.ClassVar[tx.FrozenSet[str]],
+        tx.Doc(
+            "The vocabulary fields this class cannot store: the "
+            "complement of `supported_fields`."
+        ),
+    ] = frozenset()
+
+    derived_fields: tx.Annotated[
+        tx.ClassVar[tx.FrozenSet[str]],
+        tx.Doc(
+            "The vocabulary fields that this format derives from the "
+            "geometry of the data model (read-only on write)."
+        ),
+    ] = frozenset()
+
+    lazy_fields: tx.Annotated[
+        tx.ClassVar[tx.FrozenSet[str]],
+        tx.Doc("The vocabulary fields decoded on first access."),
+    ] = frozenset()
+
+    # --- format and extras --------------------------------------------
+
+    format: tx.Annotated[
+        str,
+        tx.Doc("The format this metadata belongs to; selects the subclass."),
+    ] = "generic"
+
+    extra: tx.Annotated[
+        Maybe[tx.Dict[str, tx.Any]],
+        tx.Doc(
+            "Free-form keys the vocabulary does not cover, copied into "
+            "any free-form store a format has."
+        ),
+        Scope(FILE),
+        Factory(dict),
+    ]
+
+    # --- construction -------------------------------------------------
+
+    def __post_init__(self) -> None:
+        parent = getattr(super(), "__post_init__", None)
+        if parent is not None:
+            parent()
+        cls = type(self)
+        for name in cls.unsupported_fields:
+            value = getattr(self, name, None)
+            if value is None:
+                setattr(self, name, UNSUPPORTED)
+            elif value is not UNSUPPORTED:
+                raise ValueError(
+                    f"{cls.__name__} cannot store {name!r} (it is "
+                    f"UNSUPPORTED by this format), so {value!r} is "
+                    f"refused."
+                )
+
+    def copy(self) -> tx.Self:
+        """
+        A copy of this metadata, which can be edited without editing this
+        object (`extra` is copied too). This is what an image or a
+        transformation holds when it is given metadata that another
+        object holds already (`replace()`, `from_other`, `metadata=`).
+        """
+        new = copy.copy(self)
+        extra = self.__dict__.get("extra")
+        if isinstance(extra, dict):
+            new.__dict__["extra"] = dict(extra)
+        return new
+
+    # --- capabilities -------------------------------------------------
+
+    @_hybridmethod
+    def supports(self_or_cls, name: str) -> bool:
+        """
+        Whether this format can store the vocabulary field `name`.
+
+        On the class, this reads the class declaration (`supports=`); on
+        an instance, it reads the instance, for formats whose capability
+        depends on the instance.
+        """
+        if name not in _VOCABULARY:
+            raise KeyError(f"{name!r} is not a vocabulary field.")
+        if isinstance(self_or_cls, type):
+            return name in self_or_cls.supported_fields
+        return getattr(self_or_cls, name) is not UNSUPPORTED
+
+    # --- conversion ---------------------------------------------------
+
+    def to(
+        self,
+        cls: tx.Union[None, str, tx.Type["Metadata"]] = None,
+        *,
+        on_loss: tx.Optional[LossPolicy] = None,
+        report: tx.Optional[ConversionReport] = None,
+        **values: tx.Any,
+    ) -> "Metadata":
+        """
+        Convert this metadata into another class, as images and
+        transformations convert with `to()`.
+
+        Parameters
+        ----------
+        cls : type or str, optional
+            The `Metadata` subclass to convert to, or its format name
+            (`"generic"`, `"nifti"`, ...). `None` keeps the class: a copy
+            (a same-format copy shares the raw record).
+        on_loss : {"ignore", "warn", "raise"}, optional
+            What to do if anything is lost. Defaults to the policy in
+            effect (see [`metadata_loss_policy`][]), unless `report` is
+            given.
+        report : ConversionReport, optional
+            Filled with what was lost or approximated. When it is given
+            (and `on_loss` is not), the caller acts on it, and no loss
+            policy is applied.
+        **values
+            Fields to set on the result.
+
+        Returns
+        -------
+        Metadata
+            The converted metadata.
+        """
+        target = type(self) if cls is None else _metadata_class(cls)
+        obj, found = target._convert_from(self, (), values)
+        if report is not None:
+            report.source = report.source or found.source
+            report.target = report.target or found.target
+            report.merge(found)
+        if report is None or on_loss is not None:
+            apply_loss_policy(found, on_loss, stacklevel=2)
+        return obj
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Convert the metadata of another format into this one.
+
+        The raw record and the snapshot are never copied across formats
+        (they are when `other` is already of this class). Each
+        vocabulary value is copied, except where this format declares the
+        field unsupported: the value is then lost, and reported.
+        `UNSUPPORTED` on the source side reads as `None`. The report is
+        handed to the loss policy in effect (see
+        [`metadata_loss_policy`][]); use
+        [`to`][brainhops.datamodel.metadata.Metadata.to]`(cls,
+        report=...)` to get it back.
+        """
+        if not isinstance(other, Metadata):
+            return super().from_instance(other, *args, **kwargs)
+        obj, report = cls._convert_from(other, args, kwargs)
+        apply_loss_policy(report, stacklevel=3)
+        return obj
+
+    @classmethod
+    def _convert_from(
+        cls,
+        other: "Metadata",
+        args: tx.Tuple[tx.Any, ...] = (),
+        kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
+    ) -> tx.Tuple["Metadata", ConversionReport]:
+        """`from_instance`, returning the report instead of acting on it."""
+        from ._filebased import FileBasedMetadata, _copy_snapshot
+
+        kwargs = dict(kwargs or {})
+        same = _fits(other, cls)
+        # A copy keeps the most specific class.
+        target = type(other) if same else cls
+        report = ConversionReport(
+            source=_format_name(other), target=_format_name(target)
+        )
+        values: tx.Dict[str, tx.Any] = {}
+        if same and isinstance(other, FileBasedMetadata):
+            values["raw"] = other.raw
+            values["decoded"] = _copy_snapshot(other._decoded)
+        unsupported = target.unsupported_fields
+        for name in _VOCABULARY:
+            value = getattr(other, name, None)
+            if value is None or value is UNSUPPORTED:
+                continue
+            if name == "extra":
+                if not value:
+                    continue
+                value = dict(value)
+            if name in unsupported:
+                report.lost[name] = value
+                continue
+            values[name] = value
+        target._import(other, values, report=report)
+        values.update(kwargs)
+        return target(*args, **values), report
+
+    @classmethod
+    def _import(
+        cls,
+        other: "Metadata",
+        values: tx.Dict[str, tx.Any],
+        *,
+        report: ConversionReport,
+    ) -> None:
+        """Recover losses of a conversion. Default: nothing."""
+
+    # --- propagation --------------------------------------------------
+
+    def derive(
+        self,
+        *,
+        grid_changed: bool = False,
+        grid_map: tx.Any = None,
+        volumes: tx.Optional[tx.Sequence[int]] = None,
+        volumes_changed: bool = False,
+        step: tx.Optional[str] = None,
+    ) -> tx.Self:
+        """
+        The metadata of an object derived from this one (resampled,
+        cropped, a selection of volumes...). Always a new object.
+
+        - `file` fields are kept, except `creation_time` (cleared) and
+          `history`, to which `step` is appended; `generated_by` gains a
+          brainhops entry once.
+        - `acquisition` fields are kept.
+        - `grid` fields are cleared when `grid_changed`, with one
+          exception: given `grid_map`, the linear part of the map from
+          the old voxel axes to the new ones, an encoding direction in
+          voxel axes is mapped through it (`normalize(grid_map @ v)`)
+          instead. A direction in a named world space is kept.
+        - `volume` fields are indexed by `volumes` (the selected volume
+          indices) when given, and cleared when `volumes_changed` and no
+          selection is known.
+        - `extra` is kept verbatim.
+        """
+        values = self._derive_values(
+            grid_changed=grid_changed,
+            grid_map=grid_map,
+            volumes=volumes,
+            volumes_changed=volumes_changed,
+            step=step,
+        )
+        return type(self)(**values)
+
+    def _derive_values(
+        self,
+        *,
+        grid_changed: bool,
+        grid_map: tx.Any,
+        volumes: tx.Optional[tx.Sequence[int]],
+        volumes_changed: bool,
+        step: tx.Optional[str],
+    ) -> tx.Dict[str, tx.Any]:
+        values: tx.Dict[str, tx.Any] = {}
+        for name in _VOCABULARY:
+            value = getattr(self, name, None)
+            if value is UNSUPPORTED or name in self.unsupported_fields:
+                continue
+            scope = _field_scope(name)
+            if name == "creation_time":
+                value = None
+            elif name == "history" and step is not None:
+                value = tuple(value or ()) + (step,)
+            elif name == "generated_by":
+                value = _with_brainhops(value)
+            elif name == "extra":
+                value = dict(value or {})
+            elif scope == GRID and grid_changed:
+                value = _map_direction(value, grid_map)
+            elif scope == VOLUME and value is not None:
+                value = _select_volumes(name, value, volumes, volumes_changed)
+            values[name] = value
+        return values
+
+    # --- BIDS ---------------------------------------------------------
+
+    @classmethod
+    def from_bids(cls, sidecar: tx.Any) -> "Metadata":
+        """
+        Read a BIDS JSON sidecar: a mapping, a JSON string, or a path.
+
+        Keys that name a vocabulary field (through its BIDS key) fill
+        that field; every other key lands in `extra`. The result is
+        generic `Metadata`.
+        """
+        from brainhops.io.metadata.bids import from_bids
+
+        return from_bids(sidecar)
+
+    def to_bids(
+        self, *, on_loss: tx.Optional[LossPolicy] = None
+    ) -> tx.Dict[str, tx.Any]:
+        """
+        The BIDS JSON sidecar (a JSON-serialisable `dict`) of this
+        metadata. The diffusion fields are not sidecar keys, and are
+        reported as lost, as is an encoding direction BIDS cannot write
+        (one that is not along a voxel axis).
+        """
+        from brainhops.io.metadata.bids import to_bids
+
+        return to_bids(self, on_loss=on_loss)
+
+
+# The vocabulary, read off the class that declares it.
+for _name in ("extra",) + VOCABULARY:
+    _field = next(f for f in fields(Metadata) if f.name == _name)
+    _hint = next(
+        own_annotations(c)[_name]
+        for c in Metadata.__mro__
+        if _name in own_annotations(c)
+    )
+    _VOCABULARY[_name] = (
+        _hint,
+        _FACTORY if _name == "extra" else _field.default,
+    )
+del _name, _field, _hint
+_set_capabilities(Metadata)
+
+
+def _fits(value: tx.Any, cls: type) -> bool:
+    """Whether a metadata object is one of `cls` already: of the class
+    itself, or of a subclass of a format class (generic `Metadata` holds
+    generic metadata only)."""
+    if type(value) is cls:
+        return True
+    return cls is not Metadata and isinstance(value, cls)
+
+
+def _field_metadata(name: str) -> tx.Dict[str, tx.Any]:
+    for field in fields(Metadata):
+        if field.name == name:
+            meta = field.metadata
+            return dict(meta) if isinstance(meta, dict) else {}
+    raise KeyError(name)
+
+
+def _field_scope(name: str) -> str:
+    """The propagation scope of a vocabulary field."""
+    return _field_metadata(name).get("scope", FILE)
+
+
+def _bids_key(name: str) -> tx.Optional[str]:
+    """The BIDS key of a vocabulary field, or `None` if BIDS has none."""
+    return _field_metadata(name).get("bids")
+
+
+def _with_brainhops(
+    generated_by: tx.Optional[tx.Tuple[GeneratedBy, ...]],
+) -> tx.Tuple[GeneratedBy, ...]:
+    entries = tuple(generated_by or ())
+    if any(getattr(g, "name", None) == "brainhops" for g in entries):
+        return entries
+    try:
+        from brainhops import __version__ as version
+    except ImportError:  # pragma: no cover
+        version = None
+    return entries + (GeneratedBy(name="brainhops", version=version),)
+
+
+def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
+    """A `grid` field after a grid change: an encoding direction in voxel
+    axes goes through `grid_map` when it is given (and fits), one in a
+    world space is kept; anything else is cleared."""
+    if not isinstance(value, EncodingDirection):
+        return None
+    if value.space is not None:
+        return value
+    if grid_map is None:
+        return None
+    matrix = np.asarray(grid_map, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] != len(value.vector):
+        return None
+    try:
+        return value.transform(matrix)
+    except ValueError:
+        return None
+
+
+def _select_volumes(
+    name: str,
+    value: tx.Any,
+    volumes: tx.Optional[tx.Sequence[int]],
+    volumes_changed: bool,
+) -> tx.Any:
+    if name == "display_range" or name == "data_unit":
+        # One value for every volume: a selection keeps it.
+        return value
+    if volumes is not None:
+        try:
+            return tuple(value[i] for i in volumes)
+        except (IndexError, TypeError):
+            return None
+    return None if volumes_changed else value
+
+
+def _format_name(obj: tx.Any) -> str:
+    if isinstance(obj, type):
+        for field in fields(obj):
+            if field.name == "format":
+                default = field.default
+                if isinstance(default, str):
+                    return default
+        return obj.__name__
+    return str(getattr(obj, "format", type(obj).__name__))
+
+
+def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
+    from ._filebased import FileBasedMetadata
+
+    if isinstance(target, type) and issubclass(target, Metadata):
+        return target
+    if isinstance(target, str):
+        if target == "generic":
+            return Metadata
+        stack = list(Metadata.__subclasses__())
+        while stack:
+            klass = stack.pop()
+            if _format_name(klass) == target and klass is not (
+                FileBasedMetadata
+            ):
+                return klass
+            stack.extend(klass.__subclasses__())
+        raise ValueError(f"No metadata class for the format {target!r}.")
+    raise TypeError(
+        f"Expected a Metadata subclass or a format name, got {target!r}."
+    )
