@@ -61,6 +61,7 @@ from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
+from brainhops._core.numeric import float32_repr
 from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
@@ -262,12 +263,6 @@ def encode_history(
 # ----------------------------------------------------------------------
 
 
-def _f32(value: tx.Any) -> float:
-    """A single-precision value, as the shortest decimal that reads back
-    to it."""
-    return float(str(np.float32(value)))
-
-
 def _degrees(radians: tx.Any) -> float:
     """A single-precision angle in radians, in degrees, as the shortest
     decimal that is stored as the same radians (`9.0`, not
@@ -346,7 +341,7 @@ class MghMetadata(
             return {}
         out: tx.Dict[str, tx.Any] = {}
         for name, (slot, factor) in _FOOTER.items():
-            value = _f32(raw.header[slot])
+            value = float32_repr(raw.header[slot])
             if not value:
                 continue
             if factor is None:

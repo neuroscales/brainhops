@@ -11,6 +11,8 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
+from brainhops._core.enum import term
+
 from ..base import DataModelBase
 from ..enums import Space
 from ..units import Unit
@@ -49,33 +51,8 @@ class Channel(DataModelBase):
 
 
 # ----------------------------------------------------------------------
-#   CONVERTERS THAT THE DECLARATION OF `EncodingDirection` USES
+#   THE CONVERTER THAT THE DECLARATION OF `EncodingDirection` USES
 # ----------------------------------------------------------------------
-
-
-class _Term:
-    """
-    The converter of a free-text field with a list of known terms (an
-    enum): a known term becomes the enum member, any other string stays
-    a string. `bagof` does not do this for a `Union[Enum, str]` by
-    itself (a string already satisfies the union).
-    """
-
-    def __init__(self, enum: type) -> None:
-        self.enum = enum
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        if _passes(value) or isinstance(value, self.enum):
-            return value
-        if isinstance(value, str):
-            try:
-                return self.enum(value)
-            except ValueError:
-                return str(value)
-        raise TypeError(
-            f"Expected a {self.enum.__name__} or a str, not "
-            f"{type(value).__name__}."
-        )
 
 
 def _vector(value: tx.Any) -> tx.Tuple[float, ...]:
@@ -112,7 +89,7 @@ class EncodingDirection(DataModelBase):
             "The coordinate system of `vector`: `None` for the image's "
             "voxel axes, or the label of a world space."
         ),
-        ConvertTo(_Term(Space)),
+        ConvertTo(term(Space)),
     ] = None
 
     def __post_init__(self) -> None:
@@ -180,6 +157,17 @@ class EncodingDirection(DataModelBase):
 def _passes(value: tx.Any) -> bool:
     """`None` and `UNSUPPORTED` go through every vocabulary converter."""
     return value is None or value is UNSUPPORTED
+
+
+def _term(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
+    """The converter of a vocabulary field with known terms (`term`),
+    which lets `UNSUPPORTED` through."""
+    convert = term(enum)
+
+    def converter(value: tx.Any) -> tx.Any:
+        return value if value is UNSUPPORTED else convert(value)
+
+    return converter
 
 
 def _unit(value: tx.Any) -> tx.Any:

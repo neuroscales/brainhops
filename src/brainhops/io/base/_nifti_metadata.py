@@ -54,6 +54,7 @@ import typing_extensions as tx
 from bagof.magic import NoEq, NoRepr
 
 # internals
+from brainhops._core.numeric import float32_repr
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -93,12 +94,6 @@ def _bytes_field(header: nb.Nifti1Header, name: str) -> tx.Optional[str]:
         value = value.split(b"\0", 1)[0].decode("utf-8", "replace")
     value = str(value).strip()
     return value or None
-
-
-def _f32(value: tx.Any) -> float:
-    """A value the header stores in single precision, as the shortest
-    decimal that reads back to it (`0.3`, not `0.30000001192092896`)."""
-    return float(str(np.float32(value)))
 
 
 def _time_scale(header: nb.Nifti1Header) -> tx.Optional[float]:
@@ -195,7 +190,7 @@ class NiftiMetadata(
         scode, qcode = int(h["sform_code"]), int(h["qform_code"])
         out["space"] = _XCODES.get(scode) or _XCODES.get(qcode)
 
-        cal = (_f32(h["cal_min"]), _f32(h["cal_max"]))
+        cal = (float32_repr(h["cal_min"]), float32_repr(h["cal_max"]))
         out["display_range"] = cal if any(cal) else None
 
         try:
@@ -213,7 +208,7 @@ class NiftiMetadata(
         shape = _shape(h)
         scale = _time_scale(h)
         if len(shape) >= 4 and scale is not None:
-            step = _f32(h["pixdim"][4])
+            step = float32_repr(h["pixdim"][4])
             if step > 0:
                 out["repetition_time"] = step * scale
         return out
@@ -351,7 +346,7 @@ def _decode_slice_timing(
     # Times are multiples of the (single-precision) slice duration:
     # recompute them in double precision from the duration as written.
     stored = float(h["slice_duration"])
-    duration = _f32(stored) * scale
+    duration = float32_repr(stored) * scale
     return tuple(round(round(float(t) / stored) * duration, 9) for t in times)
 
 

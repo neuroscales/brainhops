@@ -75,8 +75,9 @@ from types import FunctionType as _FunctionType
 from brainhops._core.properties import Lazy, LazyField
 
 from ._base import Metadata
+from ._dtype import preferred_dtype
 from ._field import MetadataField
-from ._filebased import FileBasedMetadata, OpaqueMetadata, preferred_dtype
+from ._filebased import FileBasedMetadata, OpaqueMetadata
 from ._report import (
     ConversionReport,
     LossPolicy,
