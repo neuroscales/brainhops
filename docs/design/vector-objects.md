@@ -183,12 +183,22 @@ as before.
 
 **Ragged axes.** nd layouts are often ragged: a different number of
 cells per frame, of points per slice or per chunk. They are either
-packed, `data` being a `Ragged` (§2.3, §2.9), or padded, with `valid`
-saying which entries exist: either a boolean mask of shape `(*A,)`,
-or `lengths` of shape `(*A[:-1],)`, the number of valid entries along the
-last array axis (the compact form for "padded at the end", which is what
-per-chunk stores produce). Invalid vertices are never inside a region,
-never moved, and never members of an element or label.
+padded or packed:
+
+- **padded**: `valid` says which entries exist, either a boolean mask of
+  shape `(*A,)`, or `lengths` of shape `(*A[:-1],)`, the number of valid
+  entries along the last array axis (the compact form for "padded at the
+  end", which is what per-chunk stores produce);
+- **packed**: `data` is a `Ragged` (§2.3, §2.9) and its own `lengths`
+  say how many entries exist. `valid`, when needed (a crop that masks
+  rather than compacts, §5.2), is a boolean `Ragged` sharing the same
+  `starts` and `lengths`: one structure, two contents. The `lengths`
+  form of `valid` does not apply.
+
+Invalid vertices are never inside a region, never moved, and never
+members of an element or label. A label entry's effective validity is
+derived, never stored twice: `label.valid` and the validity of all its
+members.
 
 **Components and attributes** may be a homogeneous array (`(*A, D)`,
 the common, fast case) or structured (one field per component, for
@@ -245,13 +255,26 @@ class Ragged(Magic):
   nibabel, VTK): `starts = offsets[:-1]`, `lengths = diff(offsets)`. It
   is accepted on construction and returned by `.offsets` when it applies.
   `lengths` may only be omitted in that case.
-- `inner` are the content axes not in `axes` that are not lined up by
-  `batch`: they come along with every member (the `D` components of a
-  vertex, for instance).
+- **Every axis is named.** A `Ragged` exposes its logical axes as
+  `out_axes = (*shared, *batch, *own_axes, item_axis, *inner)`, where
+  `item_axis` names the ragged (or fixed-width) axis of its entries
+  (default `"item"`; `"corner"` for elements, `"point"` for fragments).
+  A nested `Ragged` uses its content's `out_axes`, so a reference into
+  a fragment's points can be written by name: `axes = ("fragment",
+  "point")`.
+- **Shared and inner axes.** The content axes not in `axes` and not in
+  `batch` either come along with every member (`inner`: the `D`
+  components of a vertex) or are shared free axes, which stay *leading*
+  and in content order. For example H, `(T, N, 3)` vertices with
+  `(M, 3)` triangles and `batch = ()`, the logical shape is
+  `(T, M, 3, 3)`, as `V[:, F]` would give.
 - **Indices are logical and nd, never linearised.** Each member reference
   is an nd index over `axes`; the trailing index dimension is present
   only when `len(axes) > 1`, so the common cases stay `(M, 3)` and
-  `(P,)`. With a structured dtype the fields are named after `axes`.
+  `(P,)`. Indices are non-negative integers (int32 or int64; negative
+  values are never wrapped). A structured dtype with fields named after
+  `axes` is accepted on input and normalised to the trailing-dimension
+  form, so the helpers see one layout.
   When `content` is itself ragged, its ragged axes are addressed by their
   logical index, so a reference into it is a `(row, position)` pair.
 - **Batch axes.** The content axes *not* in `axes` are free. `batch`
@@ -261,20 +284,30 @@ class Ragged(Magic):
   `(T, N, 3)` series; a `(Z, M, 2)` edge array with `batch = ("z",)`
   gives every slice its own edges. A reference that crosses frames lists
   the raster axis in `axes`: `[[t, n], [t + 1, m]]` over `("t", "n")`.
-  In the boxed form `members` carries no batch axes (open question 7).
+  In the boxed form `batch` applies to `starts` and `lengths` only:
+  `members` is a shared pool that they index (open question 7).
 
 **Array behaviour.** With `content` bound, a `Ragged` is array-like:
 
 ```python
 r.shape  # logical, with None for ragged axes: (P, None, 3)
-r[p]  # the content items of entry p, e.g. a (L_p, 3) array
+r[p]  # entry p (indexes the own axes): a (L_p, 3) array
 r[2:5], r[mask]  # a smaller Ragged over the same content
 r.members[p]  # the indices of entry p, not their content
 r.lengths, r.offsets  # structure
 r.pad(fill=nan)  # (P, Lmax, 3) + valid; r.pack() goes back
-r.reduce("mean")  # one value per entry (segment reduction)
-np.asarray(r)  # gathered content; padded if ragged
+r.reduce("mean")  # one value per entry: reduces one ragged level
+r.flatten()  # nested -> one level (below)
+np.asarray(r)  # gathered content, padded when one ragged level remains
 ```
+
+`np.asarray` pads only when exactly one ragged level remains; with two
+(objects over fragments over points) it raises and points at `flatten()`
+or `pad()`, rather than allocate a quadratic `(O, Fmax, Lmax, 3)`.
+`flatten()` concatenates the members of the members, in member order.
+The result is `ordered`, `atomic` and `exclusive` when both levels are;
+two fixed widths give width `W1 · W2`; anything else becomes an explicit
+1-D `members` (an object made of two track boxes is not a box).
 
 Without `content`, it is a purely structural object (for instance inside
 a reader, before the vertices are loaded); value access then raises.
@@ -292,7 +325,7 @@ class Labels(Ragged):
     directed:    bool = False
     exclusive:   bool = False
     atomic:      bool = False
-    names:       (*L,) | None
+    names:       (*L,) | None      unique; duplicates raise
     attributes:  (*G, *L, A) | (*G, *L)[fields]   optional
 ```
 
@@ -328,9 +361,14 @@ class Labels(Ragged):
 **Binding.** Inside a `Vectors`, each label's `content` is bound from its
 `of` (`"vertices"`, `"fragments"`, …) whenever the `Vectors` is built or
 replaced, so `push`, `crop` and `replace` never leave a label pointing
-at old vertices. The binding is a link, not data: it is left out of
-equality, `repr` and serialisation. A label used on its own keeps
-whatever content it was given.
+at old vertices. Binding never mutates the label it is given:
+`label.bind(content)` returns a shallow copy that shares `members`,
+`starts` and `lengths` (no array is copied), and the `Vectors` stores
+the bound copies. Two `Vectors` can therefore share a label's arrays
+without fighting over its `content`, and the label a user passed in is
+left as it was. Labels are bound in dependency order (`of` names another
+label or `"vertices"`); a cycle raises. The binding is a link, not
+data: it is left out of equality, `repr` and serialisation.
 
 **Vertex IDs.** References are always positional. When a format refers
 to vertices by ID (SWC parent IDs, neuroglancer annotation IDs, OBJ or
@@ -388,7 +426,7 @@ mesh.elements  # the Triangles label, content bound to the vertices
 mesh.elements.shape  # (M, 3, 3): triangles × corners × coordinates
 mesh.elements[10]  # (3, 3) corners of triangle 10
 mesh.elements[10:20]  # Triangles with 10 faces, same vertices
-np.asarray(mesh.elements)  # (M, 3, 3), trimesh's `triangles`
+np.asarray(mesh.elements)  # (M, 3, 3): what trimesh calls `triangles`
 np.asarray(mesh.faces)  # (M, 3), trimesh's `faces`
 ```
 
@@ -414,13 +452,19 @@ users know, in their constructors and as properties, all backed by
 
 | Class | Constructor | Properties (→ `labels` key) |
 |---|---|---|
-| `Points` | `Points(vertices, ids=None)` | — |
+| `Points` | `Points(vertices)` | — |
 | `Graphs` | `Graphs(vertices, edges, directed=False)` | `edges`, `elements` (→ `"elements"`) |
-| `Polylines` / `Streamlines` | `Streamlines(vertices, offsets=None, starts=None, lengths=None, groups=None)` | `streamlines`, `fragments` (→ `"fragments"`), `edges` (implicit) |
-| `TriangleMeshes` | `TriangleMeshes(vertices, faces)` | `faces` (→ `elements.members`), `elements`, `triangles` (→ values) |
+| `Polylines` / `Streamlines` | `Streamlines(vertices, offsets=None, starts=None, lengths=None, groups=None)` | `streamlines`, `fragments` (→ `"fragments"`), `edges` (materialised from the implicit `SequentialEdges`) |
+| `TriangleMeshes` | `TriangleMeshes(vertices, faces)` | `faces` (→ `elements.members`), `elements` |
 | `QuadMeshes` | `QuadMeshes(vertices, faces)` | as above |
 | `TetrahedralMeshes` | `TetrahedralMeshes(vertices, tetrahedra)` | `tetrahedra` (→ `elements.members`), `elements` |
-| any | `objects=`, `groups=`, `labels=` | `objects`, `groups` |
+| any | `objects=`, `groups=`, `labels=`, `ids=` (passed to `Vertices`) | `objects`, `groups` |
+
+One rule for the familiar names: `faces`, `edges` and `tetrahedra` are
+always the connectivity (`elements.members`, materialised when the
+elements are implicit), and `elements` is always the label. Corner
+coordinates are `np.asarray(mesh.elements)`; there is no separate
+`triangles` property.
 
 ```python
 tracts = Streamlines(vertices=positions, offsets=offsets)  # TRX layout
@@ -507,11 +551,7 @@ ID: the reader converts IDs to positions and keeps them as
 Centroids of cells followed over `T` frames:
 `vertices.data (T, N, 3)`, `axes = [TimeAxis("t") raster, IndexAxis("n")]`,
 components `(x, y, z)`, `valid (T, N)` for cells that do not exist in a
-frame. The native system is `(t, x, y, z)`. When the number of cells
-varies a lot between frames, the same logical `(T, var, 3)` is stored
-packed instead: `vertices.data` is a `Ragged` with a flat
-`content (ΣN_t, 3)` and `starts`, `lengths (T,)`. Nothing below changes:
-every reference is still a logical `(t, n)` pair.
+frame. The native system is `(t, x, y, z)`.
 - If slot `n` is a stable identity, track `n` is the box
   `starts = (0, n)`, `lengths = (T, 1)` of fragments over `("t", "n")`:
   `fragments.starts (N, 2)`, `lengths (N, 2)`, `ordered` along `t`.
@@ -521,6 +561,14 @@ every reference is still a logical `(t, n)` pair.
   block: `Edges.members (M, 2, 2)` with `axes = ("t", "n")`, one row
   `[[t, n], [t + 1, m]]` per division. Lineage trees are objects over the
   track fragments.
+- **Packed variant.** When the number of cells varies a lot between
+  frames, the same logical `(T, var, 3)` is stored packed: `vertices.data`
+  is a `Ragged` with a flat `content (ΣN_t, 3)` and `starts`,
+  `lengths (T,)`. Packing renumbers slots per frame, so slot `n` is no
+  longer an identity: a layout with stable slots is padded by
+  definition. In the packed variant, cell identity comes from
+  `vertices.ids`, and each track is a fragment with explicit 1-D
+  `members` of `(t, n)` pairs; division edges are unchanged.
 - A time-varying motion correction `T(t, x)` is a transformation of
   `(t, x, y, z)` that leaves `t` unchanged: `push` (§4.3) applies it frame
   by frame.
@@ -621,6 +669,12 @@ Each is written once against the array module returned by
 `get_array_backend`, so numpy and cupy share the code. Data-dependent
 sizes (masking, `Lmax`) force a host sync on cupy; operations that
 produce them are grouped.
+
+**Raster axes on packed data.** When a raster axis is the outer axis of
+a packed ragged array (example F, packed variant), `push` needs the
+raster coordinate of every row of the flat content: it is
+`segment_ids(lengths)`, the only place where a raster axis touches the
+flat content.
 
 **dask: chunks aligned with lists.** `starts` and `lengths` (or
 `offsets`) stay eager, on the host: they describe the graph and hold one
