@@ -500,8 +500,9 @@ Rules:
   for a plain TIFF when it is `None` (through `object.__setattr__`, as
   `kinds.py:559` does). `replace()` goes through `__init__`, so
   `__post_init__` runs again and the rule holds after a `replace(...,
-  dialect="plain")`. `supports(name)` on an instance reads the instance;
-  `supported_fields` on a class reads the declaration.
+  dialect="plain")`. `Cls.supports(name)` (a classmethod) and
+  `supported_fields` read the declaration; an instance's capability is
+  `meta.name is UNSUPPORTED`.
 - **`UNSUPPORTED` never travels.** `from_instance` maps a source
   `UNSUPPORTED` to `None` on the target (the target may well support
   it). Only the target's own declaration produces loss.
@@ -533,8 +534,9 @@ Rules:
 > class-specific.
 > (2) `repr` *hides* `UNSUPPORTED` (and an empty `extra`), like `None`:
 > with the full vocabulary a NIfTI object printed 28 `UNSUPPORTED`
-> entries for 9 real ones. `supported_fields` and `supports(name)` (a
-> method that works on the class and on an instance) show capabilities.
+> entries for 9 real ones. `supported_fields` and the classmethod
+> `supports(name)` show capabilities (an earlier `supports` that also
+> worked on an instance went: `meta.name is UNSUPPORTED` says it).
 > (3) `Maybe[T]` needs no converter registration: `bagof`'s union
 > converter lets an `Unsupported` instance through untouched.
 
@@ -1520,7 +1522,7 @@ from the old value, with a `DeprecationWarning` naming the replacement:
 
 **Tests.** The framework PR adds: sentinel semantics (identity, falsy,
 pickling, `Maybe` conversion, constructor refusal); `supports=` →
-`supported_fields` and per-instance `supports()`; `from_instance`
+`supported_fields`, `supports()` and per-instance `UNSUPPORTED`; `from_instance`
 loss accounting on two synthetic formats; policies (`ignore`/`warn`/
 `raise`, one warning per conversion); the change-detecting write
 (cases 1-4 of section 6, including clearing); `derive` for each scope and for a level;

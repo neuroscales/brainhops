@@ -251,18 +251,6 @@ def _metadata_repr(self: tx.Any) -> str:
     return f"{type(self).__name__}({', '.join(parts)})"
 
 
-class _hybridmethod:
-    """A method that also works on the class, binding the class."""
-
-    def __init__(self, func: tx.Callable) -> None:
-        self.func = func
-        self.__doc__ = func.__doc__
-
-    def __get__(self, obj: tx.Any, owner: type) -> tx.Callable:
-        target = owner if obj is None else obj
-        return self.func.__get__(target, owner)
-
-
 # ----------------------------------------------------------------------
 #   METADATA
 # ----------------------------------------------------------------------
@@ -382,20 +370,19 @@ class Metadata(
 
     # --- capabilities -------------------------------------------------
 
-    @_hybridmethod
-    def supports(self_or_cls, name: str) -> bool:
+    @classmethod
+    def supports(cls, name: str) -> bool:
         """
-        Whether this format can store the vocabulary field `name`.
+        Whether this format can store the vocabulary field `name` (or
+        `"extra"`), as its class declares it (`supports=`).
 
-        On the class, this reads the class declaration (`supports=`); on
-        an instance, it reads the instance, for formats whose capability
-        depends on the instance.
+        A format whose capability depends on the instance holds
+        `UNSUPPORTED` where an instance cannot store a field: test
+        `meta.name is UNSUPPORTED` for that.
         """
         if name not in _VOCABULARY:
             raise KeyError(f"{name!r} is not a vocabulary field.")
-        if isinstance(self_or_cls, type):
-            return name in self_or_cls.supported_fields
-        return getattr(self_or_cls, name) is not UNSUPPORTED
+        return name in cls.supported_fields
 
     # --- conversion ---------------------------------------------------
 

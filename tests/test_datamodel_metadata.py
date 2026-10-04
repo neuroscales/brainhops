@@ -261,23 +261,21 @@ def test_supports_lists_what_a_format_stores() -> None:
         assert field.default is UNSUPPORTED
 
 
-def test_supports_on_the_class_and_on_an_instance() -> None:
+def test_supports_reads_the_class_declaration() -> None:
     assert LiteMetadata.supports("description")
     assert not LiteMetadata.supports("echo_time")
-    meta = LiteMetadata()
-    assert meta.supports("description")
-    assert not meta.supports("echo_time")
+    assert LiteMetadata.supports("extra")
     with pytest.raises(KeyError):
         LiteMetadata.supports("not_a_field")
 
 
 def test_per_instance_capability() -> None:
     assert DialectMetadata.supports("channels")
-    assert DialectMetadata().supports("channels")
+    assert DialectMetadata().channels is not UNSUPPORTED
     plain = DialectMetadata(dialect="plain")
-    assert not plain.supports("channels")
+    assert plain.channels is UNSUPPORTED
     # `replace` runs `__post_init__` again, so the rule holds.
-    assert not replace(DialectMetadata(), dialect="plain").supports("channels")
+    assert replace(DialectMetadata(), dialect="plain").channels is UNSUPPORTED
 
 
 def test_a_subclass_inherits_and_may_change_its_capabilities() -> None:
