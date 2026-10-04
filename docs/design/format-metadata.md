@@ -154,23 +154,33 @@ model, and only format subclasses live under io:
 
 ```python
 # brainhops/datamodel/metadata.py
-class Metadata(DataModelBase, ProvenanceMetadata, MRIMetadata,
-               DiffusionMetadata, DisplayMetadata, MicroscopyMetadata,
-               TransformMetadata, polymorphic=True, kw_only=True):
+class Metadata(
+    DataModelBase,
+    ProvenanceMetadata,
+    MRIMetadata,
+    DiffusionMetadata,
+    DisplayMetadata,
+    MicroscopyMetadata,
+    TransformMetadata,
+    polymorphic=True,
+    kw_only=True,
+):
     """Common vocabulary + extras; the root, and the generic metadata."""
 
-    format: str = "generic"                      # discriminant, a real field (M4)
+    format: str = "generic"  # discriminant, a real field (M4)
     extra: Maybe[tx.Dict[str, tx.Any]] = Factory(dict)
     # supported_fields / unsupported_fields / derived_fields / lazy_fields:
     # ClassVars computed from the class keywords (M5, 6, 6.2)
 
     def to(self, cls=None, *, on_loss=None, report=None, **values): ...  # M7
-    def derive(self, *, grid_changed=False, grid_map=None, volumes=None,
-               step=None) -> tx.Self: ...                                # M9
+    def derive(
+        self, *, grid_changed=False, grid_map=None, volumes=None, step=None
+    ) -> tx.Self: ...  # M9
 
-class FileBasedMetadata(Metadata):              # mirrors FileBasedImage
-    raw: NoRepr[NoEq[tx.Any]] = None            # format-private record (M6)
-    _decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None   # read-time snapshot
+
+class FileBasedMetadata(Metadata):  # mirrors FileBasedImage
+    raw: NoRepr[NoEq[tx.Any]] = None  # format-private record (M6)
+    _decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None  # read-time snapshot
 
     @classmethod
     def from_raw(cls, raw, *, image=None, **values) -> tx.Self: ...
@@ -178,7 +188,8 @@ class FileBasedMetadata(Metadata):              # mirrors FileBasedImage
     def update_raw(self, raw=None, *, image=None, report=None, force=()): ...
     def check_writable(self, *, image=None) -> "ConversionReport": ...  # M7
 
-class OpaqueMetadata(FileBasedMetadata, supports=()):   # nothing, anywhere (M5)
+
+class OpaqueMetadata(FileBasedMetadata, supports=()):  # nothing, anywhere (M5)
     format: tx.Literal["opaque"] = "opaque"
     raw: None = None
 ```
@@ -425,10 +436,18 @@ that must be different from "nobody set it".
 # brainhops/datamodel/metadata.py
 class Unsupported:
     """The format cannot store this field. Singleton, falsy, not None."""
+
     __slots__ = ()
-    def __bool__(self): return False
-    def __repr__(self): return "UNSUPPORTED"
-    def __reduce__(self): return "UNSUPPORTED"      # pickles to the singleton
+
+    def __bool__(self):
+        return False
+
+    def __repr__(self):
+        return "UNSUPPORTED"
+
+    def __reduce__(self):
+        return "UNSUPPORTED"  # pickles to the singleton
+
 
 UNSUPPORTED = Unsupported()
 T = tx.TypeVar("T")
@@ -534,12 +553,18 @@ of what it decoded as the *snapshot*. On write, a common field is
 encoded over the record only when it differs from the snapshot:
 
 ```python
-_decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = None   # snapshot, a generic Metadata
+_decoded: NoRepr[NoEq[tx.Optional[Metadata]]] = (
+    None  # snapshot, a generic Metadata
+)
+
 
 def update_raw(self, raw=None, *, image=None, report=None, force=()):
     raw = self._raw_or_default() if raw is None else raw
-    changed = {k: v for k, v in self._vocab_items()
-               if v != getattr(self._decoded, k, None)}
+    changed = {
+        k: v
+        for k, v in self._vocab_items()
+        if v != getattr(self._decoded, k, None)
+    }
     return self._encode(raw, changed, image=image, report=report)
 ```
 
@@ -639,8 +664,10 @@ Codec hooks on the subclass, both private:
 
 ```python
 @classmethod
-def _decode(cls, raw, *, image=None) -> dict: ...        # record -> common fields
-def _encode(self, raw, changed: dict, *, image=None, report) -> raw: ...  # None in `changed` clears
+def _decode(cls, raw, *, image=None) -> dict: ...  # record -> common fields
+def _encode(
+    self, raw, changed: dict, *, image=None, report
+) -> raw: ...  # None in `changed` clears
 ```
 
 `image=` (or the transformation) is passed for the fields that need the
@@ -791,12 +818,14 @@ gives the exact figure for a given instance and image.
 
 ```python
 class ConversionReport(Magic):
-    source: str; target: str
-    lost: tx.Dict[str, tx.Any] = Factory(dict)          # field -> value dropped
-    approximated: tx.Dict[str, str] = Factory(dict)     # field -> what changed
-    passed_through: tx.Tuple[str, ...] = ()             # extras moved to a store
+    source: str
+    target: str
+    lost: tx.Dict[str, tx.Any] = Factory(dict)  # field -> value dropped
+    approximated: tx.Dict[str, str] = Factory(dict)  # field -> what changed
+    passed_through: tx.Tuple[str, ...] = ()  # extras moved to a store
+
     def raise_if_lossy(self): ...
-    def __str__(self): ...                              # one readable paragraph
+    def __str__(self): ...  # one readable paragraph
 ```
 
 **`to()`.** `metadata.to(cls=None, *, on_loss=None, report=None,
@@ -914,8 +943,9 @@ Answer to issue question 4. Propagation is driven by the field `Scope`
 tags, through one method:
 
 ```python
-def derive(self, *, grid_changed=False, grid_map=None, volumes=None,
-           step=None) -> tx.Self:
+def derive(
+    self, *, grid_changed=False, grid_map=None, volumes=None, step=None
+) -> tx.Self:
     """Metadata for an object derived from this one. Always a new object."""
 ```
 
@@ -1007,6 +1037,7 @@ The data model gets one optional field on each root:
 ```python
 class Image(DataModelBase):
     metadata: tx.Optional[Metadata] = Field(None, repr=False, eq=False)
+
 
 class Transformation(DataModelBase):
     metadata: tx.Optional[Metadata] = Field(None, repr=False, eq=False)
@@ -1175,32 +1206,47 @@ unchanged; FNIRT/NiftyReg/SPM keep reading `intent_p*` from `raw`.
 class MrtrixMetadata(FileBasedMetadata, on={"format": "mrtrix"}, supports=ALL):
     format: tx.Literal["mrtrix"] = "mrtrix"
     raw: MrtrixHeader = Factory(MrtrixHeader, repr=False)
-    _BIDS_IN_KEYVAL = ("EchoTime", "RepetitionTime", "FlipAngle",
-                       "PhaseEncodingDirection", "TotalReadoutTime",
-                       "SliceEncodingDirection", "SliceTiming",
-                       "MultibandAccelerationFactor", ...)
+    _BIDS_IN_KEYVAL = (
+        "EchoTime",
+        "RepetitionTime",
+        "FlipAngle",
+        "PhaseEncodingDirection",
+        "TotalReadoutTime",
+        "SliceEncodingDirection",
+        "SliceTiming",
+        "MultibandAccelerationFactor",
+        ...,
+    )
 
     @property
-    def keyval(self): return self.raw.keyval
+    def keyval(self):
+        return self.raw.keyval
 
     @classmethod
     def _decode(cls, h, *, image=None):
         kv = dict(h.keyval)
-        out = dict(history=_lines(kv.pop("command_history", None)),
-                   description=kv.pop("comments", None),
-                   generated_by=_mrtrix_version(kv.pop("mrtrix_version", None)))
-        out.update(_bids_from_strings(kv, cls._BIDS_IN_KEYVAL))   # pops them
+        out = dict(
+            history=_lines(kv.pop("command_history", None)),
+            description=kv.pop("comments", None),
+            generated_by=_mrtrix_version(kv.pop("mrtrix_version", None)),
+        )
+        out.update(_bids_from_strings(kv, cls._BIDS_IN_KEYVAL))  # pops them
         if "dw_scheme" in kv:
-            out.update(_dw_scheme(kv.pop("dw_scheme")))             # already world frame
-        out["extra"] = kv                                            # everything else
+            out.update(_dw_scheme(kv.pop("dw_scheme")))  # already world frame
+        out["extra"] = kv  # everything else
         return out
 
     def _encode(self, h, changed, *, image=None, report):
-        kv = dict(h.keyval); kv.update(_merge_extra(changed.get("extra")))   # None removes
-        kv.update(_bids_to_strings(changed)); ...; return replace(h, keyval=kv)
+        kv = dict(h.keyval)
+        kv.update(_merge_extra(changed.get("extra")))  # None removes
+        kv.update(_bids_to_strings(changed))
+        ...
+        return replace(h, keyval=kv)
 
     @classmethod
-    def _import(cls, other, report):            # nothing is lost: unknown vocab -> keyval[Bids name]
+    def _import(
+        cls, other, report
+    ):  # nothing is lost: unknown vocab -> keyval[Bids name]
         ...
 ```
 
@@ -1216,24 +1262,46 @@ rotation.
 
 ```python
 class LtaMetadata(
-    FileBasedMetadata, on={"format": "lta"},
-    supports=("moving", "fixed", "input_space", "output_space", "description", "history"),
+    FileBasedMetadata,
+    on={"format": "lta"},
+    supports=(
+        "moving",
+        "fixed",
+        "input_space",
+        "output_space",
+        "description",
+        "history",
+    ),
 ):
     format: tx.Literal["lta"] = "lta"
     raw: LtaStruct = Factory(LtaStruct, repr=False)
 
     @property
-    def struct(self): return self.raw
+    def struct(self):
+        return self.raw
 
     @classmethod
     def _decode(cls, s, *, transformation=None):
-        return dict(moving=s.src.filename or None, fixed=s.dst.filename or None,
-                    input_space=_lta_space(s.type)[0], output_space=_lta_space(s.type)[1],
-                    description=_first_comment(s), history=_comments(s))
+        return dict(
+            moving=s.src.filename or None,
+            fixed=s.dst.filename or None,
+            input_space=_lta_space(s.type)[0],
+            output_space=_lta_space(s.type)[1],
+            description=_first_comment(s),
+            history=_comments(s),
+        )
 
     def _encode(self, s, changed, *, transformation=None, report):
-        src = replace(s.src, filename=changed["moving"]) if "moving" in changed else s.src
-        dst = replace(s.dst, filename=changed["fixed"]) if "fixed" in changed else s.dst
+        src = (
+            replace(s.src, filename=changed["moving"])
+            if "moving" in changed
+            else s.src
+        )
+        dst = (
+            replace(s.dst, filename=changed["fixed"])
+            if "fixed" in changed
+            else s.dst
+        )
         return replace(s, src=src, dst=dst, comments=_comments_from(self, s))
 ```
 
