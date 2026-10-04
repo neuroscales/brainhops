@@ -15,8 +15,13 @@ them back. The framework does the rest: the read-time snapshot, change
 detection, conversion between formats, loss reports, propagation
 (`derive`), the `metadata` field of images and transformations.
 
-`brainhops/io/base/_nifti_metadata.py` is the worked example: its class
-comes first, and its hooks are in the order of the table below.
+`brainhops/io/base/_nifti_metadata.py` is the worked example. A format's
+metadata module reads in one order: its docstring (what each field is
+stored as, and what is lossy), its constants, the raw-record type when
+there is one (`MghRaw`, `ZarrRaw`: it must exist before the annotation
+of `raw` names it), the metadata class with its hooks in the order of
+the table below, its private codec helpers (decode side, then encode
+side), and last the helpers its image classes import.
 
 ## The class
 
@@ -42,10 +47,12 @@ class MyMetadata(
 
     def _check_raw(self, image) -> MyRaw: ...
 
-    @classmethod
-    def _import(cls, other, values, *, report) -> None: ...
-
     def _derive_raw(self, raw, *, grid_changed, volumes) -> MyRaw: ...
+
+    @classmethod
+    def _import(
+        cls, other, values, *, report
+    ) -> None: ...  # key/value formats
 ```
 
 `format` is the discriminant of the polymorphic root:
@@ -83,8 +90,8 @@ All the hooks are optional, and all private.
 | `_encode(raw, changed, *, image, report)` | `update_raw` | the raw record to write |
 | `_geometry(image)` | `update_raw` | the fields the data model owns, and their values |
 | `_check_raw(image)` | `check_writable` | the raw record a writer starts from |
+| `_derive_raw(raw, *, grid_changed, volumes)` | `derive` | a scrubbed copy of the raw record |
 | `_import(other, values, *, report)` | `to`, `from_other` | recovered losses (key/value formats) |
-| `_derive_raw(raw, *, grid_changed, volumes)` | `derive` | a scrubbed raw record |
 
 - `_default_raw() -> raw`: a fresh, empty raw record, for an object
   built in memory (or converted from another format). Defaults to
@@ -120,13 +127,6 @@ All the hooks are optional, and all private.
   record, reshaped to the data of `image`), so that a value-dependent
   check reads the same state as a real write. Defaults to a copy of the
   record, or a default one.
-- `_import(other, values, *, report) -> None`: a hook for the key/value
-  formats (MRtrix, NRRD), called on a conversion with the source object,
-  the values about to be passed to the constructor, and the report. A
-  format may *recover* a loss here, for example by moving a lost
-  vocabulary value into `values["extra"]`, removing it from
-  `report.lost` and listing it in `report.passed_through`. Defaults to
-  nothing.
 - `_derive_raw(raw, *, grid_changed, volumes) -> raw`: called by
   [`derive`][brainhops.datamodel.metadata.Metadata.derive] for
   the raw record of the derived object. Defaults to a deep copy of `raw`
@@ -134,6 +134,13 @@ All the hooks are optional, and all private.
   content tied to the grid or to the volumes but outside the vocabulary
   scrubs it from that copy (NIfTI: the slice fields and `dim_info`, when
   `grid_changed`), and never modifies `raw` in place.
+- `_import(other, values, *, report) -> None`: a hook for the key/value
+  formats (MRtrix, NRRD), called on a conversion with the source object,
+  the values about to be passed to the constructor, and the report. A
+  format may *recover* a loss here, for example by moving a lost
+  vocabulary value into `values["extra"]`, removing it from
+  `report.lost` and listing it in `report.passed_through`. Defaults to
+  nothing.
 
 ## Reading and writing
 
@@ -193,9 +200,9 @@ converts it and reports the loss.
 
 1. Write `<Fmt>Metadata` next to the parser: `on=`, `supports=`,
    `format`, `raw`, then the hooks it needs.
-2. In the parser, read the metadata from the raw record
-   (`from_raw`/`update_from_raw`); in the writer, encode it
-   (`update_raw`) and apply the loss policy.
+2. In the parser's `__post_init__`, read the metadata from the raw
+   record (`sync_metadata`); in the writer, encode it (`update_raw`) and
+   apply the loss policy.
 3. Narrow the `metadata` field of the image or transformation class
    with `MetadataField`.
 4. Add the class to the matrix test, `tests/test_io_metadata_matrix.py`:

@@ -606,7 +606,8 @@ attributes:
 [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata] stores the
 vocabulary as a BIDS sidecar under the attribute `"brainhops"`, so every
 field but the diffusion ones survives (`data_type` is the array's, as for
-OME-Zarr), and `extra` maps to the other attributes.
+OME-Zarr), and `extra` maps to the other attributes. The attributes
+are its raw record, also available as `metadata.attributes`.
 
 ### Transformations: x5, ITK and FLIRT
 

@@ -8,8 +8,9 @@ where `Magic` polymorphism does and does not fit. Decisions are tagged
 `M1`..`M13` and collected at the end, followed by the open questions.
 
 > **Prototype note.** The prototype on this branch covers the framework
-> (`brainhops/datamodel/metadata.py`, whose module docstring documents
-> the per-format hooks), the BIDS sidecar codec
+> (the `brainhops.datamodel.metadata` package; the per-format hooks are
+> documented in the format author's guide, `docs/dev/metadata-formats.md`),
+> the BIDS sidecar codec
 > (`brainhops/io/metadata/bids.py`), the `metadata` field on `Image` and
 > `Transformation`, and the formats of batches 2, 4 and 5 that exercise
 > the design most: `NiftiMetadata` (`NiftiImage` and every NIfTI-based
@@ -135,14 +136,15 @@ keeps the raw file state).
 generic `Metadata`, so everything format-agnostic lives in the data
 model, and only format subclasses live under io:
 
-- `brainhops/datamodel/metadata.py`: `Unsupported`/`UNSUPPORTED`,
+- `brainhops/datamodel/metadata/`: `Unsupported`/`UNSUPPORTED`,
   `Maybe`, the `Bids`/`Scope` annotations, the six vocabulary groups,
   `Metadata` (the root and the generic, lossless metadata, with
   `extra`, `to`, `derive` and the BIDS codec entry points),
   `FileBasedMetadata` (`raw`, the snapshot, `from_raw`,
   `update_from_raw`, `update_raw`, `check_writable` and the hooks),
   `OpaqueMetadata` (nothing supported), `MetadataField`,
-  `ConversionReport` and the loss policies.
+  `ConversionReport` and the loss policies, one module per concern (see
+  the addendum to the decisions).
 - `brainhops/_core/properties.py`: `Lazy` and the `LazyField`
   descriptor (section 6), next to `lazyproperty`.
 - `brainhops/datamodel/enums.py`: the enums of the known terms (section
@@ -153,7 +155,7 @@ model, and only format subclasses live under io:
   `<Fmt>Metadata(FileBasedMetadata)` per format, next to its parser.
 
 ```python
-# brainhops/datamodel/metadata.py
+# brainhops/datamodel/metadata/_base.py
 class Metadata(
     DataModelBase,
     ProvenanceMetadata,
@@ -437,7 +439,7 @@ A format class must be able to say "this format cannot store this", and
 that must be different from "nobody set it".
 
 ```python
-# brainhops/datamodel/metadata.py
+# brainhops/datamodel/metadata/_sentinel.py
 class Unsupported:
     """The format cannot store this field. Singleton, falsy, not None."""
 
@@ -1629,8 +1631,9 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   kind; `dtype=` wins.
 - **M7** `ConversionReport`; class-level support is the lower bound,
   `_encode` adds value-dependent `lost`/`approximated`; `on_loss` =
-  `ignore`/`warn` (default)/`raise`; one aggregated warning; `_import`
-  hook for recovery; `metadata.to(cls, *, on_loss, report)` is the
+  `ignore`/`warn` (default)/`raise`; one aggregated warning per save
+  (`collect_loss_reports` and `ConversionReport.merged`); `_import`
+  hook for recovery (the key/value formats); `metadata.to(cls, *, on_loss, report)` is the
   explicit conversion, symmetric to images and transformations.
 - **M8** `extra` passes unknown keys through to any free-form store;
   BIDS JSON sidecar is a codec on `Metadata`.
@@ -1653,6 +1656,48 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
 - **M13** Writer/constructor keywords (`like=`, `tr=`/`te=`...,
   `keyval=`, `keyvalue=`, `attributes=`, `info=`, `tags=`) become
   `metadata=` with deprecation aliases.
+
+### Addendum: the layout after the maintainability refactor
+
+The framework was reorganised for reading, with no change to M1-M13 but
+these:
+
+- **Layout.** `brainhops.datamodel.metadata` is a package, one module
+  per concern, each starting with its public API: `_sentinel`
+  (`UNSUPPORTED`, `Maybe`, `ALL`), `_terms` (`GeneratedBy`, `Channel`,
+  `EncodingDirection` and the field converters), `_vocabulary` (the
+  scopes, `Bids`/`Scope`, the groups, `GROUPS`, `VOCABULARY`, and the
+  tables `BIDS_KEYS` and `SCOPES`, computed once), `_report`
+  (`ConversionReport` and the policy), `_base` (`Metadata`), `_meta`
+  (its metaclass), `_filebased` (`FileBasedMetadata`, `OpaqueMetadata`),
+  `_dtype` (`preferred_dtype`) and `_field` (`MetadataField`). Every
+  public name is imported from the package, whose docstring is a short
+  overview; the format author's manual is
+  `docs/dev/metadata-formats.md`. Value helpers that are not about
+  metadata live in `_core` (`term`, `differs`, `float32_repr`); the
+  JSON codec shared by BIDS, x5 and Zarr is `io/metadata/_json.py`, and
+  the parsers' sync is `io/metadata/_sync.py`.
+- **M4: the metaclass is an adaptor.** It pops `supports=` and `lazy=`,
+  and calls `Metadata._declare` (before `bagof` builds a subclass) and
+  `cls._finish` (after); the logic is on the class, and `Metadata` has
+  one `__repr__` (`bagof`'s `repr=False`, inherited).
+- **M5: `supports` is a classmethod.** An instance's capability is
+  `meta.name is UNSUPPORTED`.
+- **M6: the snapshot is a dict** (`_snapshot`, field name -> decoded
+  value). `derived=` is gone: a field is geometry-derived when the
+  format's `_geometry` gives a value for it. `_derive_raw` defaults to a
+  copy of the record. The Zarr records carry the node they were read
+  from, so the base knows no format.
+- **M7: the policy surface** is `on_loss=`, `apply_loss_policy`,
+  `metadata_loss_policy` and `collect_loss_reports` (with
+  `ConversionReport.merged`); `one_loss_warning` and
+  `get_metadata_loss_policy` were folded into `io.save`.
+- **Hooks.** Six per-format hooks on `FileBasedMetadata`, in this order
+  in the base class and in every format: `_default_raw`, `_decode`,
+  `_encode`, `_geometry`, `_check_raw`, `_derive_raw`; and `_import` on
+  `Metadata`, kept (with `ConversionReport.passed_through`) as the hook
+  of the key/value formats (MRtrix, NRRD) that move what they have no
+  slot for into their free-form store.
 
 ## Open questions for the maintainer
 
