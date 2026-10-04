@@ -1,5 +1,8 @@
 __all__ = ["load", "sniff"]
 
+# stdlib
+import importlib
+
 # dependencies
 import typing_extensions as tx
 
@@ -41,6 +44,7 @@ def load(
     obj : FileBasedObject
         The object that was read.
     """
+    import_formats()
     return FileBasedObject.load(filelike, brute=brute, **kwargs)
 
 
@@ -64,4 +68,19 @@ def sniff(filelike: FileOrContentLike, **kwargs) -> tx.Optional[type]:
         The best match among all registered formats, or `None` if no
         single one stands out.
     """
+    import_formats()
     return FileBasedObject.sniff(filelike, **kwargs)
+
+
+def import_formats() -> None:
+    """
+    Import the packages of every kind, so that all their formats register.
+
+    A format registers itself when its module is imported, and the
+    packages of each kind (`brainhops.io.images`, ...) import their
+    formats. `brainhops.io` imports those packages lazily, so the
+    entry points that consult every registered format, whatever its
+    kind, import them first.
+    """
+    for package in ("images", "transformations"):
+        importlib.import_module(f"brainhops.io.{package}")

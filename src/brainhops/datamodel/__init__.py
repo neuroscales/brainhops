@@ -32,15 +32,28 @@ __all__ = [
     "units",
 ]
 
-# trigger registration
-from . import (
-    axes,
-    base,
-    enums,
-    images,
-    kinds,
-    orientation,
-    systems,
-    transformations,
-    units,
+# dependencies
+import typing_extensions as tx
+
+# internals
+from brainhops._core.lazy import lazy_exports
+
+# The submodules are imported on first access. Each one imports what it
+# builds on, and registers what it defines as it is imported, so no
+# submodule needs another one to have been imported first.
+__getattr__, __dir__ = lazy_exports(
+    __name__, globals(), {name: "." + name for name in __all__}
 )
+
+if tx.TYPE_CHECKING:
+    from . import (
+        axes,
+        base,
+        enums,
+        images,
+        kinds,
+        orientation,
+        systems,
+        transformations,
+        units,
+    )
