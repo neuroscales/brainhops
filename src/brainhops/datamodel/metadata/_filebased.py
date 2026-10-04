@@ -14,7 +14,7 @@ from bagof.magic import Factory, NoEq, NoRepr
 # internals
 from brainhops._core.properties import Lazy
 
-from ._base import _VOCABULARY, Metadata
+from ._base import _FIELDS, Metadata
 from ._report import ConversionReport, _short
 from ._sentinel import UNSUPPORTED
 
@@ -188,7 +188,7 @@ class FileBasedMetadata(Metadata):
         """
         snapshot = self._snapshot
         changed: tx.Dict[str, tx.Any] = {}
-        for name in _VOCABULARY:
+        for name in _FIELDS:
             value = getattr(self, name, None)
             if value is UNSUPPORTED:
                 continue
@@ -244,7 +244,7 @@ class FileBasedMetadata(Metadata):
             if key not in unsupported
         }
         for name in force:
-            if name in _VOCABULARY and name != "extra":
+            if name in _FIELDS and name != "extra":
                 if name not in unsupported:
                     changed[name] = getattr(self, name)
         self._check_derived(changed, image, report)
