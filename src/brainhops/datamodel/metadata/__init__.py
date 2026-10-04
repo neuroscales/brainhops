@@ -70,8 +70,6 @@ __all__ = [
     "LazyField",
 ]
 
-from types import FunctionType as _FunctionType
-
 from brainhops._core.properties import Lazy, LazyField
 
 from ._base import Metadata
@@ -108,12 +106,8 @@ from ._vocabulary import (
     TransformMetadata,
 )
 
-# The public names read as members of this package (in reprs, tracebacks
-# and pickles), not of the private module that defines them.
-for _name in __all__:
-    _obj = globals()[_name]
-    if isinstance(_obj, (type, _FunctionType)) and _obj.__module__.startswith(
-        __name__ + "._"
-    ):
-        _obj.__module__ = __name__
-del _name, _obj
+# The public names keep the `__module__` of the private module that
+# defines them: rewriting it to this package's name would break
+# `inspect.getsource`, IPython's `??` and doctest discovery, which look
+# the source up through `__module__`. Pickles name the private module,
+# and load as well.

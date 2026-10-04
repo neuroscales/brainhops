@@ -225,10 +225,12 @@ report) or `"raise"` (a `MetadataLossError`). It is the `on_loss=` option
 of `to()` (the policy applies when no report is given) and of `save`:
 
 ```python
->>> image.save(os.path.join(tmp, "long.nii"), on_loss="raise")
-Traceback (most recent call last):
-    ...
-brainhops.datamodel.metadata.MetadataLossError: Metadata conversion nifti -> nifti: approximated description (truncated to 80 bytes (descrip)).
+>>> from brainhops.datamodel import MetadataLossError
+>>> try:
+...     image.save(os.path.join(tmp, "long.nii"), on_loss="raise")
+... except MetadataLossError as error:
+...     print(error)
+Metadata conversion nifti -> nifti: approximated description (truncated to 80 bytes (descrip)).
 >>> with warnings.catch_warnings(record=True) as caught:
 ...     warnings.simplefilter("always")
 ...     image.save(os.path.join(tmp, "long.nii"))
