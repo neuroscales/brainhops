@@ -106,7 +106,7 @@ class FileBasedMetadata(Metadata):
         The metadata of another raw record, keeping the changes made here.
 
         `raw` is decoded (`from_raw`), and every field that changed since
-        this object was read (`changed_fields()`: all the fields that
+        this object was read (`_changed_fields()`: all the fields that
         are set, for an object built in memory) is set over the decoded
         values, as a change. `extra` is merged key by key. This is what
         an object given a new raw record holds (`replace(image,
@@ -115,7 +115,7 @@ class FileBasedMetadata(Metadata):
         """
         changed = {
             key: value
-            for key, value in self.changed_fields().items()
+            for key, value in self._changed_fields().items()
             if key in type(self).supported_fields
         }
         extra = changed.pop("extra", None)
@@ -128,7 +128,7 @@ class FileBasedMetadata(Metadata):
 
     # --- the change-detecting write -----------------------------------
 
-    def changed_fields(self) -> tx.Dict[str, tx.Any]:
+    def _changed_fields(self) -> tx.Dict[str, tx.Any]:
         """
         The common fields that differ from the read-time snapshot.
 
@@ -168,9 +168,8 @@ class FileBasedMetadata(Metadata):
         `raw` is the record to write over: a writer passes its own fresh
         record, already filled with what it keeps from `self.raw`. When
         it is `None`, a copy of `self.raw` (or a default record) is used.
-        Only the fields that changed since the read are encoded (see
-        [`changed_fields`][brainhops.datamodel.metadata.FileBasedMetadata.changed_fields]),
-        and the fields named in `force`, whether they changed or not (a
+        Only the fields that changed since the read are encoded, and
+        the fields named in `force`, whether they changed or not (a
         writer keyword that must win over the record, such as MGH `tr=`;
         a `None` there clears the slot).
 
@@ -202,7 +201,7 @@ class FileBasedMetadata(Metadata):
             raw = self._raw_or_default()
         changed = {
             key: value
-            for key, value in self.changed_fields().items()
+            for key, value in self._changed_fields().items()
             if key not in unsupported
         }
         for name in force:

@@ -137,14 +137,6 @@ b'sub-01_T1w.nii'
 
 ```
 
-`changed_fields()` lists what will be written over the record:
-
-```python
->>> sorted(bold.metadata.changed_fields())
-['description', 'display_range']
-
-```
-
 ## Format-agnostic metadata
 
 [`Metadata`][brainhops.datamodel.metadata.Metadata] supports every field

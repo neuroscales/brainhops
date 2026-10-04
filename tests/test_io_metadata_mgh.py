@@ -104,7 +104,7 @@ def test_the_footer_and_tags_are_decoded(scan) -> None:  # noqa: ANN001
     )
     assert meta.description is UNSUPPORTED
     assert meta.extra is UNSUPPORTED
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
 
 
 def test_the_record_is_the_header_and_the_tags(scan) -> None:  # noqa: ANN001
@@ -142,7 +142,7 @@ def test_explicit_metadata_wins_over_the_header(scan) -> None:  # noqa: ANN001
     assert image.metadata.raw.header is image.header
     assert image.metadata.echo_time == 0.005
     assert image.metadata.repetition_time == 2.3
-    assert image.metadata.changed_fields() == {"echo_time": 0.005}
+    assert image.metadata._changed_fields() == {"echo_time": 0.005}
 
 
 def test_new_tags_are_read_again(scan) -> None:  # noqa: ANN001
@@ -422,7 +422,7 @@ def test_the_tags_are_read_lazily(scan, monkeypatch) -> None:  # noqa: ANN001
         "mri_convert in.nii orig.mgz",
         "mri_normalize orig.mgz T1.mgz",
     )
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
     # Read once, for the metadata and the image alike.
     assert image.tags == meta.raw.tags
     assert reads == [1]

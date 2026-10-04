@@ -146,7 +146,7 @@ def test_x5_decodes_the_node_json(warp_x5: Path) -> None:
     assert meta.extra == {"WrittenBy": "NiTransforms 25.1.0"}
     assert meta.node is xform.nodes[0]
     assert meta.header is xform.header
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
     assert not X5Metadata.unsupported_fields
 
 

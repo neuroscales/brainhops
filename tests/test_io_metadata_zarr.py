@@ -110,7 +110,7 @@ def test_plain_zarr_stores_the_vocabulary_as_a_sidecar(tmp_path) -> None:  # noq
     assert back.metadata.data_type == np.float32
     assert back.metadata == replace(image.metadata, data_type="float32")
     assert back.metadata.attributes == attrs
-    assert back.metadata.changed_fields() == {}
+    assert back.metadata._changed_fields() == {}
     # The record remembers its node; a copy shares it, a deep copy or a
     # pickle drops the handle.
     assert back.metadata.raw.node is back.node
@@ -171,7 +171,7 @@ def test_the_pyramid_metadata_is_decoded(stained) -> None:  # noqa: ANN001
     assert meta.extra == {"lab": "neuro"}
     assert meta.description is UNSUPPORTED
     assert meta.data_unit is UNSUPPORTED
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
     assert meta.multiscale.name == "brain"
     assert meta.omero["channels"][0]["label"] == "DAPI"
 

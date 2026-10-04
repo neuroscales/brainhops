@@ -97,7 +97,7 @@ def test_the_header_is_decoded_into_the_vocabulary(scan) -> None:  # noqa: ANN00
     assert meta.intent is None
     assert meta.echo_time is UNSUPPORTED
     assert meta.extra is UNSUPPORTED
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
 
 
 def test_the_record_is_the_header(scan) -> None:  # noqa: ANN001
@@ -130,7 +130,7 @@ def test_explicit_metadata_wins_over_the_header(scan) -> None:  # noqa: ANN001
     assert image.metadata.raw is image.header
     assert image.metadata.description == "mine"
     assert image.metadata.display_range == (0.0, 100.0)
-    assert image.metadata.changed_fields() == {"description": "mine"}
+    assert image.metadata._changed_fields() == {"description": "mine"}
 
 
 # ----------------------------------------------------------------------
@@ -604,7 +604,7 @@ def test_replace_with_a_new_header_reads_it_again(scan) -> None:  # noqa: ANN001
     assert other.metadata.raw is other.header
     assert other.metadata.description == "another file"
     # What changed in the metadata carries over, as a change.
-    assert other.metadata.changed_fields() == {"display_range": (1.0, 2.0)}
+    assert other.metadata._changed_fields() == {"display_range": (1.0, 2.0)}
 
 
 # ----------------------------------------------------------------------

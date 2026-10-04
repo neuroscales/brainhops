@@ -90,7 +90,7 @@ def encode_extra(
     reserved: tx.Collection[str] = (),
 ) -> None:
     """
-    Apply an `extra` diff (see `FileBasedMetadata.changed_fields`) to a
+    Apply an `extra` diff (see `FileBasedMetadata._changed_fields`) to a
     JSON object, in place: a `None` removes the key, any other value is
     written as JSON. A key in `reserved` (one the format keeps for its
     own use) is not written, and is reported as lost.

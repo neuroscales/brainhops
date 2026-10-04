@@ -43,7 +43,7 @@ def preferred_dtype(
     if _same_kind(array_dtype, wanted):
         return wanted
     changed = (
-        metadata.changed_fields()
+        metadata._changed_fields()
         if isinstance(metadata, FileBasedMetadata)
         else {"data_type": wanted}
     )

@@ -355,7 +355,7 @@ def test_reading_decodes_and_snapshots() -> None:
     assert meta.description == "short"
     assert meta.display_range == (0.0, 1.0)
     assert meta.extra == {"Key": "v"}
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
 
 
 def test_case1_untouched_writes_the_record_as_read() -> None:
@@ -377,7 +377,7 @@ def test_case3_a_common_field_set_wins() -> None:
     meta = _read()
     meta.raw["desc"] = "edited"
     meta.description = "mine"
-    assert meta.changed_fields() == {"description": "mine"}
+    assert meta._changed_fields() == {"description": "mine"}
     assert meta.update_raw()["desc"] == "mine"
 
 
@@ -385,7 +385,7 @@ def test_case4_none_clears_the_slot() -> None:
     meta = _read()
     meta.description = None
     meta.display_range = None
-    assert meta.changed_fields() == {
+    assert meta._changed_fields() == {
         "description": None,
         "display_range": None,
     }
@@ -396,7 +396,7 @@ def test_case4_none_clears_the_slot() -> None:
 def test_extra_is_compared_key_by_key() -> None:
     meta = _read({"desc": "d", "Kept": 1, "Gone": 2, "Edited": 3})
     meta.extra = {"Kept": 1, "Edited": 4, "New": 5}
-    assert meta.changed_fields() == {
+    assert meta._changed_fields() == {
         "extra": {"Edited": 4, "New": 5, "Gone": None}
     }
     assert meta.update_raw() == {"desc": "d", "Kept": 1, "Edited": 4, "New": 5}
@@ -406,12 +406,12 @@ def test_a_snapshot_holds_converted_values() -> None:
     # A list decoded into a tuple field is not a change.
     meta = DictMetadata.from_raw({"slices": [0, 1, 2]})
     assert meta.slice_timing == (0.0, 1.0, 2.0)
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
 
 
 def test_an_object_built_in_memory_has_everything_changed() -> None:
     meta = DictMetadata(description="d", display_range=(1, 2))
-    assert meta.changed_fields() == {
+    assert meta._changed_fields() == {
         "description": "d",
         "display_range": (1.0, 2.0),
     }
@@ -426,7 +426,7 @@ def test_the_snapshot_survives_replace_copy_and_pickle() -> None:
         pickle.loads(pickle.dumps(meta)),
     ):
         assert other._snapshot == meta._snapshot
-    assert replace(meta, description="x").changed_fields() == {
+    assert replace(meta, description="x")._changed_fields() == {
         "description": "x"
     }
 
@@ -639,7 +639,7 @@ def test_derive_keeps_the_record_and_clears_through_it() -> None:
     assert derived._snapshot == meta._snapshot
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
     # The cleared field differs from the snapshot: it is cleared on write.
-    assert derived.changed_fields()["slice_timing"] is None
+    assert derived._changed_fields()["slice_timing"] is None
     assert "slices" not in derived.update_raw()
     # Unsupported fields stay unsupported.
     assert derived.echo_time is UNSUPPORTED
@@ -784,7 +784,7 @@ def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
     assert other == meta
     other.description = "changed"
     other._snapshot["description"] = "forged"
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
     assert meta._snapshot["description"] == "read"
 
 
@@ -827,7 +827,7 @@ def test_update_from_raw_keeps_the_changes_over_a_new_record() -> None:
     assert new.description == "mine"
     assert new.display_range is None
     assert new.extra == {"C": 3, "B": 2}
-    assert new.changed_fields() == {
+    assert new._changed_fields() == {
         "description": "mine",
         "display_range": None,
         "extra": {"B": 2},
@@ -927,16 +927,16 @@ def test_a_lazy_field_is_decoded_on_first_access() -> None:
     assert meta.history == ("cmd a", "cmd b")
     assert meta.history == ("cmd a", "cmd b")
     assert _LOADS == [1]
-    assert meta.changed_fields() == {}
+    assert meta._changed_fields() == {}
     # The copy waits for its own read.
-    assert copied.changed_fields() == {}
+    assert copied._changed_fields() == {}
     assert _LOADS == [1, 1]
 
 
 def test_assigning_a_lazy_field_snapshots_it_first() -> None:
     meta = LazyMetadata.from_raw({})
     meta.history = None
-    assert meta.changed_fields() == {"history": None}
+    assert meta._changed_fields() == {"history": None}
     meta = pickle.loads(pickle.dumps(LazyMetadata.from_raw({})))
     assert meta.history == ("cmd a", "cmd b")
 
@@ -1134,7 +1134,7 @@ def test_preferred_dtype() -> None:
             return {"data_type": raw}
 
     read = Typed.from_raw("uint8")
-    assert read.data_type == np.uint8 and not read.changed_fields()
+    assert read.data_type == np.uint8 and not read._changed_fields()
     report = ConversionReport()
     preferred_dtype(read, np.float64, on_loss=report)
     assert not report.lossy
@@ -1260,7 +1260,7 @@ def test_to_none_keeps_the_class() -> None:
     same = meta.to(description="other")
     assert type(same) is DictMetadata
     assert same.raw is meta.raw
-    assert same.changed_fields() == {"description": "other"}
+    assert same._changed_fields() == {"description": "other"}
     generic = Metadata(description="d").to()
     assert type(generic) is Metadata and generic.description == "d"
 

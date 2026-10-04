@@ -271,7 +271,7 @@ free text (`name`, `description`, `history`, file references) stays
 > `convert=True` itself (a field keeps the options of the class that
 > declares it; the groups share a small base for that). Inherited fields
 > come out of `fields()` in *reverse* MRO order, so every loop over the
-> vocabulary (repr, `changed_fields`, `derive`, conversion, the codecs)
+> vocabulary (repr, `_changed_fields`, `derive`, conversion, the codecs)
 > iterates `VOCABULARY`, never `fields(Metadata)`. `bagof` does not
 > coerce a string into the enum member of a `Union[Enum, str]` (a string
 > already satisfies the union), so those fields carry a small converter.
@@ -615,7 +615,7 @@ record; edit the record only for what the vocabulary does not cover*.
 | `from_raw(raw, *, image=None, **values)` | build from a raw record just read: decode, then snapshot the *converted* values (a decoded list held as a tuple is not a change) |
 | `update_from_raw(raw, *, image=None)` | the metadata of a new raw record, keeping this object's changes |
 | `update_raw(raw=None, *, image=None, on_loss=None, force=())` | encode the changes into a raw record, and return it |
-| `changed_fields()` | the diff above (`extra` as a per-key diff whose `None` removes a key) |
+| `_changed_fields()` | the diff above (`extra` as a per-key diff whose `None` removes a key); private: only `update_raw`, `update_from_raw` and `preferred_dtype` use it |
 | `check_writable(*, image=None)` | what a write would lose, from `update_raw` over `_check_raw(image)` |
 
 `update_raw` reports assigned-but-unsupported fields as lost, then calls
@@ -698,7 +698,7 @@ the fields that need it with `lazy=("history",)`, and `_decode` returns
 them as `Lazy(load)`. Each lazy field is a `LazyField` descriptor
 (`brainhops/_core/fields.py`): the pending
 `Lazy` sits in the instance `__dict__`, and the descriptor decodes it on
-first access (attribute, `repr`, `==`, `changed_fields()`, a
+first access (attribute, `repr`, `==`, `_changed_fields()`, a
 conversion) or before an assignment, through `setattr` (so the field
 converts it), then puts it in the snapshot, so the change-detecting
 write is unchanged. No other attribute access is intercepted. A load
