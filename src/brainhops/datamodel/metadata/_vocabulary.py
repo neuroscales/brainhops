@@ -3,6 +3,7 @@
 __all__ = [
     "ACQUISITION",
     "BIDS_KEYS",
+    "FIELDS",
     "FILE",
     "GRID",
     "GROUPS",
@@ -460,6 +461,9 @@ one (it is the free-form store next to them). `bagof` lists the fields of
 a class with several bases in reverse MRO order, so this is the order to
 iterate in, never `fields(Metadata)`.
 """
+
+FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
+"""The fields `supports=` speaks of, in the order reports list them."""
 
 
 BIDS_KEYS: tx.Dict[str, str] = {

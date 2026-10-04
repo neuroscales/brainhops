@@ -4,7 +4,6 @@ __all__ = ["Metadata"]
 
 # stdlib
 import copy
-import inspect
 
 # externals
 import numpy as np
@@ -12,9 +11,6 @@ import typing_extensions as tx
 from bagof.magic import Factory, fields
 
 # internals
-from brainhops._core.compat import own_annotations
-from brainhops._core.fields import LazyField
-
 from ..base import DataModelBase
 from ._meta import MetadataMeta
 from ._report import (
@@ -22,12 +18,12 @@ from ._report import (
     OnLoss,
     apply_loss_policy,
 )
-from ._sentinel import ALL, UNSUPPORTED, Maybe
+from ._sentinel import UNSUPPORTED, Maybe
 from ._terms import EncodingDirection, GeneratedBy
 from ._vocabulary import (
+    FIELDS,
     FILE,
     GRID,
-    GROUPS,
     SCOPES,
     VOCABULARY,
     VOLUME,
@@ -39,9 +35,6 @@ from ._vocabulary import (
     Scope,
     TransformMetadata,
 )
-
-FIELDS: tx.Tuple[str, ...] = ("extra",) + VOCABULARY
-"""The fields `supports=` speaks of, in the order reports list them."""
 
 
 class Metadata(
@@ -482,82 +475,6 @@ class Metadata(
         snapshot). None here."""
         return {}
 
-    # --- class keywords (see `MetadataMeta`) -------------------------
-
-    @classmethod
-    def _declare(
-        cls,
-        name: str,
-        namespace: tx.Dict[str, tx.Any],
-        supports: tx.Union[str, tx.Iterable[tx.Any]],
-    ) -> None:
-        """
-        Read `supports=` into the namespace of the class `name`, before
-        `bagof` builds its fields: a supported field is declared again
-        (in case a parent did not support it), and any other one is
-        declared with the default `UNSUPPORTED`, which is exactly what
-        writing `x: T = UNSUPPORTED` in the class body does. A field
-        written out in the body is left as it is.
-        """
-        supported = _supported_names(name, supports)
-        annotations = own_annotations(namespace)
-        for field in FIELDS:
-            if field in annotations or field in namespace:
-                continue
-            hint = _declared_hint(field)
-            if field in supported:
-                annotations[field] = hint
-                if field != "extra":  # `extra` has a factory
-                    namespace[field] = None
-            else:
-                annotations[field] = _without_factory(hint)
-                namespace[field] = UNSUPPORTED
-        # On Python 3.14+ the body's annotations come as a lazy annotate
-        # function; it is replaced by the plain dict, as up to 3.13.
-        for key in ("__annotate__", "__annotate_func__"):
-            namespace.pop(key, None)
-        namespace["__annotations__"] = annotations
-
-    @classmethod
-    def _finish(cls, lazy: tx.Optional[tx.Iterable[str]] = None) -> None:
-        """
-        Set the capabilities of a class once `bagof` has built it: its
-        `supported_fields` (the fields whose default is not
-        `UNSUPPORTED`), `unsupported_fields` and `lazy_fields` (`lazy=`,
-        or the inherited ones it still supports), and a `LazyField`
-        descriptor per lazy field.
-        """
-        supported = frozenset(
-            field.name
-            for field in fields(cls)
-            if field.name in FIELDS and field.default is not UNSUPPORTED
-        )
-        cls.supported_fields = supported
-        cls.unsupported_fields = frozenset(FIELDS) - supported
-        if lazy is None:
-            cls.lazy_fields = cls.lazy_fields & supported
-        else:
-            cls.lazy_fields = frozenset(lazy)
-            wrong = cls.lazy_fields - (supported - {"extra"})
-            if wrong:
-                raise TypeError(
-                    f"{cls.__name__} declares lazy={sorted(wrong)}, which "
-                    f"are not vocabulary fields it supports."
-                )
-        for field in fields(cls):
-            # Installed on every class that has a lazy field: a subclass
-            # that redeclares the field (`supports=`) hides its parent's.
-            if field.name in cls.lazy_fields and not isinstance(
-                inspect.getattr_static(cls, field.name), LazyField
-            ):
-                descriptor = LazyField(
-                    field.name,
-                    default=field.default,
-                    prepare=_unsupported_as_none,
-                    on_load=_join_snapshot,
-                )
-                setattr(cls, field.name, descriptor)
-
 
 # ----------------------------------------------------------------------
 #   PRIVATE
@@ -665,67 +582,3 @@ def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
     raise TypeError(
         f"Expected a Metadata subclass or a format name, got {target!r}."
     )
-
-
-def _supported_names(
-    name: str, supports: tx.Union[str, tx.Iterable[tx.Any]]
-) -> tx.FrozenSet[str]:
-    """The field names a `supports=` declaration stands for."""
-    if isinstance(supports, str):
-        if supports != ALL:
-            raise TypeError(
-                f"{name}: supports= takes a sequence of field names or "
-                f"vocabulary groups, or ALL, not {supports!r}."
-            )
-        return frozenset(FIELDS)
-    names: tx.Set[str] = set()
-    for item in supports:
-        if not isinstance(item, type):
-            names.add(item)
-        elif item in GROUPS:
-            names.update(GROUPS[item])
-        else:
-            raise TypeError(
-                f"{name}: supports= names {item.__name__}, which is not a "
-                f"vocabulary group; expected one of "
-                f"{[g.__name__ for g in GROUPS]}."
-            )
-    unknown = names - frozenset(FIELDS)
-    if unknown:
-        raise TypeError(
-            f"{name}: supports= names {sorted(unknown)}, which are not "
-            f"vocabulary fields; expected some of {sorted(FIELDS)}."
-        )
-    return frozenset(names)
-
-
-def _declared_hint(name: str) -> tx.Any:
-    """The annotation of a field as `Metadata` (or its group) declares it."""
-    return next(
-        own_annotations(klass)[name]
-        for klass in Metadata.__mro__
-        if name in own_annotations(klass)
-    )
-
-
-def _without_factory(hint: tx.Any) -> tx.Any:
-    """An annotation without its default factory (that of `extra`), for a
-    field whose default becomes `UNSUPPORTED`. Its converters stay: they
-    all let `UNSUPPORTED` through."""
-    if tx.get_origin(hint) is not tx.Annotated:
-        return hint
-    base, *extras = tx.get_args(hint)
-    kept = [extra for extra in extras if not isinstance(extra, Factory)]
-    return tx.Annotated[(base, *kept)] if kept else base
-
-
-def _unsupported_as_none(value: tx.Any) -> tx.Any:
-    return None if value is UNSUPPORTED else value
-
-
-def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
-    """A lazy field, once loaded, joins the read-time snapshot, as if it
-    had been decoded with the rest."""
-    snapshot = obj.__dict__.get("_snapshot")
-    if value is not None and snapshot is not None:
-        snapshot[name] = copy.deepcopy(value)

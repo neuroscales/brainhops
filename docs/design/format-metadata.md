@@ -528,8 +528,8 @@ Rules:
 
 > **Prototype note.** Three deviations here.
 > (1) `supports=` and `lazy=` are read by a metaclass,
-> `MetadataMeta(type(DataModelBase))` (an adaptor to the classmethods
-> `Metadata._declare` and `Metadata._finish`), not by `__init_subclass__`:
+> `MetadataMeta(type(DataModelBase))` (whose `_declare` and `_finish`
+> hold the logic), not by `__init_subclass__`:
 > `bagof` builds the fields *before* `__init_subclass__` runs and does not
 > forward class keywords to it. The metaclass redeclares each unsupported
 > field in the class namespace (annotation + `= UNSUPPORTED`) before
@@ -955,10 +955,11 @@ question 8.
 - **A metaclass** (`MetadataMeta`) passes `supports=`/`lazy=` (M5, 6)
   to `Metadata`: `bagof` refuses class keywords it
   does not know and builds the fields before `__init_subclass__` runs.
-  It is an adaptor only: it calls the classmethod `Metadata._declare`
-  (which completes the namespace) before `bagof` builds the class, and
-  `cls._finish()` (which sets the capabilities and the lazy
-  descriptors) after; the logic is on the class. `Metadata` is built
+  It holds the logic: its `_declare` completes the namespace before
+  `bagof` builds the class, and its `_finish` sets the capabilities and
+  the lazy descriptors after. No metadata class overrides either, so
+  they live on the metaclass rather than on `Metadata` (they were
+  classmethods of `Metadata` at first). `Metadata` is built
   with `bagof`'s `repr=False`, which its subclasses inherit, and has one
   hand-written `__repr__`.
 - **Descriptors** for the lazy fields (`LazyField`), installed on the
@@ -1688,9 +1689,9 @@ these:
   metadata live in `_core` (`to_enum`, `differs`, `float32_repr`); the
   JSON codec shared by BIDS, x5 and Zarr is `io/metadata/_json.py`, and
   the parsers' sync is `io/metadata/_sync.py`.
-- **M4: the metaclass is an adaptor.** It pops `supports=` and `lazy=`,
-  and calls `Metadata._declare` (before `bagof` builds a subclass) and
-  `cls._finish` (after); the logic is on the class, and `Metadata` has
+- **M4: the metaclass reads the class keywords.** It pops `supports=`
+  and `lazy=`, and runs its `_declare` (before `bagof` builds a
+  subclass) and `_finish` (after), which no class overrides; `Metadata` has
   one `__repr__` (`bagof`'s `repr=False`, inherited).
 - **M5: `supports` is a classmethod.** An instance's capability is
   `meta.name is UNSUPPORTED`.
