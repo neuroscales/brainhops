@@ -193,14 +193,16 @@ class FormatEntry:
     @property
     def available(self) -> bool:
         """
-        Whether the format takes part in dispatch: it is registered, or
-        what it needs is installed (and `check` passes).
+        Whether the format takes part in dispatch: what it needs is
+        installed, and, until it is registered, `check` passes.
 
         Being installed only says that a package is there to import, so
         a format may still fail to resolve; `resolve` says so.
         """
         if self._cls is not None:
-            return True
+            # A format module imports its dependency only once a file is
+            # read, so its class may be registered without it.
+            return self.missing is None
         if self._usable is None:
             self._usable = self.missing is None and (
                 self.check is None or bool(self.check())

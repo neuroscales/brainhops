@@ -53,6 +53,8 @@ __all__ = [
     "tfm",
 ]
 
+from brainhops._core import dependencies as _deps
+
 from . import mat, tfm
 from ._common import (
     ItkAffineBase,
@@ -64,20 +66,16 @@ from ._common import (
 )
 from ._xform import ItkTransform
 
-# The h5 reader needs h5py, which is optional. It is imported only when
-# h5py is available, mirroring how the transformations package imports
-# its own optional-dependency submodules.
-try:
+# The h5 reader needs h5py, and the NIfTI field readers nibabel, both
+# optional. Their modules import them only once a file is read, so they
+# are imported here only when they are installed, and their formats are
+# not registered otherwise.
+if _deps.HAS_H5PY:
     from . import h5
 
     __all__ += ["h5"]
-except ImportError:  # h5py is optional
-    pass
 
-# The NIfTI field readers need nibabel, which is optional too.
-try:
+if _deps.HAS_NIBABEL:
     from . import nifti
 
     __all__ += ["nifti"]
-except ImportError:  # nibabel is optional
-    pass

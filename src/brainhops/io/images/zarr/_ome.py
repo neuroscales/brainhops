@@ -21,11 +21,6 @@ identity placement.
 
 # dependencies
 import typing_extensions as tx
-from abczarr.abc.sync import ZarrGroup
-from abczarr.ome import v0_6 as _v06
-from abczarr.ome.v0_6.images import Dataset, Multiscale
-from abczarr.ome.v0_6.ome import OME
-from abczarr.ome.v0_6.transformations import CoordinateTransformation
 from bagof.magic import replace
 
 # internals
@@ -43,6 +38,14 @@ from brainhops.io.base.parsers import ParserContentError, WriterError
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map, _node
 from brainhops.io.transformations.zarr._axes import _to_axis
+
+# abczarr is imported where it is used: the Zarr formats, which import
+# this module, are imported to sniff any file.
+if tx.TYPE_CHECKING:
+    from abczarr.abc.sync import ZarrGroup
+    from abczarr.ome.v0_6.images import Dataset, Multiscale
+    from abczarr.ome.v0_6.ome import OME
+    from abczarr.ome.v0_6.transformations import CoordinateTransformation
 
 #: The brainhops spline degree each OME interpolation name maps to.
 _INTERPOLATION_DEGREE = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
@@ -78,7 +81,7 @@ class OmeImageError(ParserContentError):
     """
 
 
-def looks_like_multiscale(node: ZarrGroup) -> bool:
+def looks_like_multiscale(node: "ZarrGroup") -> bool:
     """Whether a group carries image multiscale metadata.
 
     The metadata is read through abczarr, which finds it wherever the
@@ -107,8 +110,8 @@ def looks_like_multiscale(node: ZarrGroup) -> bool:
 
 
 def read_multiscale(
-    node: ZarrGroup,
-) -> tx.Tuple[tx.Optional[Multiscale], tx.Optional[str]]:
+    node: "ZarrGroup",
+) -> "tx.Tuple[tx.Optional[Multiscale], tx.Optional[str]]":
     """Return a group's first multiscale, normalized to 0.6.
 
     The result is ``(multiscale, source_version)``, where `multiscale` is
@@ -149,7 +152,7 @@ def read_multiscale(
     return multiscales[0], source_version
 
 
-def _output_system(multiscale: Multiscale) -> tx.Any:
+def _output_system(multiscale: "Multiscale") -> tx.Any:
     # The coordinate system a dataset maps its array onto, read from the
     # first dataset's transformation. The first coordinate system is used
     # when no transformation names one.
@@ -165,13 +168,13 @@ def _output_system(multiscale: Multiscale) -> tx.Any:
     return systems[0]
 
 
-def multiscale_axes(multiscale: Multiscale) -> tx.List[Axis]:
+def multiscale_axes(multiscale: "Multiscale") -> tx.List[Axis]:
     """Return the axes of a multiscale as brainhops axes, in stored order."""
     system = _output_system(multiscale)
     return [_to_axis(axis.to_json()) for axis in system.axes]
 
 
-def intrinsic_name(multiscale: Multiscale) -> tx.Optional[str]:
+def intrinsic_name(multiscale: "Multiscale") -> tx.Optional[str]:
     """Return the name of the coordinate system the levels map onto.
 
     This is the intrinsic space that every level shares: it is what a
@@ -187,7 +190,7 @@ def intrinsic_name(multiscale: Multiscale) -> tx.Optional[str]:
     return getattr(_output_system(multiscale), "name", None)
 
 
-def system_axes(multiscale: Multiscale) -> tx.Dict[str, tx.List[Axis]]:
+def system_axes(multiscale: "Multiscale") -> tx.Dict[str, tx.List[Axis]]:
     """Return the axes of every named coordinate system, in stored order.
 
     A multiscale names one coordinate system per space it places its levels
@@ -203,7 +206,7 @@ def system_axes(multiscale: Multiscale) -> tx.Dict[str, tx.List[Axis]]:
 
 
 def _make_read_field(
-    node: tx.Optional[ZarrGroup], store_axes: tx.Optional[tx.Sequence[Axis]]
+    node: "tx.Optional[ZarrGroup]", store_axes: tx.Optional[tx.Sequence[Axis]]
 ) -> tx.Optional[tx.Callable]:
     # Build the callback that reads a displacement or coordinate field from
     # the node a field transformation names. The callback lays the field out
@@ -282,10 +285,10 @@ def _field_from_names(
 
 
 def _map_transform(
-    transform: CoordinateTransformation,
+    transform: "CoordinateTransformation",
     perm: tx.Sequence[int],
     ndim: int,
-    node: tx.Optional[ZarrGroup] = None,
+    node: "tx.Optional[ZarrGroup]" = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
 ) -> Transformation:
     # Map one 0.6 coordinate transformation to the brainhops
@@ -299,10 +302,10 @@ def _map_transform(
 
 
 def level_transformation(
-    dataset: Dataset,
+    dataset: "Dataset",
     perm: tx.Sequence[int],
     ndim: int,
-    node: tx.Optional[ZarrGroup] = None,
+    node: "tx.Optional[ZarrGroup]" = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
     input: tx.Optional[CoordinateSystem] = None,
     output: tx.Optional[CoordinateSystem] = None,
@@ -337,10 +340,10 @@ def level_transformation(
 
 
 def common_transformations(
-    multiscale: Multiscale,
+    multiscale: "Multiscale",
     perm: tx.Sequence[int],
     ndim: int,
-    node: tx.Optional[ZarrGroup] = None,
+    node: "tx.Optional[ZarrGroup]" = None,
     store_axes: tx.Optional[tx.Sequence[Axis]] = None,
     input: tx.Optional[CoordinateSystem] = None,
     systems: tx.Optional[tx.Mapping[str, CoordinateSystem]] = None,
@@ -545,7 +548,7 @@ def build_ome(
     commons: tx.Sequence[tx.Tuple[str, _Entry]],
     name: tx.Optional[str],
     version: str,
-) -> OME:
+) -> "OME":
     """Build the typed OME metadata for an image pyramid.
 
     `axes` are the axes in the stored order. `levels` gives, for each
@@ -598,7 +601,9 @@ def build_ome(
         ]
     if name is not None:
         block["name"] = name
-    ome = _v06.OME.from_json(
+    from abczarr.ome.v0_6.ome import OME
+
+    ome = OME.from_json(
         {"version": NORMALIZED_VERSION, "multiscales": [block]}
     )
     if version != NORMALIZED_VERSION:
@@ -607,7 +612,7 @@ def build_ome(
 
 
 def write_multiscale(
-    node: ZarrGroup,
+    node: "ZarrGroup",
     axes: tx.Sequence[Axis],
     levels: tx.Sequence[_Level],
     commons: tx.Sequence[tx.Tuple[str, _Entry]],

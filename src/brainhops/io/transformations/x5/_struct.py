@@ -18,7 +18,6 @@ __all__ = [
 import json
 
 # dependencies
-import h5py
 import numpy as np
 import typing_extensions as tx
 
@@ -28,6 +27,9 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 # io
 from brainhops.io.base.hdf5 import delayed_dataset, read_string
 from brainhops.io.base.parsers import ParserContentError
+
+if tx.TYPE_CHECKING:
+    import h5py
 
 X5_FORMAT = "X5"
 """The value of the root `Format` attribute of every X5 file."""
@@ -156,7 +158,7 @@ class X5Header(
 # ----------------------------------------------------------------------
 
 
-def is_x5(h5file: h5py.File) -> bool:
+def is_x5(h5file: "h5py.File") -> bool:
     """Whether an open HDF5 file says it is an X5 file."""
     try:
         return read_string(h5file.attrs.get("Format")) == X5_FORMAT
@@ -165,7 +167,7 @@ def is_x5(h5file: h5py.File) -> bool:
 
 
 def read_x5(
-    h5file: h5py.File, load: bool = True, keep_open: bool = False
+    h5file: "h5py.File", load: bool = True, keep_open: bool = False
 ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
     """Read the header and the transform nodes of an open X5 file."""
     if not is_x5(h5file):
@@ -211,7 +213,7 @@ def _index(key: str) -> int:
         ) from None
 
 
-def _read_chain(dataset: h5py.Dataset, count: int) -> tx.Tuple[int, ...]:
+def _read_chain(dataset: "h5py.Dataset", count: int) -> tx.Tuple[int, ...]:
     """A chain, stored by nitransforms as a string `"0/1/2"`."""
     text = read_string(dataset)
     try:
@@ -229,7 +231,7 @@ def _read_chain(dataset: h5py.Dataset, count: int) -> tx.Tuple[int, ...]:
 
 
 def _read_dataset(
-    group: h5py.Group, key: str, load: bool, keep_open: bool
+    group: "h5py.Group", key: str, load: bool, keep_open: bool
 ) -> tx.Any:
     if key not in group:
         return None
@@ -239,7 +241,7 @@ def _read_dataset(
     return delayed_dataset(group.file, dataset.name, keep_open)
 
 
-def _read_node(group: h5py.Group, load: bool, keep_open: bool) -> X5Node:
+def _read_node(group: "h5py.Group", load: bool, keep_open: bool) -> X5Node:
     attrs = group.attrs
     if "Type" not in attrs:
         raise ParserContentError(f"X5 group {group.name} has no Type.")
@@ -285,7 +287,7 @@ def _read_metadata(value: tx.Any) -> tx.Any:
         return text
 
 
-def _read_domain(group: h5py.Group) -> X5Domain:
+def _read_domain(group: "h5py.Group") -> X5Domain:
     domain = X5Domain()
     if "Grid" in group:
         domain.grid = bool(int(np.asarray(group["Grid"][()])))
@@ -308,7 +310,7 @@ def _read_domain(group: h5py.Group) -> X5Domain:
 # coordinates of space A to world coordinates of space B.
 
 
-def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+def _read_legacy(h5file: "h5py.File") -> tx.Tuple[X5Header, tx.List[X5Node]]:
     header = X5Header(
         format=X5_FORMAT,
         version=h5file.attrs.get("Version"),
@@ -375,7 +377,7 @@ def _read_legacy(h5file: h5py.File) -> tx.Tuple[X5Header, tx.List[X5Node]]:
 
 
 def write_x5(
-    h5file: h5py.File, header: X5Header, nodes: tx.Sequence[X5Node]
+    h5file: "h5py.File", header: X5Header, nodes: tx.Sequence[X5Node]
 ) -> None:
     """Write a header and transform nodes into an empty HDF5 file."""
     h5file.attrs["Format"] = X5_FORMAT
@@ -398,7 +400,7 @@ def write_x5(
             )
 
 
-def _write_node(group: h5py.Group, node: X5Node) -> None:
+def _write_node(group: "h5py.Group", node: X5Node) -> None:
     for key, value in node.attrs.items():
         group.attrs[key] = value
     group.attrs["Type"] = node.type

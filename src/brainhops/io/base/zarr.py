@@ -17,12 +17,14 @@ operate on an opened node, and [from_store][ZarrParser.from_store] and
 
 __all__ = ["ZarrParser", "StoreLike"]
 
+# stdlib
+import os
+
 # dependencies
 import typing_extensions as tx
-from abczarr import ZarrNode
-from abczarr import open as open_node
 
 # core
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 
 # internals
@@ -35,6 +37,13 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
+
+# abczarr is imported where it is used: the Zarr formats are imported to
+# sniff any file, and a file that cannot be a store is declined without it.
+if tx.TYPE_CHECKING:
+    from abczarr import ZarrNode
+
+_ZarrNode = deps.lazy_type("abczarr:ZarrNode")
 
 #: A location is a store path or an already-opened store or node object.
 StoreLike = tx.Union[str, path.PathLike, tx.Any]
@@ -52,7 +61,7 @@ class ZarrParser(DataModelBase, FileParser):
 
     # ---- attributes --------------------------------------------------
 
-    node: tx.Optional[ZarrNode] = None
+    node: tx.Optional[_ZarrNode] = None
 
     # ---- sniff -------------------------------------------------------
 
@@ -63,7 +72,12 @@ class ZarrParser(DataModelBase, FileParser):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        node = open_node(file, cls._READ_MODE)
+        if _is_local_file(file):
+            # A store is a directory (or a zip file, which abczarr opens
+            # too), never another regular file.
+            node = None
+        else:
+            node = deps.abczarr.open(file, cls._READ_MODE)
         if node is None:
             score = Confidence.NO
         else:
@@ -154,7 +168,7 @@ class ZarrParser(DataModelBase, FileParser):
         zarr_kwargs["mode"] = kwargs.pop("mode", cls._READ_MODE)
         if "driver" in kwargs:
             zarr_kwargs["driver"] = kwargs.pop("driver")
-        node = open_node(location, **zarr_kwargs)
+        node = deps.abczarr.open(location, **zarr_kwargs)
         if node is None:
             raise ParserExistsError(f"No Zarr store at {location}")
         return cls.from_node(node, **kwargs)
@@ -188,7 +202,7 @@ class ZarrParser(DataModelBase, FileParser):
     # ---- hooks -------------------------------------------------------
 
     @classmethod
-    def _score_store(cls, node: ZarrNode) -> float:
+    def _score_store(cls, node: "ZarrNode") -> float:
         """Score how well `node` matches this class."""
         raise NotImplementedError
 
@@ -196,7 +210,7 @@ class ZarrParser(DataModelBase, FileParser):
 class ZarrParserWriter(ZarrParser, FileParserWriter):
     # ---- write -------------------------------------------------------
 
-    def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
+    def to_node(self, node: tx.Any, **kwargs) -> "ZarrNode":
         """
         Write the object into an opened Zarr node, and return it.
 
@@ -239,21 +253,40 @@ class ZarrParserWriter(ZarrParser, FileParserWriter):
         )
 
 
-def _as_node(source: tx.Any) -> tx.Optional[ZarrNode]:
+def _is_local_file(file: tx.Any) -> bool:
+    """Whether `file` names a regular local file that is not a zip."""
+    if not isinstance(file, (str, path.PathLike)):
+        return False
+    try:
+        file = path.Path(file)
+        if file.protocol.lower() not in _LOCAL_PROTOCOLS:
+            return False
+        name = str(file)
+    except Exception:
+        return False
+    return os.path.isfile(name) and not name.lower().endswith(".zip")
+
+
+# The protocols of a path on the local file system, as `bagof.paths`
+# reports them: none, `file://` and `local://`.
+_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
+
+
+def _as_node(source: tx.Any) -> "tx.Optional[ZarrNode]":
     """Return `source` as an abczarr node, or `None` when it is a location.
 
     An abczarr node is returned unchanged. A driver-native array or group
     is wrapped. A string or path, which names a store rather than being an
     open node, returns `None`.
     """
-    if isinstance(source, ZarrNode):
+    if isinstance(source, deps.abczarr.ZarrNode):
         return source
     if isinstance(source, (str, path.PathLike)):
         return None
     return _wrap_native(source)
 
 
-def _wrap_native(source: tx.Any) -> tx.Optional[ZarrNode]:
+def _wrap_native(source: tx.Any) -> "tx.Optional[ZarrNode]":
     """Wrap a driver-native array or group in an abczarr node, or `None`.
 
     Each abczarr driver is tried only if its backend is installed, since

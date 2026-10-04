@@ -19,11 +19,15 @@ and lazily read datasets.
   file was closed, by reopening it on demand.
 
 `h5py` is an optional dependency, so this module is imported only by
-the formats that need it, and only when it is installed.
+the formats that need it, and only when it is installed. Even then, it
+imports `h5py` only once a file turns out to be HDF5: the formats are
+imported to sniff any file, and a file without the HDF5 signature is
+declined without it.
 """
 
 __all__ = [
     "DelayedH5Array",
+    "H5File",
     "H5Like",
     "Hdf5Parser",
     "Hdf5ParserWriter",
@@ -32,16 +36,17 @@ __all__ = [
 ]
 
 # stdlib
+import sys
 from io import BytesIO
 from math import prod
 from os import PathLike
 
 # dependencies
-import h5py
 import numpy as np
 import typing_extensions as tx
 
 # core
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
@@ -56,8 +61,44 @@ from brainhops.io.base.parsers import (
     SnifferExistsError,
 )
 
-H5Like = tx.Union[tx.BinaryIO, PathLike, str, h5py.File]
+if tx.TYPE_CHECKING:
+    import h5py
+
+H5Like = tx.Union[tx.BinaryIO, PathLike, str, "h5py.File"]
 """Anything an HDF5 format can be read from or written to."""
+
+H5File = deps.lazy_type("h5py:File")
+"""`h5py.File`, imported when first used, to annotate the fields that
+hold an open file."""
+
+
+# The signature that starts the superblock of an HDF5 file, which is
+# found at offset 0, or after a user block at 512, 1024, 2048, ...
+_SIGNATURE = b"\x89HDF\r\n\x1a\n"
+
+
+def _has_signature(file: tx.BinaryIO) -> bool:
+    """Whether a seekable stream holds an HDF5 superblock, read the way
+    the HDF5 library looks for it. `True` when the stream cannot say."""
+    try:
+        offset = 0
+        while True:
+            file.seek(offset)
+            head = file.read(len(_SIGNATURE))
+            if head == _SIGNATURE:
+                return True
+            if len(head) < len(_SIGNATURE):
+                return False
+            offset = 512 if offset == 0 else 2 * offset
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def _is_h5(obj: tx.Any, name: str) -> bool:
+    """Whether `obj` is an instance of `h5py.<name>`, without importing
+    `h5py`: nothing is an `h5py` object until `h5py` is imported."""
+    h5py = sys.modules.get("h5py")
+    return h5py is not None and isinstance(obj, getattr(h5py, name))
 
 
 def _raise_or(
@@ -95,7 +136,7 @@ class Hdf5Parser(BinaryFileParser):
     @classmethod
     def sniff_h5(
         cls,
-        h5file: h5py.File,
+        h5file: "h5py.File",
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
         """Score how confident the format is that an open HDF5 file is
@@ -103,7 +144,7 @@ class Hdf5Parser(BinaryFileParser):
         raise NotImplementedError
 
     @classmethod
-    def from_h5(cls, h5file: h5py.File, **kwargs) -> tx.Self:
+    def from_h5(cls, h5file: "h5py.File", **kwargs) -> tx.Self:
         """Build an object from an open HDF5 file."""
         raise NotImplementedError
 
@@ -117,7 +158,7 @@ class Hdf5Parser(BinaryFileParser):
         **kwargs,
     ) -> float:
         """Score a path, open HDF5 file, or binary stream."""
-        if isinstance(file, h5py.File):
+        if _is_h5(file, "File"):
             return cls.sniff_h5(file, error=error)
         if isinstance(file, (str, path.PathLike)):
             return cls.sniff_filename(file, error=error, **kwargs)
@@ -137,8 +178,13 @@ class Hdf5Parser(BinaryFileParser):
             return _raise_or(
                 error, SnifferExistsError, f"No such file: {filename}"
             )
+        with filename.open("rb") as f:
+            if not _has_signature(f):
+                return _raise_or(
+                    error, SnifferContentError, f"Not an HDF5 file: {filename}"
+                )
         try:
-            is_hdf5 = h5py.is_hdf5(str(filename))
+            is_hdf5 = deps.h5.is_hdf5(str(filename))
         except Exception:  # noqa: BLE001  (remote paths, ...)
             is_hdf5 = None
         if is_hdf5 is False:
@@ -148,7 +194,7 @@ class Hdf5Parser(BinaryFileParser):
         if is_hdf5 is None:
             with filename.open("rb") as f:
                 return cls.sniff_fileobj(f, error=error, **kwargs)
-        with h5py.File(str(filename), "r") as f:
+        with deps.h5.File(str(filename), "r") as f:
             return cls.sniff_h5(f, error=error)
 
     @classmethod
@@ -161,7 +207,9 @@ class Hdf5Parser(BinaryFileParser):
         """Score an open, seekable binary stream."""
         with preserve_position(file):
             try:
-                with h5py.File(file, "r") as f:
+                if not _has_signature(file):
+                    raise ValueError("No HDF5 signature")
+                with deps.h5.File(file, "r") as f:
                     return cls.sniff_h5(f, error=error)
             except Exception as e:
                 return _raise_or(
@@ -207,7 +255,7 @@ class Hdf5Parser(BinaryFileParser):
             If True, read large datasets into memory.
             If False, keep them on disk.
         """
-        if isinstance(file, h5py.File):
+        if _is_h5(file, "File"):
             return cls.from_h5(file, keep_open=keep_open, load=load, **kwargs)
         if isinstance(file, (str, path.PathLike)):
             return cls.from_filename(
@@ -228,7 +276,7 @@ class Hdf5Parser(BinaryFileParser):
             filename = path.Path(filename)
         if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
-        f = h5py.File(str(filename), "r")
+        f = deps.h5.File(str(filename), "r")
         try:
             return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
         finally:
@@ -245,7 +293,7 @@ class Hdf5Parser(BinaryFileParser):
     ) -> tx.Self:
         """Build an object from an open, seekable binary stream."""
         with preserve_position(file):
-            f = h5py.File(file, "r")
+            f = deps.h5.File(file, "r")
             try:
                 return cls.from_h5(f, keep_open=keep_open, load=load, **kwargs)
             finally:
@@ -267,11 +315,11 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
     HDF5 file open for writing.
     """
 
-    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+    def to_h5(self, h5file: "h5py.File", **kwargs) -> None:
         """Write this object into an empty HDF5 file open for writing."""
         raise NotImplementedError
 
-    def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
+    def _h5_writer(self, **kwargs) -> tx.Callable[["h5py.File"], None]:
         """
         The function that fills an HDF5 file with this object.
 
@@ -283,14 +331,14 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
 
     def to_file(self, file: H5Like, **kwargs) -> None:
         """Write to a path, an open binary stream, or an HDF5 file."""
-        if isinstance(file, h5py.File):
+        if _is_h5(file, "File"):
             return self._h5_writer(**kwargs)(file)
         return super().to_file(file, **kwargs)
 
     def to_filename(self, filename: tx.Union[str, PathLike], **kwargs) -> None:
         """Write to the file found at a path, replacing it."""
         writer = self._h5_writer(**kwargs)
-        with h5py.File(str(filename), "w") as f:
+        with deps.h5.File(str(filename), "w") as f:
             writer(f)
 
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
@@ -301,7 +349,7 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
         """The bytes of the HDF5 file that encodes this object."""
         writer = self._h5_writer(**kwargs)
         buffer = BytesIO()
-        with h5py.File(buffer, "w") as f:
+        with deps.h5.File(buffer, "w") as f:
             writer(f)
         return buffer.getvalue()
 
@@ -321,7 +369,7 @@ def read_string(value: tx.Any) -> tx.Optional[str]:
     """
     if value is None:
         return None
-    if isinstance(value, h5py.Dataset):
+    if _is_h5(value, "Dataset"):
         value = value[()]
     if isinstance(value, np.ndarray):
         if value.size != 1:
@@ -348,7 +396,7 @@ class DelayedH5Array:
         self._dtype: tx.Optional[np.dtype] = None
         self._chunks: tx.Optional[tx.Tuple[int]] = None
 
-    def open(self) -> h5py.File:
+    def open(self) -> "h5py.File":
         """Open (or reuse) the underlying HDF5 file and return it."""
         self.to_dataset(keep_open=True)
         return self._file
@@ -365,7 +413,7 @@ class DelayedH5Array:
 
     def to_dataset(
         self, file: tx.Optional[H5Like] = None, keep_open: bool = False
-    ) -> h5py.Dataset:
+    ) -> "h5py.Dataset":
         """Return the underlying `h5py.Dataset`, opening the file if
         needed."""
 
@@ -377,12 +425,12 @@ class DelayedH5Array:
 
         if isinstance(file, (str, PathLike)):
             if not keep_open:
-                with h5py.File(file, "r") as f:
+                with deps.h5.File(file, "r") as f:
                     return self.to_dataset(f)
             else:
-                file = self._file = h5py.File(file, "r")
+                file = self._file = deps.h5.File(file, "r")
 
-        if isinstance(file, h5py.File):
+        if _is_h5(file, "File"):
             dataset = file[self.path]
             # cache info
             self._shape = dataset.shape
@@ -403,7 +451,7 @@ class DelayedH5Array:
         """
         file = self._file if self._file is not None else self.file
         if isinstance(file, (str, PathLike)):
-            with h5py.File(file, "r") as f:
+            with deps.h5.File(file, "r") as f:
                 return f[self.path][index]
         return self.to_dataset(file)[index]
 
@@ -472,7 +520,7 @@ class DelayedH5Array:
 
 
 def delayed_dataset(
-    h5file: h5py.File, key: str, keep_open: bool
+    h5file: "h5py.File", key: str, keep_open: bool
 ) -> tx.Union[DelayedH5Array, ArrayProtocol]:
     """
     A dataset of an open file, to be read later rather than now.

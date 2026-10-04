@@ -3,6 +3,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import re
+import sys
 
 # dependencies
 import typing_extensions as tx
@@ -178,6 +179,15 @@ def __getattr__(name: str) -> tx.Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# The backends of abczarr's own drivers, by top-level module, with the
+# distribution whose major version the driver needs at least.
+_ABCZARR_BACKENDS = {
+    "zarr": ("zarr", 2),
+    "tensorstore": None,
+    "zarrista": None,
+}
+
+
 def has_abczarr_driver() -> bool:
     """Whether abczarr is installed together with at least one backend driver.
 
@@ -185,9 +195,20 @@ def has_abczarr_driver() -> bool:
     TensorStore, or zarrista. The core installs none of them, so abczarr
     being importable is not enough on its own. This returns `True` only when
     abczarr is present and at least one driver is available to it.
+
+    Until abczarr is imported, this tells from whether the backend of one
+    of its drivers is installed, without importing either: importing
+    abczarr imports a driver, which takes about a second. Once it is
+    imported, abczarr is asked, so that it counts the drivers registered
+    by other packages and those whose backend fails to import.
     """
     if not __getattr__("HAS_ABCZARR"):
         return False
+    if "abczarr" not in sys.modules:
+        return any(
+            _find_spec(module) and _has_version(requirement)
+            for module, requirement in _ABCZARR_BACKENDS.items()
+        )
     abczarr = __getattr__("abczarr")
     if abczarr is None:
         return False
@@ -195,6 +216,88 @@ def has_abczarr_driver() -> bool:
         return bool(abczarr.available_drivers())
     except Exception:
         return False
+
+
+def _has_version(requirement: tx.Optional[tx.Tuple[str, int]]) -> bool:
+    """Whether a distribution's major version is at least the one given,
+    or `True` when that cannot be told from its metadata."""
+    if requirement is None:
+        return True
+    dist, major = requirement
+    try:
+        version = importlib.metadata.version(dist)
+        return int(version.split(".")[0]) >= major
+    except (importlib.metadata.PackageNotFoundError, ValueError):
+        return True
+
+
+class _LazyType(type):
+    """
+    The metaclass of `lazy_type`: a class that stands for a class of an
+    optional dependency, and imports it the first time it is used.
+    """
+
+    _module: str
+    _attribute: str
+
+    def resolve(cls) -> type:
+        """The class it stands for, imported if it was not yet."""
+        resolved = cls.__dict__.get("_resolved")
+        if resolved is None:
+            resolved = importlib.import_module(cls._module)
+            for name in cls._attribute.split("."):
+                resolved = getattr(resolved, name)
+            type.__setattr__(cls, "_resolved", resolved)
+        return resolved
+
+    def __instancecheck__(cls, obj: tx.Any) -> bool:
+        return isinstance(obj, cls.resolve())
+
+    def __subclasscheck__(cls, subclass: type) -> bool:
+        return issubclass(subclass, cls.resolve())
+
+    def __call__(cls, *args: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        return cls.resolve()(*args, **kwargs)
+
+    def __repr__(cls) -> str:
+        return f"{cls._module}.{cls._attribute}"
+
+
+_LAZY_TYPES: tx.Dict[str, type] = {}
+
+
+def lazy_type(name: str) -> type:
+    """
+    A class of an optional dependency, imported when it is first used.
+
+    The fields of a format are annotated with the classes of the
+    dependency that reads it (`h5py.File`, `nibabel.Nifti1Image`), from
+    which their converters are built as the class is created. Naming the
+    class itself imports the dependency with the format's module, which
+    is imported to sniff any file. This stands for it instead: it is a
+    class, so it makes a type hint, and it imports the dependency the
+    first time a value is checked against it or built with it, that is
+    the first time the format is used.
+
+    Parameters
+    ----------
+    name : str
+        The module and the class in it, as `"module:Class"`.
+    """
+    lazy = _LAZY_TYPES.get(name)
+    if lazy is None:
+        module, attribute = name.split(":")
+        lazy = _LAZY_TYPES[name] = _LazyType(
+            attribute.rsplit(".", 1)[-1],
+            (),
+            {
+                "_module": module,
+                "_attribute": attribute,
+                "__module__": module,
+                "__qualname__": attribute,
+            },
+        )
+    return lazy
 
 
 def __dir__() -> tx.List[str]:

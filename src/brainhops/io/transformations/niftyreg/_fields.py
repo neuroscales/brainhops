@@ -7,11 +7,11 @@ not supported, are described in the package docstring,
 """
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
 # core
+from brainhops._core import dependencies as deps
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
@@ -50,6 +50,9 @@ from brainhops.io.transformations.base.fields import (
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 from ._formats import NiftyRegTransformationFormat
+
+if tx.TYPE_CHECKING:
+    import nibabel as nb
 
 # ----------------------------------------------------------------------
 #   NIFTYREG CONSTANTS
@@ -90,7 +93,7 @@ def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
     `None` unless the header is a NiftyReg transformation: a `VECTOR`
     image named `"NREG_TRANS"` whose `intent_p1` is a whole number.
     """
-    if isinstance(header, nb.Nifti1Image):
+    if isinstance(header, deps.nb.Nifti1Image):
         header = header.header
     if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
         return None
@@ -152,11 +155,13 @@ def _extension_affines(header: _NiftiObject) -> tx.List[np.ndarray]:
     return affines
 
 
-def _extension(matrix: np.ndarray) -> nb.nifti1.Nifti1Extension:
+def _extension(matrix: np.ndarray) -> "nb.nifti1.Nifti1Extension":
     """A `NIFTI_ECODE_IGNORE` extension holding a `mat44`, as NiftyReg
     writes it (`esize = 16 * sizeof(float) + 16`, zero padded)."""
     content = np.asarray(matrix, dtype="<f4").reshape(16).tobytes()
-    return nb.nifti1.Nifti1Extension(_NIFTI_ECODE_IGNORE, content + bytes(8))
+    return deps.nb.nifti1.Nifti1Extension(
+        _NIFTI_ECODE_IGNORE, content + bytes(8)
+    )
 
 
 # ----------------------------------------------------------------------
@@ -259,7 +264,9 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         `(X, Y, 1, 1, 2)` in particular -- is refused here, from the
         header alone.
         """
-        header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
+        header = (
+            nifti.header if isinstance(nifti, deps.nb.Nifti1Image) else nifti
+        )
         shape = _nifti_shape(header)
         if (
             shape is None
@@ -376,7 +383,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         like: tx.Any = None,
         extensions: tx.Sequence[np.ndarray] = (),
         **overrides,
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the NiftyReg NIfTI image of an `(X, Y, Z, 3)` array.
 
@@ -429,7 +436,7 @@ class NiftyRegDisplacementField(NiftyRegSequence):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the NIfTI image NiftyReg would write for this field.
 
@@ -472,7 +479,7 @@ class NiftyRegDeformationField(NiftyRegSequence):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the NIfTI image NiftyReg would write for this field: the
         displacements are turned back into positions.
@@ -589,7 +596,7 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the NIfTI image NiftyReg would write for this grid: the
         coefficients are turned back into control-point positions.
@@ -679,7 +686,7 @@ class NiftyRegVelocity(NiftyRegField):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the NIfTI image of the velocity, as it was read.
 
@@ -694,9 +701,9 @@ class NiftyRegVelocity(NiftyRegField):
             )
         header = self.header.copy()
         image_cls = (
-            nb.Nifti2Image
-            if isinstance(header, nb.Nifti2Header)
-            else nb.Nifti1Image
+            deps.nb.Nifti2Image
+            if isinstance(header, deps.nb.Nifti2Header)
+            else deps.nb.Nifti1Image
         )
         image = image_cls(self.data, None, header=header)
         _apply_like(image, like)

@@ -4,7 +4,6 @@ __all__ = ["X5Transform", "X5TransformParser"]
 from warnings import warn
 
 # dependencies
-import h5py
 import typing_extensions as tx
 
 # externals
@@ -18,7 +17,7 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.io.base._base import register_format
-from brainhops.io.base.hdf5 import Hdf5ParserWriter
+from brainhops.io.base.hdf5 import H5File, Hdf5ParserWriter, _is_h5
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
@@ -36,6 +35,9 @@ from ._struct import (
     read_x5,
     write_x5,
 )
+
+if tx.TYPE_CHECKING:
+    import h5py
 
 
 class X5TransformParser(
@@ -63,7 +65,7 @@ class X5TransformParser(
     if any. See `X5Transform.selection`.
     """
 
-    file: tx.Optional[h5py.File] = None
+    file: tx.Optional[H5File] = None
     """The open HDF5 file, when read with `keep_open=True`."""
 
     # --- sniff --------------------------------------------------------
@@ -71,7 +73,7 @@ class X5TransformParser(
     @classmethod
     def sniff_h5(
         cls,
-        h5file: h5py.File,
+        h5file: "h5py.File",
         error: tx.Union[bool, tx.Type[Exception]] = False,
     ) -> float:
         """Score an open HDF5 file: an X5 file says so in its root
@@ -89,7 +91,7 @@ class X5TransformParser(
     @classmethod
     def from_h5(
         cls,
-        h5file: h5py.File,
+        h5file: "h5py.File",
         keep_open: bool = False,
         load: bool = True,
         chain: tx.Optional[int] = None,
@@ -137,11 +139,11 @@ class X5TransformParser(
 
     # --- to -----------------------------------------------------------
 
-    def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
+    def _h5_writer(self, **kwargs) -> tx.Callable[["h5py.File"], None]:
         header, nodes = self.to_struct()
         return lambda h5file: write_x5(h5file, header, nodes)
 
-    def to_h5(self, h5file: h5py.File, **kwargs) -> None:
+    def to_h5(self, h5file: "h5py.File", **kwargs) -> None:
         """Write this transformation into an empty HDF5 file."""
         self._h5_writer(**kwargs)(h5file)
 
@@ -150,7 +152,7 @@ class X5TransformParser(
         return self.header, list(self.nodes)
 
     def _close(self) -> None:
-        if isinstance(self.file, h5py.File):
+        if _is_h5(self.file, "File"):
             self.file.close()
 
     def __del__(self) -> None:

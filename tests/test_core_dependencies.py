@@ -6,7 +6,7 @@ import importlib.util
 from typing import Iterator
 
 import pytest
-from test_import_time import _modules_after
+from test_import_time import _modules_after, _run
 
 from brainhops._core import dependencies as deps
 
@@ -132,3 +132,42 @@ def test_dask_array_needs_its_extra(
     monkeypatch.setattr(deps, "_has_extra", lambda *_: False)
     assert deps.HAS_DASK_ARRAY is False
     assert deps.HAS_DASK_NDIMAGE is False
+
+
+def test_lazy_type_imports_when_used() -> None:
+    code = (
+        "import sys\n"
+        "from brainhops._core import dependencies as deps\n"
+        "Fraction = deps.lazy_type('fractions:Fraction')\n"
+        "print('fractions' in sys.modules)\n"
+        "print(isinstance(Fraction(1, 2), Fraction))\n"
+        "print(isinstance(0.5, Fraction), repr(Fraction))\n"
+    )
+    out = _run(code).split()
+    assert out == ["False", "True", "False", "fractions.Fraction"]
+    assert deps.lazy_type("fractions:Fraction") is deps.lazy_type(
+        "fractions:Fraction"
+    )
+
+
+def test_has_abczarr_driver_does_not_import() -> None:
+    modules = _modules_after(
+        "from brainhops._core import dependencies as deps\n"
+        "deps.has_abczarr_driver()\n"
+    )
+    assert "abczarr" not in modules
+    assert "zarr" not in modules
+
+
+def test_has_abczarr_driver_agrees_with_abczarr() -> None:
+    # Told from the installed backends before abczarr is imported, and
+    # asked of abczarr after.
+    pytest.importorskip("abczarr")
+    code = (
+        "from brainhops._core import dependencies as deps\n"
+        "print(deps.has_abczarr_driver())\n"
+        "import abczarr\n"
+        "print(deps.has_abczarr_driver())\n"
+    )
+    before, after = _run(code).split()
+    assert before == after

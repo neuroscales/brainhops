@@ -1,10 +1,9 @@
 # dependencies
 import typing_extensions as tx
-from abczarr import ZarrGroup, ZarrNode, open_group
-from abczarr.ome.v0_6.images import Multiscale
 from bagof.magic import replace
 
 # internals
+from brainhops._core import dependencies as deps
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 
@@ -45,6 +44,14 @@ from brainhops.io.images.zarr._ome import (
 from brainhops.io.transformations.zarr import _map
 
 from ._image import ZarrImage
+
+# abczarr is imported where it is used: this format is imported to sniff
+# any file.
+if tx.TYPE_CHECKING:
+    from abczarr import ZarrGroup, ZarrNode
+    from abczarr.ome.v0_6.images import Multiscale
+
+_Multiscale = deps.lazy_type("abczarr.ome.v0_6.images:Multiscale")
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
@@ -103,18 +110,18 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     ] = None
 
     _ome: tx.Annotated[
-        tx.Optional[Multiscale],
+        tx.Optional[_Multiscale],
         tx.Doc("The OME multiscale metadata, normalized to 0.6."),
     ] = None
 
     # ---- properties --------------------------------------------------
 
     @property
-    def node(self) -> ZarrGroup:
+    def node(self) -> "ZarrGroup":
         return getattr(self, "_node", None)
 
     @node.setter
-    def node(self, value: ZarrGroup) -> None:
+    def node(self, value: "ZarrGroup") -> None:
         self._node = value
         # Everything derived from the node is dropped, so a new node is read
         # afresh. `smartproperty` caches under `_cache_<name>`.
@@ -137,7 +144,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         return getattr(self, "_axes", None)
 
     @smartproperty
-    def ome(self) -> tx.Optional[Multiscale]:
+    def ome(self) -> "tx.Optional[Multiscale]":
         # The multiscale itself, not the OME block that holds it: this is
         # what `multiscale_axes` and the rest of `_ome` take.
         return self._layout["multiscale"]
@@ -204,7 +211,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
 
     def _read_layout(self) -> tx.Dict[str, tx.Any]:
         node = self.node
-        if not isinstance(node, ZarrGroup):
+        if not isinstance(node, deps.abczarr.ZarrGroup):
             raise OmeImageError(
                 "This Zarr store is an array, not a group, so it cannot be "
                 "read as a multiscale image."
@@ -312,12 +319,12 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         }
 
     @classmethod
-    def _score_store(cls, node: ZarrNode) -> float:
+    def _score_store(cls, node: "ZarrNode") -> float:
         # An OME-Zarr image is a group that carries multiscale metadata. A
         # plain array is left to the single-scale reader. The raw attributes
         # are inspected, so a malformed pyramid is still recognized here and
         # reported by the reader rather than passed over.
-        if not isinstance(node, ZarrGroup):
+        if not isinstance(node, deps.abczarr.ZarrGroup):
             return Confidence.NO
         if not looks_like_multiscale(node):
             return Confidence.NO
@@ -332,7 +339,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     ) -> None:
         """Write the pyramid into an opened Zarr group, and return it."""
         node = _as_node(node)
-        if not isinstance(node, ZarrGroup):
+        if not isinstance(node, deps.abczarr.ZarrGroup):
             raise WriterError(
                 "A multiscale image is written into a group, not a plain "
                 "array."
@@ -428,7 +435,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         """
         node = _as_node(location)
         if node is None:
-            node = open_group(location, mode="w")
+            node = deps.abczarr.open_group(location, mode="w")
         self.to_node(node, chunks=chunks, version=version, **kwargs)
 
     def _write_axes(self, ndim: int) -> tx.List[Axis]:

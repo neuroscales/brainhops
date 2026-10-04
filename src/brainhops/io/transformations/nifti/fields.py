@@ -6,7 +6,6 @@ the package docstring, [`brainhops.io.transformations.nifti`][].
 """
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.hints.array import ArrayProtocol
@@ -47,6 +46,9 @@ from brainhops.io.transformations.base.fields import (
     split_ras_displacement_chain,
 )
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+
+if tx.TYPE_CHECKING:
+    import nibabel as nb
 
 _NDIM = 3
 """The number of spatial dimensions the displacement reader supports."""
@@ -126,7 +128,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the `nibabel` image that encodes this field of RAS coordinates.
 
@@ -313,7 +315,7 @@ class NiftiRASDisplacementField(
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the `nibabel` image that encodes this field of displacements.
 

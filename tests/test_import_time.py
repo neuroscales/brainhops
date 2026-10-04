@@ -5,7 +5,8 @@ Importing the package, or asking the command line for help, should not
 import the optional I/O dependencies or the data model: they take
 seconds to import. Nor should importing `brainhops.io.images` or
 `brainhops.io.transformations`, whose formats are declared ahead of
-import and imported by the first `load`.
+import and imported by the first `load`. Nor should reading a file
+import the backends of the formats it is not.
 Each check runs in a fresh interpreter, since this one has imported
 everything by the time the tests run.
 """
@@ -18,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import typing_extensions as tx
 
 import brainhops
 
@@ -126,6 +128,34 @@ def test_dispatcher_finds_every_format_in_a_fresh_interpreter() -> None:
         f"print(type(FileBasedObject.load({str(path)!r})).__name__)\n"
     )
     assert _run(code).strip() == "TfmTransform"
+
+
+# The optional backends of the formats. Reading a file sniffs it with
+# every format, so every format module is imported, but a format must
+# import its backend only once the file turns out to be one of its own.
+# dask is not among them: `bagof.magic`, which the formats need, imports
+# it.
+_BACKENDS = ["abczarr", "h5py", "nibabel", "openslide", "PIL", "tifffile"]
+
+
+@pytest.mark.parametrize(
+    "call, name, needs",
+    [
+        ("load", "itk_affine3d.tfm", None),
+        ("sniff", "elastix/affine3d.txt", None),
+        ("load", "fsl/src.nii.gz", "nibabel"),
+        ("load", "itk_affine3d.h5", "h5py"),
+    ],
+)
+def test_reading_a_file_imports_only_its_backend(
+    call: str, name: str, needs: tx.Optional[str]
+) -> None:
+    path = _DATA / name
+    modules = _modules_after(
+        f"import brainhops.io\nbrainhops.io.{call}({str(path)!r})"
+    )
+    imported = modules.intersection(_BACKENDS)
+    assert imported == ({needs} if needs else set())
 
 
 def test_hint_of_a_missing_format_says_what_to_install() -> None:

@@ -11,11 +11,11 @@ from io import BytesIO
 from urllib.parse import urlsplit
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 
@@ -50,8 +50,15 @@ from brainhops.io.base.parsers import (
     preserve_position,
 )
 
-# typing
-_NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
+if tx.TYPE_CHECKING:
+    import nibabel as nb
+
+# typing: the nibabel classes, imported when first used (see
+# `dependencies.lazy_type`), so that sniffing a file that is not a NIfTI
+# does not import nibabel.
+_Nifti1Image = deps.lazy_type("nibabel:Nifti1Image")
+_Nifti1Header = deps.lazy_type("nibabel:Nifti1Header")
+_NiftiObject = tx.Union[_Nifti1Header, _Nifti1Image]
 
 
 # The axes of a NIfTI array, by position. They are the axes of its voxel
@@ -217,7 +224,7 @@ larger extent along any axis is written as NIfTI-2 instead.
 def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
     """The intent code of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, nb.Nifti1Image):
+        if isinstance(header, deps.nb.Nifti1Image):
             header = header.header
         return int(header["intent_code"])
     except Exception:
@@ -227,7 +234,7 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
 def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
     """The intent name of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, nb.Nifti1Image):
+        if isinstance(header, deps.nb.Nifti1Image):
             header = header.header
         return str(header.get_intent()[2])
     except Exception:
@@ -259,7 +266,7 @@ def _nifti_vector_field(data: ArrayProtocol) -> ArrayProtocol:
 def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
     """The data shape of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, nb.Nifti1Image):
+        if isinstance(header, deps.nb.Nifti1Image):
             header = header.header
         return tuple(int(d) for d in header.get_data_shape())
     except Exception:
@@ -278,7 +285,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     # --- NIfTI API ----------------------------------------------------
 
     image: tx.Annotated[
-        tx.Optional[nb.Nifti1Image],
+        tx.Optional[_Nifti1Image],
         tx.Doc(
             """
             The NIfTI image associated with this object.
@@ -291,7 +298,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     ] = None
 
     _header: tx.Annotated[
-        tx.Optional[nb.Nifti1Header],
+        tx.Optional[_Nifti1Header],
         tx.Doc(
             """
             The NIfTI header associated with this object.
@@ -307,7 +314,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     ] = None
 
     @property
-    def header(self) -> tx.Optional[nb.Nifti1Header]:
+    def header(self) -> "tx.Optional[nb.Nifti1Header]":
         """
         The NIfTI header associated with this object.
 
@@ -340,7 +347,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         return None
 
     @header.setter
-    def header(self, value: tx.Optional[nb.Nifti1Header]) -> None:
+    def header(self, value: "tx.Optional[nb.Nifti1Header]") -> None:
         self._header = value
 
     @property
@@ -430,7 +437,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                 obj = _nifti_from_stream(fileobj, **kwargs)
             except Exception:
                 f = open_compressed(fileobj)
-                read = nb.Nifti1Header.from_fileobj
+                read = deps.nb.Nifti1Header.from_fileobj
                 obj = read(f, **_accepted(read, kwargs))
         return cls.from_nibabel(obj)
 
@@ -443,15 +450,15 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """Build the object from an already-loaded `nibabel` header or
         image."""
-        if isinstance(nifti, nb.Nifti1Header):
+        if isinstance(nifti, deps.nb.Nifti1Header):
             return cls(header=nifti, **kwargs)
-        if isinstance(nifti, nb.Nifti1Image):
+        if isinstance(nifti, deps.nb.Nifti1Image):
             return cls(image=nifti, header=nifti.header, **kwargs)
         raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
 
     # --- FileParserWriter API -----------------------------------------
 
-    def to_nibabel(self, **kwargs) -> nb.Nifti1Image:
+    def to_nibabel(self, **kwargs) -> "nb.Nifti1Image":
         """
         Build the `nibabel` image that encodes this object.
 
@@ -523,7 +530,6 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
             return Confidence.NO
 
         # --- Version hint is provided, use appropriate nibabel class
-        NiftiHeader = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
         kwargs["error"] = error
         base_error = None
         try:
@@ -543,6 +549,7 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                 head = f.read(_NIFTI_HEADER_SIZES[version])
                 if not _has_nifti_magic(head, version):
                     raise ValueError(f"No NIfTI-{version} magic number")
+                NiftiHeader = getattr(deps.nb, _NIFTI_HEADERS[version])
                 if start is not None:
                     f.seek(start)
                 else:
@@ -585,11 +592,11 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         is then scored for how well it matches this particular format,
         as opposed to another kind of NIfTI-based format.
         """
-        if isinstance(nifti, nb.Nifti1Image):
+        if isinstance(nifti, deps.nb.Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
-        if isinstance(nifti, nb.Nifti2Header):
+        if isinstance(nifti, deps.nb.Nifti2Header):
             result = nifti["sizeof_hdr"] == 540
-        elif isinstance(nifti, nb.Nifti1Header):
+        elif isinstance(nifti, deps.nb.Nifti1Header):
             result = nifti["sizeof_hdr"] == 348
         else:
             result = False
@@ -672,9 +679,9 @@ def _is_local(file: path.FilenameLike) -> bool:
     return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
 
 
-# A NIfTI image or header class, by NIfTI version.
-_NIFTI_IMAGES = {1: nb.Nifti1Image, 2: nb.Nifti2Image}
-_NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
+# The name of a NIfTI image or header class of nibabel, by NIfTI version.
+_NIFTI_IMAGES = {1: "Nifti1Image", 2: "Nifti2Image"}
+_NIFTI_HEADERS = {1: "Nifti1Header", 2: "Nifti2Header"}
 
 
 def _tell(fileobj: tx.IO) -> tx.Optional[int]:
@@ -754,7 +761,7 @@ def _accepted(func: tx.Callable, kwargs: tx.Mapping[str, tx.Any]) -> dict:
 
 def _image_from_stream(
     image_class: type, fileobj: tx.BinaryIO, **kwargs
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
     """
     Build a NIfTI image from an open, uncompressed file object.
 
@@ -770,7 +777,7 @@ def _image_from_stream(
 
 
 def _image_to_stream(
-    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
+    image: "tx.Union[nb.Nifti1Image, nb.Nifti2Image]", fileobj: tx.BinaryIO
 ) -> None:
     """
     Write a NIfTI image to an open file object, uncompressed.
@@ -788,7 +795,7 @@ def _image_to_stream(
 
 def _nifti_from_stream(
     fileobj: tx.BinaryIO, **kwargs
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
     """
     Build a NIfTI-1 or NIfTI-2 image from an open, possibly gzipped, file
     object.
@@ -803,7 +810,7 @@ def _nifti_from_stream(
     reading the voxels, and `keep_file_open` has no effect on an open
     file object.
     """
-    image_class = _NIFTI_IMAGES[_nifti_version(fileobj)]
+    image_class = getattr(deps.nb, _NIFTI_IMAGES[_nifti_version(fileobj)])
     start = _tell(fileobj)
     try:
         return _image_from_stream(
@@ -817,7 +824,7 @@ def _nifti_from_stream(
 
 def _load_nifti(
     file: path.FilenameLike, **kwargs
-) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
     """
     Load a NIfTI image from a path, local or remote.
 
@@ -832,7 +839,7 @@ def _load_nifti(
     if _is_local(file):
         filename = str(path.Path(file))
         with open(filename, "rb") as f:
-            image_class = _NIFTI_IMAGES[_nifti_version(f)]
+            image_class = getattr(deps.nb, _NIFTI_IMAGES[_nifti_version(f)])
         read = image_class.from_filename
         return read(filename, **_accepted(read, kwargs))
     with path.Path(file).open("rb") as f:
@@ -842,18 +849,18 @@ def _load_nifti(
 
 def _load_nifti_header(
     file: path.FilenameLike,
-) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
+) -> "tx.Union[nb.Nifti1Header, nb.Nifti2Header]":
     """Read the header of a NIfTI file at a path, local or remote,
     without reading its voxels."""
     if _is_local(file):
         return _load_nifti(file).header
     with path.Path(file).open("rb") as f:
-        header_class = _NIFTI_HEADERS[_nifti_version(f)]
+        header_class = getattr(deps.nb, _NIFTI_HEADERS[_nifti_version(f)])
         return header_class.from_fileobj(open_compressed(f))
 
 
 def _save_nifti(
-    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
+    image: "tx.Union[nb.Nifti1Image, nb.Nifti2Image]", file: path.FilenameLike
 ) -> None:
     """
     Write a NIfTI image to a path, local or remote, gzipped when its name
@@ -879,7 +886,7 @@ def _save_nifti(
             _image_to_stream(image, f)
 
 
-def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
+def _nifti_to_axes(header: "nb.Nifti1Header") -> tx.List[Axis]:
     """
     Compute the axes of a NIfTI file, based on its header.
 
@@ -935,9 +942,9 @@ def _new_nifti(
     `WriterError` that names the dtype.
     """
     shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
-    image_cls = nb.Nifti1Image
+    image_cls = deps.nb.Nifti1Image
     if any(d > _NIFTI1_MAX_DIM for d in shape):
-        image_cls = nb.Nifti2Image
+        image_cls = deps.nb.Nifti2Image
     try:
         return image_cls(data, affine)
     except ValueError as error:
@@ -1148,7 +1155,7 @@ def _scale_spatial(matrix: np.ndarray, factor: float) -> np.ndarray:
     return scaled
 
 
-def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
+def _like_header(like: tx.Any) -> "tx.Optional[nb.Nifti1Header]":
     """
     Resolve a `like` template to the NIfTI header to copy fields from.
 
@@ -1158,9 +1165,9 @@ def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
     """
     if like is None:
         return None
-    if isinstance(like, (nb.Nifti1Header, nb.Nifti2Header)):
+    if isinstance(like, (deps.nb.Nifti1Header, deps.nb.Nifti2Header)):
         return like
-    if isinstance(like, (nb.Nifti1Image, nb.Nifti2Image)):
+    if isinstance(like, (deps.nb.Nifti1Image, deps.nb.Nifti2Image)):
         return like.header
     header = getattr(like, "header", None)
     if header is not None:
