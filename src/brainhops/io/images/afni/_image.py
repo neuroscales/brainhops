@@ -34,7 +34,7 @@ from brainhops.io.base.afni import (
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
-_SAMPLE = "sample"
+_INDEX = "index"
 _MM = "millimeter"
 _SPATIAL = ("x", "y", "z")
 _PHYSICAL = "physical"
@@ -108,12 +108,12 @@ def _afni_axes(header: AfniHeader) -> tx.List[Axis]:
     (one with a `TAXIS_NUMS` attribute); otherwise `brick`, which AFNI
     gives no meaning of its own (the statistics of a "bucket", ...).
     """
-    axes = [Axis(name, "space", unit=_SAMPLE) for name in _SPATIAL]
+    axes = [Axis(name, "space", unit=_INDEX) for name in _SPATIAL]
     if header.nvals > 1:
         if header.taxis is not None:
-            axes.append(Axis("t", "time", unit=_SAMPLE))
+            axes.append(Axis("t", "time", unit=_INDEX))
         else:
-            axes.append(Axis("brick", unit=_SAMPLE))
+            axes.append(Axis("brick", unit=_INDEX))
     return axes
 
 

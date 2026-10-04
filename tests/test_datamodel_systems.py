@@ -974,7 +974,7 @@ def test_compatible_refuses_a_non_system() -> None:
 # axes builds that class itself.
 
 MM = "mm"
-SAMPLE = "sample"
+SAMPLE = "index"
 
 
 def _ras(unit: tx.Optional[str] = None) -> list:

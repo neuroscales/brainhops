@@ -3,6 +3,12 @@
 Status: design only, no code. Relates to #54 (axes/units design) and #97
 (adopt `bagof.magic` polymorphism across the datamodel).
 
+> **Superseded by #289.** Units are now values backed by a private pint
+> registry (see `brainhops.datamodel.units`): one interned `Unit` per
+> unit, with `SpaceUnit`, `TimeUnit` and `IndexUnit` restricted to a
+> dimension, and `Unit["<dimension>"]` for any other. The memo below
+> describes the class-per-unit implementation that this replaced.
+
 This memo audits the current units implementation
 (`src/brainhops/datamodel/units.py`) and answers one question: does
 `bagof.magic` polymorphism -- or another restructuring -- improve it? It

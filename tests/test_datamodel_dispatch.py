@@ -20,7 +20,7 @@ from brainhops.datamodel.orientation import (
     Orientation,
     RightToLeft,
 )
-from brainhops.datamodel.units import MilliMeter, SampleUnit, Second
+from brainhops.datamodel.units import IndexUnit, Unit
 
 # ----------------------------------------------------------------------
 #   AXES
@@ -38,7 +38,7 @@ _ORIENTED = [
     [
         ({"type": "space"}, ax.SpaceAxis),
         ({"type": "space", "unit": "mm"}, ax.SpaceAxis),
-        ({"type": "space", "unit": "sample"}, ax.SpaceAxis),
+        ({"type": "space", "unit": "index"}, ax.SpaceAxis),
         ({"type": "time"}, ax.TimeAxis),
         ({"type": "time", "unit": "s"}, ax.TimeAxis),
         ({"type": "channel"}, ax.ChannelAxis),
@@ -102,10 +102,10 @@ def test_intermediate_axes_reach_their_subclasses(
 def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
     # An anatomical direction is a direction in space, so an axis that only
     # names one is spatial -- also when it counts samples (a voxel axis).
-    axis = ax.Axis(orientation=LeftToRight(), unit="sample")
+    axis = ax.Axis(orientation=LeftToRight(), unit="index")
     assert type(axis) is ax.LeftToRightAxis
     assert axis.type == "space"
-    assert isinstance(axis.unit, SampleUnit)
+    assert isinstance(axis.unit, IndexUnit)
 
 
 @pytest.mark.parametrize(
@@ -115,8 +115,8 @@ def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
         lambda: ax.SpaceAxis(unit="s"),
         lambda: ax.Axis(type="time", unit="mm"),
         lambda: ax.TimeAxis(unit="mm"),
-        lambda: ax.SpaceAxis(unit=Second()),
-        lambda: ax.TimeAxis(unit=MilliMeter()),
+        lambda: ax.SpaceAxis(unit=Unit("s")),
+        lambda: ax.TimeAxis(unit=Unit("mm")),
         lambda: ax.SpaceAxis(type="time"),
         lambda: ax.ChannelAxis(type="space"),
         lambda: ax.LeftToRightAxis(orientation=RightToLeft()),
@@ -184,16 +184,16 @@ def _oriented(code: str, unit: object = None) -> list:
         (_space(2), cs.SpatialCoordinateSystem2D),
         (_space(3), cs.SpatialCoordinateSystem3D),
         (_space(4), cs.SpatialCoordinateSystem),
-        (_plain(2, "sample"), cs.ArrayCoordinateSystem2D),
-        (_plain(3, "sample"), cs.ArrayCoordinateSystem3D),
-        (_space(2, "sample"), cs.PixelCoordinateSystem),
-        (_space(3, "sample"), cs.VoxelCoordinateSystem),
+        (_plain(2, "index"), cs.ArrayCoordinateSystem2D),
+        (_plain(3, "index"), cs.ArrayCoordinateSystem3D),
+        (_space(2, "index"), cs.PixelCoordinateSystem),
+        (_space(3, "index"), cs.VoxelCoordinateSystem),
         (_oriented("RAS"), cs.RASCoordinateSystem),
         (_oriented("LPS"), cs.LPSCoordinateSystem),
         (_oriented("RSA"), cs.RSACoordinateSystem),
         # An anatomical system says nothing about the metric: sampled axes
         # pointing R, A, S are still an RAS system.
-        (_oriented("RAS", "sample"), cs.RASCoordinateSystem),
+        (_oriented("RAS", "index"), cs.RASCoordinateSystem),
         (_oriented("RAS", "mm"), cs.RASmm),
         (_oriented("LPS", "mm"), cs.LPSmm),
         (_oriented("RSA", "mm"), cs.RSAmm),
@@ -212,7 +212,7 @@ def test_the_root_reaches_every_generic_system(
         (cs.CoordinateSystem2D, _space(2), cs.SpatialCoordinateSystem2D),
         (
             cs.CoordinateSystem2D,
-            _plain(2, "sample"),
+            _plain(2, "index"),
             cs.ArrayCoordinateSystem2D,
         ),
         (cs.CoordinateSystem3D, _oriented("RAS", "mm"), cs.RASmm),
@@ -220,7 +220,7 @@ def test_the_root_reaches_every_generic_system(
         (cs.SpatialCoordinateSystem, _oriented("LPS"), cs.LPSCoordinateSystem),
         (
             cs.SpatialCoordinateSystem3D,
-            _space(3, "sample"),
+            _space(3, "index"),
             cs.VoxelCoordinateSystem,
         ),
         (cs.SpatialCoordinateSystem3D, _oriented("RSA", "mm"), cs.RSAmm),
@@ -231,12 +231,12 @@ def test_the_root_reaches_every_generic_system(
         (cs.ArrayCoordinateSystem, _plain(3), cs.ArrayCoordinateSystem3D),
         (
             cs.ArrayCoordinateSystem2D,
-            _space(2, "sample"),
+            _space(2, "index"),
             cs.PixelCoordinateSystem,
         ),
         (
             cs.ArrayCoordinateSystem3D,
-            _space(3, "sample"),
+            _space(3, "index"),
             cs.VoxelCoordinateSystem,
         ),
         # An ordered base reaches the classes of its order on the axes
@@ -310,7 +310,7 @@ def test_every_system_builds_itself_by_default(name: str) -> None:
 )
 def test_array_systems_count_samples_by_default(name: str) -> None:
     system = getattr(cs, name)()
-    assert all(isinstance(axis.unit, SampleUnit) for axis in system.axes)
+    assert all(isinstance(axis.unit, IndexUnit) for axis in system.axes)
 
 
 def test_ras_dispatch_follows_the_orientations() -> None:
@@ -330,12 +330,12 @@ def test_a_physical_system_needs_physical_axes() -> None:
     assert cs.PhysicalCoordinateSystem(axes=[]).ndim == 0
     # It never counts samples.
     with pytest.raises(ValueError, match="counts samples"):
-        cs.PhysicalCoordinateSystem(axes=_oriented("RAS", "sample"))
+        cs.PhysicalCoordinateSystem(axes=_oriented("RAS", "index"))
     # The millimetre systems are in millimetres, and nothing else.
     with pytest.raises(ValueError, match="in millimetres"):
         cs.RASmm(axes=_oriented("RAS"))
     with pytest.raises(ValueError, match="counts samples"):
-        cs.RASmm(axes=_oriented("RAS", "sample"))
+        cs.RASmm(axes=_oriented("RAS", "index"))
 
 
 def test_no_system_is_ambiguous() -> None:
@@ -345,12 +345,12 @@ def test_no_system_is_ambiguous() -> None:
         _plain(3),
         _space(2),
         _space(3),
-        _plain(2, "sample"),
-        _plain(3, "sample"),
-        _space(2, "sample"),
-        _space(3, "sample"),
+        _plain(2, "index"),
+        _plain(3, "index"),
+        _space(2, "index"),
+        _space(3, "index"),
         _space(3, "mm"),
-        _oriented("RAS", "sample"),
+        _oriented("RAS", "index"),
         _oriented("SAR"),
         _oriented("RAS", "mm"),
     ]
@@ -523,7 +523,7 @@ def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
         (cs.CoordinateSystem, _oriented("RAS"), "F", cs.FRASCoordinateSystem),
         (
             cs.CoordinateSystem,
-            _oriented("SPL", "sample"),
+            _oriented("SPL", "index"),
             "C",
             cs.CLPSCoordinateSystem,
         ),
@@ -548,11 +548,11 @@ def test_the_order_and_the_axes_select_the_class(
         (cs.ArrayCoordinateSystem, _plain(3), cs.ArrayCoordinateSystem3D),
         (cs.ArrayCoordinateSystem, [ax.Axis(), ...], cs.ArrayCoordinateSystem),
         (cs.ArrayCoordinateSystem, _plain(4), cs.ArrayCoordinateSystem),
-        (cs.CoordinateSystem, _space(3, "sample"), cs.VoxelCoordinateSystem),
-        (cs.CoordinateSystem, _space(2, "sample"), cs.PixelCoordinateSystem),
+        (cs.CoordinateSystem, _space(3, "index"), cs.VoxelCoordinateSystem),
+        (cs.CoordinateSystem, _space(2, "index"), cs.PixelCoordinateSystem),
         (
             cs.CoordinateSystem,
-            _oriented("RAS", "sample"),
+            _oriented("RAS", "index"),
             cs.RASCoordinateSystem,
         ),
     ],
@@ -586,13 +586,13 @@ def test_no_ordered_call_is_ambiguous() -> None:
         _plain(4),
         _space(2),
         _space(3),
-        _space(2, "sample"),
-        _space(3, "sample"),
+        _space(2, "index"),
+        _space(3, "index"),
         _oriented("RAS"),
-        _oriented("RAS", "sample"),
-        _oriented("SAR", "sample"),
+        _oriented("RAS", "index"),
+        _oriented("SAR", "index"),
         _oriented("LPS"),
-        _oriented("RSA", "sample"),
+        _oriented("RSA", "index"),
         [ax.Axis(), ...],
     ]
     roots = [

@@ -101,7 +101,7 @@ from bagof.magic import ConvertTo, fields, replace
 from . import axes as _axes
 from .axes import Axis, SpaceAxis
 from .base import DataModelBase
-from .units import Unit, is_physicalunit, is_sampleunit
+from .units import Unit, is_indexunit, is_physicalunit
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
@@ -112,7 +112,7 @@ AXIS = tx.TypeVar("AXIS")
 AXES = tx.TypeVarTuple("AXES")
 # The type of each item of an `AxisTuple`, in order.
 
-_SAMPLE = "sample"
+_INDEX = "index"
 
 
 class AxisSequence(tx.Sequence[AXIS]):
@@ -1000,9 +1000,9 @@ def _all(
 
 
 _is_spatial = _all(lambda axis: axis.type == "space", "_is_spatial")
-_is_array = _all(lambda axis: is_sampleunit(axis.unit), "_is_array")
+_is_array = _all(lambda axis: is_indexunit(axis.unit), "_is_array")
 _MILLIMETRE = Unit("mm")
-_is_mm = _all(lambda axis: axis.unit is _MILLIMETRE, "_is_mm")
+_is_mm = _all(lambda axis: axis.unit == _MILLIMETRE, "_is_mm")
 
 
 def _both(
@@ -1398,7 +1398,7 @@ class PhysicalCoordinateSystem(CoordinateSystem):
 
     Every axis it states is measured in a physical unit, or in a unit not
     yet specified (`None`): a millimetre or a second, never
-    [`SampleUnit`][], which says the coordinates count the samples of an
+    [`IndexUnit`][], which says the coordinates count the samples of an
     array. So reversing one of its axes is a sign flip, never the origin
     shift a sampled axis needs, and a conversion factor to another
     physical system of the same kind exists as soon as the units are all
@@ -1407,7 +1407,7 @@ class PhysicalCoordinateSystem(CoordinateSystem):
     The unit of an axis is of the kind its axis measures: a spatial axis
     takes a unit of space and a time axis a unit of time. The type of the
     axis already enforces that -- `SpaceAxis(unit="s")` is refused -- so
-    this class only refuses the sample.
+    this class only refuses the index units.
 
     It may be open, and its units may be unspecified, since neither says
     anything non-physical: `...` stands for axes about which nothing is
@@ -1447,9 +1447,9 @@ class PhysicalCoordinateSystem(CoordinateSystem):
             if unit is None or is_physicalunit(unit):
                 continue
             what = (
-                "counts samples (its unit is `'sample'`), which says it "
+                f"counts samples (its unit is {unit!r}), which says it "
                 "indexes an array"
-                if is_sampleunit(unit)
+                if is_indexunit(unit)
                 else f"carries {unit!r}, which measures nothing"
             )
             raise ValueError(
@@ -1469,7 +1469,7 @@ class ArrayCoordinateSystem(CoordinateSystem):
     """A coordinate system for a multidimensional array.
 
     Its coordinates count samples, so the axes it builds by default carry
-    the sample unit (see [`SampleUnit`][]). Its `order` is the memory
+    the index unit (see [`IndexUnit`][]). Its `order` is the memory
     order of the array, `None` when it is not specified: an
     `ArrayCoordinateSystem` says nothing about it.
 
@@ -1505,7 +1505,7 @@ class FArrayCoordinateSystem(ArrayCoordinateSystem, on={"order": "F"}):
 
 
 def _dim(i: int) -> Axis:
-    return Axis(f"dim{i}", unit=_SAMPLE)
+    return Axis(f"dim{i}", unit=_INDEX)
 
 
 # `ArrayCoordinateSystem` is not a dispatch target, so a class statement
@@ -1607,7 +1607,7 @@ class SpatialCoordinateSystem3D(
 
 
 def _space(name: str) -> SpaceAxis:
-    return SpaceAxis(name=name, unit=_SAMPLE)
+    return SpaceAxis(name=name, unit=_INDEX)
 
 
 class PixelCoordinateSystem(
@@ -1766,7 +1766,7 @@ class _Millimetres(PhysicalCoordinateSystem):
     def __post_init__(self) -> None:
         super().__post_init__()
         for axis in self.axes:
-            if axis is ... or axis.unit is _MILLIMETRE:
+            if axis is ... or axis.unit == _MILLIMETRE:
                 continue
             name = type(self).__name__
             raise ValueError(
@@ -1846,7 +1846,7 @@ class RSAmm(
 
 
 def _sampled(axis: tx.Type[Axis], name: str) -> Axis:
-    return axis(name=name, unit=_SAMPLE)
+    return axis(name=name, unit=_INDEX)
 
 
 class FRASCoordinateSystem(RASCoordinateSystem, FVoxelCoordinateSystem):

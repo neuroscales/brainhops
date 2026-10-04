@@ -147,7 +147,7 @@ _DPI_TOLERANCE = 1e-3
 # 72.009 (2835 pixels per metre). A resolution this close to a placeholder,
 # relatively, is the placeholder.
 
-_SAMPLE = "sample"
+_INDEX = "index"
 # The unit of an axis that counts samples, i.e. an array axis.
 
 AxisScale = tx.Tuple[float, tx.Optional[tx.Union[str, Unit]]]
@@ -197,7 +197,7 @@ def storage_axes(codes: _AxesLike) -> tx.List[Axis]:
     time, `C` (channels) and `S` (samples per pixel, such as the RGB
     components of a pixel) are channel axes. Any other letter is an axis
     of unknown type, named after the letter in lower case. Every axis
-    counts samples: its unit is the sample.
+    counts samples: its unit is the index unit.
 
     The channel axis is named `"c"`. When a file has both a `C` and an
     `S` axis, the `S` axis is named `"s"`. A name that would repeat is
@@ -236,7 +236,7 @@ def storage_axes(codes: _AxesLike) -> tx.List[Axis]:
         seen[name] = count + 1
         if count:
             name = f"{name}{count}"
-        axes.append(Axis(name, type_, unit=_SAMPLE))
+        axes.append(Axis(name, type_, unit=_INDEX))
     return axes
 
 
@@ -426,13 +426,13 @@ def default_axes(ndim: int, channel: bool = False) -> tx.List[Axis]:
     """
     if channel and ndim >= 1:
         others = default_axes(ndim - 1)
-        return others + [Axis("c", "channel", unit=_SAMPLE)]
+        return others + [Axis("c", "channel", unit=_INDEX)]
     names = [("x", "space"), ("y", "space"), ("z", "space")]
     names += [("t", "time"), ("c", "channel")]
     axes = [
-        Axis(*names[i], unit=_SAMPLE)
+        Axis(*names[i], unit=_INDEX)
         if i < len(names)
-        else Axis(f"dim{i}", unit=_SAMPLE)
+        else Axis(f"dim{i}", unit=_INDEX)
         for i in range(ndim)
     ]
     return axes
@@ -475,7 +475,7 @@ def pixel_system(axes: tx.Sequence[Axis]) -> CoordinateSystem:
     first). It is named `"pixel"` when the raster has two spatial axes, and
     `"voxel"` otherwise, as a NIfTI image's index space is.
     """
-    axes = [replace(axis, unit=_SAMPLE) for axis in axes]
+    axes = [replace(axis, unit=_INDEX) for axis in axes]
     name = "pixel" if len(spatial_axes(axes)) == 2 else "voxel"
     return CoordinateSystem(name=name, axes=axes, order="F")
 

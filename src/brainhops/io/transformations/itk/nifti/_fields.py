@@ -113,7 +113,7 @@ def _voxel_system(ndim: int) -> _systems.CoordinateSystem:
     Its axes are spatial and count samples, so the system is a
     `PixelCoordinateSystem` in 2-D and a `VoxelCoordinateSystem` in 3-D.
     """
-    axes = [SpaceAxis(name=f"dim{i}", unit="sample") for i in range(ndim)]
+    axes = [SpaceAxis(name=f"dim{i}", unit="index") for i in range(ndim)]
     return _systems.CoordinateSystem(axes=axes)
 
 

@@ -54,7 +54,7 @@ def _name(struct: LtaStruct.VolumeInfo) -> tx.Dict[str, str]:
 
 # A voxel space counts samples; the scaled and physical spaces are in
 # millimetres.
-_SAMPLE = "sample"
+_INDEX = "index"
 _MM = "mm"
 
 
@@ -90,7 +90,7 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (unscaled) of a volume (source or destination)."""
 
     name: tx.Optional[str] = "voxel"
-    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_SAMPLE)
+    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_INDEX)
     struct: tx.Optional[LtaStruct.VolumeInfo] = None
 
     @classmethod
@@ -103,7 +103,7 @@ class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
         return cls(
             **_name(struct),
             axes=_make_axes(
-                names, unit=_SAMPLE, orientation=_get_orient(struct)
+                names, unit=_INDEX, orientation=_get_orient(struct)
             ),
             struct=struct,
         )

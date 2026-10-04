@@ -17,7 +17,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Transformation,
 )
-from brainhops.datamodel.units import Unit
+from brainhops.datamodel.units import Unit, is_indexunit
 from brainhops.io.base._base import register_format
 from brainhops.io.base._geometry import RAS_FROM_ORIENTATION, reduce_to_affine
 from brainhops.io.base.nrrd import (
@@ -34,7 +34,7 @@ from brainhops.io.base.nrrd import (
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
 
-_SAMPLE = "sample"
+_INDEX = "index"
 
 _CHANNEL_KINDS = frozenset(
     (
@@ -171,13 +171,13 @@ def _axes(roles: tx.Sequence[str], perm: tx.Sequence[int]) -> tx.List[Axis]:
         if role == "space":
             name = "xyz"[nspace] if nspace < 3 else f"dim{i}"
             nspace += 1
-            axes.append(Axis(name, "space", unit=_SAMPLE))
+            axes.append(Axis(name, "space", unit=_INDEX))
         elif role in ("time", "channel"):
             name = role[0] if role not in seen else f"dim{i}"
             seen.add(role)
-            axes.append(Axis(name, role, unit=_SAMPLE))
+            axes.append(Axis(name, role, unit=_INDEX))
         else:
-            axes.append(Axis(f"dim{i}", unit=_SAMPLE))
+            axes.append(Axis(f"dim{i}", unit=_INDEX))
     return axes
 
 
@@ -206,7 +206,7 @@ def _with_unit(axis: Axis, unit: tx.Optional[str]) -> Axis:
 def _unit_symbol(axis: tx.Any) -> str:
     """The NRRD spelling of an axis' unit (`""` when it has none)."""
     unit = getattr(axis, "unit", None)
-    if unit is None or getattr(unit, "name", None) in (None, _SAMPLE):
+    if unit is None or is_indexunit(unit):
         return ""
     try:
         return unit.symbol
