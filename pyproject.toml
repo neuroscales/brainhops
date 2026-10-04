@@ -16,6 +16,10 @@ dependencies = [
     # it inherits, which the axes and coordinate systems rely on.
     "bagof-magic >= 0.3.dev0",
     "bagof-paths >= 0.2",
+    # Units are parsed by pint, imported on first use. 0.21.1 is the last
+    # release for Python 3.8; 0.24 is the first to support numpy 2.
+    "pint >= 0.21; python_version < '3.9'",
+    "pint >= 0.24; python_version >= '3.9'",
 ]
 dynamic = ["version"]
 
