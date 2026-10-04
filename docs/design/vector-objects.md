@@ -64,7 +64,7 @@ format. This memo uses the names in the first column.
 of variable-length lists as two flat arrays: the members of every list
 end to end, and the start of each list. TRX `offsets`, nibabel's
 `ArraySequence`, VTK's `connectivity` + `offsets` and zarr-vectors'
-fragment ranges are all this layout. Labels (§2.3) generalise it to nd:
+fragment ranges are all this layout. `Ragged` (§2.3) generalises it to nd:
 a start nd-index and an nd extent per label.
 
 ---
@@ -110,16 +110,19 @@ vertices as a transformation would leak all of that.
 Shapes are written as tuples of named groups: `(*A, D)` is "the array
 axes `A`, then `D` components". `X[fields]` means a structured
 alternative with one field per entry, used wherever columns may have
-different dtypes (§2.6).
+different dtypes (§2.7).
 
 ### 2.1 Overview
 
 ```
 Vectors[E]
-├── vertices: Vertices          the points, on nd array axes
-├── labels: {name: Labels}      nd relations over vertices or over other labels:
+├── vertices: Vertices          the points, on nd array axes (data may be a Ragged)
+├── labels: {name: Labels}      Ragged relations over vertices or other labels:
 │                                 elements (E), fragments, objects, groups, …
 └── transformations: [...]      native -> world, last preferred
+
+Ragged                          structure: content, axes, members, starts, lengths
+└── Labels(Ragged)              meaning: ordered, directed, exclusive, atomic, names, attributes
 ```
 
 | Class | Elements | Typical use |
@@ -149,11 +152,12 @@ onto `Points`, `Graphs` and `Polylines`.
 
 ```
 class Vertices(Magic):
-    data:        (*A, D) | (*A,)[components]   explicit coordinates
+    data:        (*A, D) | (*A,)[components] | Ragged   explicit coordinates
     axes:        AxisList, len(A)              one per array axis: raster or index
     components:  AxisList, D                   one per explicit coordinate
     attributes:  (*A, AV) | (*A,)[fields]      optional
     valid:       (*A,) bool | lengths          optional, for padded layouts
+    ids:         (*A,) | None                  optional keys on the index axes (§2.4)
 
     system   -> CoordinateSystem(raster axes of `axes` + components)
     ncomponents -> D
@@ -170,16 +174,17 @@ Each **array axis** is one of:
   coordinate. This needs a new axis type, `IndexAxis` (`type="index"`),
   which is never part of a coordinate system. The usual `(N,)` axis of a
   point list is one, and so is a chunk-grid axis of a store whose
-  vertices carry their full position (§2.7, example K).
+  vertices carry their full position (§2.8, example K).
 
 The **native coordinate system** is the raster axes (in array order)
 followed by the components. Transformations take it as input. A plain
 point cloud has no raster axis, so its system is just the components,
 as before.
 
-**Padding.** nd layouts are often ragged: a different number of cells
-per frame, of points per slice or per chunk. They are padded, and
-`valid` says which entries exist: either a boolean mask of shape `(*A,)`,
+**Ragged axes.** nd layouts are often ragged: a different number of
+cells per frame, of points per slice or per chunk. They are either
+packed, `data` being a `Ragged` (§2.3, §2.9), or padded, with `valid`
+saying which entries exist: either a boolean mask of shape `(*A,)`,
 or `lengths` of shape `(*A[:-1],)`, the number of valid entries along the
 last array axis (the compact form for "padded at the end", which is what
 per-chunk stores produce). Invalid vertices are never inside a region,
@@ -188,175 +193,246 @@ never moved, and never members of an element or label.
 **Components and attributes** may be a homogeneous array (`(*A, D)`,
 the common, fast case) or structured (one field per component, for
 mixed dtypes such as a categorical coordinate stored as integer codes;
-§2.6).
+§2.7).
 
-### 2.3 `Labels`: one relation for elements, fragments, objects, groups
+### 2.3 `Ragged`: nd ragged and indexed arrays
 
-Everything above the vertices is the same kind of thing: a **label** is
-a set of members of a lower level, possibly ordered. An element is a
-label of `E` vertices; a fragment is a label of vertices; an object is a
-label of fragments; a group is a label of objects. They differ only in
-how their members are stored and in a few flags, so one class defines
-them all.
+One structural class carries every ragged or indirect layout in the
+model: the vertices of a variable number of cells per frame, the
+vertices of each streamline, the corners of each triangle, the fragments
+of each object. It is a ladder of four ideas, each a special case of the
+next:
+
+| Step | Adds | Example |
+|---|---|---|
+| list array | one ragged axis of contiguous runs, `offsets` | nibabel `ArraySequence`, TRX |
+| nd boxes | runs over several content axes at once: `starts` + `lengths` per box | a track `(0, n) + (T, 1)` over `(t, n)` |
+| nesting | `content` may itself be a `Ragged` | groups → objects → fragments → vertices |
+| indirection | `members`: nd indices into `content`, which may reorder, repeat or skip | shared vertices, zarr-vectors explicit fragments |
+| fixed width | every run has the same length `W`: only `members` is stored | triangles `(M, 3)` |
+
+(These are awkward-array's `ListOffsetArray`, `ListArray`, nested
+layouts, `IndexedArray` and `RegularArray`, arrived at independently.)
 
 ```
-class Labels(Magic, Generic[T]):
-    of:          str = "vertices"        what is labelled
-    axes:        names of the target axes the member indices address
-    batch:       names of the target free axes that G lines up with = ()
-    own_axes:    names of the label axes L = ("label",)
+class Ragged(Magic):
+    content:   ArrayProtocol | Ragged | None   what is indexed (bound later if None)
+    axes:      names of the content axes the indices address
+    batch:     names of the content free axes that G lines up with = ()
+    own_axes:  names of this object's own axes L = ("label",)
 
-    # members, in one of three forms (below)
-    members:     dense: (*G, *L, W[, len(axes)]) | boxed: (*K[, len(axes)]) | None
-    indices:     boxed only: (*G, *L[, ndim(members)])  start of each label
-    lengths:     boxed only: (*G, *L[, ndim(members)])  extent; optional iff ndim(members) == 1
+    members:   (*K, [len(axes)]) | (*G, *L, W, [len(axes)]) | None
+    starts:    (*G, *L, [ndim(members)]) | None
+    lengths:   (*G, *L, [ndim(members)]) | None
+    valid:     (*G, *L) bool | lengths (*G, *L[:-1]) | None
 
+    offsets  -> starts + lengths written as (P + 1,), when 1-D and tiling
+```
+
+**Forms.** Which fields are set decides the form:
+
+| Form | Fields | Item `p` is | Logical shape |
+|---|---|---|---|
+| implicit | none (a subclass generates them) | generated | depends on the subclass |
+| fixed width | `members (*G, *L, W, ...)` | `content[members[p]]`, `W` items | `(*G, *L, W, *inner)` |
+| boxed | `starts`, `lengths`, optional `members (*K, ...)` | `members[starts[p] : starts[p] + lengths[p]]`, an nd box read in C order | `(*G, *L, None, ..., *inner)` |
+
+- `members = None` means the identity over `axes`: boxes are taken
+  directly in the content's index space, so `ndim(members) = len(axes)`.
+  With `members` given, `ndim(members) = len(K)`.
+- **`starts` + `lengths` is the canonical nd form.** `offsets` is the
+  compact special case of 1-D runs that tile `members` in order (TRX,
+  nibabel, VTK): `starts = offsets[:-1]`, `lengths = diff(offsets)`. It
+  is accepted on construction and returned by `.offsets` when it applies.
+  `lengths` may only be omitted in that case.
+- `inner` are the content axes not in `axes` that are not lined up by
+  `batch`: they come along with every member (the `D` components of a
+  vertex, for instance).
+- **Indices are logical and nd, never linearised.** Each member reference
+  is an nd index over `axes`; the trailing index dimension is present
+  only when `len(axes) > 1`, so the common cases stay `(M, 3)` and
+  `(P,)`. With a structured dtype the fields are named after `axes`.
+  When `content` is itself ragged, its ragged axes are addressed by their
+  logical index, so a reference into it is a `(row, position)` pair.
+- **Batch axes.** The content axes *not* in `axes` are free. `batch`
+  names the free axes that the leading `G` dimensions line up with, one
+  to one and by name; the others (and size-1 `G` dimensions) are shared.
+  One `(M, 3)` triangle array with `batch = ()` serves every frame of a
+  `(T, N, 3)` series; a `(Z, M, 2)` edge array with `batch = ("z",)`
+  gives every slice its own edges. A reference that crosses frames lists
+  the raster axis in `axes`: `[[t, n], [t + 1, m]]` over `("t", "n")`.
+  In the boxed form `members` carries no batch axes (open question 7).
+
+**Array behaviour.** With `content` bound, a `Ragged` is array-like:
+
+```python
+r.shape  # logical, with None for ragged axes: (P, None, 3)
+r[p]  # the content items of entry p, e.g. a (L_p, 3) array
+r[2:5], r[mask]  # a smaller Ragged over the same content
+r.members[p]  # the indices of entry p, not their content
+r.lengths, r.offsets  # structure
+r.pad(fill=nan)  # (P, Lmax, 3) + valid; r.pack() goes back
+r.reduce("mean")  # one value per entry (segment reduction)
+np.asarray(r)  # gathered content; padded if ragged
+```
+
+Without `content`, it is a purely structural object (for instance inside
+a reader, before the vertices are loaded); value access then raises.
+The same operations work on numpy, cupy and dask contents (§2.9).
+
+### 2.4 `Labels(Ragged)`: meaning on top of structure
+
+A label is a `Ragged` whose entries mean something: an element, a
+fragment, an object, a group. `Labels` adds only that meaning:
+
+```
+class Labels(Ragged):
+    of:          str = "vertices"   name of the content inside a Vectors
     ordered:     bool = False
     directed:    bool = False
     exclusive:   bool = False
     atomic:      bool = False
     names:       (*L,) | None
     attributes:  (*G, *L, A) | (*G, *L)[fields]   optional
-    valid:       (*G, *L) bool | lengths (*G, *L[:-1])   optional
 ```
-
-**Three storage forms.**
-
-| Form | Stored | Label `p` is | Used by |
-|---|---|---|---|
-| **implicit** | nothing | generated from the target's layout | `Singular`, `SequentialEdges`, `GridElements`, `Objects.identity(n)` |
-| **dense** | `members (*G, *L, W[, len(axes)])` | `members[p, :]`, exactly `W` members | elements (`W = E`), fixed-length fragments |
-| **boxed** | `indices`, `lengths`, optional `members (*K, ...)` | `members[indices[p] : indices[p] + lengths[p]]`, an nd box | fragments, objects, groups, polygons of varying size |
-
-- **Dense** is the `(M, 3)` triangle array. The width `W` is the axis
-  after the label axes, and nothing else is stored.
-- **Boxed** generalises CSR to nd. When `members` is `None` the box is
-  taken in the target's own index space (`ndim(members) = len(axes)`),
-  so a track over `("t", "n")` is `indices = (0, n)`,
-  `lengths = (T, 1)`. When `members` is given, `ndim(members) = len(K)`.
-  `lengths` is optional only when `members` is 1-D: labels are then CSR
-  runs and each length is the distance to the next start, as in TRX
-  `offsets`. `members` is an indirection: it may reorder, repeat (a
-  vertex shared by two fragments, or a fragment by two objects, as
-  zarr-vectors allows) or gather non-contiguous members. A label that is
-  not a box of the target is a run of a 1-D `members`.
-- A box is read in C order when `ordered`. Invalid members inside a box
-  are skipped; they do not break the order or split the label (a track
-  with a missing frame stays one fragment).
-
-**nd indices.** Each member reference is an nd index over `axes`. The
-trailing index dimension is present only when `len(axes) > 1`, so the
-common cases stay `(M, 3)` and `(P,)`; with a structured dtype the
-fields are named after `axes` instead. Indices are never linearised: an
-index into a 2-D layout is a pair.
-
-**Named axes.** `axes` names the target axes the indices address: vertex
-array axes for elements and fragments (default: the last index axis,
-which covers every flat layout), the target label's `own_axes` for
-objects and groups (`Objects.axes = ("fragment",)`). The target axes
-*not* in `axes` are the label's **free axes**; `batch` names the free
-axes that the leading dimensions `G` line up with, one to one and by
-name, and every free axis not in `batch` is shared (as is a `G`
-dimension of size 1). With `batch` and `own_axes` named, the split of
-every shape into `G`, `L`, `W` and the index dimension is determined.
-
-- One `(M, 3)` triangle array with `batch = ()` serves every frame of a
-  `(T, N, 3)` time series (shared topology); a `(Z, M, 2)` edge array
-  with `batch = ("z",)` gives every slice its own edges.
-- A label that joins members from different frames or slices includes
-  that raster axis in `axes`: a division edge from `(t, n)` to
-  `(t + 1, m)` is `axes = ("t", "n")`, one row `[[t, n], [t + 1, m]]`.
-- The label axes `L` are usually one axis, but may be nd when the labels
-  themselves lie on a grid, for example a stored quad mesh of a `H × W`
-  vertex grid, `members (H - 1, W - 1, 4, 2)` with `axes = ("i", "j")`
-  and `own_axes = ("ci", "cj")`.
-- In the dense form `members` carries the batch axes, so dense labels may
-  differ per frame. In the boxed form only `indices` and `lengths` do;
-  an explicit member list shared by all frames is enough for every
-  example here (open question 7).
-
-**Flags.**
 
 - `ordered`: the order of the members is structural. A polyline follows
   its fragment; an element's vertex order defines the cell (a quad is a
   loop through its vertices in order). Groups are unordered.
 - `directed` (implies `ordered`, the zarr-vectors name): reversing the
   order changes the meaning. An edge has a direction (parent → child); a
-  face has a winding (which side its normal points to); a tetrahedron
-  has a handedness, the sign of `det[v1 − v0, v2 − v0, v3 − v0]`. A
-  directed `VolumeMeshes` promises every tet has positive signed volume
-  in native space (the VTK / Gmsh convention), which makes folding
-  visible after a deformation and gives boundary triangles an outward
-  winding.
-- `exclusive`: every member has exactly one label (a partition).
-  Shared fragments and overlapping TRX groups mean it cannot be assumed.
+  face has a winding; a tetrahedron has a handedness, the sign of
+  `det[v1 − v0, v2 − v0, v3 − v0]`. A directed `VolumeMeshes` promises
+  every tet has positive signed volume in native space (the VTK / Gmsh
+  convention), which makes folding visible after a deformation.
+- `exclusive`: every member has exactly one label (a partition). Shared
+  fragments and overlapping TRX groups mean it cannot be assumed.
 - `atomic`: the label exists whole or not at all. An element is atomic
   (a triangle that lost a vertex is gone); a fragment is not (it loses
-  members, and splits when compacted). This is the only thing cropping
-  needs to know (§5.2).
+  members, and splits when compacted). This is all cropping needs to
+  know (§5.2).
+- **Reverse lookup.** The stored form is label → members. The map
+  member → label(s) is derived and cached, and makes `v.objects[17]` or
+  `v.groups["CST"]` a lookup.
+- **Composition.** Objects are labels whose content is the fragments,
+  whose content is the vertices: `objects[17]` gives the fragments of
+  object 17, and `objects.flatten()[17]` its vertices.
+- **Attributes** live on the label they belong to: per element (VTK
+  `cell_data`), per fragment (duplicated when a crop splits it), per
+  object (TRX `dps`, zarr-vectors `object_attributes`), per group (TRX
+  `dpg`). Neuroglancer `segment_properties` are object attributes.
+- A categorical attribute column and a label are two forms of the same
+  information: the column is the cheap forward form, the label adds
+  names, per-label attributes and the reverse index.
 
-**Lookup and composition.** The stored form is label → members. The
-reverse map, member → label(s), is derived and cached, and it is what
-makes `v.objects[17]` or `v.groups["CST"]` a lookup. Object → vertices is
-fragments composed with objects, a product of two relations; group →
-vertices adds one more. `Objects.identity(n)` is "one object per
-fragment"; `Objects.from_ids(ids)` builds a labeling from a plain column
-of ids.
+**Binding.** Inside a `Vectors`, each label's `content` is bound from its
+`of` (`"vertices"`, `"fragments"`, …) whenever the `Vectors` is built or
+replaced, so `push`, `crop` and `replace` never leave a label pointing
+at old vertices. The binding is a link, not data: it is left out of
+equality, `repr` and serialisation. A label used on its own keeps
+whatever content it was given.
 
-**Attributes** live on the label they belong to: per element (VTK
-`cell_data`), per fragment (duplicated when a crop splits a fragment),
-per object (TRX `dps`, zarr-vectors `object_attributes`), per group (TRX
-`dpg`). Neuroglancer `segment_properties` are object attributes and
-`relationships` are a label over objects of another store.
+**Vertex IDs.** References are always positional. When a format refers
+to vertices by ID (SWC parent IDs, neuroglancer annotation IDs, OBJ or
+PLY with gaps), the reader converts IDs to positions once
+(`searchsorted` on sorted IDs, or a hash), and keeps the IDs as keys on
+the vertex index axis (`vertices.ids`), for writing back and for lookup
+by key: `v.vertices.loc[ids]`. This is not a `members` indirection, which
+maps positions to positions; it is the inverse map, a lookup. zarr-vectors
+object IDs are dense, so there ID and position coincide.
 
-### 2.4 The standard labels
+### 2.5 The standard labels, and elements as elements
 
 ```
-Labels[T]
-├── Elements(Labels[Vertices])     dense, ordered, atomic; own_axes = ("element",); + dim
-│   ├── Singular                   implicit, W = 1, dim 0
-│   ├── Edges                      W = 2, dim 1
-│   │   └── SequentialEdges        implicit: i → i+1 along an axis or a fragment
-│   ├── SurfaceElements            dim 2
-│   │   ├── Triangles, Quads       W = 3, 4
-│   │   └── Polygons               boxed: varying size (VTK_POLYGON)
-│   ├── VolumeElements             dim 3
-│   │   └── Tetrahedra             W = 4
-│   └── GridElements               implicit: quads / hexahedra / Kuhn tets of a grid
-├── Fragments(Labels[Vertices])    boxed, ordered; own_axes = ("fragment",)
-├── Objects(Labels[Fragments])     own_axes = ("object",)
-└── Groups(Labels[Objects])        own_axes = ("group",)
+Ragged
+└── Labels
+    ├── Elements                 fixed width, ordered, atomic; of = "vertices"; + dim
+    │   ├── Singular             implicit, W = 1, dim 0
+    │   ├── Edges                W = 2, dim 1
+    │   │   └── SequentialEdges  implicit: i → i+1 along an axis or a fragment
+    │   ├── SurfaceElements      dim 2
+    │   │   ├── Triangles        W = 3
+    │   │   ├── Quads            W = 4
+    │   │   └── Polygons         boxed: varying size (VTK_POLYGON)
+    │   ├── VolumeElements       dim 3
+    │   │   └── Tetrahedra       W = 4
+    │   └── GridElements         implicit: quads / hexahedra / Kuhn tets of a grid
+    ├── Fragments                boxed, ordered; of = "vertices"; own_axes = ("fragment",)
+    ├── Objects                  of = "fragments"; own_axes = ("object",)
+    └── Groups                   of = "objects"; own_axes = ("group",)
 ```
 
-`Elements` adds one field to `Labels`, `dim`, and fixes `ordered` and
-`atomic` to `True`. Dispatch to `Edges`, `Triangles`, `Quads`,
-`Tetrahedra` is on `(dim, W)`: a quad and a tetrahedron both have
-`W = 4` and differ in `dim`. Because elements are labels, a label over
-elements (Gmsh physical groups, zarr-vectors `link_fragments`) is just
-`Labels(of="elements", axes=("element",))`, and a mesh of polygons of
-varying size is the boxed form of `SurfaceElements`, not a new concept.
+`Elements` adds one field, `dim`, and fixes `ordered` and `atomic` to
+`True`; its default `own_axes` is `("element",)`. Dispatch to `Edges`,
+`Triangles`, `Quads`, `Tetrahedra` is on `(dim, W)`: a quad and a
+tetrahedron both have `W = 4` and differ in `dim`. A label over elements
+(Gmsh physical groups, zarr-vectors `link_fragments`) is
+`Labels(of="elements", axes=("element",))`.
 
-`Vectors.labels` is a dict holding all of them. `elements`, `fragments`,
-`objects` and `groups` are well-known keys exposed as properties
-(`edges` on `Graphs` and `faces` on `SurfaceMeshes` alias `elements`);
-any other labeling (a parcellation, FreeSurfer annotation labels on
-surface vertices) is another entry. Several element blocks (tracks plus
-divisions in example F, intra- plus cross-chunk links in example K,
-triangles plus quads) are a tuple under `elements`, all of the same
-`dim`. A categorical attribute column and a label are two forms of the
-same information: the column is the cheap forward form, the label adds
-names, per-label attributes and the reverse index. Either converts into
-the other.
+**Elements as elements.** Mesh users expect two arrays: the connectivity
+(`(M, 3)` vertex indices per face) and, sometimes, the corner
+coordinates (`(M, 3, 3)`), which trimesh calls `faces` and `triangles`.
+Both are there, with no special case: the connectivity is the element
+label's `members`, and the corner coordinates are its values.
 
-### 2.5 `Vectors`
+```python
+# first draft: elements were the bare connectivity array
+mesh = SurfaceMesh(vertices=V, elements=F)  # V (N, 3), F (M, 3) int
+mesh.elements  # (M, 3) int
+V[mesh.elements]  # (M, 3, 3) corners, gathered by hand
+
+# now
+mesh = TriangleMeshes(vertices=V, faces=F)
+mesh.faces  # (M, 3) int: exactly F (= mesh.elements.members)
+mesh.elements  # the Triangles label, content bound to the vertices
+mesh.elements.shape  # (M, 3, 3): triangles × corners × coordinates
+mesh.elements[10]  # (3, 3) corners of triangle 10
+mesh.elements[10:20]  # Triangles with 10 faces, same vertices
+np.asarray(mesh.elements)  # (M, 3, 3), trimesh's `triangles`
+np.asarray(mesh.faces)  # (M, 3), trimesh's `faces`
+```
+
+The rule is the same for every label, which is what keeps streamlines
+and meshes consistent: `x[i]` gives the *values* of entry `i` (a
+streamline's points, a triangle's corners), and `x.members[i]` its
+*indices*.
+
+### 2.6 `Vectors`, and the specialised classes
 
 ```
 class Vectors(Magic, Generic[E]):
     vertices:         Vertices
-    labels:           dict[str, Labels] = {}   "elements" is an E (or a tuple of E)
+    labels:           dict[str, Labels] = {}
     transformations:  list[Transformation] = ()
+```
 
-    elements, fragments, objects, groups -> labels[...]
+`labels` is the generic, type-agnostic storage: any relation lives
+there under a name, and that is what readers, writers, cropping and
+`push` iterate over. The specialised classes expose the names their
+users know, in their constructors and as properties, all backed by
+`labels`:
+
+| Class | Constructor | Properties (→ `labels` key) |
+|---|---|---|
+| `Points` | `Points(vertices, ids=None)` | — |
+| `Graphs` | `Graphs(vertices, edges, directed=False)` | `edges`, `elements` (→ `"elements"`) |
+| `Polylines` / `Streamlines` | `Streamlines(vertices, offsets=None, starts=None, lengths=None, groups=None)` | `streamlines`, `fragments` (→ `"fragments"`), `edges` (implicit) |
+| `TriangleMeshes` | `TriangleMeshes(vertices, faces)` | `faces` (→ `elements.members`), `elements`, `triangles` (→ values) |
+| `QuadMeshes` | `QuadMeshes(vertices, faces)` | as above |
+| `TetrahedralMeshes` | `TetrahedralMeshes(vertices, tetrahedra)` | `tetrahedra` (→ `elements.members`), `elements` |
+| any | `objects=`, `groups=`, `labels=` | `objects`, `groups` |
+
+```python
+tracts = Streamlines(vertices=positions, offsets=offsets)  # TRX layout
+tracts.streamlines[17]  # (L_17, 3) points of streamline 17
+tracts.streamlines.lengths  # (P,)
+tracts.labels["fragments"] is tracts.streamlines  # True
+
+mesh = TriangleMeshes(vertices=V, faces=F)
+mesh.labels["elements"].members is F  # True: no copy
+
+graph = Graphs(vertices=nodes, edges=parent_child, directed=True)
+graph.edges  # (M, 2) int, the connectivity
 ```
 
 `vertices` is lazy for the same reason `SingleScaleImage.data` is: a
@@ -372,7 +448,7 @@ reader derives it on first access. Arrays follow `ArrayProtocol`
 | `__array__` | `__array__` | `vertices.data`, native coordinates; the docstring says so |
 | `geometry` | `bounds` | box of the native space covered (§5.4) |
 
-### 2.6 Structured columns
+### 2.7 Structured columns
 
 Coordinates that transformations act on (space, time) must be a
 homogeneous float block. Two cases need more:
@@ -393,7 +469,7 @@ dtypes), and a single attribute can stay lazy while another is loaded.
 `to_structured()` / `from_structured()` convert at the edges.
 Transformations are the identity on categorical axes.
 
-### 2.7 Examples
+### 2.8 Examples
 
 The common cases use one index axis and no nd indices at all; the nd
 features only appear when the data are genuinely nd.
@@ -403,15 +479,17 @@ features only appear when the data are genuinely nd.
 Elements are `Singular`; no labels.
 
 **B. Streamlines (TRX).** `Streamlines`.
-`vertices.data (N, 3)`; `fragments`: `indices (P,)` = TRX `offsets`,
+`Streamlines(vertices=positions, offsets=offsets)`: `vertices.data (N, 3)`;
+`fragments` (= `streamlines`): `offsets (P + 1,)` = TRX `offsets`,
 `lengths` derived (1-D, CSR); elements `SequentialEdges(along="fragments")`;
 `objects` = one per fragment; `groups`: TRX groups, `members (K,)`
-object indices, `indices (NG,)`, overlapping, `exclusive = False`. dpv,
+object indices, `starts (NG,)`, overlapping, `exclusive = False`. dpv,
 dps, dpg are vertex, object and group attributes.
 
 **C. Cortical surface (GIFTI, FreeSurfer).** `TriangleMeshes`.
-`vertices.data (N, 3)`, `elements.members (M, 3)`, `dim = 2`,
-`directed = True` (winding). A FreeSurfer annotation is a label over
+`TriangleMeshes(vertices=V, faces=F)`: `vertices.data (N, 3)`,
+`faces` = `elements.members (M, 3)`, `dim = 2`, `directed = True`
+(winding). A FreeSurfer annotation is a label over
 vertices with names and colours as label attributes.
 
 **D. Tetrahedral mesh (Gmsh, meshio).** `TetrahedralMeshes`.
@@ -421,16 +499,22 @@ are labels over elements: `Labels(of="elements", axes=("element",))`.
 **E. Skeletons (neuroglancer).** `Graphs`.
 `vertices.data (N, 3)`, `elements.members (M, 2)`, `directed = True`
 (parent → child); one fragment per segment, `objects` named by segment
-id; `radius` a vertex attribute.
+id; `radius` a vertex attribute. An SWC file refers to parents by node
+ID: the reader converts IDs to positions and keeps them as
+`vertices.ids`.
 
 **F. Cell tracking: raster time, sparse space.** `Polylines` / `Graphs`.
 Centroids of cells followed over `T` frames:
 `vertices.data (T, N, 3)`, `axes = [TimeAxis("t") raster, IndexAxis("n")]`,
 components `(x, y, z)`, `valid (T, N)` for cells that do not exist in a
-frame. The native system is `(t, x, y, z)`.
+frame. The native system is `(t, x, y, z)`. When the number of cells
+varies a lot between frames, the same logical `(T, var, 3)` is stored
+packed instead: `vertices.data` is a `Ragged` with a flat
+`content (ΣN_t, 3)` and `starts`, `lengths (T,)`. Nothing below changes:
+every reference is still a logical `(t, n)` pair.
 - If slot `n` is a stable identity, track `n` is the box
-  `indices = (0, n)`, `lengths = (T, 1)` of fragments over `("t", "n")`:
-  `fragments.indices (N, 2)`, `lengths (N, 2)`, `ordered` along `t`.
+  `starts = (0, n)`, `lengths = (T, 1)` of fragments over `("t", "n")`:
+  `fragments.starts (N, 2)`, `lengths (N, 2)`, `ordered` along `t`.
   Track edges are `SequentialEdges(along="t")`, shared over `n`; an edge
   exists only between two valid vertices.
 - Cell divisions add explicit edges across frames, as a second element
@@ -476,10 +560,10 @@ The store layout itself, exposed lazily without stitching:
 (chunk axes are index axes: the vertices carry their full position),
 `valid lengths (Cx, Cy, Cz)` from the per-chunk row counts.
 - Fragments in range mode are boxes inside one chunk:
-  `indices (F, 4) = (cx, cy, cz, k0)`, `lengths (F, 4) = (1, 1, 1, count)`.
+  `starts (F, 4) = (cx, cy, cz, k0)`, `lengths (F, 4) = (1, 1, 1, count)`.
   Explicit-list fragments use `members (R, 4)`, nd indices that may
   repeat (shared vertices). `members` is then 1-D (`K = (R,)`), so
-  `indices (F,)` are plain CSR starts and `lengths` is optional: the
+  `starts (F,)` are plain CSR starts and `lengths` is optional: the
   `ndim(members)` rule at work. A store that mixes both modes is read in
   the explicit form, ranges becoming runs of `members`.
 - Intra-chunk links: `elements.members (Cx, Cy, Cz, M, E)`, `axes = ("k",)`,
@@ -501,47 +585,35 @@ tetrahedra per grid cube without storing them; their signed volumes show
 folding. The same field read with *raster* axes and no components would
 be an image: points and images are the two ends of one model (§9).
 
-### 2.8 Ragged layouts and backends
+### 2.9 Ragged layouts and backends
 
-**Logical vs physical.** Many axes are ragged: points per frame, vertices
-per chunk, vertices per streamline. The model describes them logically
-(an index axis with `valid`, or a boxed label), and three physical
-layouts carry them:
+**A ragged axis is a property of an array's layout**: an axis whose
+length varies along the axes before it, written `var` (or `None` in
+`.shape`). It may appear on any array of the model: vertex data
+(`(T, var, 3)`, cells per frame), attributes, and label members
+(`(Z, var, 2)`, edges per slice; `(Cx, Cy, Cz, var, E)`, links per
+chunk). Every index in the model is a logical nd index over these axes;
+the physical layout is invisible to it, like strides. Three layouts
+carry a ragged axis:
 
 | Layout | Storage | Good for |
 |---|---|---|
 | **padded** | `(*outer, Lmax, ...)` + `valid` (mask or `lengths`) | nd raster layouts (examples F, G, I, J); fully vectorised on every backend |
-| **packed** | flat `content (N, ...)` + `offsets (P + 1,)`, or nd `indices` + `lengths` | flat collections (TRX, meshes); compact, one buffer, memory-mappable |
+| **packed** | a `Ragged` over a flat content: `content (N, ...)` + `starts`/`lengths` (or `offsets`) over the outer axes | flat collections (TRX, meshes); compact, one buffer, memory-mappable |
 | **nested** | an outer array of inner arrays | user code and per-chunk readers; converted on the way in |
 
 Packed is the default in memory for flat data and padded for nd raster
 data. Nested is accepted from user code and from chunk-native readers
-and converted (pad ↔ pack ↔ nest are cheap and lossless). The packed
-form is already in the model: a boxed label over a flat axis is exactly
-`offsets` (§2.3), and stacked boxed labels are awkward-array's nested
-`ListOffsetArray`.
+and converted (pad ↔ pack ↔ nest are cheap and lossless). A packed
+`(T, var, 3)` vertex array is simply a `Ragged` whose content is a flat
+`(ΣN_t, 3)` array and whose `starts`/`lengths` are `(T,)`: a vertex
+`(t, n)` is row `starts[t] + n`, a mapping internal to `Ragged`. A
+`Ragged` is therefore both the layout of ragged arrays and the
+structure of labels; there is no second ragged type, and conversions to
+awkward-array are `to_awkward()` / `from_awkward()` only.
 
-**No storage wrapper; a view for convenience.** The datamodel stores the
-raw arrays as fields (`members`, `indices`, `lengths`, `valid`, the
-vertex `data`), never an "array of arrays" object. Plain arrays
-serialise, load lazily, chunk in dask and move between backends without
-a second source of truth, and multi-level raggedness is already the
-composition of labels. For users, a label exposes a thin, read-only
-view over its target:
-
-```python
-tracts = v.fragments.view(v.vertices)  # nibabel-ArraySequence-like
-len(tracts)  # number of fragments
-tracts[17]  # (L_17, D) array of vertices
-tracts[mask]  # a smaller view (same buffers, new offsets)
-tracts.lengths, tracts.pad(fill=nan), tracts.reduce("mean")
-```
-
-The view owns nothing: it holds references to the arrays and delegates
-to private functional helpers (`_ragged.py`), which are also what the
-datamodel itself calls.
-
-**Helpers.** A handful of operations cover everything: `lengths`,
+**Helpers.** `Ragged`'s methods rest on a handful of private
+functions (`_ragged.py`): `lengths`,
 `segment_ids` (`repeat(arange(P), lengths)`), `segment_reduce` (segment
 ids + `bincount` / scatter-add), `take` (gather whole lists, rebuild
 offsets with `cumsum`), `mask_items` (filter, recount), `pad` / `pack`.
@@ -550,8 +622,8 @@ Each is written once against the array module returned by
 sizes (masking, `Lmax`) force a host sync on cupy; operations that
 produce them are grouped.
 
-**dask: chunks aligned with lists.** `offsets` (or `indices` and
-`lengths`) stay eager, on the host: they describe the graph and hold one
+**dask: chunks aligned with lists.** `starts` and `lengths` (or
+`offsets`) stay eager, on the host: they describe the graph and hold one
 integer per list. `content` is chunked along the item axis so that **no
 list straddles a chunk boundary**, with chunks
 `((n_0, n_1, ...), (D,))`, each `n_b` the length of a run of whole lists.
