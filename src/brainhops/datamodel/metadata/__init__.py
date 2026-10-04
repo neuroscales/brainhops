@@ -70,7 +70,7 @@ __all__ = [
     "LazyField",
 ]
 
-from brainhops._core.properties import Lazy, LazyField
+from brainhops._core.fields import Lazy, LazyField
 
 from ._base import Metadata
 from ._dtype import preferred_dtype

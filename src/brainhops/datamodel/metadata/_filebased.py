@@ -12,7 +12,7 @@ from bagof.magic import Factory, NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
-from brainhops._core.properties import Lazy
+from brainhops._core.fields import Lazy
 
 from ._base import FIELDS, Metadata, format_name
 from ._report import ConversionReport, short
@@ -73,7 +73,7 @@ class FileBasedMetadata(Metadata):
         what was decoded is kept as the read-time snapshot, so that an
         untouched field keeps the record's value when it is written back.
         A lazy field (`lazy=`) decoded as
-        [`Lazy`][brainhops._core.properties.Lazy] is decoded on first
+        [`Lazy`][brainhops._core.fields.Lazy] is decoded on first
         access instead. Keyword arguments set fields over the decoded
         values (they then count as changes).
 

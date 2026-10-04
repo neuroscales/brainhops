@@ -38,7 +38,7 @@ Writing `history` replaces the command-line tags and keeps every other
 tag as it was. The tags sit after the whole volume, so a raw record read
 from a file reads them lazily, and `history` is a lazy field
 (`lazy=("history",)`, see
-[`LazyField`][brainhops._core.properties.LazyField]), decoded on first
+[`LazyField`][brainhops._core.fields.LazyField]), decoded on first
 access: a load that never touches it never decompresses an MGZ to its
 end.
 """

@@ -73,9 +73,9 @@ name (`header`, `tags`, `node`) is a plain property over `raw`.
   unsupported by every format until one opts in.
 - `lazy=`: supported fields whose decoding would read a lazy part of the
   raw record (the MGH tags, after the whole compressed volume). Each
-  gets a [`LazyField`][brainhops._core.properties.LazyField]
+  gets a [`LazyField`][brainhops._core.fields.LazyField]
   descriptor, and `_decode` may return
-  [`Lazy`][brainhops._core.properties.Lazy]`(load)` for it: the field is
+  [`Lazy`][brainhops._core.fields.Lazy]`(load)` for it: the field is
   decoded on first access (or assignment), and joins the snapshot then.
   Any other attribute access is plain.
 

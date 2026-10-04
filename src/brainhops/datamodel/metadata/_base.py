@@ -13,7 +13,7 @@ from bagof.magic import Factory, fields
 
 # internals
 from brainhops._core.compat import own_annotations
-from brainhops._core.properties import LazyField
+from brainhops._core.fields import LazyField
 
 from ..base import DataModelBase
 from ._meta import MetadataMeta

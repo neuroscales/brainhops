@@ -145,8 +145,9 @@ model, and only format subclasses live under io:
   `OpaqueMetadata` (nothing supported), `MetadataField`,
   `ConversionReport` and the loss policies, one module per concern (see
   the addendum to the decisions).
-- `brainhops/_core/properties.py`: `Lazy` and the `LazyField`
-  descriptor (section 6), next to `lazyproperty`.
+- `brainhops/_core/fields.py`: `Lazy` and the `LazyField`
+  descriptor (section 6); they are field descriptors, not properties,
+  so they are not in `_core/properties.py`.
 - `brainhops/datamodel/enums.py`: the enums of the known terms (section
   4).
 - `brainhops/io/metadata/`: the BIDS sidecar codec (it reads files).
@@ -690,7 +691,7 @@ follow the whole volume, so reading them decompresses an MGZ to its
 end), the raw record holds a loader for that part, the format declares
 the fields that need it with `lazy=("history",)`, and `_decode` returns
 them as `Lazy(load)`. Each lazy field is a `LazyField` descriptor
-(`brainhops/_core/properties.py`, next to `lazyproperty`): the pending
+(`brainhops/_core/fields.py`): the pending
 `Lazy` sits in the instance `__dict__`, and the descriptor decodes it on
 first access (attribute, `repr`, `==`, `changed_fields()`, a
 conversion) or before an assignment, through `setattr` (so the field
