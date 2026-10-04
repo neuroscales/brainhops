@@ -7,9 +7,7 @@ __all__ = [
     "MetadataLossWarning",
     "apply_loss_policy",
     "collect_loss_reports",
-    "get_metadata_loss_policy",
     "metadata_loss_policy",
-    "one_loss_warning",
 ]
 
 # stdlib
@@ -70,6 +68,23 @@ class ConversionReport(DataModelBase):
             dict.fromkeys(self.passed_through + other.passed_through)
         )
         return self
+
+    @classmethod
+    def merged(
+        cls, reports: tx.Sequence["ConversionReport"]
+    ) -> "ConversionReport":
+        """
+        One report of several, in order: from the source of the first to
+        the target of the last, with the entries of all (a later entry
+        wins over an earlier one for the same field).
+        """
+        merged = cls(
+            source=reports[0].source if reports else None,
+            target=reports[-1].target if reports else None,
+        )
+        for report in reports:
+            merged.merge(report)
+        return merged
 
     def raise_if_lossy(self) -> None:
         """Raise [`MetadataLossError`][] if anything was lost or
@@ -141,11 +156,6 @@ def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
         _POLICY.reset(token)
 
 
-def get_metadata_loss_policy() -> str:
-    """The loss policy in effect (`"warn"` unless set)."""
-    return _POLICY.get()
-
-
 def apply_loss_policy(
     report: ConversionReport,
     on_loss: tx.Optional[LossPolicy] = None,
@@ -159,14 +169,14 @@ def apply_loss_policy(
     [`metadata_loss_policy`][]). A report with nothing lost or
     approximated is always silent. The report is returned.
     """
-    policy = _check_policy(on_loss or get_metadata_loss_policy())
+    policy = _check_policy(on_loss or _POLICY.get())
     if not report.lossy or policy == "ignore":
         return report
     if policy == "raise":
         raise MetadataLossError(report)
     collected = _COLLECTED.get()
     if collected is not None:
-        # Inside `one_loss_warning`: warned once, merged, at its end.
+        # Inside `collect_loss_reports`: the caller acts on it.
         collected.append(report)
         return report
     warnings.warn(MetadataLossWarning(report), stacklevel=stacklevel + 1)
@@ -179,6 +189,17 @@ def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
     Collect, instead of warning them, the reports that the conversions
     and writes in this block would warn about. Under the `"raise"`
     policy a loss still raises where it happens.
+
+    `io.save` uses it to warn once for a save that converts the object
+    into the format of the file and then writes it:
+
+    ```python
+    with collect_loss_reports() as reports:
+        nifti = NiftiImage.from_other(mgh)
+        nifti.save("out.nii.gz")
+    if reports:
+        apply_loss_policy(ConversionReport.merged(reports), "warn")
+    ```
     """
     reports: tx.List[ConversionReport] = []
     token = _COLLECTED.set(reports)
@@ -186,30 +207,6 @@ def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
         yield reports
     finally:
         _COLLECTED.reset(token)
-
-
-@contextlib.contextmanager
-def one_loss_warning(*, stacklevel: int = 2) -> tx.Iterator[None]:
-    """
-    Merge the warnings of the conversions and writes in this block into
-    one [`MetadataLossWarning`][], issued when the block ends.
-
-    `io.save` uses it, so that a save that converts the object into the
-    format of the file (saving an MGH image as NIfTI) and then writes it
-    warns once, with one report. Only warnings are merged: under the
-    `"raise"` policy a loss raises where it happens, and nothing is
-    warned if the block raises. `stacklevel=2` points the warning at
-    the caller of the function that holds the block.
-    """
-    with collect_loss_reports() as reports:
-        yield
-    if reports:
-        merged = ConversionReport(
-            source=reports[0].source, target=reports[-1].target
-        )
-        for report in reports:
-            merged.merge(report)
-        apply_loss_policy(merged, "warn", stacklevel=stacklevel + 2)
 
 
 # ----------------------------------------------------------------------

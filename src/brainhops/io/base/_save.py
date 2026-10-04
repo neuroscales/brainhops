@@ -22,11 +22,11 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
+    ConversionReport,
     MetadataLossError,
     apply_loss_policy,
     collect_loss_reports,
     metadata_loss_policy,
-    one_loss_warning,
 )
 from brainhops.io.base._base import WritableFileBasedObject
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
@@ -149,10 +149,12 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             )
         if writers:
             _, converted, reports = writers[0]
-            with one_loss_warning(stacklevel=2):
-                for report in reports:
-                    apply_loss_policy(report, "warn")
+            with collect_loss_reports() as written:
                 converted.save(file, **kwargs)
+            if reports or written:
+                # One warning for the conversion and the write.
+                merged = ConversionReport.merged(reports + written)
+                apply_loss_policy(merged, "warn", stacklevel=2)
             return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))

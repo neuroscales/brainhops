@@ -62,10 +62,8 @@ __all__ = [
     "MetadataLossWarning",
     "MetadataLossError",
     "metadata_loss_policy",
-    "get_metadata_loss_policy",
     "apply_loss_policy",
     "collect_loss_reports",
-    "one_loss_warning",
     "LossPolicy",
     "preferred_dtype",
     "Lazy",
@@ -86,9 +84,7 @@ from ._report import (
     MetadataLossWarning,
     apply_loss_policy,
     collect_loss_reports,
-    get_metadata_loss_policy,
     metadata_loss_policy,
-    one_loss_warning,
 )
 from ._sentinel import ALL, UNSUPPORTED, Maybe, Unsupported
 from ._terms import Channel, EncodingDirection, GeneratedBy

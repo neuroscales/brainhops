@@ -316,6 +316,8 @@ def test_saving_mgh_as_nifti_reports_the_loss(scan, tmp_path) -> None:  # noqa: 
         io.save(image, tmp_path / "out.nii.gz")
     # One save, one warning: the conversion's report and the write's.
     assert len(caught) == 1
+    # It points at the caller of `io.save`.
+    assert caught[0].filename == __file__
     report = caught[0].message.report
     assert (report.source, report.target) == ("mgh", "nifti")
     assert set(report.lost) == {

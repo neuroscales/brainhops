@@ -59,8 +59,7 @@ from brainhops.datamodel.metadata import (
     ProvenanceMetadata,
     TransformMetadata,
     apply_loss_policy,
-    get_metadata_loss_policy,
-    one_loss_warning,
+    collect_loss_reports,
     preferred_dtype,
 )
 from brainhops.datamodel.transformations import Affine, Translation
@@ -531,7 +530,6 @@ def test_explicit_values_win_over_the_source() -> None:
 
 
 def test_the_default_policy_warns_once_per_conversion() -> None:
-    assert get_metadata_loss_policy() == "warn"
     source = Metadata(
         echo_time=0.03, flip_angle=90.0, magnetic_field_strength=3.0
     )
@@ -559,12 +557,12 @@ def test_ignore_is_silent_and_raise_raises() -> None:
 
 def test_the_policy_context_manager_nests_and_restores() -> None:
     with metadata_loss_policy("raise"):
-        assert get_metadata_loss_policy() == "raise"
         with metadata_loss_policy("ignore"):
             LiteMetadata.from_other(_rich())
         with pytest.raises(MetadataLossError):
             LiteMetadata.from_other(_rich())
-    assert get_metadata_loss_policy() == "warn"
+    with pytest.warns(MetadataLossWarning):
+        LiteMetadata.from_other(_rich())
     with pytest.raises(ValueError):
         with metadata_loss_policy("loud"):
             pass
@@ -952,22 +950,21 @@ def test_assigning_a_lazy_field_snapshots_it_first() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_one_loss_warning_merges_the_reports() -> None:
-    with pytest.warns(MetadataLossWarning) as caught:
-        # `stacklevel=1`: this function (2 would be its caller).
-        with one_loss_warning(stacklevel=1):
+def test_collected_reports_merge_into_one() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with collect_loss_reports() as reports:
             apply_loss_policy(ConversionReport(source="a", lost={"x": 1}))
             apply_loss_policy(
                 ConversionReport(target="b", approximated={"y": "z"})
             )
             apply_loss_policy(ConversionReport(lost={"q": 1}), "ignore")
-    assert len(caught) == 1
-    report = caught[0].message.report
+    assert len(reports) == 2
+    report = ConversionReport.merged(reports)
     assert (report.source, report.target) == ("a", "b")
     assert report.lost == {"x": 1} and report.approximated == {"y": "z"}
-    assert caught[0].filename == __file__
     with pytest.raises(MetadataLossError):
-        with one_loss_warning():
+        with collect_loss_reports():
             apply_loss_policy(ConversionReport(lost={"x": 1}), "raise")
 
 

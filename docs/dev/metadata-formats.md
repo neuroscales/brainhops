@@ -150,8 +150,10 @@ A writer builds its raw record, calls
 with it and a report (and `force=` for a writer keyword that must win
 over the record, such as MGH `tr=`), and hands the report to
 [`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy].
-`io.save` wraps a conversion and the write that follows so that one save
-warns once.
+`io.save` collects the reports of a conversion and of the write that
+follows ([`collect_loss_reports`][brainhops.datamodel.metadata.collect_loss_reports])
+and warns once, with
+[`ConversionReport.merged`][brainhops.datamodel.metadata.ConversionReport.merged].
 
 ## The `metadata` field of a format class
 

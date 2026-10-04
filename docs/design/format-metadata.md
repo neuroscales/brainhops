@@ -855,10 +855,14 @@ does); otherwise, or when `on_loss` is given too, the policy applies.
 > overrides. **One warning per save:** `io.save` of an object that is not
 > of the file's format converts it first (the field converter reports),
 > then writes (the writer reports); it runs both under its own `on_loss`
-> and inside `one_loss_warning`, which collects the reports the policy
-> would warn about and warns once, with the reports merged
-> (`ConversionReport.merge`). Two explicit calls (`from_other`, then
-> `save`) still warn once each.
+> inside `collect_loss_reports`, which collects the reports the policy
+> would warn about, and warns once with `ConversionReport.merged(reports)`.
+> Two explicit calls (`from_other`, then `save`) still warn once each.
+> The policy surface is one keyword (`on_loss=`), one function
+> (`apply_loss_policy`), one context manager (`metadata_loss_policy`)
+> and one collector (`collect_loss_reports`); an earlier
+> `one_loss_warning` context manager and `get_metadata_loss_policy`
+> were folded into `io.save`.
 
 Policy, from least to most strict: `"ignore"`, `"warn"` (default: one
 `MetadataLossWarning` per conversion or write carrying the report, not
