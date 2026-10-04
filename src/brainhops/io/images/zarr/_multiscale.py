@@ -21,7 +21,6 @@ from brainhops.datamodel.axes import (
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.metadata import (
-    ConversionReport,
     MetadataField,
     apply_loss_policy,
 )
@@ -511,8 +510,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         metadata = self.metadata
         if metadata is None:
             metadata = OmeZarrMetadata()
-        elif not isinstance(metadata, OmeZarrMetadata):
-            metadata = OmeZarrMetadata.from_other(metadata)
+        metadata, report = OmeZarrMetadata.writable(metadata)
         before = metadata.raw
         block = multiscale.to_json()
         if before is not None and before.multiscale is not None:
@@ -525,7 +523,6 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             copy.deepcopy(before.omero) if before is not None else None,
             copy.deepcopy(before.attrs) if before is not None else None,
         )
-        report = ConversionReport(source=metadata.format, target="ome-zarr")
         target = metadata.update_raw(target, image=self, report=report)
         apply_loss_policy(report, on_loss, stacklevel=5)
         return target

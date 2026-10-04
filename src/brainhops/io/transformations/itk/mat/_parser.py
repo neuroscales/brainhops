@@ -17,7 +17,6 @@ from brainhops.datamodel import transformations as _xforms
 
 # core
 from brainhops.datamodel.metadata import (
-    ConversionReport,
     MetadataField,
     apply_loss_policy,
 )
@@ -319,11 +318,8 @@ def _check_metadata(obj: tx.Any, on_loss: tx.Optional[str]) -> None:
     metadata = getattr(obj, "metadata", None)
     if metadata is None:
         return
-    report = ConversionReport(source=metadata.format, target="itk")
-    if isinstance(metadata, ItkMetadata):
-        metadata.update_raw(None, report=report)
-    else:
-        report.lost.update(ItkMetadata._convert_from(metadata)[1].lost)
+    metadata, report = ItkMetadata.writable(metadata)
+    metadata.update_raw(None, report=report)
     apply_loss_policy(report, on_loss, stacklevel=4)
 
 

@@ -14,7 +14,7 @@ from bagof.magic import Factory, NoEq, NoRepr
 from brainhops._core.compare import differs
 from brainhops._core.properties import Lazy
 
-from ._base import FIELDS, Metadata
+from ._base import FIELDS, Metadata, format_name
 from ._report import ConversionReport, short
 from ._sentinel import UNSUPPORTED
 
@@ -203,6 +203,27 @@ class FileBasedMetadata(Metadata):
                     changed[name] = getattr(self, name)
         self._check_derived(changed, image, report)
         return self._encode(raw, changed, image=image, report=report)
+
+    @classmethod
+    def writable(
+        cls, metadata: Metadata
+    ) -> tx.Tuple["FileBasedMetadata", ConversionReport]:
+        """
+        The metadata a writer of this format writes, and the report its
+        write starts from.
+
+        `metadata` itself when it is of this class; otherwise its
+        conversion into this class, whose losses seed the report. The
+        loss policy is *not* applied: the writer encodes (`update_raw`)
+        into the same report and applies the policy once, so that one
+        write gives one report, and one warning.
+        """
+        if isinstance(metadata, cls):
+            target = format_name(cls)
+            return metadata, ConversionReport(
+                source=metadata.format, target=target
+            )
+        return cls._convert_from(metadata)
 
     def check_writable(self, *, image: tx.Any = None) -> ConversionReport:
         """

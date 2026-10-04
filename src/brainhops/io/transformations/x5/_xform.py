@@ -384,9 +384,9 @@ class X5Transform(
         metadata = self.metadata
         if metadata is None:
             return nodes
-        if not isinstance(metadata, X5Metadata):
-            metadata = X5Metadata.from_other(metadata)
-        report.source = metadata.format
+        metadata, found = X5Metadata.writable(metadata)
+        report.source = found.source
+        report.merge(found)
         node = None if index is None else nodes[index]
         if node is None or metadata.node is not node:
             # Not the node it was read from: everything is written.

@@ -173,8 +173,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         overrides = dict(overrides)
         on_loss = overrides.pop("on_loss", None)
         dtype = overrides.pop("dtype", None)
-        metadata, force = _writable_metadata(self.metadata, overrides)
-        report = ConversionReport(source=metadata.format, target="mgh")
+        metadata, report, force = _writable_metadata(self.metadata, overrides)
         dtype = _stored_dtype(data, dtype, metadata, report)
 
         record = metadata.raw
@@ -211,18 +210,18 @@ _LEGACY_KEYWORDS = {
 
 def _writable_metadata(
     metadata: tx.Any, overrides: tx.Dict[str, tx.Any]
-) -> tx.Tuple[MghMetadata, tx.Tuple[str, ...]]:
+) -> tx.Tuple[MghMetadata, ConversionReport, tx.Tuple[str, ...]]:
     """
-    The `MghMetadata` to write, and the fields to write whatever the
-    snapshot says: the image's own metadata (converted from another
-    format if need be), with the footer keywords popped from `overrides`
-    set over it. A keyword always wins: it is written even when it
+    The `MghMetadata` to write, the report the write starts from, and
+    the fields to write whatever the snapshot says: the image's own
+    metadata (converted from another format if need be, see
+    `FileBasedMetadata.writable`), with the footer keywords popped from
+    `overrides` set over it. A keyword always wins: it is written even when it
     equals the value that was read, and a zero clears the slot.
     """
     if metadata is None:
         metadata = MghMetadata()
-    elif not isinstance(metadata, MghMetadata):
-        metadata = MghMetadata.from_other(metadata)
+    metadata, report = MghMetadata.writable(metadata)
     values = {}
     for keyword, (name, factor) in _LEGACY_KEYWORDS.items():
         if keyword not in overrides:
@@ -235,8 +234,8 @@ def _writable_metadata(
         else:
             values[name] = float(value) * factor
     if not values:
-        return metadata, ()
-    return replace(metadata, **values), tuple(values)
+        return metadata, report, ()
+    return replace(metadata, **values), report, tuple(values)
 
 
 # ----------------------------------------------------------------------

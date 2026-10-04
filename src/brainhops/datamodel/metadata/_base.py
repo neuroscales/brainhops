@@ -361,7 +361,7 @@ class Metadata(
         # A copy keeps the most specific class.
         target = type(other) if same else cls
         report = ConversionReport(
-            source=_format_name(other), target=_format_name(target)
+            source=format_name(other), target=format_name(target)
         )
         values = other._format_state() if same else {}
         unsupported = target.unsupported_fields
@@ -568,7 +568,7 @@ def fits(value: tx.Any, cls: type) -> bool:
     return cls is not Metadata and isinstance(value, cls)
 
 
-def _format_name(obj: tx.Any) -> str:
+def format_name(obj: tx.Any) -> str:
     if isinstance(obj, type):
         for field in fields(obj):
             if field.name == "format":
@@ -589,7 +589,7 @@ def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
         stack = list(Metadata.__subclasses__())
         while stack:
             klass = stack.pop()
-            if _format_name(klass) == target:
+            if format_name(klass) == target:
                 return klass
             stack.extend(klass.__subclasses__())
         raise ValueError(f"No metadata class for the format {target!r}.")

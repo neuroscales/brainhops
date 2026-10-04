@@ -159,11 +159,17 @@ holds the parser's record already (default: by identity), `raw` may be
 a function that reads the record, called only when needed (Zarr, MGH),
 and `force=True` decodes it afresh.
 
-A writer builds its raw record, calls
+A writer starts from
+`metadata, report = MyMetadata.writable(obj.metadata)`
+([`writable`][brainhops.datamodel.metadata.FileBasedMetadata.writable]:
+the metadata converted to its class when it is of another, and a report
+that holds the conversion's losses, with no policy applied yet), builds
+its raw record, calls
 [`update_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_raw]
-with it and a report (and `force=` for a writer keyword that must win
+with it and that report (and `force=` for a writer keyword that must win
 over the record, such as MGH `tr=`), and hands the report to
-[`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy].
+[`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy]:
+one write, one report, one warning.
 `io.save` collects the reports of a conversion and of the write that
 follows ([`collect_loss_reports`][brainhops.datamodel.metadata.collect_loss_reports])
 and warns once, with

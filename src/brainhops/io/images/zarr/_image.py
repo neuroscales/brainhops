@@ -14,7 +14,6 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
-    ConversionReport,
     MetadataField,
     apply_loss_policy,
 )
@@ -114,9 +113,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         metadata = self.metadata
         if metadata is None:
             return
-        if not isinstance(metadata, ZarrMetadata):
-            metadata = ZarrMetadata.from_other(metadata)
-        report = ConversionReport(source=metadata.format, target="zarr")
+        metadata, report = ZarrMetadata.writable(metadata)
         record = metadata.update_raw(image=self, report=report)
         apply_loss_policy(report, on_loss, stacklevel=4)
         write_attributes(node, record.attrs, metadata.attributes)

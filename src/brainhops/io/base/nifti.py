@@ -25,7 +25,6 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
-    ConversionReport,
     MetadataField,
     apply_loss_policy,
     preferred_dtype,
@@ -1310,15 +1309,14 @@ def _apply_metadata(
     if overrides is not None:
         on_loss = overrides.pop("on_loss", None)
     metadata = getattr(obj, "metadata", None)
-    if metadata is not None and not isinstance(metadata, NiftiMetadata):
-        # Another format's metadata, on a class that did not narrow its
-        # field: convert it now (and report what NIfTI cannot hold).
-        metadata = NiftiMetadata.from_other(metadata)
-    if metadata is not None and record:
-        copy_record(image.header, metadata.raw, intent=intent)
+    if metadata is not None:
+        # Another format's metadata (on a class that did not narrow its
+        # field) is converted; what NIfTI cannot hold is in `report`.
+        metadata, report = NiftiMetadata.writable(metadata)
+        if record:
+            copy_record(image.header, metadata.raw, intent=intent)
     _apply_like(image, like)
     if metadata is not None:
-        report = ConversionReport(source=metadata.format, target="nifti")
         metadata.update_raw(image.header, image=obj, report=report)
         if data_type and (overrides or {}).get("dtype") is None:
             array_dtype = getattr(image.dataobj, "dtype", None)

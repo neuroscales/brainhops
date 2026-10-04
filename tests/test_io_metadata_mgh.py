@@ -460,3 +460,17 @@ def test_the_data_type_round_trips(tmp_path) -> None:  # noqa: ANN001
     image.metadata.data_type = "uint16"
     report = image.metadata.check_writable(image=image)
     assert "data_type" in report.approximated
+
+
+def test_a_direct_write_of_foreign_metadata_warns_once(tmp_path) -> None:  # noqa: ANN001
+    image = MghImage(data=np.zeros((2, 3, 4), "float32"))
+    # Not converted on assignment: the writer converts it.
+    image.__dict__["metadata"] = Metadata(description="d", data_type="int64")
+    with pytest.warns(MetadataLossWarning) as caught:
+        image.save(str(tmp_path / "a.mgz"))
+    # The conversion's loss and the write's, in one report.
+    assert len(caught) == 1
+    report = caught[0].message.report
+    assert (report.source, report.target) == ("generic", "mgh")
+    assert set(report.lost) == {"description"}
+    assert set(report.approximated) == {"data_type"}
