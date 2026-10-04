@@ -654,11 +654,11 @@ def test_an_oblique_direction_is_lost_in_dim_info(scan) -> None:  # noqa: ANN001
 
 
 def test_the_space_and_the_intent_are_terms(scan) -> None:  # noqa: ANN001
-    from brainhops.datamodel.enums import Intent, Space
+    from brainhops.datamodel.enums import IntentEnum, SpaceEnum
 
     meta = io.load(scan).metadata
-    assert meta.space is Space.aligned
+    assert meta.space is SpaceEnum.aligned
     meta.intent = "label"
-    assert meta.intent is Intent.label
+    assert meta.intent is IntentEnum.label
     nb_header = meta.update_raw()
     assert nb_header.get_intent()[0] == "label"

@@ -10,7 +10,7 @@ A vocabulary field is stored under its *sidecar key*: its BIDS key
 `Description`, `CodeURL`), and `channels` a list of objects with the
 `CamelCase` names of the `Channel` fields. Times are ISO 8601 strings.
 An encoding direction is its BIDS string (`"j-"`), or, when it has none,
-an object (`Vector`, `Space`). A known term (a `Space`, an `Intent`,
+an object (`Vector`, `Space`). A known term (a `SpaceEnum`, an `IntentEnum`,
 ...) is its string, a `data_unit` its unit symbol (`"ms"`, `"a.u."`), a
 `data_type` its `numpy` name (`"int16"`).
 """

@@ -26,9 +26,9 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     ContrastMethod,
     IlluminationType,
-    Intent,
+    IntentEnum,
     Manufacturer,
-    Space,
+    SpaceEnum,
 )
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
@@ -1057,12 +1057,12 @@ def test_known_terms_become_enum_members() -> None:
         contrast_method="DIC",
         input_space="scanner",
     )
-    assert meta.space is Space.MNI152NLin6Asym
-    assert meta.intent is Intent.label
+    assert meta.space is SpaceEnum.MNI152NLin6Asym
+    assert meta.intent is IntentEnum.label
     assert meta.manufacturer is Manufacturer.Siemens
     assert meta.illumination_type is IlluminationType.Epifluorescence
     assert meta.contrast_method is ContrastMethod.DIC
-    assert meta.input_space is Space.scanner
+    assert meta.input_space is SpaceEnum.scanner
     # They are strings, and compare equal to their value.
     assert meta.space == "MNI152NLin6Asym" and meta.intent == "label"
     # An unknown term stays a string: the vocabulary is not closed.
@@ -1161,7 +1161,7 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
     assert oblique.vector == pytest.approx((2**-0.5, 2**-0.5, 0.0))
     assert oblique.to_bids() is None
     world = EncodingDirection((0, 1, 0), space="scanner")
-    assert world.space is Space.scanner and world.to_bids() is None
+    assert world.space is SpaceEnum.scanner and world.to_bids() is None
 
 
 def test_the_direction_fields_take_bids_strings() -> None:

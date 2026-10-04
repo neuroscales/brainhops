@@ -34,9 +34,9 @@ from brainhops._core.compat import own_annotations
 from ..enums import (
     ContrastMethod,
     IlluminationType,
-    Intent,
+    IntentEnum,
     Manufacturer,
-    Space,
+    SpaceEnum,
 )
 from ..units import Unit
 from ._sentinel import Maybe
@@ -153,25 +153,25 @@ class ProvenanceMetadata(_VocabularyGroup):
     ] = None
 
     space: tx.Annotated[
-        Maybe[tx.Union[Space, str]],
+        Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc(
             "The label of the world space (`'MNI152NLin6Asym'`, "
-            "`'scanner'`, ...; a known one is a `Space`); the space itself "
-            "is geometry."
+            "`'scanner'`, ...; a known one is a `SpaceEnum`); the space "
+            "itself is geometry."
         ),
         Bids("SpatialReference"),
         Scope(FILE),
-        ConvertTo(term(Space)),
+        ConvertTo(term(SpaceEnum)),
     ] = None
 
     intent: tx.Annotated[
-        Maybe[tx.Union[Intent, str]],
+        Maybe[tx.Union[IntentEnum, str]],
         tx.Doc(
             "What the values are, as a NIfTI intent name (a known one is "
-            "an `Intent`)."
+            "an `IntentEnum`)."
         ),
         Scope(FILE),
-        ConvertTo(term(Intent)),
+        ConvertTo(term(IntentEnum)),
     ] = None
 
 
@@ -423,17 +423,17 @@ class TransformMetadata(_VocabularyGroup):
     ] = None
 
     input_space: tx.Annotated[
-        Maybe[tx.Union[Space, str]],
+        Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps from."),
         Scope(FILE),
-        ConvertTo(term(Space)),
+        ConvertTo(term(SpaceEnum)),
     ] = None
 
     output_space: tx.Annotated[
-        Maybe[tx.Union[Space, str]],
+        Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps to."),
         Scope(FILE),
-        ConvertTo(term(Space)),
+        ConvertTo(term(SpaceEnum)),
     ] = None
 
 

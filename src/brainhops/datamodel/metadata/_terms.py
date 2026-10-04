@@ -14,7 +14,7 @@ from bagof.magic import ConvertTo, replace
 from brainhops._core.enum import term as enum_term
 
 from ..base import DataModelBase
-from ..enums import Space
+from ..enums import SpaceEnum
 from ..units import Unit
 from ._sentinel import UNSUPPORTED
 
@@ -87,12 +87,12 @@ class EncodingDirection(DataModelBase):
         ConvertTo(_vector),
     ]
     space: tx.Annotated[
-        tx.Optional[tx.Union[Space, str]],
+        tx.Optional[tx.Union[SpaceEnum, str]],
         tx.Doc(
             "The coordinate system of `vector`: `None` for the image's "
             "voxel axes, or the label of a world space."
         ),
-        ConvertTo(enum_term(Space)),
+        ConvertTo(enum_term(SpaceEnum)),
     ] = None
 
     def __post_init__(self) -> None:

@@ -341,9 +341,9 @@ as the data type, is written under its name in `CamelCase`):
 
 A free-text field with a list of known terms holds an enum member when its
 value is one of them, and the string otherwise:
-[`Space`][brainhops.datamodel.enums.Space] for `space`, `input_space` and
+[`SpaceEnum`][brainhops.datamodel.enums.SpaceEnum] for `space`, `input_space` and
 `output_space` (the NIfTI space names and the BIDS templates),
-[`Intent`][brainhops.datamodel.enums.Intent] (the NIfTI intent names),
+[`IntentEnum`][brainhops.datamodel.enums.IntentEnum] (the NIfTI intent names),
 [`Manufacturer`][brainhops.datamodel.enums.Manufacturer],
 [`IlluminationType`][brainhops.datamodel.enums.IlluminationType] and
 [`ContrastMethod`][brainhops.datamodel.enums.ContrastMethod]. A member is
@@ -352,7 +352,7 @@ a string too:
 ```python
 >>> term = Metadata(space="MNI152NLin6Asym", intent="my own intent")
 >>> term.space, term.space == "MNI152NLin6Asym"
-(<Space.MNI152NLin6Asym: 'MNI152NLin6Asym'>, True)
+(<SpaceEnum.MNI152NLin6Asym: 'MNI152NLin6Asym'>, True)
 >>> term.intent
 'my own intent'
 
@@ -441,7 +441,7 @@ do, and the readers that need them (FSL FNIRT, NiftyReg) still read
 >>> nb.save(warp, os.path.join(tmp, "y_warp.nii.gz"))
 >>> field = io.load(os.path.join(tmp, "y_warp.nii.gz"), hint="coordinates")
 >>> field.metadata.description, field.metadata.intent
-('a coordinates field', <Intent.vector: 'vector'>)
+('a coordinates field', <IntentEnum.vector: 'vector'>)
 
 ```
 
@@ -647,7 +647,7 @@ writes one:
 ...     _ = domain.create_dataset("Mapping", data=np.eye(4))
 >>> x5 = io.load(os.path.join(tmp, "warp.x5"))
 >>> x5.metadata.description, x5.metadata.output_space
-('sub-01 T1w to MNI', <Space.MNI152NLin2009cAsym: 'MNI152NLin2009cAsym'>)
+('sub-01 T1w to MNI', <SpaceEnum.MNI152NLin2009cAsym: 'MNI152NLin2009cAsym'>)
 >>> x5.metadata.extra
 {'WrittenBy': 'NiTransforms 25.1.0'}
 >>> x5.metadata.node is x5.nodes[0]

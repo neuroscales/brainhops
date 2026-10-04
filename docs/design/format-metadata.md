@@ -261,8 +261,8 @@ module constants.
 `Maybe[Union[<Enum>, str]]`: a known term is held as the enum member (a
 `StrEnum`, so it is still a string and compares equal to its value), any
 other string stays a string, so the vocabulary is documented without
-being closed. The enums live in `brainhops.datamodel.enums`: `Space`,
-`Intent`, `Manufacturer`, `IlluminationType`, `ContrastMethod`. Truly
+being closed. The enums live in `brainhops.datamodel.enums`: `SpaceEnum`,
+`IntentEnum`, `Manufacturer`, `IlluminationType`, `ContrastMethod`. Truly
 free text (`name`, `description`, `history`, file references) stays
 `str`.
 
@@ -286,13 +286,13 @@ free text (`name`, `description`, `history`, file references) stays
 | `generated_by` | tuple[GeneratedBy(name, version, description)] | `GeneratedBy` | TIFF `Software`, MRtrix `mrtrix_version`, ITK h5 `ITKVersion`, x5 `Format`/`Version`, AFNI `TYPESTRING` |
 | `creation_time` | datetime | — | TIFF `DateTime`, AFNI `IDCODE_DATE`, EXIF |
 | `sources` | tuple[str] | `Sources` | BIDS-style provenance inputs only: NIfTI `aux_file`, elastix `InitialTransformParameterFileName`, NRRD/MRtrix none |
-| `space` | `Space` or str | `SpatialReference` | NIfTI `sform_code` name, AFNI `TEMPLATE_SPACE`, NRRD `space`, x5 `Domain.Coordinates` label |
-| `intent` | `Intent` or str (the NIfTI intent names) | — | NIfTI `intent_code/name`, AFNI `BRICK_STATSYM`, NRRD `kinds` (non-spatial) |
+| `space` | `SpaceEnum` or str | `SpatialReference` | NIfTI `sform_code` name, AFNI `TEMPLATE_SPACE`, NRRD `space`, x5 `Domain.Coordinates` label |
+| `intent` | `IntentEnum` or str (the NIfTI intent names) | — | NIfTI `intent_code/name`, AFNI `BRICK_STATSYM`, NRRD `kinds` (non-spatial) |
 
 `space` is a *label* (`"MNI152NLin6Asym"`, `"scanner"`, `"orig"`); the
-coordinate system itself stays in the data model. `Space` lists the
+coordinate system itself stays in the data model. `SpaceEnum` lists the
 NIfTI code names (`scanner`, `aligned`, `talairach`, `mni`, `template`),
-the BIDS standard templates and the BIDS non-standard spaces; `Intent`
+the BIDS standard templates and the BIDS non-standard spaces; `IntentEnum`
 lists the NIfTI intent names as `nibabel` spells them. `intent` is
 descriptive; the NIfTI reader still reads `intent_code` from the raw
 record to type axes, and the writer derives the code from the axes first
@@ -334,7 +334,7 @@ oriented unit vector in a named coordinate system: survives any linear
 map, and the codecs snap it back to an axis. (b) is (c) with an
 axis-aligned vector in voxel space, so (c) is chosen:
 `EncodingDirection(vector, space=None)`, where `space=None` means the
-image's voxel (array) axes, the BIDS frame, and a label (a `Space`)
+image's voxel (array) axes, the BIDS frame, and a label (a `SpaceEnum`)
 means a world space. A BIDS string is accepted wherever a direction is
 (`metadata.phase_encoding_direction = "j-"` stores `(0, -1, 0)`), a
 direction compares equal to its BIDS string, and `to_bids()` gives the
@@ -415,7 +415,7 @@ Everything else goes to `extra` until two formats agree on it.
 | Field | Type | Native sources |
 |---|---|---|
 | `moving` / `fixed` | str (file reference) | LTA `src/dst filename`, M3Z `image/atlas fname`, FLIRT `src`/`ref` (user-given, never stored), ANTs convention |
-| `input_space` / `output_space` | `Space` or str label | x5 `Domain.Coordinates`, LTA (derived from `type`), OME-Zarr coordinate system names |
+| `input_space` / `output_space` | `SpaceEnum` or str label | x5 `Domain.Coordinates`, LTA (derived from `type`), OME-Zarr coordinate system names |
 
 `moving`/`fixed` are deliberately *not* `source`/`target`: the data model
 warns that brainhops' `input`/`output` are the inverse of the imaging
@@ -1601,7 +1601,7 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   `MicroscopyMetadata`, `TransformMetadata`) that `Metadata` inherits,
   each field tagged with a propagation scope; `VOCABULARY` and `GROUPS`
   are module constants. A free-text field with known terms is
-  `Union[<Enum>, str]` (`Space`, `Intent`, `Manufacturer`,
+  `Union[<Enum>, str]` (`SpaceEnum`, `IntentEnum`, `Manufacturer`,
   `IlluminationType`, `ContrastMethod`); `data_unit` is a `Unit` when
   the units module parses it, the name otherwise, written as its
   symbol; encoding directions are `EncodingDirection` vectors (voxel
@@ -1733,7 +1733,7 @@ these:
    construct them by name only. Recommendation: keep; it costs one line
    per class and matches `ItkStruct`.
 6. **`intent` vocabulary (M3).** *Closed:* the NIfTI intent names are
-   the canonical set, as the `Intent` enum (`Union[Intent, str]`, so an
+   the canonical set, as the `IntentEnum` enum (`Union[IntentEnum, str]`, so an
    unknown name is kept); nothing else has a richer set and AFNI/NRRD
    map onto it.
 7. **NIfTI extras.** Unsupported (reported as lost), or written into a

@@ -7,8 +7,8 @@ __all__ = [
     "OrientationType",
     "AnatomicalOrientationValue",
     "SimplifyPolicy",
-    "Space",
-    "Intent",
+    "SpaceEnum",
+    "IntentEnum",
     "Manufacturer",
     "IlluminationType",
     "ContrastMethod",
@@ -212,7 +212,7 @@ class AnatomicalOrientationValue(StrEnum):
 
 # ruff: disable[E501]
 # fmt: off
-class Space(StrEnum):
+class SpaceEnum(StrEnum):
     """
     Known labels of a world space (the `space`, `input_space` and
     `output_space` metadata fields).
@@ -282,7 +282,7 @@ class Space(StrEnum):
     study = "study"
 
 
-class Intent(StrEnum):
+class IntentEnum(StrEnum):
     """
     Known values of the `intent` metadata field: what the values of an
     image are, as the NIfTI intent names (as `nibabel` spells them).
