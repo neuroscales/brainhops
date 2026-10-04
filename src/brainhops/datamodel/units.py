@@ -69,7 +69,6 @@ __all__ = [
 import math
 import re
 import threading
-import warnings
 
 # externals
 import typing_extensions as tx
@@ -160,19 +159,13 @@ _ALIASES: tx.Dict[str, str] = {
 }
 """Names matched exactly, before pint parses anything."""
 
-_DEPRECATED_ALIASES: tx.Dict[str, str] = {
-    "sample": "index",
-    "samples": "index",
-}
-"""Names that still parse, with a [`DeprecationWarning`][]."""
-
 _PINT_FREE: tx.Dict[str, tx.Tuple[str, str]] = {
     **dict.fromkeys(
         ("mm", "millimeter", "millimeters", "millimetre", "millimetres"),
         ("millimeter", "[length]"),
     ),
     **dict.fromkeys(
-        ("um", "µm", "micrometer", "micrometers", "micron", "microns"),
+        ("um", "µm", "μm", "micrometer", "micrometers", "micron", "microns"),
         ("micrometer", "[length]"),
     ),
     **dict.fromkeys(
@@ -255,6 +248,20 @@ def _canonical_name(unit: "pint.Unit") -> str:
     for factor in denominator:
         name += f" / {factor}"
     return name
+
+
+_MICRO_SIGN = "\u00b5"
+_GREEK_MU = "\u03bc"
+
+
+def _normalize_symbol(symbol: str) -> str:
+    """Write the micro prefix of a symbol with one character, the Greek mu.
+
+    pint's micro prefix lists both the micro sign (U+00B5) and the Greek
+    mu (U+03BC), and which of the two is its symbol depends on the pint
+    release (the micro sign until 0.25, the Greek mu from 0.26).
+    """
+    return symbol.replace(_MICRO_SIGN, _GREEK_MU)
 
 
 def _normalize_dimension(dimension: str) -> str:
@@ -385,15 +392,6 @@ class Unit:
                 f"{type(value).__name__} {value!r}."
             )
         name = value.strip()
-        if name in _DEPRECATED_ALIASES:
-            replacement = _DEPRECATED_ALIASES[name]
-            warnings.warn(
-                f"The unit name {name!r} is deprecated; use "
-                f"{replacement!r} (or 'voxel', 'pixel').",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            name = replacement
         if not name:
             raise ValueError(
                 "An empty name is not a unit; leave the unit unspecified "
@@ -539,8 +537,9 @@ class Unit:
 
     @property
     def symbol(self) -> str:
-        """The unit's symbol, such as `"mm"` or `"s / mm ** 2"`."""
-        return format(self.pint, "~")
+        """The unit's symbol, such as `"mm"` or `"s / mm ** 2"`. The micro
+        prefix is always the Greek mu (U+03BC), as in `"μm"`."""
+        return _normalize_symbol(format(self.pint, "~"))
 
     @property
     def dimensionality(self) -> str:
@@ -688,11 +687,6 @@ class IndexUnit(Unit, dimension="[index]"):
         from a dimensionless physical unit, such as the percent, which is
         a real, convertible unit. An index unit never converts into a
         physical unit. See [`is_indexunit`][].
-
-    !!! warning "Formerly `SampleUnit`"
-
-        This class was called `SampleUnit`, and its unit `"sample"`. Both
-        names still work, with a [`DeprecationWarning`][].
     """
 
     __slots__ = ()
@@ -731,75 +725,3 @@ def is_spaceunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
 def is_timeunit(unit: tx.Union[Unit, tx.Type[Unit], None]) -> bool:
     """Whether `unit` is a unit of time (an instance or a class)."""
     return is_instance_or_subclass(unit, TimeUnit)
-
-
-# ----------------------------------------------------------------------
-#   DEPRECATED NAMES
-# ----------------------------------------------------------------------
-
-
-class _DeprecatedUnitConstant:
-    """A former unit class, such as `MilliMeter`: calling it returns the
-    unit."""
-
-    __slots__ = ("_qualname", "_unit")
-
-    def __init__(self, qualname: str, unit: str) -> None:
-        self._qualname = qualname
-        self._unit = unit
-
-    def __call__(self) -> Unit:
-        return Unit(self._unit)
-
-    def __repr__(self) -> str:
-        return f"<deprecated unit {self._qualname}: Unit({self._unit!r})>"
-
-
-_PREFIXES = (
-    "quetta", "ronna", "yotta", "zetta", "exa", "peta", "tera", "giga",
-    "mega", "kilo", "hecto", "deca", "", "deci", "centi", "milli", "micro",
-    "nano", "pico", "femto", "atto", "zepto", "yocto", "ronto", "quecto",
-)  # fmt: skip
-
-_DEPRECATED_CONSTANTS: tx.Dict[str, str] = {
-    **{
-        prefix.capitalize() + base.capitalize(): prefix + base
-        for prefix in _PREFIXES
-        for base in ("meter", "second")
-    },
-    **{
-        name.capitalize(): name
-        for name in (
-            "minute", "hour", "day", "week", "year",
-            "inch", "foot", "yard", "mile", "angstrom", "parsec",
-        )
-    },
-}  # fmt: skip
-
-_DEPRECATED_NAMES: tx.Dict[str, tx.Tuple[str, tx.Any]] = {
-    "SampleUnit": ("IndexUnit", IndexUnit),
-    "Sample": ("IndexUnit", IndexUnit),
-    "is_sampleunit": ("is_indexunit", is_indexunit),
-}
-
-
-def __getattr__(name: str) -> tx.Any:
-    if name in _DEPRECATED_NAMES:
-        replacement, value = _DEPRECATED_NAMES[name]
-        warnings.warn(
-            f"`brainhops.datamodel.units.{name}` is deprecated; use "
-            f"`{replacement}`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return value
-    if name in _DEPRECATED_CONSTANTS:
-        unit = _DEPRECATED_CONSTANTS[name]
-        warnings.warn(
-            f"`brainhops.datamodel.units.{name}` is deprecated; use "
-            f"`Unit({unit!r})`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _DeprecatedUnitConstant(name, unit)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -7,7 +7,6 @@ import subprocess
 import sys
 import textwrap
 import typing as t
-import warnings
 
 import pytest
 from bagof.converters import ConversionError
@@ -121,7 +120,9 @@ def test_the_pint_free_names_are_what_pint_gives() -> None:
     "name, symbol",
     [
         ("mm", "mm"),
-        ("micrometer", "µm"),
+        ("micrometer", "\u03bcm"),
+        ("um", "\u03bcm"),
+        ("\u00b5s", "\u03bcs"),
         ("inch", "in"),
         ("min", "min"),
         ("s/mm^2", "s / mm ** 2"),
@@ -131,6 +132,40 @@ def test_the_pint_free_names_are_what_pint_gives() -> None:
 )
 def test_symbols(name: str, symbol: str) -> None:
     assert Unit(name).symbol == symbol
+
+
+@pytest.mark.parametrize(
+    "pint_symbol, symbol",
+    [
+        ("\u00b5m", "\u03bcm"),  # micro sign, as pint < 0.26 writes it
+        ("\u03bcm", "\u03bcm"),  # greek mu, as pint >= 0.26 writes it
+        ("s / \u00b5m ** 2", "s / \u03bcm ** 2"),
+        ("mm", "mm"),
+    ],
+)
+def test_the_micro_prefix_is_one_character(
+    pint_symbol: str, symbol: str
+) -> None:
+    # Whatever pint writes, brainhops writes the micro prefix as the Greek
+    # mu, as it did before units were backed by pint.
+    assert units._normalize_symbol(pint_symbol) == symbol
+
+
+@pytest.mark.parametrize("pint_symbol", ["\u00b5m", "\u03bcm"])
+def test_the_symbol_does_not_depend_on_pint(
+    monkeypatch: pytest.MonkeyPatch, pint_symbol: str
+) -> None:
+    import builtins
+
+    real_format = builtins.format
+
+    def fake_format(value: object, spec: str = "") -> str:
+        if spec == "~":
+            return pint_symbol
+        return real_format(value, spec)
+
+    monkeypatch.setattr(units, "format", fake_format, raising=False)
+    assert Unit("um").symbol == "\u03bcm"
 
 
 @pytest.mark.parametrize(
@@ -490,50 +525,13 @@ def test_predicates_are_exported() -> None:
     assert "IndexUnit" in units.__all__
 
 
-# ----------------------------------------------------------------------
-#   Deprecated names
-# ----------------------------------------------------------------------
-
-
-def test_sample_unit_is_a_deprecated_alias() -> None:
-    with pytest.warns(DeprecationWarning, match="SampleUnit"):
-        assert units.SampleUnit is IndexUnit
-    with pytest.warns(DeprecationWarning, match="is_sampleunit"):
-        assert units.is_sampleunit is is_indexunit
-    with pytest.warns(DeprecationWarning, match="SampleUnit"):
-        from brainhops.datamodel.units import SampleUnit  # noqa: F401
-
-
-def test_the_sample_name_is_a_deprecated_alias() -> None:
-    with pytest.warns(DeprecationWarning, match="'sample' is deprecated"):
-        assert Unit("sample") is IndexUnit()
-    with pytest.warns(DeprecationWarning, match="'sample' is deprecated"):
-        assert SpaceAxis(name="x", unit="sample").unit is IndexUnit()
-
-
-@pytest.mark.parametrize(
-    "name, unit", [("MilliMeter", "mm"), ("Second", "s"), ("Inch", "in")]
-)
-def test_the_unit_classes_are_deprecated_constants(
-    name: str, unit: str
-) -> None:
-    with pytest.warns(DeprecationWarning, match=name):
-        constant = getattr(units, name)
-    assert constant() is Unit(unit)
-
-
-def test_an_unknown_attribute_raises() -> None:
-    with pytest.raises(AttributeError):
-        units.NotAUnit  # noqa: B018
-
-
-def test_the_current_names_do_not_warn() -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        Unit("index")
-        Unit("mm")
-        IndexUnit()
-        is_indexunit(None)
+def test_sample_is_not_a_unit() -> None:
+    # The index units were called "sample" units; that name is gone.
+    with pytest.raises(ValueError, match="is not a unit brainhops"):
+        Unit("sample")
+    assert not hasattr(units, "SampleUnit")
+    assert not hasattr(units, "is_sampleunit")
+    assert not hasattr(units, "MilliMeter")
 
 
 # ----------------------------------------------------------------------

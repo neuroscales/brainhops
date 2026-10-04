@@ -41,9 +41,8 @@ Reading
 
 Writing
 -------
-* `None` (an unspecified unit) is written as `"unknown"`, and so is a
-  unit that measures nothing (a name [`Unit`][] did not recognise).
-* The **sample is never written**: it says that an axis indexes an array,
+* `None` (an unspecified unit) is written as `"unknown"`.
+* An **index unit is never written**: it says that an axis indexes an array,
   which a NIfTI voxel space always does, and has no code. Asking for one
   raises a `ValueError`.
 * A unit of the wrong kind for its slot (a second for the spatial unit)
