@@ -39,11 +39,11 @@ from brainhops.datamodel.transformations import (
 
 
 def _sp(name: str) -> SpaceAxis:
-    return SpaceAxis(name=name, unit="sample")
+    return SpaceAxis(name=name, unit="index")
 
 
 def _time(name: str = "t", discrete: object = None) -> Axis:
-    return Axis(name=name, type="time", unit="sample", discrete=discrete)
+    return Axis(name=name, type="time", unit="index", discrete=discrete)
 
 
 def _components(els: list, shape: tuple) -> object:

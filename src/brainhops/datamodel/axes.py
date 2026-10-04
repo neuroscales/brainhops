@@ -47,7 +47,7 @@ from .orientation import (
     RightToLeft,
     SuperiorToInferior,
 )
-from .units import SampleUnit, SpaceUnit, TimeUnit, Unit
+from .units import IndexUnit, SpaceUnit, TimeUnit, Unit
 
 # --- Dispatch helpers -------------------------------------------------
 
@@ -284,25 +284,27 @@ def _conflicts(
 class SpaceAxis(Axis, on={"type": "space"}):
     """An axis that measures a spatial dimension.
 
-    Its unit is a unit of space, the sample (the axis indexes an array), or
+    Its unit is a unit of space, an index unit (the axis indexes an
+    array), or
     unspecified (`None`, the default). Any other unit is refused by the
     type of the field. The unit is not what an axis is selected on, so
     `Axis(type="space", unit="s")` builds a `SpaceAxis`, which refuses the
     second, rather than quietly falling back to a generic `Axis`.
     """
 
-    unit: tx.Optional[tx.Union[SpaceUnit, SampleUnit]] = None
+    unit: tx.Optional[tx.Union[SpaceUnit, IndexUnit]] = None
     type: NoRepr[tx.Literal["space"]] = "space"
 
 
 class TimeAxis(Axis, on={"type": "time"}):
     """An axis that measures time.
 
-    Its unit is a unit of time, the sample (the axis indexes an array), or
+    Its unit is a unit of time, an index unit (the axis indexes an
+    array), or
     unspecified (`None`, the default). Any other unit is refused.
     """
 
-    unit: tx.Optional[tx.Union[TimeUnit, SampleUnit]] = None
+    unit: tx.Optional[tx.Union[TimeUnit, IndexUnit]] = None
     type: NoRepr[tx.Literal["time"]] = "time"
 
 
@@ -358,7 +360,7 @@ class OrientedSpaceAxis(SpaceAxis, OrientedAxis):
 # registered with the root by hand, on the orientation alone: an axis of
 # another type with an anatomical orientation is a contradiction, and
 # building it as an anatomical axis refuses it. An anatomical axis whose
-# unit is the sample is a spatial axis of a voxel grid that points in
+# unit is an index unit is a spatial axis of a voxel grid that points in
 # that direction.
 @Axis.register_polymorph(on={"orientation": _is_anatomical})
 class AnatomicalAxis(
@@ -369,7 +371,7 @@ class AnatomicalAxis(
 
     `Axis(orientation=...)` with an anatomical orientation builds one of
     these even when it names no type: an anatomical direction is a
-    direction in space. Its unit may still be the sample, for a voxel axis
+    direction in space. Its unit may still be an index unit, for a voxel axis
     that points in that direction.
     """
 

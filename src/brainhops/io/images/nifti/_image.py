@@ -193,7 +193,7 @@ def _nifti_to_transformations(
     # >> Physical space
     # The same axes, measured in the header's units. An axis of another
     # type (a channel, a vector component) has no physical unit: its unit
-    # is left unspecified rather than inherit "sample" from the voxel space.
+    # is left unspecified rather than inherit "index" from the voxel space.
     phys_axes = [
         replace(axis, unit=units.get(axis.type)) for axis in named_axes
     ]
