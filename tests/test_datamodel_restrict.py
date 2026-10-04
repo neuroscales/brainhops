@@ -328,7 +328,7 @@ def test_embed_refuses_a_transform_that_contradicts_its_axes() -> None:
 
 def _system(n: int) -> CoordinateSystem:
     return CoordinateSystem(
-        axes=[SpaceAxis(name=f"a{i}", unit="sample") for i in range(n)]
+        axes=[SpaceAxis(name=f"a{i}", unit="index") for i in range(n)]
     )
 
 

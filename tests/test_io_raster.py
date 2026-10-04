@@ -14,7 +14,7 @@ import typing_extensions as tx
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling
-from brainhops.datamodel.units import is_sampleunit
+from brainhops.datamodel.units import is_indexunit
 from brainhops.io.images.base import _utils_raster as raster
 
 # ----------------------------------------------------------------------
@@ -33,7 +33,7 @@ def test_storage_axes_codes() -> None:
         "space",
         "channel",
     ]
-    assert all(is_sampleunit(a.unit) for a in axes)
+    assert all(is_indexunit(a.unit) for a in axes)
 
 
 def test_storage_axes_samples_are_the_channel_axis() -> None:
@@ -154,7 +154,7 @@ def test_pixel_and_voxel_systems() -> None:
     system = raster.pixel_system(axes)
     assert system.name == "pixel"
     assert system.order == "F"
-    assert all(is_sampleunit(a.unit) for a in system.axes)
+    assert all(is_indexunit(a.unit) for a in system.axes)
     _, axes = raster.to_canonical(np.zeros((2, 3, 4)), "ZYX")
     assert raster.pixel_system(axes).name == "voxel"
 

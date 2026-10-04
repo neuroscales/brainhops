@@ -18,6 +18,8 @@ _DEPENDENCIES = (
     ("pil", "PIL", "HAS_PILLOW"),
     ("tifffile", "tifffile", "HAS_TIFFFILE"),
     ("openslide", "openslide", "HAS_OPENSLIDE"),
+    # ---- units -------------------------------------------------------
+    ("pint", "pint", "HAS_PINT"),
     # ---- backends ----------------------------------------------------
     ("np", "numpy", "HAS_NUMPY"),
     ("cp", "cupy", "HAS_CUPY"),

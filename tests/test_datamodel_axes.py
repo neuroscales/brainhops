@@ -145,14 +145,13 @@ def test_an_axis_of_another_unit_kind_is_not_read_as_spatial() -> None:
     # A spatial axis measured in seconds is a contradiction. It is refused
     # wherever it is written -- not quietly built as a generic `Axis`, and
     # not quietly read as the sample either (a second instance used to
-    # fall through the `Union[SpaceUnit, SampleUnit]` to `SampleUnit`).
-    from brainhops.datamodel.units import Second, Unit
+    # fall through the `Union[SpaceUnit, IndexUnit]` to `IndexUnit`).
+    from brainhops.datamodel.units import Unit
 
     for build in (
         lambda: Axis(name="x", type="space", unit="s"),
         lambda: SpaceAxis(name="x", unit="s"),
         lambda: SpaceAxis(name="x", unit=Unit("s")),
-        lambda: SpaceAxis(name="x", unit=Second()),
     ):
         with pytest.raises(ConversionError, match="SpaceAxis.unit"):
             build()

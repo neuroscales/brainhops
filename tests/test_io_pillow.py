@@ -26,7 +26,7 @@ import brainhops.io as bio  # noqa: E402
 from brainhops.datamodel.axes import Axis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.transformations import Scaling  # noqa: E402
-from brainhops.datamodel.units import is_sampleunit  # noqa: E402
+from brainhops.datamodel.units import is_indexunit  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     Confidence,
     ParserContentError,
@@ -119,7 +119,7 @@ def test_read_axes_and_systems(tmp_path: Path) -> None:
     assert pixel.order == "F"
     assert [a.name for a in pixel.axes] == ["x", "y", "c"]
     assert [a.type for a in pixel.axes] == ["space", "space", "channel"]
-    assert all(is_sampleunit(a.unit) for a in pixel.axes)
+    assert all(is_indexunit(a.unit) for a in pixel.axes)
     # Unknown size: identity onto axes with no unit.
     np.testing.assert_array_equal(xform.scale, [1, 1, 1])
     assert xform.output.name == "physical"

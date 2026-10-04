@@ -7,8 +7,7 @@ import numpy as np
 import pytest
 
 import brainhops.io as io
-from brainhops.datamodel import units
-from brainhops.datamodel.units import SampleUnit, Unit
+from brainhops.datamodel.units import IndexUnit, Unit
 from brainhops.io.base._nifti_units import (
     NIFTI_SPACE_CODES,
     NIFTI_TIME_CODES,
@@ -18,12 +17,12 @@ from brainhops.io.base._nifti_units import (
 )
 
 _REPRESENTABLE = [
-    ("space", "meter", units.Meter),
-    ("space", "mm", units.MilliMeter),
-    ("space", "micron", units.MicroMeter),
-    ("time", "sec", units.Second),
-    ("time", "msec", units.MilliSecond),
-    ("time", "usec", units.MicroSecond),
+    ("space", "meter", Unit("meter")),
+    ("space", "mm", Unit("millimeter")),
+    ("space", "micron", Unit("micrometer")),
+    ("time", "sec", Unit("second")),
+    ("time", "msec", Unit("millisecond")),
+    ("time", "usec", Unit("microsecond")),
 ]
 
 # ----------------------------------------------------------------------
@@ -31,14 +30,14 @@ _REPRESENTABLE = [
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind, label, cls", _REPRESENTABLE)
+@pytest.mark.parametrize("kind, label, expected", _REPRESENTABLE)
 def test_every_representable_code_round_trips(
-    kind: str, label: str, cls: type
+    kind: str, label: str, expected: Unit
 ) -> None:
     codes = NIFTI_SPACE_CODES if kind == "space" else NIFTI_TIME_CODES
     for value in (label, codes[label]):
         unit = nifti_to_unit(value, kind)
-        assert type(unit) is cls
+        assert unit is expected
         assert unit_to_nifti(unit, kind) == label
 
 
@@ -47,7 +46,7 @@ def test_an_unknown_spatial_unit_is_read_as_millimetres() -> None:
     # back as "mm", not as "unknown".
     for value in ("unknown", 0, None, ""):
         unit = nifti_to_unit(value, "space")
-        assert type(unit) is units.MilliMeter
+        assert unit is Unit("mm")
         assert unit_to_nifti(unit, "space") == "mm"
 
 
@@ -91,15 +90,15 @@ def test_a_value_that_is_not_a_nifti_unit_of_that_kind_raises(
 # ----------------------------------------------------------------------
 
 
-def test_unspecified_and_nameless_units_are_written_as_unknown() -> None:
+def test_unspecified_units_are_written_as_unknown() -> None:
     assert unit_to_nifti(None, "space") == "unknown"
-    assert unit_to_nifti(Unit("not-a-unit"), "space") == "unknown"
+    assert unit_to_nifti(None, "time") == "unknown"
 
 
-def test_the_sample_is_never_written() -> None:
+def test_an_index_unit_is_never_written() -> None:
     for kind in ("space", "time"):
         with pytest.raises(ValueError, match="never written"):
-            unit_to_nifti(SampleUnit(), kind)
+            unit_to_nifti(IndexUnit(), kind)
 
 
 def test_a_unit_of_the_wrong_kind_raises() -> None:
@@ -163,8 +162,6 @@ def test_an_unknown_file_is_written_back_in_millimetres(tmp_path) -> None:  # no
     image, written = _round_trip(tmp_path, "unknown", "unknown")
     world = image.transformations[-1].output
     assert all(
-        type(axis.unit) is units.MilliMeter
-        for axis in world.axes
-        if axis.type == "space"
+        axis.unit is Unit("mm") for axis in world.axes if axis.type == "space"
     )
     assert written == ("mm", "unknown")

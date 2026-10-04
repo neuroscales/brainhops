@@ -30,7 +30,6 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     DisplacementField,
     Scaling,
 )
-from brainhops.datamodel.units import SpaceUnit  # noqa: E402
 from brainhops.io.base.freesurfer import (  # noqa: E402
     fs_geometry_from_vox2ras,
     fs_vox2ras,
@@ -410,7 +409,7 @@ def test_world_units_are_converted_to_mm(tmp_path) -> None:  # noqa: ANN001
         world = CoordinateSystem(name="world", axes=["x", "y", "z"])
     world = replace(
         world,
-        axes=[replace(a, unit=SpaceUnit("centimeter")) for a in world.axes],
+        axes=[replace(a, unit="centimeter") for a in world.axes],
     )
     image = MghImage(
         data=_data(), transformations=[replace(affine, output=world)]

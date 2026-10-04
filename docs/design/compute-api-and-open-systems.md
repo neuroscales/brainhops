@@ -737,7 +737,8 @@ and `compatible`.)
   `S` inferior-to-superior, and `L`, `P`, `I` their opposites.
 - **Units (#115).**
   - `Unit("sample")` (`SampleUnit`) marks an *array* axis: its coordinates
-    count samples. `unit=None` means *unspecified*: nothing is claimed.
+    count samples. (Since #289 these are the index units, `Unit("index")`,
+    `"voxel"` or `"pixel"` (`IndexUnit`), tested with `is_indexunit`.) `unit=None` means *unspecified*: nothing is claimed.
     These are three different things: a sample, a physical unit, and no
     claim.
   - Each unit class refuses the other kinds: `SpaceUnit("s")` and
