@@ -46,6 +46,7 @@ from brainhops.io.base.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,
+    _ZarrGroup,
 )
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.zarr import _map, _node
@@ -184,7 +185,7 @@ class OmeZarrField(
         # An OME-Zarr field is a group whose own OME metadata names a
         # displacement or coordinate component axis. A plain image pyramid
         # names no such axis, so it is not read as a field.
-        if not isinstance(node, deps.abczarr.ZarrGroup):
+        if not isinstance(node, _ZarrGroup):
             return Confidence.NO
         for system in _node.coordinate_systems(node):
             for axis in getattr(system, "axes", None) or []:
@@ -273,7 +274,7 @@ class OmeZarrField(
         # and the metadata is re-emitted unchanged, so a read followed by a
         # write round-trips the store.
         node = _as_node(node)
-        if not isinstance(node, deps.abczarr.ZarrGroup):
+        if not isinstance(node, _ZarrGroup):
             raise WriterError(
                 "An OME-Zarr field is written into a group, not a plain array."
             )

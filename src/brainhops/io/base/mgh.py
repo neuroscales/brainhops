@@ -432,9 +432,9 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     def from_nibabel(cls, mgh: _MghObject, **kwargs) -> tx.Self:
         """Build the object from an already-loaded `nibabel` MGH header
         or image."""
-        if isinstance(mgh, deps.nb.freesurfer.mghformat.MGHHeader):
+        if isinstance(mgh, _MGHHeader):
             return cls(header=mgh, **kwargs)
-        if isinstance(mgh, deps.nb.freesurfer.mghformat.MGHImage):
+        if isinstance(mgh, _MGHImage):
             return cls(image=mgh, header=mgh.header, **kwargs)
         raise TypeError(f"Expected an MGH image or header, got {type(mgh)}")
 

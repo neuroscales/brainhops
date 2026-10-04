@@ -44,6 +44,8 @@ if tx.TYPE_CHECKING:
     from abczarr import ZarrNode
 
 _ZarrNode = deps.lazy_type("abczarr:ZarrNode")
+_ZarrArray = deps.lazy_type("abczarr:ZarrArray")
+_ZarrGroup = deps.lazy_type("abczarr:ZarrGroup")
 
 #: A location is a store path or an already-opened store or node object.
 StoreLike = tx.Union[str, path.PathLike, tx.Any]
@@ -279,7 +281,7 @@ def _as_node(source: tx.Any) -> "tx.Optional[ZarrNode]":
     is wrapped. A string or path, which names a store rather than being an
     open node, returns `None`.
     """
-    if isinstance(source, deps.abczarr.ZarrNode):
+    if isinstance(source, _ZarrNode):
         return source
     if isinstance(source, (str, path.PathLike)):
         return None

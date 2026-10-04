@@ -12,7 +12,6 @@ import typing_extensions as tx
 from brainhops._core import affines as _affines
 
 # core
-from brainhops._core import dependencies as deps
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
@@ -34,6 +33,7 @@ from brainhops.io.base.nifti import (
     _apply_overrides,
     _embed_affine,
     _new_nifti,
+    _Nifti1Image,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
@@ -176,9 +176,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         field is refused here, from its header alone, rather than when
         its chain is first built.
         """
-        header = (
-            nifti.header if isinstance(nifti, deps.nb.Nifti1Image) else nifti
-        )
+        header = nifti.header if isinstance(nifti, _Nifti1Image) else nifti
         shape = _nifti_shape(header)
         if _itk_ndim(shape) is None:
             raise ParserContentError(

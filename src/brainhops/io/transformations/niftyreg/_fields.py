@@ -29,6 +29,8 @@ from brainhops.io.base.nifti import (
     _apply_like,
     _apply_overrides,
     _new_nifti,
+    _Nifti1Image,
+    _Nifti2Header,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
@@ -93,7 +95,7 @@ def _niftyreg_type(header: _NiftiObject) -> tx.Optional[int]:
     `None` unless the header is a NiftyReg transformation: a `VECTOR`
     image named `"NREG_TRANS"` whose `intent_p1` is a whole number.
     """
-    if isinstance(header, deps.nb.Nifti1Image):
+    if isinstance(header, _Nifti1Image):
         header = header.header
     if _nifti_intent(header) != _NIFTI_INTENT_VECTOR:
         return None
@@ -264,9 +266,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
         `(X, Y, 1, 1, 2)` in particular -- is refused here, from the
         header alone.
         """
-        header = (
-            nifti.header if isinstance(nifti, deps.nb.Nifti1Image) else nifti
-        )
+        header = nifti.header if isinstance(nifti, _Nifti1Image) else nifti
         shape = _nifti_shape(header)
         if (
             shape is None
@@ -702,7 +702,7 @@ class NiftyRegVelocity(NiftyRegField):
         header = self.header.copy()
         image_cls = (
             deps.nb.Nifti2Image
-            if isinstance(header, deps.nb.Nifti2Header)
+            if isinstance(header, _Nifti2Header)
             else deps.nb.Nifti1Image
         )
         image = image_cls(self.data, None, header=header)

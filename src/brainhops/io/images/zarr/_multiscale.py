@@ -24,6 +24,7 @@ from brainhops.io.base.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,
+    _ZarrGroup,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
@@ -210,7 +211,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
 
     def _read_layout(self) -> tx.Dict[str, tx.Any]:
         node = self.node
-        if not isinstance(node, deps.abczarr.ZarrGroup):
+        if not isinstance(node, _ZarrGroup):
             raise OmeImageError(
                 "This Zarr store is an array, not a group, so it cannot be "
                 "read as a multiscale image."
@@ -323,7 +324,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # plain array is left to the single-scale reader. The raw attributes
         # are inspected, so a malformed pyramid is still recognized here and
         # reported by the reader rather than passed over.
-        if not isinstance(node, deps.abczarr.ZarrGroup):
+        if not isinstance(node, _ZarrGroup):
             return Confidence.NO
         if not looks_like_multiscale(node):
             return Confidence.NO
@@ -338,7 +339,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     ) -> None:
         """Write the pyramid into an opened Zarr group, and return it."""
         node = _as_node(node)
-        if not isinstance(node, deps.abczarr.ZarrGroup):
+        if not isinstance(node, _ZarrGroup):
             raise WriterError(
                 "A multiscale image is written into a group, not a plain "
                 "array."

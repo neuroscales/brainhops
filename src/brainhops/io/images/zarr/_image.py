@@ -21,6 +21,7 @@ from brainhops.io.base.zarr import (
     StoreLike,
     ZarrParserWriter,
     _as_node,
+    _ZarrArray,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 
@@ -61,7 +62,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     def _score_store(cls, node: "ZarrNode") -> float:
         # A plain array is very likely wanted as an image. A group is not an
         # array, so it is left to the OME reader.
-        if isinstance(node, deps.abczarr.ZarrArray):
+        if isinstance(node, _ZarrArray):
             return Confidence.LIKELY
         return Confidence.NO
 
@@ -85,7 +86,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         an image would fail later and more obscurely.
         """
         image = super().from_node(node, **kwargs)
-        if not isinstance(image.node, deps.abczarr.ZarrArray):
+        if not isinstance(image.node, _ZarrArray):
             raise ParserContentError(
                 "This Zarr store is a group, not a plain array, so it cannot "
                 "be read as a single-scale image."
@@ -99,7 +100,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     def to_node(self, node: tx.Any, **kwargs) -> "ZarrNode":
         wrapped = _as_node(node)
         data = self.data
-        if not isinstance(wrapped, deps.abczarr.ZarrArray):
+        if not isinstance(wrapped, _ZarrArray):
             raise WriterError(
                 "A plain Zarr image is written into an array node, not a "
                 "group. Pass a store path to to_store instead."

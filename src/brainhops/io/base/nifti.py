@@ -58,6 +58,8 @@ if tx.TYPE_CHECKING:
 # does not import nibabel.
 _Nifti1Image = deps.lazy_type("nibabel:Nifti1Image")
 _Nifti1Header = deps.lazy_type("nibabel:Nifti1Header")
+_Nifti2Image = deps.lazy_type("nibabel:Nifti2Image")
+_Nifti2Header = deps.lazy_type("nibabel:Nifti2Header")
 _NiftiObject = tx.Union[_Nifti1Header, _Nifti1Image]
 
 
@@ -224,7 +226,7 @@ larger extent along any axis is written as NIfTI-2 instead.
 def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
     """The intent code of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, deps.nb.Nifti1Image):
+        if isinstance(header, _Nifti1Image):
             header = header.header
         return int(header["intent_code"])
     except Exception:
@@ -234,7 +236,7 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
 def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
     """The intent name of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, deps.nb.Nifti1Image):
+        if isinstance(header, _Nifti1Image):
             header = header.header
         return str(header.get_intent()[2])
     except Exception:
@@ -266,7 +268,7 @@ def _nifti_vector_field(data: ArrayProtocol) -> ArrayProtocol:
 def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
     """The data shape of a NIfTI header, or `None` if unreadable."""
     try:
-        if isinstance(header, deps.nb.Nifti1Image):
+        if isinstance(header, _Nifti1Image):
             header = header.header
         return tuple(int(d) for d in header.get_data_shape())
     except Exception:
@@ -450,9 +452,9 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """Build the object from an already-loaded `nibabel` header or
         image."""
-        if isinstance(nifti, deps.nb.Nifti1Header):
+        if isinstance(nifti, _Nifti1Header):
             return cls(header=nifti, **kwargs)
-        if isinstance(nifti, deps.nb.Nifti1Image):
+        if isinstance(nifti, _Nifti1Image):
             return cls(image=nifti, header=nifti.header, **kwargs)
         raise TypeError(f"Expected a NIfTI image or header, got {type(nifti)}")
 
@@ -592,11 +594,11 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         is then scored for how well it matches this particular format,
         as opposed to another kind of NIfTI-based format.
         """
-        if isinstance(nifti, deps.nb.Nifti1Image):
+        if isinstance(nifti, _Nifti1Image):
             return cls.sniff_nibabel(nifti.header, error=error, **kwargs)
-        if isinstance(nifti, deps.nb.Nifti2Header):
+        if isinstance(nifti, _Nifti2Header):
             result = nifti["sizeof_hdr"] == 540
-        elif isinstance(nifti, deps.nb.Nifti1Header):
+        elif isinstance(nifti, _Nifti1Header):
             result = nifti["sizeof_hdr"] == 348
         else:
             result = False
@@ -1165,9 +1167,9 @@ def _like_header(like: tx.Any) -> "tx.Optional[nb.Nifti1Header]":
     """
     if like is None:
         return None
-    if isinstance(like, (deps.nb.Nifti1Header, deps.nb.Nifti2Header)):
+    if isinstance(like, (_Nifti1Header, _Nifti2Header)):
         return like
-    if isinstance(like, (deps.nb.Nifti1Image, deps.nb.Nifti2Image)):
+    if isinstance(like, (_Nifti1Image, _Nifti2Image)):
         return like.header
     header = getattr(like, "header", None)
     if header is not None:
