@@ -365,7 +365,8 @@ def _allowed(
     The available formats of `registry` that answer to one of `hints`,
     or all of them if no hint is given.
 
-    Only what was declared is consulted, so no format is imported.
+    Only the declarations are consulted, so no format is imported here
+    (a format's `check` may import what it tests for).
     """
     return [
         entry

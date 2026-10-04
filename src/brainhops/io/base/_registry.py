@@ -21,6 +21,7 @@ __all__ = [
     "FormatEntry",
     "FormatRegistry",
     "declare",
+    "declared",
     "ensure_declared",
     "key_of",
     "registry_for",
@@ -141,7 +142,7 @@ class FormatEntry:
         return f"{self.module}:{self.qualname}"
 
     @property
-    def __name__(self) -> str:  # noqa: PLW3201 - reads like a class
+    def __name__(self) -> str:
         """The format's name, as error messages give it."""
         if self._cls is not None:
             return self._cls.__name__
@@ -159,21 +160,21 @@ class FormatEntry:
         return self._hints
 
     @property
-    def EXTENSIONS(self) -> tx.Tuple[str, ...]:  # noqa: N802
+    def EXTENSIONS(self) -> tx.Tuple[str, ...]:
         """The extensions the format declares."""
         if self._cls is not None:
             return self._cls.EXTENSIONS
         return self._extensions
 
     @property
-    def PREFIXES(self) -> tx.Tuple[str, ...]:  # noqa: N802
+    def PREFIXES(self) -> tx.Tuple[str, ...]:
         """The prefixes the format requires."""
         if self._cls is not None:
             return self._cls.PREFIXES
         return self._prefixes
 
     @property
-    def PRIORITY(self) -> int:  # noqa: N802
+    def PRIORITY(self) -> int:
         """The format's explicit priority."""
         if self._cls is not None:
             return self._cls.PRIORITY
