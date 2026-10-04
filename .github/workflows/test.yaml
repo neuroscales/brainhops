@@ -45,6 +45,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .[test]
+      - name: Report import time
+        # Informational only (#290): the 15 slowest imports of
+        # `import brainhops`, by cumulative time in microseconds.
+        shell: bash
+        continue-on-error: true
+        run: |
+          python -X importtime -c "import brainhops" 2> importtime.log
+          sort -t'|' -k2 -n importtime.log | tail -n 15
       - name: Test with pytest
         shell: bash
         run: pytest
