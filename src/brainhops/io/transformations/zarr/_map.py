@@ -167,11 +167,11 @@ def _register_from_ome() -> None:
     """Register the readers that `_from_ome` declared."""
     if not _from_ome_pending:
         return
-    from abczarr.ome.v0_6 import transformations as ot
+    from abczarr.ome.v0_6 import transformations as _ot
 
     for name, priority, func in _from_ome_pending:
         _from_ome_fn.register(
-            (getattr(ot, name), object, object, object), priority=priority
+            (getattr(_ot, name), object, object, object), priority=priority
         )(func)
     _from_ome_pending.clear()
 
