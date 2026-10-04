@@ -20,12 +20,6 @@ import typing_extensions as tx
 from brainhops._core.dependencies import HAS_ABCZARR, HAS_H5PY, HAS_NIBABEL
 from brainhops._core.lazy import lazy_exports
 
-# The formats are declared here, ahead of import, so that `load` finds
-# every one of them while the subpackages below are imported lazily: a
-# format's module is imported when dispatch first needs it, or when it is
-# first accessed.
-from . import _entries  # noqa: F401
-
 _EXPORTS = {
     "FileBasedTransformation": ".base",
     "WritableFileBasedTransformation": ".base",
@@ -50,9 +44,7 @@ if HAS_H5PY:
     _EXPORTS.update(x5=".x5")
 
 # The OME-Zarr field reader needs abczarr and at least one of its backend
-# drivers. Whether a driver is present is only known by importing
-# abczarr, which is left to the first use of the reader. This mirrors how
-# io.images gates io.images.zarr.
+# drivers, as io.images.zarr does (see `brainhops.io.base._formats`).
 if HAS_ABCZARR:
     __all__ += ["zarr"]
     _EXPORTS.update(zarr=".zarr")

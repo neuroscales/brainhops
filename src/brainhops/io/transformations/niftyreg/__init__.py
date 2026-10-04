@@ -76,6 +76,7 @@ __all__ = ["NiftyRegAffine"]
 
 # internals
 from brainhops._core.dependencies import HAS_NIBABEL
+from brainhops.io.base._dispatch import register_missing_format
 
 from ._affine import NiftyRegAffine
 
@@ -103,3 +104,18 @@ if HAS_NIBABEL:
         "NiftyRegVelocityField",
         "NiftyRegVelocityGrid",
     ]
+else:
+    register_missing_format(
+        [
+            "niftyreg.cpp",
+            "niftyreg.f3d",
+            "niftyreg.deformation",
+            "niftyreg.def",
+            "niftyreg.displacement",
+            "niftyreg.disp",
+            "niftyreg.velocity",
+            "niftyreg.vel",
+        ],
+        "nibabel",
+        "nibabel",
+    )

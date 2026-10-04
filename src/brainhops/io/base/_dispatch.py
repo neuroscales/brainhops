@@ -2,13 +2,12 @@
 Format dispatch: choosing which registered parser should read an input.
 
 Kept apart from `_base` because none of it depends on the class
-hierarchy -- it works on a registry (any collection of parser classes, or
-the entries of a `FormatRegistry`) and an input, and is the part worth
-reading on its own when reasoning about why a given file was read by a
-given parser.
+hierarchy -- it works on a registry (any set of parser classes) and an
+input, and is the part worth reading on its own when reasoning about why
+a given file was read by a given parser.
 """
 
-__all__ = ["Source", "parse", "sniff"]
+__all__ = ["Source", "parse", "register_missing_format", "sniff"]
 
 # stdlib
 import inspect
@@ -24,7 +23,11 @@ from bagof.magic import fields
 
 # internals
 from brainhops._core import path
-from brainhops.io.base._registry import FormatEntry, declared
+from brainhops.io.base._formats import (
+    MISSING_FORMATS,
+    import_formats,
+    register_missing_format,
+)
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -37,21 +40,9 @@ from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 _T = tx.TypeVar("_T")
 
 
-def _missing_formats(hints: tx.FrozenSet[str]) -> str:
-    """
-    What to install for the requested hints of missing formats.
-
-    A format whose optional dependency is missing is still declared, so
-    asking for it by hint says what to install (`pip install
-    brainhops[extra]`).
-    """
-    needs = sorted(
-        {
-            (entry.missing, entry.extra)
-            for entry in declared()
-            if entry.hints & hints and entry.missing is not None
-        }
-    )
+def _missing_formats(hints: tx.Iterable[str]) -> str:
+    """What to install for the requested hints of missing formats."""
+    needs = sorted({MISSING_FORMATS[h] for h in hints if h in MISSING_FORMATS})
     return "".join(
         f" This format needs {package}, which is not installed: "
         f"pip install brainhops[{extra}]"
@@ -351,40 +342,12 @@ def _tiers(
     return [groups[key] for key in sorted(groups)]
 
 
-def _entries(registry: tx.Iterable[type]) -> tx.List[FormatEntry]:
-    """The entries of a registry, or of any collection of format classes."""
-    if hasattr(registry, "entries"):
-        return registry.entries()
-    return [FormatEntry.from_class(cls) for cls in registry]
-
-
-def _allowed(
-    registry: tx.Iterable[type], hints: tx.FrozenSet[str]
-) -> tx.List[FormatEntry]:
-    """
-    The available formats of `registry` that answer to one of `hints`,
-    or all of them if no hint is given.
-
-    Only the declarations are consulted, so no format is imported here
-    (a format's `check` may import what it tests for).
-    """
-    return [
-        entry
-        for entry in _entries(registry)
-        if (not hints or entry.hints & hints) and entry.available
-    ]
-
-
-def _resolved(entries: tx.Iterable[FormatEntry]) -> tx.List[type]:
-    """The classes of `entries`, leaving out those that fail to import."""
-    return [cls for cls in map(FormatEntry.resolve, entries) if cls]
-
-
 def _candidates(
     source: "Source",
-    formats: tx.Iterable[FormatEntry],
+    registry: tx.Set[type],
     fn_sniff: str,
-    errors: tx.Optional[tx.List[tx.Tuple[tx.Any, str, Exception]]] = None,
+    errors: tx.Optional[tx.List[tx.Tuple[type, str, Exception]]] = None,
+    allowed: tx.Optional[tx.Set[type]] = None,
     **kwargs,
 ) -> tx.List[tx.List[type]]:
     """
@@ -402,13 +365,8 @@ def _candidates(
     name = source.name
     scores: tx.Dict[type, float] = {}
     candidates: tx.List[tx.Tuple[type, tx.Optional[tx.Tuple[int, int]]]] = []
-    for entry in formats:
-        # Every format sniffs, whatever the file name, so each one is
-        # imported here (once).
-        subclass = entry.resolve()
-        if subclass is None:
-            if errors is not None and entry.error is not None:
-                errors.append((entry, "import", entry.error))
+    for subclass in registry:
+        if allowed is not None and subclass not in allowed:
             continue
         match = _match_name(name, subclass) if name else None
         try:
@@ -433,7 +391,7 @@ def _candidates(
 
 def parse(
     source: "Source",
-    registry: tx.Iterable[tx.Type[_T]],
+    registry: tx.Set[tx.Type[_T]],
     fn_parse: str,
     fn_sniff: str,
     brute: bool = False,
@@ -460,7 +418,7 @@ def parse(
     source : Source
         The input, wrapped so that every attempt sees it from the same
         position.
-    registry : FormatRegistry | Iterable[type]
+    registry : set[type]
         The formats to choose between.
     fn_parse : str
         Name of the parsing method to call, e.g. `"from_file"`.
@@ -483,7 +441,8 @@ def parse(
     ParserContentError
         If no parser could read the content.
     """
-    errors: tx.List[tx.Tuple[tx.Any, str, Exception]] = []
+    import_formats()
+    errors: tx.List[tx.Tuple[type, str, Exception]] = []
     tried: tx.List[type] = []
     if not registry:
         raise _failure(source, [], errors)
@@ -496,14 +455,12 @@ def parse(
             f"Source options were supplied more than once: {names}."
         )
 
-    allowed = _allowed(registry, requested_hints)
-    if source_options:
-        allowed = [
-            entry
-            for entry in allowed
-            if entry.resolve() is not None
-            and _accepts_options(entry.resolve(), source_options)
-        ]
+    allowed = {
+        subclass
+        for subclass in registry
+        if (not requested_hints or format_hints(subclass) & requested_hints)
+        and _accepts_options(subclass, source_options)
+    }
     if not allowed:
         details = []
         if requested_hints:
@@ -556,21 +513,21 @@ def parse(
                 )
         return False, None
 
-    tiers = _candidates(source, allowed, fn_sniff, errors, **kwargs)
-    # Every allowed format has been imported by now.
-    classes = _resolved(allowed)
+    tiers = _candidates(
+        source, registry, fn_sniff, errors, allowed=allowed, **kwargs
+    )
     # Hints are an explicit allowlist. If nothing in that allowlist sniffs
     # the source (an unknown extension is a common reason), try the allowed
     # formats instead of silently widening back to the full registry.
     if requested_hints and not tiers:
-        tiers = _tiers([(subclass, None) for subclass in classes])
+        tiers = _tiers([(subclass, None) for subclass in allowed])
     ok, result = walk(tiers)
     if ok:
         return result
 
     # --- Brute force ---------------------------------------------------
     if brute:
-        for subclass in sorted(classes, key=lambda c: c.__qualname__):
+        for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
                 continue
             ok, result = attempt(subclass)
@@ -578,7 +535,7 @@ def parse(
                 return result
 
     # --- Failure) Raise -----------------------------------------------
-    raise _failure(source, classes, errors)
+    raise _failure(source, list(allowed), errors)
 
 
 def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
@@ -665,7 +622,7 @@ def _parse_field_value(
 def _failure(
     source: Source,
     registry: tx.List[type],
-    errors: tx.List[tx.Tuple[tx.Any, str, Exception]],
+    errors: tx.List[tx.Tuple[type, str, Exception]],
 ) -> Exception:
     """
     Build an informative error out of everything that went wrong.
@@ -709,7 +666,7 @@ def _failure(
 
 def sniff(
     source: "Source",
-    registry: tx.Iterable[type],
+    registry: tx.Set[type],
     fn_sniff: str,
     error: tx.Union[bool, tx.Type[Exception]] = False,
     what: str = "input content",
@@ -739,7 +696,7 @@ def sniff(
     ----------
     source : Source
         The input to identify.
-    registry : FormatRegistry | Iterable[type]
+    registry : set[type]
         The formats to choose between.
     fn_sniff : str
         Name of the sniffing method to call, e.g. `"sniff_file"`.
@@ -761,9 +718,14 @@ def sniff(
         If `error` is set, no single format stands out, and the input
         names a file that does not exist. It is a `FileNotFoundError`.
     """
+    import_formats()
     requested_hints = _normalize_hints(hints, hint)
-    allowed = _allowed(registry, requested_hints)
-    tiers = _candidates(source, allowed, fn_sniff, **kwargs)
+    allowed = {
+        subclass
+        for subclass in registry
+        if not requested_hints or format_hints(subclass) & requested_hints
+    }
+    tiers = _candidates(source, registry, fn_sniff, allowed=allowed, **kwargs)
 
     if tiers and len(tiers[0]) == 1:
         return tiers[0][0]

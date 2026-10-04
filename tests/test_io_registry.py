@@ -59,7 +59,7 @@ def _format(root: type, name: str, **attrs: tx.Any) -> type:
 
 def test_format_registry_gives_a_class_its_own_registry(root: type) -> None:
     assert "_REGISTRY" in root.__dict__
-    assert len(root._REGISTRY) == 0
+    assert root._REGISTRY == set()
 
 
 def test_register_format_fills_every_ancestor_registry(root: type) -> None:
