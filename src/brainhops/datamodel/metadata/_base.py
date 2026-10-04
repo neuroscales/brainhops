@@ -290,6 +290,36 @@ class Metadata(
         scrubbed by the format of what the grid or the volumes bound) and
         its snapshot, so that a field cleared here is cleared in the
         record on write.
+
+        Examples
+        --------
+        Reslicing onto a grid whose voxel axes are the old ones swapped
+        (`i <-> j`) or flipped: the phase encoding direction, given in
+        voxel axes, follows the axes; slice timing, which belongs to the
+        acquired slices, does not survive a resampling:
+
+        ```python
+        meta = Metadata(phase_encoding_direction="j-",
+                        slice_timing=(0, 0.5, 1, 1.5), repetition_time=2)
+        swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
+        new = meta.derive(grid_changed=True, grid_map=swap, step="reslice")
+        new.phase_encoding_direction  # EncodingDirection('i-')
+        new.slice_timing              # None
+        new.repetition_time           # 2 (acquisition: kept)
+        meta.derive(grid_changed=True, grid_map=np.diag([1, -1, 1]))
+        # -> phase_encoding_direction EncodingDirection('j')
+        meta.derive(grid_changed=True)  # no map: the direction is cleared
+        ```
+
+        Selecting volumes 0-2 of a DWI keeps the matching b-values and
+        b-vectors (world frame: a reslicing leaves them alone):
+
+        ```python
+        dwi = Metadata(bvalues=(0, 1000, 1000, 2000),
+                       bvectors=((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)))
+        dwi.derive(volumes=[0, 1, 2]).bvalues      # (0, 1000, 1000)
+        dwi.derive(volumes_changed=True).bvalues   # None (unknown selection)
+        ```
         """
         values = self._derive_values(
             grid_changed=grid_changed,
@@ -349,6 +379,38 @@ class Metadata(
         cannot store. A format recovers a loss by moving the value into
         `values["extra"]`, removing it from `report.lost` and adding its
         name to `report.passed_through`. Default: nothing is recovered.
+
+        Examples (none of the formats in the package needs it yet):
+
+        - MRtrix (`.mif`) has dedicated keys for a few fields
+          (`PhaseEncodingDirection`, `TotalReadoutTime`, `dw_scheme`)
+          and none for `echo_time` or `flip_angle`, but its `keyval`
+          holds any `key: value`. Converting an MGH image's metadata
+          (`echo_time=0.0035`, `flip_angle=8.6`) to `MrtrixMetadata`
+          would otherwise report both as lost; its `_import` moves them
+          to `values["extra"]` under their BIDS keys (`EchoTime`,
+          `FlipAngle`), as `mrconvert -json_import` does, and lists them
+          in `report.passed_through`:
+
+          ```python
+          @classmethod
+          def _import(cls, other, values, *, report):
+              extra = dict(values.get("extra") or {})
+              for name in [n for n in report.lost if n != "extra"]:
+                  extra[BIDS_KEYS[name]] = report.lost.pop(name)
+                  report.passed_through += (name,)
+              values["extra"] = extra
+          ```
+
+        - NRRD has no field for slice timing or the phase encoding
+          direction of a NIfTI image; its `_import` writes them as
+          `keyvalue` pairs (`SliceTiming:=0 0.5 1 1.5`), so a NIfTI ->
+          NRRD -> NIfTI round trip keeps them.
+        - The other way round, a format with dedicated slots but no
+          free-form store (MGH) loses the `extra` of an MRtrix source
+          as a whole; its `_import` could take `extra["EchoTime"]` back
+          into `values["echo_time"]` before the rest of `extra` is
+          reported lost.
         """
 
     # --- internals ----------------------------------------------------

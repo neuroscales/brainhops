@@ -140,7 +140,35 @@ All the hooks are optional, and all private.
   format may *recover* a loss here, for example by moving a lost
   vocabulary value into `values["extra"]`, removing it from
   `report.lost` and listing it in `report.passed_through`. Defaults to
-  nothing.
+  nothing; no format in the package needs it yet. Three uses:
+    - *MRtrix keeps BIDS-named keys.* An MGH image converted to MRtrix
+      has `echo_time` and `flip_angle`, for which `.mif` has no
+      dedicated key (it has `PhaseEncodingDirection`,
+      `TotalReadoutTime`, `dw_scheme`, ...), so `MrtrixMetadata`
+      declares them unsupported. But `keyval` holds any `key: value`:
+      `_import` moves them into `values["extra"]` as `EchoTime` and
+      `FlipAngle` (what `mrconvert -json_import` writes), and the report
+      lists them as passed through instead of lost.
+    - *NRRD `keyvalue`.* NRRD has no field for the slice timing or the
+      phase encoding direction of a NIfTI image; `_import` writes them
+      as `key:=value` pairs (`SliceTiming:=0 0.5 1 1.5`), so a NIfTI ->
+      NRRD -> NIfTI round trip keeps them.
+    - *A field out of a lost `extra`.* A format with dedicated slots and
+      no free-form store (MGH) loses the `extra` of an MRtrix source as
+      a whole; `_import` can take `extra["EchoTime"]` back into
+      `values["echo_time"]` before the rest of `extra` is reported lost.
+
+  The MRtrix version is six lines:
+
+  ```python
+  @classmethod
+  def _import(cls, other, values, *, report):
+      extra = dict(values.get("extra") or {})
+      for name in [n for n in report.lost if n != "extra"]:
+          extra[BIDS_KEYS[name]] = report.lost.pop(name)
+          report.passed_through += (name,)
+      values["extra"] = extra
+  ```
 
 ## Reading and writing
 
