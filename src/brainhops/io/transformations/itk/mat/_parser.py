@@ -7,15 +7,20 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Magic
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
-# core
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 
 # io
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
+
+# core
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    MetadataField,
+    apply_loss_policy,
+)
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,
@@ -24,7 +29,6 @@ from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations.base._metadata import metadata_field
 
 # locals
 from .._common import (
@@ -91,14 +95,17 @@ class MatTransformParser(
     this parser is mixed into.
     """
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         ItkMetadata,
-        """
-        None: an ITK `.mat` file stores no metadata, so every field is
-        unsupported. See
-        [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
-        """,
-    )
+        Factory(ItkMetadata),
+        tx.Doc(
+            """
+            None: an ITK `.mat` file stores no metadata, so every field is
+            unsupported. See
+            [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
+            """
+        ),
+    ]
 
     # --- sniff --------------------------------------------------------
 
@@ -314,7 +321,7 @@ def _check_metadata(obj: tx.Any, on_loss: tx.Optional[str]) -> None:
         return
     report = ConversionReport(source=metadata.format, target="itk")
     if isinstance(metadata, ItkMetadata):
-        metadata.write_raw(None, report=report)
+        metadata.update_raw(None, report=report)
     else:
         report.lost.update(ItkMetadata._convert_from(metadata)[1].lost)
     apply_loss_policy(report, on_loss, stacklevel=4)

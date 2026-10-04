@@ -12,6 +12,13 @@ import datetime
 import numpy as np
 import pytest
 
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
+
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402, F401
@@ -19,12 +26,13 @@ from brainhops.datamodel.axes import ChannelAxis, SpaceAxis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
+    VOCABULARY,
     Channel,
     ConversionReport,
-    FormatMetadata,
+    FileBasedMetadata,
     GeneratedBy,
     Metadata,
-    convert,
+    OpaqueMetadata,
 )
 from brainhops.io.images.freesurfer.mgh import MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiMetadata  # noqa: E402
@@ -65,14 +73,15 @@ FULL = dict(
     slice_encoding_direction="k",
     slice_timing=(0.0, 0.5, 1.0, 1.5),
     multiband_acceleration_factor=2,
-    diffusion_bvalues=(0.0, 1000.0, 1000.0),
-    diffusion_bvectors=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+    bvalues=(0.0, 1000.0, 1000.0),
+    bvectors=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
     display_range=(0.0, 100.0),
     channels=tuple(
         Channel(name=name, color="FFFFFFFF", display_range=(0.0, 100.0))
         for name in ("a", "b", "c")
     ),
     data_unit="a.u.",
+    data_type="float32",
     objective_magnification=10.0,
     objective_numerical_aperture=0.3,
     illumination_type="epifluorescence",
@@ -116,30 +125,29 @@ def _subclasses(cls: type) -> set:
 def test_every_format_is_in_the_matrix() -> None:
     formats = {
         cls
-        for cls in _subclasses(FormatMetadata)
-        if cls not in (Metadata,) and cls.__module__.startswith("brainhops.io")
+        for cls in _subclasses(Metadata)
+        if cls not in (FileBasedMetadata, OpaqueMetadata)
+        and cls.__module__.startswith("brainhops.io")
     }
     assert formats == set(FORMATS)
 
 
 def test_the_fixture_is_fully_populated() -> None:
     full = Metadata(**FULL)
-    assert all(
-        getattr(full, name) is not None for name in Metadata.vocabulary_fields
-    )
+    assert all(getattr(full, name) is not None for name in VOCABULARY)
 
 
 @pytest.mark.parametrize("cls", list(FORMATS), ids=lambda c: c.__name__)
 def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa: ANN001
-    converted, report = convert(Metadata(**FULL), cls, on_loss="ignore")
+    converted, report = _to(Metadata(**FULL), cls, on_loss="ignore")
     assert set(report.lost) == set(cls.unsupported_fields)
     assert not report.approximated
     for name in cls.unsupported_fields:
         assert getattr(converted, name) is UNSUPPORTED
     # And back: nothing more is lost on the way to the hub.
-    back, report = convert(converted, Metadata, on_loss="ignore")
+    back, report = _to(converted, Metadata, on_loss="ignore")
     assert not report.lossy
-    for name in Metadata.vocabulary_fields + ("extra",):
+    for name in VOCABULARY + ("extra",):
         expected = FULL[name]
         if name in cls.unsupported_fields:
             expected = {} if name == "extra" else None
@@ -152,16 +160,16 @@ def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa
     ids=lambda c: c.__name__,
 )
 def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: ANN001
-    converted, _ = convert(Metadata(**FULL), cls, on_loss="ignore")
+    converted, _ = _to(Metadata(**FULL), cls, on_loss="ignore")
     report = ConversionReport()
-    record = converted.write_raw(FORMATS[cls](), report=report)
+    record = converted.update_raw(FORMATS[cls](), report=report)
     back = cls.from_raw(record)
     if cls is ItkH5Metadata:
         # Only the ITK version is recorded: the fixture names ITK alone.
         assert back.generated_by == FULL["generated_by"]
         return
     # Derived fields are geometry, which a bare record does not hold.
-    expected = set(cls.vocabulary_fields) - cls.unsupported_fields
+    expected = set(VOCABULARY) & cls.supported_fields
     expected -= cls.derived_fields
     assert not report.lost
     for name in sorted(expected):
@@ -171,9 +179,9 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
 
 
 def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
-    converted, _ = convert(Metadata(**FULL), OmeZarrMetadata, on_loss="ignore")
+    converted, _ = _to(Metadata(**FULL), OmeZarrMetadata, on_loss="ignore")
     image = OmeZarrImage(
-        images=[SingleScaleImage(np.zeros((4, 4, 4, 3), "uint16"))],
+        images=[SingleScaleImage(np.zeros((4, 4, 4, 3), "float32"))],
         axes=[
             SpaceAxis("x"),
             SpaceAxis("y"),
@@ -184,7 +192,7 @@ def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
     )
     image.save(str(tmp_path / "full.ome.zarr"), on_loss="raise")
     back = io.load(str(tmp_path / "full.ome.zarr")).metadata
-    for name in sorted(OmeZarrMetadata.vocabulary_fields):
+    for name in sorted(VOCABULARY):
         if OmeZarrMetadata.supports(name):
             assert getattr(back, name) == FULL[name], name
     assert back.extra == FULL["extra"]

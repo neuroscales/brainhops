@@ -1,11 +1,12 @@
 """
 The metadata of FLIRT `.mat` files: [`FlirtMetadata`][].
 
-A FLIRT matrix is a bare `(4, 4)` matrix: it stores no metadata. The
-reader needs the moving and reference images, though, and when they were
-read from files their paths are `moving` and `fixed`. They live in
-memory only: a `.mat` file has no place for them, so a write reports
-them as lost.
+A FLIRT matrix is a bare `(4, 4)` matrix: it stores no metadata, and
+there is no raw record. The reader needs the moving and reference
+images, though, and when they were read from files their paths are
+`moving` and `fixed`. So the metadata is not opaque: it holds these two
+fields, in memory only. A `.mat` file has no place for them, so a write
+reports them as lost.
 """
 
 __all__ = ["FlirtMetadata"]
@@ -14,7 +15,9 @@ __all__ = ["FlirtMetadata"]
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel.metadata import ConversionReport, OpaqueMetadata
+from bagof.magic import NoEq, NoRepr
+
+from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 
 
 def _filename(image: tx.Any) -> tx.Optional[str]:
@@ -29,16 +32,22 @@ def _filename(image: tx.Any) -> tx.Optional[str]:
 
 
 class FlirtMetadata(
-    OpaqueMetadata, on={"format": "flirt"}, supports=("moving", "fixed")
+    FileBasedMetadata, on={"format": "flirt"}, supports=("moving", "fixed")
 ):
     """
     The metadata of a FLIRT `.mat` file: only `moving` and `fixed`, the
-    paths of the images the reader was given, kept in memory.
+    paths of the images the reader was given, kept in memory (a read and
+    a copy keep them; a write reports them as lost). There is no raw
+    record.
     """
 
     format: tx.Annotated[tx.Literal["flirt"], tx.Doc("Always `'flirt'`.")] = (
         "flirt"
     )
+
+    raw: tx.Annotated[
+        None, tx.Doc("Always `None`: no raw record."), NoRepr(), NoEq()
+    ] = None
 
     @classmethod
     def _decode(

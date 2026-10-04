@@ -10,6 +10,13 @@ import numpy as np
 import pytest
 from bagof.magic import fields
 
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
+
 h5py = pytest.importorskip("h5py")
 nb = pytest.importorskip("nibabel")
 
@@ -18,12 +25,12 @@ from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
+    ConversionReport,
     GeneratedBy,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
     OpaqueMetadata,
-    convert,
     metadata_loss_policy,
 )
 from brainhops.io.base._base import FileBasedObject  # noqa: E402
@@ -241,19 +248,19 @@ def test_x5_reassigned_chain_keeps_the_metadata(
 
 def test_x5_to_generic_to_bids_and_back(warp_x5: Path) -> None:
     meta = io.load(warp_x5).metadata
-    generic, report = convert(meta, Metadata)
+    generic, report = _to(meta, Metadata)
     assert not report.lossy
-    assert generic.raw is None
+    assert not hasattr(generic, "raw")  # the raw record stays
     sidecar = generic.to_bids()
     assert sidecar == JSON
-    back, report = convert(Metadata.from_bids(sidecar), X5Metadata)
+    back, report = _to(Metadata.from_bids(sidecar), X5Metadata)
     assert not report.lossy
     assert back == meta
 
 
 def test_x5_to_itk_loses_everything(warp_x5: Path) -> None:
     meta = io.load(warp_x5).metadata
-    itk, report = convert(meta, ItkMetadata, on_loss="ignore")
+    itk, report = _to(meta, ItkMetadata, on_loss="ignore")
     assert set(report.lost) == {
         "description",
         "generated_by",
@@ -311,7 +318,7 @@ def test_a_single_node_block_holds_a_copy_of_the_metadata(
 ) -> None:
     xform = io.load(warp_x5)
     block = xform.transformations[0]
-    assert block.metadata == convert(xform.metadata, Metadata)[0]
+    assert block.metadata == _to(xform.metadata, Metadata)[0]
     block.metadata.description = "edited block"
     assert xform.metadata.description == "sub-01 T1w to MNI"
     # A chain of several nodes has no metadata of its own: nor do they.
@@ -365,7 +372,7 @@ def test_itk_h5_generated_by(tmp_path: Path) -> None:
     assert meta.description is UNSUPPORTED
     # Composition does not merge: the blocks have none of their own.
     assert xform.transformations[0].metadata is None
-    generic, report = convert(meta, Metadata)
+    generic, report = _to(meta, Metadata)
     assert generic.to_bids() == {
         "GeneratedBy": [{"Name": "ITK", "Version": "5.4.0"}]
     }
@@ -380,7 +387,7 @@ def test_itk_h5_encodes_only_the_itk_entry(tmp_path: Path) -> None:
     )
     report = xform.metadata.check_writable()
     assert set(report.lost) == {"generated_by"}
-    header = xform.metadata.write_raw()
+    header = xform.metadata.update_raw()
     assert header.ITKVersion == "5.3.0"
     assert xform.header.ITKVersion == "5.4.0"  # the record is not edited
 
@@ -424,6 +431,10 @@ def test_flirt_moving_and_fixed_are_kept_in_memory_only(
     )
     meta = xform.metadata
     assert type(meta) is FlirtMetadata
+    # Not opaque: it keeps two fields, with no raw record.
+    assert not isinstance(meta, OpaqueMetadata)
+    assert meta.raw is None
+    assert FlirtMetadata.supported_fields == {"moving", "fixed"}
     assert meta.moving == str(tmp_path / "moving.nii.gz")
     assert meta.fixed == str(tmp_path / "reference.nii.gz")
     assert meta.description is UNSUPPORTED
@@ -433,6 +444,9 @@ def test_flirt_moving_and_fixed_are_kept_in_memory_only(
     image = nb.Nifti1Image(np.zeros(SHAPE, "float32"), np.eye(4))
     bare = FlirtTransform(flirt_matrix=np.eye(4), moving=image)
     assert bare.metadata.moving is None
+    # A copy carries them, as any metadata.
+    assert meta.copy().moving == meta.moving
+    assert meta.to(Metadata).fixed == meta.fixed
 
 
 # ----------------------------------------------------------------------

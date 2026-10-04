@@ -2,11 +2,13 @@
 Tests for the format-agnostic metadata framework
 (`brainhops.datamodel.metadata`), on synthetic formats.
 
-What is checked: the `UNSUPPORTED` sentinel; the `supports=`/`derived=`
-class keywords; the read-time snapshot and the change-detecting write
-(cases 1-4 of section 6 of the design memo); conversion loss reports and
-the loss policies; `derive`; the BIDS sidecar codec; and the `metadata`
-field of the data model roots.
+What is checked: the `UNSUPPORTED` sentinel; the class hierarchy and the
+vocabulary groups; the `supports=`/`derived=`/`lazy=` class keywords; the
+typed terms (enums, units, data types, encoding directions); the read-time
+snapshot and the change-detecting write (cases 1-4 of section 6 of the
+design memo); `to()`, conversion loss reports and the loss policies;
+`derive`; the BIDS sidecar codec; and the `metadata` field of the data
+model roots.
 """
 
 import copy
@@ -18,12 +20,12 @@ import warnings
 import numpy as np
 import pytest
 import typing_extensions as tx
-from bagof.magic import fields, replace
+from bagof.magic import Factory, Magic, fields, replace
 
 from brainhops.datamodel import (
     UNSUPPORTED,
     ConversionReport,
-    FormatMetadata,
+    FileBasedMetadata,
     GeneratedBy,
     Metadata,
     MetadataLossError,
@@ -33,17 +35,42 @@ from brainhops.datamodel import (
     metadata_loss_policy,
 )
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.enums import (
+    ContrastMethod,
+    IlluminationType,
+    Intent,
+    Manufacturer,
+    Space,
+)
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     ALL,
+    GROUPS,
+    VOCABULARY,
     Channel,
+    DiffusionMetadata,
+    DisplayMetadata,
+    EncodingDirection,
     Lazy,
+    LazyField,
+    MetadataField,
+    MicroscopyMetadata,
+    MRIMetadata,
+    ProvenanceMetadata,
+    TransformMetadata,
     apply_loss_policy,
-    convert,
     get_metadata_loss_policy,
     one_loss_warning,
+    preferred_dtype,
 )
 from brainhops.datamodel.transformations import Affine, Translation
+
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
 
 # ----------------------------------------------------------------------
 #   SYNTHETIC FORMATS
@@ -51,7 +78,7 @@ from brainhops.datamodel.transformations import Affine, Translation
 
 
 class LiteMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-lite"},
     supports=("description", "slice_timing", "history", "extra"),
     derived=("slice_timing",),
@@ -62,7 +89,7 @@ class LiteMetadata(
 
 
 class DictMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-dict"},
     supports=("description", "display_range", "slice_timing", "extra"),
 ):
@@ -124,7 +151,7 @@ class DictMetadata(
 
 
 class KeyvalMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-keyval"},
     supports=("description", "extra"),
 ):
@@ -144,7 +171,7 @@ class KeyvalMetadata(
 
 
 class DialectMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-dialect"},
     supports=("description", "channels"),
 ):
@@ -219,15 +246,16 @@ def test_repr_hides_none_and_unsupported() -> None:
 
 
 def test_supports_lists_what_a_format_stores() -> None:
-    vocabulary = set(FormatMetadata.vocabulary_fields) | {"extra"}
-    assert LiteMetadata.unsupported_fields == vocabulary - {
-        "description",
-        "slice_timing",
-        "history",
-        "extra",
-    }
+    vocabulary = set(VOCABULARY) | {"extra"}
+    supported = {"description", "slice_timing", "history", "extra"}
+    assert LiteMetadata.supported_fields == supported
+    # The complement is derived from the declaration.
+    assert LiteMetadata.unsupported_fields == vocabulary - supported
     assert LiteMetadata.derived_fields == {"slice_timing"}
+    assert Metadata.supported_fields == vocabulary
     assert Metadata.unsupported_fields == frozenset()
+    assert FileBasedMetadata.supported_fields == vocabulary
+    assert OpaqueMetadata.supported_fields == frozenset()
     assert OpaqueMetadata.unsupported_fields == vocabulary
     for name in LiteMetadata.unsupported_fields:
         field = next(f for f in fields(LiteMetadata) if f.name == name)
@@ -277,7 +305,7 @@ def test_a_field_may_be_declared_unsupported_by_hand() -> None:
 
 
 def test_supports_all() -> None:
-    class Everything(FormatMetadata, supports=ALL):
+    class Everything(FileBasedMetadata, supports=ALL):
         pass
 
     assert Everything.unsupported_fields == frozenset()
@@ -286,28 +314,32 @@ def test_supports_all() -> None:
 def test_wrong_declarations_are_refused() -> None:
     with pytest.raises(TypeError, match="not vocabulary"):
 
-        class Typo(FormatMetadata, supports=("descr",)):
+        class Typo(FileBasedMetadata, supports=("descr",)):
             pass
 
     with pytest.raises(TypeError, match="derived"):
 
         class NotStored(
-            FormatMetadata, supports=("description",), derived=("echo_time",)
+            FileBasedMetadata,
+            supports=("description",),
+            derived=("echo_time",),
         ):
             pass
 
 
 def test_polymorphic_construction_on_format() -> None:
-    meta = FormatMetadata(format="test-lite", description="x")
+    meta = Metadata(format="test-lite", description="x")
     assert type(meta) is LiteMetadata
-    assert type(FormatMetadata(description="x")) is Metadata
-    assert type(FormatMetadata(format="opaque")) is OpaqueMetadata
+    assert type(Metadata(description="x")) is Metadata
+    assert type(Metadata(format="opaque")) is OpaqueMetadata
+    # An unknown format falls back to the root, the generic metadata.
+    assert type(Metadata(format="unknown")) is Metadata
     with pytest.raises(ValueError):
         LiteMetadata(format="test-dict")
 
 
 def test_bids_and_scope_annotations() -> None:
-    by_name = {f.name: f.metadata for f in fields(FormatMetadata)}
+    by_name = {f.name: f.metadata for f in fields(Metadata)}
     assert by_name["repetition_time"]["bids"] == "RepetitionTime"
     assert by_name["repetition_time"]["scope"] == "acquisition"
     assert by_name["slice_timing"]["scope"] == "grid"
@@ -337,7 +369,7 @@ def test_reading_decodes_and_snapshots() -> None:
 def test_case1_untouched_writes_the_record_as_read() -> None:
     meta = _read()
     report = ConversionReport()
-    record = meta.write_raw(report=report)
+    record = meta.update_raw(report=report)
     assert record == {"desc": "short", "cal": (0.0, 1.0), "Key": "v"}
     assert record is not meta.raw  # written over a copy
     assert not report.lossy
@@ -346,7 +378,7 @@ def test_case1_untouched_writes_the_record_as_read() -> None:
 def test_case2_a_record_edit_survives() -> None:
     meta = _read()
     meta.raw["desc"] = "edited"
-    assert meta.write_raw()["desc"] == "edited"
+    assert meta.update_raw()["desc"] == "edited"
 
 
 def test_case3_a_common_field_set_wins() -> None:
@@ -354,7 +386,7 @@ def test_case3_a_common_field_set_wins() -> None:
     meta.raw["desc"] = "edited"
     meta.description = "mine"
     assert meta.changed_fields() == {"description": "mine"}
-    assert meta.write_raw()["desc"] == "mine"
+    assert meta.update_raw()["desc"] == "mine"
 
 
 def test_case4_none_clears_the_slot() -> None:
@@ -365,7 +397,7 @@ def test_case4_none_clears_the_slot() -> None:
         "description": None,
         "display_range": None,
     }
-    record = meta.write_raw()
+    record = meta.update_raw()
     assert "desc" not in record and "cal" not in record
 
 
@@ -375,7 +407,7 @@ def test_extra_is_compared_key_by_key() -> None:
     assert meta.changed_fields() == {
         "extra": {"Edited": 4, "New": 5, "Gone": None}
     }
-    assert meta.write_raw() == {"desc": "d", "Kept": 1, "Edited": 4, "New": 5}
+    assert meta.update_raw() == {"desc": "d", "Kept": 1, "Edited": 4, "New": 5}
 
 
 def test_a_snapshot_holds_converted_values() -> None:
@@ -391,7 +423,7 @@ def test_an_object_built_in_memory_has_everything_changed() -> None:
         "description": "d",
         "display_range": (1.0, 2.0),
     }
-    assert meta.write_raw() == {"desc": "d", "cal": (1.0, 2.0)}
+    assert meta.update_raw() == {"desc": "d", "cal": (1.0, 2.0)}
 
 
 def test_the_snapshot_survives_replace_copy_and_pickle() -> None:
@@ -428,7 +460,7 @@ def test_an_unsupported_field_assigned_later_is_reported_at_write() -> None:
 
 
 def test_conversion_reports_what_the_target_cannot_hold() -> None:
-    target, report = convert(_rich(), LiteMetadata, on_loss="ignore")
+    target, report = _to(_rich(), LiteMetadata, on_loss="ignore")
     assert type(target) is LiteMetadata
     assert target.description == "a scan"
     assert target.slice_timing == (0.0, 0.5, 1.0)
@@ -439,40 +471,41 @@ def test_conversion_reports_what_the_target_cannot_hold() -> None:
 
 
 def test_conversion_accepts_a_format_name() -> None:
-    target, _ = convert(_rich(), "test-lite", on_loss="ignore")
+    target, _ = _to(_rich(), "test-lite", on_loss="ignore")
     assert type(target) is LiteMetadata
 
 
 def test_conversion_through_the_hub_loses_what_a_direct_one_does() -> None:
     lite = LiteMetadata(description="d", history=("h",), extra={"k": 1})
-    hub, report = convert(lite, Metadata)
+    hub, report = _to(lite, Metadata)
     assert not report.lossy
     # UNSUPPORTED on the source side reads as None.
     assert hub.echo_time is None
-    _, direct = convert(lite, DictMetadata, on_loss="ignore")
-    _, via_hub = convert(hub, DictMetadata, on_loss="ignore")
+    _, direct = _to(lite, DictMetadata, on_loss="ignore")
+    _, via_hub = _to(hub, DictMetadata, on_loss="ignore")
     assert direct.lost == via_hub.lost == {"history": ("h",)}
 
 
 def test_the_record_travels_only_within_a_format() -> None:
     meta = _read()
-    other, _ = convert(meta, Metadata)
-    assert other.raw is None and other._decoded == {}
+    other, _ = _to(meta, Metadata)
+    assert type(other) is Metadata
+    assert not hasattr(other, "raw") and not hasattr(other, "_decoded")
     same = DictMetadata.from_other(meta)
     assert same.raw is meta.raw and same._decoded == meta._decoded
     # A copy keeps the most specific class.
-    assert type(FormatMetadata.from_other(meta)) is DictMetadata
+    assert type(FileBasedMetadata.from_other(meta)) is DictMetadata
 
 
 def test_extra_is_lost_where_the_target_has_no_store() -> None:
-    _, report = convert(
+    _, report = _to(
         Metadata(extra={"Key": 1}), OpaqueMetadata, on_loss="ignore"
     )
     assert report.lost == {"extra": {"Key": 1}}
 
 
 def test_import_may_recover_a_loss() -> None:
-    target, report = convert(_rich(), KeyvalMetadata)
+    target, report = _to(_rich(), KeyvalMetadata)
     assert not report.lossy
     assert target.extra == {
         "Custom": 1,
@@ -488,7 +521,7 @@ def test_import_may_recover_a_loss() -> None:
 
 
 def test_explicit_values_win_over_the_source() -> None:
-    target, _ = convert(_rich(), Metadata, description="other")
+    target, _ = _to(_rich(), Metadata, description="other")
     assert target.description == "other"
 
 
@@ -516,11 +549,11 @@ def test_the_default_policy_warns_once_per_conversion() -> None:
 def test_ignore_is_silent_and_raise_raises() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        convert(_rich(), LiteMetadata, on_loss="ignore")
+        _to(_rich(), LiteMetadata, on_loss="ignore")
         # Nothing lost: silent whatever the policy.
-        convert(Metadata(description="d"), LiteMetadata, on_loss="raise")
+        _to(Metadata(description="d"), LiteMetadata, on_loss="raise")
     with pytest.raises(MetadataLossError) as info:
-        convert(_rich(), LiteMetadata, on_loss="raise")
+        _to(_rich(), LiteMetadata, on_loss="raise")
     assert info.value.report.lost == {"echo_time": 0.03}
 
 
@@ -577,7 +610,7 @@ def test_derive_follows_the_scopes() -> None:
         slice_timing=(0.0, 0.5),
         phase_encoding_direction="j-",
         channels=(Channel(name="a"), Channel(name="b"), Channel(name="c")),
-        diffusion_bvalues=(0, 1000, 2000),
+        bvalues=(0, 1000, 2000),
         display_range=(0, 1),
         extra={"Key": 1},
     )
@@ -601,11 +634,11 @@ def test_derive_follows_the_scopes() -> None:
 
     selected = meta.derive(volumes=[2, 0])
     assert [c.name for c in selected.channels] == ["c", "a"]
-    assert selected.diffusion_bvalues == (2000.0, 0.0)
+    assert selected.bvalues == (2000.0, 0.0)
     assert selected.display_range == (0.0, 1.0)
 
     changed = meta.derive(volumes_changed=True)
-    assert changed.channels is None and changed.diffusion_bvalues is None
+    assert changed.channels is None and changed.bvalues is None
 
 
 def test_derive_keeps_the_record_and_clears_through_it() -> None:
@@ -618,7 +651,7 @@ def test_derive_keeps_the_record_and_clears_through_it() -> None:
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
     # The cleared field differs from the snapshot: it is cleared on write.
     assert derived.changed_fields()["slice_timing"] is None
-    assert "slices" not in derived.write_raw()
+    assert "slices" not in derived.update_raw()
     # Unsupported fields stay unsupported.
     assert derived.echo_time is UNSUPPORTED
 
@@ -668,7 +701,7 @@ def test_a_sidecar_is_read_from_a_path_or_a_string(tmp_path) -> None:  # noqa: A
 
 
 def test_diffusion_is_not_a_sidecar_key() -> None:
-    meta = Metadata(diffusion_bvalues=(0, 1000), description="dwi")
+    meta = Metadata(bvalues=(0, 1000), description="dwi")
     with pytest.warns(MetadataLossWarning):
         sidecar = meta.to_bids()
     assert sidecar == {"Description": "dwi"}
@@ -755,21 +788,25 @@ def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
     assert other.raw is meta.raw
     assert other == meta
     other.description = "changed"
-    other._decoded["description"] = "forged"
+    other._decoded.description = "forged"
     assert meta.changed_fields() == {}
-    assert meta._decoded["description"] == "read"
+    assert meta._decoded.description == "read"
 
 
 def test_the_hub_and_opaque_have_no_record() -> None:
-    for cls in (Metadata, OpaqueMetadata):
-        assert cls().raw is None
-        with pytest.raises(TypeError):
-            cls(raw={"a": 1})
+    assert not hasattr(Metadata(), "raw")
+    with pytest.raises(TypeError):
+        Metadata(raw={"a": 1})
+    assert OpaqueMetadata().raw is None
+    with pytest.raises(TypeError):
+        OpaqueMetadata(raw={"a": 1})
 
 
 def test_a_decoder_may_not_return_an_unsupported_field() -> None:
     class Wrong(
-        FormatMetadata, on={"format": "test-wrong"}, supports=("description",)
+        FileBasedMetadata,
+        on={"format": "test-wrong"},
+        supports=("description",),
     ):
         format: tx.Literal["test-wrong"] = "test-wrong"
 
@@ -786,12 +823,12 @@ def test_a_decoder_may_not_return_an_unsupported_field() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_with_record_keeps_the_changes_over_a_new_record() -> None:
+def test_update_from_raw_keeps_the_changes_over_a_new_record() -> None:
     meta = DictMetadata.from_raw({"desc": "old", "cal": (0, 1), "A": 1})
     meta.description = "mine"
     meta.display_range = None
     meta.extra = {"A": 1, "B": 2}
-    new = meta.with_record({"desc": "new", "cal": (2, 3), "C": 3})
+    new = meta.update_from_raw({"desc": "new", "cal": (2, 3), "C": 3})
     assert new.description == "mine"
     assert new.display_range is None
     assert new.extra == {"C": 3, "B": 2}
@@ -805,15 +842,17 @@ def test_with_record_keeps_the_changes_over_a_new_record() -> None:
 def test_force_writes_a_field_equal_to_the_snapshot() -> None:
     meta = DictMetadata.from_raw({"desc": "read"})
     meta.raw["desc"] = "record edit"
-    assert meta.write_raw(dict(meta.raw))["desc"] == "record edit"
-    forced = meta.write_raw(dict(meta.raw), force=("description",))
+    assert meta.update_raw(dict(meta.raw))["desc"] == "record edit"
+    forced = meta.update_raw(dict(meta.raw), force=("description",))
     assert forced["desc"] == "read"
     meta.description = None
-    assert "desc" not in meta.write_raw(dict(meta.raw), force=("description",))
+    assert "desc" not in meta.update_raw(
+        dict(meta.raw), force=("description",)
+    )
 
 
 class GeoMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-geo"},
     supports=("repetition_time",),
     derived=("repetition_time",),
@@ -839,13 +878,13 @@ class GeoMetadata(
 def test_a_derived_field_the_data_model_gives_is_not_encoded() -> None:
     meta = GeoMetadata(repetition_time=2.0)
     report = ConversionReport()
-    assert meta.write_raw(image=2.0, report=report) == {}
+    assert meta.update_raw(image=2.0, report=report) == {}
     assert not report.lossy
     report = ConversionReport()
-    assert meta.write_raw(image=1.5, report=report) == {}
+    assert meta.update_raw(image=1.5, report=report) == {}
     assert set(report.approximated) == {"repetition_time"}
     # The data model says nothing: the value is the format's to write.
-    assert meta.write_raw(image=None) == {"tr": 2.0}
+    assert meta.update_raw(image=None) == {"tr": 2.0}
     assert meta.check_writable(image=1.5).approximated
 
 
@@ -862,9 +901,10 @@ def _load_history() -> tuple:
 
 
 class LazyMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "test-lazy"},
     supports=("description", "history"),
+    lazy=("history",),
 ):
     """A format whose `history` sits in a lazy part of the record."""
 
@@ -942,3 +982,325 @@ def test_from_other_carries_the_metadata_of_another_family() -> None:
     assert held.inner is affine
     assert held.metadata.description == "mine"
     assert Holder.from_other(affine, metadata=None).metadata is None
+
+
+# ----------------------------------------------------------------------
+#   HIERARCHY AND VOCABULARY GROUPS
+# ----------------------------------------------------------------------
+
+
+def test_the_hierarchy_mirrors_the_images() -> None:
+    assert issubclass(FileBasedMetadata, Metadata)
+    assert issubclass(OpaqueMetadata, FileBasedMetadata)
+    assert issubclass(LiteMetadata, FileBasedMetadata)
+    for group in GROUPS:
+        assert issubclass(Metadata, group)
+    # Only a file-based class has a raw record and a snapshot.
+    names = {f.name for f in fields(Metadata)}
+    assert "raw" not in names and "_decoded" not in names
+    assert {"raw", "_decoded"} <= {f.name for f in fields(FileBasedMetadata)}
+
+
+def test_the_vocabulary_is_the_groups_in_order() -> None:
+    assert list(GROUPS) == [
+        ProvenanceMetadata,
+        MRIMetadata,
+        DiffusionMetadata,
+        DisplayMetadata,
+        MicroscopyMetadata,
+        TransformMetadata,
+    ]
+    assert VOCABULARY == sum(GROUPS.values(), ())
+    assert VOCABULARY[:2] == ("name", "description")
+    assert GROUPS[DiffusionMetadata] == ("bvalues", "bvectors")
+    assert "data_type" in GROUPS[DisplayMetadata]
+    assert "extra" not in VOCABULARY
+    assert len(set(VOCABULARY)) == len(VOCABULARY)
+    # A group's fields convert, as the class that inherits them does.
+    assert Metadata(echo_time="0.03", bvalues=[0, 1000]).bvalues == (
+        0.0,
+        1000.0,
+    )
+
+
+def test_supports_takes_groups() -> None:
+    class ByGroup(
+        FileBasedMetadata,
+        on={"format": "test-group"},
+        supports=(ProvenanceMetadata, "echo_time"),
+    ):
+        format: tx.Literal["test-group"] = "test-group"
+
+    assert ByGroup.supported_fields == set(
+        GROUPS[ProvenanceMetadata] + ("echo_time",)
+    )
+    assert ByGroup.supports("history") and not ByGroup.supports("bvalues")
+    with pytest.raises(TypeError, match="not a vocabulary group"):
+
+        class NotAGroup(FileBasedMetadata, supports=(Channel,)):
+            pass
+
+
+def test_a_new_field_is_unsupported_until_a_format_opts_in() -> None:
+    # `supports=` lists what a format stores: everything else, including
+    # what the vocabulary gains later, defaults to UNSUPPORTED.
+    assert LiteMetadata.supported_fields <= set(VOCABULARY) | {"extra"}
+    assert "data_type" in LiteMetadata.unsupported_fields
+
+
+# ----------------------------------------------------------------------
+#   TERMS
+# ----------------------------------------------------------------------
+
+
+def test_known_terms_become_enum_members() -> None:
+    meta = Metadata(
+        space="MNI152NLin6Asym",
+        intent="label",
+        manufacturer="Siemens",
+        illumination_type="Epifluorescence",
+        contrast_method="DIC",
+        input_space="scanner",
+    )
+    assert meta.space is Space.MNI152NLin6Asym
+    assert meta.intent is Intent.label
+    assert meta.manufacturer is Manufacturer.Siemens
+    assert meta.illumination_type is IlluminationType.Epifluorescence
+    assert meta.contrast_method is ContrastMethod.DIC
+    assert meta.input_space is Space.scanner
+    # They are strings, and compare equal to their value.
+    assert meta.space == "MNI152NLin6Asym" and meta.intent == "label"
+    # An unknown term stays a string: the vocabulary is not closed.
+    meta.space = "my-template"
+    assert type(meta.space) is str and meta.space == "my-template"
+    assert Metadata(intent=UNSUPPORTED).intent is UNSUPPORTED
+    with pytest.raises((TypeError, ValueError)):
+        Metadata(space=3)
+    assert json.dumps(Metadata(space="mni").to_bids()) == (
+        '{"SpatialReference": "mni"}'
+    )
+
+
+def test_data_unit_is_a_unit_when_known() -> None:
+    from brainhops.datamodel.units import Unit
+
+    meta = Metadata(data_unit="ms")
+    assert isinstance(meta.data_unit, Unit)
+    assert str(meta.data_unit) == "millisecond"
+    assert Metadata(data_unit="a.u.").data_unit == "a.u."
+    assert Metadata(data_unit="mm/s").data_unit == "mm/s"
+    assert meta.to_bids() == {"DataUnit": "millisecond"}
+
+
+def test_data_type_is_a_native_dtype() -> None:
+    meta = Metadata(data_type=">i2")
+    assert meta.data_type == np.dtype("int16")
+    assert meta.data_type.isnative
+    assert meta.to_bids() == {"DataType": "int16"}
+    assert Metadata.from_bids({"DataType": "uint8"}).data_type == np.uint8
+    # A resampling changes the kind of the values: it is grid-bound.
+    assert meta.derive(grid_changed=True).data_type is None
+    assert meta.derive(volumes=[0]).data_type == np.int16
+
+
+def test_preferred_dtype() -> None:
+    labels = Metadata(data_type="uint8")
+    # The data type wins when the values are of its kind...
+    assert preferred_dtype(labels, np.int64) == np.uint8
+    assert preferred_dtype(labels, np.bool_) == np.uint8
+    assert preferred_dtype(Metadata(data_type="f4"), np.float64) == np.float32
+    # ... an explicit dtype wins over it ...
+    assert preferred_dtype(labels, np.int64, "int16") == np.int16
+    # ... and floats are never quantised into it, nor integers made floats.
+    report = ConversionReport()
+    assert preferred_dtype(labels, np.float64, report=report) == np.float64
+    assert "data_type" in report.approximated
+    assert preferred_dtype(Metadata(data_type="f4"), np.int16) == np.int16
+    assert preferred_dtype(Metadata(), np.int16) == np.int16
+    # A data type that was only read is dropped silently.
+
+    class Typed(
+        FileBasedMetadata, on={"format": "test-typed"}, supports=("data_type",)
+    ):
+        format: tx.Literal["test-typed"] = "test-typed"
+
+        @classmethod
+        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+            return {"data_type": raw}
+
+    read = Typed.from_raw("uint8")
+    assert read.data_type == np.uint8 and not read.changed_fields()
+    report = ConversionReport()
+    preferred_dtype(read, np.float64, report=report)
+    assert not report.lossy
+
+
+# ----------------------------------------------------------------------
+#   ENCODING DIRECTIONS
+# ----------------------------------------------------------------------
+
+
+def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
+    direction = EncodingDirection("j-")
+    assert direction.vector == (0.0, -1.0, 0.0)
+    assert direction.space is None
+    assert direction.to_bids() == "j-"
+    assert direction.axis() == (1, -1)
+    assert direction == "j-" and direction != "j"
+    assert repr(direction) == "EncodingDirection('j-')"
+    assert EncodingDirection.from_bids("k") == EncodingDirection((0, 0, 2))
+    with pytest.raises(ValueError):
+        EncodingDirection("x")
+    with pytest.raises(ValueError):
+        EncodingDirection((0, 0, 0))
+    oblique = EncodingDirection((1, 1, 0))
+    assert oblique.vector == pytest.approx((2**-0.5, 2**-0.5, 0.0))
+    assert oblique.to_bids() is None and oblique.axis() is None
+    world = EncodingDirection((0, 1, 0), space="scanner")
+    assert world.space is Space.scanner and world.to_bids() is None
+
+
+def test_the_direction_fields_take_bids_strings() -> None:
+    meta = Metadata(phase_encoding_direction="j-")
+    assert isinstance(meta.phase_encoding_direction, EncodingDirection)
+    assert meta.phase_encoding_direction == "j-"
+    meta.slice_encoding_direction = {"Vector": [0, 0, 1]}
+    assert meta.slice_encoding_direction == "k"
+    assert meta.to_bids() == {
+        "PhaseEncodingDirection": "j-",
+        "SliceEncodingDirection": "k",
+    }
+    assert Metadata.from_bids(meta.to_bids()) == meta
+
+
+def test_an_oblique_direction_is_lost_in_a_sidecar() -> None:
+    meta = Metadata(phase_encoding_direction=(1, 1, 0))
+    with pytest.raises(MetadataLossError) as info:
+        meta.to_bids(on_loss="raise")
+    assert set(info.value.report.lost) == {"phase_encoding_direction"}
+
+
+def test_derive_maps_a_direction_through_the_grid() -> None:
+    meta = Metadata(
+        phase_encoding_direction="j-",
+        slice_encoding_direction=EncodingDirection((0, 0, 1), space="mni"),
+        slice_timing=(0.0, 0.5),
+    )
+    swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
+    derived = meta.derive(grid_changed=True, grid_map=swap)
+    assert derived.phase_encoding_direction == "i-"
+    # A direction in a world space does not move with the grid.
+    assert derived.slice_encoding_direction.space == "mni"
+    # The slice timing is still cleared.
+    assert derived.slice_timing is None
+    rotated = meta.derive(
+        grid_changed=True,
+        grid_map=[[1, 0, 0], [0, 2**-0.5, -(2**-0.5)], [0, 2**-0.5, 2**-0.5]],
+    )
+    assert rotated.phase_encoding_direction.to_bids() is None
+    # Without a map, a grid change clears it.
+    assert meta.derive(grid_changed=True).phase_encoding_direction is None
+
+
+# ----------------------------------------------------------------------
+#   to()
+# ----------------------------------------------------------------------
+
+
+def test_to_converts_and_reports() -> None:
+    lite = _rich().to(LiteMetadata, on_loss="ignore")
+    assert type(lite) is LiteMetadata
+    assert lite.description == "a scan"
+    report = ConversionReport()
+    _rich().to("test-lite", report=report)
+    assert report.lost == {"echo_time": 0.03}
+    assert (report.source, report.target) == ("generic", "test-lite")
+    with pytest.raises(MetadataLossError):
+        _rich().to(LiteMetadata, on_loss="raise")
+    with pytest.warns(MetadataLossWarning):
+        _rich().to(LiteMetadata)
+    with pytest.raises(ValueError):
+        _rich().to("no-such-format")
+
+
+def test_to_none_keeps_the_class() -> None:
+    meta = _read()
+    same = meta.to(description="other")
+    assert type(same) is DictMetadata
+    assert same.raw is meta.raw
+    assert same.changed_fields() == {"description": "other"}
+    generic = Metadata(description="d").to()
+    assert type(generic) is Metadata and generic.description == "d"
+
+
+def test_a_format_class_given_to_the_generic_field_is_converted() -> None:
+    meta = _read()
+    image = SingleScaleImage(np.zeros((2, 3)), metadata=meta)
+    assert type(image.metadata) is Metadata
+    assert image.metadata.description == "short"
+
+
+def test_metadata_field_is_an_annotation() -> None:
+    class Holder(Magic):
+        meta: MetadataField[
+            LiteMetadata, Factory(LiteMetadata), tx.Doc("Some metadata.")
+        ]
+
+    field = next(f for f in fields(Holder) if f.name == "meta")
+    assert not field.repr and not field.eq and field.kw
+    assert field.doc == "Some metadata."
+    assert type(Holder().meta) is LiteMetadata
+    given = LiteMetadata(description="d")
+    held = Holder(meta=given)
+    assert held.meta is not given and held.meta == given
+    # Converted even though `Holder` does not convert its fields.
+    with metadata_loss_policy("ignore"):
+        held.meta = _rich()
+    assert type(held.meta) is LiteMetadata
+
+
+# ----------------------------------------------------------------------
+#   LAZY FIELDS AS DESCRIPTORS
+# ----------------------------------------------------------------------
+
+
+def test_lazy_fields_are_descriptors() -> None:
+    assert LazyMetadata.lazy_fields == {"history"}
+    assert isinstance(
+        inspect.getattr_static(LazyMetadata, "history"), LazyField
+    )
+    # No attribute access is intercepted but that of the lazy fields.
+    assert "__getattribute__" not in vars(FileBasedMetadata)
+    assert "__getattribute__" not in vars(LazyMetadata)
+    meta = LazyMetadata.from_raw({})
+    assert isinstance(meta.__dict__["history"], Lazy)
+
+    # A subclass that redeclares the field keeps it lazy.
+    class Narrower(LazyMetadata, supports=("history",)):
+        pass
+
+    assert isinstance(inspect.getattr_static(Narrower, "history"), LazyField)
+    assert Narrower.from_raw({}).history == ("cmd a", "cmd b")
+
+
+def test_lazy_is_declared() -> None:
+    with pytest.raises(TypeError, match="lazy"):
+
+        class NotStored(
+            FileBasedMetadata, supports=("description",), lazy=("history",)
+        ):
+            pass
+
+    class Undeclared(
+        FileBasedMetadata,
+        on={"format": "test-undeclared"},
+        supports=("history",),
+    ):
+        format: tx.Literal["test-undeclared"] = "test-undeclared"
+
+        @classmethod
+        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+            return {"history": Lazy(_load_history)}
+
+    with pytest.raises(TypeError, match="lazy"):
+        Undeclared.from_raw({})

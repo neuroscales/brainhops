@@ -3,14 +3,16 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Alias, Magic
+from bagof.magic import HIDE_IF_NONE, Alias, Factory, Magic
 
-# core
 from brainhops._core.peek import peekable_lines
 from brainhops._core.typing import ArrayLike
 
 # datamodel
 from brainhops.datamodel.images import Image
+
+# core
+from brainhops.datamodel.metadata import MetadataField
 
 # io
 from brainhops.io.base.arrays import ArrayContainerError, read_text_rows
@@ -21,7 +23,6 @@ from brainhops.io.base.parsers import (
     TextFileParser,
 )
 from brainhops.io.transformations.base._metadata import (
-    metadata_field,
     sync_metadata,
 )
 
@@ -62,15 +63,18 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
     """The reference image, a nibabel image or header, or a brainhops
     image."""
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         FlirtMetadata,
-        """
-        The paths of the moving and reference images, when they were
-        read from files (`moving`, `fixed`). A `.mat` file stores no
-        metadata. See
-        [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
-        """,
-    )
+        Factory(FlirtMetadata),
+        tx.Doc(
+            """
+            The paths of the moving and reference images, when they were
+            read from files (`moving`, `fixed`). A `.mat` file stores no
+            metadata. See
+            [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
+            """
+        ),
+    ]
 
     def __post_init__(self) -> None:
         parent = getattr(super(), "__post_init__", None)

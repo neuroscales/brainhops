@@ -8,7 +8,11 @@ The metadata of ITK transformation files.
 - `.h5` records the version of ITK that wrote it (`/ITKVersion`):
   [`ItkH5Metadata`][] reads it as `generated_by`, with the small root
   header ([`H5Header`][brainhops.io.transformations.itk.h5.H5Header]) as
-  its record.
+  its raw record.
+
+ITK's `precision` (`float`/`double`) is the element type of the stored
+parameters; it stays in the raw record (`ItkStruct.precision`) for now,
+rather than `data_type`.
 
 The blocks of a chain (or of a `CompositeTransform`) are data model
 transformations with no metadata of their own: composition does not
@@ -25,12 +29,12 @@ from bagof.magic import NoEq, NoRepr, replace
 # internals
 from brainhops.datamodel.metadata import (
     ConversionReport,
-    FormatMetadata,
+    FileBasedMetadata,
     GeneratedBy,
     OpaqueMetadata,
 )
 
-# The record of an `.h5` file is an `H5Header`, from the h5 reader, which
+# The raw record of an `.h5` file is an `H5Header`, from the h5 reader, which
 # needs the optional h5py: it is imported only where a record is built.
 H5Header = tx.Any
 
@@ -44,11 +48,11 @@ class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
 
 
 class ItkH5Metadata(
-    FormatMetadata, on={"format": "itk-h5"}, supports=("generated_by",)
+    FileBasedMetadata, on={"format": "itk-h5"}, supports=("generated_by",)
 ):
     """
     The metadata of an ITK `.h5` file: the version of ITK that wrote
-    it, as `generated_by`. Its record is the root header.
+    it, as `generated_by`. Its raw record is the root header.
     """
 
     format: tx.Annotated[
@@ -66,7 +70,7 @@ class ItkH5Metadata(
 
     @property
     def header(self) -> tx.Optional[H5Header]:
-        """The root header (the record, `raw`)."""
+        """The root header (the raw record, `raw`)."""
         return self.raw
 
     @classmethod

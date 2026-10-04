@@ -7,10 +7,10 @@ attributes. The vocabulary is stored as a BIDS-style sidecar (the keys of
 [`Metadata.to_bids`][brainhops.datamodel.metadata.Metadata.to_bids]) under
 the array attribute `"brainhops"`, and `extra` maps to the other
 attributes of the array. Everything but the diffusion fields (which are
-not sidecar keys) is supported. The record (`raw`) is the dict of the
+not sidecar keys) is supported. The raw record (`raw`) is the dict of the
 array's attributes.
 
-**OME-Zarr.** The record is an `OmeZarrRecord`: the typed `abczarr`
+**OME-Zarr.** The raw record is an `OmeZarrRaw`: the typed `abczarr`
 multiscale (normalised to 0.6), the `omero` block as JSON, and the group
 attributes that are not OME metadata. What the vocabulary covers:
 
@@ -20,6 +20,7 @@ attributes that are not OME metadata. What the vocabulary covers:
 | `channels` | `omero.channels`: `label`, `color`, `window.start`/`end` |
 | `display_range` | `omero.channels[*].window.start`/`end` |
 | `extra` | the other group attributes |
+| `data_type` (derived) | the data type of the arrays |
 
 An omero color (`RRGGBB`) reads as an RGBA string (`RRGGBBFF`). The
 display range is read when every channel shares it, and written to every
@@ -28,11 +29,15 @@ it is the range of the data type (0 to 1 for floats). OME-Zarr has no
 unit for the values, so `data_unit` is unsupported, and the unit of a
 channel is dropped (approximated).
 
+In both, `data_type` is derived (see `derived=`): it is the data type of
+the array that was read, and a writer stores the array as it is, so a
+`data_type` that disagrees with it is reported as approximated.
+
 There is one metadata object per pyramid; each level holds a derived copy
 (see `OmeZarrImage`).
 """
 
-__all__ = ["OmeZarrMetadata", "OmeZarrRecord", "ZarrMetadata"]
+__all__ = ["OmeZarrMetadata", "OmeZarrRaw", "ZarrMetadata"]
 
 # stdlib
 import copy
@@ -44,18 +49,20 @@ from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops.datamodel.metadata import (
-    _VOCABULARY,
+    VOCABULARY,
     Channel,
     ConversionReport,
-    FormatMetadata,
+    DisplayMetadata,
+    FileBasedMetadata,
+    MicroscopyMetadata,
+    MRIMetadata,
+    ProvenanceMetadata,
+    TransformMetadata,
 )
 from brainhops.io.metadata.bids import _from_json, _to_json, sidecar_key
 
 # The array attribute that holds the vocabulary of a plain Zarr image.
 BRAINHOPS_KEY = "brainhops"
-
-# Not sidecar keys (see `brainhops.io.metadata.bids`).
-_NOT_IN_SIDECAR = ("diffusion_bvalues", "diffusion_bvectors")
 
 # Group attributes that belong to the OME metadata (0.5 and later nest it
 # under "ome"; 0.4 writes it at the top level).
@@ -70,6 +77,35 @@ OME_KEYS = frozenset(
         "well",
     }
 )
+
+
+def _array_dtype(image: tx.Any) -> tx.Optional[np.dtype]:
+    """The data type of the array of an image (of the first level of a
+    pyramid), read from its node when it has one (without reading the
+    data), `None` when there is none."""
+    if image is None:
+        return None
+    objects = [image]
+    try:
+        images = getattr(image, "images", None)
+        if images:
+            objects.append(images[0])
+    except Exception:
+        pass
+    for obj in objects:
+        dtype = getattr(getattr(obj, "node", None), "dtype", None)
+        if dtype is not None:
+            return np.dtype(dtype)
+    for obj in objects:
+        if getattr(obj, "node", None) is not None:
+            continue
+        try:
+            dtype = getattr(getattr(obj, "data", None), "dtype", None)
+        except Exception:
+            dtype = None
+        if dtype is not None:
+            return np.dtype(dtype)
+    return None
 
 
 def _apply_extra(
@@ -93,16 +129,24 @@ def _apply_extra(
 
 
 class ZarrMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "zarr"},
-    supports=tuple(
-        name for name in _VOCABULARY if name not in _NOT_IN_SIDECAR
+    # Not the diffusion fields: they are not sidecar keys.
+    supports=(
+        ProvenanceMetadata,
+        MRIMetadata,
+        DisplayMetadata,
+        MicroscopyMetadata,
+        TransformMetadata,
+        "extra",
     ),
+    derived=("data_type",),
 ):
     """
     The metadata of a plain Zarr array: the vocabulary as a sidecar under
     the attribute `"brainhops"`, and `extra` as the other attributes.
-    Its record (`raw`) is the dict of the array's attributes.
+    Its raw record (`raw`) is the dict of the array's attributes.
+    `data_type` is the data type of the array.
     """
 
     format: tx.Annotated[tx.Literal["zarr"], tx.Doc("Always `'zarr'`.")] = (
@@ -124,13 +168,13 @@ class ZarrMetadata(
     def _decode(
         cls, raw: tx.Optional[tx.Mapping[str, tx.Any]], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
+        out: tx.Dict[str, tx.Any] = {"data_type": _array_dtype(image)}
         if not raw:
-            return {}
-        out: tx.Dict[str, tx.Any] = {}
+            return out
         block = raw.get(BRAINHOPS_KEY)
         if isinstance(block, tx.Mapping):
-            for name in cls.vocabulary_fields:
-                if name in cls.unsupported_fields:
+            for name in VOCABULARY:
+                if name not in cls.supported_fields or name == "data_type":
                     continue
                 key = sidecar_key(name)
                 if key in block:
@@ -150,7 +194,8 @@ class ZarrMetadata(
     ) -> tx.Dict[str, tx.Any]:
         block = dict(raw.get(BRAINHOPS_KEY) or {})
         for name, value in changed.items():
-            if name == "extra":
+            if name in ("extra", "data_type"):
+                # `data_type` is the array's: nothing to store.
                 continue
             key = sidecar_key(name)
             if value is None:
@@ -165,15 +210,18 @@ class ZarrMetadata(
             raw.pop(BRAINHOPS_KEY, None)
         return raw
 
+    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
+        return {"data_type": _array_dtype(image)}
+
 
 # ----------------------------------------------------------------------
 #   OME-ZARR
 # ----------------------------------------------------------------------
 
 
-class OmeZarrRecord:
+class OmeZarrRaw:
     """
-    The record of an OME-Zarr pyramid: its typed `abczarr` multiscale
+    The raw record of an OME-Zarr pyramid: its typed `abczarr` multiscale
     (normalised to 0.6), its `omero` block as JSON, and the group
     attributes that are not OME metadata.
     """
@@ -190,16 +238,16 @@ class OmeZarrRecord:
         self.omero = omero
         self.attrs = dict(attrs or {})
 
-    def __deepcopy__(self, memo: tx.Dict) -> "OmeZarrRecord":
+    def __deepcopy__(self, memo: tx.Dict) -> "OmeZarrRaw":
         # The typed multiscale is immutable: it is shared.
-        return OmeZarrRecord(
+        return OmeZarrRaw(
             self.multiscale,
             copy.deepcopy(self.omero, memo),
             copy.deepcopy(self.attrs, memo),
         )
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, OmeZarrRecord):
+        if not isinstance(other, OmeZarrRaw):
             return NotImplemented
         return (
             _json(self.multiscale) == _json(other.multiscale)
@@ -212,16 +260,16 @@ class OmeZarrRecord:
     def __repr__(self) -> str:
         name = getattr(self.multiscale, "name", None)
         return (
-            f"OmeZarrRecord(multiscale={name!r}, "
+            f"OmeZarrRaw(multiscale={name!r}, "
             f"omero={self.omero is not None}, attrs={sorted(self.attrs)})"
         )
 
     @classmethod
     def from_attributes(
         cls, multiscale: tx.Any, attrs: tx.Mapping[str, tx.Any]
-    ) -> "OmeZarrRecord":
-        """The record of a group, from its multiscale and its attributes
-        (as JSON)."""
+    ) -> "OmeZarrRaw":
+        """The raw record of a group, from its multiscale and its
+        attributes (as JSON)."""
         attrs = dict(attrs)
         block = attrs.get("ome")
         holder = block if isinstance(block, tx.Mapping) else attrs
@@ -337,16 +385,17 @@ def _window(
 
 
 class OmeZarrMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "ome-zarr"},
-    supports=("name", "channels", "display_range", "extra"),
+    supports=("name", "channels", "display_range", "extra", "data_type"),
+    derived=("data_type",),
 ):
     """
-    The metadata of an OME-Zarr multiscale pyramid; its record is an
-    `OmeZarrRecord` (the multiscale, `omero` and the other group
-    attributes).
+    The metadata of an OME-Zarr multiscale pyramid; its raw record is an
+    `OmeZarrRaw` (the multiscale, `omero` and the other group
+    attributes). `data_type` is the data type of the arrays.
 
-    `multiscale` and `omero` are the parts of the record under their
+    `multiscale` and `omero` are the parts of the raw record under their
     familiar names.
     """
 
@@ -355,12 +404,12 @@ class OmeZarrMetadata(
     ] = "ome-zarr"
 
     raw: tx.Annotated[
-        tx.Optional[OmeZarrRecord],
+        tx.Optional[OmeZarrRaw],
         tx.Doc(
             """
-            The record of the pyramid that was read: its typed multiscale
-            (normalised to OME-NGFF 0.6), its `omero` block and its other
-            group attributes. The levels and the coordinate
+            The raw record of the pyramid that was read: its typed
+            multiscale (normalised to OME-NGFF 0.6), its `omero` block
+            and its other group attributes. The levels and the coordinate
             transformations are rewritten from the data model on save.
             """
         ),
@@ -370,27 +419,27 @@ class OmeZarrMetadata(
 
     @property
     def multiscale(self) -> tx.Any:
-        """The typed `abczarr` multiscale of the record."""
+        """The typed `abczarr` multiscale of the raw record."""
         return None if self.raw is None else self.raw.multiscale
 
     @property
     def omero(self) -> tx.Optional[tx.Dict[str, tx.Any]]:
-        """The `omero` block of the record, as JSON."""
+        """The `omero` block of the raw record, as JSON."""
         return None if self.raw is None else self.raw.omero
 
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _default_raw(cls) -> OmeZarrRecord:
-        return OmeZarrRecord()
+    def _default_raw(cls) -> OmeZarrRaw:
+        return OmeZarrRaw()
 
     @classmethod
     def _decode(
-        cls, raw: tx.Optional[OmeZarrRecord], *, image: tx.Any = None
+        cls, raw: tx.Optional[OmeZarrRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
+        out: tx.Dict[str, tx.Any] = {"data_type": _array_dtype(image)}
         if raw is None:
-            return {}
-        out: tx.Dict[str, tx.Any] = {}
+            return out
         name = getattr(raw.multiscale, "name", None)
         out["name"] = name if isinstance(name, str) and name else None
         entries = (raw.omero or {}).get("channels") or []
@@ -420,12 +469,12 @@ class OmeZarrMetadata(
 
     def _encode(
         self,
-        raw: OmeZarrRecord,
+        raw: OmeZarrRaw,
         changed: tx.Dict[str, tx.Any],
         *,
         image: tx.Any = None,
         report: ConversionReport,
-    ) -> OmeZarrRecord:
+    ) -> OmeZarrRaw:
         if "name" in changed and raw.multiscale is not None:
             block = raw.multiscale.to_json()
             if changed["name"] is None:
@@ -439,18 +488,21 @@ class OmeZarrMetadata(
             _apply_extra(raw.attrs, changed["extra"], OME_KEYS, report)
         return raw
 
+    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
+        return {"data_type": _array_dtype(image)}
+
     def _derive_raw(
         self,
-        raw: tx.Optional[OmeZarrRecord],
+        raw: tx.Optional[OmeZarrRaw],
         *,
         grid_changed: bool,
         volumes: tx.Optional[tx.Sequence[int]],
-    ) -> tx.Optional[OmeZarrRecord]:
+    ) -> tx.Optional[OmeZarrRaw]:
         return copy.deepcopy(raw)
 
     def _encode_omero(
         self,
-        raw: OmeZarrRecord,
+        raw: OmeZarrRaw,
         changed: tx.Dict[str, tx.Any],
         image: tx.Any,
         report: ConversionReport,

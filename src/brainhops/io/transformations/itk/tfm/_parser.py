@@ -7,10 +7,12 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Magic
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
+
+from brainhops._core.peek import peekable_lines
 
 # core
-from brainhops._core.peek import peekable_lines
+from brainhops.datamodel.metadata import MetadataField
 
 # io
 from brainhops.io.base.parsers import (
@@ -18,7 +20,6 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
-from brainhops.io.transformations.base._metadata import metadata_field
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
 from .._metadata import ItkMetadata
@@ -54,14 +55,17 @@ class TfmTransformParser(
     this parser is mixed into.
     """
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         ItkMetadata,
-        """
-        None: an ITK `.tfm` file stores no metadata, so every field is
-        unsupported. See
-        [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
-        """,
-    )
+        Factory(ItkMetadata),
+        tx.Doc(
+            """
+            None: an ITK `.tfm` file stores no metadata, so every field is
+            unsupported. See
+            [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
+            """
+        ),
+    ]
 
     # --- sniff --------------------------------------------------------
 

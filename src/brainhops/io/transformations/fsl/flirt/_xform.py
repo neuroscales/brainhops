@@ -1,16 +1,18 @@
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Factory
+
+from brainhops.datamodel import systems as _systems
+from brainhops.datamodel import transformations as _xforms
 
 # externals
 # datamodel
-from brainhops.datamodel import systems as _systems
-from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.metadata import MetadataField
 
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.transformations.base import FileBasedTransformation
-from brainhops.io.transformations.base._metadata import metadata_field
 
 from .._affines import _ImageGeometry
 from .._formats import FslAffineFormat
@@ -50,15 +52,18 @@ class FlirtTransform(
 
     # Declared again here: the first base is not a data model, and
     # `Affine` would otherwise give its generic `metadata`.
-    metadata: metadata_field(
+    metadata: MetadataField[
         FlirtMetadata,
-        """
-        The paths of the moving and reference images, when they were
-        read from files (`moving`, `fixed`). A `.mat` file stores no
-        metadata. See
-        [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
-        """,
-    )
+        Factory(FlirtMetadata),
+        tx.Doc(
+            """
+            The paths of the moving and reference images, when they were
+            read from files (`moving`, `fixed`). A `.mat` file stores no
+            metadata. See
+            [`FlirtMetadata`][brainhops.io.transformations.fsl.flirt.FlirtMetadata].
+            """
+        ),
+    ]
 
     _input: _systems.CoordinateSystem = _systems.RASmm()
     _output: _systems.CoordinateSystem = _systems.RASmm()

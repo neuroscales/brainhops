@@ -35,7 +35,7 @@ here from the raw bytes, so that a file round-trips:
 __all__ = [
     "MghMetadata",
     "MghParser",
-    "MghRecord",
+    "MghRaw",
     "MGH_HEADER_SIZE",
     "MGH_FOOTER_SIZE",
 ]
@@ -49,6 +49,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Factory
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -58,9 +59,9 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import metadata_annotation
+from brainhops.datamodel.metadata import MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.io.base._mgh_metadata import MghMetadata, MghRecord
+from brainhops.io.base._mgh_metadata import MghMetadata, MghRaw
 from brainhops.io.base.freesurfer import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
@@ -111,17 +112,20 @@ _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 
 # The `metadata` field of every MGH-based class.
-MghMetadataField = metadata_annotation(
+MghMetadataField = MetadataField[
     MghMetadata,
-    """
-    The metadata of the file: the MRI parameters of the footer (in
-    seconds and degrees) and the command-line history of the trailing
-    tags, with the header and the tags as its record (`metadata.raw`).
-    A field set here is written over the record on save; see
-    [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
-    """,
-    default=MghMetadata,
-)
+    Factory(MghMetadata),
+    tx.Doc(
+        """
+        The metadata of the file: the MRI parameters of the footer (in
+        seconds and degrees) and the command-line history of the trailing
+        tags, with the header and the tags as its raw record
+        (`metadata.raw`). A field set here is written over the raw record
+        on save; see
+        [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
+        """
+    ),
+]
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
@@ -218,10 +222,10 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         is not its record yet (or, with `force`, again).
 
         The tags are not read here: the record reads them on first use
-        (see `MghRecord`), and so does `history`. A `metadata` given
+        (see `MghRaw`), and so does `history`. A `metadata` given
         along with the header (explicitly, or carried over by
         `replace(image, header=...)`) keeps the fields that changed in
-        it, over the decoded ones (see `FormatMetadata.with_record`).
+        it, over the decoded ones (see `FileBasedMetadata.update_from_raw`).
         """
         header = self.header
         metadata = self.metadata
@@ -230,17 +234,17 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         record = getattr(metadata, "raw", None)
         if (
             not force
-            and isinstance(record, MghRecord)
+            and isinstance(record, MghRaw)
             and record.header is header
         ):
             return
-        record = MghRecord(
+        record = MghRaw(
             header, getattr(self, "_tags", None), loader=self._tags_loader()
         )
         if force or metadata is None:
             self.metadata = MghMetadata.from_raw(record, image=self)
         else:
-            self.metadata = metadata.with_record(record, image=self)
+            self.metadata = metadata.update_from_raw(record, image=self)
 
     def _tags_loader(self) -> tx.Optional[tx.Callable[[], bytes]]:
         """What reads the tags from the file the image was loaded from,
@@ -282,7 +286,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         if getattr(self, "_tags", None) is not None:
             return self._tags
         record = getattr(self.metadata, "raw", None)
-        if isinstance(record, MghRecord) and record.header is self.header:
+        if isinstance(record, MghRaw) and record.header is self.header:
             # Read once, by the record of the metadata.
             tags = record.tags
         else:

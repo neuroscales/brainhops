@@ -9,6 +9,7 @@ import warnings
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 pytest.importorskip("abczarr")
 
@@ -21,10 +22,10 @@ from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
     Channel,
+    ConversionReport,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
-    convert,
     metadata_loss_policy,
 )
 from brainhops.io.images.nifti import NiftiImage, NiftiMetadata  # noqa: E402
@@ -35,6 +36,13 @@ from brainhops.io.images.zarr import (  # noqa: E402
     ZarrMetadata,
 )
 from brainhops.io.images.zarr._multiscale import OmeZarrLevel  # noqa: E402
+
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
 
 AXES = [SpaceAxis("x"), SpaceAxis("y"), SpaceAxis("z"), ChannelAxis("c")]
 
@@ -96,7 +104,9 @@ def test_plain_zarr_stores_the_vocabulary_as_a_sidecar(tmp_path) -> None:  # noq
     }
     back = io.load(path)
     assert type(back) is ZarrImage
-    assert back.metadata == image.metadata
+    # `data_type` is the array's (derived): not in the sidecar.
+    assert back.metadata.data_type == np.float32
+    assert back.metadata == replace(image.metadata, data_type="float32")
     assert back.metadata.raw == attrs
     assert back.metadata.changed_fields() == {}
 
@@ -118,15 +128,15 @@ def test_plain_zarr_round_trip_and_edits(tmp_path) -> None:  # noqa: ANN001
 
 def test_plain_zarr_cannot_hold_diffusion() -> None:
     assert ZarrMetadata.unsupported_fields == {
-        "diffusion_bvalues",
-        "diffusion_bvectors",
+        "bvalues",
+        "bvectors",
     }
-    _, report = convert(
-        Metadata(diffusion_bvalues=(0.0, 1000.0)),
+    _, report = _to(
+        Metadata(bvalues=(0.0, 1000.0)),
         ZarrMetadata,
         on_loss="ignore",
     )
-    assert report.lost == {"diffusion_bvalues": (0.0, 1000.0)}
+    assert report.lost == {"bvalues": (0.0, 1000.0)}
 
 
 def test_a_reserved_extra_key_is_reported(tmp_path) -> None:  # noqa: ANN001
@@ -286,17 +296,15 @@ def test_alpha_and_units_are_approximated(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_ome_zarr_channels_to_generic(stained) -> None:  # noqa: ANN001
-    generic, report = convert(io.load(stained).metadata, Metadata)
+    generic, report = _to(io.load(stained).metadata, Metadata)
     assert not report.lossy
     assert [c.name for c in generic.channels] == ["DAPI", "GFP"]
     assert generic.name == "brain"
-    assert generic.raw is None
+    assert not hasattr(generic, "raw")  # the raw record stays
 
 
 def test_ome_zarr_to_nifti_reports_the_loss(stained) -> None:  # noqa: ANN001
-    _, report = convert(
-        io.load(stained).metadata, NiftiMetadata, on_loss="ignore"
-    )
+    _, report = _to(io.load(stained).metadata, NiftiMetadata, on_loss="ignore")
     assert set(report.lost) == {"name", "channels", "extra"}
 
 
@@ -304,7 +312,7 @@ def test_nifti_to_ome_zarr(tmp_path) -> None:  # noqa: ANN001
     nifti = NiftiImage(data=np.zeros((4, 4, 6), "float32"))
     nifti.metadata.description = "a scan"
     nifti.metadata.display_range = (0.0, 50.0)
-    meta, report = convert(nifti.metadata, OmeZarrMetadata, on_loss="ignore")
+    meta, report = _to(nifti.metadata, OmeZarrMetadata, on_loss="ignore")
     assert report.lost == {"description": "a scan"}
     assert meta.display_range == (0.0, 50.0)
     path = str(tmp_path / "p.zarr")
@@ -317,7 +325,7 @@ def test_nifti_to_ome_zarr(tmp_path) -> None:  # noqa: ANN001
     back = io.load(path).metadata
     assert back.display_range == (0.0, 50.0)
     # And back to NIfTI: the display range is kept, the channel is lost.
-    nifti, report = convert(back, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(back, NiftiMetadata, on_loss="ignore")
     assert nifti.display_range == (0.0, 50.0)
     assert set(report.lost) == {"channels"}
 

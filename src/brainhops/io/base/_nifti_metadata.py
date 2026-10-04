@@ -3,19 +3,21 @@ The metadata of NIfTI files: [`NiftiMetadata`][], shared by `NiftiImage`
 and every NIfTI-based transformation (plain fields and affines, FSL
 FNIRT, ITK NIfTI fields, NiftyReg, SPM).
 
-Its record (`raw`) is the `nibabel` header. What the vocabulary covers:
+Its raw record (`raw`) is the `nibabel` header. What the vocabulary
+covers:
 
 | Field | Header slots |
 |---|---|
 | `description` | `descrip` (80 bytes) |
 | `display_range` | `cal_min`, `cal_max` |
 | `sources` | `aux_file` (one name, 24 bytes) |
-| `slice_encoding_direction` | `dim_info` (no polarity) |
-| `phase_encoding_direction` | `dim_info` (no polarity) |
+| `slice_encoding_direction` | `dim_info` (a voxel axis, no polarity) |
+| `phase_encoding_direction` | `dim_info` (a voxel axis, no polarity) |
 | `slice_timing` | `slice_code`, `slice_start`, `slice_end`, `slice_duration` |
 | `repetition_time` (derived) | `pixdim[4]` (the time step) |
 | `intent` (derived) | `intent_code` |
 | `space` (derived) | `sform_code` / `qform_code` |
+| `data_type` | `datatype` (the writer's, see below) |
 
 The derived fields are views of geometry that the writer takes from the
 data model; a value that disagrees with it is reported, not written.
@@ -25,11 +27,18 @@ whose data model has no time step gets the field's value there.
 NIfTI has no free-form store, so `extra` is unsupported (open question 7
 of the design memo).
 
-The writer keeps, from the record of the file that was read, what is
+An encoding direction is stored as the voxel axis it is along: its
+polarity is dropped (approximated), and one along no voxel axis (an
+oblique direction, or one in a world space) is lost.
+
+The writer keeps, from the raw record of the file that was read, what is
 safe to keep: `descrip`, `aux_file`, `cal_*`, `dim_info`, the `slice_*`
 fields (when the slice axis kept its length), a non-structural intent
-(images only) and the header extensions. Geometry, `xyzt_units`, the
-data type and `scl_*` always come from the data model and the writer.
+(images only) and the header extensions. Geometry, `xyzt_units` and
+`scl_*` always come from the data model and the writer. The image writer
+stores the data as `data_type` when the array's values are of its kind
+(see [`preferred_dtype`][brainhops.datamodel.metadata.preferred_dtype]);
+a `dtype=` writer option wins.
 """
 
 __all__ = ["NiftiMetadata"]
@@ -47,7 +56,8 @@ from bagof.magic import NoEq, NoRepr
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
-    FormatMetadata,
+    EncodingDirection,
+    FileBasedMetadata,
 )
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 
@@ -117,10 +127,11 @@ def _shape(header: nb.Nifti1Header) -> tx.Tuple[int, ...]:
 
 
 class NiftiMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "nifti"},
     supports=(
         "description",
+        "data_type",
         "intent",
         "space",
         "display_range",
@@ -133,9 +144,9 @@ class NiftiMetadata(
     derived=("repetition_time", "intent", "space"),
 ):
     """
-    The metadata of a NIfTI file; its record is the `nibabel` header.
+    The metadata of a NIfTI file; its raw record is the `nibabel` header.
 
-    `header` is the record under its familiar name.
+    `header` is the raw record under its familiar name.
     """
 
     format: tx.Annotated[tx.Literal["nifti"], tx.Doc("Always `'nifti'`.")] = (
@@ -147,8 +158,8 @@ class NiftiMetadata(
         tx.Doc(
             """
             The `nibabel` header of the file that was read. Edit it only
-            for what the vocabulary does not cover; geometry, units, data
-            type and scaling are rewritten from the data model on save.
+            for what the vocabulary does not cover; geometry, units and
+            scaling are rewritten from the data model on save.
             """
         ),
         NoRepr(),
@@ -157,7 +168,7 @@ class NiftiMetadata(
 
     @property
     def header(self) -> tx.Optional[nb.Nifti1Header]:
-        """The `nibabel` header (the record, `raw`)."""
+        """The `nibabel` header (the raw record, `raw`)."""
         return self.raw
 
     # --- hooks --------------------------------------------------------
@@ -186,6 +197,11 @@ class NiftiMetadata(
 
         cal = (_f32(h["cal_min"]), _f32(h["cal_max"]))
         out["display_range"] = cal if any(cal) else None
+
+        try:
+            out["data_type"] = h.get_data_dtype()
+        except Exception:
+            pass
 
         freq, phase, slice_ = h.get_dim_info()
         if phase is not None and phase < len(_AXES):
@@ -248,6 +264,13 @@ class NiftiMetadata(
             _encode_intent(h, changed["intent"], image, report)
         if "space" in changed:
             _check_space(h, changed["space"], report)
+        if "data_type" in changed and changed["data_type"] is not None:
+            # The image writer settles it against the data afterwards
+            # (see `preferred_dtype`).
+            try:
+                h.set_data_dtype(changed["data_type"])
+            except Exception:
+                report.lost["data_type"] = changed["data_type"]
         return h
 
     def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
@@ -255,7 +278,7 @@ class NiftiMetadata(
             return {}
         return {"repetition_time": time_step(image.transformations)}
 
-    def _check_record(self, image: tx.Any) -> nb.Nifti1Header:
+    def _check_raw(self, image: tx.Any) -> nb.Nifti1Header:
         # The writer's header has the shape of the data, whatever the
         # record says.
         h = self._raw_or_default()
@@ -333,7 +356,7 @@ def _decode_slice_timing(
 def _encode_dim_info(
     h: nb.Nifti1Header,
     name: str,
-    value: tx.Optional[str],
+    value: tx.Optional[EncodingDirection],
     position: int,
     report: ConversionReport,
 ) -> None:
@@ -341,13 +364,14 @@ def _encode_dim_info(
     if value is None:
         dims[position] = None
     else:
-        axis = value.rstrip("-")
-        if axis not in _AXES or len(axis) != 1:
+        bids = value.to_bids()
+        if bids is None:
+            # Along no voxel axis: `dim_info` stores an axis.
             report.lost[name] = value
             return
-        if value.endswith("-"):
+        if bids.endswith("-"):
             report.approximated[name] = "polarity dropped (dim_info)"
-        dims[position] = _AXES.index(axis)
+        dims[position] = _AXES.index(bids[0])
     h.set_dim_info(*dims)
 
 

@@ -10,12 +10,17 @@ import typing_extensions as tx
 # externals
 from bagof.magic import HIDE_IF_NONE, Factory, Magic, replace
 
-# core
 from brainhops._core.properties import smartproperty
 
 # datamodel
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
+
+# core
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    MetadataField,
+    apply_loss_policy,
+)
 
 # io
 from brainhops.io.base._base import register_format
@@ -27,7 +32,6 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.base._metadata import (
-    metadata_field,
     sync_metadata,
 )
 
@@ -77,16 +81,19 @@ class X5TransformParser(
     file: tx.Optional[h5py.File] = None
     """The open HDF5 file, when read with `keep_open=True`."""
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         X5Metadata,
-        """
-        The metadata of the node the transformation was read from,
-        decoded from its JSON `Metadata`, with `(header, node)` as its
-        record. A chain of several nodes has none of its own: its
-        nodes keep theirs, and write them back. See
-        [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata].
-        """,
-    )
+        Factory(X5Metadata),
+        tx.Doc(
+            """
+            The metadata of the node the transformation was read from,
+            decoded from its JSON `Metadata`, with `(header, node)` as its
+            record. A chain of several nodes has none of its own: its
+            nodes keep theirs, and write them back. See
+            [`X5Metadata`][brainhops.io.transformations.x5.X5Metadata].
+            """
+        ),
+    ]
 
     def __post_init__(self) -> None:
         parent = getattr(super(), "__post_init__", None)
@@ -381,7 +388,7 @@ class X5Transform(
         if node is None or metadata.node is not node:
             # Not the node it was read from: everything is written.
             metadata = replace(metadata, decoded={})
-        _, node = metadata.write_raw(
+        _, node = metadata.update_raw(
             (self.header, node), image=self, report=report
         )
         if index is not None:

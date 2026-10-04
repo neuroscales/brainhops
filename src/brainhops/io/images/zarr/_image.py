@@ -4,6 +4,7 @@ import copy
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
+from bagof.magic import Factory
 
 # internals
 from brainhops._core.dependencies import da
@@ -15,9 +16,9 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     ConversionReport,
-    FormatMetadata,
+    FileBasedMetadata,
+    MetadataField,
     apply_loss_policy,
-    metadata_annotation,
 )
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
@@ -36,28 +37,23 @@ from brainhops.io.images.base import WritableFileBasedImage
 from ._metadata import ZarrMetadata
 
 
-def metadata_field(cls: tx.Type[FormatMetadata], doc: str) -> tx.Any:
-    """The annotation of the narrowed `metadata` field of a Zarr class."""
-    return metadata_annotation(cls, doc, default=cls)
-
-
 def sync_record(
-    cls: tx.Type[FormatMetadata],
-    metadata: tx.Optional[FormatMetadata],
+    cls: tx.Type[FileBasedMetadata],
+    metadata: tx.Optional[FileBasedMetadata],
     node: tx.Any,
     read: tx.Callable[[], tx.Any],
     image: tx.Any = None,
-) -> FormatMetadata:
+) -> FileBasedMetadata:
     """
     The metadata of an object read from `node`.
 
-    A Zarr record is rebuilt from the attributes of the node on each
-    read, so the metadata remembers the node its record was read from:
-    a metadata read from `node` already (as `replace()` carries it) is
-    kept as it is. Otherwise the record is read (`read()`) and decoded,
-    and the fields that changed in `metadata` (all of them for one
-    built in memory) are set over the decoded ones, as changes (see
-    `FormatMetadata.with_record`).
+    A Zarr raw record is rebuilt from the attributes of the node on each
+    read, so the metadata remembers the node its raw record was read
+    from: a metadata read from `node` already (as `replace()` carries
+    it) is kept as it is. Otherwise the raw record is read (`read()`)
+    and decoded, and the fields that changed in `metadata` (all of them
+    for one built in memory) are set over the decoded ones, as changes
+    (see `FileBasedMetadata.update_from_raw`).
     """
     if (
         metadata is not None
@@ -67,7 +63,7 @@ def sync_record(
         return metadata
     if metadata is None:
         metadata = cls()
-    synced = metadata.with_record(read(), image=image)
+    synced = metadata.update_from_raw(read(), image=image)
     synced.__dict__["_source"] = node
     return synced
 
@@ -87,7 +83,7 @@ def write_attributes(
     before: tx.Optional[tx.Mapping[str, tx.Any]] = None,
 ) -> None:
     """Write `attrs` onto a node, and remove the keys of `before` (the
-    record that was read) that are no longer in it."""
+    raw record that was read) that are no longer in it."""
     current = node_attributes(node)
     for key in before or {}:
         if key not in attrs and key in current:
@@ -114,15 +110,18 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         ZarrMetadata,
-        """
-        The metadata of the array: the vocabulary, stored as a sidecar
-        under its attribute `"brainhops"`, and its other attributes as
-        `extra`; the attributes are the record (`metadata.raw`). See
-        [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata].
-        """,
-    )
+        Factory(ZarrMetadata),
+        tx.Doc(
+            """
+            The metadata of the array: the vocabulary, stored as a sidecar
+            under its attribute `"brainhops"`, and its other attributes as
+            `extra`; the attributes are the raw record (`metadata.raw`).
+            See [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata].
+            """
+        ),
+    ]
 
     def __post_init__(self) -> None:
         parent = getattr(super(), "__post_init__", None)
@@ -152,7 +151,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             metadata = ZarrMetadata.from_other(metadata)
         before = metadata.raw
         report = ConversionReport(source=metadata.format, target="zarr")
-        record = metadata.write_raw(
+        record = metadata.update_raw(
             copy.deepcopy(before) if before is not None else {},
             image=self,
             report=report,

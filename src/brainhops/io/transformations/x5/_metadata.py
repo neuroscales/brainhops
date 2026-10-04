@@ -1,7 +1,7 @@
 """
 The metadata of X5 files: [`X5Metadata`][].
 
-Its record (`raw`) is the pair `(X5Header, X5Node)`: the root of the
+Its raw record (`raw`) is the pair `(X5Header, X5Node)`: the root of the
 file and the node the transformation was read from. Every vocabulary
 field is stored in the node's JSON `Metadata` attribute, under its BIDS
 sidecar key (`Description`, `GeneratedBy`, ...) or, when BIDS has none,
@@ -21,10 +21,10 @@ from bagof.magic import NoEq, NoRepr, replace
 
 # internals
 from brainhops.datamodel.metadata import (
-    _VOCABULARY,
     ALL,
+    VOCABULARY,
     ConversionReport,
-    FormatMetadata,
+    FileBasedMetadata,
 )
 from brainhops.io.metadata.bids import _from_json, _jsonable, _to_json
 from brainhops.io.metadata.bids import sidecar_key as _sidecar_key
@@ -33,17 +33,15 @@ from brainhops.io.metadata.bids import sidecar_key as _sidecar_key
 from ._struct import X5Header, X5Node
 
 # JSON key -> vocabulary field.
-_KEYS: tx.Dict[str, str] = {
-    _sidecar_key(name): name for name in _VOCABULARY if name != "extra"
-}
+_KEYS: tx.Dict[str, str] = {_sidecar_key(name): name for name in VOCABULARY}
 _NAMES: tx.Dict[str, str] = {name: key for key, name in _KEYS.items()}
 
 
-class X5Metadata(FormatMetadata, on={"format": "x5"}, supports=ALL):
+class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
     """
     The metadata of an X5 transform node, stored in its JSON `Metadata`.
 
-    `node` and `header` are the two halves of the record.
+    `node` and `header` are the two halves of the raw record.
     """
 
     format: tx.Annotated[tx.Literal["x5"], tx.Doc("Always `'x5'`.")] = "x5"
@@ -63,12 +61,12 @@ class X5Metadata(FormatMetadata, on={"format": "x5"}, supports=ALL):
 
     @property
     def header(self) -> tx.Optional[X5Header]:
-        """The root of the file (first half of the record)."""
+        """The root of the file (first half of the raw record)."""
         return None if self.raw is None else self.raw[0]
 
     @property
     def node(self) -> tx.Optional[X5Node]:
-        """The node (second half of the record)."""
+        """The node (second half of the raw record)."""
         return None if self.raw is None else self.raw[1]
 
     # --- hooks --------------------------------------------------------

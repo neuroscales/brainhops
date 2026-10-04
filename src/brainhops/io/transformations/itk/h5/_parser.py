@@ -7,6 +7,7 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # io
+from brainhops.datamodel.metadata import MetadataField
 from brainhops.io.base.hdf5 import (
     DelayedH5Array,
     Hdf5Parser,
@@ -15,7 +16,6 @@ from brainhops.io.base.hdf5 import (
 )
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 from brainhops.io.transformations.base._metadata import (
-    metadata_field,
     sync_metadata,
 )
 
@@ -80,15 +80,18 @@ class H5TransformParser(
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
 
-    metadata: metadata_field(
+    metadata: MetadataField[
         ItkH5Metadata,
-        """
-        The metadata of the file: the version of ITK that wrote it
-        (`generated_by`), with the root header as its record. The
-        blocks have none of their own. See
-        [`ItkH5Metadata`][brainhops.io.transformations.itk.ItkH5Metadata].
-        """,
-    )
+        Factory(ItkH5Metadata),
+        tx.Doc(
+            """
+            The metadata of the file: the version of ITK that wrote it
+            (`generated_by`), with the root header as its record. The
+            blocks have none of their own. See
+            [`ItkH5Metadata`][brainhops.io.transformations.itk.ItkH5Metadata].
+            """
+        ),
+    ]
 
     def __post_init__(self) -> None:
         parent = getattr(super(), "__post_init__", None)

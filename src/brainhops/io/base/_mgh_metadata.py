@@ -2,8 +2,8 @@
 The metadata of MGH/MGZ files: `MghMetadata`, the metadata of
 `MghImage`.
 
-Its record (`raw`) is an `MghRecord`: the `nibabel` header, which
-holds the footer of MRI acquisition parameters, and the raw bytes of the
+Its raw record (`raw`) is an `MghRaw`: the `nibabel` header, which
+holds the footer of MRI acquisition parameters, and the bytes of the
 trailing tags. What the vocabulary covers:
 
 | Field | Record | Unit conversion |
@@ -13,12 +13,22 @@ trailing tags. What the vocabulary covers:
 | `inversion_time` | footer `ti` | ms -> s |
 | `flip_angle` | footer `flip_angle` | rad -> deg |
 | `history` | the `TAG_CMDLINE` tags | one command per tag |
+| `data_type` | header `type` | uint8, int16, int32, float32 |
 
 FreeSurfer stores the times in milliseconds and the flip angle in
 radians (`mri_info` prints the latter in degrees); a value of zero means
 "not recorded", and reads as `None`. The field of view (`fov`) is not in
-the vocabulary (it follows from the geometry) and stays in the record.
-MGH has no free-form store, so `extra` is unsupported.
+the vocabulary (it follows from the geometry) and stays in the raw
+record. MGH has no free-form store, so `extra` is unsupported. The
+writer stores the data as `data_type` when the array's values are of its
+kind, or as the nearest type MGH stores (approximated).
+
+**Why not `nibabel`'s footer.** `nibabel` has no separate footer class:
+the footer fields (`tr`, `flip_angle`, `te`, `ti`, `fov`) are part of
+`MGHHeader` (its `hf_dtype` is the header and the footer), which is the
+first half of `MghRaw`. What `nibabel` does not read, nor write, is the
+tag stream after the footer (the command lines, `TAG_CMDLINE`), which is
+why this module parses it.
 
 **Tags.** After the footer, FreeSurfer writes a sequence of tags: a
 big-endian `int32` tag id, a length, and the payload. The length is an
@@ -29,13 +39,15 @@ NUL-terminated string. `history` is decoded only when the whole tag
 stream parses; otherwise the tags are kept verbatim and `history` is
 unknown (and a new value cannot be written: it is reported as lost).
 Writing `history` replaces the command-line tags and keeps every other
-tag as it was. The tags sit after the whole volume, so a record read
-from a file reads them lazily, and `history` is decoded on first access
-(see [`Lazy`][brainhops.datamodel.metadata.Lazy]): a load that never
-touches it never decompresses an MGZ to its end.
+tag as it was. The tags sit after the whole volume, so a raw record read
+from a file reads them lazily, and `history` is a lazy field
+(`lazy=("history",)`, see
+[`LazyField`][brainhops._core.properties.LazyField]), decoded on first
+access: a load that never touches it never decompresses an MGZ to its
+end.
 """
 
-__all__ = ["MghMetadata", "MghRecord"]
+__all__ = ["MghMetadata", "MghRaw"]
 
 # stdlib
 import copy
@@ -50,7 +62,11 @@ from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
-from brainhops.datamodel.metadata import ConversionReport, FormatMetadata, Lazy
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    FileBasedMetadata,
+    Lazy,
+)
 
 # FreeSurfer tag ids (`utils/tags.h`).
 TAG_OLD_COLORTABLE = 1
@@ -58,6 +74,11 @@ TAG_OLD_USEREALRAS = 2
 TAG_CMDLINE = 3
 TAG_OLD_SURF_GEOM = 20
 TAG_OLD_MGH_XFORM = 30
+
+# The voxel types MGH stores.
+_MGH_DTYPES = tuple(
+    np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
+)
 
 # Legacy tags with no length field.
 _NO_LENGTH = (TAG_OLD_COLORTABLE, TAG_OLD_USEREALRAS, TAG_OLD_SURF_GEOM)
@@ -72,15 +93,16 @@ _FOOTER = {
 }
 
 
-class MghRecord:
+class MghRaw:
     """
-    The record of an MGH file: its `nibabel` header (footer included)
-    and the raw bytes of the trailing tags.
+    The raw record of an MGH file: its `nibabel` header (the footer of
+    MRI parameters included: `nibabel` keeps it in `MGHHeader`) and the
+    bytes of the trailing tags, which `nibabel` does not read.
 
     The tags follow the whole volume, so reading them decompresses an
-    MGZ to its end. A record read from a file therefore holds a `loader`
-    instead, and reads the tags the first time `tags` is used (only
-    `history` needs them).
+    MGZ to its end. A raw record read from a file therefore holds a
+    `loader` instead, and reads the tags the first time `tags` is used
+    (only `history` needs them).
     """
 
     __slots__ = ("header", "_tags", "_loader")
@@ -116,8 +138,8 @@ class MghRecord:
         """Whether the tags have been read (or were given)."""
         return self._tags is not None
 
-    def __deepcopy__(self, memo: tx.Dict) -> "MghRecord":
-        return MghRecord(self.header.copy(), self._tags, loader=self._loader)
+    def __deepcopy__(self, memo: tx.Dict) -> "MghRaw":
+        return MghRaw(self.header.copy(), self._tags, loader=self._loader)
 
     def __getstate__(self) -> tx.Tuple[tx.Any, ...]:
         return (self.header, self.tags)
@@ -127,7 +149,7 @@ class MghRecord:
         self._loader = None
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, MghRecord):
+        if not isinstance(other, MghRaw):
             return NotImplemented
         return self.tags == other.tags and bytes(
             self.header.binaryblock
@@ -137,7 +159,7 @@ class MghRecord:
 
     def __repr__(self) -> str:
         tags = f"{len(self._tags)} bytes" if self._tags is not None else "lazy"
-        return f"MghRecord(header=..., tags={tags})"
+        return f"MghRaw(header=..., tags={tags})"
 
 
 # ----------------------------------------------------------------------
@@ -260,12 +282,12 @@ def _degrees(radians: tx.Any) -> float:
     return exact
 
 
-def _lazy_history(raw: MghRecord) -> tx.Optional[tx.Tuple[str, ...]]:
+def _lazy_history(raw: MghRaw) -> tx.Optional[tx.Tuple[str, ...]]:
     return decode_history(raw.tags)
 
 
 class MghMetadata(
-    FormatMetadata,
+    FileBasedMetadata,
     on={"format": "mgh"},
     supports=(
         "repetition_time",
@@ -273,26 +295,28 @@ class MghMetadata(
         "inversion_time",
         "flip_angle",
         "history",
+        "data_type",
     ),
+    lazy=("history",),
 ):
     """
-    The metadata of an MGH/MGZ file; its record is an `MghRecord`
+    The metadata of an MGH/MGZ file; its raw record is an `MghRaw`
     (the `nibabel` header and the trailing tags).
 
-    `header` and `tags` are the parts of the record under their familiar
-    names.
+    `header` and `tags` are the parts of the raw record under their
+    familiar names.
     """
 
     format: tx.Annotated[tx.Literal["mgh"], tx.Doc("Always `'mgh'`.")] = "mgh"
 
     raw: tx.Annotated[
-        tx.Optional[MghRecord],
+        tx.Optional[MghRaw],
         tx.Doc(
             """
-            The record of the file that was read: its `nibabel` header
-            (the footer of MRI parameters included) and its trailing
-            tags. Geometry and data type are rewritten from the data
-            model on save.
+            The raw record of the file that was read: its `nibabel`
+            header (the footer of MRI parameters included) and its
+            trailing tags. Geometry is rewritten from the data model on
+            save.
             """
         ),
         NoRepr(),
@@ -301,23 +325,23 @@ class MghMetadata(
 
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
-        """The `nibabel` header of the record."""
+        """The `nibabel` header of the raw record."""
         return None if self.raw is None else self.raw.header
 
     @property
     def tags(self) -> bytes:
-        """The raw trailing tags of the record."""
+        """The trailing tags of the raw record."""
         return b"" if self.raw is None else self.raw.tags
 
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _default_raw(cls) -> MghRecord:
-        return MghRecord()
+    def _default_raw(cls) -> MghRaw:
+        return MghRaw()
 
     @classmethod
     def _decode(
-        cls, raw: tx.Optional[MghRecord], *, image: tx.Any = None
+        cls, raw: tx.Optional[MghRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         if raw is None:
             return {}
@@ -330,22 +354,26 @@ class MghMetadata(
                 out[name] = _degrees(raw.header[slot])
             else:
                 out[name] = round(value * factor, 12)
+        try:
+            out["data_type"] = raw.header.get_data_dtype()
+        except Exception:
+            pass
         if raw.tags_loaded:
             out["history"] = decode_history(raw.tags)
         else:
             # Decoded on first access: reading the tags reads the file
-            # to its end (see `MghRecord`).
+            # to its end (see `MghRaw`).
             out["history"] = Lazy(functools.partial(_lazy_history, raw))
         return out
 
     def _encode(
         self,
-        raw: MghRecord,
+        raw: MghRaw,
         changed: tx.Dict[str, tx.Any],
         *,
         image: tx.Any = None,
         report: ConversionReport,
-    ) -> MghRecord:
+    ) -> MghRaw:
         for name, (slot, factor) in _FOOTER.items():
             if name not in changed:
                 continue
@@ -357,6 +385,16 @@ class MghMetadata(
             else:
                 stored = value / factor
             raw.header[slot] = stored
+        if changed.get("data_type") is not None:
+            # The writer settles it against the data afterwards.
+            dtype = changed["data_type"]
+            if dtype in _MGH_DTYPES:
+                raw.header.set_data_dtype(dtype)
+            else:
+                report.approximated["data_type"] = (
+                    f"MGH cannot store {dtype.name} (it stores uint8, "
+                    f"int16, int32 and float32)"
+                )
         if "history" in changed:
             tags = encode_history(raw.tags, changed["history"])
             if tags is None:
@@ -368,9 +406,9 @@ class MghMetadata(
 
     def _derive_raw(
         self,
-        raw: tx.Optional[MghRecord],
+        raw: tx.Optional[MghRaw],
         *,
         grid_changed: bool,
         volumes: tx.Optional[tx.Sequence[int]],
-    ) -> tx.Optional[MghRecord]:
+    ) -> tx.Optional[MghRaw]:
         return None if raw is None else copy.deepcopy(raw)

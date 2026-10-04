@@ -6,7 +6,7 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import Metadata, metadata_annotation
+from brainhops.datamodel.metadata import Metadata, MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
@@ -107,16 +107,18 @@ class Transformation(DataModelBase, reverse=True):
     # Keyword-only, so that it never shifts the positional arguments of a
     # subclass, and out of `repr` and `==`: two transformations are equal
     # when they map the same coordinates the same way.
-    metadata: metadata_annotation(
+    metadata: MetadataField[
         tx.Optional[Metadata],
-        """
-        Non-spatial metadata (description, provenance, the moving and
-        fixed images of a registration, ...), format-agnostic. A file
-        format narrows it to its own `FormatMetadata` subclass. A
-        transformation holds its own copy: metadata given to it is
-        copied, never shared. See [`brainhops.datamodel.metadata`][].
-        """,
-    ) = None
+        tx.Doc(
+            """
+            Non-spatial metadata (description, provenance, the moving and
+            fixed images of a registration, ...), format-agnostic. A file
+            format narrows it to its own `FileBasedMetadata` subclass. A
+            transformation holds its own copy: metadata given to it is
+            copied, never shared. See [`brainhops.datamodel.metadata`][].
+            """
+        ),
+    ] = None
 
     # --- methods ------------------------------------------------------
 

@@ -18,7 +18,7 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase
 from .geometry import Geometry
-from .metadata import Metadata, metadata_annotation
+from .metadata import Metadata, MetadataField
 from .transformations import (
     CartesianField,
     Identity,
@@ -32,18 +32,20 @@ class Image(DataModelBase):
     # Keyword-only, so that it never takes the place of a positional
     # argument of a subclass (`SingleScaleImage(data)`), and out of `repr`
     # and `==`: two images are equal when their data and geometry are.
-    metadata: metadata_annotation(
+    metadata: MetadataField[
         tx.Optional[Metadata],
-        """
-        Non-spatial metadata (description, acquisition parameters,
-        provenance, ...), format-agnostic. A file format narrows it to
-        its own `FormatMetadata` subclass, which converts (and reports
-        what is lost) when an image changes format. An image holds its
-        own copy: metadata given to it (`metadata=`, `replace()`,
-        `from_other`) is copied, never shared. See
-        [`brainhops.datamodel.metadata`][].
-        """,
-    ) = None
+        tx.Doc(
+            """
+            Non-spatial metadata (description, acquisition parameters,
+            provenance, ...), format-agnostic. A file format narrows it
+            to its own `FileBasedMetadata` subclass, which converts (and
+            reports what is lost) when an image changes format. An image
+            holds its own copy: metadata given to it (`metadata=`,
+            `replace()`, `from_other`) is copied, never shared. See
+            [`brainhops.datamodel.metadata`][].
+            """
+        ),
+    ] = None
 
     # --- array API ----------------------------------------------------
 

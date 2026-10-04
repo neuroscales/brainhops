@@ -39,14 +39,15 @@ __all__ = [
     "Scope",
     "GeneratedBy",
     "Channel",
-    "FormatMetadata",
+    "EncodingDirection",
     "Metadata",
+    "FileBasedMetadata",
     "OpaqueMetadata",
+    "MetadataField",
     "ConversionReport",
     "MetadataLossWarning",
     "MetadataLossError",
     "metadata_loss_policy",
-    "convert_metadata",
 ]
 
 # trigger registration
@@ -67,10 +68,12 @@ from .metadata import (
     Bids,
     Channel,
     ConversionReport,
-    FormatMetadata,
+    EncodingDirection,
+    FileBasedMetadata,
     GeneratedBy,
     Maybe,
     Metadata,
+    MetadataField,
     MetadataLossError,
     MetadataLossWarning,
     OpaqueMetadata,
@@ -78,4 +81,3 @@ from .metadata import (
     Unsupported,
     metadata_loss_policy,
 )
-from .metadata import convert as convert_metadata

@@ -16,6 +16,13 @@ import warnings
 import numpy as np
 import pytest
 
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
+
 nb = pytest.importorskip("nibabel")
 
 from bagof.magic import fields  # noqa: E402
@@ -24,14 +31,14 @@ from nibabel.freesurfer.mghformat import MGHImage as NibabelMgh  # noqa: E402
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
+    ConversionReport,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
-    convert,
     metadata_loss_policy,
 )
 from brainhops.io.base._mgh_metadata import (  # noqa: E402
-    MghRecord,
+    MghRaw,
     decode_history,
     encode_history,
     parse_tags,
@@ -291,7 +298,7 @@ def test_like_sits_under_a_changed_field(scan, tmp_path) -> None:  # noqa: ANN00
 
 def test_mgh_to_nifti_loses_the_acquisition_parameters(scan) -> None:  # noqa: ANN001
     meta = io.load(scan).metadata
-    nifti, report = convert(meta, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(meta, NiftiMetadata, on_loss="ignore")
     assert set(report.lost) == {
         "history",
         "echo_time",
@@ -332,7 +339,7 @@ def test_nifti_to_mgh(tmp_path) -> None:  # noqa: ANN001
     nii.header["pixdim"][4] = 2.0
     nb.save(nii, str(tmp_path / "bold.nii.gz"))
     meta = io.load(tmp_path / "bold.nii.gz").metadata
-    mgh, report = convert(meta, MghMetadata, on_loss="ignore")
+    mgh, report = _to(meta, MghMetadata, on_loss="ignore")
     assert report.lost == {"description": "bold", "space": "aligned"}
     assert mgh.repetition_time == 2.0
     with metadata_loss_policy("ignore"):
@@ -341,20 +348,20 @@ def test_nifti_to_mgh(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_mgh_through_generic_to_bids(scan) -> None:  # noqa: ANN001
-    generic, report = convert(io.load(scan).metadata, Metadata)
+    generic, report = _to(io.load(scan).metadata, Metadata)
     assert not report.lossy
     sidecar = generic.to_bids()
     assert sidecar["RepetitionTime"] == 2.3
     assert sidecar["EchoTime"] == 0.00298
     assert sidecar["InversionTime"] == 0.9
     assert sidecar["FlipAngle"] == 9.0
-    back, report = convert(Metadata.from_bids(sidecar), MghMetadata)
+    back, report = _to(Metadata.from_bids(sidecar), MghMetadata)
     assert not report.lossy
     assert back == io.load(scan).metadata
 
 
 def test_record_copies_are_independent() -> None:
-    record = MghRecord(tags=b"x")
+    record = MghRaw(tags=b"x")
     record.header["tr"] = 5.0
     other = copy.deepcopy(record)
     other.header["tr"] = 6.0
@@ -436,3 +443,18 @@ def test_a_new_header_is_read_again_through_replace(scan) -> None:  # noqa: ANN0
     assert other.metadata.repetition_time == 1.0
     assert other.metadata.echo_time == 0.004
     assert image.metadata.repetition_time == 2.3
+
+
+def test_the_data_type_round_trips(tmp_path) -> None:  # noqa: ANN001
+    data = np.arange(60).reshape((3, 4, 5)).astype("int16")
+    nb.save(NibabelMgh(data, np.eye(4)), str(tmp_path / "a.mgz"))
+    image = io.load(tmp_path / "a.mgz")
+    assert image.metadata.data_type == np.int16
+    image.data = np.asarray(image.data, "int64")
+    image.save(tmp_path / "b.mgz")
+    stored = nb.load(str(tmp_path / "b.mgz")).get_data_dtype()
+    assert stored.newbyteorder("=") == np.int16  # MGH is big-endian
+    # A type MGH cannot store is approximated by the nearest one.
+    image.metadata.data_type = "uint16"
+    report = image.metadata.check_writable(image=image)
+    assert "data_type" in report.approximated

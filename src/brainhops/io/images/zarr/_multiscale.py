@@ -5,7 +5,7 @@ import copy
 import typing_extensions as tx
 from abczarr import ZarrGroup, ZarrNode, open_group
 from abczarr.ome.v0_6.images import Multiscale
-from bagof.magic import replace
+from bagof.magic import Factory, replace
 
 # internals
 from brainhops._core.properties import smartproperty
@@ -20,7 +20,11 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    MetadataField,
+    apply_loss_policy,
+)
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import SampleUnit
@@ -52,19 +56,24 @@ from brainhops.io.transformations.zarr import _map
 
 from ._image import (
     ZarrImage,
-    metadata_field,
     node_attributes,
     sync_record,
     write_attributes,
 )
-from ._metadata import OmeZarrMetadata, OmeZarrRecord
+from ._metadata import OmeZarrMetadata, OmeZarrRaw
 
-_OME_METADATA_DOC = """
-    The metadata of the pyramid: its name, and the channels and display
-    window of `omero`, with the multiscale, `omero` and the other group
-    attributes as its record (`metadata.raw`). See
-    [`OmeZarrMetadata`][brainhops.io.images.zarr.OmeZarrMetadata].
-"""
+_OME_METADATA_FIELD = MetadataField[
+    OmeZarrMetadata,
+    Factory(OmeZarrMetadata),
+    tx.Doc(
+        """
+        The metadata of the pyramid: its name, and the channels and
+        display window of `omero`, with the multiscale, `omero` and the
+        other group attributes as its raw record (`metadata.raw`). See
+        [`OmeZarrMetadata`][brainhops.io.images.zarr.OmeZarrMetadata].
+        """
+    ),
+]
 
 _Ellipsis = type(Ellipsis)
 # The type of `...`. Python 3.10 names it `types.EllipsisType`.
@@ -82,7 +91,7 @@ class OmeZarrLevel(ZarrImage):
     pyramid, whose metadata is the one written.
     """
 
-    metadata: metadata_field(OmeZarrMetadata, _OME_METADATA_DOC)
+    metadata: _OME_METADATA_FIELD
 
     def _sync_metadata(self) -> None:
         # A level is given a derived copy of the pyramid's metadata; the
@@ -120,7 +129,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
 
     # ---- attributes --------------------------------------------------
 
-    metadata: metadata_field(OmeZarrMetadata, _OME_METADATA_DOC)
+    metadata: _OME_METADATA_FIELD
 
     _axes: tx.Annotated[
         tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
@@ -223,13 +232,16 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             OmeZarrMetadata,
             metadata,
             node,
-            lambda: OmeZarrRecord.from_attributes(
+            lambda: OmeZarrRaw.from_attributes(
                 self.ome, node_attributes(node)
             ),
             self,
         )
         for index, level in enumerate(self._layout["images"]):
-            level.metadata = metadata.derive(grid_changed=index > 0)
+            derived = metadata.derive(grid_changed=index > 0)
+            # The levels of a pyramid share the data type of its arrays.
+            derived.data_type = metadata.data_type
+            level.metadata = derived
 
     # ---- load --------------------------------------------------------
 
@@ -496,13 +508,11 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             node, record.attrs, before.attrs if before is not None else None
         )
 
-    def _write_record(
-        self, multiscale: tx.Any, on_loss: tx.Any
-    ) -> OmeZarrRecord:
+    def _write_record(self, multiscale: tx.Any, on_loss: tx.Any) -> OmeZarrRaw:
         """
-        The record to write: the multiscale built from the levels, with
-        the name, type and downsampling metadata of the record that was
-        read, then the changed fields of the metadata over it.
+        The raw record to write: the multiscale built from the levels,
+        with the name, type and downsampling metadata of the raw record
+        that was read, then the changed fields of the metadata over it.
         """
         metadata = self.metadata
         if metadata is None:
@@ -516,13 +526,13 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             for key in ("name", "type", "metadata"):
                 if key in kept:
                     block[key] = kept[key]
-        target = OmeZarrRecord(
+        target = OmeZarrRaw(
             type(multiscale).from_json(block),
             copy.deepcopy(before.omero) if before is not None else None,
             copy.deepcopy(before.attrs) if before is not None else None,
         )
         report = ConversionReport(source=metadata.format, target="ome-zarr")
-        target = metadata.write_raw(target, image=self, report=report)
+        target = metadata.update_raw(target, image=self, report=report)
         apply_loss_policy(report, on_loss, stacklevel=5)
         return target
 

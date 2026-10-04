@@ -13,38 +13,49 @@ brainhops reads back whole. Every other key lands in `extra`, and
 `GeneratedBy` is the BIDS list of objects (`Name`, `Version`,
 `Description`, `CodeURL`), and `channels` a list of objects with the
 `CamelCase` names of [`Channel`][brainhops.datamodel.metadata.Channel]
-fields. Times are ISO 8601 strings. The diffusion fields are not sidecar
-keys (BIDS keeps them in `.bval`/`.bvec` files, in voxel axes), so
-`to_bids` reports them as lost.
+fields. Times are ISO 8601 strings. An encoding direction is its BIDS
+string (`"j-"`); one BIDS cannot write (along no voxel axis) is reported
+as lost by `to_bids`, and written as an object (`Vector`, `Space`) in the
+JSON stores of other formats (x5, Zarr), which read it back. A known
+term (a `Space`, an `Intent`, ...) is its string, a `data_unit` its unit
+name, a `data_type` its `numpy` name (`"int16"`). The fields of the
+[`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
+group are not sidecar keys (BIDS keeps them in `.bval`/`.bvec` files, in
+voxel axes), so `to_bids` reports them as lost.
 """
 
 __all__ = ["from_bids", "to_bids"]
 
 # stdlib
 import datetime
+import enum
 import json
 import os
 
 # externals
+import numpy as np
 import typing_extensions as tx
 
 # internals
 from brainhops._core import path
 from brainhops.datamodel.metadata import (
-    _VOCABULARY,
+    GROUPS,
     UNSUPPORTED,
+    VOCABULARY,
     Channel,
     ConversionReport,
-    FormatMetadata,
+    DiffusionMetadata,
+    EncodingDirection,
     GeneratedBy,
     LossPolicy,
     Metadata,
     _bids_key,
     apply_loss_policy,
 )
+from brainhops.datamodel.units import Unit
 
 # Not sidecar keys: BIDS stores them as `.bval`/`.bvec` files.
-_NOT_IN_SIDECAR = ("diffusion_bvalues", "diffusion_bvectors")
+_NOT_IN_SIDECAR = GROUPS[DiffusionMetadata]
 
 _GENERATED_BY_KEYS = {
     "Name": "name",
@@ -77,8 +88,8 @@ def _keys() -> tx.Dict[str, str]:
     """Sidecar key -> vocabulary field name."""
     return {
         sidecar_key(name): name
-        for name in _VOCABULARY
-        if name != "extra" and name not in _NOT_IN_SIDECAR
+        for name in VOCABULARY
+        if name not in _NOT_IN_SIDECAR
     }
 
 
@@ -153,12 +164,26 @@ def _to_json(name: str, value: tx.Any) -> tx.Any:
             }
             for entry in value
         ]
+    if isinstance(value, EncodingDirection):
+        bids = value.to_bids()
+        if bids is not None:
+            return bids
+        out = {"Vector": list(value.vector)}
+        if value.space is not None:
+            out["Space"] = str(value.space)
+        return out
     return _jsonable(value)
 
 
 def _jsonable(value: tx.Any) -> tx.Any:
     if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
         return value.isoformat()
+    if isinstance(value, enum.Enum):
+        return _jsonable(value.value)
+    if isinstance(value, np.dtype):
+        return value.name
+    if isinstance(value, Unit):
+        return str(value)
     if isinstance(value, tuple):
         return [_jsonable(v) for v in value]
     if isinstance(value, list):
@@ -201,7 +226,7 @@ def from_bids(source: tx.Any) -> Metadata:
 
 
 def to_bids(
-    metadata: FormatMetadata,
+    metadata: Metadata,
     *,
     on_loss: tx.Optional[LossPolicy] = None,
 ) -> tx.Dict[str, tx.Any]:
@@ -210,11 +235,12 @@ def to_bids(
 
     Parameters
     ----------
-    metadata : FormatMetadata
+    metadata : Metadata
         The metadata to write; only its vocabulary and `extra` are used.
     on_loss : {"ignore", "warn", "raise"}, optional
         What to do with the fields a sidecar cannot hold (the diffusion
-        fields). Defaults to the policy in effect.
+        fields, an encoding direction along no voxel axis). Defaults to
+        the policy in effect.
 
     Returns
     -------
@@ -227,13 +253,13 @@ def to_bids(
     extra = metadata.extra
     if extra and extra is not UNSUPPORTED:
         sidecar.update(_jsonable(dict(extra)))
-    for name in _VOCABULARY:
-        if name == "extra":
-            continue
+    for name in VOCABULARY:
         value = getattr(metadata, name, None)
         if value is None or value is UNSUPPORTED:
             continue
-        if name in _NOT_IN_SIDECAR:
+        if name in _NOT_IN_SIDECAR or (
+            isinstance(value, EncodingDirection) and value.to_bids() is None
+        ):
             report.lost[name] = value
             continue
         sidecar[sidecar_key(name)] = _to_json(name, value)

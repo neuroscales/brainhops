@@ -10,13 +10,17 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.metadata import ConversionReport, apply_loss_policy
+from brainhops.datamodel.metadata import (
+    ConversionReport,
+    apply_loss_policy,
+    preferred_dtype,
+)
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.datamodel.units import MilliMeter, MilliSecond
 from brainhops.io.base._base import register_format
-from brainhops.io.base._mgh_metadata import MghRecord
+from brainhops.io.base._mgh_metadata import MghRaw
 from brainhops.io.base.mgh import _MRI_PARAMS, MghMetadata, MghParser
 from brainhops.io.base.nifti import (
     _scale_spatial,
@@ -128,7 +132,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         `UnrepresentableTransformationError`.
 
         The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
-        `fov`) are copied from the record of the file this image was read
+        `fov`) are copied from the raw record of the file this image was read
         from (`metadata.raw`), then from `like` when it is given (a path
         to an MGH/MGZ file, a `nibabel` MGH image or header, or another
         object read from MGH). The fields of `metadata` changed since the
@@ -142,11 +146,13 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         (`repetition_time`, ... in seconds and degrees) and win over
         everything else; any other keyword, such as `fov`, sets that
         header field last. `dtype` sets the stored voxel type. Without
-        it, the array's type is kept when MGH can store it (uint8, int16,
-        int32, float32), and otherwise converted to the nearest one MGH
-        can: booleans to uint8, other floats to float32, other integers
-        to int16 or int32. Integers that int32 cannot hold raise
-        `WriterError`.
+        it, `metadata.data_type` (the type of the file that was read)
+        does, when the array's values are of its kind (an integer type
+        for integer values); else the array's type is kept when MGH can
+        store it (uint8, int16, int32, float32), and otherwise converted
+        to the nearest one MGH can: booleans to uint8, other floats to
+        float32, other integers to int16 or int32. Integers that int32
+        cannot hold raise `WriterError`.
         """
         return self._to_nibabel_and_tags(like, **overrides)[0]
 
@@ -168,8 +174,9 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         overrides = dict(overrides)
         on_loss = overrides.pop("on_loss", None)
         dtype = overrides.pop("dtype", None)
-        dtype = _mgh_dtype(data, dtype)
         metadata, force = _writable_metadata(self.metadata, overrides)
+        report = ConversionReport(source=metadata.format, target="mgh")
+        dtype = _stored_dtype(data, dtype, metadata, report)
 
         record = metadata.raw
         base = record.header if record is not None else self.header
@@ -180,9 +187,8 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
             for name in _MRI_PARAMS:
                 header[name] = source[name]
         tags = record.tags if record is not None else (self.tags or b"")
-        report = ConversionReport(source=metadata.format, target="mgh")
-        target = metadata.write_raw(
-            MghRecord(header, tags), image=self, report=report, force=force
+        target = metadata.update_raw(
+            MghRaw(header, tags), image=self, report=report, force=force
         )
         apply_loss_policy(report, on_loss, stacklevel=4)
         header = target.header
@@ -358,6 +364,33 @@ def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
         f"MGH cannot store voxels of type {dtype}; it stores uint8, int16, "
         f"int32 and float32."
     )
+
+
+def _stored_dtype(
+    data: tx.Any,
+    dtype: tx.Any,
+    metadata: MghMetadata,
+    report: ConversionReport,
+) -> np.dtype:
+    """
+    The voxel type to store: `dtype` when given, else the metadata's
+    `data_type` when the values are of its kind (see `preferred_dtype`),
+    as the nearest type MGH stores (approximated when it is not the
+    same), else the array's own (see `_mgh_dtype`).
+    """
+    if dtype is not None:
+        return _mgh_dtype(data, dtype)
+    array_dtype = np.dtype(getattr(data, "dtype", np.float32))
+    wanted = preferred_dtype(metadata, array_dtype, report=report)
+    if wanted == array_dtype:
+        return _mgh_dtype(data)
+    nearest = _mgh_dtype(np.empty(0, dtype=wanted))
+    if nearest != wanted:
+        report.approximated["data_type"] = (
+            f"stored as {nearest.name} (MGH stores uint8, int16, int32 "
+            f"and float32)"
+        )
+    return _mgh_dtype(data, nearest)
 
 
 def _like_header(like: tx.Any) -> tx.Optional[_mgh.MGHHeader]:

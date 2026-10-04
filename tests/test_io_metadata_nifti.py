@@ -13,6 +13,13 @@ import warnings
 import numpy as np
 import pytest
 
+
+def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    """`source.to(target, ...)`, and the report it filled."""
+    report = ConversionReport()
+    return source.to(target, report=report, **kwargs), report
+
+
 nb = pytest.importorskip("nibabel")
 
 from bagof.magic import fields  # noqa: E402
@@ -21,10 +28,10 @@ import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
+    ConversionReport,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
-    convert,
     metadata_loss_policy,
 )
 from brainhops.io.base._base import FileBasedObject  # noqa: E402
@@ -86,6 +93,7 @@ def test_the_header_is_decoded_into_the_vocabulary(scan) -> None:  # noqa: ANN00
     assert meta.slice_encoding_direction == "k"
     assert meta.slice_timing == (0.0, 0.25, 0.5, 0.75, 1.0, 1.25)
     assert meta.space == "aligned"
+    assert meta.data_type == np.float32
     assert meta.intent is None
     assert meta.echo_time is UNSUPPORTED
     assert meta.extra is UNSUPPORTED
@@ -330,10 +338,10 @@ def test_like_still_copies_its_description(scan, tmp_path) -> None:  # noqa: ANN
 
 def test_nifti_to_generic_and_back_is_lossless(scan) -> None:  # noqa: ANN001
     nifti = io.load(scan).metadata
-    generic, report = convert(nifti, Metadata)
+    generic, report = _to(nifti, Metadata)
     assert not report.lossy
-    assert generic.raw is None
-    back, report = convert(generic, NiftiMetadata)
+    assert not hasattr(generic, "raw")  # the raw record stays
+    back, report = _to(generic, NiftiMetadata)
     assert not report.lossy
     assert back == nifti
     assert back.raw is None  # the record never travels across formats
@@ -343,7 +351,7 @@ def test_what_nifti_cannot_hold_is_reported() -> None:
     generic = Metadata(
         description="d", echo_time=0.03, history=("a",), extra={"K": 1}
     )
-    nifti, report = convert(generic, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(generic, NiftiMetadata, on_loss="ignore")
     assert nifti.description == "d"
     assert report.lost == {
         "echo_time": 0.03,
@@ -353,10 +361,10 @@ def test_what_nifti_cannot_hold_is_reported() -> None:
 
 
 def test_a_sidecar_round_trips_through_nifti(scan) -> None:  # noqa: ANN001
-    sidecar = convert(io.load(scan).metadata, Metadata)[0].to_bids()
+    sidecar = _to(io.load(scan).metadata, Metadata)[0].to_bids()
     assert sidecar["SliceTiming"] == [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]
     assert sidecar["RepetitionTime"] == 2.0
-    nifti, report = convert(Metadata.from_bids(sidecar), NiftiMetadata)
+    nifti, report = _to(Metadata.from_bids(sidecar), NiftiMetadata)
     assert not report.lossy
     assert nifti == io.load(scan).metadata
 
@@ -602,3 +610,60 @@ def test_replace_with_a_new_header_reads_it_again(scan) -> None:  # noqa: ANN001
     assert other.metadata.description == "another file"
     # What changed in the metadata carries over, as a change.
     assert other.metadata.changed_fields() == {"display_range": (1.0, 2.0)}
+
+
+# ----------------------------------------------------------------------
+#   DATA TYPE, DIRECTIONS AND TERMS
+# ----------------------------------------------------------------------
+
+
+def _labels(path, dtype="uint8"):  # noqa: ANN001, ANN202
+    data = np.arange(60).reshape((3, 4, 5)).astype(dtype)
+    nb.save(nb.Nifti1Image(data, np.eye(4)), str(path))
+    return path
+
+
+def test_the_data_type_of_the_file_is_kept(tmp_path) -> None:  # noqa: ANN001
+    image = io.load(_labels(tmp_path / "labels.nii"))
+    assert image.metadata.data_type == np.uint8
+    # Integer values of another type are stored as the file's type...
+    image.data = np.asarray(image.data, "int64")
+    image.save(tmp_path / "same.nii")
+    assert _header(tmp_path / "same.nii").get_data_dtype() == np.uint8
+    # ... floats are not rounded into it ...
+    image.data = np.asarray(image.data, "float32") / 2
+    image.save(tmp_path / "float.nii", on_loss="raise")
+    assert _header(tmp_path / "float.nii").get_data_dtype() == np.float32
+    # ... and `dtype=` wins.
+    image.data = np.asarray(image.data, "int64")
+    image.save(tmp_path / "int16.nii", dtype="int16")
+    assert _header(tmp_path / "int16.nii").get_data_dtype() == np.int16
+
+
+def test_a_data_type_set_by_hand_is_used_or_reported(tmp_path) -> None:  # noqa: ANN001
+    image = NiftiImage(data=np.zeros((2, 3, 4), "int64"))
+    image.metadata.data_type = "int16"
+    image.save(tmp_path / "a.nii")
+    assert _header(tmp_path / "a.nii").get_data_dtype() == np.int16
+    image = NiftiImage(data=np.zeros((2, 3, 4), "float32"))
+    image.metadata.data_type = "int16"
+    with pytest.raises(MetadataLossError, match="data_type"):
+        image.save(tmp_path / "b.nii", on_loss="raise")
+
+
+def test_an_oblique_direction_is_lost_in_dim_info(scan) -> None:  # noqa: ANN001
+    image = io.load(scan)
+    image.metadata.phase_encoding_direction = (0.0, 0.8, 0.6)
+    report = image.metadata.check_writable(image=image)
+    assert set(report.lost) == {"phase_encoding_direction"}
+
+
+def test_the_space_and_the_intent_are_terms(scan) -> None:  # noqa: ANN001
+    from brainhops.datamodel.enums import Intent, Space
+
+    meta = io.load(scan).metadata
+    assert meta.space is Space.aligned
+    meta.intent = "label"
+    assert meta.intent is Intent.label
+    nb_header = meta.update_raw()
+    assert nb_header.get_intent()[0] == "label"
