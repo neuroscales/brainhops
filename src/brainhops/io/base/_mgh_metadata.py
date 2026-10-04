@@ -27,16 +27,12 @@ kind, or as the nearest type MGH stores (approximated).
 the footer fields (`tr`, `flip_angle`, `te`, `ti`, `fov`) are part of
 `MGHHeader` (its `hf_dtype` is the header and the footer), which is the
 first half of `MghRaw`. What `nibabel` does not read, nor write, is the
-tag stream after the footer (the command lines, `TAG_CMDLINE`), which is
-why this module parses it.
+tag stream after the footer (the command lines, `TAG_CMDLINE`), which
+`brainhops.io.base._mgh_tags` parses.
 
-**Tags.** After the footer, FreeSurfer writes a sequence of tags: a
-big-endian `int32` tag id, a length, and the payload. The length is an
-`int64`, except for a few legacy ids (`TAG_OLD_MGH_XFORM` has an `int32`
-length, and `TAG_OLD_COLORTABLE`, `TAG_OLD_USEREALRAS` and
-`TAG_OLD_SURF_GEOM` none). A command line (`TAG_CMDLINE = 3`) is a
-NUL-terminated string. `history` is decoded only when the whole tag
-stream parses; otherwise the tags are kept verbatim and `history` is
+**Tags.** The command lines are tags after the footer (see
+`brainhops.io.base._mgh_tags`). `history` is decoded only when the whole
+tag stream parses; otherwise the tags are kept verbatim and `history` is
 unknown (and a new value cannot be written: it is reported as lost).
 Writing `history` replaces the command-line tags and keeps every other
 tag as it was. The tags sit after the whole volume, so a raw record read
@@ -52,7 +48,6 @@ __all__ = ["MghMetadata", "MghRaw"]
 # stdlib
 import functools
 import math
-import struct
 
 # dependencies
 import numpy as np
@@ -67,21 +62,13 @@ from brainhops.datamodel.metadata import (
     FileBasedMetadata,
     Lazy,
 )
-
-# FreeSurfer tag ids (`utils/tags.h`).
-TAG_OLD_COLORTABLE = 1
-TAG_OLD_USEREALRAS = 2
-TAG_CMDLINE = 3
-TAG_OLD_SURF_GEOM = 20
-TAG_OLD_MGH_XFORM = 30
+from brainhops.io.base._mgh_tags import decode_history, encode_history
 
 # The voxel types MGH stores.
 _MGH_DTYPES = tuple(
     np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
 )
 
-# Legacy tags with no length field.
-_NO_LENGTH = (TAG_OLD_COLORTABLE, TAG_OLD_USEREALRAS, TAG_OLD_SURF_GEOM)
 
 # Vocabulary field -> (footer slot, factor from the footer unit to the
 # vocabulary unit).
@@ -160,124 +147,6 @@ class MghRaw:
     def __repr__(self) -> str:
         tags = f"{len(self._tags)} bytes" if self._tags is not None else "lazy"
         return f"MghRaw(header=..., tags={tags})"
-
-
-# ----------------------------------------------------------------------
-#   TAGS
-# ----------------------------------------------------------------------
-
-
-def parse_tags(
-    tags: bytes,
-) -> tx.Optional[tx.List[tx.Tuple[int, bytes]]]:
-    """
-    Split trailing tags into `(tag id, chunk)` pairs, where `chunk` is the
-    tag's bytes verbatim (id, length and payload). `None` when they do not
-    parse as a FreeSurfer tag stream.
-    """
-    out = []
-    pos, end = 0, len(tags)
-    while pos < end:
-        if end - pos < 4:
-            return None
-        start = pos
-        (tag,) = struct.unpack_from(">i", tags, pos)
-        pos += 4
-        if tag in _NO_LENGTH:
-            # A legacy tag with no length: only safe when it is the last.
-            if pos != end:
-                return None
-            out.append((tag, tags[start:]))
-            break
-        if tag == TAG_OLD_MGH_XFORM:
-            if end - pos < 4:
-                return None
-            (length,) = struct.unpack_from(">i", tags, pos)
-            pos += 4
-        else:
-            if end - pos < 8:
-                return None
-            (length,) = struct.unpack_from(">q", tags, pos)
-            pos += 8
-        if tag <= 0 or length < 0 or pos + length > end:
-            return None
-        pos += length
-        out.append((tag, tags[start:pos]))
-    return out
-
-
-def _cmdline_payload(chunk: bytes) -> str:
-    payload = chunk[12:]
-    return payload.split(b"\0", 1)[0].decode("utf-8", "replace")
-
-
-def _cmdline_chunk(command: str) -> bytes:
-    payload = command.encode("utf-8") + b"\0"
-    return struct.pack(">iq", TAG_CMDLINE, len(payload)) + payload
-
-
-def decode_history(tags: bytes) -> tx.Optional[tx.Tuple[str, ...]]:
-    """The command lines of trailing tags, or `None` (none, or the tags
-    do not parse)."""
-    parsed = parse_tags(tags)
-    if not parsed:
-        return None
-    history = tuple(
-        _cmdline_payload(chunk) for tag, chunk in parsed if tag == TAG_CMDLINE
-    )
-    return history or None
-
-
-def encode_history(
-    tags: bytes, history: tx.Optional[tx.Sequence[str]]
-) -> tx.Optional[bytes]:
-    """
-    Replace the command-line tags of `tags` with `history`, keeping the
-    other tags in place (the new commands go where the first one was, or
-    at the end). `None` when the tags do not parse.
-    """
-    parsed = parse_tags(tags)
-    if parsed is None:
-        return None
-    new = b"".join(_cmdline_chunk(c) for c in history or ())
-    out, placed = [], False
-    for tag, chunk in parsed:
-        if tag == TAG_CMDLINE:
-            if not placed:
-                out.append(new)
-                placed = True
-            continue
-        out.append(chunk)
-    if not placed:
-        # FreeSurfer writes the command lines before the legacy tags with
-        # no length, which must stay last.
-        if out and parsed[-1][0] in _NO_LENGTH:
-            out.insert(len(out) - 1, new)
-        else:
-            out.append(new)
-    return b"".join(out)
-
-
-# ----------------------------------------------------------------------
-#   METADATA
-# ----------------------------------------------------------------------
-
-
-def _degrees(radians: tx.Any) -> float:
-    """A single-precision angle in radians, in degrees, as the shortest
-    decimal that is stored as the same radians (`9.0`, not
-    `9.000000419`)."""
-    stored = np.float32(radians)
-    exact = math.degrees(float(stored))
-    for digits in range(10):
-        candidate = round(exact, digits)
-        if np.float32(math.radians(candidate)) == stored:
-            return candidate
-    return exact
-
-
-def _lazy_history(raw: MghRaw) -> tx.Optional[tx.Tuple[str, ...]]:
-    return decode_history(raw.tags)
 
 
 class MghMetadata(
@@ -397,3 +266,25 @@ class MghMetadata(
             else:
                 raw.tags = tags
         return raw
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _degrees(radians: tx.Any) -> float:
+    """A single-precision angle in radians, in degrees, as the shortest
+    decimal that is stored as the same radians (`9.0`, not
+    `9.000000419`)."""
+    stored = np.float32(radians)
+    exact = math.degrees(float(stored))
+    for digits in range(10):
+        candidate = round(exact, digits)
+        if np.float32(math.radians(candidate)) == stored:
+            return candidate
+    return exact
+
+
+def _lazy_history(raw: MghRaw) -> tx.Optional[tx.Tuple[str, ...]]:
+    return decode_history(raw.tags)

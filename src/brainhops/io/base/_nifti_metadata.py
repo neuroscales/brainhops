@@ -45,8 +45,6 @@ a `dtype=` writer option wins.
 
 __all__ = ["NiftiMetadata"]
 
-# stdlib
-
 # dependencies
 import nibabel as nb
 import numpy as np
@@ -72,6 +70,7 @@ _XCODES = {
     5: "template",
 }
 
+
 # Intent codes that retype the axes of the data (see `nifti.py`); a
 # writer never takes them from a record, only from the data model.
 _STRUCTURAL_INTENTS = frozenset(
@@ -79,47 +78,18 @@ _STRUCTURAL_INTENTS = frozenset(
     | {2006, 2007, 2008, 2009}
 )
 
+
 _AXES = "ijk"
+
 
 # Seconds per NIfTI time unit.
 _TIME_UNITS = {"sec": 1.0, "msec": 1e-3, "usec": 1e-6}
 
+
 _DESCRIP_BYTES = 80
+
+
 _AUX_FILE_BYTES = 24
-
-
-def _bytes_field(header: nb.Nifti1Header, name: str) -> tx.Optional[str]:
-    value = np.asarray(header[name]).item()
-    if isinstance(value, bytes):
-        value = value.split(b"\0", 1)[0].decode("utf-8", "replace")
-    value = str(value).strip()
-    return value or None
-
-
-def _time_scale(header: nb.Nifti1Header) -> tx.Optional[float]:
-    """Seconds per unit of the header's time axis, `None` if unknown."""
-    try:
-        return _TIME_UNITS.get(header.get_xyzt_units()[1])
-    except Exception:
-        return None
-
-
-def _intent_label(code: int) -> tx.Optional[str]:
-    try:
-        return str(nb.nifti1.intent_codes.label[code])
-    except KeyError:
-        return None
-
-
-def _intent_code(name: str) -> tx.Optional[int]:
-    try:
-        return int(nb.nifti1.intent_codes.code[name])
-    except KeyError:
-        return None
-
-
-def _shape(header: nb.Nifti1Header) -> tx.Tuple[int, ...]:
-    return tuple(int(d) for d in header.get_data_shape())
 
 
 class NiftiMetadata(
@@ -303,7 +273,60 @@ class NiftiMetadata(
 
 
 # ----------------------------------------------------------------------
-#   CODEC HELPERS
+#   DECODING
+# ----------------------------------------------------------------------
+
+
+def _bytes_field(header: nb.Nifti1Header, name: str) -> tx.Optional[str]:
+    value = np.asarray(header[name]).item()
+    if isinstance(value, bytes):
+        value = value.split(b"\0", 1)[0].decode("utf-8", "replace")
+    value = str(value).strip()
+    return value or None
+
+
+def _time_scale(header: nb.Nifti1Header) -> tx.Optional[float]:
+    """Seconds per unit of the header's time axis, `None` if unknown."""
+    try:
+        return _TIME_UNITS.get(header.get_xyzt_units()[1])
+    except Exception:
+        return None
+
+
+def _intent_label(code: int) -> tx.Optional[str]:
+    try:
+        return str(nb.nifti1.intent_codes.label[code])
+    except KeyError:
+        return None
+
+
+def _shape(header: nb.Nifti1Header) -> tx.Tuple[int, ...]:
+    return tuple(int(d) for d in header.get_data_shape())
+
+
+def _decode_slice_timing(
+    h: nb.Nifti1Header,
+) -> tx.Optional[tx.Tuple[float, ...]]:
+    scale = _time_scale(h) or 1.0
+    try:
+        if not int(h["slice_code"]) or not float(h["slice_duration"]):
+            return None
+        times = h.get_slice_times()
+    except Exception:
+        return None
+    if any(t is None for t in times):
+        # Padding slices have no time: BIDS has no way to say so, and
+        # the record keeps them.
+        return None
+    # Times are multiples of the (single-precision) slice duration:
+    # recompute them in double precision from the duration as written.
+    stored = float(h["slice_duration"])
+    duration = float32_repr(stored) * scale
+    return tuple(round(round(float(t) / stored) * duration, 9) for t in times)
+
+
+# ----------------------------------------------------------------------
+#   ENCODING
 # ----------------------------------------------------------------------
 
 
@@ -327,27 +350,6 @@ def _clear_slices(h: nb.Nifti1Header) -> None:
     h["slice_start"] = 0
     h["slice_end"] = 0
     h["slice_duration"] = 0
-
-
-def _decode_slice_timing(
-    h: nb.Nifti1Header,
-) -> tx.Optional[tx.Tuple[float, ...]]:
-    scale = _time_scale(h) or 1.0
-    try:
-        if not int(h["slice_code"]) or not float(h["slice_duration"]):
-            return None
-        times = h.get_slice_times()
-    except Exception:
-        return None
-    if any(t is None for t in times):
-        # Padding slices have no time: BIDS has no way to say so, and
-        # the record keeps them.
-        return None
-    # Times are multiples of the (single-precision) slice duration:
-    # recompute them in double precision from the duration as written.
-    stored = float(h["slice_duration"])
-    duration = float32_repr(stored) * scale
-    return tuple(round(round(float(t) / stored) * duration, 9) for t in times)
 
 
 def _encode_dim_info(
@@ -408,61 +410,11 @@ def _encode_repetition_time(
     set_time_step(h, value)
 
 
-def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
-    """Store a time step, in seconds, as `pixdim[4]`, in the time unit of
-    the header (seconds when it has none)."""
-    space, time = h.get_xyzt_units()
-    if time not in _TIME_UNITS:
-        h.set_xyzt_units(space, "sec")
-        time = "sec"
-    h["pixdim"][4] = float(seconds) / _TIME_UNITS[time]
-
-
-def time_step(
-    transformations: tx.Optional[tx.Iterable[tx.Any]],
-) -> tx.Optional[float]:
-    """
-    The time step of an image, in seconds, as its data model gives it:
-    the scale of the time axis of the first scaling (voxel to physical
-    space, as the NIfTI and MGH readers build it) whose output has a
-    time axis with a physical time unit. `None` when there is none.
-    """
-    for xform in transformations or ():
-        scale = getattr(xform, "scale", None)
-        output = getattr(xform, "output", None)
-        if scale is None or output is None:
-            continue
-        axes = [
-            axis
-            for axis in (getattr(output, "axes", None) or ())
-            if axis is not Ellipsis
-        ]
-        for index, axis in enumerate(axes):
-            if getattr(axis, "type", None) != "time":
-                continue
-            unit = getattr(axis, "unit", None)
-            if not (is_physicalunit(unit) and is_timeunit(unit)):
-                break
-            scale = np.ravel(np.asarray(scale, dtype=float))
-            if index < scale.size and scale[index] > 0:
-                return float(scale[index]) * float(unit.scale)
-            break
-    return None
-
-
-def _data_shape(image: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
-    """The shape of the data of an image, without reading the data."""
-    data = image.__dict__.get("_data")
-    if data is None:
-        nib = getattr(image, "image", None)
-        if nib is not None and hasattr(nib, "shape"):
-            return tuple(int(d) for d in nib.shape)
-        try:
-            data = image.data
-        except Exception:
-            return None
-    shape = getattr(data, "shape", None)
-    return None if shape is None else tuple(int(d) for d in shape)
+def _intent_code(name: str) -> tx.Optional[int]:
+    try:
+        return int(nb.nifti1.intent_codes.code[name])
+    except KeyError:
+        return None
 
 
 def _encode_intent(
@@ -504,9 +456,66 @@ def _check_space(
         )
 
 
+def _data_shape(image: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
+    """The shape of the data of an image, without reading the data."""
+    data = image.__dict__.get("_data")
+    if data is None:
+        nib = getattr(image, "image", None)
+        if nib is not None and hasattr(nib, "shape"):
+            return tuple(int(d) for d in nib.shape)
+        try:
+            data = image.data
+        except Exception:
+            return None
+    shape = getattr(data, "shape", None)
+    return None if shape is None else tuple(int(d) for d in shape)
+
+
 # ----------------------------------------------------------------------
-#   RECORD BASE
+#   SHARED WITH THE IMAGE CLASS
 # ----------------------------------------------------------------------
+
+
+def time_step(
+    transformations: tx.Optional[tx.Iterable[tx.Any]],
+) -> tx.Optional[float]:
+    """
+    The time step of an image, in seconds, as its data model gives it:
+    the scale of the time axis of the first scaling (voxel to physical
+    space, as the NIfTI and MGH readers build it) whose output has a
+    time axis with a physical time unit. `None` when there is none.
+    """
+    for xform in transformations or ():
+        scale = getattr(xform, "scale", None)
+        output = getattr(xform, "output", None)
+        if scale is None or output is None:
+            continue
+        axes = [
+            axis
+            for axis in (getattr(output, "axes", None) or ())
+            if axis is not Ellipsis
+        ]
+        for index, axis in enumerate(axes):
+            if getattr(axis, "type", None) != "time":
+                continue
+            unit = getattr(axis, "unit", None)
+            if not (is_physicalunit(unit) and is_timeunit(unit)):
+                break
+            scale = np.ravel(np.asarray(scale, dtype=float))
+            if index < scale.size and scale[index] > 0:
+                return float(scale[index]) * float(unit.scale)
+            break
+    return None
+
+
+def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
+    """Store a time step, in seconds, as `pixdim[4]`, in the time unit of
+    the header (seconds when it has none)."""
+    space, time = h.get_xyzt_units()
+    if time not in _TIME_UNITS:
+        h.set_xyzt_units(space, "sec")
+        time = "sec"
+    h["pixdim"][4] = float(seconds) / _TIME_UNITS[time]
 
 
 def copy_record(

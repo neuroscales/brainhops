@@ -20,17 +20,6 @@ from bagof.magic import NoEq, NoRepr
 from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 
 
-def _filename(image: tx.Any) -> tx.Optional[str]:
-    """The path a (`nibabel` or brainhops NIfTI) image was read from."""
-    for obj in (image, getattr(image, "image", None)):
-        getter = getattr(obj, "get_filename", None)
-        if callable(getter):
-            name = getter()
-            if name:
-                return str(name)
-    return None
-
-
 class FlirtMetadata(
     FileBasedMetadata, on={"format": "flirt"}, supports=("moving", "fixed")
 ):
@@ -72,3 +61,14 @@ class FlirtMetadata(
             if value is not None:
                 report.lost[name] = value
         return raw
+
+
+def _filename(image: tx.Any) -> tx.Optional[str]:
+    """The path a (`nibabel` or brainhops NIfTI) image was read from."""
+    for obj in (image, getattr(image, "image", None)):
+        getter = getattr(obj, "get_filename", None)
+        if callable(getter):
+            name = getter()
+            if name:
+                return str(name)
+    return None

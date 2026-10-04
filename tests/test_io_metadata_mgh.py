@@ -37,8 +37,8 @@ from brainhops.datamodel.metadata import (  # noqa: E402
     MetadataLossWarning,
     metadata_loss_policy,
 )
-from brainhops.io.base._mgh_metadata import (  # noqa: E402
-    MghRaw,
+from brainhops.io.base._mgh_metadata import MghRaw  # noqa: E402
+from brainhops.io.base._mgh_tags import (  # noqa: E402
     decode_history,
     encode_history,
     parse_tags,

@@ -73,6 +73,7 @@ from brainhops.io.metadata._json import (
 # The array attribute that holds the vocabulary of a plain Zarr image.
 BRAINHOPS_KEY = "brainhops"
 
+
 # Group attributes that belong to the OME metadata (0.5 and later nest it
 # under "ome"; 0.4 writes it at the top level).
 OME_KEYS = frozenset(
@@ -86,35 +87,6 @@ OME_KEYS = frozenset(
         "well",
     }
 )
-
-
-def _array_dtype(image: tx.Any) -> tx.Optional[np.dtype]:
-    """The data type of the array of an image (of the first level of a
-    pyramid), read from its node when it has one (without reading the
-    data), `None` when there is none."""
-    if image is None:
-        return None
-    objects = [image]
-    try:
-        images = getattr(image, "images", None)
-        if images:
-            objects.append(images[0])
-    except Exception:
-        pass
-    for obj in objects:
-        dtype = getattr(getattr(obj, "node", None), "dtype", None)
-        if dtype is not None:
-            return np.dtype(dtype)
-    for obj in objects:
-        if getattr(obj, "node", None) is not None:
-            continue
-        try:
-            dtype = getattr(getattr(obj, "data", None), "dtype", None)
-        except Exception:
-            dtype = None
-        if dtype is not None:
-            return np.dtype(dtype)
-    return None
 
 
 # ----------------------------------------------------------------------
@@ -343,107 +315,6 @@ class OmeZarrRaw:
         )
 
 
-def _json(obj: tx.Any) -> tx.Any:
-    return None if obj is None else obj.to_json()
-
-
-def _color_in(color: tx.Any) -> tx.Optional[str]:
-    """An omero color (`RRGGBB`) as an RGBA hex string."""
-    if not isinstance(color, str):
-        return None
-    color = color.lstrip("#").upper()
-    if len(color) == 6:
-        return color + "FF"
-    return color or None
-
-
-def _color_out(
-    color: tx.Optional[str], default: str, report: ConversionReport
-) -> str:
-    """An RGBA hex string as an omero color (`RRGGBB`)."""
-    if not color:
-        return default
-    color = color.lstrip("#").upper()
-    if len(color) == 8:
-        if color[6:] != "FF":
-            report.approximated["channels"] = "alpha of the colors dropped"
-        color = color[:6]
-    return color
-
-
-def _default_window(
-    image: tx.Any, report: tx.Optional[ConversionReport] = None
-) -> tx.Dict[str, float]:
-    """
-    The display window of a channel nothing says anything about.
-
-    OME-Zarr requires one. The window (`start`, `end`) is the range of
-    the values of the smallest level (cheap to read), and the allowed
-    range (`min`, `max`) that of the data type (of the values, for
-    floats); with no data, both are the range of the data type (0..1
-    for floats). It is reported as approximated in `report`, under
-    `"channels"`: nothing in the metadata gave it.
-    """
-    dtype = data = None
-    try:
-        dtype = np.dtype(image.images[0].data.dtype)
-        data = np.asarray(image.images[-1].data)
-    except Exception:
-        pass
-    if dtype is not None and dtype.kind in "iub":
-        info = np.iinfo(np.uint8 if dtype.kind == "b" else dtype)
-        lo, hi = float(info.min), float(info.max)
-    else:
-        lo, hi = 0.0, 1.0
-    start, end, where = lo, hi, "the range of the data type"
-    if data is not None and data.size:
-        values = data[np.isfinite(data)] if data.dtype.kind == "f" else data
-        if values.size:
-            start, end = float(values.min()), float(values.max())
-            where = "the range of the values of the smallest level"
-            if dtype is None or dtype.kind not in "iub":
-                lo, hi = start, end
-    if report is not None:
-        report.approximated["channels"] = (
-            f"display window not given, written as {where} "
-            f"({start:g}..{end:g})"
-        )
-    return {"min": lo, "max": hi, "start": start, "end": end}
-
-
-def _channel_count(image: tx.Any) -> int:
-    """The size of the channel axis of a pyramid (1 without one)."""
-    try:
-        shape = image.images[0].data.shape
-        axes = image._write_axes(len(shape))
-        for axis, size in zip(axes, shape):
-            if getattr(axis, "type", None) == "channel":
-                return int(size)
-    except Exception:
-        pass
-    return 1
-
-
-def _window(
-    base: tx.Mapping[str, tx.Any],
-    display_range: tx.Optional[tx.Tuple[float, float]],
-    image: tx.Any,
-    report: ConversionReport,
-) -> tx.Dict[str, float]:
-    if base:
-        window = dict(base)
-    else:
-        # A display range gives the window: only invented without one.
-        invented = report if display_range is None else None
-        window = _default_window(image, invented)
-    if display_range is not None:
-        start, end = (float(v) for v in display_range)
-        window["start"], window["end"] = start, end
-        window["min"] = min(float(window.get("min", start)), start)
-        window["max"] = max(float(window.get("max", end)), end)
-    return window
-
-
 class OmeZarrMetadata(
     FileBasedMetadata,
     on={"format": "ome-zarr"},
@@ -559,6 +430,8 @@ class OmeZarrMetadata(
         image: tx.Any,
         report: ConversionReport,
     ) -> None:
+        """Write the channels (`channels`) and the window of every channel
+        (`display_range`) into `omero`, which needs one per channel."""
         omero = dict(raw.omero or {})
         entries = [dict(e) for e in omero.get("channels") or []]
         common = self.display_range or None
@@ -568,29 +441,16 @@ class OmeZarrMetadata(
                 omero.pop("channels", None)
                 raw.omero = omero if omero else None
                 return
-            new = []
-            for index, channel in enumerate(channels):
-                base = entries[index] if index < len(entries) else {}
-                entry = dict(base)
-                if channel.name is None:
-                    entry.pop("label", None)
-                else:
-                    entry["label"] = channel.name
-                entry["color"] = _color_out(
-                    channel.color, base.get("color", "FFFFFF"), report
-                )
-                entry["window"] = _window(
-                    base.get("window") or {},
-                    channel.display_range or common,
+            entries = [
+                _channel_entry(
+                    entries[index] if index < len(entries) else {},
+                    channel,
+                    common,
                     image,
                     report,
                 )
-                if channel.unit is not None:
-                    report.approximated["channels"] = (
-                        "channel units dropped (omero has no unit)"
-                    )
-                new.append(entry)
-            entries = new
+                for index, channel in enumerate(channels)
+            ]
         elif changed["display_range"] is None:
             if entries:
                 report.approximated["display_range"] = (
@@ -608,3 +468,169 @@ class OmeZarrMetadata(
                 )
         omero["channels"] = entries
         raw.omero = omero
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _array_dtype(image: tx.Any) -> tx.Optional[np.dtype]:
+    """The data type of the array of an image (of the first level of a
+    pyramid), read from its node when it has one (without reading the
+    data), `None` when there is none."""
+    if image is None:
+        return None
+    objects = [image]
+    try:
+        images = getattr(image, "images", None)
+        if images:
+            objects.append(images[0])
+    except Exception:
+        pass
+    for obj in objects:
+        dtype = getattr(getattr(obj, "node", None), "dtype", None)
+        if dtype is not None:
+            return np.dtype(dtype)
+    for obj in objects:
+        if getattr(obj, "node", None) is not None:
+            continue
+        try:
+            dtype = getattr(getattr(obj, "data", None), "dtype", None)
+        except Exception:
+            dtype = None
+        if dtype is not None:
+            return np.dtype(dtype)
+    return None
+
+
+def _json(obj: tx.Any) -> tx.Any:
+    return None if obj is None else obj.to_json()
+
+
+def _color_in(color: tx.Any) -> tx.Optional[str]:
+    """An omero color (`RRGGBB`) as an RGBA hex string."""
+    if not isinstance(color, str):
+        return None
+    color = color.lstrip("#").upper()
+    if len(color) == 6:
+        return color + "FF"
+    return color or None
+
+
+def _color_out(
+    color: tx.Optional[str], default: str, report: ConversionReport
+) -> str:
+    """An RGBA hex string as an omero color (`RRGGBB`)."""
+    if not color:
+        return default
+    color = color.lstrip("#").upper()
+    if len(color) == 8:
+        if color[6:] != "FF":
+            report.approximated["channels"] = "alpha of the colors dropped"
+        color = color[:6]
+    return color
+
+
+def _channel_entry(
+    base: tx.Mapping[str, tx.Any],
+    channel: Channel,
+    common: tx.Optional[tx.Tuple[float, float]],
+    image: tx.Any,
+    report: ConversionReport,
+) -> tx.Dict[str, tx.Any]:
+    """The omero entry of a channel, over the entry it had (`base`): its
+    label, its color, and its window (its own display range, or the
+    common one)."""
+    entry = dict(base)
+    if channel.name is None:
+        entry.pop("label", None)
+    else:
+        entry["label"] = channel.name
+    entry["color"] = _color_out(
+        channel.color, base.get("color", "FFFFFF"), report
+    )
+    entry["window"] = _window(
+        base.get("window") or {},
+        channel.display_range or common,
+        image,
+        report,
+    )
+    if channel.unit is not None:
+        report.approximated["channels"] = (
+            "channel units dropped (omero has no unit)"
+        )
+    return entry
+
+
+def _channel_count(image: tx.Any) -> int:
+    """The size of the channel axis of a pyramid (1 without one)."""
+    try:
+        shape = image.images[0].data.shape
+        axes = image._write_axes(len(shape))
+        for axis, size in zip(axes, shape):
+            if getattr(axis, "type", None) == "channel":
+                return int(size)
+    except Exception:
+        pass
+    return 1
+
+
+def _window(
+    base: tx.Mapping[str, tx.Any],
+    display_range: tx.Optional[tx.Tuple[float, float]],
+    image: tx.Any,
+    report: ConversionReport,
+) -> tx.Dict[str, float]:
+    if base:
+        window = dict(base)
+    else:
+        # A display range gives the window: only invented without one.
+        invented = report if display_range is None else None
+        window = _default_window(image, invented)
+    if display_range is not None:
+        start, end = (float(v) for v in display_range)
+        window["start"], window["end"] = start, end
+        window["min"] = min(float(window.get("min", start)), start)
+        window["max"] = max(float(window.get("max", end)), end)
+    return window
+
+
+def _default_window(
+    image: tx.Any, report: tx.Optional[ConversionReport] = None
+) -> tx.Dict[str, float]:
+    """
+    The display window of a channel nothing says anything about.
+
+    OME-Zarr requires one. The window (`start`, `end`) is the range of
+    the values of the smallest level (cheap to read), and the allowed
+    range (`min`, `max`) that of the data type (of the values, for
+    floats); with no data, both are the range of the data type (0..1
+    for floats). It is reported as approximated in `report`, under
+    `"channels"`: nothing in the metadata gave it.
+    """
+    dtype = data = None
+    try:
+        dtype = np.dtype(image.images[0].data.dtype)
+        data = np.asarray(image.images[-1].data)
+    except Exception:
+        pass
+    if dtype is not None and dtype.kind in "iub":
+        info = np.iinfo(np.uint8 if dtype.kind == "b" else dtype)
+        lo, hi = float(info.min), float(info.max)
+    else:
+        lo, hi = 0.0, 1.0
+    start, end, where = lo, hi, "the range of the data type"
+    if data is not None and data.size:
+        values = data[np.isfinite(data)] if data.dtype.kind == "f" else data
+        if values.size:
+            start, end = float(values.min()), float(values.max())
+            where = "the range of the values of the smallest level"
+            if dtype is None or dtype.kind not in "iub":
+                lo, hi = start, end
+    if report is not None:
+        report.approximated["channels"] = (
+            f"display window not given, written as {where} "
+            f"({start:g}..{end:g})"
+        )
+    return {"min": lo, "max": hi, "start": start, "end": end}
