@@ -112,29 +112,26 @@ Each starts with a magic number. Formats that have none, or a weak one
 arbitrary binary data is never mistaken for them.
 """
 
-# How each of `SNIFF_FORMATS` starts, as Pillow's plugins recognize it
-# (their `_accept`), so that a file that starts otherwise is declined
-# without importing Pillow.
-_TIFF_PREFIXES = (
-    b"MM\x00\x2a",
-    b"II\x2a\x00",
-    b"MM\x2a\x00",
-    b"II\x00\x2a",
-    b"MM\x00\x2b",
-    b"II\x2b\x00",
-)
-_MAGIC_NUMBERS: tx.Dict[str, tx.Callable[[bytes], bool]] = {
-    "PNG": lambda h: h.startswith(b"\x89PNG\r\n\x1a\n"),
-    "JPEG": lambda h: h.startswith(b"\xff\xd8\xff"),
-    "BMP": lambda h: h.startswith(b"BM"),
-    "GIF": lambda h: h.startswith((b"GIF87a", b"GIF89a")),
-    "WEBP": lambda h: h.startswith(b"RIFF") and h[8:12] == b"WEBP",
-    "PPM": lambda h: len(h) >= 2 and h[:1] == b"P" and h[1] in b"0123456fy",
-    "JPEG2000": lambda h: h.startswith(
-        (b"\xff\x4f\xff\x51", b"\x00\x00\x00\x0cjP  \r\n\x87\n")
+# How each of `SNIFF_FORMATS` may start, as Pillow's plugins recognize
+# it (their `_accept`), so that a file that starts otherwise is declined
+# without importing Pillow. Pillow checks the rest.
+_MAGIC_NUMBERS: tx.Dict[str, tx.Tuple[bytes, ...]] = {
+    "PNG": (b"\x89PNG\r\n\x1a\n",),
+    "JPEG": (b"\xff\xd8\xff",),
+    "BMP": (b"BM",),
+    "GIF": (b"GIF87a", b"GIF89a"),
+    "WEBP": (b"RIFF",),
+    "PPM": tuple(b"P" + bytes([c]) for c in b"0123456fy"),
+    "JPEG2000": (b"\xff\x4f\xff\x51", b"\x00\x00\x00\x0cjP  \r\n\x87\n"),
+    "QOI": (b"qoif",),
+    "TIFF": (
+        b"MM\x00\x2a",
+        b"II\x2a\x00",
+        b"MM\x2a\x00",
+        b"II\x00\x2a",
+        b"MM\x00\x2b",
+        b"II\x2b\x00",
     ),
-    "QOI": lambda h: h.startswith(b"qoif"),
-    "TIFF": lambda h: h.startswith(_TIFF_PREFIXES),
 }
 
 DPI_FORMATS: tx.FrozenSet[str] = frozenset({"PNG", "JPEG", "BMP", "TIFF"})
@@ -236,7 +233,7 @@ def sniff_pillow(
             formats = [
                 fmt
                 for fmt in formats
-                if fmt not in _MAGIC_NUMBERS or _MAGIC_NUMBERS[fmt](head)
+                if head.startswith(_MAGIC_NUMBERS.get(fmt, b""))
             ]
             if not formats:
                 return None
