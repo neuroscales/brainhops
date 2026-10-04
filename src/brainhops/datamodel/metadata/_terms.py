@@ -122,7 +122,7 @@ class EncodingDirection(DataModelBase):
             return None
         return AXES[index] + ("-" if vector[index] < 0 else "")
 
-    def transform(self, linear: tx.Any) -> "EncodingDirection":
+    def transform(self, linear: tx.Any) -> tx.Self:
         """The direction after a linear map of its space (`linear`, a
         matrix from the old axes to the new ones)."""
         matrix = np.asarray(linear, dtype=float)

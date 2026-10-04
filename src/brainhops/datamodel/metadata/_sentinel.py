@@ -19,7 +19,7 @@ class Unsupported:
     __slots__ = ()
     _instance: tx.ClassVar[tx.Optional["Unsupported"]] = None
 
-    def __new__(cls) -> "Unsupported":
+    def __new__(cls) -> tx.Self:
         if cls._instance is None:
             cls._instance = object.__new__(cls)
         return cls._instance

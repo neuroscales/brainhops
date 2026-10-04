@@ -64,7 +64,7 @@ class ConversionReport(DataModelBase):
         """Whether anything was lost or approximated."""
         return bool(self.lost or self.approximated)
 
-    def merge(self, other: "ConversionReport") -> "ConversionReport":
+    def merge(self, other: "ConversionReport") -> tx.Self:
         """Add the entries of another report to this one, in place."""
         self.lost.update(other.lost)
         self.approximated.update(other.approximated)
@@ -74,9 +74,7 @@ class ConversionReport(DataModelBase):
         return self
 
     @classmethod
-    def merged(
-        cls, reports: tx.Sequence["ConversionReport"]
-    ) -> "ConversionReport":
+    def merged(cls, reports: tx.Sequence["ConversionReport"]) -> tx.Self:
         """
         One report of several, in order: from the source of the first to
         the target of the last, with the entries of all (a later entry

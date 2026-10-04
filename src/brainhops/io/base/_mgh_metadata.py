@@ -125,8 +125,8 @@ class MghRaw:
         """Whether the tags have been read (or were given)."""
         return self._tags is not None
 
-    def __deepcopy__(self, memo: tx.Dict) -> "MghRaw":
-        return MghRaw(self.header.copy(), self._tags, loader=self._loader)
+    def __deepcopy__(self, memo: tx.Dict) -> tx.Self:
+        return type(self)(self.header.copy(), self._tags, loader=self._loader)
 
     def __getstate__(self) -> tx.Tuple[tx.Any, ...]:
         return (self.header, self.tags)

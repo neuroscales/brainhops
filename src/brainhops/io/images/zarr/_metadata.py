@@ -113,8 +113,8 @@ class ZarrRaw:
         self.attrs = dict(attrs or {})
         self.node = node
 
-    def __deepcopy__(self, memo: tx.Dict) -> "ZarrRaw":
-        return ZarrRaw(copy.deepcopy(self.attrs, memo))
+    def __deepcopy__(self, memo: tx.Dict) -> tx.Self:
+        return type(self)(copy.deepcopy(self.attrs, memo))
 
     def __getstate__(self) -> tx.Dict[str, tx.Any]:
         return self.attrs
@@ -258,10 +258,10 @@ class OmeZarrRaw:
         self.attrs = dict(attrs or {})
         self.node = node
 
-    def __deepcopy__(self, memo: tx.Dict) -> "OmeZarrRaw":
+    def __deepcopy__(self, memo: tx.Dict) -> tx.Self:
         # The typed multiscale is immutable: it is shared. The node is a
         # handle, not state: it is dropped.
-        return OmeZarrRaw(
+        return type(self)(
             self.multiscale,
             copy.deepcopy(self.omero, memo),
             copy.deepcopy(self.attrs, memo),
@@ -298,7 +298,7 @@ class OmeZarrRaw:
         multiscale: tx.Any,
         attrs: tx.Mapping[str, tx.Any],
         node: tx.Any = None,
-    ) -> "OmeZarrRaw":
+    ) -> tx.Self:
         """The raw record of a group, from its multiscale and its
         attributes (as JSON)."""
         attrs = dict(attrs)
