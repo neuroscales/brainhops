@@ -46,7 +46,7 @@ temporary directory:
 >>> import numpy as np
 >>> import nibabel as nb
 >>> from brainhops import io
->>> from brainhops.datamodel import Metadata, UNSUPPORTED
+>>> from brainhops.datamodel.metadata import Metadata, UNSUPPORTED
 >>> tmp = tempfile.mkdtemp()
 
 ```
@@ -155,7 +155,7 @@ class, as images and transformations convert; given a
 fills it with what was lost:
 
 ```python
->>> from brainhops.datamodel import ConversionReport
+>>> from brainhops.datamodel.metadata import ConversionReport
 >>> report = ConversionReport()
 >>> generic = bold.metadata.to(Metadata, report=report)
 >>> generic.description, generic.slice_timing
@@ -225,7 +225,7 @@ report) or `"raise"` (a `MetadataLossError`). It is the `on_loss=` option
 of `to()` (the policy applies when no report is given) and of `save`:
 
 ```python
->>> from brainhops.datamodel import MetadataLossError
+>>> from brainhops.datamodel.metadata import MetadataLossError
 >>> try:
 ...     image.save(os.path.join(tmp, "long.nii"), on_loss="raise")
 ... except MetadataLossError as error:
@@ -246,7 +246,7 @@ given metadata of another class. They take no `on_loss=`; the
 `metadata_loss_policy` context manager sets the policy for them:
 
 ```python
->>> from brainhops.datamodel import metadata_loss_policy
+>>> from brainhops.datamodel.metadata import metadata_loss_policy
 >>> with metadata_loss_policy("ignore"):
 ...     nifti = NiftiMetadata.from_other(scan)
 >>> nifti.description

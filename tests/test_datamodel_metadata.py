@@ -22,18 +22,6 @@ import pytest
 import typing_extensions as tx
 from bagof.magic import Factory, Magic, fields, replace
 
-from brainhops.datamodel import (
-    UNSUPPORTED,
-    ConversionReport,
-    FileBasedMetadata,
-    GeneratedBy,
-    Metadata,
-    MetadataLossError,
-    MetadataLossWarning,
-    OpaqueMetadata,
-    Unsupported,
-    metadata_loss_policy,
-)
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     ContrastMethod,
@@ -46,20 +34,30 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     ALL,
     GROUPS,
+    UNSUPPORTED,
     VOCABULARY,
     Channel,
+    ConversionReport,
     DiffusionMetadata,
     DisplayMetadata,
     EncodingDirection,
+    FileBasedMetadata,
+    GeneratedBy,
     Lazy,
     LazyField,
+    Metadata,
     MetadataField,
+    MetadataLossError,
+    MetadataLossWarning,
     MicroscopyMetadata,
     MRIMetadata,
+    OpaqueMetadata,
     ProvenanceMetadata,
     TransformMetadata,
+    Unsupported,
     apply_loss_policy,
     collect_loss_reports,
+    metadata_loss_policy,
     preferred_dtype,
 )
 from brainhops.datamodel.transformations import Affine, Translation

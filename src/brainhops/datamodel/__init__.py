@@ -31,23 +31,6 @@ __all__ = [
     "systems",
     "transformations",
     "units",
-    # metadata
-    "UNSUPPORTED",
-    "Unsupported",
-    "Maybe",
-    "Bids",
-    "Scope",
-    "GeneratedBy",
-    "Channel",
-    "EncodingDirection",
-    "Metadata",
-    "FileBasedMetadata",
-    "OpaqueMetadata",
-    "MetadataField",
-    "ConversionReport",
-    "MetadataLossWarning",
-    "MetadataLossError",
-    "metadata_loss_policy",
 ]
 
 # trigger registration
@@ -62,22 +45,4 @@ from . import (
     systems,
     transformations,
     units,
-)
-from .metadata import (
-    UNSUPPORTED,
-    Bids,
-    Channel,
-    ConversionReport,
-    EncodingDirection,
-    FileBasedMetadata,
-    GeneratedBy,
-    Maybe,
-    Metadata,
-    MetadataField,
-    MetadataLossError,
-    MetadataLossWarning,
-    OpaqueMetadata,
-    Scope,
-    Unsupported,
-    metadata_loss_policy,
 )

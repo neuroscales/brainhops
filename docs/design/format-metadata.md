@@ -144,7 +144,9 @@ model, and only format subclasses live under io:
   `update_from_raw`, `update_raw`, `check_writable` and the hooks),
   `OpaqueMetadata` (nothing supported), `MetadataField`,
   `ConversionReport` and the loss policies, one module per concern (see
-  the addendum to the decisions).
+  the addendum to the decisions). Its names are imported from
+  `brainhops.datamodel.metadata`: like the other submodules,
+  `brainhops.datamodel` exposes the submodule, not its members.
 - `brainhops/_core/fields.py`: `Lazy` and the `LazyField`
   descriptor (section 6); they are field descriptors, not properties,
   so they are not in `_core/properties.py`.
