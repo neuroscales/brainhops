@@ -55,7 +55,6 @@ from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops.datamodel.metadata import (
-    VOCABULARY,
     Channel,
     ConversionReport,
     DisplayMetadata,
@@ -65,7 +64,11 @@ from brainhops.datamodel.metadata import (
     ProvenanceMetadata,
     TransformMetadata,
 )
-from brainhops.io.metadata.bids import _from_json, _to_json, sidecar_key
+from brainhops.io.metadata._json import (
+    decode_object,
+    encode_changes,
+    encode_extra,
+)
 
 # The array attribute that holds the vocabulary of a plain Zarr image.
 BRAINHOPS_KEY = "brainhops"
@@ -112,21 +115,6 @@ def _array_dtype(image: tx.Any) -> tx.Optional[np.dtype]:
         if dtype is not None:
             return np.dtype(dtype)
     return None
-
-
-def _apply_extra(
-    attrs: tx.Dict[str, tx.Any],
-    diff: tx.Mapping[str, tx.Any],
-    reserved: tx.Collection[str],
-    report: ConversionReport,
-) -> None:
-    for key, value in diff.items():
-        if key in reserved:
-            report.lost[f"extra[{key!r}]"] = value
-        elif value is None:
-            attrs.pop(key, None)
-        else:
-            attrs[key] = _to_json("extra", value)
 
 
 # ----------------------------------------------------------------------
@@ -229,12 +217,10 @@ class ZarrMetadata(
             return out
         block = attrs.get(BRAINHOPS_KEY)
         if isinstance(block, tx.Mapping):
-            for name in VOCABULARY:
-                if name not in cls.supported_fields or name == "data_type":
-                    continue
-                key = sidecar_key(name)
-                if key in block:
-                    out[name] = _from_json(name, block[key])
+            # `data_type` is the array's; other keys are not ours.
+            names = cls.supported_fields - {"extra", "data_type"}
+            values, _ = decode_object(block, names)
+            out.update(values)
         extra = {k: v for k, v in attrs.items() if k != BRAINHOPS_KEY}
         if extra:
             out["extra"] = extra
@@ -250,17 +236,20 @@ class ZarrMetadata(
     ) -> ZarrRaw:
         attrs = raw.attrs
         block = dict(attrs.get(BRAINHOPS_KEY) or {})
-        for name, value in changed.items():
-            if name in ("extra", "data_type"):
-                # `data_type` is the array's: nothing to store.
-                continue
-            key = sidecar_key(name)
-            if value is None:
-                block.pop(key, None)
-            else:
-                block[key] = _to_json(name, value)
+        # `data_type` is the array's: nothing to store.
+        fields = {
+            name: value
+            for name, value in changed.items()
+            if name not in ("extra", "data_type")
+        }
+        encode_changes(block, fields)
         if "extra" in changed:
-            _apply_extra(attrs, changed["extra"], (BRAINHOPS_KEY,), report)
+            encode_extra(
+                attrs,
+                changed["extra"],
+                reserved=(BRAINHOPS_KEY,),
+                report=report,
+            )
         if block:
             attrs[BRAINHOPS_KEY] = block
         else:
@@ -555,7 +544,9 @@ class OmeZarrMetadata(
         if "channels" in changed or "display_range" in changed:
             self._encode_omero(raw, changed, image, report)
         if "extra" in changed:
-            _apply_extra(raw.attrs, changed["extra"], OME_KEYS, report)
+            encode_extra(
+                raw.attrs, changed["extra"], reserved=OME_KEYS, report=report
+            )
         return raw
 
     def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:

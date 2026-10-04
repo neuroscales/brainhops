@@ -26,15 +26,14 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
 )
-from brainhops.io.metadata.bids import _from_json, _jsonable, _to_json
-from brainhops.io.metadata.bids import sidecar_key as _sidecar_key
+from brainhops.io.metadata._json import (
+    decode_object,
+    encode_changes,
+    encode_extra,
+)
 
 # locals
 from ._struct import X5Header, X5Node
-
-# JSON key -> vocabulary field.
-_KEYS: tx.Dict[str, str] = {_sidecar_key(name): name for name in VOCABULARY}
-_NAMES: tx.Dict[str, str] = {name: key for key, name in _KEYS.items()}
 
 
 class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
@@ -83,16 +82,8 @@ class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
         json = getattr(node, "metadata", None)
         if not isinstance(json, dict):
             return {}
-        out: tx.Dict[str, tx.Any] = {}
-        extra: tx.Dict[str, tx.Any] = {}
-        for key, value in json.items():
-            name = _KEYS.get(key)
-            if name is None:
-                extra[key] = value
-            else:
-                out[name] = _from_json(name, value)
-        out["extra"] = extra or None
-        return out
+        values, extra = decode_object(json, VOCABULARY)
+        return {**values, "extra": extra or None}
 
     def _encode(
         self,
@@ -116,19 +107,11 @@ class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
                 "the node's Metadata was not JSON, and is replaced"
             )
         json = dict(json) if isinstance(json, dict) else {}
-        for name, value in changed.items():
-            if name == "extra":
-                for key, item in value.items():
-                    if item is None:
-                        json.pop(key, None)
-                    else:
-                        json[key] = _jsonable(item)
-                continue
-            key = _NAMES[name]
-            if value is None:
-                json.pop(key, None)
-            else:
-                json[key] = _to_json(name, value)
+        encode_changes(
+            json, {k: v for k, v in changed.items() if k != "extra"}
+        )
+        if "extra" in changed:
+            encode_extra(json, changed["extra"], report=report)
         if not json and node.metadata is None:
             return raw
         return header, replace(node, metadata=json)
