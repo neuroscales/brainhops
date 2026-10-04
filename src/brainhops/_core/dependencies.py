@@ -16,6 +16,9 @@ _PILLOW = ("pil", "PIL", "HAS_PILLOW")
 _TIFFFILE = ("tifffile", "tifffile", "HAS_TIFFFILE")
 _OPENSLIDE = ("openslide", "openslide", "HAS_OPENSLIDE")
 
+# ---- units -----------------------------------------------------------
+_PINT = ("pint", "pint", "HAS_PINT")
+
 # ---- backends --------------------------------------------------------
 _NUMPY = ("np", "numpy", "HAS_NUMPY")
 _CUPY = ("cp", "cupy", "HAS_CUPY")
@@ -35,6 +38,7 @@ _LAZY_NAMES = (
     + _PILLOW
     + _TIFFFILE
     + _OPENSLIDE
+    + _PINT
     + _NUMPY
     + _CUPY
     + _DASK
@@ -71,6 +75,15 @@ def __getattr__(name: str) -> tx.Any:
 
     if name in _OPENSLIDE:
         return _lazy_import(globals(), name, "openslide", "openslide")
+
+    # ==================================================================
+    #
+    #                                UNITS
+    #
+    # ==================================================================
+
+    if name in _PINT:
+        return _lazy_import(globals(), name, "pint", "pint")
 
     # ==================================================================
     #

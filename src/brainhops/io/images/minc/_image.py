@@ -148,7 +148,7 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
         ):
             unit = None
     if unit is None and axis_type == "space":
-        unit = SpaceUnit("mm")
+        unit = "mm"
     return unit
 
 

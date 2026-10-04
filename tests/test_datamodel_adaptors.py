@@ -67,7 +67,6 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
-from brainhops.datamodel.units import IndexUnit
 
 # The physical anatomical axes, in millimetres. `R`/`A`/`S` fix a direction
 # and leave the metric unspecified, which is a different thing -- an array
@@ -218,7 +217,7 @@ def _oriented_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=IndexUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 
@@ -814,7 +813,7 @@ def _oriented_named_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=IndexUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 

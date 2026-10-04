@@ -46,7 +46,8 @@ PARSED = [
     ("mile", SpaceUnit, "mile", 1609.344),
     ('"', SpaceUnit, "inch", 0.0254),
     ("'", SpaceUnit, "foot", 0.3048),
-    ("light year", SpaceUnit, "light_year", 9.4607304725808e15),
+    ("lyr", SpaceUnit, "light_year", 9.4607304725808e15),
+    ("ly", SpaceUnit, "light_year", 9.4607304725808e15),
     ("ms", TimeUnit, "millisecond", 1e-3),
     ("msec", TimeUnit, "millisecond", 1e-3),
     ("millisec", TimeUnit, "millisecond", 1e-3),
@@ -97,10 +98,17 @@ def test_names_are_parsed(
     assert unit.scale == pytest.approx(scale, rel=1e-12)
 
 
+def test_the_micron_is_the_micrometer() -> None:
+    # pint's `micron` is a unit of its own, unequal to the micrometer.
+    assert Unit("micron") is Unit("micrometer")
+    assert Unit("microns/s") is Unit("um/s")
+    assert Unit("s/micron**2") is Unit("s/um^2")
+
+
 def test_the_arbitrary_unit_is_not_parsed_by_pint() -> None:
     # pint's tokenizer splits "a.u." on the dots, and reads it as
     # `unified_atomic_mass_unit * year`; "au" is pint's astronomical unit.
-    for name in ("a.u.", "A.U.", "a.u", "au", "AU", "arbitrary unit"):
+    for name in ("a.u.", "A.U.", "a.u", "A.U", "au", "arbitrary_units"):
         unit = Unit(name)
         assert unit is Unit("arbitrary_unit")
         assert unit.type == "dimensionless"
@@ -114,6 +122,8 @@ def test_the_pint_free_names_are_what_pint_gives() -> None:
         parsed = units._parse(units._ALIASES.get(name, name))
         assert units._canonical_name(parsed) == canonical, name
         assert str(parsed.dimensionality) == dimension, name
+    # Only the names brainhops builds at import time are here.
+    assert set(units._PINT_FREE) == {"index", "mm", "millimeter"}
 
 
 @pytest.mark.parametrize(
@@ -213,8 +223,8 @@ def test_prefixes(name: str, prefix: t.Optional[str]) -> None:
         ("ms", "time"),
         ("voxel", "index"),
         ("%", "dimensionless"),
-        ("Hz", "1 / [time]"),
-        ("s/mm^2", "[time] / [length] ** 2"),
+        ("Hz", "1 / time"),
+        ("s/mm^2", "time / length ** 2"),
     ],
 )
 def test_types(name: str, kind: str) -> None:
@@ -285,9 +295,9 @@ def test_unit_returns_the_class_of_the_dimension() -> None:
 
 
 def test_the_declared_dimensions() -> None:
-    assert SpaceUnit.dimension == "[length]"
-    assert TimeUnit.dimension == "[time]"
-    assert IndexUnit.dimension == "[index]"
+    assert SpaceUnit.dimension == "length"
+    assert TimeUnit.dimension == "time"
+    assert IndexUnit.dimension == "index"
     assert Unit.dimension is None
 
 
@@ -302,7 +312,7 @@ def test_the_declared_dimensions() -> None:
         lambda: TimeUnit("Hz"),
         lambda: IndexUnit("mm"),
         lambda: IndexUnit(Unit("s")),
-        lambda: Unit["[time] / [length] ** 2"]("mm"),
+        lambda: Unit["time / length ** 2"]("mm"),
     ],
 )
 def test_a_unit_class_only_builds_its_own_units(build: object) -> None:
@@ -315,7 +325,7 @@ def test_the_restriction_error_names_both_dimensions() -> None:
         SpaceUnit("s")
     message = str(error.value)
     assert "'s' is not a SpaceUnit" in message
-    assert "[time]" in message and "[length]" in message
+    assert "unit of time, not of length" in message
 
 
 def test_a_unit_class_builds_its_own_units() -> None:
@@ -328,25 +338,47 @@ def test_a_unit_class_builds_its_own_units() -> None:
 
 
 def test_a_parametrized_class() -> None:
-    Diffusion = Unit["[time] / [length] ** 2"]
+    Diffusion = Unit["time / length ** 2"]
     unit = Diffusion("s/mm^2")
     assert isinstance(unit, Diffusion)
     assert isinstance(unit, Unit)
-    assert Diffusion.dimension == "[time] / [length] ** 2"
+    assert Diffusion.dimension == "time / length ** 2"
     assert unit == Unit("s/mm^2")
     assert hash(unit) == hash(Unit("s/mm^2"))
     assert Diffusion(unit) is unit
     assert Diffusion(Unit("s/mm^2")) is unit
     # Built once per dimension, however it is spaced.
-    assert Unit["[time]/[length]**2"] is Diffusion
+    assert Unit["time/length**2"] is Diffusion
+    # pint's brackets are optional.
+    assert Unit["time / length ** 2"] is Diffusion
     # A declared dimension gives its declared class.
+    assert Unit["length"] is SpaceUnit
     assert Unit["[length]"] is SpaceUnit
+    assert Unit["index"] is IndexUnit
     assert Unit["[index]"] is IndexUnit
+
+
+@pytest.mark.parametrize(
+    "dimension, normalized",
+    [
+        ("length", "[length]"),
+        ("[length]", "[length]"),
+        ("time / length ** 2", "[time]/[length]**2"),
+        ("[time] / length**2", "[time]/[length]**2"),
+        ("1 / time", "1/[time]"),
+        ("index", "[index]"),
+        ("dimensionless", ""),
+    ],
+)
+def test_dimensions_are_written_with_or_without_brackets(
+    dimension: str, normalized: str
+) -> None:
+    assert units._normalize_dimension(dimension) == normalized
 
 
 def test_only_unit_is_subscripted() -> None:
     with pytest.raises(TypeError, match="already restricted"):
-        SpaceUnit["[time]"]
+        SpaceUnit["time"]
     with pytest.raises(TypeError, match="dimension is a string"):
         Unit[1]
 
@@ -358,7 +390,7 @@ def test_an_invalid_dimension_raises_when_used() -> None:
 
 
 def test_a_subclass_declares_a_dimension() -> None:
-    class Frequency(Unit, dimension="1 / [time]"):
+    class Frequency(Unit, dimension="1 / time"):
         __slots__ = ()
 
     assert type(Frequency("Hz")) is Frequency
@@ -399,7 +431,7 @@ def test_axis_hints_refuse_other_units(build: t.Callable) -> None:
 def test_a_parametrized_class_as_a_hint() -> None:
     from bagof.converters import get_converter
 
-    Diffusion = Unit["[time] / [length] ** 2"]
+    Diffusion = Unit["time / length ** 2"]
     convert = get_converter(t.Optional[t.Union[Diffusion, IndexUnit]])
     assert convert("s/mm^2") is Diffusion("s/mm^2")
     assert convert("voxel") is Unit("voxel")
@@ -440,7 +472,7 @@ def test_equal_units_are_equal() -> None:
         Unit("a.u."),
         Unit("voxel"),
         IndexUnit(),
-        Unit["[time] / [length] ** 2"]("s/mm^2"),
+        Unit["time / length ** 2"]("s/mm^2"),
     ],
 )
 def test_units_pickle(unit: Unit) -> None:
@@ -458,10 +490,10 @@ def test_units_copy_to_themselves() -> None:
 
 
 def test_the_pint_escape_hatch() -> None:
-    pint_unit = Unit("mm").pint
+    pint_unit = Unit("mm").to_pint()
     assert str(pint_unit) == "millimeter"
     assert Unit.from_pint(pint_unit) is Unit("mm")
-    assert Unit.from_pint(pint_unit / Unit("s").pint) is Unit("mm/s")
+    assert Unit.from_pint(pint_unit / Unit("s").to_pint()) is Unit("mm/s")
     assert SpaceUnit.from_pint(pint_unit) is Unit("mm")
     with pytest.raises(ValueError, match="is not a"):
         TimeUnit.from_pint(pint_unit)
@@ -559,7 +591,7 @@ def test_importing_brainhops_does_not_import_pint() -> None:
         from brainhops.datamodel.units import IndexUnit, SpaceUnit, Unit
         print("pint" in sys.modules, units._registry_instance is None)
         # Names resolved without pint, and class-level questions.
-        Unit("mm"); IndexUnit(); Unit("voxel"); units.is_spaceunit(SpaceUnit)
+        Unit("mm"); IndexUnit(); Unit("index"); units.is_spaceunit(SpaceUnit)
         print("pint" in sys.modules)
         # The first name pint has to parse imports it.
         Unit("parsec")

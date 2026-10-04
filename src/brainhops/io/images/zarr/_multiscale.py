@@ -19,7 +19,6 @@ from brainhops.datamodel.axes import (
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
-from brainhops.datamodel.units import IndexUnit
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.base.zarr import (
@@ -273,7 +272,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         reverses = list(perm) == list(range(ndim))[::-1]
         voxel_system = CoordinateSystem(
             name="voxel",
-            axes=[replace(axis, unit=IndexUnit()) for axis in canonical_axes],
+            axes=[replace(axis, unit="index") for axis in canonical_axes],
             order="F" if reverses else None,
         )
         intrinsic_system = system(intrinsic_name(multiscale))

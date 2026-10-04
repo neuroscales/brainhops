@@ -9,29 +9,30 @@ Unit("millimeter")`), and the same spelling gives the same object.
 The name is parsed by [pint](https://pint.readthedocs.io), through a
 registry that belongs to brainhops and that is extended with the units
 imaging data needs: the *index* units (`index`, `voxel`, `pixel`, of
-dimension `[index]`), the arbitrary unit (`a.u.`) and the Hounsfield unit
+dimension `index`), the arbitrary unit (`a.u.`) and the Hounsfield unit
 (`HU`). pint is imported, and the registry built, the first time a name is
 parsed, not when `brainhops` is imported. pint types never appear in the
-API, apart from the [`Unit.pint`][brainhops.datamodel.units.Unit.pint] and
+API, apart from the
+[`Unit.to_pint`][brainhops.datamodel.units.Unit.to_pint] and
 [`Unit.from_pint`][brainhops.datamodel.units.Unit.from_pint] escape
 hatches.
 
 ## Units restricted to a dimension
 
 A subclass of [`Unit`][] can be restricted to a dimension, and then only
-builds units of that dimension. [`SpaceUnit`][] (`[length]`),
-[`TimeUnit`][] (`[time]`) and [`IndexUnit`][] (`[index]`) are declared this
+builds units of that dimension. [`SpaceUnit`][] (`length`),
+[`TimeUnit`][] (`time`) and [`IndexUnit`][] (`index`) are declared this
 way:
 
 ```python
-class SpaceUnit(Unit, dimension="[length]"): ...
+class SpaceUnit(Unit, dimension="length"): ...
 ```
 
 and any other dimension can be asked for with a subscript, which builds
 (and caches) such a class:
 
 ```python
-DiffusionUnit = Unit["[time] / [length] ** 2"]
+DiffusionUnit = Unit["time / length ** 2"]
 DiffusionUnit("s/mm^2")   # 'second / millimeter ** 2'
 DiffusionUnit("mm")       # ValueError: 'millimeter' is not a ...
 ```
@@ -40,17 +41,21 @@ These classes are what a field's type hint names, so that a field typed
 `Optional[Union[SpaceUnit, IndexUnit]]` holds a unit of length, an index
 unit or nothing, and converts a name to one of these.
 
+A dimension is written with pint's base dimensions (`length`, `time`,
+`mass`, ..., and brainhops' `index`), with or without pint's square
+brackets: `"time / length ** 2"` is `"[time] / [length] ** 2"`.
+
 `Unit(name)` returns an instance of the declared class of the unit's
 dimension, so `isinstance(Unit("mm"), SpaceUnit)` is true.
 
 !!! note "Angles"
 
     Angles are dimensionless, as pint has them: a degree is compatible
-    with a percent. A dedicated `[angle]` dimension may be introduced
+    with a percent. A dedicated `angle` dimension may be introduced
     later.
 """
 
-# TODO: Investigate a dedicated `[angle]` dimension, so that angles are
+# TODO: Investigate a dedicated `angle` dimension, so that angles are
 #       not interchangeable with every other dimensionless unit (`deg` is
 #       currently compatible with `%`).
 
@@ -74,6 +79,7 @@ import threading
 import typing_extensions as tx
 
 # core
+from brainhops._core import dependencies as _dependencies
 from brainhops._core.typing import is_instance_or_subclass
 
 if tx.TYPE_CHECKING:  # pragma: no cover
@@ -92,6 +98,8 @@ _DEFINITIONS = (
     # Dimensionless units of imaging data.
     "arbitrary_unit = [] = a.u. = au = arbitrary_units",
     "hounsfield_unit = [] = HU = hounsfield_units",
+    # A spelling of the light year that pint does not know.
+    "@alias light_year = lyr",
 )
 """The definitions brainhops adds to pint's default registry."""
 
@@ -110,8 +118,12 @@ def _registry() -> "pint.UnitRegistry":
 
 
 def _build_registry() -> "pint.UnitRegistry":
-    import pint
-
+    pint = _dependencies.pint
+    if pint is None:
+        raise ImportError(
+            "Units are parsed by pint, a dependency of brainhops that is "
+            "not installed: `pip install pint`."
+        )
     registry = pint.UnitRegistry(on_redefinition="ignore")
     for definition in _DEFINITIONS:
         registry.define(definition)
@@ -130,66 +142,40 @@ def _build_registry() -> "pint.UnitRegistry":
 
 _ALIASES: tx.Dict[str, str] = {
     # pint's tokenizer splits on ".", so `a.u.` would parse as
-    # `unified_atomic_mass_unit * year` if it reached pint.
+    # `unified_atomic_mass_unit * year` (and `A.U.` as `ampere *
+    # enzyme_unit`) if it reached pint.
     "a.u.": "arbitrary_unit",
     "a.u": "arbitrary_unit",
     "A.U.": "arbitrary_unit",
     "A.U": "arbitrary_unit",
-    "au": "arbitrary_unit",
-    "AU": "arbitrary_unit",
-    "arb. unit": "arbitrary_unit",
-    "arb. units": "arbitrary_unit",
-    "arbitrary unit": "arbitrary_unit",
-    "arbitrary units": "arbitrary_unit",
-    "Hounsfield unit": "hounsfield_unit",
-    "Hounsfield units": "hounsfield_unit",
-    # pint's `micron` is a unit of its own, unequal to the micrometer.
-    "micron": "micrometer",
-    "microns": "micrometer",
-    # The symbols of the foot and the inch.
+    # The symbols of the foot and the inch, which pint's tokenizer reads
+    # as unterminated strings.
     "'": "foot",
     '"': "inch",
-    # Spellings with a space, or that pint does not know.
-    "light year": "light_year",
-    "light years": "light_year",
-    "lyr": "light_year",
-    "y": "year",
-    "w": "week",
-    "weeks": "week",
 }
-"""Names matched exactly, before pint parses anything."""
+"""Names matched exactly, before pint parses anything: the ones pint
+cannot parse, whatever its definitions."""
+
+_EQUIVALENTS: tx.Dict[str, str] = {
+    # pint's `micron` is a unit of its own, equal in size to the
+    # micrometer but not equal to it, and it cannot be made an alias of
+    # the micrometer since pint already defines it.
+    "micron": "micrometer",
+}
+"""Units of pint replaced, after parsing, by the unit they equal."""
 
 _PINT_FREE: tx.Dict[str, tx.Tuple[str, str]] = {
-    **dict.fromkeys(
-        ("mm", "millimeter", "millimeters", "millimetre", "millimetres"),
-        ("millimeter", "[length]"),
-    ),
-    **dict.fromkeys(
-        ("um", "µm", "μm", "micrometer", "micrometers", "micron", "microns"),
-        ("micrometer", "[length]"),
-    ),
-    **dict.fromkeys(
-        ("m", "meter", "meters", "metre", "metres"), ("meter", "[length]")
-    ),
-    **dict.fromkeys(("s", "sec", "second", "seconds"), ("second", "[time]")),
-    **dict.fromkeys(
-        ("ms", "msec", "millisecond", "milliseconds"),
-        ("millisecond", "[time]"),
-    ),
     "index": ("index", "[index]"),
-    "idx": ("index", "[index]"),
-    "indices": ("index", "[index]"),
-    "voxel": ("voxel", "[index]"),
-    "voxels": ("voxel", "[index]"),
-    "vox": ("voxel", "[index]"),
-    "pixel": ("pixel", "[index]"),
-    "pixels": ("pixel", "[index]"),
+    "mm": ("millimeter", "[length]"),
+    "millimeter": ("millimeter", "[length]"),
 }
 """Names resolved without pint, to their canonical name and dimension.
 
-The axes and units that brainhops builds at import time must not import
-pint, so the names they use are resolved here. Every entry is what the
-registry gives (which a test checks)."""
+brainhops builds units from these names when it is imported -- the default
+axes of the voxel and array coordinate systems are in `"index"`, and those
+of the `RASmm`-like systems in `"mm"` -- and resolving them here is what
+keeps pint out of `import brainhops`. Every entry is what the registry
+gives, which a test checks."""
 
 _SUPERSCRIPTS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻", "0123456789-")
 _SUPERSCRIPT_RUN = re.compile("[⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+")
@@ -221,6 +207,13 @@ def _parse(name: str) -> "pint.Unit":
             f"pint does, such as 'mm', 'micrometer', 'ms', 's/mm^2' or "
             f"'voxel'."
         ) from e
+    factors = dict(unit._units)
+    if any(factor in _EQUIVALENTS for factor in factors):
+        unit = _registry().parse_units(
+            _format_factors(
+                {_EQUIVALENTS.get(n, n): e for n, e in factors.items()}
+            )
+        )
     return unit
 
 
@@ -231,6 +224,11 @@ def _canonical_name(unit: "pint.Unit") -> str:
     with the factors sorted, so that it does not depend on how the unit
     was spelled.
     """
+    return _format_factors(dict(unit._units))
+
+
+def _format_factors(factors: tx.Mapping[str, tx.Any]) -> str:
+    """Write units raised to exponents as pint writes them in full."""
 
     def term(name: str, exponent: tx.Any) -> str:
         if exponent == 1:
@@ -239,7 +237,7 @@ def _canonical_name(unit: "pint.Unit") -> str:
             exponent = int(exponent)
         return f"{name} ** {exponent}"
 
-    factors = sorted(dict(unit._units).items())
+    factors = sorted(factors.items())
     numerator = [term(n, e) for n, e in factors if e > 0]
     denominator = [term(n, -e) for n, e in factors if e < 0]
     if not numerator and not denominator:
@@ -264,8 +262,22 @@ def _normalize_symbol(symbol: str) -> str:
     return symbol.replace(_MICRO_SIGN, _GREEK_MU)
 
 
+_BARE_DIMENSION = re.compile(r"(?<![\[\w])([A-Za-z_]\w*)(?![\]\w])")
+
+
 def _normalize_dimension(dimension: str) -> str:
-    return "".join(dimension.split())
+    """A dimension in pint's notation, without spaces: `"time / length **
+    2"` and `"[time] / [length] ** 2"` are both `"[time]/[length]**2"`."""
+    dimension = "".join(dimension.split())
+    if dimension == "dimensionless":
+        return ""
+    return _BARE_DIMENSION.sub(r"[\1]", dimension)
+
+
+def _bare_dimension(dimension: tx.Any) -> str:
+    """A dimension without pint's brackets, such as `"time / length **
+    2"`."""
+    return str(dimension).replace("[", "").replace("]", "")
 
 
 # ----------------------------------------------------------------------
@@ -281,7 +293,7 @@ _DECLARED: tx.Dict[str, tx.Type["Unit"]] = {}
 _PARAMETRIZED: tx.Dict[str, tx.Type["Unit"]] = {}
 """The classes built by `Unit[dimension]`, by normalized dimension."""
 
-_KIND_NAMES = {"[length]": "space", "[time]": "time", "[index]": "index"}
+_KIND_NAMES = {"length": "space"}
 
 
 class Unit:
@@ -311,7 +323,7 @@ class Unit:
 
     dimension: tx.ClassVar[tx.Optional[str]] = None
     """The dimension that the class restricts its units to, such as
-    `"[length]"`, or `None` for any."""
+    `"length"`, or `None` for any."""
 
     _default: tx.ClassVar[tx.Optional[str]] = None
 
@@ -327,8 +339,8 @@ class Unit:
 
     def __class_getitem__(cls, dimension: str) -> tx.Type["Unit"]:
         """The class of the units of a dimension, such as
-        `Unit["[time] / [length] ** 2"]`. It is built once per dimension,
-        and `Unit["[length]"]` is [`SpaceUnit`][]."""
+        `Unit["time / length ** 2"]`. It is built once per dimension, and
+        `Unit["length"]` is [`SpaceUnit`][]."""
         if cls is not Unit:
             raise TypeError(
                 f"{cls.__name__} is already restricted to a dimension; "
@@ -336,8 +348,7 @@ class Unit:
             )
         if not isinstance(dimension, str):
             raise TypeError(
-                f"A dimension is a string such as '[length]', not "
-                f"{dimension!r}."
+                f"A dimension is a string such as 'length', not {dimension!r}."
             )
         key = _normalize_dimension(dimension)
         found = _DECLARED.get(key) or _PARAMETRIZED.get(key)
@@ -383,7 +394,8 @@ class Unit:
                 # Refused without pint: an index unit is not a length.
                 raise ValueError(
                     f"{value!r} is not a {cls.__name__}: it is a unit of "
-                    f"{dimension}, not of {cls.dimension}."
+                    f"{_bare_dimension(dimension)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
                 )
             return cls._intern(value._name, value._pint, value)
         if not isinstance(value, str):
@@ -406,7 +418,8 @@ class Unit:
             if _excludes(cls, dimension):
                 raise ValueError(
                     f"{value!r} is not a {cls.__name__}: it is a unit of "
-                    f"{dimension}, not of {cls.dimension}."
+                    f"{_bare_dimension(dimension)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
                 )
         return cls._intern(None, _parse(name), value)
 
@@ -458,7 +471,8 @@ class Unit:
             if unit.dimensionality != expected:
                 raise ValueError(
                     f"{source!r} is not a {cls.__name__}: it is a unit of "
-                    f"{unit.dimensionality}, not of {cls.dimension}."
+                    f"{_bare_dimension(unit.dimensionality)}, not of "
+                    f"{_bare_dimension(cls.dimension)}."
                 )
         return cls._lookup(canonical, unit)
 
@@ -517,12 +531,12 @@ class Unit:
     #   PROPERTIES
     # ------------------------------------------------------------------
 
-    @property
-    def pint(self) -> "pint.Unit":
+    def to_pint(self) -> "pint.Unit":
         """The unit in brainhops' private pint registry.
 
-        This is an escape hatch to pint; it is the only place where a pint
-        object comes out of brainhops."""
+        This is an escape hatch to pint, the converse of
+        [`from_pint`][brainhops.datamodel.units.Unit.from_pint]; it is the
+        only place where a pint object comes out of brainhops."""
         unit = self._pint
         if unit is None:
             unit = _registry().parse_units(self._name)
@@ -539,18 +553,18 @@ class Unit:
     def symbol(self) -> str:
         """The unit's symbol, such as `"mm"` or `"s / mm ** 2"`. The micro
         prefix is always the Greek mu (U+03BC), as in `"μm"`."""
-        return _normalize_symbol(format(self.pint, "~"))
+        return _normalize_symbol(format(self.to_pint(), "~"))
 
     @property
     def dimensionality(self) -> str:
-        """The unit's dimension, such as `"[length]"` or `"1 / [time]"`."""
-        return str(self.pint.dimensionality)
+        """The unit's dimension, such as `"length"` or `"1 / time"`."""
+        return _bare_dimension(self.to_pint().dimensionality)
 
     @property
     def type(self) -> str:
         """The kind of quantity the unit measures: `"space"`, `"time"` or
-        `"index"`, or else its dimension (`"1 / [time]"`,
-        `"dimensionless"`, ...).
+        `"index"`, or else its dimension (`"1 / time"`, `"dimensionless"`,
+        ...).
 
         Two units with the same `type` can be converted into each other.
         """
@@ -561,7 +575,7 @@ class Unit:
     def prefix(self) -> tx.Optional[str]:
         """The SI prefix of a unit such as the millimeter (`"milli"`), or
         `None` for a unit without one or a compound unit."""
-        factors = dict(self.pint._units)
+        factors = dict(self.to_pint()._units)
         if len(factors) != 1:
             return None
         ((name, exponent),) = factors.items()
@@ -577,7 +591,7 @@ class Unit:
         """The size of the unit in the base units of its dimension: in
         meters for a length, in seconds for a duration, and in indices
         for an index unit (`1.0`)."""
-        factor, _ = _registry().get_base_units(self.pint)
+        factor, _ = _registry().get_base_units(self.to_pint())
         if factor is None:
             raise ValueError(
                 f"{self!r} is not a multiplicative unit, so it has no scale."
@@ -600,7 +614,7 @@ class Unit:
         the same dimension."""
         if not isinstance(other, Unit):
             other = Unit(other)
-        return self.pint.dimensionality == other.pint.dimensionality
+        return self.to_pint().dimensionality == other.to_pint().dimensionality
 
 
 _SIMPLE_DIMENSION = re.compile(r"^\[\w+\]$")
@@ -619,11 +633,13 @@ _DIMENSIONALITIES: tx.Dict[str, tx.Any] = {}
 
 
 def _dimensionality(dimension: str) -> tx.Any:
-    """The pint dimensionality of a dimension such as `"[length]"`."""
+    """The pint dimensionality of a dimension such as `"length"`."""
     found = _DIMENSIONALITIES.get(dimension)
     if found is None:
         try:
-            found = _registry().get_dimensionality(dimension)
+            found = _registry().get_dimensionality(
+                _normalize_dimension(dimension)
+            )
         except Exception as e:
             raise ValueError(f"{dimension!r} is not a dimension.") from e
         _DIMENSIONALITIES[dimension] = found
@@ -651,19 +667,19 @@ def _restore(kls: tx.Union[tx.Type[Unit], str], name: str) -> Unit:
 # ----------------------------------------------------------------------
 
 
-class SpaceUnit(Unit, dimension="[length]"):
+class SpaceUnit(Unit, dimension="length"):
     """A unit of length, such as the millimeter."""
 
     __slots__ = ()
 
 
-class TimeUnit(Unit, dimension="[time]"):
+class TimeUnit(Unit, dimension="time"):
     """A unit of time, such as the second."""
 
     __slots__ = ()
 
 
-class IndexUnit(Unit, dimension="[index]"):
+class IndexUnit(Unit, dimension="index"):
     """An index unit: coordinates count the elements of an array rather
     than measure a quantity.
 

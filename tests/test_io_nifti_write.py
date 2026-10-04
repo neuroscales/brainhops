@@ -30,7 +30,6 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     Scaling,
     Sequence,
 )
-from brainhops.datamodel.units import SpaceUnit  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
@@ -385,7 +384,7 @@ def test_a_non_nifti_unit_is_scaled_to_a_valid_one(tmp_path) -> None:  # noqa: A
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
-            replace(axis, unit=SpaceUnit("centimeter"))
+            replace(axis, unit="centimeter")
             for axis in RASCoordinateSystem().axes
         ],
     )
@@ -566,7 +565,7 @@ def test_the_unit_scale_comes_from_the_preferred_transform(tmp_path) -> None:  #
     ras_cm = replace(
         RASCoordinateSystem(),
         axes=[
-            replace(axis, unit=SpaceUnit("centimeter"))
+            replace(axis, unit="centimeter")
             for axis in RASCoordinateSystem().axes
         ],
     )
