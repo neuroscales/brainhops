@@ -27,7 +27,8 @@ class FileBasedMetadata(Metadata):
     This is the base of every `<Fmt>Metadata` (as `FileBasedImage` is of
     every format's image class): a format declares what it can store
     with `supports=`, and decodes and encodes its raw record with the
-    hooks described in the module documentation.
+    hooks described in the format author's guide
+    (`docs/dev/metadata-formats.md`).
     """
 
     raw: tx.Annotated[

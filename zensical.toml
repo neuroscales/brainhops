@@ -89,7 +89,10 @@ nav = [
         {"properties" = "api/_core/properties.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
     ]}
-  ]}
+  ]},
+  {"Developer guide" = [
+    {"Metadata of a format" = "dev/metadata-formats.md"},
+  ]},
 ]
 
 # The site_name is shown in the page header and the browser window title

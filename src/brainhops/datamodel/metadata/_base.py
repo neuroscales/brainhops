@@ -296,7 +296,8 @@ class Metadata(
     [`MRIMetadata`][], [`DiffusionMetadata`][], [`DisplayMetadata`][],
     [`MicroscopyMetadata`][] and [`TransformMetadata`][]. Each field holds
     a value, `None` (unknown) or `UNSUPPORTED` (a format has no slot for
-    it); see the module documentation for the formats' hooks.
+    it). The hooks of a format are described in the format author's
+    guide (`docs/dev/metadata-formats.md`).
     """
 
     # --- class attributes ---------------------------------------------

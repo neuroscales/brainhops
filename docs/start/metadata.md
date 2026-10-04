@@ -400,7 +400,8 @@ direction that is along none as lost.
 ## Formats
 
 Each format stores a different part of the vocabulary. This section lists,
-per format, what it reads and writes, and where.
+per format, what it reads and writes, and where. To add the metadata of a
+format, see [Writing the metadata of a format](../dev/metadata-formats.md).
 
 ### NIfTI
 

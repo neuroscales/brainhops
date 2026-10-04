@@ -78,7 +78,8 @@ class MetadataField:
     ```
 
     A narrowed field must be declared on the class itself or on its
-    first base (see the module documentation).
+    first base: `bagof` takes a field from the first base that has it
+    (see the format author's guide, `docs/dev/metadata-formats.md`).
     """
 
     def __class_getitem__(cls, params: tx.Any) -> tx.Any:
