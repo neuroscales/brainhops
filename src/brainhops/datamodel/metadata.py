@@ -270,7 +270,7 @@ from .enums import (
     Manufacturer,
     Space,
 )
-from .units import Unit, _lookup_unit
+from .units import Unit
 
 # ----------------------------------------------------------------------
 #   SENTINEL
@@ -405,13 +405,15 @@ class _Term:
 
 
 def _unit(value: tx.Any) -> tx.Any:
-    """A unit the units module knows, as a `Unit`; any other unit name
-    (`"a.u."`, `"mm/s"`) stays a string."""
+    """A unit name the units module parses, as a `Unit`; a name it
+    cannot parse stays a string, so that a file's own spelling survives."""
     if _passes(value) or isinstance(value, Unit):
         return value
     if isinstance(value, str):
-        unit = _lookup_unit(value)
-        return value if unit is None else unit
+        try:
+            return Unit(value)
+        except ValueError:
+            return value
     raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
 
 
@@ -1071,8 +1073,11 @@ class DisplayMetadata(_VocabularyGroup):
     data_unit: tx.Annotated[
         Maybe[tx.Union[Unit, str]],
         tx.Doc(
-            "Unit of the data values: a `Unit` when the units module "
-            "knows it, its name otherwise (`'a.u.'`, `'mm/s'`)."
+            "Unit of the data values: a `Unit` whenever the units module "
+            "parses the name (`'a.u.'`, `'mm/s'`, `'HU'`), and the name "
+            "itself, as a string, when it does not, so that a file with "
+            "an odd unit still reads. Formats write it as its symbol "
+            "(`Unit.symbol`), which parses back to the same unit."
         ),
         Scope(VOLUME),
         ConvertTo(_unit),

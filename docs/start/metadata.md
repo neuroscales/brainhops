@@ -356,8 +356,22 @@ a string too:
 
 ```
 
-`data_unit` is a [`Unit`][brainhops.datamodel.units.Unit] when the units
-module knows it, and its name otherwise (`"a.u."`).
+`data_unit` is a [`Unit`][brainhops.datamodel.units.Unit] whenever the
+units module parses its name, and the name itself otherwise, so that a
+file with an odd unit still reads. Units compare as units, and a format
+writes one as its symbol, which reads back as the same unit:
+
+```python
+>>> from brainhops.datamodel.units import Unit
+>>> unit = Metadata(data_unit="a.u.").data_unit
+>>> unit, unit == Unit("au"), unit.symbol
+('arbitrary_unit', True, 'a.u.')
+>>> Metadata(data_unit="mm/s").to_bids()
+{'DataUnit': 'mm / s'}
+>>> Metadata(data_unit="mm2/s").data_unit
+'mm2/s'
+
+```
 
 An encoding direction (`phase_encoding_direction`,
 `slice_encoding_direction`) is an

@@ -18,7 +18,8 @@ string (`"j-"`); one BIDS cannot write (along no voxel axis) is reported
 as lost by `to_bids`, and written as an object (`Vector`, `Space`) in the
 JSON stores of other formats (x5, Zarr), which read it back. A known
 term (a `Space`, an `Intent`, ...) is its string, a `data_unit` its unit
-name, a `data_type` its `numpy` name (`"int16"`). The fields of the
+symbol (`"ms"`, `"a.u."`), a `data_type` its `numpy` name (`"int16"`).
+The fields of the
 [`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
 group are not sidecar keys (BIDS keeps them in `.bval`/`.bvec` files, in
 voxel axes), so `to_bids` reports them as lost.
@@ -183,7 +184,8 @@ def _jsonable(value: tx.Any) -> tx.Any:
     if isinstance(value, np.dtype):
         return value.name
     if isinstance(value, Unit):
-        return str(value)
+        # The symbol (`"a.u."`, `"mm / s"`) parses back to the same unit.
+        return value.symbol
     if isinstance(value, tuple):
         return [_jsonable(v) for v in value]
     if isinstance(value, list):

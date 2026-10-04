@@ -1086,10 +1086,20 @@ def test_data_unit_is_a_unit_when_known() -> None:
 
     meta = Metadata(data_unit="ms")
     assert isinstance(meta.data_unit, Unit)
-    assert str(meta.data_unit) == "millisecond"
-    assert Metadata(data_unit="a.u.").data_unit == "a.u."
-    assert Metadata(data_unit="mm/s").data_unit == "mm/s"
-    assert meta.to_bids() == {"DataUnit": "millisecond"}
+    assert meta.data_unit == Unit("millisecond")
+    # Any name the units module parses is a `Unit`, compared as a unit.
+    assert Metadata(data_unit="a.u.").data_unit == Unit("au")
+    assert Metadata(data_unit="mm/s").data_unit == Unit("millimeter/second")
+    # A name it cannot parse stays the file's own string.
+    assert Metadata(data_unit="mm2/s").data_unit == "mm2/s"
+    with pytest.raises(TypeError):
+        Metadata(data_unit=3)
+    # Written as its symbol, which parses back to the same unit.
+    assert meta.to_bids() == {"DataUnit": "ms"}
+    for name in ("a.u.", "mm/s", "degC", "uV", "HU"):
+        bids = Metadata(data_unit=name).to_bids()
+        assert Metadata.from_bids(bids).data_unit == Unit(name)
+    assert Metadata(data_unit="mm2/s").to_bids() == {"DataUnit": "mm2/s"}
 
 
 def test_data_type_is_a_native_dtype() -> None:

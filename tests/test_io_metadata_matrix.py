@@ -92,6 +92,9 @@ FULL = dict(
     output_space="MNI152NLin2009cAsym",
     extra={"TaskName": "rest"},
 )
+# The values as the hub holds them (`"a.u."` is a `Unit`), to compare
+# with what a conversion gives back.
+HUB = Metadata(**FULL)
 
 
 def _nifti_record() -> nb.Nifti1Header:
@@ -148,7 +151,7 @@ def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa
     back, report = _to(converted, Metadata, on_loss="ignore")
     assert not report.lossy
     for name in VOCABULARY + ("extra",):
-        expected = FULL[name]
+        expected = getattr(HUB, name)
         if name in cls.unsupported_fields:
             expected = {} if name == "extra" else None
         assert getattr(back, name) == expected, name
@@ -173,7 +176,7 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
     expected -= cls.derived_fields
     assert not report.lost
     for name in sorted(expected):
-        assert getattr(back, name) == FULL[name], name
+        assert getattr(back, name) == getattr(HUB, name), name
     if cls.supports("extra"):
         assert back.extra == FULL["extra"]
 
@@ -194,5 +197,5 @@ def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
     back = io.load(str(tmp_path / "full.ome.zarr")).metadata
     for name in sorted(VOCABULARY):
         if OmeZarrMetadata.supports(name):
-            assert getattr(back, name) == FULL[name], name
+            assert getattr(back, name) == getattr(HUB, name), name
     assert back.extra == FULL["extra"]

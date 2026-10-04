@@ -365,15 +365,18 @@ affine, which is why `_decode`/`_encode` take the data model object too.
 
 `Channel.color` is an RGBA hex string; LUT arrays stay in `extra`.
 
-`data_unit` is a `Unit` when `brainhops.datamodel.units` knows the
-name, and the name otherwise: the units module knows time, length and
-sample units only (no intensity, angle, field or arbitrary units, and no
-compound units such as `"mm/s"`), and the codecs must round-trip NRRD
-`sample units: "mm/s"` and OME `"a.u."`, so `Maybe[Unit]` alone would
-refuse real files. A follow-up issue (to be opened) widens the units
-module (intensity, angle, magnetic field, compound units; `pint` is the
-obvious candidate); the field then narrows to `Unit` without a
-vocabulary change.
+`data_unit` is a `Unit` whenever `brainhops.datamodel.units` (backed by
+`pint` since #291) parses the name: compound units (`"mm/s"`),
+intensity, angle and field units, and the arbitrary unit (`"a.u."`,
+`"au"`) all parse. Only a name that does not parse (`"mm2/s"`) stays a
+string, so that a file with an odd unit still reads. The type therefore
+stays `Maybe[Union[Unit, str]]` with a lenient converter (`Unit(name)`,
+the string on `ValueError`) rather than `Maybe[Unit]`: a strict field
+would refuse real files, and declaring `Unit` while holding a string
+would lie to type checkers. Units compare as units
+(`Unit("a.u.") == Unit("au")`), not as strings. A codec writes a `Unit`
+as its symbol (`Unit("a.u.").symbol == "a.u."`, `"mm / s"`, `"ms"`),
+which parses back to the same unit, and an unparsed name as it was read.
 
 `data_type` is the element type of the data as stored, which may differ
 from the type of the loaded array (a scaled `int16` file loads as
@@ -891,7 +894,7 @@ question 8.
 > list of objects with CamelCase keys, times are ISO strings. `to_bids`
 > takes `on_loss=` and reports the diffusion fields as lost, and an
 > encoding direction along no voxel axis. A known term is written as its
-> string, `data_unit` as its unit name, `data_type` as its `numpy` name.
+> string, `data_unit` as its unit symbol, `data_type` as its `numpy` name.
 > `from_bids` also takes a JSON string or an open file.
 
 ## 8. Where `bagof.magic` is used, and where it is not (M4)
@@ -1571,8 +1574,9 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   are module constants. A free-text field with known terms is
   `Union[<Enum>, str]` (`Space`, `Intent`, `Manufacturer`,
   `IlluminationType`, `ContrastMethod`); `data_unit` is a `Unit` when
-  known; encoding directions are `EncodingDirection` vectors (voxel axes
-  by default, BIDS strings accepted); `bvalues`/`bvectors`. LTA/M3Z
+  the units module parses it, the name otherwise, written as its
+  symbol; encoding directions are `EncodingDirection` vectors (voxel
+  axes by default, BIDS strings accepted); `bvalues`/`bvectors`. LTA/M3Z
   image references are `moving`/`fixed`; `sources` is BIDS provenance.
 - **M4** `Magic` is used for the vocabulary fields (on mixins), for
   `from_other`/`from_instance` conversion, and for polymorphic
