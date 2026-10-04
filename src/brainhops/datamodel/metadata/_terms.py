@@ -16,66 +16,6 @@ from ..enums import Space
 from ..units import Unit
 from ._sentinel import UNSUPPORTED
 
-# ----------------------------------------------------------------------
-#   CONVERTERS
-# ----------------------------------------------------------------------
-
-
-def _passes(value: tx.Any) -> bool:
-    """`None` and `UNSUPPORTED` go through every vocabulary converter."""
-    return value is None or value is UNSUPPORTED
-
-
-class _Term:
-    """
-    The converter of a free-text field with a list of known terms (an
-    enum): a known term becomes the enum member, any other string stays
-    a string. `bagof` does not do this for a `Union[Enum, str]` by
-    itself (a string already satisfies the union).
-    """
-
-    def __init__(self, enum: type) -> None:
-        self.enum = enum
-
-    def __call__(self, value: tx.Any) -> tx.Any:
-        if _passes(value) or isinstance(value, self.enum):
-            return value
-        if isinstance(value, str):
-            try:
-                return self.enum(value)
-            except ValueError:
-                return str(value)
-        raise TypeError(
-            f"Expected a {self.enum.__name__} or a str, not "
-            f"{type(value).__name__}."
-        )
-
-
-def _unit(value: tx.Any) -> tx.Any:
-    """A unit name the units module parses, as a `Unit`; a name it
-    cannot parse stays a string, so that a file's own spelling survives."""
-    if _passes(value) or isinstance(value, Unit):
-        return value
-    if isinstance(value, str):
-        try:
-            return Unit(value)
-        except ValueError:
-            return value
-    raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
-
-
-def _dtype(value: tx.Any) -> tx.Any:
-    """A numpy data type, in native byte order: the byte order is
-    storage encoding, never metadata (M1)."""
-    if _passes(value):
-        return value
-    return np.dtype(value).newbyteorder("=")
-
-
-# ----------------------------------------------------------------------
-#   STRUCTURED VALUES
-# ----------------------------------------------------------------------
-
 
 class GeneratedBy(DataModelBase):
     """One entry of BIDS `GeneratedBy`: a program that made the data."""
@@ -108,20 +48,34 @@ class Channel(DataModelBase):
     ] = None
 
 
-_AXES = "ijk"
+# ----------------------------------------------------------------------
+#   CONVERTERS THAT THE DECLARATION OF `EncodingDirection` USES
+# ----------------------------------------------------------------------
 
 
-def _bids_vector(value: str) -> tx.Tuple[float, ...]:
-    """The unit vector of a BIDS direction (`"i"`, `"j-"`, `"k"`)."""
-    axis = value[:-1] if value.endswith("-") else value
-    if len(axis) != 1 or axis not in _AXES:
-        raise ValueError(
-            f"A BIDS direction is one of 'i', 'j', 'k', optionally "
-            f"followed by '-', not {value!r}."
+class _Term:
+    """
+    The converter of a free-text field with a list of known terms (an
+    enum): a known term becomes the enum member, any other string stays
+    a string. `bagof` does not do this for a `Union[Enum, str]` by
+    itself (a string already satisfies the union).
+    """
+
+    def __init__(self, enum: type) -> None:
+        self.enum = enum
+
+    def __call__(self, value: tx.Any) -> tx.Any:
+        if _passes(value) or isinstance(value, self.enum):
+            return value
+        if isinstance(value, str):
+            try:
+                return self.enum(value)
+            except ValueError:
+                return str(value)
+        raise TypeError(
+            f"Expected a {self.enum.__name__} or a str, not "
+            f"{type(value).__name__}."
         )
-    vector = [0.0] * len(_AXES)
-    vector[_AXES.index(axis)] = -1.0 if value.endswith("-") else 1.0
-    return tuple(vector)
 
 
 def _vector(value: tx.Any) -> tx.Tuple[float, ...]:
@@ -235,6 +189,37 @@ class EncodingDirection(DataModelBase):
         return f"EncodingDirection({vector!r}, space={str(self.space)!r})"
 
 
+# ----------------------------------------------------------------------
+#   CONVERTERS
+# ----------------------------------------------------------------------
+
+
+def _passes(value: tx.Any) -> bool:
+    """`None` and `UNSUPPORTED` go through every vocabulary converter."""
+    return value is None or value is UNSUPPORTED
+
+
+def _unit(value: tx.Any) -> tx.Any:
+    """A unit name the units module parses, as a `Unit`; a name it
+    cannot parse stays a string, so that a file's own spelling survives."""
+    if _passes(value) or isinstance(value, Unit):
+        return value
+    if isinstance(value, str):
+        try:
+            return Unit(value)
+        except ValueError:
+            return value
+    raise TypeError(f"Expected a Unit or a str, not {type(value).__name__}.")
+
+
+def _dtype(value: tx.Any) -> tx.Any:
+    """A numpy data type, in native byte order: the byte order is
+    storage encoding, never metadata (M1)."""
+    if _passes(value):
+        return value
+    return np.dtype(value).newbyteorder("=")
+
+
 def _direction(value: tx.Any) -> tx.Any:
     """The converter of an encoding direction field: a BIDS string, a
     vector, a mapping (`vector`/`space`, or the JSON `Vector`/`Space`)."""
@@ -245,3 +230,19 @@ def _direction(value: tx.Any) -> tx.Any:
         space = value.get("space", value.get("Space"))
         return EncodingDirection(vector, space=space)
     return EncodingDirection(value)
+
+
+def _bids_vector(value: str) -> tx.Tuple[float, ...]:
+    """The unit vector of a BIDS direction (`"i"`, `"j-"`, `"k"`)."""
+    axis = value[:-1] if value.endswith("-") else value
+    if len(axis) != 1 or axis not in _AXES:
+        raise ValueError(
+            f"A BIDS direction is one of 'i', 'j', 'k', optionally "
+            f"followed by '-', not {value!r}."
+        )
+    vector = [0.0] * len(_AXES)
+    vector[_AXES.index(axis)] = -1.0 if value.endswith("-") else 1.0
+    return tuple(vector)
+
+
+_AXES = "ijk"

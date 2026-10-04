@@ -23,6 +23,7 @@ from ._vocabulary import (
     FILE,
     GRID,
     GROUPS,
+    SCOPES,
     VOCABULARY,
     VOLUME,
     DiffusionMetadata,
@@ -563,7 +564,7 @@ class Metadata(
             value = getattr(self, name, None)
             if value is UNSUPPORTED or name in self.unsupported_fields:
                 continue
-            scope = _field_scope(name)
+            scope = SCOPES.get(name, FILE)
             if name == "creation_time":
                 value = None
             elif name == "history" and step is not None:
@@ -631,24 +632,6 @@ def _fits(value: tx.Any, cls: type) -> bool:
     if type(value) is cls:
         return True
     return cls is not Metadata and isinstance(value, cls)
-
-
-def _field_metadata(name: str) -> tx.Dict[str, tx.Any]:
-    for field in fields(Metadata):
-        if field.name == name:
-            meta = field.metadata
-            return dict(meta) if isinstance(meta, dict) else {}
-    raise KeyError(name)
-
-
-def _field_scope(name: str) -> str:
-    """The propagation scope of a vocabulary field."""
-    return _field_metadata(name).get("scope", FILE)
-
-
-def _bids_key(name: str) -> tx.Optional[str]:
-    """The BIDS key of a vocabulary field, or `None` if BIDS has none."""
-    return _field_metadata(name).get("bids")
 
 
 def _with_brainhops(

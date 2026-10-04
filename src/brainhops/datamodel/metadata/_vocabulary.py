@@ -2,9 +2,11 @@
 
 __all__ = [
     "ACQUISITION",
+    "BIDS_KEYS",
     "FILE",
     "GRID",
     "GROUPS",
+    "SCOPES",
     "VOCABULARY",
     "VOLUME",
     "Bids",
@@ -24,7 +26,7 @@ import itertools
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, Field, Magic
+from bagof.magic import ConvertTo, Field, Magic, fields
 
 # internals
 from brainhops._core.compat import own_annotations
@@ -48,23 +50,20 @@ from ._terms import (
     _unit,
 )
 
-# ----------------------------------------------------------------------
-#   FIELD ANNOTATIONS
-# ----------------------------------------------------------------------
-
 FILE = "file"
 """Scope of a field about the file itself (kept by `derive`)."""
+
 
 ACQUISITION = "acquisition"
 """Scope of a field invariant under resampling (kept by `derive`)."""
 
+
 GRID = "grid"
 """Scope of a field tied to the voxel grid (cleared when it changes)."""
 
+
 VOLUME = "volume"
 """Scope of a field with one entry per volume or channel."""
-
-_SCOPES = (FILE, ACQUISITION, GRID, VOLUME)
 
 
 class Bids(Field):
@@ -90,8 +89,9 @@ class Scope(Field):
     """
 
     def __init__(self, scope: str) -> None:
-        if scope not in _SCOPES:
-            raise ValueError(f"A scope is one of {_SCOPES}, not {scope!r}.")
+        scopes = (FILE, ACQUISITION, GRID, VOLUME)
+        if scope not in scopes:
+            raise ValueError(f"A scope is one of {scopes}, not {scope!r}.")
         super().__init__(metadata={"scope": scope})
 
 
@@ -437,19 +437,19 @@ class TransformMetadata(_VocabularyGroup):
     ] = None
 
 
-_GROUP_CLASSES = (
-    ProvenanceMetadata,
-    MRIMetadata,
-    DiffusionMetadata,
-    DisplayMetadata,
-    MicroscopyMetadata,
-    TransformMetadata,
-)
-
 GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {
-    group: tuple(own_annotations(group)) for group in _GROUP_CLASSES
+    group: tuple(own_annotations(group))
+    for group in (
+        ProvenanceMetadata,
+        MRIMetadata,
+        DiffusionMetadata,
+        DisplayMetadata,
+        MicroscopyMetadata,
+        TransformMetadata,
+    )
 }
 """Each vocabulary group class, and the names of its fields."""
+
 
 VOCABULARY: tx.Tuple[str, ...] = tuple(
     itertools.chain.from_iterable(GROUPS.values())
@@ -460,3 +460,21 @@ one (it is the free-form store next to them). `bagof` lists the fields of
 a class with several bases in reverse MRO order, so this is the order to
 iterate in, never `fields(Metadata)`.
 """
+
+
+BIDS_KEYS: tx.Dict[str, str] = {
+    field.name: field.metadata["bids"]
+    for group in GROUPS
+    for field in fields(group)
+    if "bids" in (field.metadata or {})
+}
+"""Vocabulary field -> its BIDS sidecar key (`Bids(...)`), for the fields
+BIDS has a key for."""
+
+
+SCOPES: tx.Dict[str, str] = {
+    field.name: (field.metadata or {}).get("scope", FILE)
+    for group in GROUPS
+    for field in fields(group)
+}
+"""Vocabulary field -> its propagation scope (`Scope(...)`)."""

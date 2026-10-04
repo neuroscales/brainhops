@@ -43,6 +43,8 @@ __all__ = [
     "VOLUME",
     "VOCABULARY",
     "GROUPS",
+    "BIDS_KEYS",
+    "SCOPES",
     "GeneratedBy",
     "Channel",
     "EncodingDirection",
@@ -75,7 +77,6 @@ from types import FunctionType as _FunctionType
 from brainhops._core.properties import Lazy, LazyField
 
 from ._base import Metadata
-from ._base import _bids_key as _bids_key  # for the BIDS codec
 from ._field import MetadataField
 from ._filebased import FileBasedMetadata, OpaqueMetadata, preferred_dtype
 from ._report import (
@@ -93,9 +94,11 @@ from ._sentinel import ALL, UNSUPPORTED, Maybe, Unsupported
 from ._terms import Channel, EncodingDirection, GeneratedBy
 from ._vocabulary import (
     ACQUISITION,
+    BIDS_KEYS,
     FILE,
     GRID,
     GROUPS,
+    SCOPES,
     VOCABULARY,
     VOLUME,
     Bids,

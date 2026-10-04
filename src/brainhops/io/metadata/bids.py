@@ -40,6 +40,7 @@ import typing_extensions as tx
 # internals
 from brainhops._core import path
 from brainhops.datamodel.metadata import (
+    BIDS_KEYS,
     GROUPS,
     UNSUPPORTED,
     VOCABULARY,
@@ -50,7 +51,6 @@ from brainhops.datamodel.metadata import (
     GeneratedBy,
     LossPolicy,
     Metadata,
-    _bids_key,
     apply_loss_policy,
 )
 from brainhops.datamodel.units import Unit
@@ -82,7 +82,7 @@ def _camel(name: str) -> str:
 def sidecar_key(name: str) -> str:
     """The sidecar key of a vocabulary field: its BIDS key, or its name
     in `CamelCase` when BIDS has none."""
-    return _bids_key(name) or _camel(name)
+    return BIDS_KEYS.get(name) or _camel(name)
 
 
 def _keys() -> tx.Dict[str, str]:

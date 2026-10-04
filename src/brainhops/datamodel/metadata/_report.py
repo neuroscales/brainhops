@@ -25,10 +25,6 @@ from bagof.magic import Factory
 # internals
 from ..base import DataModelBase
 
-# ----------------------------------------------------------------------
-#   LOSS REPORTING
-# ----------------------------------------------------------------------
-
 
 class ConversionReport(DataModelBase):
     """
@@ -97,14 +93,6 @@ class ConversionReport(DataModelBase):
         return f"Metadata conversion {where}: " + "; ".join(parts) + "."
 
 
-def _short(value: tx.Any, width: int = 40) -> str:
-    if isinstance(value, enum.Enum):
-        # A known term reads as the term (`'scanner'`).
-        value = value.value
-    text = repr(value)
-    return text if len(text) <= width else text[: width - 3] + "..."
-
-
 class MetadataLossWarning(UserWarning):
     """Some metadata could not be carried over. `report` says what."""
 
@@ -128,26 +116,7 @@ class MetadataLossError(Exception):
         self.report = report
 
 
-_POLICIES = ("ignore", "warn", "raise")
-
 LossPolicy = tx.Literal["ignore", "warn", "raise"]
-
-_POLICY: "contextvars.ContextVar[str]" = contextvars.ContextVar(
-    "brainhops_metadata_loss_policy", default="warn"
-)
-
-
-def _check_policy(policy: str) -> str:
-    if policy not in _POLICIES:
-        raise ValueError(
-            f"A metadata loss policy is one of {_POLICIES}, not {policy!r}."
-        )
-    return policy
-
-
-def get_metadata_loss_policy() -> str:
-    """The loss policy in effect (`"warn"` unless set)."""
-    return _POLICY.get()
 
 
 @contextlib.contextmanager
@@ -170,6 +139,11 @@ def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
         yield
     finally:
         _POLICY.reset(token)
+
+
+def get_metadata_loss_policy() -> str:
+    """The loss policy in effect (`"warn"` unless set)."""
+    return _POLICY.get()
 
 
 def apply_loss_policy(
@@ -197,14 +171,6 @@ def apply_loss_policy(
         return report
     warnings.warn(MetadataLossWarning(report), stacklevel=stacklevel + 1)
     return report
-
-
-_Reports = tx.Optional[tx.List[ConversionReport]]
-
-# The reports collected by `collect_loss_reports`, when one is active.
-_COLLECTED: "contextvars.ContextVar[_Reports]" = contextvars.ContextVar(
-    "brainhops_metadata_loss_reports", default=None
-)
 
 
 @contextlib.contextmanager
@@ -244,3 +210,41 @@ def one_loss_warning(*, stacklevel: int = 2) -> tx.Iterator[None]:
         for report in reports:
             merged.merge(report)
         apply_loss_policy(merged, "warn", stacklevel=stacklevel + 2)
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _short(value: tx.Any, width: int = 40) -> str:
+    if isinstance(value, enum.Enum):
+        # A known term reads as the term (`'scanner'`).
+        value = value.value
+    text = repr(value)
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+_POLICIES = ("ignore", "warn", "raise")
+
+
+def _check_policy(policy: str) -> str:
+    if policy not in _POLICIES:
+        raise ValueError(
+            f"A metadata loss policy is one of {_POLICIES}, not {policy!r}."
+        )
+    return policy
+
+
+_POLICY: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "brainhops_metadata_loss_policy", default="warn"
+)
+
+
+_Reports = tx.Optional[tx.List[ConversionReport]]
+
+
+# The reports collected by `collect_loss_reports`, when one is active.
+_COLLECTED: "contextvars.ContextVar[_Reports]" = contextvars.ContextVar(
+    "brainhops_metadata_loss_reports", default=None
+)

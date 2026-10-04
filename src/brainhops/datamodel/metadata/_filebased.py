@@ -393,58 +393,9 @@ class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):
     ] = None
 
 
-def _copy_snapshot(snapshot: tx.Optional[Metadata]) -> tx.Optional[Metadata]:
-    return None if snapshot is None else snapshot.copy()
-
-
-def _extra_diff(
-    before: tx.Optional[tx.Mapping], after: tx.Any
-) -> tx.Dict[str, tx.Any]:
-    before = dict(before or {})
-    after = dict(after or {})
-    diff = {
-        key: value
-        for key, value in after.items()
-        if key not in before or _differs(value, before[key])
-    }
-    for key in before:
-        if key not in after:
-            diff[key] = None
-    return diff
-
-
-def _agrees(value: tx.Any, given: tx.Any) -> bool:
-    """Whether a value agrees with what the data model gives (numbers
-    within single-precision rounding)."""
-    if isinstance(value, (int, float)) and isinstance(given, (int, float)):
-        return math.isclose(value, given, rel_tol=1e-6, abs_tol=1e-9)
-    return not _differs(value, given)
-
-
-def _differs(a: tx.Any, b: tx.Any) -> bool:
-    """Whether two field values differ, without trusting `!=` on arrays."""
-    if a is b:
-        return False
-    try:
-        return bool(a != b)
-    except Exception:
-        return True
-
-
 # ----------------------------------------------------------------------
 #   WRITERS
 # ----------------------------------------------------------------------
-
-
-def _same_kind(source: np.dtype, target: np.dtype) -> bool:
-    """Whether values of `source` may be stored as `target` without
-    changing their kind: integers (booleans included) as integers,
-    floats as floats, complex numbers as complex numbers."""
-
-    def kind(dtype: np.dtype) -> str:
-        return "i" if dtype.kind in "biu" else dtype.kind
-
-    return kind(source) == kind(target) and target.kind != "b"
 
 
 def preferred_dtype(
@@ -487,3 +438,57 @@ def preferred_dtype(
                 f"{wanted.name} values"
             )
     return array_dtype
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _copy_snapshot(snapshot: tx.Optional[Metadata]) -> tx.Optional[Metadata]:
+    return None if snapshot is None else snapshot.copy()
+
+
+def _extra_diff(
+    before: tx.Optional[tx.Mapping], after: tx.Any
+) -> tx.Dict[str, tx.Any]:
+    before = dict(before or {})
+    after = dict(after or {})
+    diff = {
+        key: value
+        for key, value in after.items()
+        if key not in before or _differs(value, before[key])
+    }
+    for key in before:
+        if key not in after:
+            diff[key] = None
+    return diff
+
+
+def _agrees(value: tx.Any, given: tx.Any) -> bool:
+    """Whether a value agrees with what the data model gives (numbers
+    within single-precision rounding)."""
+    if isinstance(value, (int, float)) and isinstance(given, (int, float)):
+        return math.isclose(value, given, rel_tol=1e-6, abs_tol=1e-9)
+    return not _differs(value, given)
+
+
+def _differs(a: tx.Any, b: tx.Any) -> bool:
+    """Whether two field values differ, without trusting `!=` on arrays."""
+    if a is b:
+        return False
+    try:
+        return bool(a != b)
+    except Exception:
+        return True
+
+
+def _same_kind(source: np.dtype, target: np.dtype) -> bool:
+    """Whether values of `source` may be stored as `target` without
+    changing their kind: integers (booleans included) as integers,
+    floats as floats, complex numbers as complex numbers."""
+
+    def kind(dtype: np.dtype) -> str:
+        return "i" if dtype.kind in "biu" else dtype.kind
+
+    return kind(source) == kind(target) and target.kind != "b"
