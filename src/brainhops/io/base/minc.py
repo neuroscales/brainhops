@@ -54,11 +54,9 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
-from nibabel import minc1 as _minc1
-from nibabel import minc2 as _minc2
-from nibabel.externals.netcdf import netcdf_file as _netcdf_file
 
 # internals
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 from brainhops._core.streams import open_compressed, preserve_position
 from brainhops._core.typing import ArrayProtocol
@@ -74,6 +72,9 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     SnifferContentError,
 )
+
+if tx.TYPE_CHECKING:
+    from nibabel import minc1 as _minc1
 
 _NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02")
 """The magic numbers of NetCDF classic files (MINC1)."""
@@ -473,7 +474,7 @@ def _sniff_minc2(file: tx.Union[str, tx.IO]) -> float:
 def _read_minc(
     source: _Source,
     version: int,
-    read: tx.Callable[[tx.Any, _minc1.Minc1File, int], tx.Any],
+    read: "tx.Callable[[tx.Any, _minc1.Minc1File, int], tx.Any]",
 ) -> tx.Any:
     """
     Open a MINC file with `nibabel`, read it, and close it.
@@ -487,9 +488,13 @@ def _read_minc(
     try:
         if version == 1:
             if isinstance(source, str):
-                container = _netcdf_file(source, "r", mmap=True)
+                container = deps.nb.externals.netcdf.netcdf_file(
+                    source, "r", mmap=True
+                )
             else:
-                container = _netcdf_file(BytesIO(source), "r", mmap=False)
+                container = deps.nb.externals.netcdf.netcdf_file(
+                    BytesIO(source), "r", mmap=False
+                )
         else:
             import h5py
 
@@ -500,14 +505,16 @@ def _read_minc(
     mfile, failure = None, None
     try:
         try:
-            mfile = (_minc1.Minc1File if version == 1 else _minc2.Minc2File)(
-                container
-            )
+            mfile = (
+                deps.nb.minc1.Minc1File
+                if version == 1
+                else deps.nb.minc2.Minc2File
+            )(container)
         except (
             AttributeError,
             KeyError,
             ValueError,
-            _minc1.MincError,
+            deps.nb.minc1.MincError,
         ) as e:
             # Raised outside of this block: the traceback would otherwise
             # keep the (memory-mapped) variables alive past `close`.
@@ -526,7 +533,7 @@ def _read_minc(
 
 
 def _read_voxels(
-    container: tx.Any, mfile: _minc1.Minc1File, version: int
+    container: tx.Any, mfile: "_minc1.Minc1File", version: int
 ) -> np.ndarray:
     """The voxels of an open MINC file, scaled, in file (C) order."""
     array = mfile.get_scaled_data()
@@ -536,7 +543,7 @@ def _read_voxels(
 
 
 def _read_dimensions(
-    container: tx.Any, mfile: _minc1.Minc1File, version: int
+    container: tx.Any, mfile: "_minc1.Minc1File", version: int
 ) -> tx.Tuple[MincDimension, ...]:
     """The dimensions of the image of an open MINC file (its NetCDF or
     HDF5 container), slowest first."""

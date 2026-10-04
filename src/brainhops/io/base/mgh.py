@@ -42,9 +42,9 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from nibabel.freesurfer import mghformat as _mgh
 
 # internals
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
@@ -75,6 +75,9 @@ from brainhops.io.base.parsers import (
     preserve_position,
 )
 
+if tx.TYPE_CHECKING:
+    from nibabel.freesurfer import mghformat as _mgh
+
 MGH_HEADER_SIZE = 284
 """Size in bytes of the fixed MGH header; the voxels start right after."""
 
@@ -99,7 +102,9 @@ _MGH_AXES = [
 _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
 """The footer fields, as `nibabel` names them."""
 
-_MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
+_MGHImage = deps.lazy_type("nibabel.freesurfer.mghformat:MGHImage")
+_MGHHeader = deps.lazy_type("nibabel.freesurfer.mghformat:MGHHeader")
+_MghObject = tx.Union[_MGHHeader, _MGHImage]
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
@@ -135,7 +140,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     # --- MGH API ------------------------------------------------------
 
     image: tx.Annotated[
-        tx.Optional[_mgh.MGHImage],
+        tx.Optional[_MGHImage],
         tx.Doc(
             """
             The `nibabel` MGH image associated with this object, or `None`
@@ -145,7 +150,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     ] = None
 
     _header: tx.Annotated[
-        tx.Optional[_mgh.MGHHeader],
+        tx.Optional[_MGHHeader],
         tx.Doc(
             """
             The `nibabel` MGH header associated with this object.
@@ -183,7 +188,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     ] = None
 
     @property
-    def header(self) -> tx.Optional[_mgh.MGHHeader]:
+    def header(self) -> "tx.Optional[_mgh.MGHHeader]":
         """The `nibabel` MGH header: the one set explicitly, or else the
         header of `image`, or `None`."""
         if getattr(self, "_header", None) is not None:
@@ -193,7 +198,7 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         return None
 
     @header.setter
-    def header(self, value: tx.Optional[_mgh.MGHHeader]) -> None:
+    def header(self, value: "tx.Optional[_mgh.MGHHeader]") -> None:
         self._header = value
 
     @property
@@ -407,7 +412,9 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
             start = stream.tell()
             prefix = _read_prefix(stream)
             stream.seek(start)
-            image = _image_from_stream(_mgh.MGHImage, stream, **kwargs)
+            image = _image_from_stream(
+                deps.nb.freesurfer.mghformat.MGHImage, stream, **kwargs
+            )
             tags = _read_tags(stream, image.header)
         return cls(
             image=image,
@@ -425,15 +432,15 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     def from_nibabel(cls, mgh: _MghObject, **kwargs) -> tx.Self:
         """Build the object from an already-loaded `nibabel` MGH header
         or image."""
-        if isinstance(mgh, _mgh.MGHHeader):
+        if isinstance(mgh, _MGHHeader):
             return cls(header=mgh, **kwargs)
-        if isinstance(mgh, _mgh.MGHImage):
+        if isinstance(mgh, _MGHImage):
             return cls(image=mgh, header=mgh.header, **kwargs)
         raise TypeError(f"Expected an MGH image or header, got {type(mgh)}")
 
     # --- FileParserWriter API -----------------------------------------
 
-    def to_nibabel(self, **kwargs) -> _mgh.MGHImage:
+    def to_nibabel(self, **kwargs) -> "_mgh.MGHImage":
         """Build the `nibabel` image that encodes this object.
 
         Each concrete MGH format overrides this method; the other writer
@@ -527,7 +534,7 @@ def _mgh_from_filename(
     *,
     mmap: tx.Union[bool, str] = True,
     keep_file_open: tx.Optional[bool] = None,
-) -> _mgh.MGHImage:
+) -> "_mgh.MGHImage":
     """
     `nibabel`'s `MGHImage.from_filename`, but closing the file the header
     is read from.
@@ -538,7 +545,7 @@ def _mgh_from_filename(
     lazily: the array proxy holds the file name, and opens the file
     itself when they are read.
     """
-    klass = _mgh.MGHImage
+    klass = deps.nb.freesurfer.mghformat.MGHImage
     if mmap not in (True, False, "c", "r"):
         raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
     file_map = klass.filespec_to_file_map(filename)
@@ -562,7 +569,7 @@ def _seekable(fileobj: tx.IO) -> bool:
         return False
 
 
-def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:
+def _read_tags(stream: tx.BinaryIO, header: "_mgh.MGHHeader") -> bytes:
     """Read the raw bytes after the footer of a decompressed stream.
 
     Offsets are from the start of the stream, as `nibabel` takes them."""

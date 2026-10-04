@@ -16,6 +16,7 @@ from bagof.magic import Field, fields
 # internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
+from brainhops.io.base import _registry
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     BinaryFileParser,
@@ -60,8 +61,9 @@ def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
     #   visible at the class that opts into it.
 
     # Assign to `cls.__dict__`, so that `_is_dispatcher` can tell a class
-    # that *owns* a registry from one that merely inherits one.
-    cls._REGISTRY = set()
+    # that *owns* a registry from one that merely inherits one. The
+    # registry may exist already, holding the formats declared into it.
+    cls._REGISTRY = _registry.registry_for(_registry.key_of(cls), cls)
     return cls
 
 
@@ -84,10 +86,17 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
         whose `load` re-enters dispatch.
 
     !!! note "Order does not matter"
-        The registry is an unordered `set`, deliberately: registration
-        order is import order, which is neither stable nor meaningful.
-        Dispatch never falls back on it -- candidates that cannot be
-        separated on merit raise `AmbiguousFormatError` instead.
+        Registration order is import order, which is neither stable nor
+        meaningful, so dispatch never falls back on it -- candidates
+        that cannot be separated on merit raise `AmbiguousFormatError`
+        instead.
+
+    !!! note "Declared formats"
+        The formats of `brainhops` are declared ahead of import (see
+        `brainhops.io.base._registry`), so that dispatch finds them
+        without importing them all. Registering one of them fills in
+        its declared entry. A format of another package needs no
+        declaration: it is found once its module is imported.
 
     Parameters
     ----------

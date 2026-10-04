@@ -120,7 +120,7 @@ class Minc2Image(MincImage):
 MincImage.VARIANTS = (Minc1Image, Minc2Image)
 
 # MINC2 is HDF5: without h5py, it is not registered, and asking for it by
-# hint says what to install (see the package's `__init__`).
+# hint says what to install (see `brainhops.io.images._entries`).
 if HAS_H5PY:
     register_format(Minc2Image)
 

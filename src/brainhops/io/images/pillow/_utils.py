@@ -46,12 +46,17 @@ from io import BytesIO
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
-from PIL import Image, UnidentifiedImageError
 
 # internals
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import ParserContentError, WriterError
+
+# Pillow is imported where it is used, rather than here: this module is
+# imported to sniff any file, and `sniff_pillow` declines a file that
+# starts with none of the magic numbers of `SNIFF_FORMATS` without it.
+if tx.TYPE_CHECKING:
+    from PIL import Image
 
 EXTENSIONS: tx.Tuple[str, ...] = (
     ".png",
@@ -107,6 +112,28 @@ Each starts with a magic number. Formats that have none, or a weak one
 arbitrary binary data is never mistaken for them.
 """
 
+# How each of `SNIFF_FORMATS` may start, as Pillow's plugins recognize
+# it (their `_accept`), so that a file that starts otherwise is declined
+# without importing Pillow. Pillow checks the rest.
+_MAGIC_NUMBERS: tx.Dict[str, tx.Tuple[bytes, ...]] = {
+    "PNG": (b"\x89PNG\r\n\x1a\n",),
+    "JPEG": (b"\xff\xd8\xff",),
+    "BMP": (b"BM",),
+    "GIF": (b"GIF87a", b"GIF89a"),
+    "WEBP": (b"RIFF",),
+    "PPM": tuple(b"P" + bytes([c]) for c in b"0123456fy"),
+    "JPEG2000": (b"\xff\x4f\xff\x51", b"\x00\x00\x00\x0cjP  \r\n\x87\n"),
+    "QOI": (b"qoif",),
+    "TIFF": (
+        b"MM\x00\x2a",
+        b"II\x2a\x00",
+        b"MM\x2a\x00",
+        b"II\x00\x2a",
+        b"MM\x00\x2b",
+        b"II\x2b\x00",
+    ),
+}
+
 DPI_FORMATS: tx.FrozenSet[str] = frozenset({"PNG", "JPEG", "BMP", "TIFF"})
 """The Pillow formats that can store a resolution in dots per inch."""
 
@@ -160,6 +187,8 @@ def _open(
 ) -> "Image.Image":
     """Open an image with Pillow, reporting a file it cannot identify as
     a parser error."""
+    from PIL import Image, UnidentifiedImageError
+
     if isinstance(file, (str, path.PathLike)):
         file = str(file)
     try:
@@ -196,6 +225,22 @@ def sniff_pillow(
     """
 
     if formats is not None:
+        # Narrow the formats down to those whose magic number the file
+        # starts with, before importing Pillow: most files sniffed here
+        # are not raster images at all.
+        head = _head(file)
+        if head is not None:
+            formats = [
+                fmt
+                for fmt in formats
+                if head.startswith(_MAGIC_NUMBERS.get(fmt, b""))
+            ]
+            if not formats:
+                return None
+
+    from PIL import Image
+
+    if formats is not None:
         Image.init()
         formats = [fmt for fmt in formats if fmt in Image.OPEN]
 
@@ -216,6 +261,18 @@ def sniff_pillow(
         with preserve_position(file):
             return identify(file)
     return identify(str(file))
+
+
+def _head(file: tx.Any) -> tx.Optional[bytes]:
+    """The first bytes of a file, or `None` if they cannot be read."""
+    try:
+        if hasattr(file, "read"):
+            with preserve_position(file):
+                return bytes(file.read(16))
+        with open(str(file), "rb") as f:
+            return f.read(16)
+    except Exception:
+        return None
 
 
 def pillow_to_array(
@@ -369,6 +426,8 @@ def read_pillow(
                 f"This file has {n_frames} frame(s), so it has no frame "
                 f"{frame}."
             )
+        from PIL import Image
+
         try:
             if index:
                 im.seek(index)
@@ -523,6 +582,8 @@ def array_to_pillow(array: tx.Any) -> "Image.Image":
             f"hold each are fewer still: PNG holds bool, uint8 and uint16, "
             f"and JPEG only uint8). Convert the data first."
         )
+    from PIL import Image
+
     array = np.ascontiguousarray(array)
     if array.dtype.byteorder not in ("=", "|"):
         array = array.astype(array.dtype.newbyteorder("="))
@@ -540,6 +601,8 @@ def format_for_name(name: tx.Any) -> tx.Optional[str]:
     or `None`."""
     if name is None:
         return None
+    from PIL import Image
+
     name = str(name).lower()
     Image.init()
     extensions = Image.registered_extensions()
@@ -554,6 +617,8 @@ def format_for_name(name: tx.Any) -> tx.Optional[str]:
 
 def can_write(format: str) -> bool:
     """Whether Pillow can write files in a format (by Pillow's name)."""
+    from PIL import Image
+
     Image.init()
     return str(format).upper() in Image.SAVE
 

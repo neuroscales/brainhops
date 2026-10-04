@@ -77,9 +77,10 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import Magic
 
+from brainhops._core import dependencies as deps
+
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import tifffile
 from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.images.base import _utils_raster as raster
 
@@ -193,6 +194,7 @@ _TIME_UNITS = {
 
 
 def _require_tifffile() -> tx.Any:
+    tifffile = deps.tifffile
     if tifffile is None:
         raise ImportError(
             "Reading this TIFF file needs tifffile: pip install "

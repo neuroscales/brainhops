@@ -2,16 +2,16 @@
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
-from nibabel.freesurfer import mghformat as _mgh
 
 # internals
+from brainhops._core import dependencies as deps
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
 from brainhops.io.base._base import register_format
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
+from brainhops.io.base.mgh import _MRI_PARAMS, MghParser, _MGHHeader, _MGHImage
 from brainhops.io.base.nifti import (
     _scale_spatial,
     _unit_scale,
@@ -19,6 +19,9 @@ from brainhops.io.base.nifti import (
 )
 from brainhops.io.base.parsers import WriterError
 from brainhops.io.images.base import WritableFileBasedImage
+
+if tx.TYPE_CHECKING:
+    from nibabel.freesurfer import mghformat as _mgh
 
 _SCANNER = "scanner"
 """Name of the scanner RAS space, the preferred world space."""
@@ -107,7 +110,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
 
-    def to_nibabel(self, like: tx.Any = None, **overrides) -> _mgh.MGHImage:
+    def to_nibabel(self, like: tx.Any = None, **overrides) -> "_mgh.MGHImage":
         """
         Build the `nibabel` image that encodes this image.
 
@@ -148,7 +151,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         dtype = overrides.pop("dtype", None)
         dtype = _mgh_dtype(data, dtype)
 
-        header = _mgh.MGHHeader()
+        header = deps.nb.freesurfer.mghformat.MGHHeader()
         for source in (self.header, _like_header(like)):
             if source is None:
                 continue
@@ -159,7 +162,9 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         header.set_data_dtype(dtype)
 
         vox2ras = _scanner_matrix(self.transformations)
-        return _mgh.MGHImage(data, vox2ras, header=header)
+        return deps.nb.freesurfer.mghformat.MGHImage(
+            data, vox2ras, header=header
+        )
 
 
 # ----------------------------------------------------------------------
@@ -288,16 +293,16 @@ def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
     )
 
 
-def _like_header(like: tx.Any) -> tx.Optional[_mgh.MGHHeader]:
+def _like_header(like: tx.Any) -> "tx.Optional[_mgh.MGHHeader]":
     """Resolve a `like` template to the MGH header to copy fields from."""
     if like is None:
         return None
-    if isinstance(like, _mgh.MGHHeader):
+    if isinstance(like, _MGHHeader):
         return like
-    if isinstance(like, _mgh.MGHImage):
+    if isinstance(like, _MGHImage):
         return like.header
     header = getattr(like, "header", None)
-    if isinstance(header, _mgh.MGHHeader):
+    if isinstance(header, _MGHHeader):
         return header
     if isinstance(like, (str, path.PathLike)):
         return MghImage.from_file(like).header

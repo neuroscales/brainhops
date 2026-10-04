@@ -1,5 +1,4 @@
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
@@ -24,6 +23,9 @@ from brainhops.io.base.nifti import (
 )
 from brainhops.io.base.parsers import Confidence, WriterError
 from brainhops.io.images.base import WritableFileBasedImage
+
+if tx.TYPE_CHECKING:
+    import nibabel as nb
 
 
 @register_format
@@ -88,7 +90,7 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the `nibabel` image that encodes this image.
 
@@ -128,7 +130,7 @@ class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
 
 
 def _nifti_to_transformations(
-    header: nb.Nifti1Header,
+    header: "nb.Nifti1Header",
 ) -> tx.List[Transformation]:
     """
     Convert a NIfTI header to a list of transformations.

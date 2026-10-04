@@ -22,5 +22,38 @@ __all__ = [
     "vectors",
 ]
 
-from . import base, images, transformations, vectors
-from .base import FileBasedObject, WritableFileBasedObject, load, save, sniff
+# dependencies
+import typing_extensions as tx
+
+# internals
+from brainhops._core.lazy import lazy_exports
+
+# The subpackages are imported on first access. `load`, `save` and
+# `sniff` find every format whether or not `images` and `transformations`
+# were accessed first: a registry asked for its formats has the packages
+# of every kind declare theirs, and imports a format when it needs it.
+__getattr__, __dir__ = lazy_exports(
+    __name__,
+    globals(),
+    {
+        "FileBasedObject": ".base",
+        "WritableFileBasedObject": ".base",
+        "base": ".base",
+        "images": ".images",
+        "load": ".base",
+        "save": ".base",
+        "sniff": ".base",
+        "transformations": ".transformations",
+        "vectors": ".vectors",
+    },
+)
+
+if tx.TYPE_CHECKING:
+    from . import base, images, transformations, vectors
+    from .base import (
+        FileBasedObject,
+        WritableFileBasedObject,
+        load,
+        save,
+        sniff,
+    )

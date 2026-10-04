@@ -35,7 +35,6 @@ import itertools
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from abczarr.ome.v0_6 import transformations as _ot
 from bagof.dispatchers import Function, NoMethodError
 
 # internals
@@ -144,19 +143,37 @@ _from_ome_fn: Function = Function("from_ome")
 _from_order = itertools.count()
 
 
-def _from_ome(ome_type: type) -> tx.Callable:
-    # Register a reader for one OME-Zarr coordinate transformation type. Only
-    # the first parameter (the OME transform) is dispatched on; the rest are
+def _from_ome(name: str) -> tx.Callable:
+    # Register a reader for one OME-Zarr coordinate transformation type,
+    # named as in `abczarr.ome.v0_6.transformations`. Only the first
+    # parameter (the OME transform) is dispatched on; the rest are
     # overlaid with `object` so they are carried, not matched. A decreasing
     # priority makes the earliest registration win a specificity tie.
+    #
+    # The readers are registered on the first `from_ome`, which imports
+    # abczarr: the Zarr formats, which import this module, are imported to
+    # sniff any file.
     def register(func: tx.Callable) -> tx.Callable:
-        _from_ome_fn.register(
-            (ome_type, object, object, object),
-            priority=-next(_from_order),
-        )(func)
+        _from_ome_pending.append((name, -next(_from_order), func))
         return func
 
     return register
+
+
+_from_ome_pending: tx.List[tx.Tuple[str, int, tx.Callable]] = []
+
+
+def _register_from_ome() -> None:
+    """Register the readers that `_from_ome` declared."""
+    if not _from_ome_pending:
+        return
+    from abczarr.ome.v0_6 import transformations as _ot
+
+    for name, priority, func in _from_ome_pending:
+        _from_ome_fn.register(
+            (getattr(_ot, name), object, object, object), priority=priority
+        )(func)
+    _from_ome_pending.clear()
 
 
 def from_ome(
@@ -174,6 +191,7 @@ def from_ome(
     does not read is refused with an
     [`OmeMappingError`][brainhops.io.transformations.zarr._map.OmeMappingError].
     """
+    _register_from_ome()
     try:
         return _from_ome_fn(transform, perm, ndim, read_field)
     except NoMethodError:
@@ -185,7 +203,7 @@ def from_ome(
         ) from None
 
 
-@_from_ome(_ot.Identity)
+@_from_ome("Identity")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -195,7 +213,7 @@ def _(
     return Identity()
 
 
-@_from_ome(_ot.Scale)
+@_from_ome("Scale")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -205,7 +223,7 @@ def _(
     return Scaling(scale=permute_vector(transform.scale, perm))
 
 
-@_from_ome(_ot.Translation)
+@_from_ome("Translation")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -215,7 +233,7 @@ def _(
     return Translation(translation=permute_vector(transform.translation, perm))
 
 
-@_from_ome(_ot.Affine)
+@_from_ome("Affine")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -228,7 +246,7 @@ def _(
     return Affine(matrix=permute_affine(matrix, perm))
 
 
-@_from_ome(_ot.Rotation)
+@_from_ome("Rotation")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -238,7 +256,7 @@ def _(
     return Rotation(matrix=permute_linear(transform.rotation, perm))
 
 
-@_from_ome(_ot.MapAxis)
+@_from_ome("MapAxis")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -248,7 +266,7 @@ def _(
     return _map_axis_transform(transform.mapAxis, perm, ndim)
 
 
-@_from_ome(_ot.Displacements)
+@_from_ome("Displacements")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -258,7 +276,7 @@ def _(
     return _read_field(transform, "displacements", read_field)
 
 
-@_from_ome(_ot.Coordinates)
+@_from_ome("Coordinates")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],
@@ -268,7 +286,7 @@ def _(
     return _read_field(transform, "coordinates", read_field)
 
 
-@_from_ome(_ot.Sequence)
+@_from_ome("Sequence")
 def _(
     transform: tx.Any,
     perm: tx.Sequence[int],

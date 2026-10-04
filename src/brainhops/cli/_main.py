@@ -4,6 +4,10 @@
 subcommand. `main` parses the arguments, calls the selected command and
 turns a `CliError` into a message on standard error and a non-zero exit
 code.
+
+Building the parser imports no more than `argparse`: the ``reslice``
+command, which needs the data model and the file formats, is imported
+only when it runs (see `_reslice_parser`).
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import sys
 
 import typing_extensions as tx
 
-from . import _compose, _convert, _reslice
+from . import _compose, _convert, _reslice_parser
 from ._errors import CliError
 
 
@@ -27,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="command",
         metavar="<command>",
     )
-    _reslice.add_parser(subparsers)
+    _reslice_parser.add_parser(subparsers)
     _compose.add_parser(subparsers)
     _convert.add_parser(subparsers)
     return parser

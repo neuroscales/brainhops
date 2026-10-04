@@ -2,7 +2,6 @@
 header."""
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
@@ -19,6 +18,9 @@ from brainhops.io.base.parsers import Confidence
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+
+if tx.TYPE_CHECKING:
+    import nibabel as nb
 
 
 class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
@@ -55,7 +57,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build a `nibabel` image whose affine is this transformation.
 

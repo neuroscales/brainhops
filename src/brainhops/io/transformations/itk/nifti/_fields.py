@@ -6,12 +6,12 @@ docstring, [`brainhops.io.transformations.itk.nifti`][].
 """
 
 # dependencies
-import nibabel as nb
 import numpy as np
 import typing_extensions as tx
 
-# core
 from brainhops._core import affines as _affines
+
+# core
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
@@ -33,6 +33,7 @@ from brainhops.io.base.nifti import (
     _apply_overrides,
     _embed_affine,
     _new_nifti,
+    _Nifti1Image,
     _nifti_intent,
     _nifti_intent_name,
     _nifti_shape,
@@ -49,6 +50,9 @@ from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 # locals
 from .._systems import _make_system
+
+if tx.TYPE_CHECKING:
+    import nibabel as nb
 
 _NDIMS = (2, 3)
 """
@@ -172,7 +176,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         field is refused here, from its header alone, rather than when
         its chain is first built.
         """
-        header = nifti.header if isinstance(nifti, nb.Nifti1Image) else nifti
+        header = nifti.header if isinstance(nifti, _Nifti1Image) else nifti
         shape = _nifti_shape(header)
         if _itk_ndim(shape) is None:
             raise ParserContentError(
@@ -294,7 +298,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         vox2lps: np.ndarray,
         like: tx.Any = None,
         **overrides,
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the ITK NIfTI image of an `(*shape, ndim)` array of LPS
         vectors, given the grid's homogeneous voxel-to-LPS affine.
@@ -454,7 +458,7 @@ class ItkNiftiDisplacementField(ItkNiftiField):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the `nibabel` image that ITK would write for this field.
 
@@ -570,7 +574,7 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    ) -> "tx.Union[nb.Nifti1Image, nb.Nifti2Image]":
         """
         Build the `nibabel` image of this field of LPS coordinates.
 

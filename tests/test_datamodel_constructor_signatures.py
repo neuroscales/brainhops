@@ -22,7 +22,7 @@ import typing_extensions as tx
 
 # Import every family, so that walking the subclasses finds them all.
 import brainhops.datamodel.geometry  # noqa: F401
-import brainhops.io.transformations  # noqa: F401
+import brainhops.io.transformations
 from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
@@ -30,6 +30,10 @@ from brainhops.datamodel.transformations import (
     Sequence,
     Transformation,
 )
+
+# The format subpackages are imported lazily: import them all.
+for _name in brainhops.io.transformations.__all__:
+    getattr(brainhops.io.transformations, _name)
 
 # The positional parameters of each public transformation class, in
 # order, keyed by the module that defines the class. Every other

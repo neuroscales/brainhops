@@ -18,9 +18,10 @@ import weakref
 import numpy as np
 import typing_extensions as tx
 
+from brainhops._core import dependencies as deps
+
 # internals
 from brainhops._core import path
-from brainhops._core.dependencies import openslide
 from brainhops._core.properties import smartproperty
 from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
@@ -58,6 +59,7 @@ _LEVEL_CLASSES: tx.Dict[str, type] = {}
 
 
 def _require_openslide() -> tx.Any:
+    openslide = deps.openslide
     if openslide is None:
         raise ImportError(
             "Reading whole-slide images needs openslide-python and the "
@@ -94,6 +96,7 @@ def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
     `("", 0)` if OpenSlide cannot read it. Cached by modification time
     and size, since every OpenSlide format sniffs the same file."""
     del mtime, size  # part of the cache key only
+    openslide = deps.openslide
     try:
         vendor = openslide.OpenSlide.detect_format(filename)
         if not vendor:
@@ -104,8 +107,39 @@ def _detect(filename: str, mtime: int, size: int) -> tx.Tuple[str, int]:
         return "", 0
 
 
+# What a file OpenSlide reads may start with, at an offset: a TIFF or
+# BigTIFF header (Aperio, Hamamatsu NDPI, Leica, Philips, Trestle,
+# Ventana, generic tiled TIFF), a Zeiss CZI segment, a Sakura SQLite
+# database, or DICOM's preamble. The other formats (Hamamatsu VMS and
+# VMU, MIRAX) are text files that OpenSlide recognizes by their
+# extension.
+_SLIDE_MAGIC = (
+    (0, (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")),
+    (0, (b"ZISRAWFILE",)),
+    (0, (b"SQLite format 3\x00",)),
+    (128, (b"DICM",)),
+)
+_SLIDE_EXTENSIONS = (".vms", ".vmu", ".mrxs")
+
+
+def _may_be_slide(filename: str) -> bool:
+    """Whether OpenSlide may read a file, judged from its first bytes or
+    its extension, so that a file that is no slide is declined without
+    importing OpenSlide."""
+    if filename.lower().endswith(_SLIDE_EXTENSIONS):
+        return True
+    try:
+        with open(filename, "rb") as f:
+            head = f.read(132)
+    except OSError:
+        return False
+    return any(
+        head[offset:].startswith(magic) for offset, magic in _SLIDE_MAGIC
+    )
+
+
 def _detect_file(filename: str) -> tx.Tuple[str, int]:
-    if openslide is None:
+    if not _may_be_slide(filename) or deps.openslide is None:
         return "", 0
     stat = os.stat(filename)
     return _detect(os.path.abspath(filename), stat.st_mtime_ns, stat.st_size)
