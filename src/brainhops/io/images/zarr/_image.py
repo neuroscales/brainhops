@@ -1,5 +1,4 @@
 # stdlib
-import copy
 
 # dependencies
 import typing_extensions as tx
@@ -34,7 +33,7 @@ from brainhops.io.base.zarr import (
 )
 from brainhops.io.images.base import WritableFileBasedImage
 
-from ._metadata import ZarrMetadata
+from ._metadata import ZarrMetadata, ZarrRaw
 
 
 def sync_record(
@@ -48,24 +47,18 @@ def sync_record(
     The metadata of an object read from `node`.
 
     A Zarr raw record is rebuilt from the attributes of the node on each
-    read, so the metadata remembers the node its raw record was read
-    from: a metadata read from `node` already (as `replace()` carries
-    it) is kept as it is. Otherwise the raw record is read (`read()`)
+    read, so it remembers the node it was read from (`raw.node`): a
+    metadata read from `node` already (as `replace()` carries it) is
+    kept as it is. Otherwise the raw record is read (`read()`)
     and decoded, and the fields that changed in `metadata` (all of them
     for one built in memory) are set over the decoded ones, as changes
     (see `FileBasedMetadata.update_from_raw`).
     """
-    if (
-        metadata is not None
-        and metadata.raw is not None
-        and metadata.__dict__.get("_source") is node
-    ):
+    if metadata is not None and getattr(metadata.raw, "node", None) is node:
         return metadata
     if metadata is None:
         metadata = cls()
-    synced = metadata.update_from_raw(read(), image=image)
-    synced.__dict__["_source"] = node
-    return synced
+    return metadata.update_from_raw(read(), image=image)
 
 
 def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
@@ -139,7 +132,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             ZarrMetadata,
             self.metadata,
             node,
-            lambda: node_attributes(node),
+            lambda: ZarrRaw(node_attributes(node), node),
             self,
         )
 
@@ -149,15 +142,10 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             return
         if not isinstance(metadata, ZarrMetadata):
             metadata = ZarrMetadata.from_other(metadata)
-        before = metadata.raw
         report = ConversionReport(source=metadata.format, target="zarr")
-        record = metadata.update_raw(
-            copy.deepcopy(before) if before is not None else {},
-            image=self,
-            report=report,
-        )
+        record = metadata.update_raw(image=self, report=report)
         apply_loss_policy(report, on_loss, stacklevel=4)
-        write_attributes(node, record, before)
+        write_attributes(node, record.attrs, metadata.attributes)
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:

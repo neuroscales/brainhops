@@ -627,9 +627,13 @@ header=...)`) holds `metadata.update_from_raw(raw)`: the new raw record
 decoded, with the fields that changed in the metadata set over it as
 changes. Whether the metadata's raw record *is* the parser's is an
 identity test (the NIfTI header, the MGH header, the x5 `(header,
-node)` pair); a Zarr raw record is rebuilt on each read, so the metadata
-remembers the node it was read from. The per-format raw types are named
-for it too (`MghRaw`, `OmeZarrRaw`).
+node)` pair); a Zarr raw record is rebuilt on each read, so it carries
+the node it was read from (`ZarrRaw.node`, `OmeZarrRaw.node`, a handle
+that a deep copy or a pickle drops), and the test is `metadata.raw.node
+is node`. The base class knows nothing of any format: an earlier
+prototype kept the node in `metadata.__dict__["_source"]`, special-cased
+by `FileBasedMetadata.copy` and `__getstate__`. The per-format raw types
+are named for it too (`MghRaw`, `ZarrRaw`, `OmeZarrRaw`).
 
 `from_raw` raises `TypeError` when `_decode` returns a value for a field
 its class does not support (or a `Lazy` for a field that is not lazy).

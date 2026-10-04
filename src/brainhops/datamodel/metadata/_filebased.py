@@ -60,14 +60,6 @@ class FileBasedMetadata(Metadata):
         Factory(dict),
     ]
 
-    def __getstate__(self) -> tx.Dict[str, tx.Any]:
-        # `_source` (what a format whose raw record is rebuilt on each
-        # read, Zarr, read it from: a store node) is a handle, not state,
-        # and is not pickled nor deep-copied; `copy()` keeps it.
-        state = dict(self.__dict__)
-        state.pop("_source", None)
-        return state
-
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -137,8 +129,6 @@ class FileBasedMetadata(Metadata):
         stays so in both.
         """
         new = super().copy()
-        if "_source" in self.__dict__:
-            new.__dict__["_source"] = self.__dict__["_source"]
         new.__dict__["_snapshot"] = dict(self._snapshot)
         return new
 

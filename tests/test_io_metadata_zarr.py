@@ -5,6 +5,8 @@ the vocabulary as a sidecar under the attribute `"brainhops"`) and
 the other group attributes).
 """
 
+import copy
+import pickle
 import warnings
 
 import numpy as np
@@ -107,8 +109,15 @@ def test_plain_zarr_stores_the_vocabulary_as_a_sidecar(tmp_path) -> None:  # noq
     # `data_type` is the array's (derived): not in the sidecar.
     assert back.metadata.data_type == np.float32
     assert back.metadata == replace(image.metadata, data_type="float32")
-    assert back.metadata.raw == attrs
+    assert back.metadata.attributes == attrs
     assert back.metadata.changed_fields() == {}
+    # The record remembers its node; a copy shares it, a deep copy or a
+    # pickle drops the handle.
+    assert back.metadata.raw.node is back.node
+    assert back.metadata.copy().raw.node is back.node
+    assert copy.deepcopy(back.metadata).raw.node is None
+    assert pickle.loads(pickle.dumps(back.metadata)).raw.node is None
+    assert pickle.loads(pickle.dumps(back.metadata)).raw == back.metadata.raw
 
 
 def test_plain_zarr_round_trip_and_edits(tmp_path) -> None:  # noqa: ANN001

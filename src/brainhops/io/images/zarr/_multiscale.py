@@ -223,8 +223,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         metadata = self.metadata
         if node is None or (
             metadata is not None
-            and metadata.raw is not None
-            and metadata.__dict__.get("_source") is node
+            and getattr(metadata.raw, "node", None) is node
         ):
             return
         self.metadata = metadata = sync_record(
@@ -232,7 +231,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             metadata,
             node,
             lambda: OmeZarrRaw.from_attributes(
-                self.ome, node_attributes(node)
+                self.ome, node_attributes(node), node
             ),
             self,
         )
