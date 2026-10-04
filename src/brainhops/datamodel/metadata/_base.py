@@ -256,8 +256,6 @@ class Metadata(
         kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
     ) -> tx.Tuple["Metadata", ConversionReport]:
         """`from_instance`, returning the report instead of acting on it."""
-        from ._filebased import FileBasedMetadata
-
         kwargs = dict(kwargs or {})
         same = _fits(other, cls)
         # A copy keeps the most specific class.
@@ -265,10 +263,7 @@ class Metadata(
         report = ConversionReport(
             source=_format_name(other), target=_format_name(target)
         )
-        values: tx.Dict[str, tx.Any] = {}
-        if same and isinstance(other, FileBasedMetadata):
-            values["raw"] = other.raw
-            values["snapshot"] = dict(other._snapshot)
+        values = other._format_state() if same else {}
         unsupported = target.unsupported_fields
         for name in _FIELDS:
             value = getattr(other, name, None)
@@ -333,8 +328,14 @@ class Metadata(
           instead. A direction in a named world space is kept.
         - `volume` fields are indexed by `volumes` (the selected volume
           indices) when given, and cleared when `volumes_changed` and no
-          selection is known.
+          selection is known; `display_range` and `data_unit`, one value
+          for every volume, are kept.
         - `extra` is kept verbatim.
+
+        The metadata of a file format also keeps its raw record (a copy,
+        scrubbed by the format of what the grid or the volumes bound) and
+        its snapshot, so that a field cleared here is cleared in the
+        record on write.
         """
         values = self._derive_values(
             grid_changed=grid_changed,
@@ -354,26 +355,28 @@ class Metadata(
         volumes_changed: bool,
         step: tx.Optional[str],
     ) -> tx.Dict[str, tx.Any]:
+        """The constructor values of `derive`: a field rule
+        (`_DERIVE_RULES`) where there is one, else its scope's."""
         values: tx.Dict[str, tx.Any] = {}
         for name in _FIELDS:
             value = getattr(self, name, None)
             if value is UNSUPPORTED or name in self.unsupported_fields:
                 continue
-            scope = SCOPES.get(name, FILE)
-            if name == "creation_time":
-                value = None
-            elif name == "history" and step is not None:
-                value = tuple(value or ()) + (step,)
-            elif name == "generated_by":
-                value = _with_brainhops(value)
-            elif name == "extra":
-                value = dict(value or {})
+            scope = SCOPES.get(name)
+            if name in _DERIVE_RULES:
+                value = _DERIVE_RULES[name](value, step)
             elif scope == GRID and grid_changed:
                 value = _map_direction(value, grid_map)
             elif scope == VOLUME and value is not None:
-                value = _select_volumes(name, value, volumes, volumes_changed)
+                value = _select_volumes(value, volumes, volumes_changed)
             values[name] = value
         return values
+
+    def _format_state(self) -> tx.Dict[str, tx.Any]:
+        """The constructor values a copy in the same format carries over
+        besides the fields (`FileBasedMetadata`: the raw record and the
+        snapshot). None here."""
+        return {}
 
     # --- BIDS ---------------------------------------------------------
 
@@ -594,20 +597,35 @@ def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
 
 
 def _select_volumes(
-    name: str,
     value: tx.Any,
     volumes: tx.Optional[tx.Sequence[int]],
     volumes_changed: bool,
 ) -> tx.Any:
-    if name == "display_range" or name == "data_unit":
-        # One value for every volume: a selection keeps it.
-        return value
+    """A `volume` field after a change of volumes: indexed by the
+    selection when it is known, cleared when it is not."""
     if volumes is not None:
         try:
             return tuple(value[i] for i in volumes)
         except (IndexError, TypeError):
             return None
     return None if volumes_changed else value
+
+
+def _appended(history: tx.Any, step: tx.Optional[str]) -> tx.Any:
+    return history if step is None else tuple(history or ()) + (step,)
+
+
+# The fields `derive` treats by name rather than by scope: field ->
+# `rule(value, step)`, the derived value.
+_DERIVE_RULES: tx.Dict[str, tx.Callable[[tx.Any, tx.Any], tx.Any]] = {
+    "creation_time": lambda value, step: None,  # a new object
+    "history": _appended,
+    "generated_by": lambda value, step: _with_brainhops(value),
+    "extra": lambda value, step: dict(value or {}),
+    # One value for every volume: a selection keeps it.
+    "display_range": lambda value, step: value,
+    "data_unit": lambda value, step: value,
+}
 
 
 def _format_name(obj: tx.Any) -> str:
@@ -622,8 +640,7 @@ def _format_name(obj: tx.Any) -> str:
 
 
 def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
-    from ._filebased import FileBasedMetadata
-
+    """The class a `to()` target names: a class, or a format name."""
     if isinstance(target, type) and issubclass(target, Metadata):
         return target
     if isinstance(target, str):
@@ -632,9 +649,7 @@ def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
         stack = list(Metadata.__subclasses__())
         while stack:
             klass = stack.pop()
-            if _format_name(klass) == target and klass is not (
-                FileBasedMetadata
-            ):
+            if _format_name(klass) == target:
                 return klass
             stack.extend(klass.__subclasses__())
         raise ValueError(f"No metadata class for the format {target!r}.")

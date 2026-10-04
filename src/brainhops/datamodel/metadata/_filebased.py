@@ -351,33 +351,27 @@ class FileBasedMetadata(Metadata):
 
     # --- propagation --------------------------------------------------
 
-    def derive(
+    def _derive_values(
         self,
         *,
-        grid_changed: bool = False,
-        grid_map: tx.Any = None,
-        volumes: tx.Optional[tx.Sequence[int]] = None,
-        volumes_changed: bool = False,
-        step: tx.Optional[str] = None,
-    ) -> tx.Self:
-        """
-        As [`Metadata.derive`][brainhops.datamodel.metadata.Metadata.derive];
-        in addition, the raw record and the snapshot are kept, so that a
-        cleared field is cleared in the raw record on write, and
-        `_derive_raw` scrubs what the vocabulary does not cover.
-        """
-        values = self._derive_values(
-            grid_changed=grid_changed,
-            grid_map=grid_map,
-            volumes=volumes,
-            volumes_changed=volumes_changed,
-            step=step,
+        grid_changed: bool,
+        volumes: tx.Optional[tx.Sequence[int]],
+        **kwargs: tx.Any,
+    ) -> tx.Dict[str, tx.Any]:
+        # The raw record and the snapshot are kept, so that a field
+        # `derive` cleared is cleared in the record on write, and
+        # `_derive_raw` scrubs what the vocabulary does not cover.
+        values = super()._derive_values(
+            grid_changed=grid_changed, volumes=volumes, **kwargs
         )
         values["raw"] = self._derive_raw(
             self.raw, grid_changed=grid_changed, volumes=volumes
         )
         values["snapshot"] = dict(self._snapshot)
-        return type(self)(**values)
+        return values
+
+    def _format_state(self) -> tx.Dict[str, tx.Any]:
+        return {"raw": self.raw, "snapshot": dict(self._snapshot)}
 
 
 class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):

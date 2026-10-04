@@ -128,7 +128,7 @@ All the hooks are optional, and all private.
   `report.lost` and listing it in `report.passed_through`. Defaults to
   nothing.
 - `_derive_raw(raw, *, grid_changed, volumes) -> raw`: called by
-  [`derive`][brainhops.datamodel.metadata.FileBasedMetadata.derive] for
+  [`derive`][brainhops.datamodel.metadata.Metadata.derive] for
   the raw record of the derived object. Defaults to a deep copy of `raw`
   (a derived object never shares its record); a format that keeps raw
   content tied to the grid or to the volumes but outside the vocabulary
