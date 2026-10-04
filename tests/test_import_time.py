@@ -1,9 +1,12 @@
-"""Guards on what `import brainhops` and `brainhops --help` import (#290).
+"""Guards on what `import brainhops`, `brainhops --help` and the packages
+of each kind of file import (#290).
 
 Importing the package, or asking the command line for help, should not
 import the optional I/O dependencies or the data model: they take
-seconds to import. Each check runs in a fresh interpreter, since this
-one has imported everything by the time the tests run.
+seconds to import. Nor should importing `brainhops.io.images`, whose
+formats are declared ahead of import and imported by the first `load`.
+Each check runs in a fresh interpreter, since this one has imported
+everything by the time the tests run.
 """
 
 import importlib
@@ -79,6 +82,26 @@ def test_help_does_not_import(module: str, modules_after_help: set) -> None:
     assert module not in modules_after_help
 
 
+# What the formats of each kind need, which importing the package of the
+# kind must not import.
+_FORMAT_DEPENDENCIES = [
+    "abczarr",
+    "bagof.magic",
+    "dask",
+    "h5py",
+    "nibabel",
+    "openslide",
+    "PIL",
+    "tifffile",
+]
+
+
+@pytest.mark.parametrize("package", ["brainhops.io.images"])
+def test_import_kind_does_not_import_formats(package: str) -> None:
+    modules = _modules_after(f"import {package}")
+    assert not modules.intersection(_FORMAT_DEPENDENCIES)
+
+
 def test_load_finds_every_format_in_a_fresh_interpreter() -> None:
     # `brainhops.io.load` dispatches over the formats of every kind, which
     # register as their packages are imported; the lazy `brainhops.io`
@@ -99,6 +122,7 @@ def test_load_finds_every_format_in_a_fresh_interpreter() -> None:
         "brainhops.datamodel._transformations",
         "brainhops.io",
         "brainhops.io.base",
+        "brainhops.io.images",
     ],
 )
 def test_lazy_names_resolve(package: str) -> None:

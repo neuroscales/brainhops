@@ -12,26 +12,28 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel.images import Image
-from brainhops.io.base import ImageSpec, TransformationSpec, format_hints
+from brainhops.io.base import ImageSpec, TransformationSpec
 from brainhops.io.base.parsers import AmbiguousFormatError, WriterError
 
 from ._errors import CliError, WritingUnavailable
 
 
-def _image_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
-    """The image readers available under each registered hint."""
-    from brainhops.io.images.base import FileBasedImage
-
-    result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedImage, "_REGISTRY", set()):
-        for hint in format_hints(fmt):
-            result.setdefault(hint, set()).add(fmt)
-    return result
+def _hints(dispatcher: type) -> tx.Set[str]:
+    """The hints of the formats available to a dispatcher, read from
+    their declarations rather than by importing them."""
+    return {
+        hint
+        for entry in dispatcher._REGISTRY.entries()
+        if entry.available
+        for hint in entry.hints
+    }
 
 
 def image_format_hints() -> tx.Set[str]:
     """The format hints recognized after an image path in the CLI."""
-    return set(_image_formats_by_hint())
+    from brainhops.io.images.base import FileBasedImage
+
+    return _hints(FileBasedImage)
 
 
 def load_image(source: tx.Union[str, ImageSpec]) -> Image:
@@ -68,20 +70,11 @@ def load_image(source: tx.Union[str, ImageSpec]) -> Image:
         raise CliError(f"Could not read image {spec.path!r}: {exc}") from exc
 
 
-def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
-    """The transformation readers available under each registered hint."""
-    from brainhops.io.transformations.base import FileBasedTransformation
-
-    result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedTransformation, "_REGISTRY", set()):
-        for hint in format_hints(fmt):
-            result.setdefault(hint, set()).add(fmt)
-    return result
-
-
 def transform_format_hints() -> tx.Set[str]:
     """The format hints recognized after a transform path in the CLI."""
-    return set(_transform_formats_by_hint())
+    from brainhops.io.transformations.base import FileBasedTransformation
+
+    return _hints(FileBasedTransformation)
 
 
 def load_transform(

@@ -24,7 +24,7 @@ from bagof.magic import fields
 
 # internals
 from brainhops._core import path
-from brainhops.io.base._registry import FormatEntry
+from brainhops.io.base._registry import FormatEntry, declared
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     ParserContentError,
@@ -53,11 +53,15 @@ def register_missing_format(
         _MISSING_FORMATS[str(hint).lower()] = (package, extra)
 
 
-def _missing_formats(hints: tx.Iterable[str]) -> str:
+def _missing_formats(hints: tx.FrozenSet[str]) -> str:
     """What to install for the requested hints of missing formats."""
-    needs = sorted(
-        {_MISSING_FORMATS[h] for h in hints if h in _MISSING_FORMATS}
+    needs = {_MISSING_FORMATS[h] for h in hints if h in _MISSING_FORMATS}
+    needs.update(
+        (entry.missing, entry.extra)
+        for entry in declared()
+        if entry.hints & hints and entry.missing is not None
     )
+    needs = sorted(needs)
     return "".join(
         f" This format needs {package}, which is not installed: "
         f"pip install brainhops[{extra}]"

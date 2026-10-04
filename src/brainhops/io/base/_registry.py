@@ -339,10 +339,21 @@ def registry_for(key: str, owner: tx.Optional[type] = None) -> FormatRegistry:
 def declare(entries: tx.Iterable[FormatEntry]) -> None:
     """Declare formats into the registries of their dispatchers.
     Declaring a format again is a no-op."""
+    new = {}
     for entry in entries:
-        if entry.key in _ENTRIES:
-            continue
-        _ENTRIES[entry.key] = entry
+        if entry.key not in _ENTRIES:
+            new[entry.key] = _ENTRIES[entry.key] = entry
+    # A format registered before it was declared (its module imported
+    # ahead of its package's declarations) is filed under its class:
+    # file it under its entry instead, or it would be there twice.
+    for registry in _REGISTRIES.values():
+        for cls in [k for k in registry._entries if isinstance(k, type)]:
+            entry = new.get(key_of(cls))
+            if entry is not None:
+                entry._cls = cls
+                del registry._entries[cls]
+                registry._entries[entry.key] = entry
+    for entry in new.values():
         for key in entry.dispatchers:
             registry_for(key)._entries.setdefault(entry.key, entry)
 
