@@ -29,9 +29,9 @@ import typing_extensions as tx
 from brainhops._core.lazy import lazy_exports
 
 # The subpackages are imported on first access. `load`, `save` and
-# `sniff` import the formats they dispatch to themselves, so they find
-# every format whether or not `images` and `transformations` were
-# accessed first.
+# `sniff` find every format whether or not `images` and `transformations`
+# were accessed first: a registry asked for its formats has the packages
+# of every kind declare theirs, and imports a format when it needs it.
 __getattr__, __dir__ = lazy_exports(
     __name__,
     globals(),

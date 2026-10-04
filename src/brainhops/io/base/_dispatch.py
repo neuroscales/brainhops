@@ -36,32 +36,22 @@ from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 
 _T = tx.TypeVar("_T")
 
-# Hints of formats that are not registered because an optional dependency
-# is missing, with what to install: hint -> (package, extra).
-_MISSING_FORMATS: tx.Dict[str, tx.Tuple[str, str]] = {}
-
-
-def register_missing_format(
-    hints: tx.Iterable[str], package: str, extra: str
-) -> None:
-    """
-    Record that the format answering to `hints` is not registered because
-    `package` is not installed, so that asking for it by hint says what
-    to install (`pip install brainhops[extra]`).
-    """
-    for hint in hints:
-        _MISSING_FORMATS[str(hint).lower()] = (package, extra)
-
 
 def _missing_formats(hints: tx.FrozenSet[str]) -> str:
-    """What to install for the requested hints of missing formats."""
-    needs = {_MISSING_FORMATS[h] for h in hints if h in _MISSING_FORMATS}
-    needs.update(
-        (entry.missing, entry.extra)
-        for entry in declared()
-        if entry.hints & hints and entry.missing is not None
+    """
+    What to install for the requested hints of missing formats.
+
+    A format whose optional dependency is missing is still declared, so
+    asking for it by hint says what to install (`pip install
+    brainhops[extra]`).
+    """
+    needs = sorted(
+        {
+            (entry.missing, entry.extra)
+            for entry in declared()
+            if entry.hints & hints and entry.missing is not None
+        }
     )
-    needs = sorted(needs)
     return "".join(
         f" This format needs {package}, which is not installed: "
         f"pip install brainhops[{extra}]"

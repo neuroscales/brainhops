@@ -13,53 +13,69 @@ __all__ = [
     "sniff",
 ]
 
+# dependencies
+import typing_extensions as tx
+
 # internals
-from brainhops._core.dependencies import has_abczarr_driver
+from brainhops._core.dependencies import HAS_ABCZARR, HAS_H5PY, HAS_NIBABEL
+from brainhops._core.lazy import lazy_exports
 
-from . import base, elastix, freesurfer, itk, matrix, niftyreg
-from .base import (
-    FileBasedTransformation,
-    WritableFileBasedTransformation,
-    load,
-    sniff,
-)
+# The formats are declared here, ahead of import, so that `load` finds
+# every one of them while the subpackages below are imported lazily: a
+# format's module is imported when dispatch first needs it, or when it is
+# first accessed.
+from . import _entries  # noqa: F401
 
-# Formats must be imported for them to register themselves: the registry
-# only holds classes that have actually been imported, so a format left
-# unimported would silently be invisible to `load`.
-try:
-    from . import nifti
+_EXPORTS = {
+    "FileBasedTransformation": ".base",
+    "WritableFileBasedTransformation": ".base",
+    "load": ".base",
+    "sniff": ".base",
+    "base": ".base",
+    "elastix": ".elastix",
+    "freesurfer": ".freesurfer",
+    "itk": ".itk",
+    "matrix": ".matrix",
+    "niftyreg": ".niftyreg",
+}
 
-    __all__ += ["nifti"]
-except ImportError:  # nibabel is optional
-    pass
+# The NIfTI, SPM and FSL formats are read with nibabel.
+if HAS_NIBABEL:
+    __all__ += ["nifti", "spm", "fsl"]
+    _EXPORTS.update(nifti=".nifti", spm=".spm", fsl=".fsl")
 
-try:
-    from . import spm
-
-    __all__ += ["spm"]
-except ImportError:  # nibabel is optional
-    pass
-
-try:
-    from . import fsl
-
-    __all__ += ["fsl"]
-except ImportError:  # nibabel is optional
-    pass
-
-# The X5 reader needs h5py, which is optional.
-try:
-    from . import x5
-
+# The X5 reader needs h5py.
+if HAS_H5PY:
     __all__ += ["x5"]
-except ImportError:  # h5py is optional
-    pass
+    _EXPORTS.update(x5=".x5")
 
-# The OME-Zarr field reader needs abczarr and at least one backend driver.
-# abczarr alone cannot open a store, so the reader is registered only when a
-# driver is present. This mirrors how io.images gates io.images.zarr.
-if has_abczarr_driver():
-    from . import zarr
-
+# The OME-Zarr field reader needs abczarr and at least one of its backend
+# drivers. Whether a driver is present is only known by importing
+# abczarr, which is left to the first use of the reader. This mirrors how
+# io.images gates io.images.zarr.
+if HAS_ABCZARR:
     __all__ += ["zarr"]
+    _EXPORTS.update(zarr=".zarr")
+
+__getattr__, __dir__ = lazy_exports(__name__, globals(), _EXPORTS)
+
+if tx.TYPE_CHECKING:
+    from . import (
+        base,
+        elastix,
+        freesurfer,
+        fsl,
+        itk,
+        matrix,
+        nifti,
+        niftyreg,
+        spm,
+        x5,
+        zarr,
+    )
+    from .base import (
+        FileBasedTransformation,
+        WritableFileBasedTransformation,
+        load,
+        sniff,
+    )

@@ -22,7 +22,6 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._base import WritableFileBasedObject
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
-from brainhops.io.base._load import import_formats
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
     FileSniffer,
@@ -93,7 +92,6 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    import_formats()
     # The name is matched against the declared formats, and only those
     # it claims are imported: writing `a.nii` imports the NIfTI formats.
     entries = WritableFileBasedObject._REGISTRY.entries()

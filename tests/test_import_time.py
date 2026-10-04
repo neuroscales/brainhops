@@ -3,8 +3,9 @@ of each kind of file import (#290).
 
 Importing the package, or asking the command line for help, should not
 import the optional I/O dependencies or the data model: they take
-seconds to import. Nor should importing `brainhops.io.images`, whose
-formats are declared ahead of import and imported by the first `load`.
+seconds to import. Nor should importing `brainhops.io.images` or
+`brainhops.io.transformations`, whose formats are declared ahead of
+import and imported by the first `load`.
 Each check runs in a fresh interpreter, since this one has imported
 everything by the time the tests run.
 """
@@ -96,7 +97,9 @@ _FORMAT_DEPENDENCIES = [
 ]
 
 
-@pytest.mark.parametrize("package", ["brainhops.io.images"])
+@pytest.mark.parametrize(
+    "package", ["brainhops.io.images", "brainhops.io.transformations"]
+)
 def test_import_kind_does_not_import_formats(package: str) -> None:
     modules = _modules_after(f"import {package}")
     assert not modules.intersection(_FORMAT_DEPENDENCIES)
@@ -114,6 +117,32 @@ def test_load_finds_every_format_in_a_fresh_interpreter() -> None:
     assert _run(code).strip() == "TfmTransform"
 
 
+def test_dispatcher_finds_every_format_in_a_fresh_interpreter() -> None:
+    # The generic dispatcher has the packages of every kind declare their
+    # formats, even when nothing but `brainhops.io.base` was imported.
+    path = _DATA / "itk_affine3d.tfm"
+    code = (
+        "from brainhops.io.base import FileBasedObject\n"
+        f"print(type(FileBasedObject.load({str(path)!r})).__name__)\n"
+    )
+    assert _run(code).strip() == "TfmTransform"
+
+
+def test_hint_of_a_missing_format_says_what_to_install() -> None:
+    # A format whose dependency is missing is declared all the same, so
+    # asking for it by hint names the extra to install.
+    code = (
+        "import sys\n"
+        "sys.modules['tifffile'] = None\n"
+        "import brainhops.io as bio\n"
+        "try:\n"
+        "    bio.load(b'II*\\x00', hint='tiff')\n"
+        "except Exception as e:\n"
+        "    print(e)\n"
+    )
+    assert "pip install brainhops[tiff]" in _run(code)
+
+
 @pytest.mark.parametrize(
     "package",
     [
@@ -123,6 +152,7 @@ def test_load_finds_every_format_in_a_fresh_interpreter() -> None:
         "brainhops.io",
         "brainhops.io.base",
         "brainhops.io.images",
+        "brainhops.io.transformations",
     ],
 )
 def test_lazy_names_resolve(package: str) -> None:
