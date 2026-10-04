@@ -17,7 +17,7 @@ import pytest
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 nb = pytest.importorskip("nibabel")
@@ -346,7 +346,7 @@ def test_what_nifti_cannot_hold_is_reported() -> None:
     generic = Metadata(
         description="d", echo_time=0.03, history=("a",), extra={"K": 1}
     )
-    nifti, report = _to(generic, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(generic, NiftiMetadata)
     assert nifti.description == "d"
     assert report.lost == {
         "echo_time": 0.03,

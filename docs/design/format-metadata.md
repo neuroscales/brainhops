@@ -177,7 +177,7 @@ class Metadata(
     # supported_fields / unsupported_fields / lazy_fields:
     # ClassVars computed from the class keywords (M5, 6, 6.2)
 
-    def to(self, cls=None, *, on_loss=None, report=None, **values): ...  # M7
+    def to(self, cls=None, *, on_loss=None, **values): ...  # M7
     def derive(
         self, *, grid_changed=False, grid_map=None, volumes=None, step=None
     ) -> tx.Self: ...  # M9
@@ -191,7 +191,7 @@ class FileBasedMetadata(Metadata):  # mirrors FileBasedImage
     @classmethod
     def from_raw(cls, raw, *, image=None, **values) -> tx.Self: ...
     def update_from_raw(self, raw, *, image=None) -> tx.Self: ...
-    def update_raw(self, raw=None, *, image=None, report=None, force=()): ...
+    def update_raw(self, raw=None, *, image=None, on_loss=None, force=()): ...
     def check_writable(self, *, image=None) -> "ConversionReport": ...  # M7
 
 
@@ -568,12 +568,15 @@ encoded over the record only when it differs from the snapshot:
 _snapshot: NoRepr[NoEq[tx.Dict[str, tx.Any]]] = Factory(dict)  # name -> value
 
 
-def update_raw(self, raw=None, *, image=None, report=None, force=()):
+def update_raw(self, raw=None, *, image=None, on_loss=None, force=()):
     raw = self._raw_or_default() if raw is None else raw
     changed = {
         k: v for k, v in self._vocab_items() if v != self._snapshot.get(k)
     }
-    return self._encode(raw, changed, image=image, report=report)
+    report = on_loss if isinstance(on_loss, ConversionReport) else ...
+    raw = self._encode(raw, changed, image=image, report=report)
+    apply_loss_policy(report, on_loss)  # a report given is only filled
+    return raw
 ```
 
 The record is never re-decoded at write time: the snapshot is the
@@ -611,7 +614,7 @@ record; edit the record only for what the vocabulary does not cover*.
 |---|---|
 | `from_raw(raw, *, image=None, **values)` | build from a raw record just read: decode, then snapshot the *converted* values (a decoded list held as a tuple is not a change) |
 | `update_from_raw(raw, *, image=None)` | the metadata of a new raw record, keeping this object's changes |
-| `update_raw(raw=None, *, image=None, report=None, force=())` | encode the changes into a raw record, and return it |
+| `update_raw(raw=None, *, image=None, on_loss=None, force=())` | encode the changes into a raw record, and return it |
 | `changed_fields()` | the diff above (`extra` as a per-key diff whose `None` removes a key) |
 | `check_writable(*, image=None)` | what a write would lose, from `update_raw` over `_check_raw(image)` |
 
@@ -847,13 +850,18 @@ class ConversionReport(Magic):
     def __str__(self): ...  # one readable paragraph
 ```
 
-**`to()`.** `metadata.to(cls=None, *, on_loss=None, report=None,
-**values)` is the explicit conversion, symmetric to
-`Transformation.to`: `cls` is a `Metadata` subclass or a format name
-(`"nifti"`, `"generic"`), `None` keeps the class (a copy with `**values`
-set, sharing the raw record within a format). Given a `report`, it
-fills it and leaves the loss policy to the caller (as `update_raw`
-does); otherwise, or when `on_loss` is given too, the policy applies.
+**`to()`.** `metadata.to(cls=None, *, on_loss=None, **values)` is the
+explicit conversion, symmetric to `Transformation.to`: `cls` is a
+`Metadata` subclass or a format name (`"nifti"`, `"generic"`), `None`
+keeps the class (a copy with `**values` set, sharing the raw record
+within a format). `on_loss` is a policy (`"ignore"`, `"warn"`,
+`"raise"`, default the policy in effect) or a `ConversionReport`, which
+is filled, with no warning and no error: the caller acts on it. A
+report only makes sense when the policy is not applied, so the two are
+one keyword (the type alias `OnLoss`); an earlier `report=` keyword,
+next to `on_loss=`, was folded into it, on `to`, `update_raw`,
+`preferred_dtype`, `to_bids`, `X5Transform.to_struct`, the writers'
+`save(on_loss=)` and `io.save`.
 `from_instance` stays the `bagof` hook; `to` is sugar over it.
 
 > **Prototype note.** As specified, with a `lossy` property and
@@ -887,7 +895,7 @@ Policy, from least to most strict: `"ignore"`, `"warn"` (default: one
 `MetadataLossWarning` per conversion or write carrying the report, not
 one per field), `"raise"` (`MetadataLossError`). It is a keyword on
 `io.save(obj, file, on_loss=...)`, on the explicit
-`source.to(Target, on_loss=...)` (or `report=...` to get the report
+`source.to(Target, on_loss=...)` (`on_loss=report` to get the report
 back), and a context manager `metadata_loss_policy("raise")`
 for the implicit conversions that `bagof`'s field converter triggers
 (assigning a `MrtrixMetadata` to a field typed `NiftiMetadata`).
@@ -1636,7 +1644,7 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   `_encode` adds value-dependent `lost`/`approximated`; `on_loss` =
   `ignore`/`warn` (default)/`raise`; one aggregated warning per save
   (`collect_loss_reports` and `ConversionReport.merged`); `_import`
-  hook for recovery (the key/value formats); `metadata.to(cls, *, on_loss, report)` is the
+  hook for recovery (the key/value formats); `metadata.to(cls, *, on_loss)` is the
   explicit conversion, symmetric to images and transformations.
 - **M8** `extra` passes unknown keys through to any free-form store;
   BIDS JSON sidecar is a codec on `Metadata`.
@@ -1697,7 +1705,9 @@ these:
   one report and one warning. A metadata class refuses a class keyword
   it does not read (a leftover `derived=` included), where `bagof`
   would ignore it.
-- **M7: the policy surface** is `on_loss=`, `apply_loss_policy`,
+- **M7: the policy surface** is `on_loss=` (a policy, or a
+  `ConversionReport` to fill instead of warning; it replaced `report=`),
+  `apply_loss_policy`,
   `metadata_loss_policy` and `collect_loss_reports` (with
   `ConversionReport.merged`); `one_loss_warning` and
   `get_metadata_loss_policy` were folded into `io.save`.

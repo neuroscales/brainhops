@@ -8,7 +8,7 @@ import typing_extensions as tx
 
 # internals
 from ._filebased import FileBasedMetadata
-from ._report import ConversionReport
+from ._report import ConversionReport, OnLoss, apply_loss_policy
 from ._sentinel import UNSUPPORTED
 
 
@@ -17,7 +17,7 @@ def preferred_dtype(
     array_dtype: tx.Any,
     dtype: tx.Any = None,
     *,
-    report: tx.Optional[ConversionReport] = None,
+    on_loss: tx.Optional[OnLoss] = None,
 ) -> np.dtype:
     """
     The element type a writer stores an array as.
@@ -28,8 +28,10 @@ def preferred_dtype(
     read as `uint8` is written as `uint8` again but a resampled, floating
     point version of it is not quantised; the array's own type. A
     `data_type` set (or converted) by hand that is not used is reported
-    in `report` as approximated; one that was only read is dropped
-    silently (the data changed kind since the read).
+    as approximated, according to `on_loss` (the policy in effect by
+    default; a writer passes the `ConversionReport` of its write); one
+    that was only read is dropped silently (the data changed kind since
+    the read).
     """
     array_dtype = np.dtype(array_dtype)
     if dtype is not None:
@@ -40,17 +42,18 @@ def preferred_dtype(
     wanted = np.dtype(wanted)
     if _same_kind(array_dtype, wanted):
         return wanted
-    if report is not None:
-        changed = (
-            metadata.changed_fields()
-            if isinstance(metadata, FileBasedMetadata)
-            else {"data_type": wanted}
+    changed = (
+        metadata.changed_fields()
+        if isinstance(metadata, FileBasedMetadata)
+        else {"data_type": wanted}
+    )
+    if "data_type" in changed:
+        report = ConversionReport(target=getattr(metadata, "format", None))
+        report.approximated["data_type"] = (
+            f"stored as {array_dtype.name}: the values are not "
+            f"{wanted.name} values"
         )
-        if "data_type" in changed:
-            report.approximated["data_type"] = (
-                f"stored as {array_dtype.name}: the values are not "
-                f"{wanted.name} values"
-            )
+        apply_loss_policy(report, on_loss, stacklevel=2)
     return array_dtype
 
 

@@ -17,7 +17,11 @@ from brainhops._core.fields import LazyField
 
 from ..base import DataModelBase
 from ._meta import MetadataMeta
-from ._report import ConversionReport, LossPolicy, apply_loss_policy
+from ._report import (
+    ConversionReport,
+    OnLoss,
+    apply_loss_policy,
+)
 from ._sentinel import ALL, UNSUPPORTED, Maybe
 from ._terms import EncodingDirection, GeneratedBy
 from ._vocabulary import (
@@ -190,8 +194,7 @@ class Metadata(
         self,
         cls: tx.Union[None, str, tx.Type["Metadata"]] = None,
         *,
-        on_loss: tx.Optional[LossPolicy] = None,
-        report: tx.Optional[ConversionReport] = None,
+        on_loss: tx.Optional[OnLoss] = None,
         **values: tx.Any,
     ) -> "Metadata":
         """
@@ -204,14 +207,12 @@ class Metadata(
             The `Metadata` subclass to convert to, or its format name
             (`"generic"`, `"nifti"`, ...). `None` keeps the class: a copy
             (a same-format copy shares the raw record).
-        on_loss : {"ignore", "warn", "raise"}, optional
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do if anything is lost. Defaults to the policy in
-            effect (see [`metadata_loss_policy`][]), unless `report` is
-            given.
-        report : ConversionReport, optional
-            Filled with what was lost or approximated. When it is given
-            (and `on_loss` is not), the caller acts on it, and no loss
-            policy is applied.
+            effect (see [`metadata_loss_policy`][]). A
+            [`ConversionReport`][] is filled with what was lost or
+            approximated, and nothing is warned or raised: the caller
+            acts on it.
         **values
             Fields to set on the result.
 
@@ -219,15 +220,19 @@ class Metadata(
         -------
         Metadata
             The converted metadata.
+
+        Examples
+        --------
+        ```python
+        report = ConversionReport()
+        nifti = meta.to(NiftiMetadata, on_loss=report)
+        if report.lossy:
+            ...
+        ```
         """
         target = type(self) if cls is None else _metadata_class(cls)
         obj, found = target._convert_from(self, (), values)
-        if report is not None:
-            report.source = report.source or found.source
-            report.target = report.target or found.target
-            report.merge(found)
-        if report is None or on_loss is not None:
-            apply_loss_policy(found, on_loss, stacklevel=2)
+        apply_loss_policy(found, on_loss, stacklevel=2)
         return obj
 
     @classmethod
@@ -243,7 +248,7 @@ class Metadata(
         handed to the loss policy in effect (see
         [`metadata_loss_policy`][]); use
         [`to`][brainhops.datamodel.metadata.Metadata.to]`(cls,
-        report=...)` to get it back.
+        on_loss=report)` to get it back.
         """
         if not isinstance(other, Metadata):
             return super().from_instance(other, *args, **kwargs)
@@ -311,7 +316,7 @@ class Metadata(
         return from_bids(sidecar)
 
     def to_bids(
-        self, *, on_loss: tx.Optional[LossPolicy] = None
+        self, *, on_loss: tx.Optional[OnLoss] = None
     ) -> tx.Dict[str, tx.Any]:
         """
         The BIDS JSON sidecar (a JSON-serialisable `dict`) of this

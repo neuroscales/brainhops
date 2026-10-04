@@ -16,7 +16,7 @@ import pytest
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 nb = pytest.importorskip("nibabel")
@@ -142,13 +142,13 @@ def test_the_fixture_is_fully_populated() -> None:
 
 @pytest.mark.parametrize("cls", list(FORMATS), ids=lambda c: c.__name__)
 def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa: ANN001
-    converted, report = _to(Metadata(**FULL), cls, on_loss="ignore")
+    converted, report = _to(Metadata(**FULL), cls)
     assert set(report.lost) == set(cls.unsupported_fields)
     assert not report.approximated
     for name in cls.unsupported_fields:
         assert getattr(converted, name) is UNSUPPORTED
     # And back: nothing more is lost on the way to the hub.
-    back, report = _to(converted, Metadata, on_loss="ignore")
+    back, report = _to(converted, Metadata)
     assert not report.lossy
     for name in VOCABULARY + ("extra",):
         expected = getattr(HUB, name)
@@ -170,9 +170,9 @@ _GEOMETRY = {
     ids=lambda c: c.__name__,
 )
 def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: ANN001
-    converted, _ = _to(Metadata(**FULL), cls, on_loss="ignore")
+    converted, _ = _to(Metadata(**FULL), cls)
     report = ConversionReport()
-    record = converted.update_raw(FORMATS[cls](), report=report)
+    record = converted.update_raw(FORMATS[cls](), on_loss=report)
     back = cls.from_raw(record)
     if cls is ItkH5Metadata:
         # Only the ITK version is recorded: the fixture names ITK alone.
@@ -190,7 +190,7 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
 
 
 def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
-    converted, _ = _to(Metadata(**FULL), OmeZarrMetadata, on_loss="ignore")
+    converted, _ = _to(Metadata(**FULL), OmeZarrMetadata)
     image = OmeZarrImage(
         images=[SingleScaleImage(np.zeros((4, 4, 4, 3), "float32"))],
         axes=[

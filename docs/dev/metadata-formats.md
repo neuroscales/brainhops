@@ -166,8 +166,9 @@ the metadata converted to its class when it is of another, and a report
 that holds the conversion's losses, with no policy applied yet), builds
 its raw record, calls
 [`update_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_raw]
-with it and that report (and `force=` for a writer keyword that must win
-over the record, such as MGH `tr=`), and hands the report to
+with it and that report, as `on_loss=report` (a report given as
+`on_loss` is filled, never warned about; `force=` names a writer keyword
+that must win over the record, such as MGH `tr=`), and hands the report to
 [`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy]:
 one write, one report, one warning.
 `io.save` collects the reports of a conversion and of the write that

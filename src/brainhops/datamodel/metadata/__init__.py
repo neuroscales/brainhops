@@ -24,7 +24,8 @@ the images' (`Image` -> `FileBasedImage` -> `NiftiImage`):
 (`metadata.to(NiftiMetadata)`) reports what it cannot hold in a
 [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport], and
 the loss policy (`"ignore"`, `"warn"`, `"raise"`) decides what happens to
-the report.
+the report; `on_loss=` also takes a `ConversionReport`, which is filled
+instead (no warning, no error).
 
 Read next: the user guide (`docs/start/metadata.md`), and, to add a
 format, the format author's guide (`docs/dev/metadata-formats.md`).
@@ -65,6 +66,7 @@ __all__ = [
     "apply_loss_policy",
     "collect_loss_reports",
     "LossPolicy",
+    "OnLoss",
     "preferred_dtype",
     "Lazy",
     "LazyField",
@@ -81,6 +83,7 @@ from ._report import (
     LossPolicy,
     MetadataLossError,
     MetadataLossWarning,
+    OnLoss,
     apply_loss_policy,
     collect_loss_reports,
     metadata_loss_policy,

@@ -43,7 +43,7 @@ from brainhops.io.images.zarr._multiscale import OmeZarrLevel  # noqa: E402
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 AXES = [SpaceAxis("x"), SpaceAxis("y"), SpaceAxis("z"), ChannelAxis("c")]
@@ -143,7 +143,6 @@ def test_plain_zarr_cannot_hold_diffusion() -> None:
     _, report = _to(
         Metadata(bvalues=(0.0, 1000.0)),
         ZarrMetadata,
-        on_loss="ignore",
     )
     assert report.lost == {"bvalues": (0.0, 1000.0)}
 
@@ -313,7 +312,7 @@ def test_ome_zarr_channels_to_generic(stained) -> None:  # noqa: ANN001
 
 
 def test_ome_zarr_to_nifti_reports_the_loss(stained) -> None:  # noqa: ANN001
-    _, report = _to(io.load(stained).metadata, NiftiMetadata, on_loss="ignore")
+    _, report = _to(io.load(stained).metadata, NiftiMetadata)
     assert set(report.lost) == {"name", "channels", "extra"}
 
 
@@ -321,7 +320,7 @@ def test_nifti_to_ome_zarr(tmp_path) -> None:  # noqa: ANN001
     nifti = NiftiImage(data=np.zeros((4, 4, 6), "float32"))
     nifti.metadata.description = "a scan"
     nifti.metadata.display_range = (0.0, 50.0)
-    meta, report = _to(nifti.metadata, OmeZarrMetadata, on_loss="ignore")
+    meta, report = _to(nifti.metadata, OmeZarrMetadata)
     assert report.lost == {"description": "a scan"}
     assert meta.display_range == (0.0, 50.0)
     path = str(tmp_path / "p.zarr")
@@ -334,7 +333,7 @@ def test_nifti_to_ome_zarr(tmp_path) -> None:  # noqa: ANN001
     back = io.load(path).metadata
     assert back.display_range == (0.0, 50.0)
     # And back to NIfTI: the display range is kept, the channel is lost.
-    nifti, report = _to(back, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(back, NiftiMetadata)
     assert nifti.display_range == (0.0, 50.0)
     assert set(report.lost) == {"channels"}
 

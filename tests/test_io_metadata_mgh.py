@@ -20,7 +20,7 @@ import pytest
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 nb = pytest.importorskip("nibabel")
@@ -298,7 +298,7 @@ def test_like_sits_under_a_changed_field(scan, tmp_path) -> None:  # noqa: ANN00
 
 def test_mgh_to_nifti_loses_the_acquisition_parameters(scan) -> None:  # noqa: ANN001
     meta = io.load(scan).metadata
-    nifti, report = _to(meta, NiftiMetadata, on_loss="ignore")
+    nifti, report = _to(meta, NiftiMetadata)
     assert set(report.lost) == {
         "history",
         "echo_time",
@@ -341,7 +341,7 @@ def test_nifti_to_mgh(tmp_path) -> None:  # noqa: ANN001
     nii.header["pixdim"][4] = 2.0
     nb.save(nii, str(tmp_path / "bold.nii.gz"))
     meta = io.load(tmp_path / "bold.nii.gz").metadata
-    mgh, report = _to(meta, MghMetadata, on_loss="ignore")
+    mgh, report = _to(meta, MghMetadata)
     assert report.lost == {"description": "bold", "space": "aligned"}
     assert mgh.repetition_time == 2.0
     with metadata_loss_policy("ignore"):

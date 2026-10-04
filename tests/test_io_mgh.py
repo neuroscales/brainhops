@@ -517,6 +517,25 @@ def test_io_save_converts_between_mgh_and_nifti(tmp_path) -> None:  # noqa: ANN0
     )
 
 
+def test_io_save_fills_a_report_given_as_on_loss(tmp_path) -> None:  # noqa: ANN001
+    """A report given as `on_loss` gathers the losses of the conversion
+    and of the write, and nothing is warned or raised."""
+    from brainhops.datamodel.metadata import (
+        ConversionReport,
+        metadata_loss_policy,
+    )
+
+    source = _write(tmp_path, "vol.mgz", _data())
+    nifti = tmp_path / "out.nii.gz"
+    io.save(io.load(source), nifti, on_loss="ignore")
+    report = ConversionReport()
+    with warnings.catch_warnings(), metadata_loss_policy("raise"):
+        warnings.simplefilter("error")
+        io.save(io.load(nifti), tmp_path / "back.mgz", on_loss=report)
+    assert "space" in report.lost
+    assert (report.source, report.target) == ("nifti", "mgh")
+
+
 class _RemotePath(os.PathLike):
     """A path to remote storage, held in memory: `nibabel` cannot open
     it by name, since `os.fspath` raises (see test_io_nifti_remote)."""

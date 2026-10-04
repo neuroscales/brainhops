@@ -157,7 +157,7 @@ fills it with what was lost:
 ```python
 >>> from brainhops.datamodel.metadata import ConversionReport
 >>> report = ConversionReport()
->>> generic = bold.metadata.to(Metadata, report=report)
+>>> generic = bold.metadata.to(Metadata, on_loss=report)
 >>> generic.description, generic.slice_timing
 ('resting state, run 1, denoised', (0.0, 0.5, 1.0, 1.5, 2.0, 2.5))
 >>> hasattr(generic, "raw")  # the raw record never leaves its format
@@ -171,7 +171,7 @@ Converting back to NIfTI gives the same fields, without the raw record:
 
 ```python
 >>> report = ConversionReport()
->>> back = generic.to(NiftiMetadata, report=report)
+>>> back = generic.to(NiftiMetadata, on_loss=report)
 >>> back == bold.metadata, report.lossy
 (True, False)
 
@@ -197,7 +197,7 @@ approximately:
 ```python
 >>> scan = Metadata(description="T1w", echo_time=0.0029, flip_angle=8.0)
 >>> report = ConversionReport()
->>> nifti = scan.to(NiftiMetadata, report=report)
+>>> nifti = scan.to(NiftiMetadata, on_loss=report)
 >>> report.lost
 {'echo_time': 0.0029, 'flip_angle': 8.0}
 >>> print(report)
@@ -222,7 +222,10 @@ writing, and says what a save would lose:
 What happens to a report is the *loss policy*: `"ignore"`, `"warn"` (the
 default: one `MetadataLossWarning` per conversion or save, carrying the
 report) or `"raise"` (a `MetadataLossError`). It is the `on_loss=` option
-of `to()` (the policy applies when no report is given) and of `save`:
+of `to()` and of `save`, which also takes a `ConversionReport`: the report
+is then filled, and nothing is warned or raised (as in the examples
+above). A policy and a report are exclusive: a report means "I will look
+at it myself".
 
 ```python
 >>> from brainhops.datamodel.metadata import MetadataLossError
@@ -237,6 +240,10 @@ Metadata conversion nifti -> nifti: approximated description (truncated to 80 by
 >>> [type(w.message).__name__ for w in caught]
 ['MetadataLossWarning']
 >>> caught[0].message.report.approximated
+{'description': 'truncated to 80 bytes (descrip)'}
+>>> report = ConversionReport()
+>>> image.save(os.path.join(tmp, "long.nii"), on_loss=report)
+>>> report.approximated
 {'description': 'truncated to 80 bytes (descrip)'}
 
 ```
@@ -321,7 +328,7 @@ no place for the echo time, nor for free-form keys such as the task name:
 
 ```python
 >>> report = ConversionReport()
->>> nifti = meta.to(NiftiMetadata, report=report)
+>>> nifti = meta.to(NiftiMetadata, on_loss=report)
 >>> sorted(report.lost)
 ['echo_time', 'extra']
 
@@ -528,7 +535,7 @@ holds them in BIDS units, ready to sit next to the NIfTI file:
 
 ```python
 >>> report = ConversionReport()
->>> generic = edited.metadata.to(Metadata, report=report)
+>>> generic = edited.metadata.to(Metadata, on_loss=report)
 >>> report.lossy
 False
 >>> sidecar = generic.to_bids()
@@ -593,11 +600,11 @@ NIfTI, which has no channel names, reports them:
 
 ```python
 >>> report = ConversionReport()
->>> generic = stain.metadata.to(Metadata, report=report)
+>>> generic = stain.metadata.to(Metadata, on_loss=report)
 >>> [c.name for c in generic.channels], report.lossy
 (['DAPI', 'GFP'], False)
 >>> report = ConversionReport()
->>> _ = stain.metadata.to(NiftiMetadata, report=report)
+>>> _ = stain.metadata.to(NiftiMetadata, on_loss=report)
 >>> sorted(report.lost)
 ['channels', 'name']
 
@@ -695,7 +702,7 @@ metadata at all, so everything is lost:
 ```python
 >>> from brainhops.io.transformations.itk import ItkMetadata
 >>> report = ConversionReport()
->>> itk = x5.metadata.to(ItkMetadata, report=report)
+>>> itk = x5.metadata.to(ItkMetadata, on_loss=report)
 >>> print(report)  # doctest: +ELLIPSIS
 Metadata conversion x5 -> itk: lost extra=..., description='sub-01 T1w to MNI', generated_by=..., input_space='T1w', output_space='MNI152NLin2009cAsym'.
 >>> itk.description

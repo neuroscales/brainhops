@@ -29,8 +29,8 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     DiffusionMetadata,
     EncodingDirection,
-    LossPolicy,
     Metadata,
+    OnLoss,
     apply_loss_policy,
 )
 
@@ -61,7 +61,7 @@ def from_bids(source: tx.Any) -> Metadata:
 def to_bids(
     metadata: Metadata,
     *,
-    on_loss: tx.Optional[LossPolicy] = None,
+    on_loss: tx.Optional[OnLoss] = None,
 ) -> tx.Dict[str, tx.Any]:
     """
     Write metadata as a BIDS JSON sidecar.
@@ -70,10 +70,10 @@ def to_bids(
     ----------
     metadata : Metadata
         The metadata to write; only its vocabulary and `extra` are used.
-    on_loss : {"ignore", "warn", "raise"}, optional
+    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
         What to do with the fields a sidecar cannot hold (the diffusion
         fields, an encoding direction along no voxel axis). Defaults to
-        the policy in effect.
+        the policy in effect; a `ConversionReport` is filled instead.
 
     Returns
     -------

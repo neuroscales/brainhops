@@ -114,7 +114,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         if metadata is None:
             return
         metadata, report = ZarrMetadata.writable(metadata)
-        record = metadata.update_raw(image=self, report=report)
+        record = metadata.update_raw(image=self, on_loss=report)
         apply_loss_policy(report, on_loss, stacklevel=4)
         write_attributes(node, record.attrs, metadata.attributes)
 

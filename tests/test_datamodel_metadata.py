@@ -66,7 +66,7 @@ from brainhops.datamodel.transformations import Affine, Translation
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 # ----------------------------------------------------------------------
@@ -361,7 +361,7 @@ def test_reading_decodes_and_snapshots() -> None:
 def test_case1_untouched_writes_the_record_as_read() -> None:
     meta = _read()
     report = ConversionReport()
-    record = meta.update_raw(report=report)
+    record = meta.update_raw(on_loss=report)
     assert record == {"desc": "short", "cal": (0.0, 1.0), "Key": "v"}
     assert record is not meta.raw  # written over a copy
     assert not report.lossy
@@ -452,7 +452,7 @@ def test_an_unsupported_field_assigned_later_is_reported_at_write() -> None:
 
 
 def test_conversion_reports_what_the_target_cannot_hold() -> None:
-    target, report = _to(_rich(), LiteMetadata, on_loss="ignore")
+    target, report = _to(_rich(), LiteMetadata)
     assert type(target) is LiteMetadata
     assert target.description == "a scan"
     assert target.slice_timing == (0.0, 0.5, 1.0)
@@ -463,7 +463,7 @@ def test_conversion_reports_what_the_target_cannot_hold() -> None:
 
 
 def test_conversion_accepts_a_format_name() -> None:
-    target, _ = _to(_rich(), "test-lite", on_loss="ignore")
+    target, _ = _to(_rich(), "test-lite")
     assert type(target) is LiteMetadata
 
 
@@ -473,8 +473,8 @@ def test_conversion_through_the_hub_loses_what_a_direct_one_does() -> None:
     assert not report.lossy
     # UNSUPPORTED on the source side reads as None.
     assert hub.echo_time is None
-    _, direct = _to(lite, DictMetadata, on_loss="ignore")
-    _, via_hub = _to(hub, DictMetadata, on_loss="ignore")
+    _, direct = _to(lite, DictMetadata)
+    _, via_hub = _to(hub, DictMetadata)
     assert direct.lost == via_hub.lost == {"history": ("h",)}
 
 
@@ -490,9 +490,7 @@ def test_the_record_travels_only_within_a_format() -> None:
 
 
 def test_extra_is_lost_where_the_target_has_no_store() -> None:
-    _, report = _to(
-        Metadata(extra={"Key": 1}), OpaqueMetadata, on_loss="ignore"
-    )
+    _, report = _to(Metadata(extra={"Key": 1}), OpaqueMetadata)
     assert report.lost == {"extra": {"Key": 1}}
 
 
@@ -540,11 +538,11 @@ def test_the_default_policy_warns_once_per_conversion() -> None:
 def test_ignore_is_silent_and_raise_raises() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        _to(_rich(), LiteMetadata, on_loss="ignore")
+        _rich().to(LiteMetadata, on_loss="ignore")
         # Nothing lost: silent whatever the policy.
-        _to(Metadata(description="d"), LiteMetadata, on_loss="raise")
+        Metadata(description="d").to(LiteMetadata, on_loss="raise")
     with pytest.raises(MetadataLossError) as info:
-        _to(_rich(), LiteMetadata, on_loss="raise")
+        _rich().to(LiteMetadata, on_loss="raise")
     assert info.value.report.lost == {"echo_time": 0.03}
 
 
@@ -874,10 +872,10 @@ class GeoMetadata(
 def test_a_derived_field_the_data_model_gives_is_not_encoded() -> None:
     meta = GeoMetadata(repetition_time=2.0)
     report = ConversionReport()
-    assert meta.update_raw(image=2.0, report=report) == {}
+    assert meta.update_raw(image=2.0, on_loss=report) == {}
     assert not report.lossy
     report = ConversionReport()
-    assert meta.update_raw(image=1.5, report=report) == {}
+    assert meta.update_raw(image=1.5, on_loss=report) == {}
     assert set(report.approximated) == {"repetition_time"}
     # The data model says nothing: the value is the format's to write.
     assert meta.update_raw(image=None) == {"tr": 2.0}
@@ -1118,9 +1116,11 @@ def test_preferred_dtype() -> None:
     assert preferred_dtype(labels, np.int64, "int16") == np.int16
     # ... and floats are never quantised into it, nor integers made floats.
     report = ConversionReport()
-    assert preferred_dtype(labels, np.float64, report=report) == np.float64
+    assert preferred_dtype(labels, np.float64, on_loss=report) == np.float64
     assert "data_type" in report.approximated
-    assert preferred_dtype(Metadata(data_type="f4"), np.int16) == np.int16
+    with pytest.warns(MetadataLossWarning):
+        # With no report, the policy in effect.
+        assert preferred_dtype(Metadata(data_type="f4"), np.int16) == np.int16
     assert preferred_dtype(Metadata(), np.int16) == np.int16
     # A data type that was only read is dropped silently.
 
@@ -1136,7 +1136,7 @@ def test_preferred_dtype() -> None:
     read = Typed.from_raw("uint8")
     assert read.data_type == np.uint8 and not read.changed_fields()
     report = ConversionReport()
-    preferred_dtype(read, np.float64, report=report)
+    preferred_dtype(read, np.float64, on_loss=report)
     assert not report.lossy
 
 
@@ -1216,13 +1216,41 @@ def test_to_converts_and_reports() -> None:
     assert type(lite) is LiteMetadata
     assert lite.description == "a scan"
     report = ConversionReport()
-    _rich().to("test-lite", report=report)
+    _rich().to("test-lite", on_loss=report)
     assert report.lost == {"echo_time": 0.03}
     assert (report.source, report.target) == ("generic", "test-lite")
     with pytest.raises(MetadataLossError):
         _rich().to(LiteMetadata, on_loss="raise")
     with pytest.warns(MetadataLossWarning):
         _rich().to(LiteMetadata)
+
+
+def test_a_report_as_on_loss_is_filled_silently() -> None:
+    report = ConversionReport()
+    with warnings.catch_warnings(), metadata_loss_policy("raise"):
+        warnings.simplefilter("error")
+        _rich().to(LiteMetadata, on_loss=report)
+        # A second conversion adds to the same report.
+        Metadata(extra={"Key": 1}).to(OpaqueMetadata, on_loss=report)
+    assert report.lost == {"echo_time": 0.03, "extra": {"Key": 1}}
+    assert (report.source, report.target) == ("generic", "test-lite")
+    # `report=` is gone: it would be a field, which there is not.
+    with pytest.raises(TypeError):
+        _rich().to(LiteMetadata, report=ConversionReport())
+
+
+def test_update_raw_applies_the_policy_unless_given_a_report() -> None:
+    meta = _read()
+    meta.echo_time = 0.03  # not supported: lost on write
+    with pytest.warns(MetadataLossWarning):
+        meta.update_raw()
+    with pytest.raises(MetadataLossError):
+        meta.update_raw(on_loss="raise")
+    report = ConversionReport()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        meta.update_raw(on_loss=report)
+    assert report.lost == {"echo_time": 0.03}
     with pytest.raises(ValueError):
         _rich().to("no-such-format")
 

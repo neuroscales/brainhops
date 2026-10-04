@@ -15,7 +15,7 @@ from brainhops._core.compare import differs
 from brainhops._core.fields import Lazy
 
 from ._base import FIELDS, Metadata, format_name
-from ._report import ConversionReport, short
+from ._report import ConversionReport, OnLoss, apply_loss_policy, short
 from ._sentinel import UNSUPPORTED
 
 
@@ -159,7 +159,7 @@ class FileBasedMetadata(Metadata):
         raw: tx.Any = None,
         *,
         image: tx.Any = None,
-        report: tx.Optional[ConversionReport] = None,
+        on_loss: tx.Optional[OnLoss] = None,
         force: tx.Collection[str] = (),
     ) -> tx.Any:
         """
@@ -179,11 +179,19 @@ class FileBasedMetadata(Metadata):
         encoded: the data model's value is what the writer stores, and a
         changed value that disagrees with it is reported as
         approximated. A field this format does not
-        support but that was assigned after construction is recorded as
-        lost in `report`, as are the value-dependent losses `_encode`
-        finds.
+        support but that was assigned after construction is lost, as are
+        the value-dependent losses `_encode` finds.
+
+        `on_loss` says what to do with them: the policy in effect by
+        default (see [`metadata_loss_policy`][]), `"ignore"`, `"warn"`,
+        `"raise"`, or a [`ConversionReport`][] to fill, which is what a
+        writer passes (the report of its whole write, which it then acts
+        on once).
         """
-        if report is None:
+        sink = isinstance(on_loss, ConversionReport)
+        if sink:
+            report = on_loss
+        else:
             report = ConversionReport(source=self.format, target=self.format)
         unsupported = type(self).unsupported_fields
         for name in unsupported:
@@ -202,7 +210,10 @@ class FileBasedMetadata(Metadata):
                 if name not in unsupported:
                     changed[name] = getattr(self, name)
         self._check_derived(changed, image, report)
-        return self._encode(raw, changed, image=image, report=report)
+        raw = self._encode(raw, changed, image=image, report=report)
+        if not sink:
+            apply_loss_policy(report, on_loss, stacklevel=2)
+        return raw
 
     @classmethod
     def writable(
@@ -215,8 +226,8 @@ class FileBasedMetadata(Metadata):
         `metadata` itself when it is of this class; otherwise its
         conversion into this class, whose losses seed the report. The
         loss policy is *not* applied: the writer encodes (`update_raw`)
-        into the same report and applies the policy once, so that one
-        write gives one report, and one warning.
+        into the same report (`on_loss=report`) and applies the policy
+        once, so that one write gives one report, and one warning.
         """
         if isinstance(metadata, cls):
             target = format_name(cls)
@@ -237,7 +248,7 @@ class FileBasedMetadata(Metadata):
         need it.
         """
         report = ConversionReport(source=self.format, target=self.format)
-        self.update_raw(self._check_raw(image), image=image, report=report)
+        self.update_raw(self._check_raw(image), image=image, on_loss=report)
         return report
 
     # --- copies -------------------------------------------------------

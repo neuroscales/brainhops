@@ -5,6 +5,7 @@ __all__ = [
     "LossPolicy",
     "MetadataLossError",
     "MetadataLossWarning",
+    "OnLoss",
     "apply_loss_policy",
     "collect_loss_reports",
     "metadata_loss_policy",
@@ -135,6 +136,14 @@ class MetadataLossError(Exception):
 
 
 LossPolicy = tx.Literal["ignore", "warn", "raise"]
+"""A loss policy: ignore a loss, warn about it, or raise."""
+
+OnLoss = tx.Union[LossPolicy, ConversionReport]
+"""
+What an `on_loss=` argument takes: a [`LossPolicy`][], or a
+[`ConversionReport`][] to fill with what is lost, instead of warning or
+raising.
+"""
 
 
 @contextlib.contextmanager
@@ -161,17 +170,28 @@ def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
 
 def apply_loss_policy(
     report: ConversionReport,
-    on_loss: tx.Optional[LossPolicy] = None,
+    on_loss: tx.Optional[OnLoss] = None,
     *,
     stacklevel: int = 2,
 ) -> ConversionReport:
     """
-    Act on a report: do nothing, warn once, or raise.
+    Act on a report: do nothing, warn once, raise, or fill another
+    report.
 
     `on_loss` defaults to the policy in effect (see
-    [`metadata_loss_policy`][]). A report with nothing lost or
-    approximated is always silent. The report is returned.
+    [`metadata_loss_policy`][]). A `ConversionReport` given as `on_loss`
+    is filled with the entries of `report` (and its `source` and
+    `target`, where it has none yet), whether anything was lost or not,
+    and nothing is warned or raised: the caller acts on it. A report
+    with nothing lost or approximated is otherwise silent. `report` is
+    returned.
     """
+    if isinstance(on_loss, ConversionReport):
+        if on_loss is not report:
+            on_loss.source = on_loss.source or report.source
+            on_loss.target = on_loss.target or report.target
+            on_loss.merge(report)
+        return report
     policy = _check_policy(on_loss or _POLICY.get())
     if not report.lossy or policy == "ignore":
         return report

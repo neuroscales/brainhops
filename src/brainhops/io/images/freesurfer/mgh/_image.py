@@ -186,7 +186,7 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
                 header[name] = source[name]
         tags = record.tags if record is not None else (self.tags or b"")
         target = metadata.update_raw(
-            MghRaw(header, tags), image=self, report=report, force=force
+            MghRaw(header, tags), image=self, on_loss=report, force=force
         )
         apply_loss_policy(report, on_loss, stacklevel=4)
         header = target.header
@@ -379,7 +379,7 @@ def _stored_dtype(
     if dtype is not None:
         return _mgh_dtype(data, dtype)
     array_dtype = np.dtype(getattr(data, "dtype", np.float32))
-    wanted = preferred_dtype(metadata, array_dtype, report=report)
+    wanted = preferred_dtype(metadata, array_dtype, on_loss=report)
     if wanted == array_dtype:
         return _mgh_dtype(data)
     nearest = _mgh_dtype(np.empty(0, dtype=wanted))

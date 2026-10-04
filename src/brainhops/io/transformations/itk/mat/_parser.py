@@ -319,7 +319,7 @@ def _check_metadata(obj: tx.Any, on_loss: tx.Optional[str]) -> None:
     if metadata is None:
         return
     metadata, report = ItkMetadata.writable(metadata)
-    metadata.update_raw(None, report=report)
+    metadata.update_raw(None, on_loss=report)
     apply_loss_policy(report, on_loss, stacklevel=4)
 
 

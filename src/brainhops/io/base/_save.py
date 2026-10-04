@@ -82,7 +82,9 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         Format-specific options, passed on to the chosen format's `save`.
         `on_loss` (`"ignore"`, `"warn"`, `"raise"`) also governs the
         metadata the conversion to that format cannot hold: a save that
-        converts, then writes, warns at most once, with one report.
+        converts, then writes, warns at most once, with one report. A
+        `ConversionReport` given as `on_loss` is filled with what the
+        conversion and the write lose, and nothing is warned or raised.
 
     Raises
     ------
@@ -132,11 +134,16 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     # format cannot hold), under the save's own `on_loss`; its report
     # and the write's are warned as one.
     on_loss = kwargs.get("on_loss")
+    # A report given as `on_loss` is filled with both, and acted on by
+    # the caller: the conversion's losses are collected (`"warn"` inside
+    # `collect_loss_reports`), and the writer fills it with its own.
+    sink = on_loss if isinstance(on_loss, ConversionReport) else None
     for tier in _tiers(holders):
         writers = []
         for fmt in tier:
             try:
-                with _policy(on_loss), collect_loss_reports() as reports:
+                policy = "warn" if sink is not None else on_loss
+                with _policy(policy), collect_loss_reports() as reports:
                     converted = fmt.from_instance(obj)
                 writers.append((fmt, converted, reports))
             except MetadataLossError:
@@ -149,6 +156,10 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             )
         if writers:
             _, converted, reports = writers[0]
+            if sink is not None:
+                apply_loss_policy(ConversionReport.merged(reports), sink)
+                converted.save(file, **kwargs)
+                return
             with collect_loss_reports() as written:
                 converted.save(file, **kwargs)
             if reports or written:

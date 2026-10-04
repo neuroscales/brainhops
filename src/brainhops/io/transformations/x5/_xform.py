@@ -19,6 +19,7 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.metadata import (
     ConversionReport,
     MetadataField,
+    OnLoss,
     apply_loss_policy,
 )
 
@@ -195,7 +196,7 @@ class X5TransformParser(
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
         on_loss = kwargs.pop("on_loss", None)
         report = ConversionReport(target="x5")
-        header, nodes = self.to_struct(report=report)
+        header, nodes = self._to_struct(report)
         apply_loss_policy(report, on_loss, stacklevel=4)
         return lambda h5file: write_x5(h5file, header, nodes)
 
@@ -204,9 +205,24 @@ class X5TransformParser(
         self._h5_writer(**kwargs)(h5file)
 
     def to_struct(
-        self, report: tx.Optional[ConversionReport] = None
+        self, *, on_loss: tx.Optional[OnLoss] = None
     ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
-        """The header and the nodes that encode this object."""
+        """
+        The header and the nodes that encode this object.
+
+        What the metadata cannot carry is handed to `on_loss`: the
+        policy in effect by default, `"ignore"`, `"warn"`, `"raise"`, or
+        a `ConversionReport` to fill.
+        """
+        report = ConversionReport(target="x5")
+        out = self._to_struct(report)
+        apply_loss_policy(report, on_loss, stacklevel=2)
+        return out
+
+    def _to_struct(
+        self, report: ConversionReport
+    ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
+        """`to_struct`, recording what is lost in `report`."""
         return self.header, list(self.nodes)
 
     def _close(self) -> None:
@@ -328,8 +344,8 @@ class X5Transform(
 
     # --- to -----------------------------------------------------------
 
-    def to_struct(
-        self, report: tx.Optional[ConversionReport] = None
+    def _to_struct(
+        self, report: ConversionReport
     ) -> tx.Tuple[X5Header, tx.List[X5Node]]:
         """
         The header and the nodes that encode this transformation.
@@ -343,8 +359,6 @@ class X5Transform(
         UnrepresentableTransformationError
             If an element of the chain cannot be encoded in X5.
         """
-        if report is None:
-            report = ConversionReport(target="x5")
         if getattr(self, "_transformations", None) is None:
             nodes = list(self.nodes)
             index = self._metadata_index() if nodes else None
@@ -392,7 +406,7 @@ class X5Transform(
             # Not the node it was read from: everything is written.
             metadata = replace(metadata, snapshot={})
         _, node = metadata.update_raw(
-            (self.header, node), image=self, report=report
+            (self.header, node), image=self, on_loss=report
         )
         if index is not None:
             nodes[index] = node

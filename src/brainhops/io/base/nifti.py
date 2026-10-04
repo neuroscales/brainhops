@@ -1317,12 +1317,12 @@ def _apply_metadata(
             copy_record(image.header, metadata.raw, intent=intent)
     _apply_like(image, like)
     if metadata is not None:
-        metadata.update_raw(image.header, image=obj, report=report)
+        metadata.update_raw(image.header, image=obj, on_loss=report)
         if data_type and (overrides or {}).get("dtype") is None:
             array_dtype = getattr(image.dataobj, "dtype", None)
             if array_dtype is None:
                 array_dtype = image.get_data_dtype()
-            dtype = preferred_dtype(metadata, array_dtype, report=report)
+            dtype = preferred_dtype(metadata, array_dtype, on_loss=report)
             try:
                 image.header.set_data_dtype(dtype)
             except Exception:
@@ -1411,6 +1411,7 @@ def _image_with_geometry(
         getattr(owner, "metadata", None),
         getattr(data, "dtype", np.float32),
         overrides.get("dtype"),
+        on_loss="ignore",
     )
     image = _new_nifti(data, sform, dtype)
     image.header.set_sform(sform, code=scode)

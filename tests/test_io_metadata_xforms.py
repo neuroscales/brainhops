@@ -14,7 +14,7 @@ from bagof.magic import fields
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
     """`source.to(target, ...)`, and the report it filled."""
     report = ConversionReport()
-    return source.to(target, report=report, **kwargs), report
+    return source.to(target, on_loss=report, **kwargs), report
 
 
 h5py = pytest.importorskip("h5py")
@@ -260,7 +260,7 @@ def test_x5_to_generic_to_bids_and_back(warp_x5: Path) -> None:
 
 def test_x5_to_itk_loses_everything(warp_x5: Path) -> None:
     meta = io.load(warp_x5).metadata
-    itk, report = _to(meta, ItkMetadata, on_loss="ignore")
+    itk, report = _to(meta, ItkMetadata)
     assert set(report.lost) == {
         "description",
         "generated_by",
@@ -387,7 +387,7 @@ def test_itk_h5_encodes_only_the_itk_entry(tmp_path: Path) -> None:
     )
     report = xform.metadata.check_writable()
     assert set(report.lost) == {"generated_by"}
-    header = xform.metadata.update_raw()
+    header = xform.metadata.update_raw(on_loss="ignore")
     assert header.ITKVersion == "5.3.0"
     assert xform.header.ITKVersion == "5.4.0"  # the record is not edited
 
