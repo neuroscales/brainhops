@@ -1013,7 +1013,10 @@ def derive(
   `_PER_BRICK` attributes, NRRD `_PER_AXIS` fields) is scrubbed by a
   per-format hook, `_derive_raw(raw, *, grid_changed, volumes)`, which
   is where today's AFNI and NRRD rules move. Without both, case 1 would
-  write stale slice timing from an untouched record.
+  write stale slice timing from an untouched record. The hook's default
+  is a deep copy of the record (a derived object never shares it, as
+  M10 copies rather than aliases), so a format overrides it only to
+  scrub.
 
 Where it is called:
 

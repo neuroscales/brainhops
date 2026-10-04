@@ -489,15 +489,6 @@ class OmeZarrMetadata(
     def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
         return {"data_type": _array_dtype(image)}
 
-    def _derive_raw(
-        self,
-        raw: tx.Optional[OmeZarrRaw],
-        *,
-        grid_changed: bool,
-        volumes: tx.Optional[tx.Sequence[int]],
-    ) -> tx.Optional[OmeZarrRaw]:
-        return copy.deepcopy(raw)
-
     def _encode_omero(
         self,
         raw: OmeZarrRaw,

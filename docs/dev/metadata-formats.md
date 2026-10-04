@@ -83,7 +83,7 @@ All the hooks are optional, and all private.
 | `_encode(raw, changed, *, image, report)` | `update_raw` | the raw record to write |
 | `_geometry(image)` | `update_raw` | the fields the data model owns, and their values |
 | `_check_raw(image)` | `check_writable` | the raw record a writer starts from |
-| `_import(other, values, *, report)` | `to`, `from_other` | recovered losses |
+| `_import(other, values, *, report)` | `to`, `from_other` | recovered losses (key/value formats) |
 | `_derive_raw(raw, *, grid_changed, volumes)` | `derive` | a scrubbed raw record |
 
 - `_default_raw() -> raw`: a fresh, empty raw record, for an object
@@ -128,9 +128,12 @@ All the hooks are optional, and all private.
   `report.lost` and listing it in `report.passed_through`. Defaults to
   nothing.
 - `_derive_raw(raw, *, grid_changed, volumes) -> raw`: called by
-  [`derive`][brainhops.datamodel.metadata.FileBasedMetadata.derive] to
-  scrub raw content that is tied to the grid or to the volumes but is
-  outside the vocabulary. It must not modify `raw` in place.
+  [`derive`][brainhops.datamodel.metadata.FileBasedMetadata.derive] for
+  the raw record of the derived object. Defaults to a deep copy of `raw`
+  (a derived object never shares its record); a format that keeps raw
+  content tied to the grid or to the volumes but outside the vocabulary
+  scrubs it from that copy (NIfTI: the slice fields and `dim_info`, when
+  `grid_changed`), and never modifies `raw` in place.
 
 ## Reading and writing
 

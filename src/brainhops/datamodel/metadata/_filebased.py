@@ -340,8 +340,14 @@ class FileBasedMetadata(Metadata):
         grid_changed: bool,
         volumes: tx.Optional[tx.Sequence[int]],
     ) -> tx.Any:
-        """Scrub grid- or volume-bound raw content. Default: none."""
-        return raw
+        """
+        The raw record of a derived object (`derive`): a copy of `raw`,
+        which a format scrubs of what is tied to the grid (when
+        `grid_changed`) or to the volumes (`volumes`, the selected
+        indices) but is outside the vocabulary. Default: a deep copy, so
+        that the derived object never shares its record.
+        """
+        return copy.deepcopy(raw)
 
     # --- propagation --------------------------------------------------
 

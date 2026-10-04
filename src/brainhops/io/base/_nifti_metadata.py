@@ -46,7 +46,6 @@ a `dtype=` writer option wins.
 __all__ = ["NiftiMetadata"]
 
 # stdlib
-import copy
 
 # dependencies
 import nibabel as nb
@@ -298,11 +297,13 @@ class NiftiMetadata(
         grid_changed: bool,
         volumes: tx.Optional[tx.Sequence[int]],
     ) -> tx.Optional[nb.Nifti1Header]:
-        if raw is None or not grid_changed:
-            return raw
-        raw = copy.deepcopy(raw)
-        _clear_slices(raw)
-        raw.set_dim_info(None, None, None)
+        raw = super()._derive_raw(
+            raw, grid_changed=grid_changed, volumes=volumes
+        )
+        if raw is not None and grid_changed:
+            # The slice timing and the encoding axes follow the grid.
+            _clear_slices(raw)
+            raw.set_dim_info(None, None, None)
         return raw
 
 

@@ -50,7 +50,6 @@ end.
 __all__ = ["MghMetadata", "MghRaw"]
 
 # stdlib
-import copy
 import functools
 import math
 import struct
@@ -403,12 +402,3 @@ class MghMetadata(
             else:
                 raw.tags = tags
         return raw
-
-    def _derive_raw(
-        self,
-        raw: tx.Optional[MghRaw],
-        *,
-        grid_changed: bool,
-        volumes: tx.Optional[tx.Sequence[int]],
-    ) -> tx.Optional[MghRaw]:
-        return None if raw is None else copy.deepcopy(raw)

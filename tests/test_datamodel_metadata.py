@@ -639,6 +639,12 @@ def test_derive_keeps_the_record_and_clears_through_it() -> None:
     assert derived.echo_time is UNSUPPORTED
 
 
+def test_derive_copies_the_record_by_default() -> None:
+    meta = LiteMetadata.from_raw({"key": [1]})
+    derived = meta.derive()
+    assert derived.raw == meta.raw and derived.raw is not meta.raw
+
+
 # ----------------------------------------------------------------------
 #   BIDS SIDECAR
 # ----------------------------------------------------------------------

@@ -294,7 +294,18 @@ class Metadata(
         *,
         report: ConversionReport,
     ) -> None:
-        """Recover losses of a conversion. Default: nothing."""
+        """
+        Recover losses of a conversion into this class: a hook for the
+        key/value formats (MRtrix, NRRD), whose free-form store can hold
+        what they have no slot for.
+
+        Called by `to` and `from_instance` with the source object, the
+        values about to be passed to the constructor (`values`, edited in
+        place) and the report, whose `lost` already lists what this class
+        cannot store. A format recovers a loss by moving the value into
+        `values["extra"]`, removing it from `report.lost` and adding its
+        name to `report.passed_through`. Default: nothing is recovered.
+        """
 
     # --- propagation --------------------------------------------------
 
