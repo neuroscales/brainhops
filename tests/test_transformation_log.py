@@ -34,6 +34,7 @@ from brainhops.datamodel.transformations import (
     Inverse,
     Linear,
     LinearExponential,
+    Permutation,
     Rotation,
     RotationExponential,
     Scaling,
@@ -709,3 +710,142 @@ def test_a_format_copies_the_map_not_the_stored_data(t: object) -> None:
     copied = NiftyRegAffine.from_other(t)
     assert not copied.log
     np.testing.assert_allclose(copied.matrix, t.matrix, atol=1e-12)
+
+
+# ----------------------------------------------------------------------
+#   REVIEW FOLLOW-UPS
+# ----------------------------------------------------------------------
+
+
+def test_an_unset_field_becomes_a_velocity_with_steps() -> None:
+    velocity = DisplacementField(degree=DEGREE).to(log=True, steps=4)
+    assert type(velocity) is StationaryVelocityField
+    assert (velocity.steps, velocity.degree, velocity.data) == (4, 3, None)
+
+
+def test_a_velocity_type_points_at_the_flag() -> None:
+    with pytest.raises(ConversionError, match=r"to\(log=True\)"):
+        DisplacementField(data=_linear_velocity()).to(StationaryVelocityField)
+    velocity = _velocity_field()
+    assert velocity.to(StationaryVelocityField) is velocity
+
+
+@pytest.mark.parametrize(
+    "t, value",
+    [
+        (StationaryVelocityField(data=np.zeros((4, 4, 2))), False),
+        (AffineExponential(data=TANGENT), False),
+        (ScalingExponential(data=np.zeros(2)), False),
+        (Affine(data=MATRIX), True),
+        (DisplacementField(data=np.zeros((4, 4, 2))), True),
+    ],
+    ids=lambda x: getattr(type(x), "__name__", str(x)),
+)
+def test_the_log_flag_cannot_change_in_place(t: object, value: bool) -> None:
+    # Both directions refuse alike: the flag selects the class.
+    with pytest.raises(TypeError, match=f"t.to\\(log={value}\\)"):
+        t.log = value
+
+
+def test_the_resolved_squarings() -> None:
+    velocity = _velocity_field()
+    assert velocity.squarings == _concrete._squaring_steps(velocity.data)
+    assert _velocity_field(steps=3).squarings == 3
+    assert StationaryVelocityField().squarings is None
+
+
+@pytest.mark.parametrize("cls", [Translation, Permutation])
+def test_assigning_data_forgets_the_cached_inverse_and_root(
+    cls: type,
+) -> None:
+    first, second = (
+        (np.array([1.0, 2.0]), np.array([4.0, -2.0]))
+        if cls is Translation
+        else (np.array([1, 2, 0]), np.array([2, 0, 1]))
+    )
+    t = cls(data=first)
+    t.inverse().data  # noqa: B018
+    if cls is Translation:
+        t.sqrt().data  # noqa: B018
+    t.data = second
+    expected = cls(data=second)
+    np.testing.assert_array_equal(t.inverse().data, expected.inverse().data)
+    if cls is Translation:
+        np.testing.assert_array_equal(t.sqrt().data, second / 2)
+
+
+@pytest.mark.parametrize(
+    "cls, wrapper",
+    [
+        (
+            Translation,
+            Translation(translation=np.array([1.0, -2.0])).inverse(),
+        ),
+        (Permutation, Permutation(permutation=np.array([1, 2, 0])).inverse()),
+        (AffineExponential, AffineExponential(data=TANGENT).inverse()),
+        (
+            DisplacementField,
+            DisplacementField(
+                data=_linear_velocity() * 0.01, degree=3
+            ).inverse(),
+        ),
+        (StationaryVelocityField, _velocity_field(steps=3).inverse()),
+    ],
+    ids=lambda x: getattr(x, "__name__", ""),
+)
+def test_a_copy_of_a_lazy_wrapper_holds_its_map(
+    cls: type, wrapper: object
+) -> None:
+    copied = cls.from_instance(wrapper)
+    assert type(copied) is cls
+    np.testing.assert_allclose(copied.data, wrapper.data, atol=1e-12)
+    if cls is StationaryVelocityField:
+        assert copied.log and copied.steps == 3
+
+
+def test_a_copy_of_a_velocity_into_a_displacement_is_integrated() -> None:
+    velocity = _velocity_field()
+    copied = DisplacementField.from_instance(velocity)
+    assert type(copied) is DisplacementField and not copied.log
+    np.testing.assert_array_equal(copied.field, velocity.field)
+
+
+# --- a chain between a change of coordinates --------------------------
+
+
+def _framed(middle: object) -> Sequence:
+    voxel_to_world = VoxelToLPS(matrix=np.diag([2.0, 3.0, 1.0])[:2])
+    return Sequence([voxel_to_world.inverse(), middle, voxel_to_world])
+
+
+def test_a_framed_velocity_converts_to_its_displacement() -> None:
+    velocity = _velocity_field()
+    chain = _framed(velocity)
+    plain = chain.to(log=False)
+    assert isinstance(plain, Sequence) and len(plain) == 3
+    assert plain[0] is chain[0] and plain[2] is chain[2]
+    assert type(plain[1]) is DisplacementField
+    np.testing.assert_array_equal(plain[1].field, velocity.field)
+    # And back: the displacement has no logarithm.
+    with pytest.raises(NotImplementedError, match="logarithm"):
+        plain.to(log=True)
+    tangent = _framed(Affine(matrix=np.eye(2, 3) + 0.1)).to(log=True)
+    assert type(tangent[1]) is AffineExponential
+
+
+def test_a_chain_that_does_not_reduce_is_refused_before_computing() -> None:
+    from brainhops.datamodel._transformations import sequence as _sequence
+
+    chain = Sequence(
+        [
+            Translation(translation=np.ones(2)),
+            _velocity_field(),
+            DisplacementField(data=np.zeros(SHAPE + (2,))),
+        ]
+    )
+    computed = AssertionError("composed")
+    with mock.patch.object(_sequence, "compose", side_effect=computed):
+        with mock.patch.object(_concrete, "compose", side_effect=computed):
+            for log in (True, False):
+                with pytest.raises(ConversionError, match="not composed"):
+                    chain.to(log=log)

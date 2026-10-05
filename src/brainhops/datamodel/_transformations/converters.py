@@ -210,7 +210,15 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
                 f"implemented. A velocity is built with log=True, from "
                 f"its data: DisplacementField(data=v, log=True)."
             )
-        return smart_replace(t, **kwargs)
+        # `replace` would build this class, which takes no `steps`: the
+        # result is built as a `StationaryVelocityField`.
+        del kwargs["log"]
+        kwargs.setdefault("data", t.data)
+        kwargs.setdefault("coeff", t.coeff)
+        kwargs.setdefault("degree", t.degree)
+        kwargs.setdefault("bound", t.bound)
+        _endpoints(t, kwargs)
+        return StationaryVelocityField(**kwargs)
     kwargs.pop("log", None)
     # The flags of the result: those given, or else those of `t`.
     coeff = kwargs.get("coeff", t.coeff)
@@ -231,6 +239,20 @@ def _(t: DisplacementField, **kwargs) -> DisplacementField:
     return smart_replace(t, **kwargs)
 
 
+@converter
+def _(t: DisplacementField, **kwargs) -> StationaryVelocityField:
+    # A type is not an encoding: a field becomes a velocity with
+    # `.to(log=True)`, which says what it does to the stored `data`.
+    raise ConversionError(
+        f"A {type(t).__name__} is converted to a StationaryVelocityField "
+        f"with t.to(log=True), not t.to(StationaryVelocityField). A field "
+        f"that holds a displacement has no logarithm that brainhops "
+        f"computes; one whose data is a velocity is built with "
+        f"DisplacementField(data=v, log=True)."
+    )
+
+
+@converter(StationaryVelocityField, StationaryVelocityField)
 @converter
 def _(t: StationaryVelocityField, **kwargs) -> DisplacementField:
     # The flags of the result: those given, or else those of `t`.
@@ -310,9 +332,12 @@ def _(t: CartesianField, **kwargs) -> CartesianField:
 @converter
 def _(t: SubspaceTransformation, **kwargs) -> SubspaceTransformation:
     if "log" in kwargs:
-        # The encoding of the inner transformation. The axes a subspace
-        # does not act on are the identity, whose tangent is zero, so a
-        # tangent inner pads to the tangent of the whole: the map is kept.
+        # The encoding of the inner transformation; the map is kept. When
+        # the subspace reads and writes the same axes, the axes it does not
+        # act on are the identity, whose tangent is zero, so the padded
+        # inner tangent is the tangent of the whole. A subspace that
+        # reindexes its axes has no such tangent of its own, and only its
+        # inner transformation is re-encoded.
         log = kwargs.pop("log")
         inner = kwargs.get("transformation", t.transformation)
         if inner is not None:

@@ -19,7 +19,6 @@ from brainhops.backends import get_array_backend
 # datamodel
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
-from brainhops.datamodel._transformations.concrete import _squaring_steps
 from brainhops.datamodel.enums import BoundaryCondition
 
 # io
@@ -282,6 +281,22 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
                 f"Two-dimensional NiftyReg fields are not supported."
             )
         return super().from_nibabel(nifti, **kwargs)
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        The chain of another transformation is carried over, rather than
+        re-read from a NIfTI header that comes with it: that header is
+        another format's, and this one would read its vectors as its own
+        (a displacement as a velocity, say).
+        """
+        if isinstance(other, _xforms.Sequence) and not isinstance(other, cls):
+            kwargs.setdefault("transformations", tuple(other))
+        return super().from_instance(other, *args, **kwargs)
 
     # --- endpoints ----------------------------------------------------
     #
@@ -670,6 +685,11 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
     of coordinates the chain makes, so the chain maps reference RAS to
     floating RAS as NiftyReg's deformation does.
 
+    A velocity grid is read as the coefficients of the velocity, and is
+    squared on its own grid, of control points. NiftyReg evaluates the
+    grid onto the dense reference grid first, and squares there, so the
+    flow matches `reg_transform -def` closely but not exactly.
+
     NiftyReg removes the affine it keeps in the extensions of a symmetric
     registration's velocity before the squaring, and composes it back
     after; that is not decoded here, so a velocity whose header carries
@@ -726,7 +746,11 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
         self, like: tx.Any = None, **overrides
     ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
         """The NIfTI image as it was read, or `None` if this velocity was
-        not read from a file, or its chain was assigned."""
+        not read from a NiftyReg velocity file of its type, or its chain
+        was assigned. A header copied from another format is never written
+        back: it says something else."""
+        if self.niftyreg_type not in type(self).TYPES:
+            return None
         if getattr(self, "_transformations", None) is not None:
             return None
         if self.header is None or self.data is None:
@@ -746,11 +770,7 @@ StationaryVelocityField]: the velocity, in voxel units, negated for a
 def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:
     """The squaring steps NiftyReg is told to integrate a velocity with:
     those of the velocity, or else the number its default rule picks."""
-    velocity = chain[1]
-    steps = getattr(velocity, "steps", None)
-    if steps is not None:
-        return int(steps)
-    return _squaring_steps(velocity.to(coeff=False).data)
+    return int(chain[1].squarings)
 
 
 @register_format

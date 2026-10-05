@@ -279,6 +279,27 @@ transformations.StationaryVelocityField].
             return Confidence.CERTAIN
         return Confidence.NO
 
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        The chain of another transformation is carried over, rather than
+        re-read from a NIfTI header that comes with it and says something
+        else (a NiftyReg file holds positions, say). Its encoding is not:
+        `log` and `steps` are this format's options, so a velocity copied
+        here is written as its displacement unless `log=True` is given --
+        to this copy, or to `save`.
+        """
+        if not isinstance(other, NiftiRASDisplacementField):
+            kwargs.setdefault("log", False)
+            kwargs.setdefault("steps", None)
+            if isinstance(other, _xforms.Sequence):
+                kwargs.setdefault("transformations", tuple(other))
+        return super().from_instance(other, *args, **kwargs)
+
     # --- endpoints ----------------------------------------------------
     #
     # Declared rather than read off the chain: reading them off the
@@ -373,7 +394,10 @@ transformations.StationaryVelocityField].
     # --- writing ------------------------------------------------------
 
     def to_nibabel(
-        self, like: tx.Any = None, **overrides
+        self,
+        like: tx.Any = None,
+        log: tx.Optional[bool] = None,
+        **overrides,
     ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
         """
         Build the `nibabel` image that encodes this field of displacements.
@@ -381,15 +405,17 @@ transformations.StationaryVelocityField].
         The displacements are rotated from voxel units into RAS
         millimetres and written as a `DISPVECT` (1006) image of shape
         `(X, Y, Z, 1, 3)`, whose voxel-to-RAS affine is the grid's. With
-        `log`, the velocity is written instead; otherwise a velocity is
-        integrated into its displacement.
+        `log` (this field's own, unless one is given here, as in
+        `save(path, log=True)`), the velocity is written instead;
+        otherwise a velocity is integrated into its displacement.
 
         When `like` is given, non-encoding header fields are copied from
         it. Keyword arguments override header fields last.
         """
         what = "A NIfTI displacement field"
+        log = self.log if log is None else log
         vox2ras, vectors = split_ras_displacement_chain(
-            self.transformations, what, ndim=_NDIM, log=self.log
+            self.transformations, what, ndim=_NDIM, log=log
         )
         backend = get_array_backend(vectors)
         # NIfTI stores a vector field as a five-dimensional array, with

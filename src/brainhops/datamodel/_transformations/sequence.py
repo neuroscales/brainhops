@@ -211,20 +211,23 @@ class Sequence(SequenceMixin, Transformation):
 
         See [`Transformation.to`][brainhops.datamodel.transformations.\
 Transformation.to]. A chain has no tangent of its own -- the tangent of a
-        composition is not the sum of the tangents -- so `log=` is the
-        encoding of the single transformation the chain composes to: it is
-        composed first, and refused when it does not compose to one.
+        composition is not the sum of the tangents -- so `log=` re-encodes
+        the transformation it reduces to, and anything else is refused
+        before it is computed:
+
+        * a chain that simplifies to one transformation is that one;
+        * a change of coordinates `[P, *X, P^-1]` (see [`sqrt`][brainhops.\
+datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
+          `X`: the flow of a velocity commutes with the conjugation, so this
+          is exact. A velocity read between a world-to-voxel affine and its
+          inverse (`|svf`) is turned into its displacement that way;
+        * a chain of affines is composed, which is cheap and exact.
+
+        Any other chain -- one with a field, between ends that do not undo
+        each other -- raises `ConversionError`.
         """
         if "log" in kwargs:
-            reduced = self.compute()
-            if isinstance(reduced, Sequence):
-                names = ", ".join(type(t).__name__ for t in reduced)
-                raise ConversionError(
-                    f"A chain is stored as its tangent (log=) only when it "
-                    f"composes to a single transformation, but this one "
-                    f"composes to [{names}]."
-                )
-            return reduced.to(cls, **kwargs)
+            return _chain_to(self, cls, kwargs)
         return super().to(cls, **kwargs)
 
     def compute(
@@ -668,6 +671,44 @@ def _chain_sqrt(
             f"[{names}]."
         )
     return reduced.sqrt(compute, **kwargs)
+
+
+def _chain_to(
+    seq: Sequence,
+    cls: tx.Optional[tx.Type[Transformation]],
+    kwargs: tx.Dict[str, tx.Any],
+) -> Transformation:
+    # A chain stored as its tangent, or not (see `Sequence.to`). The
+    # endpoints are those of the chain; every other keyword re-encodes the
+    # transformation it reduces to.
+    ends = {k: kwargs.pop(k) for k in ("input", "output") if k in kwargs}
+    chain = seq.simplify()
+    if not isinstance(chain, Sequence):
+        return chain.to(cls, **kwargs, **ends)
+    leaves = list(chain.transformations or [])
+    if len(leaves) >= 3 and _undoes(leaves[0], leaves[-1]):
+        middle = leaves[1:-1]
+        if len(middle) == 1:
+            inner = middle[0]
+        else:
+            inner = Sequence(transformations=middle)
+        obj = Sequence(
+            transformations=[leaves[0], inner.to(**kwargs), leaves[-1]],
+            input=chain._input,
+            output=chain._output,
+        )
+        return obj.to(**ends) if ends else obj
+    if all(is_kind(t, kinds.Affine) for t in leaves):
+        reduced = chain.compute()
+        if not isinstance(reduced, Sequence):
+            return reduced.to(cls, **kwargs, **ends)
+    names = ", ".join(type(t).__name__ for t in leaves)
+    raise ConversionError(
+        f"A chain is stored as its tangent (log=) only when it reduces to "
+        f"a single transformation, is a change of coordinates "
+        f"[P, ..., P^-1], or is a chain of affines, but this one is "
+        f"[{names}]. It is not composed to find out."
+    )
 
 
 def _undoes(first: Transformation, last: Transformation) -> bool:

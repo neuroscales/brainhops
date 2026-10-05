@@ -148,9 +148,14 @@ The encoding changes with `.to(log=...)`:
 - The flags combine: `.to(coeff=False)` on a velocity decodes its
   coefficients and keeps `log`, and `.to(log=False)` keeps `coeff`.
 - A `SubspaceTransformation` converts its inner transformation (the axes
-  it does not act on are the identity, whose tangent is zero), and a
-  `Sequence` is composed to one transformation first, and refused when
-  it does not compose to one.
+  it does not act on are the identity, whose tangent is zero).
+- A `Sequence` converts the transformation it reduces to: a chain that
+  simplifies to one transformation; the middle of a change of
+  coordinates `[P, *X, P^-1]`, whose ends are kept (the flow commutes with
+  them, so a velocity read between a world-to-voxel affine and its
+  inverse becomes its displacement exactly); or the affine a chain of
+  affines composes to. Any other chain is refused before anything is
+  computed.
 
 A tangent makes some operations exact: `inverse()` is a lazy `Inverse`
 whose `data` is the negated tangent, which still cancels against its

@@ -365,11 +365,41 @@ class DisplacementField(TransformationField, polymorphic=True):
     # --- stored attributes, which key the views -----------------------
 
     def _set_log(self, value: bool) -> None:
-        _refuse_log(self, value, "StationaryVelocityField")
+        _refuse_log_change(self, value, "StationaryVelocityField")
         self._log = value
         self._forget_views()
 
     log = smartproperty("log", _set_log)
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. A lazy wrapper derives its `data` and its
+        flags, so they are read through their public names. A field that
+        holds its displacement is copied as its displacement: a velocity
+        (`log=True`) is integrated, unless the copy is a velocity too.
+        """
+        if isinstance(other, DisplacementField):
+            flags = dict(coeff=other.coeff, degree=other.degree)
+            flags["bound"] = other.bound
+            for name, value in flags.items():
+                kwargs.setdefault(name, value)
+            if issubclass(cls, StationaryVelocityField):
+                if other.log:
+                    kwargs.setdefault("data", other.data)
+                    kwargs.setdefault("log", True)
+                    kwargs.setdefault("steps", other.steps)
+            elif other.log:
+                kwargs.setdefault("data", _encode(other.field, **flags))
+                kwargs.setdefault("log", False)
+            else:
+                kwargs.setdefault("data", other.data)
+        return super().from_instance(other, *args, **kwargs)
 
     # --- methods ------------------------------------------------------
 
@@ -399,6 +429,13 @@ class StationaryVelocityField(DisplacementField, on={"_log": True}):
     coefficients is refitted at each step, so its squaring stays in
     coefficients. The displacements are in the voxels of the field's own
     grid, as for any [`DisplacementField`][].
+
+    !!! note "Squaring on the knot grid"
+        A field of coefficients is squared on its own grid: the grid of
+        its knots. NiftyReg evaluates a velocity grid (`-vel -cpp`) onto
+        the dense reference grid first, and squares there, so the two do
+        not match `reg_transform -def` exactly, although both converge to
+        the same flow.
 
     `DisplacementField(data=v, log=True)`, `d.to(log=True)` (for an unset
     `d`) and `StationaryVelocityField(data=v)` build the same object.
@@ -436,6 +473,11 @@ class StationaryVelocityField(DisplacementField, on={"_log": True}):
     ] = None
 
     def __post_init__(self, arguments: tx.Any) -> None:
+        # This does not call the base's, which only does what does not
+        # apply here: `DisplacementField` refuses `log=True`, which is what
+        # selects this class, and `TransformationField` encodes `field=`,
+        # which is refused here instead.
+        #
         # `field=` is the map, as displacement values, which would be
         # stored here as its velocity: a field has no logarithm that
         # brainhops computes.
@@ -449,18 +491,27 @@ class StationaryVelocityField(DisplacementField, on={"_log": True}):
 
     # --- stored attributes, which key the views -----------------------
 
-    def _set_log(self, value: bool) -> None:
-        self._log = value
-        self._forget_views()
-
     def _set_steps(self, value: tx.Optional[int]) -> None:
         self._steps = value
         self._forget_views()
 
-    log = smartproperty("log", _set_log)
     steps = smartproperty("steps", _set_steps)
 
     # --- views --------------------------------------------------------
+
+    @property
+    def squarings(self) -> tx.Optional[int]:
+        """
+        The number of squaring steps the `field` view integrates with:
+        `steps`, or the number the default rule picks when it is `None`.
+        `None` when `data` is unset.
+        """
+        if self.data is None:
+            return None
+        if self.steps is not None:
+            return self.steps
+        flags = self.coeff, self.degree, self.bound
+        return _squaring_steps(_decode(self.data, *flags))
 
     @lazyproperty
     def field(self) -> tx.Optional[ArrayProtocol]:
@@ -512,6 +563,26 @@ class CoordinatesField(TransformationField):
     The input space corresponds to the regular grid on which the
     coordinates are defined.
     """
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. A lazy wrapper derives its `data` and its
+        flags, so they are read through their public names.
+        """
+        if isinstance(other, CoordinatesField) and not isinstance(
+            other, CartesianField
+        ):
+            kwargs.setdefault("data", other.data)
+            kwargs.setdefault("coeff", other.coeff)
+            kwargs.setdefault("degree", other.degree)
+            kwargs.setdefault("bound", other.bound)
+        return super().from_instance(other, *args, **kwargs)
 
     # --- methods ------------------------------------------------------
 
@@ -678,7 +749,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
         self._forget_views()
 
     def _set_log(self, value: bool) -> None:
-        _refuse_log(self, value, "AffineExponential")
+        _refuse_log_change(self, value, "AffineExponential")
         self._log = value
         self._forget_views()
 
@@ -705,13 +776,16 @@ class Affine(ConcreteTransformation, polymorphic=True):
         See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
 DataModelBase.from_instance]. The map of an `Affine` is copied through
         its `matrix` view, not its stored `data`, which a lazy wrapper
-        derives and a tangent (`log=True`) stores as its logarithm.
+        derives and a tangent (`log=True`) stores as its logarithm. A
+        tangent is copied into a tangent through its `data`.
         """
-        if isinstance(other, Affine) and not issubclass(
-            cls, AffineExponential
-        ):
-            kwargs.setdefault("data", other.matrix)
-            kwargs.setdefault("log", False)
+        if isinstance(other, Affine):
+            if not issubclass(cls, AffineExponential):
+                kwargs.setdefault("data", other.matrix)
+                kwargs.setdefault("log", False)
+            elif other.log:
+                kwargs.setdefault("data", other.data)
+                kwargs.setdefault("log", True)
         return super().from_instance(other, *args, **kwargs)
 
     @property
@@ -759,14 +833,6 @@ class AffineExponential(Affine, on={"_log": True}):
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
             self.data = affine_logm(matrix, _logarithm_of(self))
-
-    # --- stored attributes, which key the views -----------------------
-
-    def _set_log(self, value: bool) -> None:
-        self._log = value
-        self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -873,7 +939,7 @@ class Linear(ConcreteTransformation, polymorphic=True):
         self._forget_views()
 
     def _set_log(self, value: bool) -> None:
-        _refuse_log(self, value, "LinearExponential")
+        _refuse_log_change(self, value, "LinearExponential")
         self._log = value
         self._forget_views()
 
@@ -897,12 +963,16 @@ class Linear(ConcreteTransformation, polymorphic=True):
         See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
 DataModelBase.from_instance]. The map of a `Linear` is copied through
         its `matrix` view, not its stored `data`, which a lazy wrapper
-        derives and a tangent (`log=True`) stores as its logarithm.
+        derives and a tangent (`log=True`) stores as its logarithm. A
+        tangent is copied into a tangent through its `data`.
         """
-        tangent = (LinearExponential, RotationExponential)
-        if isinstance(other, Linear) and not issubclass(cls, tangent):
-            kwargs.setdefault("data", other.matrix)
-            kwargs.setdefault("log", False)
+        if isinstance(other, Linear):
+            if not issubclass(cls, (LinearExponential, RotationExponential)):
+                kwargs.setdefault("data", other.matrix)
+                kwargs.setdefault("log", False)
+            elif other.log:
+                kwargs.setdefault("data", other.data)
+                kwargs.setdefault("log", True)
         return super().from_instance(other, *args, **kwargs)
 
 
@@ -936,14 +1006,6 @@ class LinearExponential(
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
             self.data = logm(matrix, _logarithm_of(self))
-
-    # --- stored attributes, which key the views -----------------------
-
-    def _set_log(self, value: bool) -> None:
-        self._log = value
-        self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -1016,7 +1078,7 @@ class Rotation(Linear):
     # --- stored attributes, which key the views -----------------------
 
     def _set_log(self, value: bool) -> None:
-        _refuse_log(self, value, "RotationExponential")
+        _refuse_log_change(self, value, "RotationExponential")
         self._log = value
         self._forget_views()
 
@@ -1045,14 +1107,6 @@ class RotationExponential(Rotation, on={"_log": True}):
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
             self.data = logm(matrix, _logarithm_of(self))
-
-    # --- stored attributes, which key the views -----------------------
-
-    def _set_log(self, value: bool) -> None:
-        self._log = value
-        self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -1098,7 +1152,7 @@ class Permutation(ConcreteTransformation):
 
     # --- attributes ---------------------------------------------------
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npvector[Integral]],
         tx.Doc(
             """
@@ -1124,12 +1178,42 @@ class Permutation(ConcreteTransformation):
             _refuse_data_too(self, arguments, "permutation")
             self.data = permutation
 
+    # --- stored attributes, which key the caches ----------------------
+
+    def _forget_views(self) -> None:
+        # The inverse and square root cached on this transform are
+        # computed from `data`: a new value clears them.
+        for name in (INVERSE_CACHE, OPERATION_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+
     # --- views --------------------------------------------------------
 
     @property
     def permutation(self) -> tx.Optional[ArrayProtocol]:
         """The permutation vector, of shape `(N,)`."""
         return self.data
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. The map of a `Permutation` is copied
+        through its `permutation` view, not its stored `data`, which a lazy
+        wrapper derives.
+        """
+        if isinstance(other, Permutation):
+            kwargs.setdefault("data", other.permutation)
+        return super().from_instance(other, *args, **kwargs)
 
 
 @kinds.Diagonal
@@ -1200,7 +1284,7 @@ class Scaling(ConcreteTransformation, polymorphic=True):
         self._forget_views()
 
     def _set_log(self, value: bool) -> None:
-        _refuse_log(self, value, "ScalingExponential")
+        _refuse_log_change(self, value, "ScalingExponential")
         self._log = value
         self._forget_views()
 
@@ -1224,13 +1308,16 @@ class Scaling(ConcreteTransformation, polymorphic=True):
         See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
 DataModelBase.from_instance]. The map of a `Scaling` is copied through
         its `scale` view, not its stored `data`, which a lazy wrapper
-        derives and a tangent (`log=True`) stores as its logarithm.
+        derives and a tangent (`log=True`) stores as its logarithm. A
+        tangent is copied into a tangent through its `data`.
         """
-        if isinstance(other, Scaling) and not issubclass(
-            cls, ScalingExponential
-        ):
-            kwargs.setdefault("data", other.scale)
-            kwargs.setdefault("log", False)
+        if isinstance(other, Scaling):
+            if not issubclass(cls, ScalingExponential):
+                kwargs.setdefault("data", other.scale)
+                kwargs.setdefault("log", False)
+            elif other.log:
+                kwargs.setdefault("data", other.data)
+                kwargs.setdefault("log", True)
         return super().from_instance(other, *args, **kwargs)
 
 
@@ -1255,14 +1342,6 @@ class ScalingExponential(Scaling, on={"_log": True}):
         if scale is not None:
             _refuse_data_too(self, arguments, "scale")
             self.data = log_scale(scale, _logarithm_of(self))
-
-    # --- stored attributes, which key the views -----------------------
-
-    def _set_log(self, value: bool) -> None:
-        self._log = value
-        self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -1306,7 +1385,7 @@ class Translation(ConcreteTransformation):
 
     # --- attributes ---------------------------------------------------
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npvector[Real]],
         tx.Doc(
             """
@@ -1330,12 +1409,42 @@ class Translation(ConcreteTransformation):
             _refuse_data_too(self, arguments, "translation")
             self.data = translation
 
+    # --- stored attributes, which key the caches ----------------------
+
+    def _forget_views(self) -> None:
+        # The inverse and square root cached on this transform are
+        # computed from `data`: a new value clears them.
+        for name in (INVERSE_CACHE, OPERATION_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+
     # --- views --------------------------------------------------------
 
     @property
     def translation(self) -> tx.Optional[ArrayProtocol]:
         """The translation vector, of shape `(N,)`."""
         return self.data
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. The map of a `Translation` is copied
+        through its `translation` view, not its stored `data`, which a lazy
+        wrapper derives.
+        """
+        if isinstance(other, Translation):
+            kwargs.setdefault("data", other.translation)
+        return super().from_instance(other, *args, **kwargs)
 
 
 @kinds.Identity
@@ -1569,6 +1678,20 @@ def _refuse_log(
         f"identity, so its log flag cannot be set: log=True builds a "
         f"{tangent}. To convert a transformation to its tangent, use "
         f"t.to(log=True)."
+    )
+
+
+def _refuse_log_change(xform: Transformation, log: bool, tangent: str) -> None:
+    # `log` selects the class -- the map's, or its tangent subclass
+    # (`tangent`) -- and an assignment cannot change the class of an
+    # instance. Assigning the value it has only clears the views.
+    if bool(log) == bool(xform.log):
+        return
+    raise TypeError(
+        f"The log flag of a {type(xform).__name__} selects its class (log="
+        f"True builds a {tangent}), which an assignment cannot change. To "
+        f"convert a transformation to or from its tangent, use "
+        f"t.to(log={bool(log)})."
     )
 
 

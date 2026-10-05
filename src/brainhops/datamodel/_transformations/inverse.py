@@ -305,7 +305,7 @@ class InverseTranslation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npvector[Real]]]
+    _data: Derived[tx.Optional[npvector[Real]]]
     _translation: Deactivated[None]
 
     @_invcache
@@ -380,7 +380,7 @@ class InversePermutation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npvector[Integral]]]
+    _data: Derived[tx.Optional[npvector[Integral]]]
     _permutation: Deactivated[None]
 
     @_invcache

@@ -265,7 +265,7 @@ class SqrtTranslation(
         tx.Doc("The translation whose square root this represents."),
     ] = None
 
-    data: Derived[tx.Optional[npvector[Real]]]
+    _data: Derived[tx.Optional[npvector[Real]]]
     _translation: Deactivated[None]
 
     @_cached

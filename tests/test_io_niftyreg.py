@@ -856,3 +856,69 @@ def test_a_velocity_written_as_a_displacement_is_integrated(
     np.testing.assert_allclose(
         written[interior], (_flow(world) - world)[interior], atol=2e-3
     )
+
+
+def _dispvect(tmp_path: Path, vectors: np.ndarray) -> Path:
+    image = nb.Nifti1Image(
+        np.asarray(vectors, "f4")[:, :, :, None], REF_VOX2RAS
+    )
+    image.header.set_intent(1006)
+    path = tmp_path / "warp.nii.gz"
+    nb.save(image, path)
+    return path
+
+
+def test_a_displacement_copied_to_a_velocity_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A NIfTI displacement is not written back as a NiftyReg velocity:
+    its header is another format's, and a displacement has no logarithm."""
+    path = _dispvect(tmp_path, np.zeros((*REF_SHAPE, 3)) + 0.5)
+    copied = NiftyRegVelocityField.from_instance(load(path))
+    with pytest.raises(NotImplementedError, match="logarithm"):
+        copied.to_nibabel()
+
+
+def test_a_velocity_copied_to_niftyreg_keeps_its_steps(tmp_path: Path) -> None:
+    from brainhops.io.base import TransformationSpec
+
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = _dispvect(tmp_path, _velocity(world))
+    velocity = load(TransformationSpec.from_arg(f"{path}|svf|steps:5"))
+    image = NiftyRegVelocityField.from_instance(velocity).to_nibabel()
+    assert image.header.get_intent() == ("vector", (), "NREG_TRANS")
+    assert float(image.header["intent_p1"]) == 3
+    assert float(image.header["intent_p2"]) == 5
+    np.testing.assert_allclose(
+        np.asarray(image.dataobj)[:, :, :, 0, :],
+        world + _velocity(world),
+        atol=1e-4,
+    )
+
+
+def test_a_niftyreg_velocity_copied_to_nifti_is_integrated(
+    tmp_path: Path,
+) -> None:
+    """A velocity copied to a NIfTI displacement file is written as its
+    displacement, unless `log=True` is asked for when it is saved."""
+    from brainhops.io.transformations.nifti import NiftiRASDisplacementField
+
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=8), path)
+    copied = NiftiRASDisplacementField.from_instance(load(path))
+    assert not copied.log and copied.steps is None
+    out = tmp_path / "out.nii.gz"
+    bio.save(copied, out)
+    written = nb.load(out)
+    assert written.header.get_intent()[0] == "displacement vector"
+    interior = (slice(3, 6), slice(3, 5), slice(2, 5))
+    np.testing.assert_allclose(
+        written.get_fdata()[:, :, :, 0, :][interior],
+        (_flow(world) - world)[interior],
+        atol=2e-3,
+    )
+    bio.save(copied, out, log=True)
+    np.testing.assert_allclose(
+        nb.load(out).get_fdata()[:, :, :, 0, :], _velocity(world), atol=1e-4
+    )
