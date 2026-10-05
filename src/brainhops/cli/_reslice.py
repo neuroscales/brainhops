@@ -53,7 +53,9 @@ class _UnimplementedOperation(OperationSpec, frozen=True):
         )
 
 
-for _operation_name in ("sqrt", "square", "exp", "log"):
+# The exponential and the logarithm are not operators: a file that holds a
+# velocity says so with an option (`|svf`, `|displacements|log:true`).
+for _operation_name in ("sqrt", "square"):
     TransformationSpec.register_operation(_operation_name)(
         _UnimplementedOperation
     )

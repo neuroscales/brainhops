@@ -34,6 +34,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Sequence,
     Sqrt,
+    StationaryVelocityField,
     SubspaceTransformation,
     Transformation,
     Translation,
@@ -485,6 +486,33 @@ def test_a_change_of_coordinates_is_recognized_exactly() -> None:
     )
     root = chain.sqrt()
     assert isinstance(root, Sqrt) and root.forward is not inner
+
+
+def _velocity_3d() -> StationaryVelocityField:
+    return StationaryVelocityField(data=np.zeros((4, 4, 4, 3)) + 0.2)
+
+
+def test_a_world_space_velocity_halves_inside_its_frame() -> None:
+    # A velocity stored in voxels between a voxel-to-world affine and its
+    # lazy inverse -- the form the readers build -- is a change of
+    # coordinates, and its square root halves the velocity inside it.
+    voxel_to_world = VoxelToLPS(matrix=VOX2LPS)
+    velocity = _velocity_3d()
+    chain = Sequence([voxel_to_world.inverse(), velocity, voxel_to_world])
+    root = chain.sqrt()
+    assert isinstance(root, Sequence) and len(root) == 3
+    assert root[0] is chain[0] and root[2] is chain[2]
+    assert isinstance(root[1], StationaryVelocityField)
+    np.testing.assert_array_equal(root[1].data, velocity.data / 2)
+    # Rounded affine ends are not a change of coordinates, and a field
+    # between two affines does not compose to a single transformation.
+    rounded = np.linalg.inv(_homogeneous(VOX2LPS))[:3]
+    rounded[0, -1] += 1e-12
+    chain = Sequence(
+        [LPSToVoxel(matrix=rounded), velocity, VoxelToLPS(matrix=VOX2LPS)]
+    )
+    with pytest.raises(NotImplementedError, match="single transformation"):
+        chain.sqrt()
 
 
 def test_bijection_keeps_both_directions_of_its_root() -> None:

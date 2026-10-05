@@ -467,3 +467,106 @@ def test_a_displacement_field_refuses_in_place_edits(standard_warp) -> None:  # 
         _apply(field, points) + [1.0, 0.0, 0.0],
         atol=1e-4,
     )
+
+
+# ----------------------------------------------------------------------
+#   VELOCITIES (`log`)
+# ----------------------------------------------------------------------
+
+# A constant RAS velocity: its flow is the translation by it.
+VELOCITY = np.array([1.5, -2.0, 0.5], dtype="float32")
+
+
+@pytest.fixture
+def velocity_warp(tmp_path):  # noqa: ANN001, ANN201
+    """A `DISPVECT` file that holds a constant velocity, in mm."""
+    vectors = np.zeros((*SHAPE, 3), dtype="float32") + VELOCITY
+    return _write(tmp_path / "vel.nii.gz", vectors, DISPVECT)
+
+
+@pytest.mark.parametrize(
+    "spec, steps",
+    [
+        ("{}|svf", None),
+        ("{}|svf|steps:6", 6),
+        ("{}|displacements|log:true", None),
+        ("{}|displacements|log:TRUE|steps:3", 3),
+    ],
+)
+def test_a_velocity_is_read_with_the_log_option(
+    velocity_warp,  # noqa: ANN001
+    spec: str,
+    steps: object,
+) -> None:
+    from brainhops.io.base import TransformationSpec
+
+    spec = TransformationSpec.from_arg(spec.format(velocity_warp))
+    field = io.transformations.load(spec)
+    assert type(field) is NiftiRASDisplacementField and field.log
+    velocity = field.displacement
+    assert type(velocity) is xforms.StationaryVelocityField
+    assert velocity.steps == steps
+    points = _grid_points()[1:3, 1:3, 1:3].reshape(-1, 3)
+    np.testing.assert_allclose(
+        _apply(field, points), points + VELOCITY, atol=1e-4
+    )
+
+
+@pytest.mark.parametrize("spec", ["{}", "{}|displacements|log:false"])
+def test_log_false_reads_a_displacement(velocity_warp, spec: str) -> None:  # noqa: ANN001
+    from brainhops.io.base import TransformationSpec
+
+    field = io.transformations.load(
+        TransformationSpec.from_arg(spec.format(velocity_warp))
+    )
+    assert not field.log
+    assert type(field.displacement) is xforms.DisplacementField
+
+
+def test_a_velocity_is_read_with_a_keyword(velocity_warp) -> None:  # noqa: ANN001
+    field = io.transformations.load(velocity_warp, log=True, steps=4)
+    assert type(field.displacement) is xforms.StationaryVelocityField
+    assert field.displacement.steps == 4
+
+
+def test_steps_need_a_velocity(velocity_warp) -> None:  # noqa: ANN001
+    from brainhops.io.base import TransformationSpec
+
+    spec = TransformationSpec.from_arg(
+        f"{velocity_warp}|displacements|steps:3"
+    )
+    with pytest.raises(Exception, match="squaring steps"):
+        io.transformations.load(spec)
+
+
+def test_a_velocity_is_written_in_the_encoding_of_the_format(
+    velocity_warp,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    velocity = io.transformations.load(velocity_warp, log=True)
+    chain = tuple(velocity.transformations)
+    # As a displacement, the default: the velocity is integrated.
+    written = NiftiRASDisplacementField(transformations=chain).to_nibabel()
+    np.testing.assert_allclose(
+        np.asarray(written.dataobj)[:, :, :, 0, :],
+        np.zeros((*SHAPE, 3)) + VELOCITY,
+        atol=1e-4,
+    )
+    # As a velocity, with `log`: the velocity as it is.
+    stored = NiftiRASDisplacementField(
+        transformations=chain, log=True
+    ).to_nibabel()
+    np.testing.assert_allclose(
+        np.asarray(stored.dataobj)[:, :, :, 0, :],
+        np.zeros((*SHAPE, 3)) + VELOCITY,
+        atol=1e-6,
+    )
+    # A linear velocity tells the two apart.
+    sheared = chain[1].to(data=chain[1].data * _ramp()[..., :1])
+    chain = (chain[0], sheared, chain[2])
+    integrated = NiftiRASDisplacementField(transformations=chain)
+    kept = NiftiRASDisplacementField(transformations=chain, log=True)
+    assert not np.allclose(
+        np.asarray(integrated.to_nibabel().dataobj),
+        np.asarray(kept.to_nibabel().dataobj),
+    )

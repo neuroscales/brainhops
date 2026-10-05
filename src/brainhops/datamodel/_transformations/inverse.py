@@ -882,7 +882,10 @@ class InverseStationaryVelocityField(
     Its `data` is the negated velocity, in the encoding of the forward
     field, whose flags (`steps` included) it reports. Its `field` view
     integrates that velocity -- exactly as the forward integrates its own,
-    rather than by inverting the forward's displacement.
+    rather than by inverting the forward's displacement. The accuracy
+    note of [`InverseDisplacementField`][] does not apply: no mesh is
+    inverted, the inverse is exact in the tangent, and `exp(-v)` is
+    integrated as accurately as `exp(v)` is.
     """
 
     # --- class attributes ---------------------------------------------

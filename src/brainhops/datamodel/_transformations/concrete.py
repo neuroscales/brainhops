@@ -695,6 +695,25 @@ class Affine(ConcreteTransformation, polymorphic=True):
         """
         return self.data
 
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. The map of an `Affine` is copied through
+        its `matrix` view, not its stored `data`, which a lazy wrapper
+        derives and a tangent (`log=True`) stores as its logarithm.
+        """
+        if isinstance(other, Affine) and not issubclass(
+            cls, AffineExponential
+        ):
+            kwargs.setdefault("data", other.matrix)
+            kwargs.setdefault("log", False)
+        return super().from_instance(other, *args, **kwargs)
+
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
         """
@@ -867,6 +886,24 @@ class Linear(ConcreteTransformation, polymorphic=True):
     def matrix(self) -> tx.Optional[ArrayProtocol]:
         """The matrix, of shape `(No, Ni)`."""
         return self.data
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. The map of a `Linear` is copied through
+        its `matrix` view, not its stored `data`, which a lazy wrapper
+        derives and a tangent (`log=True`) stores as its logarithm.
+        """
+        tangent = (LinearExponential, RotationExponential)
+        if isinstance(other, Linear) and not issubclass(cls, tangent):
+            kwargs.setdefault("data", other.matrix)
+            kwargs.setdefault("log", False)
+        return super().from_instance(other, *args, **kwargs)
 
 
 @kinds.PositiveLinear
@@ -1176,6 +1213,25 @@ class Scaling(ConcreteTransformation, polymorphic=True):
     def scale(self) -> tx.Optional[ArrayProtocol]:
         """The scaling factors, of shape `(N,)`."""
         return self.data
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        See [`DataModelBase.from_instance`][brainhops.datamodel.base.\
+DataModelBase.from_instance]. The map of a `Scaling` is copied through
+        its `scale` view, not its stored `data`, which a lazy wrapper
+        derives and a tangent (`log=True`) stores as its logarithm.
+        """
+        if isinstance(other, Scaling) and not issubclass(
+            cls, ScalingExponential
+        ):
+            kwargs.setdefault("data", other.scale)
+            kwargs.setdefault("log", False)
+        return super().from_instance(other, *args, **kwargs)
 
 
 @kinds.PositiveDiagonal
