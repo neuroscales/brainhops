@@ -20,7 +20,7 @@ import warnings
 import numpy as np
 import pytest
 import typing_extensions as tx
-from bagof.magic import Factory, Magic, fields, replace
+from bagof.magic import Factory, Magic, NoEq, NoRepr, fields, replace
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
@@ -87,6 +87,11 @@ class LiteMetadata(
     """A format that stores three fields and free-form keys."""
 
 
+class DictRecord(dict):
+    """The raw record of `DictMetadata`: a dict of a type of its own, so
+    that a conversion knows whose record it is."""
+
+
 class DictMetadata(
     FileBasedMetadata,
     on={"format": "test-dict"},
@@ -95,11 +100,13 @@ class DictMetadata(
     """A format whose record is a dict: `desc`, `cal`, `slices`, and any
     other key is free-form."""
 
+    raw: tx.Annotated[tx.Optional[DictRecord], NoRepr(), NoEq()] = None
+
     _KNOWN = {"desc": "description", "cal": "display_range"}
 
     @classmethod
     def _default_raw(cls) -> dict:
-        return {}
+        return DictRecord()
 
     @classmethod
     def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
@@ -487,7 +494,11 @@ def test_the_record_travels_only_within_a_format() -> None:
     meta = _read()
     other, _ = _to(meta, Metadata)
     assert type(other) is Metadata
-    assert not hasattr(other, "raw") and not hasattr(other, "_snapshot")
+    # The hub carries the record and the snapshot...
+    assert other.raw is meta.raw and other._snapshot == meta._snapshot
+    # ... back to the format whose type of record it is, not to another.
+    assert _to(other, DictMetadata)[0].raw is meta.raw
+    assert _to(other, LiteMetadata)[0].raw is None
     same = DictMetadata.from_other(meta)
     assert same.raw is meta.raw and same._snapshot == meta._snapshot
     # A copy keeps the most specific class.
@@ -799,10 +810,9 @@ def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
     assert meta._snapshot["description"] == "read"
 
 
-def test_the_hub_and_opaque_have_no_record() -> None:
-    assert not hasattr(Metadata(), "raw")
-    with pytest.raises(TypeError):
-        Metadata(raw={"a": 1})
+def test_the_hub_holds_any_record_and_opaque_none() -> None:
+    assert Metadata().raw is None
+    assert Metadata(raw={"a": 1}).raw == {"a": 1}
     assert OpaqueMetadata().raw is None
     with pytest.raises(TypeError):
         OpaqueMetadata(raw={"a": 1})
@@ -993,10 +1003,11 @@ def test_the_hierarchy_mirrors_the_images() -> None:
     assert issubclass(LiteMetadata, FileBasedMetadata)
     for group in GROUPS:
         assert issubclass(Metadata, group)
-    # Only a file-based class has a raw record and a snapshot.
+    # Every class has a raw record and a snapshot; reading and writing
+    # them is what a file-based class adds.
     names = {f.name for f in fields(Metadata)}
-    assert "raw" not in names and "_snapshot" not in names
-    assert {"raw", "_snapshot"} <= {f.name for f in fields(FileBasedMetadata)}
+    assert {"raw", "_snapshot"} <= names
+    assert not hasattr(Metadata, "from_raw")
 
 
 def test_the_vocabulary_is_the_groups_in_order() -> None:

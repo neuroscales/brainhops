@@ -36,6 +36,7 @@ from brainhops.datamodel.metadata import (  # noqa: E402
 )
 from brainhops.io.base._base import FileBasedObject  # noqa: E402
 from brainhops.io.base.nifti import NiftiParser  # noqa: E402
+from brainhops.io.images.freesurfer.mgh import MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage, NiftiMetadata  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
@@ -335,11 +336,35 @@ def test_nifti_to_generic_and_back_is_lossless(scan) -> None:  # noqa: ANN001
     nifti = io.load(scan).metadata
     generic, report = _to(nifti, Metadata)
     assert not report.lossy
-    assert not hasattr(generic, "raw")  # the raw record stays
+    # The generic hub carries the header, and gives it back to NIfTI.
+    assert generic.raw is nifti.raw
     back, report = _to(generic, NiftiMetadata)
     assert not report.lossy
     assert back == nifti
-    assert back.raw is None  # the record never travels across formats
+    assert back.raw is nifti.raw
+    assert back._snapshot == nifti._snapshot
+    assert not back._changed_fields()
+
+
+def test_the_header_survives_a_trip_through_the_hub(tmp_path) -> None:  # noqa: ANN001
+    nii = nb.Nifti1Image(np.zeros((3, 4, 5), "float32"), np.eye(4))
+    nii.header["aux_file"] = b"sub-01_T1w.nii"
+    nii.header.extensions.append(nb.nifti1.Nifti1Extension(6, b"a comment"))
+    nb.save(nii, str(tmp_path / "in.nii"))
+    image = io.load(str(tmp_path / "in.nii"))
+    generic = SingleScaleImage(image.data, metadata=image.metadata)
+    assert type(generic.metadata) is Metadata
+    assert generic.metadata.raw is not None
+    NiftiImage.from_other(generic).save(str(tmp_path / "out.nii"))
+    out = nb.load(str(tmp_path / "out.nii"))
+    assert out.header["aux_file"].item() == b"sub-01_T1w.nii"
+    assert [e.get_content() for e in out.header.extensions] == [b"a comment"]
+
+
+def test_a_record_does_not_go_to_another_format(scan) -> None:  # noqa: ANN001
+    generic = io.load(scan).metadata.to(Metadata)
+    mgh = generic.to(MghMetadata, on_loss="ignore")
+    assert mgh.raw is None and not mgh._snapshot
 
 
 def test_what_nifti_cannot_hold_is_reported() -> None:

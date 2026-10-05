@@ -179,12 +179,13 @@ __all__ = [
     "X5Domain",
     "X5Header",
     "X5Metadata",
+    "X5Raw",
     "X5Node",
     "X5Transform",
     "X5TransformParser",
 ]
 
 from ._blocks import X5BSplineField, X5CoordinatesField, X5DisplacementField
-from ._metadata import X5Metadata
+from ._metadata import X5Metadata, X5Raw
 from ._struct import X5Domain, X5Header, X5Node
 from ._xform import X5Transform, X5TransformParser

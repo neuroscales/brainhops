@@ -19,41 +19,9 @@ from brainhops.io.metadata._sync import sync_metadata
 
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
-from .._metadata import ItkH5Metadata
+from .._metadata import H5Header, ItkH5Metadata
 
 __all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
-
-
-class H5Header(
-    Magic,
-    convert=True,
-    repr=HIDE_IF_NONE,
-):
-    """Header of a ITK H5 file."""
-
-    HDFVersion: tx.Optional[str] = None
-    """
-    A string describing the version of the HDF5 library used.
-    Ex: "HDF5 library version: 1.10.4"
-    """
-
-    ITKVersion: tx.Optional[str] = None
-    """
-    A string describing the version of the ITK library used.
-    Ex: "5.1.0"
-    """
-
-    OSName: tx.Optional[str] = None
-    """
-    A string describing the operating system name.
-    Ex: "Linux"
-    """
-
-    OSVersion: tx.Optional[str] = None
-    """
-    A string describing the operating system version.
-    Ex: "6.1.0-1007-oem"
-    """
 
 
 class H5TransformParser(

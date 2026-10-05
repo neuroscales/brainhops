@@ -8,7 +8,7 @@ import math
 
 # externals
 import typing_extensions as tx
-from bagof.magic import Factory, NoEq, NoRepr
+from bagof.magic import NoEq, NoRepr, fields
 
 # internals
 from brainhops._core.compare import differs
@@ -22,44 +22,19 @@ from ._sentinel import UNSUPPORTED
 
 class FileBasedMetadata(Metadata):
     """
-    The metadata of a file format: the common vocabulary, plus the
-    format's own raw record and the read-time snapshot.
+    The metadata of a file format: the common vocabulary, decoded from and
+    encoded into the format's own raw record.
 
-    This is the base of every `<Fmt>Metadata` (as `FileBasedImage` is of
-    every format's image class): a format declares what it can store
-    with `supports=`, and decodes and encodes its raw record with the
-    hooks described in the format author's guide
-    (`docs/dev/metadata-formats.md`).
+    This is the base of every `<Fmt>Metadata`, as `FileBasedImage` is the
+    base of the image class of every format. A format declares what it
+    can store with `supports=`, declares the type of its raw record by
+    annotating `raw`, and decodes and encodes the record with the hooks
+    described in the format author's guide
+    (`docs/dev/metadata-formats.md`). The record itself and the read-time
+    snapshot are fields of [`Metadata`][], so that generic metadata
+    carries them through a conversion; reading and writing them is what
+    this class adds.
     """
-
-    raw: tx.Annotated[
-        tx.Any,
-        tx.Doc(
-            """
-            The format's own raw record (a `nibabel` header, ...). Edit
-            it only for what the vocabulary does not cover: an untouched
-            common field keeps the record's value on write, a common
-            field you set wins over it. Never copied across formats.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
-
-    _snapshot: tx.Annotated[
-        tx.Dict[str, tx.Any],
-        tx.Doc(
-            """
-            The read-time snapshot: field name -> the value the reader
-            decoded from `raw` (empty for an object built in memory). A
-            common field is written over the raw record only when it
-            differs from it. Filled by the reader; never set by hand.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-        Factory(),
-    ]
 
     # --- reading ------------------------------------------------------
 
@@ -322,20 +297,53 @@ class FileBasedMetadata(Metadata):
         self.update_raw(self._check_raw(image), image=image, on_loss=report)
         return report
 
-    # --- copies -------------------------------------------------------
+    # --- the record of a conversion -----------------------------------
 
-    def copy(self) -> tx.Self:
+    @classmethod
+    def _raw_type(cls) -> tx.Optional[type]:
         """
-        A copy of this metadata, sharing its raw record.
+        The type of raw record that this class declares, read from the
+        annotation of its `raw` field (`Optional` removed).
 
-        The raw record (`raw`) is shared, as `replace()` shares it; the
-        snapshot and `extra` are copied, so editing the copy never edits
-        this object. A field still waiting to be decoded (see `lazy=`)
-        stays so in both.
+        Returns
+        -------
+        type or None
+            The declared type, `type(None)` for a format without a record,
+            or `None` when the class does not declare a type (it inherits
+            the `Any` of `Metadata`).
         """
-        new = super().copy()
-        new.__dict__["_snapshot"] = dict(self._snapshot)
-        return new
+        hint = next(f.type for f in fields(cls) if f.name == "raw")
+        while tx.get_origin(hint) is tx.Annotated:
+            hint = tx.get_args(hint)[0]
+        if hint is None or hint is type(None):
+            return type(None)
+        if tx.get_origin(hint) is tx.Union:
+            args = [a for a in tx.get_args(hint) if a is not type(None)]
+            hint = args[0] if len(args) == 1 else None
+        if hint is tx.Any or not isinstance(hint, type):
+            return None
+        return hint
+
+    @classmethod
+    def _accepts_raw(cls, raw: tx.Any) -> bool:
+        """
+        Whether a conversion into this class keeps a raw record: only
+        when the record is of the type this class declares. Formats
+        declare distinct types, so a record only ever goes back to its
+        own format; a class that declares no type keeps none.
+
+        Parameters
+        ----------
+        raw : object
+            The raw record of the source metadata.
+
+        Returns
+        -------
+        bool
+            Whether the record is kept.
+        """
+        declared = cls._raw_type()
+        return declared is not None and isinstance(raw, declared)
 
     # --- per-format hooks ---------------------------------------------
 
@@ -551,14 +559,9 @@ class FileBasedMetadata(Metadata):
         values = super()._derive_values(
             changed=changed, spatial_map=spatial_map, step=step
         )
-        values.update(self._format_state())
+        values["snapshot"] = dict(self._snapshot)
         values["raw"] = self._derive_raw(self.raw, changed=changed)
         return values
-
-    def _format_state(self) -> tx.Dict[str, tx.Any]:
-        """What a same-format copy carries besides the fields: the raw
-        record (shared) and the snapshot (copied)."""
-        return {"raw": self.raw, "snapshot": dict(self._snapshot)}
 
 
 class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):

@@ -9,7 +9,7 @@ import types
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, fields
+from bagof.magic import Factory, NoEq, NoRepr, fields
 
 # internals
 from brainhops._core.typing import ArrayLike
@@ -127,6 +127,46 @@ class Metadata(
         Factory(dict),
     ]
 
+    # --- the raw record -----------------------------------------------
+
+    raw: tx.Annotated[
+        tx.Any,
+        tx.Doc(
+            """
+            The raw record of the file the metadata was read from (a
+            `nibabel` header, the attributes of a Zarr array, ...), or
+            `None`. Edit it only for what the vocabulary does not cover:
+            on write, a field left untouched keeps the value of the
+            record, and a field that was set wins over it.
+
+            Generic metadata keeps the record of the metadata it was
+            converted from, so that converting back to the format of the
+            record keeps it: `NiftiMetadata -> Metadata -> NiftiMetadata`
+            round-trips, header extensions included. A conversion into
+            another format leaves the record behind, since every format
+            declares its own type of record.
+            """
+        ),
+        NoRepr(),
+        NoEq(),
+    ] = None
+
+    _snapshot: tx.Annotated[
+        tx.Dict[str, tx.Any],
+        tx.Doc(
+            """
+            The read-time snapshot: field name to the value that the
+            reader decoded from `raw`, and empty for metadata built in
+            memory. On write, a field is encoded over the raw record only
+            when it differs from its snapshot. The reader fills it; it is
+            never set by hand.
+            """
+        ),
+        NoRepr(),
+        NoEq(),
+        Factory(),
+    ]
+
     # --- construction -------------------------------------------------
 
     def __post_init__(self) -> None:
@@ -177,13 +217,19 @@ class Metadata(
         metadata that another object already holds (through `replace()`,
         `from_other` or `metadata=`).
 
+        The raw record is shared, as `replace()` shares it, while the
+        read-time snapshot and `extra` are copied, so that editing the
+        copy never edits the original. A field that is still waiting to
+        be decoded (see `lazy=`) stays so in both.
+
         Returns
         -------
         Metadata
-            The copy, of the same class. `extra` is copied as well.
+            The copy, of the same class.
         """
         new = copy.copy(self)
         new.extra = copy.copy(new.extra)
+        new._snapshot = dict(self._snapshot)
         return new
 
     # --- capabilities -------------------------------------------------
@@ -535,7 +581,13 @@ class Metadata(
         report = ConversionReport(
             source=_format_name(other), target=_format_name(target)
         )
-        values = other._format_state() if same else {}
+        values: tx.Dict[str, tx.Any] = {}
+        if same or (other.raw is not None and target._accepts_raw(other.raw)):
+            # The record and its snapshot go along, shared and copied as
+            # `copy()` does: to a copy, to the generic hub, or back to the
+            # format whose class declares the type of the record.
+            values["raw"] = other.raw
+            values["snapshot"] = dict(other._snapshot)
         unsupported = target.unsupported_fields
         for name in FIELDS:
             value = getattr(other, name, None)
@@ -578,11 +630,12 @@ class Metadata(
         _derive_provenance(values, step)
         return values
 
-    def _format_state(self) -> tx.Dict[str, tx.Any]:
-        """The constructor values a copy in the same format carries over
-        besides the fields (`FileBasedMetadata`: the raw record and the
-        snapshot). None here."""
-        return {}
+    @classmethod
+    def _accepts_raw(cls, raw: tx.Any) -> bool:
+        """Whether a conversion into this class keeps a raw record:
+        generic metadata keeps any record (see `raw`); a file format,
+        only its own (see `FileBasedMetadata._accepts_raw`)."""
+        return True
 
 
 # ----------------------------------------------------------------------

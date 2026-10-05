@@ -37,6 +37,7 @@ from brainhops.io.images.zarr import (  # noqa: E402
     ZarrImage,
     ZarrMetadata,
 )
+from brainhops.io.images.zarr._metadata import OmeZarrRaw  # noqa: E402
 from brainhops.io.images.zarr._multiscale import OmeZarrLevel  # noqa: E402
 
 
@@ -310,7 +311,9 @@ def test_ome_zarr_channels_to_generic(stained) -> None:  # noqa: ANN001
     assert not report.lossy
     assert [c.name for c in generic.channels] == ["DAPI", "GFP"]
     assert generic.name == "brain"
-    assert not hasattr(generic, "raw")  # the raw record stays
+    assert isinstance(generic.raw, OmeZarrRaw)  # carried by the hub
+    # A plain Zarr array does not take the record of a pyramid.
+    assert generic.to(ZarrMetadata).raw is None
 
 
 def test_ome_zarr_to_nifti_reports_the_loss(stained) -> None:  # noqa: ANN001

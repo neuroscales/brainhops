@@ -147,9 +147,9 @@ b'sub-01_T1w.nii'
 
 ## Format-agnostic metadata
 
-[`Metadata`][brainhops.datamodel.metadata.Metadata] supports every field
-and has no raw record. It is what in-memory objects carry, and the hub
-through which formats convert. `to()` converts metadata into another
+[`Metadata`][brainhops.datamodel.metadata.Metadata] supports every field.
+It is what in-memory objects carry, and the hub through which formats
+convert. `to()` converts metadata into another
 class, as images and transformations convert; given a
 [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport], it
 fills it with what was lost:
@@ -160,20 +160,26 @@ fills it with what was lost:
 >>> generic = bold.metadata.to(Metadata, on_loss=report)
 >>> generic.description, generic.slice_timing
 ('resting state, run 1, denoised', (0.0, 0.5, 1.0, 1.5, 2.0, 2.5))
->>> hasattr(generic, "raw")  # the raw record never leaves its format
-False
 >>> report.lossy
 False
 
 ```
 
-Converting back to NIfTI gives the same fields, without the raw record:
+Generic metadata keeps the raw record of the metadata it was converted
+from, so converting back to NIfTI gives the same fields and the same
+header, extensions included. A conversion into another format leaves the
+header behind: each format declares its own type of record, and only
+takes a record of that type.
 
 ```python
+>>> generic.raw is bold.header
+True
 >>> report = ConversionReport()
 >>> back = generic.to(NiftiMetadata, on_loss=report)
->>> back == bold.metadata, report.lossy
-(True, False)
+>>> back == bold.metadata, back.raw is bold.header, report.lossy
+(True, True, False)
+>>> generic.to("mgh", on_loss="ignore").raw is None
+True
 
 ```
 
@@ -677,8 +683,8 @@ are its raw record, also available as `metadata.attributes`.
 An x5 node stores its metadata as a JSON object: each field under its BIDS
 key (`Description`, `GeneratedBy`), or under its name in `CamelCase` when
 BIDS has none (`History`, `Moving`, `Fixed`, `InputSpace`, `OutputSpace`).
-The other keys are `extra`. The raw record of the metadata is the pair
-`(header, node)`. Here is a displacement field written as nitransforms
+The other keys are `extra`. The raw record of the metadata is an
+`X5Raw`, which holds the header of the file and the node. Here is a displacement field written as nitransforms
 writes one:
 
 ```python

@@ -254,7 +254,7 @@ convert its fields (a plain `Magic` parser), converts a metadata object
 of another class into the field's class (a `NiftiMetadata` given to a
 field typed `Metadata` becomes generic `Metadata`), and *copies* a
 metadata object that already is of the field's class
-([`copy`][brainhops.datamodel.metadata.FileBasedMetadata.copy]: the raw
+([`copy`][brainhops.datamodel.metadata.Metadata.copy]: the raw
 record is shared, the snapshot and `extra` are not): two objects never
 hold the same metadata, so editing the result of `replace()` or
 `from_other` never edits the original.

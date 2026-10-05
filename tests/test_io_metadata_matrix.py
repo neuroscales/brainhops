@@ -216,3 +216,43 @@ def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
         if OmeZarrMetadata.supports(name):
             assert getattr(back, name) == getattr(HUB, name), name
     assert back.extra == FULL["extra"]
+
+
+def _format_classes() -> list:
+    """Every metadata class of a format in the package."""
+    found, stack = [], [Metadata]
+    while stack:
+        cls = stack.pop()
+        for sub in cls.__subclasses__():
+            stack.append(sub)
+            if sub.__module__.startswith("brainhops.") and issubclass(
+                sub, FileBasedMetadata
+            ):
+                found.append(sub)
+    return found
+
+
+def test_every_format_declares_a_record_type_of_its_own() -> None:
+    # A conversion gives a record back to a format only when the record is
+    # of the type the format declares (`_accepts_raw`): no two formats
+    # may declare the same type, or one that is a subclass of another's.
+    declared = {}
+    for cls in _format_classes():
+        if cls is FileBasedMetadata:
+            continue
+        raw_type = cls._raw_type()
+        assert raw_type is not None, f"{cls.__name__} declares no raw type"
+        if raw_type is not type(None):
+            declared[cls] = raw_type
+    assert {cls.__name__ for cls in declared} >= {
+        "NiftiMetadata",
+        "MghMetadata",
+        "ZarrMetadata",
+        "OmeZarrMetadata",
+        "X5Metadata",
+        "ItkH5Metadata",
+    }
+    for cls, raw_type in declared.items():
+        for other, other_type in declared.items():
+            if other is not cls:
+                assert not issubclass(raw_type, other_type), (cls, other)

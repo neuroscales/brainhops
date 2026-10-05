@@ -200,7 +200,7 @@ def test_x5_chain_has_no_metadata_of_its_own(tmp_path: Path) -> None:
         chains=[(0, 1)],
     )
     xform = io.load(path)
-    assert xform.metadata.raw[1] is None
+    assert xform.metadata.raw.node is None
     assert xform.metadata.description is None
     out = tmp_path / "out.x5"
     xform.save(out, on_loss="raise")
@@ -250,7 +250,7 @@ def test_x5_to_generic_to_bids_and_back(warp_x5: Path) -> None:
     meta = io.load(warp_x5).metadata
     generic, report = _to(meta, Metadata)
     assert not report.lossy
-    assert not hasattr(generic, "raw")  # the raw record stays
+    assert generic.raw is meta.raw  # carried by the hub
     sidecar = generic.to_bids()
     assert sidecar == JSON
     back, report = _to(Metadata.from_bids(sidecar), X5Metadata)

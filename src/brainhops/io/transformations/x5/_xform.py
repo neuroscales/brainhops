@@ -36,7 +36,7 @@ from brainhops.io.transformations.base import WritableFileBasedTransformation
 
 # locals
 from ._blocks import node_to_transformation, transformation_to_nodes
-from ._metadata import X5Metadata
+from ._metadata import X5Metadata, X5Raw
 from ._struct import (
     X5_VERSION,
     X5Header,
@@ -45,11 +45,6 @@ from ._struct import (
     read_x5,
     write_x5,
 )
-
-
-def _same_x5(a: tx.Tuple[tx.Any, ...], b: tx.Tuple[tx.Any, ...]) -> bool:
-    """Whether two x5 records are the same `(header, node)` pair."""
-    return len(a) == len(b) and all(x is y for x, y in zip(a, b))
 
 
 class X5TransformParser(
@@ -100,12 +95,12 @@ class X5TransformParser(
             parent()
         index = self._metadata_index() if self.nodes else None
         node = None if index is None else self.nodes[index]
-        record = (self.header, node)
+        header = self.header
         sync_metadata(
             self,
             X5Metadata,
-            record,
-            same=lambda held: _same_x5(held, record),
+            X5Raw(header, node),
+            same=lambda held: held.is_record_of(header, node),
             image=self,
         )
 
@@ -405,9 +400,9 @@ class X5Transform(
         if node is None or metadata.node is not node:
             # Not the node it was read from: everything is written.
             metadata = replace(metadata, snapshot={})
-        _, node = metadata.update_raw(
-            (self.header, node), image=self, on_loss=report
-        )
+        node = metadata.update_raw(
+            X5Raw(self.header, node), image=self, on_loss=report
+        ).node
         if index is not None:
             nodes[index] = node
         return nodes

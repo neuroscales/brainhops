@@ -20,11 +20,11 @@ merge, so the metadata of the file is on the transformation read from
 it, not on its blocks.
 """
 
-__all__ = ["ItkH5Metadata", "ItkMetadata"]
+__all__ = ["H5Header", "ItkH5Metadata", "ItkMetadata"]
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr, replace
+from bagof.magic import HIDE_IF_NONE, Magic, NoEq, NoRepr, replace
 
 # internals
 from brainhops.datamodel.metadata import (
@@ -34,11 +34,43 @@ from brainhops.datamodel.metadata import (
     OpaqueMetadata,
 )
 
-# The raw record of an `.h5` file is an `H5Header`, from the h5 reader, which
-# needs the optional h5py: it is imported only where a record is built.
-H5Header = tx.Any
-
 _ITK = "ITK"
+
+
+class H5Header(
+    Magic,
+    convert=True,
+    repr=HIDE_IF_NONE,
+):
+    """
+    The root header of an ITK `.h5` file: the versions of the libraries
+    and of the system that wrote it, as the root datasets of the file
+    record them. It is the raw record of [`ItkH5Metadata`][].
+    """
+
+    HDFVersion: tx.Optional[str] = None
+    """
+    A string describing the version of the HDF5 library used.
+    Ex: "HDF5 library version: 1.10.4"
+    """
+
+    ITKVersion: tx.Optional[str] = None
+    """
+    A string describing the version of the ITK library used.
+    Ex: "5.1.0"
+    """
+
+    OSName: tx.Optional[str] = None
+    """
+    A string describing the operating system name.
+    Ex: "Linux"
+    """
+
+    OSVersion: tx.Optional[str] = None
+    """
+    A string describing the operating system version.
+    Ex: "6.1.0-1007-oem"
+    """
 
 
 class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
@@ -73,8 +105,6 @@ class ItkH5Metadata(
 
     @classmethod
     def _default_raw(cls) -> H5Header:
-        from .h5._parser import H5Header
-
         return H5Header()
 
     @classmethod
