@@ -27,6 +27,17 @@ its `data` from it, encoded under its flags. A lazy inverse, such as an
 `InverseDisplacementField`, derives its `data` from the transformation
 it inverts, in that transformation's encoding.
 
+!!! note "Inverting a field is approximate"
+    The inverse of a displacement or coordinates field is computed from
+    the field's values at its grid nodes only: they define a
+    piecewise-affine map, which is inverted exactly (Ashburner's mesh
+    inversion), and the result is interpolated with the field's
+    `degree`. A field of degree 3 is therefore inverted as its
+    piecewise-linear interpolant, about as accurately as a field of
+    degree 1. On smooth fields of a few voxels' amplitude,
+    `fwd(inv(x)) - x` is typically a few hundredths of a voxel in the
+    interior and a few tenths near the border.
+
 Constructors take `data` (positionally, as the first argument) and the
 flags. The view's name is also a keyword, a convenience meaning "the
 map, as values". One rule holds everywhere: a convenience keyword is the
