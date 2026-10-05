@@ -3,7 +3,6 @@ import typing_extensions as tx
 from bagof.magic import replace
 
 # core
-from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import _axes_or_unknown
@@ -22,6 +21,7 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
+    _encode,
 )
 from .convert import convert, converter
 from .errors import CompositionError, ConversionError, LossyConversionError
@@ -40,12 +40,6 @@ def smart_replace(t: Transformation, **kwargs) -> Transformation:
 
 
 @converter(Identity, Identity)
-@converter(Translation, Translation)
-@converter(Scaling, Scaling)
-@converter(Permutation, Permutation)
-@converter(Rotation, Rotation)
-@converter(Affine, Affine)
-@converter(Linear, Linear)
 @converter
 def _(t: Transformation, **kwargs) -> Transformation:
     # A same-type conversion with no overrides is a pass-through; with
@@ -55,41 +49,106 @@ def _(t: Transformation, **kwargs) -> Transformation:
 
 
 @converter
+def _(t: Affine, **kwargs) -> Affine:
+    # A new `matrix=` replaces the matrix stored in `data`.
+    if "matrix" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter(Rotation, Rotation)
+@converter
+def _(t: Linear, **kwargs) -> Linear:
+    # A new `matrix=` replaces the matrix stored in `data`.
+    if "matrix" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Permutation, **kwargs) -> Permutation:
+    # A new `permutation=` replaces the vector stored in `data`.
+    if "permutation" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Scaling, **kwargs) -> Scaling:
+    # A new `scale=` replaces the vector stored in `data`.
+    if "scale" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Translation, **kwargs) -> Translation:
+    # A new `translation=` replaces the vector stored in `data`.
+    if "translation" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
 def _(t: DisplacementField, **kwargs) -> DisplacementField:
-    if "field" not in kwargs and t.field is not None:
-        if t.coeff and not kwargs.get("coeff", t.coeff):
-            field = coeff2value_field(t.field, degree=t.degree, bound=t.bound)
-            kwargs["field"] = field
-        elif not t.coeff and kwargs.get("coeff", t.coeff):
-            degree = kwargs.get("degree", t.degree)
-            bound = kwargs.get("bound", t.bound)
-            field = value2coeff_field(t.field, degree=degree, bound=bound)
-            kwargs["field"] = field
+    # The flags of the result: those given, or else those of `t`.
+    coeff = kwargs.get("coeff", t.coeff)
+    degree = kwargs.get("degree", t.degree)
+    bound = kwargs.get("bound", t.bound)
+    if "field" in kwargs:
+        # A new map, as values, stored under the flags of the result.
+        if "data" in kwargs:
+            raise _data_and_field(t)
+        kwargs["data"] = _encode(kwargs.pop("field"), coeff, degree, bound)
+    elif "data" not in kwargs and (coeff, degree, bound) != (
+        t.coeff,
+        t.degree,
+        t.bound,
+    ):
+        # New flags, and no new data: the map is kept, and re-encoded.
+        kwargs["data"] = _encode(t.field, coeff, degree, bound)
     return smart_replace(t, **kwargs)
 
 
 @converter
 def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
-    if "field" not in kwargs and t.field is not None:
-        if t.coeff and not kwargs.get("coeff", t.coeff):
-            field = coeff2value_field(t.field, degree=t.degree, bound=t.bound)
-            kwargs["field"] = field
-        if not t.coeff and kwargs.get("coeff", t.coeff):
-            degree = kwargs.get("degree", t.degree)
-            bound = kwargs.get("bound", t.bound)
-            field = value2coeff_field(t.field, degree=degree, bound=bound)
-            kwargs["field"] = field
+    # The flags of the result: those given, or else those of `t`.
+    coeff = kwargs.get("coeff", t.coeff)
+    degree = kwargs.get("degree", t.degree)
+    bound = kwargs.get("bound", t.bound)
+    if "field" in kwargs:
+        # A new map, as values, stored under the flags of the result.
+        if "data" in kwargs:
+            raise _data_and_field(t)
+        kwargs["data"] = _encode(kwargs.pop("field"), coeff, degree, bound)
+    elif "data" not in kwargs and (coeff, degree, bound) != (
+        t.coeff,
+        t.degree,
+        t.bound,
+    ):
+        # New flags, and no new data: the map is kept, and re-encoded.
+        kwargs["data"] = _encode(t.field, coeff, degree, bound)
     return smart_replace(t, **kwargs)
 
 
 @converter
 def _(t: CartesianField, **kwargs) -> CartesianField:
-    # A CartesianField generates its `field` on demand from `shape`, so
-    # `field` is not a constructor argument here. A rebuild carries
-    # `shape` over and lets the new instance regenerate the field, and any
-    # `field` override is dropped.
+    # A CartesianField generates its `field` and its `data` on demand
+    # from `shape` and the flags, so neither is a constructor argument
+    # here, and nothing needs re-encoding. A rebuild carries `shape` over
+    # and lets the new instance regenerate them, and any `field` or
+    # `data` override is dropped.
     kwargs.pop("field", None)
+    kwargs.pop("data", None)
     return smart_replace(t, **kwargs)
+
+
+def _data_and_field(t: Transformation) -> TypeError:
+    return TypeError(
+        f"{type(t).__name__}.to() got both data= and field=: field= is "
+        f"the map, as values, encoded under the flags of the result, while "
+        f"data= is stored as given. Pass one of them."
+    )
 
 
 # ----------------------------------------------------------------------
@@ -213,7 +272,8 @@ def _(t: Linear, **kwargs) -> Rotation:
     # a matrix that does not keep it is lossy.
     if t.matrix is None:
         return convert(Identity(input=t.input, output=t.output), Rotation)
-    kwargs.setdefault("matrix", t.matrix)
+    if "data" not in kwargs and "matrix" not in kwargs:
+        kwargs["data"] = t.matrix
     kwargs.setdefault("input", t.input)
     kwargs.setdefault("output", t.output)
     u = Rotation(**kwargs)
@@ -365,14 +425,22 @@ def _(t: Sequence) -> Affine:
 
 @converter
 def _(t: DisplacementField) -> CoordinatesField:
-    if t.field is None:
-        return CoordinatesField(
-            coordinates=None, input=t.input, output=t.output
-        )
-    ba = get_array_backend(t.field)
-    g = ba.meshgrid(*(ba.arange(s) for s in t.field.shape[:-1]), indexing="ij")
-    g = ba.stack(g, axis=-1)
-    return CoordinatesField(field=t.field + g, input=t.input, output=t.output)
+    # The coordinate of a grid point is the point plus its displacement.
+    # The result keeps the encoding of `t` (its `coeff`, `degree` and
+    # `bound`). Fitting spline coefficients is linear, so the encoded
+    # arrays add up the same way the values do: the coordinates' `data`
+    # is the displacements' `data` plus the grid, encoded under the same
+    # flags. Nothing is decoded, and a field of coefficients stays one.
+    flags = dict(coeff=t.coeff, degree=t.degree, bound=t.bound)
+    data = t.data
+    if data is None:
+        return CoordinatesField(input=t.input, output=t.output, **flags)
+    ba = get_array_backend(data)
+    grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
+    grid = _encode(ba.stack(grid, axis=-1).astype(data.dtype), **flags)
+    return CoordinatesField(
+        data=data + grid, input=t.input, output=t.output, **flags
+    )
 
 
 # ----------------------------------------------------------------------

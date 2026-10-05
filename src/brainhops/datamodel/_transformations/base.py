@@ -254,7 +254,11 @@ class Transformation(
             This allows transformations to be modified within their type.
             For example, a [`DisplacementField`][] can be converted from
             a field of values to a field of spline coefficients by
-            setting `coeff=True` in `kwargs`.
+            setting `coeff=True` in `kwargs`: a change of encoding flag
+            re-encodes the stored `data`, and keeps the map. A view's
+            name (`field=`, `matrix=`, ...) sets the map, as values, and
+            it is stored in the encoding of the result; `data=` is
+            stored as given.
 
         Returns
         -------

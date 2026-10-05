@@ -94,21 +94,28 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     """
 
     @property
-    def matrix(self) -> tx.Optional[np.ndarray]:
-        """The affine matrix of the transformation."""
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+    def data(self) -> tx.Optional[np.ndarray]:
+        """The stored affine matrix, which the `matrix` view reads.
+
+        It is derived from the header, unless it has been set explicitly.
+        It takes the name of the NIfTI parser's image `data` (the file
+        holds no voxels of interest, only the header's affine), but not
+        its storage: an explicit matrix has a slot of its own, so that
+        reading the image through the parser never stands in for it.
+        """
+        if getattr(self, "_explicit_matrix", None) is not None:
+            return self._explicit_matrix
         if self.header is not None:
             return np.linalg.inv(self.header.get_best_affine())[:-1]
         return None
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._explicit_matrix = value
 
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
-        if getattr(self, "_matrix", None) is None:
+        if getattr(self, "_explicit_matrix", None) is None:
             return NiftiVoxelToRAS(image=self.image, header=self.header)
         return super().inverse(compute=compute, **kwargs).to(VoxelToRAS)
 
@@ -128,21 +135,28 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     HINTS = ("nifti",)
 
     @property
-    def matrix(self) -> tx.Optional[np.ndarray]:
-        """The affine matrix of the transformation."""
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+    def data(self) -> tx.Optional[np.ndarray]:
+        """The stored affine matrix, which the `matrix` view reads.
+
+        It is derived from the header, unless it has been set explicitly.
+        It takes the name of the NIfTI parser's image `data` (the file
+        holds no voxels of interest, only the header's affine), but not
+        its storage: an explicit matrix has a slot of its own, so that
+        reading the image through the parser never stands in for it.
+        """
+        if getattr(self, "_explicit_matrix", None) is not None:
+            return self._explicit_matrix
         if self.header is not None:
             return self.header.get_best_affine()[:-1]
         return None
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._explicit_matrix = value
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""
-        if getattr(self, "_matrix", None) is None:
+        if getattr(self, "_explicit_matrix", None) is None:
             return NiftiRASToVoxel(image=self.image, header=self.header)
         return super().inverse(compute=compute, **kwargs).to(RASToVoxel)
 

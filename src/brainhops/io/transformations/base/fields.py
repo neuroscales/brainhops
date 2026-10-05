@@ -109,7 +109,7 @@ def ras_displacement_chain(
     return (
         RASToVoxel(matrix=_affines.inv(compact)),
         _xforms.DisplacementField(
-            field=field,
+            data=field,
             input=voxel,
             output=voxel,
             degree=degree,
@@ -125,9 +125,15 @@ def split_ras_displacement_chain(
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
     coeff: bool = False,
+    degree: tx.Any = None,
+    bound: tx.Any = None,
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
     """
     Undo [`ras_displacement_chain`][]: the grid and the RAS vectors.
+
+    The field is first converted to the encoding the format stores, and
+    its `data` is what is written. A field already in that encoding is
+    passed through as it is: its stored array is written, unrefitted.
 
     Parameters
     ----------
@@ -139,7 +145,12 @@ def split_ras_displacement_chain(
         The number of spatial dimensions the format supports.
     coeff : bool
         Whether the format stores spline coefficients rather than
-        sampled values.
+        sampled values. A field of values written to a format of
+        coefficients is encoded, and the reverse is decoded.
+    degree, bound : optional
+        The spline degree and boundary condition of the coefficients a
+        format stores. A field of coefficients under other ones is
+        refitted. `None` keeps the field's own.
 
     Returns
     -------
@@ -152,9 +163,8 @@ def split_ras_displacement_chain(
     Raises
     ------
     WriterError
-        If the chain does not have that shape, holds coefficients when
-        the format stores values (or the reverse), or its grid is not an
-        affine.
+        If the chain does not have that shape, holds no field, or its
+        grid is not an affine.
     """
     chain = tuple(chain or ())
     if len(chain) != 3 or not isinstance(chain[1], _xforms.DisplacementField):
@@ -162,24 +172,19 @@ def split_ras_displacement_chain(
             f"{what} is written from a chain of three transformations: "
             f"RAS to voxel, a displacement field, and voxel to RAS."
         )
-    displacement = chain[1]
-    if displacement.field is None:
+    encoding: tx.Dict[str, tx.Any] = {"coeff": coeff}
+    if coeff and degree is not None:
+        encoding["degree"] = degree
+    if coeff and bound is not None:
+        encoding["bound"] = bound
+    displacement = chain[1].to(**encoding)
+    if displacement.data is None:
         raise WriterError(
             "This field has no displacements, so there is nothing to write."
         )
-    if displacement.coeff and not coeff:
-        raise WriterError(
-            f"{what} stores sampled displacements, and this field holds "
-            f"spline coefficients. Convert it to values first."
-        )
-    if coeff and not displacement.coeff:
-        raise WriterError(
-            f"{what} stores spline coefficients, and this field holds "
-            f"sampled displacements. Convert it to coefficients first."
-        )
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
-    field = displacement.field
+    field = displacement.data
     backend = get_array_backend(field)
     field = backend.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:

@@ -323,11 +323,11 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            To.field,
+            To.to(coeff=True).data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,
-            coeff=To.coeff,
+            coeff=True,
         )
         + Ti.field
     )
@@ -347,11 +347,11 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            To.field,
+            To.to(coeff=True).data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,
-            coeff=To.coeff,
+            coeff=True,
         )
         + x2.field
     )
@@ -370,11 +370,11 @@ def _(To: CoordinatesField, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
     field = pull_field(
-        To.field,
+        To.to(coeff=True).data,
         coords=Ti.field,
         degree=To.degree,
         bound=To.bound,
-        coeff=To.coeff,
+        coeff=True,
     )
     return CoordinatesField(
         field=field,

@@ -4,13 +4,19 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import fields
 
 # core
 from brainhops._core.affines import inv as inverse_affine
-from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._core.compat import PLACEHOLDER, partial
 from brainhops._core.properties import smartproperty
-from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
+from brainhops._core.typing import (
+    ArrayProtocol,
+    Deactivated,
+    Derived,
+    npmatrix,
+    npvector,
+)
 from brainhops._ext.invfield import inverse as inverse_disp
 
 # api
@@ -30,6 +36,8 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
+    _decode,
+    _encode,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
 from .registries import INVERSE_CACHE, register_inverse
@@ -52,9 +60,11 @@ def _invcache(func: tx.Callable) -> property:
     the cache survives the rebuild and an expensive inversion is not run
     twice.
 
-    The cache assumes the forward transform is not mutated in place after
-    it is wrapped: a forward transform whose parameter is replaced by
-    editing the same object would keep serving the stale inverse.
+    A field clears it when its `data` or a flag is assigned. The other
+    families do not: their cache assumes the forward transform is not
+    mutated in place after it is wrapped, and one whose parameter is
+    replaced by editing the same object would keep serving the stale
+    inverse.
     """
     name = func.__name__
 
@@ -178,8 +188,28 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         **kwargs,
     ) -> Transformation:
         if cls is None or cls is type(self):
-            # An endpoint or metadata edit keeps the inverse unresolved,
-            # reusing the forward transform and its cached materialization.
+            # The map of an inverse is derived from its forward: what a
+            # typed inverse lists in `derived_fields` (`data`, and its
+            # view, such as `field` or `matrix`) cannot be set.
+            derived = [k for k in kwargs if k in type(self).derived_fields]
+            if derived:
+                raise TypeError(
+                    f"{type(self).__name__}.to() got {derived[0]}=, but "
+                    f"the map of an inverse is derived from its forward; "
+                    f"change the forward instead: "
+                    f"inv.forward.to({derived[0]}=...)."
+                )
+            # An edit of the wrapper's own fields (its endpoints, say)
+            # keeps the inverse unresolved, reusing the forward transform
+            # and its cached materialization. Any other change -- a new
+            # encoding (`coeff=True`), say -- is made to the transform it
+            # inverts, and the inverse stays unresolved too: it is
+            # `replace(self, forward=self.forward.to(**others))`.
+            own = {f.public_name for f in fields(type(self)) if f.init}
+            own.add("error")
+            others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
+            if others:
+                kwargs["forward"] = self.forward.to(**others)
             return super().to(cls, **kwargs)
         # A conversion to another type, including the forward type,
         # materializes the concrete inverse first, then converts onward.
@@ -230,6 +260,13 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         return forward.to(**changes)
 
 
+# Each typed inverse derives its `data` from its forward transform, in
+# the forward's encoding, and reads its views (`translation`, `matrix`,
+# `field`, ...) off that `data` exactly as a forward transform does. The
+# convenience keyword its family takes (`translation=`, `matrix=`, ...)
+# is deactivated: a wrapper is built from its forward only.
+
+
 class InverseTranslation(
     Inverse[Translation],
     Translation,
@@ -241,7 +278,8 @@ class InverseTranslation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "translation")
 
     # --- attributes ---------------------------------------------------
 
@@ -253,13 +291,15 @@ class InverseTranslation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    translation: Derived[tx.Optional[npvector[Real]]]
+    data: Derived[tx.Optional[npvector[Real]]]
+    _translation: Deactivated[None]
 
     @_invcache
-    def translation(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.translation is None:
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        translation = self.forward.translation
+        if translation is None:
             return None
-        return -self.forward.translation
+        return -translation
 
 
 class InverseScaling(
@@ -273,7 +313,8 @@ class InverseScaling(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "scale")
 
     # --- attributes ---------------------------------------------------
 
@@ -285,13 +326,15 @@ class InverseScaling(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    scale: Derived[tx.Optional[npvector[Real]]]
+    data: Derived[tx.Optional[npvector[Real]]]
+    _scale: Deactivated[None]
 
     @_invcache
-    def scale(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.scale is None:
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        scale = self.forward.scale
+        if scale is None:
             return None
-        return 1.0 / self.forward.scale
+        return 1.0 / scale
 
 
 class InversePermutation(
@@ -305,7 +348,8 @@ class InversePermutation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "permutation")
 
     # --- attributes ---------------------------------------------------
 
@@ -317,14 +361,15 @@ class InversePermutation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    permutation: Derived[tx.Optional[npvector[Integral]]]
+    data: Derived[tx.Optional[npvector[Integral]]]
+    _permutation: Deactivated[None]
 
     @_invcache
-    def permutation(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.permutation is None:
-            return None
-        backend = get_array_backend(self.forward.permutation)
+    def data(self) -> tx.Optional[ArrayProtocol]:
         forward = self.forward.permutation
+        if forward is None:
+            return None
+        backend = get_array_backend(forward)
         inverse_permutation = backend.zeros(forward.shape, dtype=forward.dtype)
         for i, p in enumerate(forward):
             inverse_permutation[p] = i
@@ -346,7 +391,8 @@ class InverseRotation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
 
     # --- attributes ---------------------------------------------------
 
@@ -358,14 +404,16 @@ class InverseRotation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
+    data: Derived[tx.Optional[npmatrix[Real]]]
+    _matrix: Deactivated[None]
 
     @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        matrix = self.forward.matrix
+        if matrix is None:
             return None
         # A rotation is orthogonal, so its inverse is its transpose.
-        return self.forward.matrix.T
+        return matrix.T
 
 
 class InverseLinear(
@@ -379,7 +427,8 @@ class InverseLinear(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
 
     # --- attributes ---------------------------------------------------
 
@@ -391,14 +440,16 @@ class InverseLinear(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
+    data: Derived[tx.Optional[npmatrix[Real]]]
+    _matrix: Deactivated[None]
 
     @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        matrix = self.forward.matrix
+        if matrix is None:
             return None
-        ab = get_array_backend(self.forward.matrix)
-        return ab.linalg.inv(self.forward.matrix)
+        ab = get_array_backend(matrix)
+        return ab.linalg.inv(matrix)
 
 
 class InverseAffine(
@@ -412,7 +463,12 @@ class InverseAffine(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
+        "data",
+        "matrix",
+        "homogeneous_matrix",
+    )
 
     # --- attributes ---------------------------------------------------
     forward: tx.Annotated[
@@ -423,13 +479,15 @@ class InverseAffine(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    matrix: Derived[tx.Optional[npmatrix[Real]]]
+    data: Derived[tx.Optional[npmatrix[Real]]]
+    _matrix: Deactivated[None]
 
     @_invcache
-    def matrix(self) -> tx.Optional[ArrayProtocol]:
-        if self.forward.matrix is None:
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        matrix = self.forward.matrix
+        if matrix is None:
             return None
-        return inverse_affine(self.forward.matrix)
+        return inverse_affine(matrix)
 
 
 class InverseDisplacementField(
@@ -440,22 +498,21 @@ class InverseDisplacementField(
     """The inverse of a [`DisplacementField`][], resolved on demand.
 
     The wrapper reports the `degree`, `bound` and `coeff` of the forward
-    field, and the inverse field it materializes preserves them. A field
-    of spline coefficients is inverted by re-fitting, and its inverse is
-    itself a field of coefficients.
+    field, and its `data` is the inverse field in that same encoding: the
+    forward field's values are inverted, and the result is fitted back to
+    spline coefficients when the forward field holds coefficients. Its
+    `field` view is the inverse field, as values, either way.
     """
 
     # --- class attributes ---------------------------------------------
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field",
-        "degree",
-        "bound",
-        "coeff",
-    )
+    # The map is derived from the forward, and cannot be set. The flags
+    # are the forward's too, read on demand, and a change of flag is made
+    # to the forward (see `Inverse.to`), so they stay in
+    # `metadata_fields`.
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
 
     # --- attributes ---------------------------------------------------
 
@@ -467,20 +524,20 @@ class InverseDisplacementField(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    field: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
+    _data: Derived[tx.Optional[ArrayProtocol]]
+    _degree: Derived[InterpolationOrder]
+    _bound: Derived[tx.Union[BoundaryCondition, float]]
+    _coeff: Derived[bool]
+    _field: Deactivated[None]
 
     @_invcache
-    def field(self) -> tx.Optional[ArrayProtocol]:
+    def data(self) -> tx.Optional[ArrayProtocol]:
         forward = self.forward
-        return _inv_disp(
-            forward.field,
-            coeff=forward.coeff,
-            degree=forward.degree,
-            bound=forward.bound,
-        )
+        field = forward.field
+        if field is None:
+            return None
+        flags = forward.coeff, forward.degree, forward.bound
+        return _encode(inverse_disp(field), *flags)
 
     @property
     def degree(self) -> InterpolationOrder:
@@ -494,6 +551,12 @@ class InverseDisplacementField(
     def coeff(self) -> bool:
         return self.forward.coeff
 
+    @_invcache
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        # Cached with `data`, on the forward, which clears both when its
+        # own `data` or flags are assigned.
+        return _decode(self.data, self.coeff, self.degree, self.bound)
+
 
 class InverseCoordinatesField(
     Inverse[CoordinatesField],
@@ -503,9 +566,10 @@ class InverseCoordinatesField(
     """The inverse of a [`CoordinatesField`][], resolved on demand.
 
     The wrapper reports the `degree`, `bound` and `coeff` of the forward
-    field, and the inverse field it materializes preserves them. A field of
-    spline coefficients is inverted by re-fitting, and its inverse is
-    itself a field of coefficients.
+    field, and its `data` is the inverse field in that same encoding: the
+    forward field's values are inverted, and the result is fitted back to
+    spline coefficients when the forward field holds coefficients. Its
+    `field` view is the inverse field, as values, either way.
 
     Placed next to the field it inverts in a [`Sequence`][], the two cancel
     and nothing is computed. That is the cheap path, and the one worth
@@ -527,13 +591,11 @@ class InverseCoordinatesField(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ()
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "field",
-        "degree",
-        "bound",
-        "coeff",
-    )
+    # The map is derived from the forward, and cannot be set. The flags
+    # are the forward's too, read on demand, and a change of flag is made
+    # to the forward (see `Inverse.to`), so they stay in
+    # `metadata_fields`.
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
 
     # --- attributes ---------------------------------------------------
 
@@ -545,20 +607,20 @@ class InverseCoordinatesField(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    field: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
+    _data: Derived[tx.Optional[ArrayProtocol]]
+    _degree: Derived[InterpolationOrder]
+    _bound: Derived[tx.Union[BoundaryCondition, float]]
+    _coeff: Derived[bool]
+    _field: Deactivated[None]
 
     @_invcache
-    def field(self) -> tx.Optional[ArrayProtocol]:
+    def data(self) -> tx.Optional[ArrayProtocol]:
         forward = self.forward
-        return _inv_coords(
-            forward.field,
-            coeff=forward.coeff,
-            degree=forward.degree,
-            bound=forward.bound,
-        )
+        field = forward.field
+        if field is None:
+            return None
+        flags = forward.coeff, forward.degree, forward.bound
+        return _encode(_inv_coords(field), *flags)
 
     @property
     def degree(self) -> InterpolationOrder:
@@ -572,48 +634,29 @@ class InverseCoordinatesField(
     def coeff(self) -> bool:
         return self.forward.coeff
 
+    @_invcache
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        # Cached with `data`, on the forward, which clears both when its
+        # own `data` or flags are assigned.
+        return _decode(self.data, self.coeff, self.degree, self.bound)
+
 
 # ----------------------------------------------------------------------
 #   HELPERS
 # ----------------------------------------------------------------------
 
 
-def _inv_disp(
-    disp: ArrayProtocol, coeff: bool = False, **options
-) -> ArrayProtocol:
-    if disp is None:
-        return None
-    if not coeff:
-        return inverse_disp(disp)
-    # A coefficient field is inverted by re-fitting: the coefficients
-    # are read out as values, the value field is inverted, and the
-    # result is fitted back to coefficients.
-    disp = coeff2value_field(disp, **options)
-    disp = inverse_disp(disp)
-    return value2coeff_field(disp, **options)
-
-
-def _inv_coords(
-    coords: ArrayProtocol, coeff: bool = False, **options
-) -> ArrayProtocol:
-    if coords is None:
-        return None
-
-    # A coordinate field is the identity grid plus a displacement, so
-    # it is inverted by inverting that displacement and adding the grid
-    # back. See the class docstring: this reads the coordinates as
-    # living in the units of their own grid.
+def _inv_coords(coords: ArrayProtocol) -> ArrayProtocol:
+    # A coordinate field (as values) is the identity grid plus a
+    # displacement, so it is inverted by inverting that displacement and
+    # adding the grid back. See the class docstring: this reads the
+    # coordinates as living in the units of their own grid.
     #
     # FIXME
     #   A better approach is to regress out the affine transformation
     #   from the field, such that the normalised field is close to
     #   being in voxel space. The objective would be
     #   ``||aff @ field - idgrid||_F``.
-
-    if coeff:
-        # The coefficients are read out as values first: the arithmetic
-        # below is on coordinates, not on spline coefficients.
-        coords = coeff2value_field(coords, **options)
 
     # Compute the identity coordinates mapping.
     # The grid is built on the backend the field lives on,
@@ -623,11 +666,4 @@ def _inv_coords(
         idgrid = CartesianField(shape=coords.shape[:-1]).field
 
     # Invert the coordinates field via the equivalent displacement field.
-    inverse_coords = inverse_disp(coords - idgrid) + idgrid
-
-    if coeff:
-        # Convert back to coefficients, so that the inverse uses the
-        # same parameters as the forward field.
-        inverse_coords = value2coeff_field(inverse_coords, **options)
-
-    return inverse_coords
+    return inverse_disp(coords - idgrid) + idgrid

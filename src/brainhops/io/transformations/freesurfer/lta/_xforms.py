@@ -140,14 +140,14 @@ class LtaTransformation(
         raise AssertionError(f"unsupported LTA type: {self.struct.type}")
 
     @property
-    def matrix(self) -> np.ndarray:
+    def data(self) -> np.ndarray:
         """The transformation's affine matrix.
 
         Read from the struct's affine block, unless it has been set
         explicitly.
         """
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+        if getattr(self, "_data", None) is not None:
+            return self._data
         return np.asarray(self.struct.affine.matrix, dtype=np.float64)[:-1]
 
     @input.setter
@@ -158,9 +158,9 @@ class LtaTransformation(
     def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._data = value
 
     # --- sniff --------------------------------------------------------
 
@@ -247,7 +247,7 @@ class LtaTransformation(
         """
         if all(
             getattr(self, name, None) is None
-            for name in ("_matrix", "_input", "_output")
+            for name in ("_data", "_input", "_output")
         ):
             return self.struct
         return _build_struct(self)
@@ -304,11 +304,11 @@ class LtaTransformationVoxToVox(LtaTransformation):
         return _system(LtaVoxelSystem, self.struct.dst)
 
     @property
-    def matrix(self) -> np.ndarray:
+    def data(self) -> np.ndarray:
         """The voxel-to-voxel affine matrix derived from the struct,
         unless it has been set explicitly."""
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+        if getattr(self, "_data", None) is not None:
+            return self._data
         return _get_vox2vox(self.struct)[:-1]
 
     @input.setter
@@ -319,9 +319,9 @@ class LtaTransformationVoxToVox(LtaTransformation):
     def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._data = value
 
 
 class LtaTransformationPhysToPhys(LtaTransformation):
@@ -357,11 +357,11 @@ class LtaTransformationPhysToPhys(LtaTransformation):
         return _system(LtaPhysicalSystem, self.struct.dst)
 
     @property
-    def matrix(self) -> np.ndarray:
+    def data(self) -> np.ndarray:
         """The physical-to-physical affine matrix derived from the
         struct, unless it has been set explicitly."""
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+        if getattr(self, "_data", None) is not None:
+            return self._data
         return _get_phys2phys(self.struct)[:-1]
 
     @input.setter
@@ -372,9 +372,9 @@ class LtaTransformationPhysToPhys(LtaTransformation):
     def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._data = value
 
 
 class LtaTransformationRASToRAS(LtaTransformation):
@@ -406,11 +406,11 @@ class LtaTransformationRASToRAS(LtaTransformation):
         return _systems.RASmm()
 
     @property
-    def matrix(self) -> np.ndarray:
+    def data(self) -> np.ndarray:
         """The RAS-to-RAS affine matrix derived from the struct, unless
         it has been set explicitly."""
-        if getattr(self, "_matrix", None) is not None:
-            return self._matrix
+        if getattr(self, "_data", None) is not None:
+            return self._data
         return _get_ras2ras(self.struct)[:-1]
 
     @input.setter
@@ -421,9 +421,9 @@ class LtaTransformationRASToRAS(LtaTransformation):
     def output(self, value: LtaCoordinateSystem) -> None:
         self._output = value
 
-    @matrix.setter
-    def matrix(self, value: np.ndarray) -> None:
-        self._matrix = value
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._data = value
 
 
 # ----------------------------------------------------------------------

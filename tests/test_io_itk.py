@@ -216,7 +216,9 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
         ]
         assert block.degree == degree
         assert block.coeff == coeff
-        assert block.displacement.field is block.field
+        # The block's array is what its displacement field stores: the
+        # values, or the spline coefficients of a B-spline.
+        assert block.displacement.data is block.field
         assert block.field.shape[-1] == 3
 
 

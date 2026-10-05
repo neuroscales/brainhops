@@ -151,7 +151,7 @@ def _(query: Affine, kind: IdentityType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
     if compute:
         return bool((query.field == 0).all())
@@ -159,7 +159,7 @@ def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
     return False
 
@@ -203,7 +203,7 @@ def _(query: Affine, kind: TranslationType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
     if compute:
         field = query.field

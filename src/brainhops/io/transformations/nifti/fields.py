@@ -27,6 +27,7 @@ from brainhops.io.base.nifti import (
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
+    NiftiParser,
     _apply_like,
     _apply_overrides,
     _new_nifti,
@@ -103,26 +104,30 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         return Confidence.NO
 
     @property
-    def field(self) -> tx.Optional[ArrayProtocol]:
+    def data(self) -> tx.Optional[ArrayProtocol]:
         """
         The field of RAS coordinates, as an `(X, Y, Z, 3)` array.
 
+        It is the image data that the NIfTI parser reads from the file,
+        and the array this field stores: its `field` view reads it.
         NIfTI stores a vector field as `(X, Y, Z, 1, 3)`, with the
         components in the fifth axis, and SPM writes its `y_` fields that
         way. The singleton axis before the components is dropped, or the
         field would be sampled as a 4-D grid of 3-vectors.
         """
-        data = self.data
+        # `CoordinatesField` exposes its stored `_data` as `data`, which
+        # shadows the parser's lazy `data` property. The parser keeps the
+        # image it reads in `_data` too, so the two are one value here,
+        # read through the parser.
+        data = NiftiParser.data.fget(self)
         if data is None:
             return None
         return _nifti_vector_field(data)
 
-    @field.setter
-    def field(self, value: tx.Optional[ArrayProtocol]) -> None:
-        # `field` is this format's name for the image data, so the two
-        # must stay one value. Without a setter the struct's generated
-        # `__init__` cannot assign the inherited `field` at all.
-        self.data = value
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        NiftiParser.data.fset(self, value)
+        self._forget_views()
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -145,7 +150,8 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         Keyword arguments override header fields last, so an explicit value
         wins.
         """
-        field = self.field
+        # NIfTI stores sampled coordinates.
+        field = self.to(coeff=False).data
         if field is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
