@@ -617,6 +617,36 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
     assert isinstance(cancelled, Identity)
 
 
+def test_an_equal_but_distinct_transform_never_cancels() -> None:
+    # Cancellation is decided from object identity alone: the inverse of an
+    # equal-valued, distinct transform is not recognized, and recognizing
+    # it never compares the two (which would raise).
+    from brainhops.datamodel._transformations import simplifiers
+
+    affine = Affine(matrix=SUB_AFFINE)
+    twin = Affine(matrix=SUB_AFFINE.copy())
+    field = DisplacementField(field=np.zeros((5, 6, 2)))
+    copy = DisplacementField(field=np.zeros((5, 6, 2)))
+    for first, second in ((affine, twin), (field, copy)):
+        assert simplifiers._cancels(first, first.inverse())
+        assert not simplifiers._cancels(first, second.inverse())
+        assert not simplifiers._cancels(second.inverse(), first)
+
+
+def test_a_3d_affine_refuses_a_4d_field() -> None:
+    # A matrix acts on as many coordinates as it has columns. A 3D affine
+    # composed with a field of 4D coordinates is a mismatch, and is
+    # refused rather than applied to some of them.
+    points = np.random.default_rng(0).standard_normal((5, 4))
+    system = _full4("world")
+    for transform in (
+        Affine(matrix=SUB_AFFINE, input=system, output=system),
+        Linear(matrix=SUB_AFFINE[:, :-1], input=system, output=system),
+    ):
+        with pytest.raises(ValueError):
+            compose(transform, CoordinatesField(field=points))
+
+
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:
     # A restrictive mode composes only the inner types it admits. Two
     # subspace-wrapped fields are left separate under an affine-only mode,

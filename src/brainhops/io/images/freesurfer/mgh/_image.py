@@ -10,14 +10,19 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
+from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
-from brainhops.io.base.nifti import (
-    _scale_spatial,
-    _unit_scale,
-    _voxel_to_ras,
+from brainhops.io.base._geometry import (
+    Arrangement,
+    arrange_voxel_to_ras,
+    declared_axes,
 )
-from brainhops.io.base.parsers import WriterError
+from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
+from brainhops.io.base.nifti import _scale_spatial, _unit_scale
+from brainhops.io.base.parsers import (
+    UnrepresentableTransformationError,
+    WriterError,
+)
 from brainhops.io.images.base import WritableFileBasedImage
 
 _SCANNER = "scanner"
@@ -121,11 +126,32 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         axes. A transformation with no affine representation raises
         `UnrepresentableTransformationError`.
 
+        The axes are placed by the types and names the voxel space of
+        that transformation declares, as NIfTI places them (see
+        [`plan_axes`][brainhops.io.base._geometry.plan_axes]): the
+        spatial axes first (`x, y, z` in that order when they are so
+        named), then the one axis MGH stores besides them, its frames.
+        The data is transposed to match (lazily, for a lazy array), and a
+        slice with frames is given a `z` axis of size one. A second axis
+        besides the spatial ones has no place in MGH, and raises
+        `UnrepresentableTransformationError`. A voxel space that declares
+        nothing is written in the order it has.
+
+        The frames of a time axis are spaced by the repetition time,
+        which MGH stores in milliseconds (`tr`): it is taken from the
+        time axis of the transformation, converted from its unit (a time
+        axis with no unit is taken to be in milliseconds already). A time
+        axis that still counts frames states no repetition time. MGH
+        stores no origin for the frames, so a time axis with one raises
+        `UnrepresentableTransformationError`, as do frames of another
+        kind that are scaled or shifted.
+
         The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
         `fov`) are copied from this image's header, then from `like` when
         it is given (a path to an MGH/MGZ file, a `nibabel` MGH image or
-        header, or another object read from MGH), then from the keyword
-        arguments. `dtype` sets the stored voxel type. Without it, the
+        header, or another object read from MGH); the repetition time the
+        transformation states replaces theirs; then the keyword arguments
+        apply. `dtype` sets the stored voxel type. Without it, the
         array's type is kept when MGH can store it (uint8, int16, int32,
         float32), and otherwise converted to the nearest one MGH can:
         booleans to uint8, other floats to float32, other integers to
@@ -137,6 +163,9 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
             raise WriterError(
                 "This image has no data, so there is nothing to write."
             )
+        vox2ras, layout, tr = _scanner_geometry(self.transformations, data)
+        if layout is not None:
+            data = layout.apply(data)
         ndim = len(getattr(data, "shape", ()))
         if not 1 <= ndim <= 4:
             raise WriterError(
@@ -154,11 +183,12 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
                 continue
             for name in _MRI_PARAMS:
                 header[name] = source[name]
+        if tr is not None:
+            header["tr"] = tr
         for name, value in overrides.items():
             header[name] = value
         header.set_data_dtype(dtype)
 
-        vox2ras = _scanner_matrix(self.transformations)
         return _mgh.MGHImage(data, vox2ras, header=header)
 
 
@@ -222,15 +252,23 @@ def _mgh_to_transformations(image: MghParser) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-def _scanner_matrix(
+_MGH_POLICY = dict(fill_space=True, max_nonspatial=1)
+"""
+Where MGH stores the axes of an array (see
+[`plan_axes`][brainhops.io.base._geometry.plan_axes]): three spatial axes,
+then the frames.
+"""
+
+
+def _scanner_transformation(
     transformations: tx.Sequence[Transformation],
-) -> np.ndarray:
+) -> tx.Optional[Transformation]:
     """
-    The `(4, 4)` voxel-to-scanner RAS matrix, in mm, to store.
+    The transformation that gives the voxel-to-scanner RAS matrix to store.
 
     The transformation named `"scanner"` wins; failing that, the
     preferred one, unless it maps to tkr RAS, in which case the last
-    transformation that does not. No transformation gives the identity.
+    transformation that does not. `None` when there is none.
     """
     transformations = list(transformations or [])
     chosen = None
@@ -243,11 +281,81 @@ def _scanner_matrix(
             if name != _TKR:
                 chosen = xform
                 break
+    return chosen
+
+
+def _scanner_geometry(
+    transformations: tx.Sequence[Transformation], data: tx.Any
+) -> tx.Tuple[np.ndarray, tx.Any, tx.Optional[float]]:
+    """
+    The `(4, 4)` voxel-to-scanner RAS matrix, in mm, to store, where each
+    axis of the data is stored, and the repetition time, in ms, the
+    transformation states (see `MghImage.to_nibabel`).
+
+    No transformation gives the identity, the data as it is, and no
+    repetition time.
+    """
+    chosen = _scanner_transformation(transformations)
     if chosen is None:
-        return np.eye(4)
-    matrix = _voxel_to_ras(chosen)
+        return np.eye(4), None, None
+    ndim = len(getattr(data, "shape", ()) or ())
+    voxel_axes = declared_axes(getattr(chosen, "input", None), ndim)
+    arranged = arrange_voxel_to_ras(
+        chosen, voxel_axes, "MGH", "scanner", **_MGH_POLICY
+    )
     output = getattr(chosen, "output", None)
-    return _scale_spatial(matrix, _unit_scale(output, "mm"))
+    matrix = _scale_spatial(arranged.matrix, _unit_scale(output, "mm"))
+    return matrix, arranged.layout, _frame_tr(arranged)
+
+
+def _frame_tr(arranged: Arrangement) -> tx.Optional[float]:
+    """
+    The repetition time, in ms, of the frames of an arranged geometry, or
+    `None` when it states none.
+
+    The frames are the one axis stored after the spatial ones. Frames of
+    a time axis are spaced by the repetition time; MGH has no origin to
+    store for them. A time axis that still counts frames (scale one, and
+    no time unit) states no repetition time. Frames that the spaces
+    declare as another kind of axis are neither scaled nor shifted, as
+    MGH stores neither. A space that declares nothing is read as the MGH
+    reader reads it: the frames are time.
+    """
+    if not arranged.others:
+        return None
+    scale, offset = arranged.others[0]
+    groups = [
+        g[3]
+        for g in (arranged.voxel_groups, arranged.world_groups)
+        if g is not None and len(g) > 3
+    ]
+    if any(g != "time" for g in groups):
+        if (scale, offset) != (1.0, 0.0):
+            raise UnrepresentableTransformationError(
+                "MGH stores no spacing or origin for frames that are not "
+                f"time, so a map that scales or shifts them ({scale}, "
+                f"{offset}) cannot be written."
+            )
+        return None
+    if offset != 0:
+        raise UnrepresentableTransformationError(
+            f"MGH stores no origin for the time axis, so a map that "
+            f"shifts it ({offset}) cannot be written."
+        )
+    if scale <= 0:
+        raise UnrepresentableTransformationError(
+            f"MGH stores the repetition time as a positive number, so a "
+            f"map that scales time by {scale} cannot be written."
+        )
+    axes = list(getattr(arranged.world, "axes", None) or [])
+    unit = getattr(axes[3], "unit", None) if len(axes) > 3 else None
+    if is_physicalunit(unit) and is_timeunit(unit):
+        return float(scale) * float(unit.scale) * 1000.0
+    if scale == 1.0:
+        # Still a frame index, as the reader reads frames with no
+        # repetition time: none is stated.
+        return None
+    return float(scale)
 
 
 def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:

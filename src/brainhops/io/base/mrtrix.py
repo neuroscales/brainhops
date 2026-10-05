@@ -104,11 +104,7 @@ from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._geometry import (
-    embed_affine,
-    ras_conversion,
-    reduce_to_affine,
-)
+from brainhops.io.base._geometry import Arrangement, arrange_voxel_to_ras
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
 from brainhops.io.base._utils_files import sibling as _sibling
@@ -852,34 +848,45 @@ def _is_gzip(file: tx.Any) -> bool:
 # ----------------------------------------------------------------------
 
 
-def voxel_to_ras(xform: Transformation) -> np.ndarray:
+MRTRIX_POLICY = dict(fill_space=True)
+"""
+Where MRtrix stores the axes of an array (see
+[`plan_axes`][brainhops.io.base._geometry.plan_axes]).
+
+MRtrix reads its first three axes as spatial, and gives the others no
+meaning of their own: they are stored after the spatial ones, time first,
+then the channels, then the others. A slice with other axes is given a
+`z` axis of size one, so they are not read as spatial.
+"""
+
+
+def voxel_to_ras(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[tx.Any]] = None
+) -> Arrangement:
     """
-    The `(4, 4)` voxel-to-RAS matrix of a voxel-to-world transformation.
+    The voxel-to-RAS geometry of a voxel-to-world transformation, with
+    the axes placed where MRtrix stores them.
 
     The transformation is reduced to an affine (a `Scaling`, a `Sequence`
-    of affines, ...). A map with fewer than three dimensions is embedded
-    in three, with unit extra axes. The world space is turned into RAS
-    from the anatomical orientation of its axes; a world space with no
-    orientation is taken to be RAS already.
+    of affines, ...). The axes are placed by the types and names their
+    spaces declare (`voxel_axes` are those of the data, see
+    [`arrange_voxel_to_ras`][brainhops.io.base._geometry.
+    arrange_voxel_to_ras] and `MRTRIX_POLICY`). A map with fewer than
+    three dimensions is embedded in three. A map over more axes keeps its
+    three spatial ones in the `(4, 4)` matrix, when it does not mix them
+    with the others, and the scale and offset of the others apart. The
+    world space is turned into RAS from the anatomical orientation of its
+    axes; a world space with no orientation is taken to be RAS already.
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the transformation has no affine representation.
-    WriterError
-        If it maps more than three spatial dimensions.
+        If the transformation has no affine representation, or mixes the
+        spatial axes with the others.
     """
-    affine = reduce_to_affine(xform, "MRtrix", "scanner")
-    matrix = affine.homogeneous_matrix
-    matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
-    embedded = embed_affine(matrix, "MRtrix", "scanner")
-    output = getattr(affine, "output", None)
-    try:
-        if output is not None and output.ndim is None:
-            output = output.expand(matrix.shape[0] - 1)
-    except Exception:
-        output = None
-    return ras_conversion(output) @ embedded
+    return arrange_voxel_to_ras(
+        xform, voxel_axes, "MRtrix", "scanner", **MRTRIX_POLICY
+    )
 
 
 def split_voxel_to_scanner(
