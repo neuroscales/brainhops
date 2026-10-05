@@ -61,7 +61,7 @@ class ConversionReport(DataModelBase):
         tx.Tuple[str, ...],
         tx.Doc(
             "Fields a key/value format moved into its free-form store "
-            "(`extra`) instead of losing them (see `Metadata._import`)."
+            "(`extra`) instead of losing them."
         ),
     ] = ()
 

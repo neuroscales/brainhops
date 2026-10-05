@@ -150,24 +150,6 @@ class DictMetadata(
         return obj
 
 
-class KeyvalMetadata(
-    FileBasedMetadata,
-    on={"format": "test-keyval"},
-    supports=("description", "extra"),
-):
-    """A key/value format: what it has no slot for goes into `extra`."""
-
-    @classmethod
-    def _import(cls, other, values, *, report) -> None:  # noqa: ANN001
-        extra = dict(values.get("extra") or {})
-        for name in list(report.lost):
-            if name == "extra":
-                continue
-            extra[name] = report.lost.pop(name)
-            report.passed_through += (name,)
-        values["extra"] = extra
-
-
 class DialectMetadata(
     FileBasedMetadata,
     on={"format": "test-dialect"},
@@ -504,22 +486,6 @@ def test_the_record_travels_only_within_a_format() -> None:
 def test_extra_is_lost_where_the_target_has_no_store() -> None:
     _, report = _to(Metadata(extra={"Key": 1}), OpaqueMetadata)
     assert report.lost == {"extra": {"Key": 1}}
-
-
-def test_import_may_recover_a_loss() -> None:
-    target, report = _to(_rich(), KeyvalMetadata)
-    assert not report.lossy
-    assert target.extra == {
-        "Custom": 1,
-        "echo_time": 0.03,
-        "slice_timing": (0.0, 0.5, 1.0),
-        "history": ("acquired",),
-    }
-    assert set(report.passed_through) == {
-        "echo_time",
-        "slice_timing",
-        "history",
-    }
 
 
 def test_explicit_values_win_over_the_source() -> None:

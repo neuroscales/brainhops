@@ -1908,6 +1908,12 @@ holds.
   `Metadata.load` imports the dispatcher when it is called.
   `preferred_dtype` asks the metadata for `_changed_fields` rather than
   checking its class.
+- **No `_import` hook.** The conversion hook `Metadata._import`, which
+  a key/value format (MRtrix, NRRD) was to override to move into its
+  free-form store what it has no slot for, was dropped: no format used
+  it. A conversion reports what the target cannot store as lost.
+  `ConversionReport.passed_through` stays, for a format that moves a
+  field into its store.
 
 ## Open questions for the maintainer
 

@@ -509,61 +509,6 @@ class Metadata(
 
         return to_bids(self, on_loss=on_loss)
 
-    # --- conversion hook (key/value formats) --------------------------
-
-    @classmethod
-    def _import(
-        cls,
-        other: "Metadata",
-        values: tx.Dict[str, tx.Any],
-        *,
-        report: ConversionReport,
-    ) -> None:
-        """
-        Recover losses of a conversion into this class: a hook for the
-        key/value formats (MRtrix, NRRD), whose free-form store can hold
-        what they have no slot for.
-
-        Called by `to` and `from_instance` with the source object, the
-        values about to be passed to the constructor (`values`, edited in
-        place) and the report, whose `lost` already lists what this class
-        cannot store. A format recovers a loss by moving the value into
-        `values["extra"]`, removing it from `report.lost` and adding its
-        name to `report.passed_through`. Default: nothing is recovered.
-
-        Examples (none of the formats in the package needs it yet):
-
-        - MRtrix (`.mif`) has dedicated keys for a few fields
-          (`PhaseEncodingDirection`, `TotalReadoutTime`, `dw_scheme`)
-          and none for `echo_time` or `flip_angle`, but its `keyval`
-          holds any `key: value`. Converting an MGH image's metadata
-          (`echo_time=0.0035`, `flip_angle=8.6`) to `MrtrixMetadata`
-          would otherwise report both as lost; its `_import` moves them
-          to `values["extra"]` under their BIDS keys (`EchoTime`,
-          `FlipAngle`), as `mrconvert -json_import` does, and lists them
-          in `report.passed_through`:
-
-          ```python
-          @classmethod
-          def _import(cls, other, values, *, report):
-              extra = dict(values.get("extra") or {})
-              for name in [n for n in report.lost if n != "extra"]:
-                  extra[BIDS_KEYS[name]] = report.lost.pop(name)
-                  report.passed_through += (name,)
-              values["extra"] = extra
-          ```
-
-        - NRRD has no field for slice timing or the phase encoding
-          direction of a NIfTI image; its `_import` writes them as
-          `keyvalue` pairs (`SliceTiming:=0 0.5 1 1.5`), so a NIfTI ->
-          NRRD -> NIfTI round trip keeps them.
-        - The other way round, a format with dedicated slots but no
-          free-form store (MGH) loses the `extra` of an MRtrix source
-          as a whole; its `_import` could take `extra["EchoTime"]` back
-          into `values["echo_time"]` before the rest of `extra` is
-          reported lost.
-        """
-
     # --- internals ----------------------------------------------------
 
     @classmethod
@@ -601,7 +546,6 @@ class Metadata(
                 report.lost[name] = value
                 continue
             values[name] = value
-        target._import(other, values, report=report)
         values.update(kwargs)
         return target(*args, **values), report
 

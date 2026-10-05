@@ -200,44 +200,6 @@ public method and calling `super()`:
   vocabulary, overrides them, calls `super()`, and removes that content
   from the copy: NIfTI's `_reslice` clears its slice slots and
   `dim_info`.
-Last, a key/value format may implement a conversion hook of
-`Metadata`:
-
-- `_import(other, values, *, report) -> None`: a hook for the key/value
-  formats (MRtrix, NRRD), called on a conversion with the source object,
-  the values about to be passed to the constructor, and the report. A
-  format may *recover* a loss here, for example by moving a lost
-  vocabulary value into `values["extra"]`, removing it from
-  `report.lost` and listing it in `report.passed_through`. Defaults to
-  nothing; no format in the package needs it yet. Three uses:
-    - *MRtrix keeps BIDS-named keys.* An MGH image converted to MRtrix
-      has `echo_time` and `flip_angle`, for which `.mif` has no
-      dedicated key (it has `PhaseEncodingDirection`,
-      `TotalReadoutTime`, `dw_scheme`, ...), so `MrtrixMetadata`
-      declares them unsupported. But `keyval` holds any `key: value`:
-      `_import` moves them into `values["extra"]` as `EchoTime` and
-      `FlipAngle` (what `mrconvert -json_import` writes), and the report
-      lists them as passed through instead of lost.
-    - *NRRD `keyvalue`.* NRRD has no field for the slice timing or the
-      phase encoding direction of a NIfTI image; `_import` writes them
-      as `key:=value` pairs (`SliceTiming:=0 0.5 1 1.5`), so a NIfTI ->
-      NRRD -> NIfTI round trip keeps them.
-    - *A field out of a lost `extra`.* A format with dedicated slots and
-      no free-form store (MGH) loses the `extra` of an MRtrix source as
-      a whole; `_import` can take `extra["EchoTime"]` back into
-      `values["echo_time"]` before the rest of `extra` is reported lost.
-
-  The MRtrix version is six lines:
-
-  ```python
-  @classmethod
-  def _import(cls, other, values, *, report):
-      extra = dict(values.get("extra") or {})
-      for name in [n for n in report.lost if n != "extra"]:
-          extra[BIDS_KEYS[name]] = report.lost.pop(name)
-          report.passed_through += (name,)
-      values["extra"] = extra
-  ```
 
 ## Scopes and axes
 
@@ -303,9 +265,7 @@ vocabulary fields `names` (read from their sidecar keys, BIDS keys or
 `encode_changes(obj, changed)` writes the changed fields back under
 their keys (`None` removes one), and `encode_extra(obj, diff, report=,
 reserved=)` applies the `extra` diff, reporting the keys the format
-keeps for itself as lost. `X5Metadata` is the shortest example. A
-key/value format that can hold what it has no slot for pairs this with
-the `_import` hook.
+keeps for itself as lost. `X5Metadata` is the shortest example.
 
 ## The `metadata` field of a format class
 
