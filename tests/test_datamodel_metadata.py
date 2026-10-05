@@ -24,6 +24,7 @@ from bagof.magic import Factory, Magic, fields, replace
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
+    AxisType,
     ContrastMethod,
     IlluminationType,
     IntentEnum,
@@ -36,6 +37,7 @@ from brainhops.datamodel.metadata import (
     GROUPS,
     UNSUPPORTED,
     VOCABULARY,
+    Along,
     Channel,
     ConversionReport,
     DiffusionVocabulary,
@@ -53,6 +55,8 @@ from brainhops.datamodel.metadata import (
     MRIVocabulary,
     OpaqueMetadata,
     ProvenanceVocabulary,
+    Scope,
+    Scoped,
     StorageVocabulary,
     TransformVocabulary,
     Unsupported,
@@ -135,8 +139,8 @@ class DictMetadata(
                 raw["desc"] = changed["description"][:8]
         return raw
 
-    def _derive_raw(self, raw, *, grid_changed, volumes) -> dict:  # noqa: ANN001
-        if raw is None or not grid_changed:
+    def _derive_raw(self, raw, *, changed) -> dict:  # noqa: ANN001
+        if raw is None or AxisType.space not in changed:
             return raw
         raw = dict(raw)
         raw.pop("slice_hint", None)
@@ -327,9 +331,16 @@ def test_polymorphic_construction_on_format() -> None:
 def test_bids_and_scope_annotations() -> None:
     by_name = {f.name: f.metadata for f in fields(Metadata)}
     assert by_name["repetition_time"]["bids"] == "RepetitionTime"
-    assert by_name["repetition_time"]["scope"] == "acquisition"
-    assert by_name["slice_timing"]["scope"] == "grid"
-    assert by_name["channels"]["scope"] == "volume"
+    assert by_name["repetition_time"]["scope"] is Scope.ACQUISITION
+    assert by_name["slice_timing"]["scope"] is Scope.SPATIAL
+    assert by_name["channels"]["scope"] is Scope.AXIS
+    assert by_name["channels"]["along"] is AxisType.channel
+    assert by_name["bvalues"]["along"] is AxisType.time
+    assert by_name["display_range"]["scope"] is Scope.FILE
+    with pytest.raises(ValueError):
+        Scoped(Scope.AXIS)
+    with pytest.raises(ValueError):
+        Along("space")
     assert "bids" not in by_name["display_range"]
 
 
@@ -610,25 +621,31 @@ def test_derive_follows_the_scopes() -> None:
     # The brainhops entry is added once.
     assert len(same_grid.derive().generated_by) == 1
 
-    resampled = meta.derive(grid_changed=True)
+    resampled = meta.derive(changed={"space": None})
     assert resampled.slice_timing is None
     assert resampled.phase_encoding_direction is None
     assert resampled.echo_time == 0.03
 
-    selected = meta.derive(volumes=[2, 0])
-    assert [c.name for c in selected.channels] == ["c", "a"]
+    # Each per-axis field follows its own axis.
+    selected = meta.derive(changed={"time": [2, 0]})
     assert selected.bvalues == (2000.0, 0.0)
+    assert [c.name for c in selected.channels] == ["a", "b", "c"]
     assert selected.display_range == (0.0, 1.0)
+    channel = meta.derive(changed={AxisType.channel: [2, 0]})
+    assert [c.name for c in channel.channels] == ["c", "a"]
+    assert channel.bvalues == (0.0, 1000.0, 2000.0)
 
-    changed = meta.derive(volumes_changed=True)
+    changed = meta.derive(changed={"time": None, "channel": None})
     assert changed.channels is None and changed.bvalues is None
+    with pytest.raises(ValueError, match="axis type"):
+        meta.derive(changed={"volume": None})
 
 
 def test_derive_keeps_the_record_and_clears_through_it() -> None:
     meta = DictMetadata.from_raw(
         {"desc": "d", "slices": [0, 1], "slice_hint": "x"}
     )
-    derived = meta.derive(grid_changed=True)
+    derived = meta.derive(changed={"space": None})
     assert type(derived) is DictMetadata
     assert derived._snapshot == meta._snapshot
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
@@ -1092,8 +1109,8 @@ def test_data_type_is_a_native_dtype() -> None:
     assert Metadata.from_bids({"DataType": "uint8"}).data_type == np.uint8
     # A resampling changes the kind of the values: it is grid-bound.
     # How the file stores the values: kept by `derive` (`file` scope).
-    assert meta.derive(grid_changed=True).data_type == np.int16
-    assert meta.derive(volumes=[0]).data_type == np.int16
+    assert meta.derive(changed={"space": None}).data_type == np.int16
+    assert meta.derive(changed={"time": [0]}).data_type == np.int16
 
 
 def test_preferred_dtype() -> None:
@@ -1182,19 +1199,25 @@ def test_derive_maps_a_direction_through_the_grid() -> None:
         slice_timing=(0.0, 0.5),
     )
     swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
-    derived = meta.derive(grid_changed=True, grid_map=swap)
+    derived = meta.derive(changed={"space": None}, spatial_map=swap)
     assert derived.phase_encoding_direction == EncodingDirection("i-")
     # A direction in a world space does not move with the grid.
     assert derived.slice_encoding_direction.space == "mni"
     # The slice timing is still cleared.
     assert derived.slice_timing is None
     rotated = meta.derive(
-        grid_changed=True,
-        grid_map=[[1, 0, 0], [0, 2**-0.5, -(2**-0.5)], [0, 2**-0.5, 2**-0.5]],
+        changed={"space": None},
+        spatial_map=[
+            [1, 0, 0],
+            [0, 2**-0.5, -(2**-0.5)],
+            [0, 2**-0.5, 2**-0.5],
+        ],
     )
     assert rotated.phase_encoding_direction.to_bids() is None
     # Without a map, a grid change clears it.
-    assert meta.derive(grid_changed=True).phase_encoding_direction is None
+    assert (
+        meta.derive(changed={"space": None}).phase_encoding_direction is None
+    )
 
 
 # ----------------------------------------------------------------------

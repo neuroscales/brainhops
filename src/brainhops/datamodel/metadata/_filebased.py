@@ -14,6 +14,7 @@ from bagof.magic import Factory, NoEq, NoRepr
 from brainhops._core.compare import differs
 from brainhops._core.fields import Lazy
 
+from ..enums import AxisType
 from ._base import FIELDS, Metadata, _format_name
 from ._report import ConversionReport, OnLoss, apply_loss_policy, short
 from ._sentinel import UNSUPPORTED
@@ -458,15 +459,29 @@ class FileBasedMetadata(Metadata):
         self,
         raw: tx.Any,
         *,
-        grid_changed: bool,
-        volumes: tx.Optional[tx.Sequence[int]],
+        changed: tx.Mapping[AxisType, tx.Optional[tx.Tuple[int, ...]]],
     ) -> tx.Any:
         """
-        The raw record of a derived object (`derive`): a copy of `raw`,
-        which a format scrubs of what is tied to the grid (when
-        `grid_changed`) or to the volumes (`volumes`, the selected
-        indices) but is outside the vocabulary. Default: a deep copy, so
-        that the derived object never shares its record.
+        Build the raw record of derived metadata (see `derive`).
+
+        The record is a copy of `raw`. A format overrides this hook to
+        remove from the copy what the changed axes invalidate but the
+        vocabulary does not cover, such as the slice-timing slots of a
+        NIfTI header when the spatial axes changed. The default makes a
+        deep copy, so that the derived metadata never shares its record.
+
+        Parameters
+        ----------
+        raw : object
+            The record of this metadata.
+        changed : mapping
+            The changed axes, as `derive` received them: `AxisType` to the
+            indices kept along the axes of that type, or to `None`.
+
+        Returns
+        -------
+        object
+            The record of the derived metadata.
         """
         return copy.deepcopy(raw)
 
@@ -526,26 +541,18 @@ class FileBasedMetadata(Metadata):
     def _derive_values(
         self,
         *,
-        grid_changed: bool,
-        grid_map: tx.Any,
-        volumes: tx.Optional[tx.Sequence[int]],
-        volumes_changed: bool,
+        changed: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]],
+        spatial_map: tx.Any,
         step: tx.Optional[str],
     ) -> tx.Dict[str, tx.Any]:
         # The raw record and the snapshot are kept, so that a field
         # `derive` cleared is cleared in the record on write; the record
         # is the format's scrubbed copy (`_derive_raw`).
         values = super()._derive_values(
-            grid_changed=grid_changed,
-            grid_map=grid_map,
-            volumes=volumes,
-            volumes_changed=volumes_changed,
-            step=step,
+            changed=changed, spatial_map=spatial_map, step=step
         )
         values.update(self._format_state())
-        values["raw"] = self._derive_raw(
-            self.raw, grid_changed=grid_changed, volumes=volumes
-        )
+        values["raw"] = self._derive_raw(self.raw, changed=changed)
         return values
 
     def _format_state(self) -> tx.Dict[str, tx.Any]:

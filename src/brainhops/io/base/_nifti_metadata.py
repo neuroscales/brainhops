@@ -57,6 +57,7 @@ from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops._core.numeric import float32_repr
+from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -264,14 +265,12 @@ class NiftiMetadata(
         self,
         raw: tx.Optional[nb.Nifti1Header],
         *,
-        grid_changed: bool,
-        volumes: tx.Optional[tx.Sequence[int]],
+        changed: tx.Mapping[AxisType, tx.Optional[tx.Tuple[int, ...]]],
     ) -> tx.Optional[nb.Nifti1Header]:
-        raw = super()._derive_raw(
-            raw, grid_changed=grid_changed, volumes=volumes
-        )
-        if raw is not None and grid_changed:
-            # The slice timing and the encoding axes follow the grid.
+        raw = super()._derive_raw(raw, changed=changed)
+        if raw is not None and AxisType.space in changed:
+            # The slice timing and the encoding axes follow the spatial
+            # axes.
             _clear_slices(raw)
             raw.set_dim_info(None, None, None)
         return raw

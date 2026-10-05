@@ -1,15 +1,13 @@
 """The common vocabulary: its scopes, its annotations and its groups."""
 
 __all__ = [
-    "ACQUISITION",
+    "ALONG",
     "BIDS_KEYS",
     "FIELDS",
-    "FILE",
-    "GRID",
     "GROUPS",
     "SCOPES",
     "VOCABULARY",
-    "VOLUME",
+    "Along",
     "Bids",
     "DiffusionVocabulary",
     "DisplayVocabulary",
@@ -17,6 +15,7 @@ __all__ = [
     "MicroscopyVocabulary",
     "ProvenanceVocabulary",
     "Scope",
+    "Scoped",
     "StorageVocabulary",
     "TransformVocabulary",
 ]
@@ -31,7 +30,10 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, Field, Magic, fields
 
 # internals
+from brainhops._core.enum import StrEnum
+
 from ..enums import (
+    AxisType,
     ContrastMethod,
     IlluminationType,
     IntentEnum,
@@ -50,49 +52,146 @@ from ._terms import (
     unit,
 )
 
-FILE = "file"
-"""Scope of a field about the file itself (kept by `derive`)."""
 
+class Scope(StrEnum):
+    """
+    How a vocabulary field propagates when an image is derived from
+    another one (see `Metadata.derive`).
 
-ACQUISITION = "acquisition"
-"""Scope of a field invariant under resampling (kept by `derive`)."""
+    +-----------------+-------------------+---------------------------------+
+    | Member          | Value             | Meaning                         |
+    +=================+===================+=================================+
+    | `FILE`          | `"file"`          | The field is about the file or  |
+    |                 |                   | about the data as a whole. It   |
+    |                 |                   | is kept.                        |
+    +-----------------+-------------------+---------------------------------+
+    | `ACQUISITION`   | `"acquisition"`   | The field describes the         |
+    |                 |                   | acquisition, and does not       |
+    |                 |                   | change under a resampling. It   |
+    |                 |                   | is kept.                        |
+    +-----------------+-------------------+---------------------------------+
+    | `SPATIAL`       | `"spatial"`       | The field is tied to the        |
+    |                 |                   | spatial sampling. It is cleared |
+    |                 |                   | when the spatial axes change,   |
+    |                 |                   | or mapped along with them.      |
+    +-----------------+-------------------+---------------------------------+
+    | `AXIS`          | `"axis"`          | The field has one entry per     |
+    |                 |                   | index along one non-spatial     |
+    |                 |                   | axis (see [`Along`][]). It is   |
+    |                 |                   | indexed when that axis changes. |
+    +-----------------+-------------------+---------------------------------+
+    """
 
-
-GRID = "grid"
-"""Scope of a field tied to the voxel grid (cleared when it changes)."""
-
-
-VOLUME = "volume"
-"""Scope of a field with one entry per volume or channel."""
+    FILE = "file"
+    ACQUISITION = "acquisition"
+    SPATIAL = "spatial"
+    AXIS = "axis"
 
 
 class Bids(Field):
     """
-    The BIDS sidecar key of a vocabulary field.
+    The annotation that gives a vocabulary field its BIDS sidecar key.
 
-    Used as an annotation, `tx.Annotated[Maybe[float],
-    Bids("RepetitionTime")]`; the key lands in the field's `metadata`
-    under `"bids"`, where the sidecar codec reads it.
+    The key lands in the `metadata` of the field, under `"bids"`, where
+    the sidecar codec reads it.
+
+    Examples
+    --------
+    ```python
+    repetition_time: tx.Annotated[
+        Maybe[float], Bids("RepetitionTime")
+    ] = None
+    ```
     """
 
     def __init__(self, key: str) -> None:
+        """
+        Parameters
+        ----------
+        key : str
+            The BIDS key, such as `"RepetitionTime"`.
+        """
         super().__init__(metadata={"bids": key})
 
 
-class Scope(Field):
+class Scoped(Field):
     """
-    The propagation scope of a vocabulary field: one of `"file"`,
-    `"acquisition"`, `"grid"` or `"volume"` (see `derive`).
+    The annotation that gives a vocabulary field its [`Scope`][].
 
-    Used as an annotation; the scope lands in the field's `metadata`
-    under `"scope"`.
+    The scope lands in the `metadata` of the field, under `"scope"`. A
+    field without a scope is in the `FILE` scope. A field in the `AXIS`
+    scope is declared with [`Along`][] instead, which also names its axis.
+
+    Examples
+    --------
+    ```python
+    echo_time: tx.Annotated[Maybe[float], Scoped(Scope.ACQUISITION)] = None
+    ```
     """
 
-    def __init__(self, scope: str) -> None:
-        scopes = (FILE, ACQUISITION, GRID, VOLUME)
-        if scope not in scopes:
-            raise ValueError(f"A scope is one of {scopes}, not {scope!r}.")
+    def __init__(self, scope: tx.Union[Scope, str]) -> None:
+        """
+        Parameters
+        ----------
+        scope : Scope or str
+            The scope of the field.
+
+        Raises
+        ------
+        ValueError
+            If `scope` is not a scope, or is `AXIS` (use [`Along`][]).
+        """
+        scope = Scope(scope)
+        if scope is Scope.AXIS:
+            raise ValueError(
+                "A field in the AXIS scope names its axis: use Along(...)."
+            )
         super().__init__(metadata={"scope": scope})
+
+
+class Along(Field):
+    """
+    The annotation of a vocabulary field that has one entry per index
+    along one non-spatial axis of an image.
+
+    The field is in the `AXIS` scope, and its entries run along the axes
+    of the given type. NIfTI and OME-Zarr both map their time and channel
+    dimensions to brainhops axis types, so the b-values of a diffusion
+    image run along the time axis (NIfTI dimension 4), and the
+    descriptions of the channels run along the channel axis.
+
+    The axis type lands in the `metadata` of the field, under `"along"`,
+    next to the scope.
+
+    Examples
+    --------
+    ```python
+    channels: tx.Annotated[
+        Maybe[tx.Tuple[Channel, ...]], Along(AxisType.channel)
+    ] = None
+    ```
+    """
+
+    def __init__(self, axis: tx.Union[AxisType, str]) -> None:
+        """
+        Parameters
+        ----------
+        axis : AxisType or str
+            The type of the axis the entries run along. It cannot be
+            `space`: a field tied to the spatial axes is in the `SPATIAL`
+            scope.
+
+        Raises
+        ------
+        ValueError
+            If `axis` is not an axis type, or is `space`.
+        """
+        axis = AxisType(axis)
+        if axis is AxisType.space:
+            raise ValueError(
+                "A field tied to the spatial axes is Scoped(Scope.SPATIAL)."
+            )
+        super().__init__(metadata={"scope": Scope.AXIS, "along": axis})
 
 
 # ----------------------------------------------------------------------
@@ -120,40 +219,40 @@ class ProvenanceVocabulary(Vocabulary):
     """
 
     name: tx.Annotated[
-        Maybe[str], tx.Doc("A short name for the data."), Scope(FILE)
+        Maybe[str], tx.Doc("A short name for the data."), Scoped(Scope.FILE)
     ] = None
 
     description: tx.Annotated[
         Maybe[str],
         tx.Doc("A free-text description."),
         Bids("Description"),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     history: tx.Annotated[
         Maybe[tx.Tuple[str, ...]],
         tx.Doc("The commands that produced the data, oldest first."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     generated_by: tx.Annotated[
         Maybe[tx.Tuple[GeneratedBy, ...]],
         tx.Doc("The programs that produced the data."),
         Bids("GeneratedBy"),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     creation_time: tx.Annotated[
         Maybe[datetime.datetime],
         tx.Doc("When the file was created."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     sources: tx.Annotated[
         Maybe[tx.Tuple[str, ...]],
         tx.Doc("Files the data was derived from (BIDS provenance)."),
         Bids("Sources"),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     space: tx.Annotated[
@@ -164,7 +263,7 @@ class ProvenanceVocabulary(Vocabulary):
             "itself is geometry."
         ),
         Bids("SpatialReference"),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
@@ -174,15 +273,16 @@ class ProvenanceVocabulary(Vocabulary):
             "What the values are, as a NIfTI intent name (a known one is "
             "an `IntentEnum`)."
         ),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         ConvertTo(MaybeEnumConverter(IntentEnum)),
     ] = None
 
 
 class MRIVocabulary(Vocabulary):
     """
-    Vocabulary group: MRI acquisition parameters (`acquisition` scope,
-    except the encoding directions and the slice timing, `grid`). Not
+    Vocabulary group: MRI acquisition parameters. They are in the
+    `ACQUISITION` scope, except the encoding directions and the slice
+    timing, which are tied to the spatial sampling (`SPATIAL` scope). Not
     meant to be instantiated; see [`Metadata`][].
     """
 
@@ -190,35 +290,35 @@ class MRIVocabulary(Vocabulary):
         Maybe[float],
         tx.Doc("Repetition time, in seconds."),
         Bids("RepetitionTime"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     echo_time: tx.Annotated[
         Maybe[float],
         tx.Doc("Echo time, in seconds."),
         Bids("EchoTime"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     inversion_time: tx.Annotated[
         Maybe[float],
         tx.Doc("Inversion time, in seconds."),
         Bids("InversionTime"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     flip_angle: tx.Annotated[
         Maybe[float],
         tx.Doc("Flip angle, in degrees."),
         Bids("FlipAngle"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     magnetic_field_strength: tx.Annotated[
         Maybe[float],
         tx.Doc("Nominal field strength, in tesla."),
         Bids("MagneticFieldStrength"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     manufacturer: tx.Annotated[
@@ -227,7 +327,7 @@ class MRIVocabulary(Vocabulary):
             "Manufacturer of the equipment (a known one is a `Manufacturer`)."
         ),
         Bids("Manufacturer"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
         ConvertTo(MaybeEnumConverter(Manufacturer)),
     ] = None
 
@@ -235,21 +335,21 @@ class MRIVocabulary(Vocabulary):
         Maybe[str],
         tx.Doc("Model name of the equipment."),
         Bids("ManufacturersModelName"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     institution_name: tx.Annotated[
         Maybe[str],
         tx.Doc("Institution responsible for the equipment."),
         Bids("InstitutionName"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     acquisition_time: tx.Annotated[
         Maybe[datetime.datetime],
         tx.Doc("When the acquisition started."),
         Bids("AcquisitionTime"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     phase_encoding_direction: tx.Annotated[
@@ -259,7 +359,7 @@ class MRIVocabulary(Vocabulary):
             "axes (BIDS `'j-'` is accepted)."
         ),
         Bids("PhaseEncodingDirection"),
-        Scope(GRID),
+        Scoped(Scope.SPATIAL),
         ConvertTo(direction),
     ] = None
 
@@ -267,14 +367,14 @@ class MRIVocabulary(Vocabulary):
         Maybe[float],
         tx.Doc("Total readout time, in seconds."),
         Bids("TotalReadoutTime"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     effective_echo_spacing: tx.Annotated[
         Maybe[float],
         tx.Doc("Effective echo spacing, in seconds."),
         Bids("EffectiveEchoSpacing"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     slice_encoding_direction: tx.Annotated[
@@ -284,7 +384,7 @@ class MRIVocabulary(Vocabulary):
             "axes (BIDS `'k'` is accepted)."
         ),
         Bids("SliceEncodingDirection"),
-        Scope(GRID),
+        Scoped(Scope.SPATIAL),
         ConvertTo(direction),
     ] = None
 
@@ -295,56 +395,62 @@ class MRIVocabulary(Vocabulary):
             "encoding direction."
         ),
         Bids("SliceTiming"),
-        Scope(GRID),
+        Scoped(Scope.SPATIAL),
     ] = None
 
     multiband_acceleration_factor: tx.Annotated[
         Maybe[int],
         tx.Doc("Multiband acceleration factor."),
         Bids("MultibandAccelerationFactor"),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
 
 class DiffusionVocabulary(Vocabulary):
     """
-    Vocabulary group: the diffusion gradient table (`volume` scope). BIDS
-    stores it in `.bval`/`.bvec` files, not in the sidecar. Not meant to
+    Vocabulary group: the diffusion gradient table, one entry per index
+    along the time axis (`AXIS` scope). BIDS stores it in `.bval` and
+    `.bvec` files, not in the sidecar. Not meant to
     be instantiated; see [`Metadata`][].
     """
 
     bvalues: tx.Annotated[
         Maybe[tx.Tuple[float, ...]],
-        tx.Doc("One b-value per volume, in s/mm^2."),
-        Scope(VOLUME),
+        tx.Doc(
+            "One b-value per index along the time axis (the volumes of a "
+            "diffusion series), in s/mm^2."
+        ),
+        Along(AxisType.time),
     ] = None
 
     bvectors: tx.Annotated[
         Maybe[tx.Tuple[tx.Tuple[float, float, float], ...]],
         tx.Doc(
-            "One unit gradient direction per volume, in world (RAS) "
-            "coordinates."
+            "One unit gradient direction per index along the time axis, "
+            "in world (RAS) coordinates."
         ),
-        Scope(VOLUME),
+        Along(AxisType.time),
     ] = None
 
 
 class DisplayVocabulary(Vocabulary):
     """
-    Vocabulary group: how the values are shown and what they are
-    (`volume` scope). Not meant to be instantiated; see [`Metadata`][].
+    Vocabulary group: how the values are shown and what they are. The
+    channels run along the channel axis (`AXIS` scope); the display range
+    and the unit apply to every value (`FILE` scope). Not meant to be
+    instantiated; see [`Metadata`][].
     """
 
     display_range: tx.Annotated[
         Maybe[tx.Tuple[float, float]],
         tx.Doc("Display window `(min, max)`."),
-        Scope(VOLUME),
+        Scoped(Scope.FILE),
     ] = None
 
     channels: tx.Annotated[
         Maybe[tx.Tuple[Channel, ...]],
         tx.Doc("One description per channel."),
-        Scope(VOLUME),
+        Along(AxisType.channel),
     ] = None
 
     data_unit: tx.Annotated[
@@ -356,7 +462,7 @@ class DisplayVocabulary(Vocabulary):
             "an odd unit still reads. Formats write it as its symbol "
             "(`Unit.symbol`), which parses back to the same unit."
         ),
-        Scope(VOLUME),
+        Scoped(Scope.FILE),
         ConvertTo(unit),
     ] = None
 
@@ -384,7 +490,7 @@ class StorageVocabulary(Vocabulary):
             "scaled integer file loads as floating-point values. A "
             "`dtype=` writer option wins over it."
         ),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         ConvertTo(dtype),
     ] = None
 
@@ -394,7 +500,7 @@ class StorageVocabulary(Vocabulary):
             "The slope of the intensity scaling: a value is `stored * "
             "scale_slope + scale_intercept`. `None` means no scaling."
         ),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     scale_intercept: tx.Annotated[
@@ -403,7 +509,7 @@ class StorageVocabulary(Vocabulary):
             "The intercept of the intensity scaling (see `scale_slope`). "
             "`None` means no intercept."
         ),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
 
@@ -416,26 +522,26 @@ class MicroscopyVocabulary(Vocabulary):
     objective_magnification: tx.Annotated[
         Maybe[float],
         tx.Doc("Nominal magnification of the objective."),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     objective_numerical_aperture: tx.Annotated[
         Maybe[float],
         tx.Doc("Numerical aperture of the objective."),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
     ] = None
 
     illumination_type: tx.Annotated[
         Maybe[tx.Union[IlluminationType, str]],
         tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
         ConvertTo(MaybeEnumConverter(IlluminationType)),
     ] = None
 
     contrast_method: tx.Annotated[
         Maybe[tx.Union[ContrastMethod, str]],
         tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
-        Scope(ACQUISITION),
+        Scoped(Scope.ACQUISITION),
         ConvertTo(MaybeEnumConverter(ContrastMethod)),
     ] = None
 
@@ -449,26 +555,26 @@ class TransformVocabulary(Vocabulary):
     moving: tx.Annotated[
         Maybe[str],
         tx.Doc("The moving image of a registration (file reference)."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     fixed: tx.Annotated[
         Maybe[str],
         tx.Doc("The fixed image of a registration (file reference)."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
     ] = None
 
     input_space: tx.Annotated[
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps from."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
     output_space: tx.Annotated[
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps to."),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
@@ -514,9 +620,19 @@ BIDS_KEYS: tx.Dict[str, str] = {
 BIDS has a key for."""
 
 
-SCOPES: tx.Dict[str, str] = {
-    field.name: (field.metadata or {}).get("scope", FILE)
+SCOPES: tx.Dict[str, Scope] = {
+    field.name: (field.metadata or {}).get("scope", Scope.FILE)
     for group in GROUPS
     for field in fields(group)
 }
-"""Vocabulary field -> its propagation scope (`Scope(...)`)."""
+"""Vocabulary field -> its propagation scope (`Scoped` or `Along`)."""
+
+
+ALONG: tx.Dict[str, AxisType] = {
+    field.name: field.metadata["along"]
+    for group in GROUPS
+    for field in fields(group)
+    if "along" in (field.metadata or {})
+}
+"""Vocabulary field in the `AXIS` scope -> the type of the axis its
+entries run along (`Along`)."""

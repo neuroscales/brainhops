@@ -4,6 +4,7 @@ __all__ = ["Metadata"]
 
 # stdlib
 import copy
+import types
 
 # externals
 import numpy as np
@@ -14,6 +15,7 @@ from bagof.magic import Factory, fields
 from brainhops._core.typing import ArrayLike
 
 from ..base import DataModelBase
+from ..enums import AxisType
 from ._meta import MetadataMeta
 from ._report import (
     ConversionReport,
@@ -23,21 +25,24 @@ from ._report import (
 from ._sentinel import UNSUPPORTED, Maybe
 from ._terms import EncodingDirection, GeneratedBy
 from ._vocabulary import (
+    ALONG,
     FIELDS,
-    FILE,
-    GRID,
     SCOPES,
     VOCABULARY,
-    VOLUME,
     DiffusionVocabulary,
     DisplayVocabulary,
     MicroscopyVocabulary,
     MRIVocabulary,
     ProvenanceVocabulary,
     Scope,
+    Scoped,
     StorageVocabulary,
     TransformVocabulary,
 )
+
+# The default of `derive(changed=...)`: no axis changed. A mapping proxy,
+# so that the shared default cannot be edited.
+_NOTHING_CHANGED: tx.Mapping[tx.Any, tx.Any] = types.MappingProxyType({})
 
 
 class Metadata(
@@ -116,7 +121,7 @@ class Metadata(
             "Free-form keys the vocabulary does not cover, copied into "
             "any free-form store a format has."
         ),
-        Scope(FILE),
+        Scoped(Scope.FILE),
         # Not `Factory()`: inferred from `Maybe[...]`, a union with
         # `None`, the default would be `None`.
         Factory(dict),
@@ -307,72 +312,104 @@ class Metadata(
     def derive(
         self,
         *,
-        grid_changed: bool = False,
-        grid_map: tx.Optional[ArrayLike] = None,
-        volumes: tx.Optional[tx.Sequence[int]] = None,
-        volumes_changed: bool = False,
+        changed: tx.Mapping[
+            tx.Union[AxisType, str], tx.Optional[tx.Sequence[int]]
+        ] = _NOTHING_CHANGED,
+        spatial_map: tx.Optional[ArrayLike] = None,
         step: tx.Optional[str] = None,
     ) -> tx.Self:
         """
-        The metadata of an object derived from this one (resampled,
-        cropped, a selection of volumes...). Always a new object.
+        Build the metadata of an image derived from the image this
+        metadata describes, such as a resampled, cropped or selected
+        version of it.
 
-        - `file` fields are kept, except `creation_time` (cleared) and
-          `history`, to which `step` is appended; `generated_by` gains a
-          brainhops entry once.
-        - `acquisition` fields are kept.
-        - `grid` fields are cleared when `grid_changed`, with one
-          exception: given `grid_map`, the linear part of the map from
-          the old voxel axes to the new ones, an encoding direction in
-          voxel axes is mapped through it (`normalize(grid_map @ v)`)
-          instead. A direction in a named world space is kept.
-        - `volume` fields are indexed by `volumes` (the selected volume
-          indices) when given, and cleared when `volumes_changed` and no
-          selection is known; `display_range` and `data_unit`, one value
-          for every volume, are kept.
-        - `extra` is kept verbatim.
+        The caller says which axes of the image changed, by type. A key
+        of `changed` is an axis type, and its value is the list of the
+        indices that were kept along the axes of that type, or `None` when
+        the axes changed in a way that is not a selection (or when the
+        selection is unknown). Each field then propagates according to
+        its [`Scope`][brainhops.datamodel.metadata.Scope]:
 
-        The metadata of a file format also keeps its raw record (a copy,
-        scrubbed by the format of what the grid or the volumes bound) and
-        its snapshot, so that a field cleared here is cleared in the
-        record on write.
+        - A field in the `FILE` scope is kept. Three provenance fields
+          record the derivation instead: `creation_time` is cleared,
+          `step` is appended to `history`, and `generated_by` gains a
+          brainhops entry, once.
+        - A field in the `ACQUISITION` scope is kept.
+        - A field in the `SPATIAL` scope is cleared when `"space"` is a
+          key of `changed`. An encoding direction expressed in voxel axes
+          is the exception: given `spatial_map`, the linear part of the
+          map from the old voxel axes to the new ones, the direction is
+          mapped through it instead. A direction expressed in a named
+          world space is kept.
+        - A field in the `AXIS` scope runs along the axes of one type.
+          When that type is a key of `changed`, the entries of the field
+          are indexed by the kept indices, or the field is cleared when
+          the value is `None`.
+        - `extra` is kept as it is.
+
+        The metadata does not know the coordinate system of the image,
+        so the caller, an image operation, translates the names of the
+        axes it changed into their types.
+
+        Parameters
+        ----------
+        changed : mapping, optional
+            Axis type (an `AxisType`, or its name) to the indices kept
+            along the axes of that type, or to `None`. By default, no
+            axis changed.
+        spatial_map : array-like, optional
+            The linear map from the old voxel axes to the new ones, when
+            the spatial axes changed by a permutation, a flip or a
+            rotation.
+        step : str, optional
+            A description of the derivation, appended to `history`.
+
+        Returns
+        -------
+        Metadata
+            New metadata, of the same class. Generic metadata derived this
+            way carries no raw record, since no format hook can scrub it.
+            The metadata of a file format keeps a copy of its record, from
+            which the format removes what the changed axes invalidate.
+
+        Raises
+        ------
+        ValueError
+            If a key of `changed` is not an axis type.
 
         Examples
         --------
         Reslicing onto a grid whose voxel axes are the old ones swapped
-        (`i <-> j`) or flipped: the phase encoding direction, given in
-        voxel axes, follows the axes; slice timing, which belongs to the
-        acquired slices, does not survive a resampling:
+        (`i <-> j`) maps the phase-encoding direction, which is given in
+        voxel axes, and clears the slice timing, which belongs to the
+        acquired slices. The repetition time describes the acquisition,
+        and is kept:
 
         ```python
         meta = Metadata(phase_encoding_direction="j-",
                         slice_timing=(0, 0.5, 1, 1.5), repetition_time=2)
         swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
-        new = meta.derive(grid_changed=True, grid_map=swap, step="reslice")
+        new = meta.derive(changed={"space": None}, spatial_map=swap,
+                          step="reslice")
         new.phase_encoding_direction  # EncodingDirection('i-')
         new.slice_timing              # None
-        new.repetition_time           # 2 (acquisition: kept)
-        meta.derive(grid_changed=True, grid_map=np.diag([1, -1, 1]))
-        # -> phase_encoding_direction EncodingDirection('j')
-        meta.derive(grid_changed=True)  # no map: the direction is cleared
+        new.repetition_time           # 2
+        meta.derive(changed={"space": None}).phase_encoding_direction
+        # None: without a map, the direction is unknown
         ```
 
-        Selecting volumes 0-2 of a DWI keeps the matching b-values and
-        b-vectors (world frame: a reslicing leaves them alone):
+        Selecting the volumes 0 to 2 of a diffusion series, along its
+        time axis, keeps the matching b-values and b-vectors:
 
         ```python
         dwi = Metadata(bvalues=(0, 1000, 1000, 2000),
                        bvectors=((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)))
-        dwi.derive(volumes=[0, 1, 2]).bvalues      # (0, 1000, 1000)
-        dwi.derive(volumes_changed=True).bvalues   # None (unknown selection)
+        dwi.derive(changed={"time": [0, 1, 2]}).bvalues  # (0, 1000, 1000)
+        dwi.derive(changed={"time": None}).bvalues       # None
         ```
         """
         values = self._derive_values(
-            grid_changed=grid_changed,
-            grid_map=grid_map,
-            volumes=volumes,
-            volumes_changed=volumes_changed,
-            step=step,
+            changed=_axis_changes(changed), spatial_map=spatial_map, step=step
         )
         return type(self)(**values)
 
@@ -519,27 +556,26 @@ class Metadata(
     def _derive_values(
         self,
         *,
-        grid_changed: bool,
-        grid_map: tx.Any,
-        volumes: tx.Optional[tx.Sequence[int]],
-        volumes_changed: bool,
+        changed: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]],
+        spatial_map: tx.Any,
         step: tx.Optional[str],
     ) -> tx.Dict[str, tx.Any]:
-        """The constructor values of `derive`: a field rule
-        (`_DERIVE_RULES`) where there is one, else its scope's."""
+        """The constructor values of `derive`, field by field, from the
+        scope of each field (see `derive`)."""
         values: tx.Dict[str, tx.Any] = {}
         for name in FIELDS:
             value = getattr(self, name, None)
             if value is UNSUPPORTED or name in self.unsupported_fields:
                 continue
-            scope = SCOPES.get(name)
-            if name in _DERIVE_RULES:
-                value = _DERIVE_RULES[name](value, step)
-            elif scope == GRID and grid_changed:
-                value = _map_direction(value, grid_map)
-            elif scope == VOLUME and value is not None:
-                value = _select_volumes(value, volumes, volumes_changed)
+            scope = SCOPES.get(name, Scope.FILE)
+            if name == "extra":
+                value = dict(value or {})
+            elif scope is Scope.SPATIAL and AxisType.space in changed:
+                value = _map_direction(value, spatial_map)
+            elif scope is Scope.AXIS and ALONG[name] in changed:
+                value = _select(value, changed[ALONG[name]])
             values[name] = value
+        _derive_provenance(values, step)
         return values
 
     def _format_state(self) -> tx.Dict[str, tx.Any]:
@@ -554,21 +590,42 @@ class Metadata(
 # ----------------------------------------------------------------------
 
 
-# The fields `derive` treats by name rather than by scope: field ->
-# `rule(value, step)`, the derived value.
-_DERIVE_RULES: tx.Dict[str, tx.Callable[[tx.Any, tx.Any], tx.Any]] = {
-    "creation_time": lambda value, step: None,  # a new object
-    "history": lambda value, step: _appended(value, step),
-    "generated_by": lambda value, step: _with_brainhops(value),
-    "extra": lambda value, step: dict(value or {}),
-    # One value for every volume: a selection keeps it.
-    "display_range": lambda value, step: value,
-    "data_unit": lambda value, step: value,
-}
+def _axis_changes(
+    changed: tx.Mapping[tx.Any, tx.Optional[tx.Sequence[int]]],
+) -> tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]]:
+    """The `changed=` argument of `derive`, keyed by `AxisType`, with the
+    kept indices as tuples."""
+    out: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]] = {}
+    for key, kept in dict(changed or {}).items():
+        try:
+            axis = AxisType(key)
+        except ValueError:
+            raise ValueError(
+                f"derive(changed=...) is keyed by axis type, one of "
+                f"{[t.value for t in AxisType]}, not {key!r}."
+            ) from None
+        out[axis] = None if kept is None else tuple(int(i) for i in kept)
+    return out
 
 
-def _appended(history: tx.Any, step: tx.Optional[str]) -> tx.Any:
-    return history if step is None else tuple(history or ()) + (step,)
+def _derive_provenance(
+    values: tx.Dict[str, tx.Any], step: tx.Optional[str]
+) -> None:
+    """
+    Record a derivation in the provenance fields, in place.
+
+    The derived object is a new object, so its `creation_time` is
+    cleared. The step, when one is given, is appended to `history`, and
+    brainhops is added to `generated_by` unless it is there already. A
+    field that the format does not support is absent from `values`, and
+    is left alone.
+    """
+    if "creation_time" in values:
+        values["creation_time"] = None
+    if "history" in values and step is not None:
+        values["history"] = tuple(values["history"] or ()) + (step,)
+    if "generated_by" in values:
+        values["generated_by"] = _with_brainhops(values["generated_by"])
 
 
 def _with_brainhops(
@@ -584,17 +641,17 @@ def _with_brainhops(
     return entries + (GeneratedBy(name="brainhops", version=version),)
 
 
-def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
-    """A `grid` field after a grid change: an encoding direction in voxel
-    axes goes through `grid_map` when it is given (and fits), one in a
-    world space is kept; anything else is cleared."""
+def _map_direction(value: tx.Any, spatial_map: tx.Any) -> tx.Any:
+    """A `SPATIAL` field after a change of the spatial axes: an encoding
+    direction in voxel axes goes through `spatial_map` when it is given
+    (and fits), one in a world space is kept; anything else is cleared."""
     if not isinstance(value, EncodingDirection):
         return None
     if value.space is not None:
         return value
-    if grid_map is None:
+    if spatial_map is None:
         return None
-    matrix = np.asarray(grid_map, dtype=float)
+    matrix = np.asarray(spatial_map, dtype=float)
     if matrix.ndim != 2 or matrix.shape[1] != len(value.vector):
         return None
     try:
@@ -603,19 +660,16 @@ def _map_direction(value: tx.Any, grid_map: tx.Any) -> tx.Any:
         return None
 
 
-def _select_volumes(
-    value: tx.Any,
-    volumes: tx.Optional[tx.Sequence[int]],
-    volumes_changed: bool,
-) -> tx.Any:
-    """A `volume` field after a change of volumes: indexed by the
-    selection when it is known, cleared when it is not."""
-    if volumes is not None:
-        try:
-            return tuple(value[i] for i in volumes)
-        except (IndexError, TypeError):
-            return None
-    return None if volumes_changed else value
+def _select(value: tx.Any, kept: tx.Optional[tx.Tuple[int, ...]]) -> tx.Any:
+    """An `AXIS` field after a change of its axis: indexed by the kept
+    indices when they are known, cleared when they are not (or when they
+    do not fit the field)."""
+    if value is None or kept is None:
+        return None
+    try:
+        return tuple(value[i] for i in kept)
+    except (IndexError, TypeError):
+        return None
 
 
 def _is_already(value: tx.Any, cls: type) -> bool:

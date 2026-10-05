@@ -215,7 +215,7 @@ def test_case4_none_clears_the_header_slot(scan, tmp_path) -> None:  # noqa: ANN
 
 def test_derive_clears_the_grid_fields_on_write(scan, tmp_path) -> None:  # noqa: ANN001
     image = io.load(scan)
-    image.metadata = image.metadata.derive(grid_changed=True)
+    image.metadata = image.metadata.derive(changed={"space": None})
     image.save(tmp_path / "out.nii")
     h = _header(tmp_path / "out.nii")
     assert int(h["slice_code"]) == 0

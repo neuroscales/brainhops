@@ -84,9 +84,11 @@ class OmeZarrLevel(ZarrImage):
     order only when its data is read, so opening a pyramid does not read
     any level.
 
-    Its `metadata` is a copy of the pyramid's, derived for the level
-    (`derive(grid_changed=level > 0)`): editing it does not edit the
-    pyramid, whose metadata is the one written.
+    Its `metadata` is a copy of the metadata of the pyramid, derived for
+    the level: every level but the first is derived with
+    `derive(changed={"space": None})`, since it samples space differently.
+    Editing the metadata of a level does not edit the metadata of the
+    pyramid, which is the metadata that is written.
     """
 
     metadata: _OME_METADATA_FIELD
@@ -231,7 +233,9 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             return
         metadata = self.metadata
         for index, level in enumerate(self._layout["images"]):
-            level.metadata = metadata.derive(grid_changed=index > 0)
+            # A coarser level samples space differently.
+            changed = {"space": None} if index > 0 else {}
+            level.metadata = metadata.derive(changed=changed)
 
     # ---- load --------------------------------------------------------
 

@@ -50,7 +50,7 @@ class MyMetadata(
 
     def _check_raw(self, image) -> MyRaw: ...
 
-    def _derive_raw(self, raw, *, grid_changed, volumes) -> MyRaw: ...
+    def _derive_raw(self, raw, *, changed) -> MyRaw: ...
 
     @classmethod
     def _import(
@@ -93,7 +93,7 @@ All the hooks are optional, and all private.
 | `_encode(raw, changed, *, image, report)` | `update_raw` | the raw record to write |
 | `_geometry(image)` | `update_raw` | the fields the data model owns, and their values |
 | `_check_raw(image)` | `check_writable` | the raw record a writer starts from |
-| `_derive_raw(raw, *, grid_changed, volumes)` | `derive` | a scrubbed copy of the raw record |
+| `_derive_raw(raw, *, changed)` | `derive` | a scrubbed copy of the raw record |
 | `_import(other, values, *, report)` | `to`, `from_other` | recovered losses (key/value formats) |
 
 - `_default_raw() -> raw`: a fresh, empty raw record, for an object
@@ -130,13 +130,17 @@ All the hooks are optional, and all private.
   record, reshaped to the data of `image`), so that a value-dependent
   check reads the same state as a real write. Defaults to a copy of the
   record, or a default one.
-- `_derive_raw(raw, *, grid_changed, volumes) -> raw`: called by
-  [`derive`][brainhops.datamodel.metadata.Metadata.derive] for
-  the raw record of the derived object. Defaults to a deep copy of `raw`
-  (a derived object never shares its record); a format that keeps raw
-  content tied to the grid or to the volumes but outside the vocabulary
-  scrubs it from that copy (NIfTI: the slice fields and `dim_info`, when
-  `grid_changed`), and never modifies `raw` in place.
+- `_derive_raw(raw, *, changed) -> raw`: called by
+  [`derive`][brainhops.datamodel.metadata.Metadata.derive] for the raw
+  record of the derived object. `changed` maps an
+  [`AxisType`][brainhops.datamodel.enums.AxisType] to the indices kept
+  along the axes of that type, or to `None` when they changed in a way
+  that is not a selection. The default is a deep copy of `raw`, so that
+  a derived object never shares its record. A format whose record holds
+  content tied to some axes, but outside the vocabulary, removes it from
+  the copy: NIfTI clears its slice slots and `dim_info` when
+  `AxisType.space` is in `changed`. The hook never modifies `raw` in
+  place.
 - `_import(other, values, *, report) -> None`: a hook for the key/value
   formats (MRtrix, NRRD), called on a conversion with the source object,
   the values about to be passed to the constructor, and the report. A
@@ -172,6 +176,23 @@ All the hooks are optional, and all private.
           report.passed_through += (name,)
       values["extra"] = extra
   ```
+
+## Scopes and axes
+
+Every vocabulary field declares how it propagates to a derived image,
+with an annotation: `Scoped(Scope.FILE)`, `Scoped(Scope.ACQUISITION)`,
+`Scoped(Scope.SPATIAL)`, or, for a field with one entry per index along
+a non-spatial axis, `Along(AxisType.time)` or `Along(AxisType.channel)`
+(the `AXIS` scope). These live in
+`brainhops.datamodel.metadata._vocabulary`, with the groups.
+
+A writer of an arbitrary image maps the axes of its coordinate system to
+the slots of the format by type, not by name: NIfTI stores the time axis
+as its fourth dimension and the channel axis as its fifth, and OME-Zarr
+names them `t` and `c`. A per-axis field goes with the axis its `Along`
+names. When the image has no axis of that type, or when the length of
+the field differs from the length of the axis, `_encode` reports the
+field as lost rather than writing entries that describe nothing.
 
 ## Reading and writing
 
