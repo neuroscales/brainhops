@@ -59,7 +59,6 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core.numeric import float32_repr
-from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -140,6 +139,39 @@ class NiftiMetadata(
         """The `nibabel` header (the raw record, `raw`)."""
         return self.raw
 
+    def check_writable(
+        self, *, image: tx.Any = None, raw: tx.Any = None
+    ) -> ConversionReport:
+        """
+        Report what a write of this metadata would lose, without writing
+        anything.
+
+        By default, the scratch record is the one the writer of `image`
+        would start from: a copy of `raw` with the shape of the data of
+        the image, whatever the record says.
+
+        Parameters
+        ----------
+        image : object, optional
+            The image or transformation that would be written.
+        raw : nibabel.Nifti1Header, optional
+            The header to encode over, which may be edited.
+
+        Returns
+        -------
+        ConversionReport
+            What would be lost or approximated.
+        """
+        if raw is None and isinstance(image, Image):
+            raw = self._raw_or_default()
+            shape = _data_shape(image)
+            if shape and shape != _shape(raw):
+                try:
+                    raw.set_data_shape(shape)
+                except Exception:
+                    pass
+        return super().check_writable(image=image, raw=raw)
+
     # --- reading the header of a file ---------------------------------
 
     @classmethod
@@ -212,7 +244,7 @@ class NiftiMetadata(
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Optional[nb.Nifti1Header], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         if raw is None:
@@ -253,7 +285,7 @@ class NiftiMetadata(
                 out["repetition_time"] = step * scale
         return out
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: nb.Nifti1Header,
         changed: tx.Dict[str, tx.Any],
@@ -317,31 +349,19 @@ class NiftiMetadata(
             return {}
         return {"repetition_time": time_step(image.transformations)}
 
-    def _check_raw(self, image: tx.Any) -> nb.Nifti1Header:
-        # The writer's header has the shape of the data, whatever the
-        # record says.
-        h = self._raw_or_default()
-        shape = _data_shape(image) if isinstance(image, Image) else None
-        if shape and shape != _shape(h):
-            try:
-                h.set_data_shape(shape)
-            except Exception:
-                pass
-        return h
-
-    def _derive_raw(
+    def _reslice(
         self,
-        raw: tx.Optional[nb.Nifti1Header],
+        linear: tx.Any,
         *,
-        changed: tx.Mapping[AxisType, tx.Any],
-    ) -> tx.Optional[nb.Nifti1Header]:
-        raw = super()._derive_raw(raw, changed=changed)
-        if raw is not None and AxisType.space in changed:
+        history: tx.Any = None,
+    ) -> tx.Self:
+        obj = super()._reslice(linear, history=history)
+        if obj.raw is not None:
             # The slice timing and the encoding axes follow the spatial
             # axes.
-            _clear_slices(raw)
-            raw.set_dim_info(None, None, None)
-        return raw
+            _clear_slices(obj.raw)
+            obj.raw.set_dim_info(None, None, None)
+        return obj
 
 
 # ----------------------------------------------------------------------

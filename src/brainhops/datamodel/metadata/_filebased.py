@@ -107,7 +107,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         Build the metadata of a raw record that was just read.
 
         The raw record is decoded into the common fields by the format's
-        `_decode` hook. The decoded values are kept as the read-time
+        `_decode_raw` hook. The decoded values are kept as the read-time
         snapshot, so that a field the user leaves untouched keeps the
         value of the record when the record is written back.
 
@@ -130,13 +130,13 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         Raises
         ------
         TypeError
-            If `_decode` returned a value for a field that this class does
+            If `_decode_raw` returned a value for a field that this class does
             not support. The raw record belongs to the format, so this
             error never comes from the data: it reveals a format class
-            whose `_decode` disagrees with its `supports=` declaration,
+            whose `_decode_raw` disagrees with its `supports=` declaration,
             and which would otherwise drop the value without a report.
         """
-        decoded = cls._checked_decode(raw, image)
+        decoded = cls._checked_decode_raw(raw, image)
         obj = cls(raw=raw, **decoded)
         # Snapshot the *converted* values, so that a decoded list held as
         # a tuple does not count as a change.
@@ -271,7 +271,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         the data model, the field is reported as approximated. A field
         that the format does not support, but that was assigned after
         construction, is reported as lost, as are the value-dependent
-        losses found by `_encode`.
+        losses found by `_encode_raw`.
 
         Parameters
         ----------
@@ -321,7 +321,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
                 if name not in unsupported:
                     changed[name] = getattr(self, name)
         self._check_derived(changed, image, report)
-        raw = self._encode(raw, changed, image=image, report=report)
+        raw = self._encode_raw(raw, changed, image=image, report=report)
         if not sink:
             apply_loss_policy(report, on_loss, stacklevel=2)
         return raw
@@ -359,22 +359,28 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
             )
         return cls._convert_from(metadata)
 
-    def check_writable(self, *, image: tx.Any = None) -> ConversionReport:
+    def check_writable(
+        self, *, image: tx.Any = None, raw: tx.Any = None
+    ) -> ConversionReport:
         """
         Report what a write of this metadata would lose, without writing
         anything.
 
         The class declarations only give a lower bound of what is lost.
-        This method runs the encoder on the record that the writer of the
-        format would start from (see `_check_raw`), so that the losses
-        that depend on the values, such as an over-long description or an
-        irregular slice timing, are included as well.
+        This method runs the encoder on a scratch record, so that the
+        losses that depend on the values, such as an over-long description
+        or an irregular slice timing, are included as well. A format whose
+        writer starts from another record than a copy of `raw` overrides
+        this method, builds that record, and calls `super()` with it.
 
         Parameters
         ----------
         image : object, optional
             The image or transformation that would be written, for the
             fields that depend on the data model.
+        raw : object, optional
+            The record to encode over, which may be edited. By default, a
+            copy of `raw`, or a new, empty record when there is none.
 
         Returns
         -------
@@ -382,7 +388,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
             What would be lost or approximated.
         """
         report = ConversionReport(source=self.format, target=self.format)
-        self.update_raw(self._check_raw(image), image=image, on_loss=report)
+        self.update_raw(raw, image=image, on_loss=report)
         return report
 
     # --- the record of a conversion -----------------------------------
@@ -425,7 +431,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
     # --- per-format hooks ---------------------------------------------
 
     @classmethod
-    def _decode(cls, raw: tx.Any, *, image: tx.Any = None) -> tx.Dict:
+    def _decode_raw(cls, raw: tx.Any, *, image: tx.Any = None) -> tx.Dict:
         """
         Decode a raw record into common fields.
 
@@ -446,7 +452,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         """
         return {}
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: tx.Any,
         changed: tx.Dict[str, tx.Any],
@@ -493,7 +499,7 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         when its changed value disagrees with the value of the data model.
 
         A field that this hook leaves out, or gives as `None`, is one the
-        data model says nothing about, and `_encode` handles its changed
+        data model says nothing about, and `_encode_raw` handles its changed
         value as usual. The default gives no field.
 
         Parameters
@@ -508,75 +514,21 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         """
         return {}
 
-    def _check_raw(self, image: tx.Any) -> tx.Any:
-        """
-        Build the raw record that `check_writable` encodes over.
-
-        The record is the one that the writer of this format would pass
-        to `update_raw` for `image`. The default is a copy of `raw`, or a
-        default record when there is none.
-
-        Parameters
-        ----------
-        image : object
-            The image or transformation that would be written.
-
-        Returns
-        -------
-        object
-            A scratch record, which may be edited.
-        """
-        return self._raw_or_default()
-
-    def _derive_raw(
-        self,
-        raw: tx.Any,
-        *,
-        changed: tx.Mapping[AxisType, tx.Any],
-    ) -> tx.Any:
-        """
-        Build the raw record of derived metadata (see `derive`, and the
-        hooks of the image operations, `_select` and `_reslice`).
-
-        The record is a copy of `raw`. A format overrides this hook to
-        remove from the copy what the changed axes invalidate but the
-        vocabulary does not cover, such as the slice-timing slots of a
-        NIfTI header when the spatial axes changed. The default makes a
-        deep copy, so that the derived metadata never shares its record.
-
-        Parameters
-        ----------
-        raw : object
-            The record of this metadata.
-        changed : mapping
-            The changed axes: `AxisType` to what changed the axes of that
-            type, the kept positions for `_select` and the linear voxel
-            map (or `None`) for `_reslice`. It is empty for `derive`. A
-            format only tests which types are in it
-            (`AxisType.space in changed`).
-
-        Returns
-        -------
-        object
-            The record of the derived metadata.
-        """
-        return copy.deepcopy(raw)
-
     # --- internals ----------------------------------------------------
 
     @classmethod
-    def _checked_decode(
+    def _checked_decode_raw(
         cls, raw: tx.Any, image: tx.Any
     ) -> tx.Dict[str, tx.Any]:
-        """`_decode`, without its absent values, and checked against the
+        """`_decode_raw`, without its absent values, and checked against the
         declarations of the class (see `from_raw`)."""
         decoded: tx.Dict[str, tx.Any] = {}
-        for key, value in cls._decode(raw, image=image).items():
+        for key, value in cls._decode_raw(raw, image=image).items():
             if value is None or value is UNSUPPORTED:
                 continue
             if key not in cls.supported_fields:
                 raise TypeError(
-                    f"{cls.__name__}._decode returned {key}={value!r}, "
+                    f"{cls.__name__}._decode_raw returned {key}={value!r}, "
                     f"but {cls.__name__} does not support {key!r}."
                 )
             decoded[key] = value
@@ -614,12 +566,13 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         changed: tx.Mapping[AxisType, tx.Any],
         history: _History,
     ) -> tx.Dict[str, tx.Any]:
-        # The raw record and the snapshot are kept, so that a field
-        # `_reslice` or `_select` cleared is cleared in the record on write;
-        # the record is the format's scrubbed copy (`_derive_raw`).
+        # A copy of the raw record and the snapshot are kept, so that a
+        # field `_reslice` or `_select` cleared is cleared in the record on
+        # write. A format scrubs what else the change invalidates in its
+        # own `_reslice` or `_select`, on the copy.
         values = super()._derive_values(changed=changed, history=history)
         values["snapshot"] = copy.copy(self._snapshot)
-        values["raw"] = self._derive_raw(self.raw, changed=changed)
+        values["raw"] = copy.deepcopy(self.raw)
         return values
 
 

@@ -122,7 +122,7 @@ class ItkH5Metadata(
         return self.raw
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Optional[H5Header], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         version = getattr(raw, "ITKVersion", None)
@@ -130,7 +130,7 @@ class ItkH5Metadata(
             return {}
         return {"generated_by": (GeneratedBy(name=_ITK, version=version),)}
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: H5Header,
         changed: tx.Dict[str, tx.Any],

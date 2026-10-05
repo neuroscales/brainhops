@@ -198,7 +198,7 @@ class X5Metadata(
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Any, *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         node = None if raw is None else raw.node
@@ -208,7 +208,7 @@ class X5Metadata(
         values, extra = decode_object(json, VOCABULARY)
         return {**values, "extra": extra or None}
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: X5Raw,
         changed: tx.Dict[str, tx.Any],

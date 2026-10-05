@@ -104,7 +104,7 @@ class DictMetadata(
     _KNOWN = {"desc": "description", "cal": "display_range"}
 
     @classmethod
-    def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+    def _decode_raw(cls, raw, *, image=None) -> dict:  # noqa: ANN001
         out = {name: raw.get(key) for key, name in cls._KNOWN.items()}
         out["slice_timing"] = raw.get("slices")
         out["extra"] = {
@@ -114,7 +114,7 @@ class DictMetadata(
         }
         return out
 
-    def _encode(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
+    def _encode_raw(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
         for key, name in self._KNOWN.items():
             if name in changed:
                 if changed[name] is None:
@@ -141,12 +141,11 @@ class DictMetadata(
                 raw["desc"] = changed["description"][:8]
         return raw
 
-    def _derive_raw(self, raw, *, changed) -> dict:  # noqa: ANN001
-        if raw is None or AxisType.space not in changed:
-            return raw
-        raw = dict(raw)
-        raw.pop("slice_hint", None)
-        return raw
+    def _reslice(self, linear, *, history=None) -> "DictMetadata":  # noqa: ANN001
+        obj = super()._reslice(linear, history=history)
+        if obj.raw is not None:
+            obj.raw.pop("slice_hint", None)
+        return obj
 
 
 class KeyvalMetadata(
@@ -881,7 +880,7 @@ def test_a_decoder_may_not_return_an_unsupported_field() -> None:
         supports=("description",),
     ):
         @classmethod
-        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+        def _decode_raw(cls, raw, *, image=None) -> dict:  # noqa: ANN001
             return {"description": "d", "echo_time": 0.03}
 
     with pytest.raises(TypeError, match="echo_time"):
@@ -932,7 +931,7 @@ class GeoMetadata(
     def _geometry(self, image) -> dict:  # noqa: ANN001
         return {"repetition_time": image}
 
-    def _encode(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
+    def _encode_raw(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
         if "repetition_time" in changed:
             raw["tr"] = changed["repetition_time"]
         return raw
@@ -1141,7 +1140,7 @@ def test_preferred_dtype() -> None:
         FileBasedMetadata, on={"format": "test-typed"}, supports=("data_type",)
     ):
         @classmethod
-        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+        def _decode_raw(cls, raw, *, image=None) -> dict:  # noqa: ANN001
             return {"data_type": raw}
 
     read = Typed.from_raw("uint8")

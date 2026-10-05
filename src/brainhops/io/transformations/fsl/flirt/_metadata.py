@@ -31,7 +31,7 @@ class FlirtMetadata(
     """
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Any, *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         return {
@@ -39,7 +39,7 @@ class FlirtMetadata(
             "fixed": _filename(getattr(image, "reference", None)),
         }
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: tx.Any,
         changed: tx.Dict[str, tx.Any],

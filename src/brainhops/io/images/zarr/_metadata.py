@@ -305,7 +305,7 @@ class ZarrMetadata(
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Optional[ZarrRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         dtype = _array_dtype(image) if image is not None else _node_dtype(raw)
@@ -324,7 +324,7 @@ class ZarrMetadata(
             out["extra"] = extra
         return out
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: ZarrRaw,
         changed: tx.Dict[str, tx.Any],
@@ -525,7 +525,7 @@ class OmeZarrMetadata(
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Optional[OmeZarrRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         dtype = _array_dtype(image) if image is not None else _node_dtype(raw)
@@ -559,7 +559,7 @@ class OmeZarrMetadata(
             out["extra"] = dict(raw.attrs)
         return out
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: OmeZarrRaw,
         changed: tx.Dict[str, tx.Any],

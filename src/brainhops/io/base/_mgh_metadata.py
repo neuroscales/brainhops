@@ -268,7 +268,7 @@ class MghMetadata(
     # --- hooks --------------------------------------------------------
 
     @classmethod
-    def _decode(
+    def _decode_raw(
         cls, raw: tx.Optional[MghRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
         if raw is None:
@@ -295,7 +295,7 @@ class MghMetadata(
         out["history"] = decode_history(raw.tags)
         return out
 
-    def _encode(
+    def _encode_raw(
         self,
         raw: MghRaw,
         changed: tx.Dict[str, tx.Any],
