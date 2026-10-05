@@ -50,7 +50,6 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -160,7 +159,7 @@ class MghRaw:
 @register_format
 class MghMetadata(
     MetadataParser,
-    FileBasedMetadata,
+    FileBasedMetadata[MghRaw],
     on={"format": "mgh"},
     supports=(
         "repetition_time",
@@ -172,8 +171,10 @@ class MghMetadata(
     ),
 ):
     """
-    The metadata of an MGH/MGZ file; its raw record is an `MghRaw`
-    (the `nibabel` header and the trailing tags).
+    The metadata of an MGH/MGZ file; its raw record (`raw`) is the
+    `MghRaw` of the file that was read: its `nibabel` header (the footer
+    of MRI parameters included) and its trailing tags. Geometry is
+    rewritten from the data model on save.
 
     `header` and `tags` are the parts of the raw record under their
     familiar names. `MghMetadata.load(path)` reads the header and the
@@ -184,20 +185,6 @@ class MghMetadata(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS = ("mgh", "mgz")
     _READ_MODE = "rb"
-
-    raw: tx.Annotated[
-        tx.Optional[MghRaw],
-        tx.Doc(
-            """
-            The raw record of the file that was read: its `nibabel`
-            header (the footer of MRI parameters included) and its
-            trailing tags. Geometry is rewritten from the data model on
-            save.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
 
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
@@ -279,10 +266,6 @@ class MghMetadata(
         return read_mgh_raw(file)
 
     # --- hooks --------------------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> MghRaw:
-        return MghRaw()
 
     @classmethod
     def _decode(

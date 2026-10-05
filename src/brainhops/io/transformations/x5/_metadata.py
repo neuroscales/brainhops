@@ -18,7 +18,7 @@ __all__ = ["X5Metadata", "X5Raw", "metadata_index"]
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr, replace
+from bagof.magic import replace
 
 from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 
@@ -37,6 +37,10 @@ from brainhops.io.metadata._json import (
 # locals
 from ._struct import X5Header, X5Node, is_x5, read_x5
 
+# The default of `X5Raw(node=...)`: a new, empty node. `None` means a
+# chain of several nodes, so it cannot be the default.
+_NEW = object()
+
 
 class X5Raw:
     """
@@ -54,19 +58,20 @@ class X5Raw:
     def __init__(
         self,
         header: tx.Optional[X5Header] = None,
-        node: tx.Optional[X5Node] = None,
+        node: tx.Any = _NEW,
     ) -> None:
         """
         Parameters
         ----------
         header : X5Header, optional
             The root of the file. By default, an empty header.
-        node : X5Node, optional
+        node : X5Node or None, optional
             The node of the transformation, or `None` for a chain of
-            several nodes, whose own metadata stays in their nodes.
+            several nodes, whose own metadata stays in their nodes. By
+            default, an empty node.
         """
         self.header = X5Header() if header is None else header
-        self.node = node
+        self.node = X5Node() if node is _NEW else node
 
     def is_record_of(self, header: tx.Any, node: tx.Any) -> bool:
         """
@@ -135,14 +140,17 @@ def metadata_index(
 @register_format
 class X5Metadata(
     Hdf5MetadataParser,
-    FileBasedMetadata,
+    FileBasedMetadata[X5Raw],
     on={"format": "x5"},
     supports=ALL,
 ):
     """
     The metadata of an X5 transform node, stored in its JSON `Metadata`.
 
-    `node` and `header` are the two halves of the raw record.
+    Its raw record (`raw`) is an `X5Raw`: the root of the file and the
+    node the transformation was read from (no node for a chain of
+    several nodes, whose own metadata stays in their nodes). `node` and
+    `header` are its two halves.
     `X5Metadata.load(path)` reads the metadata of the transformation that
     `X5Transform.load(path)` would read (`chain=` and `position=` select
     another one), without reading its arrays.
@@ -177,19 +185,6 @@ class X5Metadata(
             ) from None
         return X5Raw(header, node)
 
-    raw: tx.Annotated[
-        tx.Optional[X5Raw],
-        tx.Doc(
-            """
-            The root of the file and the node the transformation was
-            read from (no node for a chain of several nodes, whose own
-            metadata stays in their nodes).
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
-
     @property
     def header(self) -> tx.Optional[X5Header]:
         """The root of the file (first half of the raw record)."""
@@ -201,10 +196,6 @@ class X5Metadata(
         return None if self.raw is None else self.raw.node
 
     # --- hooks --------------------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> X5Raw:
-        return X5Raw(X5Header(), X5Node())
 
     @classmethod
     def _decode(

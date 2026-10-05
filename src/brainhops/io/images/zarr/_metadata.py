@@ -52,7 +52,6 @@ import copy
 import numpy as np
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrGroup
-from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops.datamodel.metadata import (
@@ -152,7 +151,7 @@ class ZarrRaw:
         return f"ZarrRaw(attrs={sorted(self.attrs)})"
 
 
-class _ZarrMetadataParser(MetadataParser, FileBasedMetadata):
+class _ZarrMetadataParser(MetadataParser):
     """
     The metadata parser of a Zarr store: a store is a directory, read
     from its path, never from a stream. A format implements
@@ -251,6 +250,7 @@ class _ZarrMetadataParser(MetadataParser, FileBasedMetadata):
 @register_format
 class ZarrMetadata(
     _ZarrMetadataParser,
+    FileBasedMetadata[ZarrRaw],
     on={"format": "zarr"},
     # Not the diffusion fields: they are not sidecar keys.
     supports=(
@@ -266,9 +266,9 @@ class ZarrMetadata(
     """
     The metadata of a plain Zarr array: the vocabulary as a sidecar under
     the attribute `"brainhops"`, and `extra` as the other attributes.
-    Its raw record (`raw`) is a `ZarrRaw`, the array's attributes (and
-    the array they were read from). `data_type` is the data type of the
-    array.
+    Its raw record (`raw`) is a `ZarrRaw`, the attributes of the array
+    that was read, as JSON (and the array they were read from).
+    `data_type` is the data type of the array.
 
     `attributes` is the raw record's attributes under their familiar
     name. `ZarrMetadata.load(store)` reads the attributes of an array
@@ -278,13 +278,6 @@ class ZarrMetadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
     HINTS = ("zarr",)
-
-    raw: tx.Annotated[
-        tx.Optional[ZarrRaw],
-        tx.Doc("The attributes of the array that was read, as JSON."),
-        NoRepr(),
-        NoEq(),
-    ] = None
 
     @property
     def attributes(self) -> tx.Dict[str, tx.Any]:
@@ -310,10 +303,6 @@ class ZarrMetadata(
         write_attributes(node, raw.attrs, self.attributes)
 
     # --- hooks --------------------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> ZarrRaw:
-        return ZarrRaw()
 
     @classmethod
     def _decode(
@@ -483,13 +472,17 @@ class OmeZarrRaw:
 @register_format
 class OmeZarrMetadata(
     _ZarrMetadataParser,
+    FileBasedMetadata[OmeZarrRaw],
     on={"format": "ome-zarr"},
     supports=("name", "channels", "display_range", "extra", "data_type"),
 ):
     """
-    The metadata of an OME-Zarr multiscale pyramid; its raw record is an
-    `OmeZarrRaw` (the multiscale, `omero` and the other group
-    attributes). `data_type` is the data type of the arrays.
+    The metadata of an OME-Zarr multiscale pyramid; its raw record
+    (`raw`) is the `OmeZarrRaw` of the pyramid that was read: its typed
+    multiscale (normalised to OME-NGFF 0.6), its `omero` block and its
+    other group attributes. The levels and the coordinate
+    transformations are rewritten from the data model on save.
+    `data_type` is the data type of the arrays.
 
     `multiscale` and `omero` are the parts of the raw record under their
     familiar names. `OmeZarrMetadata.load(store)` reads the metadata of a
@@ -498,20 +491,6 @@ class OmeZarrMetadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
     HINTS = ("ome-zarr", "ome")
-
-    raw: tx.Annotated[
-        tx.Optional[OmeZarrRaw],
-        tx.Doc(
-            """
-            The raw record of the pyramid that was read: its typed
-            multiscale (normalised to OME-NGFF 0.6), its `omero` block
-            and its other group attributes. The levels and the coordinate
-            transformations are rewritten from the data model on save.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
 
     @property
     def multiscale(self) -> tx.Any:
@@ -544,10 +523,6 @@ class OmeZarrMetadata(
         )
 
     # --- hooks --------------------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> OmeZarrRaw:
-        return OmeZarrRaw()
 
     @classmethod
     def _decode(

@@ -112,10 +112,10 @@ def _nifti_record() -> nb.Nifti1Header:
 # format has no record to hold the values (or is checked otherwise).
 FORMATS = {
     NiftiMetadata: _nifti_record,
-    MghMetadata: MghMetadata._default_raw,
-    X5Metadata: X5Metadata._default_raw,
-    ZarrMetadata: ZarrMetadata._default_raw,
-    ItkH5Metadata: ItkH5Metadata._default_raw,
+    MghMetadata: MghMetadata._raw_class,
+    X5Metadata: X5Metadata._raw_class,
+    ZarrMetadata: ZarrMetadata._raw_class,
+    ItkH5Metadata: ItkH5Metadata._raw_class,
     OmeZarrMetadata: None,  # written by a real save below
     ItkMetadata: None,
     FlirtMetadata: None,
@@ -233,6 +233,9 @@ def _format_classes() -> list:
                 sub.__module__.startswith("brainhops.")
                 and issubclass(sub, FileBasedMetadata)
                 and not sub.__name__.startswith("_")
+                # Not the class `bagof` builds for a subscript such as
+                # `FileBasedMetadata[MghRaw]`: its subclass is the format.
+                and "__magic_generic_origin__" not in vars(sub)
             ):
                 found.append(sub)
     return found

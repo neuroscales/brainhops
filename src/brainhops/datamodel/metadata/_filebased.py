@@ -8,7 +8,7 @@ import math
 
 # externals
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr, fields
+from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
@@ -18,22 +18,49 @@ from ._base import FIELDS, Metadata, _format_name, _History
 from ._report import ConversionReport, OnLoss, apply_loss_policy, short
 from ._sentinel import UNSUPPORTED
 
+RawT = tx.TypeVar("RawT")
+"""The type of the raw record of a format (see `FileBasedMetadata`)."""
 
-class FileBasedMetadata(Metadata):
+
+class FileBasedMetadata(Metadata, tx.Generic[RawT]):
     """
     The metadata of a file format: the common vocabulary, decoded from and
     encoded into the format's own raw record.
 
     This is the base of every `<Fmt>Metadata`, as `FileBasedImage` is the
     base of the image class of every format. A format declares what it
-    can store with `supports=`, declares the type of its raw record by
-    annotating `raw`, and decodes and encodes the record with the hooks
-    described in the format author's guide
-    (`docs/dev/metadata-formats.md`). The record itself and the read-time
-    snapshot are fields of [`Metadata`][], so that generic metadata
-    carries them through a conversion; reading and writing them is what
-    this class adds.
+    can store with `supports=`, declares the type of its raw record as
+    the type argument of its base (`FileBasedMetadata[nb.Nifti1Header]`;
+    `FileBasedMetadata[None]` for a format without one), and decodes and
+    encodes the record with the hooks described in the format author's
+    guide (`docs/dev/metadata-formats.md`). The record itself and the
+    read-time snapshot are fields of [`Metadata`][], so that generic
+    metadata carries them through a conversion; reading and writing them
+    is what this class adds.
+
+    A new, empty record is the type called without arguments, so the
+    type of a record must build one that way.
     """
+
+    raw: tx.Annotated[
+        tx.Optional[RawT],
+        tx.Doc(
+            """
+            The raw record of the file the metadata was read from, of the
+            type the format declares, or `None` for metadata built in
+            memory. Edit it only for what the vocabulary does not cover:
+            on write, a field left untouched keeps the value of the
+            record, and a field that was set wins over it.
+            """
+        ),
+        NoRepr(),
+        NoEq(),
+    ] = None
+
+    # The type argument of the base (`FileBasedMetadata[T]`), set by the
+    # metaclass: `type(None)` for `[None]`, and `None` when the class
+    # declares no type.
+    _raw_class: tx.ClassVar[tx.Optional[type]] = None
 
     # --- reading ------------------------------------------------------
 
@@ -363,27 +390,16 @@ class FileBasedMetadata(Metadata):
     @classmethod
     def _raw_type(cls) -> tx.Optional[type]:
         """
-        The type of raw record that this class declares, read from the
-        annotation of its `raw` field (`Optional` removed).
+        The type of raw record that this class declares, as the type
+        argument of its base (`FileBasedMetadata[T]`).
 
         Returns
         -------
         type or None
             The declared type, `type(None)` for a format without a record,
-            or `None` when the class does not declare a type (it inherits
-            the `Any` of `Metadata`).
+            or `None` when the class does not declare a type.
         """
-        hint = next(f.type for f in fields(cls) if f.name == "raw")
-        while tx.get_origin(hint) is tx.Annotated:
-            hint = tx.get_args(hint)[0]
-        if hint is None or hint is type(None):
-            return type(None)
-        if tx.get_origin(hint) is tx.Union:
-            args = [a for a in tx.get_args(hint) if a is not type(None)]
-            hint = args[0] if len(args) == 1 else None
-        if hint is tx.Any or not isinstance(hint, type):
-            return None
-        return hint
+        return cls._raw_class
 
     @classmethod
     def _accepts_raw(cls, raw: tx.Any) -> bool:
@@ -407,18 +423,6 @@ class FileBasedMetadata(Metadata):
         return declared is not None and isinstance(raw, declared)
 
     # --- per-format hooks ---------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> tx.Any:
-        """
-        Build a fresh, empty raw record of this format.
-
-        Returns
-        -------
-        object
-            The empty record, or `None` for a format without one.
-        """
-        return None
 
     @classmethod
     def _decode(cls, raw: tx.Any, *, image: tx.Any = None) -> tx.Dict:
@@ -598,9 +602,11 @@ class FileBasedMetadata(Metadata):
                 )
 
     def _raw_or_default(self) -> tx.Any:
+        """A copy of `raw`, or a new, empty record when there is none."""
         if self.raw is not None:
             return copy.deepcopy(self.raw)
-        return self._default_raw()
+        cls = type(self)._raw_class
+        return None if cls is None else cls()
 
     def _derive_values(
         self,
@@ -617,7 +623,9 @@ class FileBasedMetadata(Metadata):
         return values
 
 
-class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):
+class OpaqueMetadata(
+    FileBasedMetadata[None], on={"format": "opaque"}, supports=()
+):
     """
     The metadata of a format that stores none, not even in memory: every
     field is unsupported, and there is no raw record.
@@ -626,12 +634,9 @@ class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):
     nothing else (matrix text, ITK `.tfm`/`.mat`). A read-then-save
     loses nothing, because nothing is there. A format that keeps
     anything, if only in memory (FLIRT `moving`/`fixed`), is a
-    `FileBasedMetadata` with a `supports=` list instead.
+    `FileBasedMetadata` with a `supports=` list instead. Its `raw` is
+    always `None`.
     """
-
-    raw: tx.Annotated[
-        None, tx.Doc("Always `None`: no raw record."), NoRepr(), NoEq()
-    ] = None
 
 
 # ----------------------------------------------------------------------

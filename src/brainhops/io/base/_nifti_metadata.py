@@ -56,7 +56,6 @@ from io import BytesIO
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops._core.numeric import float32_repr
@@ -104,7 +103,7 @@ _AUX_FILE_BYTES = 24
 @register_format
 class NiftiMetadata(
     MetadataParser,
-    FileBasedMetadata,
+    FileBasedMetadata[nb.Nifti1Header],
     on={"format": "nifti"},
     supports=(
         "description",
@@ -122,7 +121,10 @@ class NiftiMetadata(
     ),
 ):
     """
-    The metadata of a NIfTI file; its raw record is the `nibabel` header.
+    The metadata of a NIfTI file; its raw record (`raw`) is the `nibabel`
+    header of the file that was read. Edit it only for what the
+    vocabulary does not cover; geometry, units and scaling are rewritten
+    from the data model on save.
 
     `header` is the raw record under its familiar name.
     `NiftiMetadata.load(path)` reads the header of a NIfTI-1 or NIfTI-2
@@ -132,19 +134,6 @@ class NiftiMetadata(
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS = ("nifti",)
     _READ_MODE = "rb"
-
-    raw: tx.Annotated[
-        tx.Optional[nb.Nifti1Header],
-        tx.Doc(
-            """
-            The `nibabel` header of the file that was read. Edit it only
-            for what the vocabulary does not cover; geometry, units and
-            scaling are rewritten from the data model on save.
-            """
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
 
     @property
     def header(self) -> tx.Optional[nb.Nifti1Header]:
@@ -221,10 +210,6 @@ class NiftiMetadata(
         return _load_nifti_header(file)
 
     # --- hooks --------------------------------------------------------
-
-    @classmethod
-    def _default_raw(cls) -> nb.Nifti1Header:
-        return nb.Nifti1Header()
 
     @classmethod
     def _decode(

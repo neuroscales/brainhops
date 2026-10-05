@@ -15,24 +15,20 @@ __all__ = ["FlirtMetadata"]
 import typing_extensions as tx
 
 # internals
-from bagof.magic import NoEq, NoRepr
-
 from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 
 
 class FlirtMetadata(
-    FileBasedMetadata, on={"format": "flirt"}, supports=("moving", "fixed")
+    FileBasedMetadata[None],
+    on={"format": "flirt"},
+    supports=("moving", "fixed"),
 ):
     """
     The metadata of a FLIRT `.mat` file: only `moving` and `fixed`, the
     paths of the images the reader was given, kept in memory (a read and
     a copy keep them; a write reports them as lost). There is no raw
-    record.
+    record: `raw` is always `None`.
     """
-
-    raw: tx.Annotated[
-        None, tx.Doc("Always `None`: no raw record."), NoRepr(), NoEq()
-    ] = None
 
     @classmethod
     def _decode(

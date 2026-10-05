@@ -20,7 +20,7 @@ import warnings
 import numpy as np
 import pytest
 import typing_extensions as tx
-from bagof.magic import Factory, Magic, NoEq, NoRepr, fields, replace
+from bagof.magic import Factory, Magic, fields, replace
 
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
@@ -94,20 +94,14 @@ class DictRecord(dict):
 
 
 class DictMetadata(
-    FileBasedMetadata,
+    FileBasedMetadata[DictRecord],
     on={"format": "test-dict"},
     supports=("description", "display_range", "slice_timing", "extra"),
 ):
     """A format whose record is a dict: `desc`, `cal`, `slices`, and any
     other key is free-form."""
 
-    raw: tx.Annotated[tx.Optional[DictRecord], NoRepr(), NoEq()] = None
-
     _KNOWN = {"desc": "description", "cal": "display_range"}
-
-    @classmethod
-    def _default_raw(cls) -> dict:
-        return DictRecord()
 
     @classmethod
     def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
@@ -314,7 +308,7 @@ def test_wrong_declarations_are_refused() -> None:
         class Typo(FileBasedMetadata, supports=("descr",)):
             pass
 
-    with pytest.raises(TypeError, match="_geometry"):
+    with pytest.raises(TypeError, match="derived"):
 
         class Derived(FileBasedMetadata, derived=("description",)):
             pass
@@ -928,16 +922,12 @@ def test_force_writes_a_field_equal_to_the_snapshot() -> None:
 
 
 class GeoMetadata(
-    FileBasedMetadata,
+    FileBasedMetadata[dict],
     on={"format": "test-geo"},
     supports=("repetition_time",),
 ):
     """A format whose `repetition_time` is the image's time step (the
     image is a number here), or the record's when it has none."""
-
-    @classmethod
-    def _default_raw(cls) -> dict:
-        return {}
 
     def _geometry(self, image) -> dict:  # noqa: ANN001
         return {"repetition_time": image}

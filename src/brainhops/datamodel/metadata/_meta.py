@@ -42,15 +42,9 @@ class MetadataMeta(type(DataModelBase)):
     ) -> type:
         unknown = sorted(set(kwargs) - _BAGOF_KEYWORDS)
         if unknown:
-            hint = (
-                " (`derived=` was removed: a format's `_geometry` says "
-                "which fields the data model gives)"
-                if "derived" in unknown
-                else ""
-            )
             raise TypeError(
                 f"{name}: unknown class keyword(s) {unknown}; a metadata "
-                f"class takes supports= and the bagof options{hint}."
+                f"class takes supports= and the bagof options."
             )
         parent = next((b for b in bases if isinstance(b, metacls)), None)
         if parent is None:
@@ -65,6 +59,7 @@ class MetadataMeta(type(DataModelBase)):
             root = [b for b in parent.__mro__ if isinstance(b, metacls)][-1]
             metacls._declare(root, name, namespace, supports)
         cls = super().__new__(metacls, name, bases, namespace, **kwargs)
+        metacls._read_raw_class(cls)
         if "__magic_discard__" not in name:
             # Not one of the transient classes `bagof` builds.
             cls._finish()
@@ -104,6 +99,24 @@ class MetadataMeta(type(DataModelBase)):
         for key in ("__annotate__", "__annotate_func__"):
             namespace.pop(key, None)
         namespace["__annotations__"] = annotations
+
+    @staticmethod
+    def _read_raw_class(cls: type) -> None:
+        """
+        Set `_raw_class` from the type argument of a generic base, as in
+        `class NiftiMetadata(FileBasedMetadata[nb.Nifti1Header])`:
+        `type(None)` for `[None]`. A class without such a base inherits
+        the value of its parent.
+        """
+        for base in cls.__dict__.get("__orig_bases__", ()):
+            origin = tx.get_origin(base)
+            args = tx.get_args(base)
+            if not isinstance(origin, MetadataMeta) or len(args) != 1:
+                continue
+            (arg,) = args
+            if isinstance(arg, tx.TypeVar):
+                continue
+            cls._raw_class = type(None) if arg is None else arg
 
     def _finish(cls) -> None:
         """

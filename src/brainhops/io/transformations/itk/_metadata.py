@@ -23,7 +23,7 @@ __all__ = ["H5Header", "ItkH5Metadata", "ItkMetadata"]
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import HIDE_IF_NONE, Magic, NoEq, NoRepr, replace
+from bagof.magic import HIDE_IF_NONE, Magic, replace
 
 from brainhops.datamodel.metadata import (
     ConversionReport,
@@ -87,13 +87,14 @@ class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
 @register_format
 class ItkH5Metadata(
     Hdf5MetadataParser,
-    FileBasedMetadata,
+    FileBasedMetadata[H5Header],
     on={"format": "itk-h5"},
     supports=("generated_by",),
 ):
     """
     The metadata of an ITK `.h5` file: the version of ITK that wrote
-    it, as `generated_by`. Its raw record is the root header.
+    it, as `generated_by`. Its raw record (`raw`) is the root header of
+    the file (an `H5Header`: `/ITKVersion`, ...).
     `ItkH5Metadata.load(path)` reads the root header alone (which needs
     `h5py`).
     """
@@ -115,23 +116,10 @@ class ItkH5Metadata(
 
         return read_h5_header(h5file)
 
-    raw: tx.Annotated[
-        tx.Optional[H5Header],
-        tx.Doc(
-            "The root header of the file (an `H5Header`: `/ITKVersion`, ...)."
-        ),
-        NoRepr(),
-        NoEq(),
-    ] = None
-
     @property
     def header(self) -> tx.Optional[H5Header]:
         """The root header (the raw record, `raw`)."""
         return self.raw
-
-    @classmethod
-    def _default_raw(cls) -> H5Header:
-        return H5Header()
 
     @classmethod
     def _decode(
