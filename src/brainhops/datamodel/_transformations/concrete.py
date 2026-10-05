@@ -96,12 +96,16 @@ class ConcreteTransformation(Transformation):
     # spline coefficients are `t.to(coeff=True).data`.
     #
     # The view's name doubles as a constructor keyword, a convenience
-    # that means "the map, as values": `Affine(matrix=m)` is
-    # `Affine(data=m)`, and `DisplacementField(field=u)` is
-    # `DisplacementField(data=u, coeff=False)`. Each family declares it
-    # as an `InitVar` under the view's name with a leading underscore
-    # (so that the constructor takes `field=` while the class keeps its
-    # `field` view), and `__post_init__` below moves it into `data`.
+    # that means "the map, as values", while the flags say how it is
+    # stored: `Affine(matrix=m)` is `Affine(data=m)`, and
+    # `DisplacementField(field=u, coeff=True, degree=3)` stores the
+    # cubic coefficients of `u`, exactly as
+    # `DisplacementField(field=u, degree=3).to(coeff=True)` does. Each
+    # family declares the keyword as an `InitVar` under the view's name
+    # with a leading underscore (so that the constructor takes `field=`
+    # while the class keeps its `field` view), and `__post_init__` below
+    # encodes it into `data` with `_encode_view`, which `.to(field=...)`
+    # shares.
 
     _view: tx.ClassVar[tx.Optional[str]] = None
     """The name of the view that reads the map, and of its keyword."""
@@ -110,34 +114,26 @@ class ConcreteTransformation(Transformation):
     """The flags under which `data` holds the map as values."""
 
     def __post_init__(self, arguments: tx.Any) -> None:
-        # The convenience keyword is the map, as values. It fills `data`,
-        # so it cannot come with `data=` as well, nor with a flag that
-        # says `data` holds something else.
+        # The convenience keyword is the map, as values, encoded into
+        # `data` under the flags. It fills `data`, so it cannot come with
+        # `data=` as well.
         view = type(self)._view
         values = arguments.get(view) if view is not None else None
         if values is None:
             return
         name = type(self).__name__
         if arguments.get("data") is not None:
+            # `replace()` reaches here too: it carries `data` over, so a
+            # convenience keyword passed through it always meets one.
             raise TypeError(
-                f"{name}() got both data= and {view}=. {view}= is the "
-                f"map, as values, and fills data; pass one of them."
+                f"{name}() got both data= and {view}=: {view}= is the "
+                f"map, as values, and fills data, so it cannot be "
+                f"combined with data=, which replace() also passes on. "
+                f"To change the map of an existing transformation, use "
+                f"t.to({view}=...), which encodes it under the flags of "
+                f"t; to store an array as it is encoded, pass data= alone."
             )
-        contradicting = {
-            flag: getattr(self, flag)
-            for flag, value in type(self)._values_flags.items()
-            if getattr(self, flag) != value
-        }
-        if contradicting:
-            flags = ", ".join(f"{k}={v!r}" for k, v in contradicting.items())
-            raise TypeError(
-                f"{name}({view}=..., {flags}) is contradictory: {view}= "
-                f"is the map, as values, while {flags} says that data "
-                f"holds another encoding. Pass data=..., {flags} to store "
-                f"that encoding as given, or pass {view}= alone and "
-                f"convert with .to({flags})."
-            )
-        self.data = values
+        self.data = type(self)._encode_view(values, **self._flags())
 
     def _flags(self) -> tx.Dict[str, tx.Any]:
         # The encoding flags of `data`, by name.
@@ -150,6 +146,16 @@ class ConcreteTransformation(Transformation):
             flags.get(flag, value) == value
             for flag, value in cls._values_flags.items()
         )
+
+    @classmethod
+    def _encode_view(cls, values: tx.Any, **flags) -> tx.Any:
+        """The `data` of the map given as values to its keyword.
+
+        This is the one path from a convenience keyword (`field=`,
+        `matrix=`, ...) to `data`, shared by the constructor and by
+        `.to(...)`: the values are encoded under `flags`.
+        """
+        return None if values is None else cls._encode(values, **flags)
 
     @classmethod
     def _encode(cls, values: tx.Any, **flags) -> tx.Any:
@@ -259,6 +265,12 @@ class TransformationField(ConcreteTransformation):
     The field is stored in `data`, either as values or, when `coeff` is
     true, as the coefficients of the spline of degree `degree` that
     interpolates them. Its `field` view is always the values.
+
+    The `field=` keyword is the map, as values, and the flags say how it
+    is stored: `DisplacementField(field=u, degree=3, coeff=True)` holds
+    the cubic coefficients of `u` in `data`, the same `data` as
+    `DisplacementField(field=u, degree=3).to(coeff=True)`. To store an
+    array as it is already encoded, pass it as `data=`.
     """
 
     # --- class attributes ---------------------------------------------
@@ -312,8 +324,10 @@ class TransformationField(ConcreteTransformation):
         InitVar[tx.Optional[ArrayProtocol]],
         tx.Doc(
             """
-            The field, as values: a convenience for `data`, which cannot
-            be combined with `coeff=True`.
+            The field, as values: a convenience for `data`. It is stored
+            as the flags say, so with `coeff=True` its spline
+            coefficients are what `data` holds. It cannot be combined
+            with `data=`.
             """
         ),
         KwOnly(),
@@ -344,6 +358,7 @@ class TransformationField(ConcreteTransformation):
     ) -> ArrayProtocol:
         if not coeff:
             return values
+        values = _prefilter_dtype(values)
         return value2coeff_field(values, degree=degree, bound=bound)
 
     @classmethod
@@ -358,6 +373,19 @@ class TransformationField(ConcreteTransformation):
         if not coeff:
             return data
         return coeff2value_field(data, degree=degree, bound=bound)
+
+
+def _prefilter_dtype(values: ArrayProtocol) -> ArrayProtocol:
+    """The array the spline prefilter is run on, in a floating dtype.
+
+    The coefficients of integer or boolean values (a grid, say) are not
+    integers, and fitting them in an integer array would truncate them:
+    such an array is cast to `float32`, on its own backend. A floating
+    array keeps its dtype.
+    """
+    if values.dtype.kind in "biu":
+        return values.astype("float32")
+    return values
 
 
 class DisplacementField(TransformationField):
@@ -434,8 +462,6 @@ class CartesianField(CoordinatesField):
             return field
         cached = self.__dict__.get("_encoded")
         if cached is None or cached[0] != flags:
-            # The grid is integer; its coefficients are not.
-            field = field.astype(float)
             cached = (flags, type(self)._encode(field, **flags))
             self.__dict__["_encoded"] = cached
         return cached[1]

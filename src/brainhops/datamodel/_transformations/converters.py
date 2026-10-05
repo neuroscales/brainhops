@@ -41,6 +41,11 @@ def smart_replace(t: Transformation, **kwargs) -> Transformation:
     if not kwargs:
         return t
     if isinstance(t, ConcreteTransformation):
+        flags = t._flags()
+        if all(k in flags and v == flags[k] for k, v in kwargs.items()):
+            # The encoding asked for is the one `t` has: nothing changes,
+            # so `t` itself comes back, with the same `data`.
+            return t
         kwargs = encode_changes(t, kwargs)
     return replace(t, **kwargs)
 
@@ -70,13 +75,11 @@ def encode_changes(
     if view is not None and view in changes:
         if "data" in changes:
             raise TypeError(
-                f"{cls.__name__}.to() got both data= and {view}=. {view}= "
-                f"is the map, as values, and fills data; pass one of them."
+                f"{cls.__name__}.to() got both data= and {view}=: {view}= "
+                f"is the map, as values, encoded under the flags of the "
+                f"result, while data= is stored as given. Pass one of them."
             )
-        values = changes.pop(view)
-        changes["data"] = (
-            None if values is None else cls._encode(values, **new)
-        )
+        changes["data"] = cls._encode_view(changes.pop(view), **new)
     elif "data" not in changes and new != old:
         data = t.data
         if data is not None:

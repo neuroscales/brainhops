@@ -29,25 +29,37 @@ it inverts, in that transformation's encoding.
 
 Constructors take `data` (positionally, as the first argument) and the
 flags. The view's name is also a keyword, a convenience meaning "the
-map, as values":
+map, as values". One rule holds everywhere: a convenience keyword is the
+map, as values, and the flags describe how it is stored.
 
 ```python
 DisplacementField(u)  # u is displacement values
 DisplacementField(field=u)  # the same
 DisplacementField(data=c, degree=3, coeff=True)  # c is coefficients
-DisplacementField(field=u, coeff=True)  # TypeError: contradictory
-Affine(m), Affine(data=m), Affine(matrix=m)  # three equal affines
+DisplacementField(field=u, degree=3, coeff=True)  # stores u's coefficients
+Affine(m), Affine(data=m), Affine(matrix=m)  # the same affine, thrice
 ```
 
-A convenience keyword cannot be combined with `data=`, nor with a flag
-that says `data` holds another encoding. Within a type, `.to(...)`
-re-encodes rather than reinterprets: `t.to(coeff=True)` fits
-coefficients to the values, `t.to(degree=3)` on a field of coefficients
-refits them, and `t.to(field=u)` stores `u` in the encoding of `t`.
+So `DisplacementField(field=u, degree=3, coeff=True)` holds the same
+`data` as `DisplacementField(field=u, degree=3).to(coeff=True)`: the
+constructor encodes `u` the way `.to(...)` does. A convenience keyword
+cannot be combined with `data=`, which already is the stored array.
+
+To change the map of an existing transformation, use `.to(...)`. Within
+a type, it re-encodes rather than reinterprets: `t.to(field=u)` stores
+`u` in the encoding of `t`, `t.to(coeff=True)` fits coefficients to the
+values, and `t.to(degree=3)` on a field of coefficients refits them.
 Passing `data=` to `.to(...)` stores the array as given, under the flags
-of the result.
+of the result. `bagof.magic.replace` is not the way to do it: it carries
+`data` over, so a convenience keyword passed through it (as in
+`replace(t, field=u)`) meets that `data` and raises whenever `t` has
+one, and a flag passed
+through it (as in `replace(t, coeff=True)`) reinterprets the stored
+array instead of re-encoding it.
 
 Equality compares the class, `data` and the flags, so the same map
-stored as values and as coefficients does not compare equal.
+stored as values and as coefficients does not compare equal. Comparing
+two transformations whose `data` are arrays raises today, as an array
+has no single truth value (see #235).
 
 # ::: brainhops.datamodel.transformations

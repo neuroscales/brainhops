@@ -12,6 +12,7 @@ import inspect
 
 import numpy as np
 import pytest
+from bagof.magic import replace
 
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._ext.invfield import inverse as inverse_disp
@@ -122,7 +123,7 @@ def test_the_grid_view_is_the_grid(coeff: bool) -> None:
     expected = _grid(shape)
     if coeff:
         expected = _coefficients(expected.astype(float))
-    np.testing.assert_allclose(np.asarray(t.data), expected, atol=1e-10)
+    np.testing.assert_allclose(np.asarray(t.data), expected, atol=1e-4)
 
 
 @pytest.mark.parametrize("cls, view, values", MATRIX_FAMILY, ids=MATRIX_IDS)
@@ -229,9 +230,17 @@ def test_a_matrix_family_inverse_derives_its_data(
 
 
 @pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
-def test_field_values_contradict_coefficients(cls: type) -> None:
-    with pytest.raises(TypeError, match="contradictory"):
-        cls(field=_values(), degree=DEGREE, coeff=True)
+def test_field_values_are_stored_as_the_flags_say(cls: type) -> None:
+    # The keyword is the map, as values; the flags describe its storage.
+    values = _values()
+    t = cls(field=values, degree=DEGREE, coeff=True)
+    expected = cls(field=values, degree=DEGREE).to(coeff=True)
+    assert (t.coeff, t.degree) == (True, DEGREE)
+    np.testing.assert_array_equal(
+        np.asarray(t.data), np.asarray(expected.data)
+    )
+    np.testing.assert_allclose(np.asarray(t.data), _coefficients(values))
+    np.testing.assert_allclose(np.asarray(t.field), values, atol=1e-10)
 
 
 @pytest.mark.parametrize(
@@ -300,6 +309,70 @@ def test_equality_compares_data_and_flags() -> None:
     assert Affine() == Affine()
 
 
+@pytest.mark.parametrize(
+    "cls, view, values",
+    MATRIX_FAMILY + [(cls, "field", _values()) for cls in FIELDS],
+    ids=MATRIX_IDS + [cls.__name__ for cls in FIELDS],
+)
+def test_a_dictionary_names_the_map_or_its_data(
+    cls: type, view: str, values: np.ndarray
+) -> None:
+    for key in (view, "data"):
+        t = cls.from_dict({key: values})
+        assert type(t) is cls
+        np.testing.assert_array_equal(np.asarray(t.data), values)
+        np.testing.assert_array_equal(np.asarray(getattr(t, view)), values)
+        t = cls.from_other({key: values})
+        np.testing.assert_array_equal(np.asarray(t.data), values)
+
+
+def test_a_dictionary_of_field_values_is_stored_as_the_flags_say() -> None:
+    values = _values()
+    t = DisplacementField.from_dict(
+        {"field": values, "degree": DEGREE, "coeff": True}
+    )
+    np.testing.assert_allclose(np.asarray(t.data), _coefficients(values))
+    t = DisplacementField.from_dict(
+        {"data": values, "degree": DEGREE, "coeff": True}
+    )
+    assert t.data is values
+
+
+def test_an_unknown_key_names_the_convenience_keywords() -> None:
+    with pytest.raises(TypeError, match="'matrix'") as error:
+        Affine.from_other({"matrices": np.eye(3)[:2]})
+    assert "'data'" in str(error.value)
+    assert "'matrices'" in str(error.value)
+
+
+def test_an_instance_is_read_through_its_data() -> None:
+    t = DisplacementField(data=_coefficients(_values()), degree=3, coeff=True)
+    copy = CoordinatesField.from_instance(t)
+    assert copy.data is t.data
+    assert (copy.coeff, copy.degree) == (True, 3)
+
+
+@pytest.mark.parametrize(
+    "cls, view, values",
+    MATRIX_FAMILY + [(cls, "field", _values()) for cls in FIELDS],
+    ids=MATRIX_IDS + [cls.__name__ for cls in FIELDS],
+)
+def test_replace_with_a_convenience_keyword_points_to_to(
+    cls: type, view: str, values: np.ndarray
+) -> None:
+    # `replace` carries `data` over, so the keyword meets it: the error
+    # says why, and what to use instead.
+    with pytest.raises(TypeError) as error:
+        replace(cls(values), **{view: values})
+    message = str(error.value)
+    assert f"both data= and {view}=" in message
+    assert "replace()" in message
+    assert f"t.to({view}=...)" in message
+    # On a transformation with no data yet there is nothing to meet.
+    t = replace(cls(), **{view: values})
+    np.testing.assert_array_equal(np.asarray(t.data), values)
+
+
 # ----------------------------------------------------------------------
 #   CONVERSION WITHIN A TYPE
 # ----------------------------------------------------------------------
@@ -353,6 +426,39 @@ def test_a_linear_converts_to_a_rotation() -> None:
     rotation = Linear(matrix).to(Rotation)
     assert type(rotation) is Rotation
     np.testing.assert_array_equal(rotation.matrix, matrix)
+
+
+@pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize(
+    "dtype, expected",
+    [
+        ("int64", "float32"),
+        ("int32", "float32"),
+        ("bool", "float32"),
+        ("float32", "float32"),
+        ("float64", "float64"),
+    ],
+)
+def test_the_coefficients_dtype(cls: type, dtype: str, expected: str) -> None:
+    # Integer and boolean values are fitted in float32; floating values
+    # keep their dtype.
+    values = (_grid((7, 8)) % 2).astype(dtype)
+    t = cls(field=values, degree=DEGREE).to(coeff=True)
+    assert np.asarray(t.data).dtype == np.dtype(expected)
+    np.testing.assert_allclose(
+        np.asarray(t.field), values.astype(float), atol=1e-5
+    )
+    assert cls(field=values, degree=DEGREE, coeff=True).data.dtype == expected
+
+
+def test_the_grid_coefficients_are_float32() -> None:
+    t = CartesianField(shape=(7, 8), degree=DEGREE, coeff=True)
+    assert np.asarray(t.data).dtype == np.float32
+
+
+def test_an_unchanged_encoding_is_a_pass_through() -> None:
+    t = DisplacementField(data=_values(), degree=DEGREE, coeff=True)
+    assert t.to(coeff=True, degree=DEGREE, bound=BOUND) is t
 
 
 # ----------------------------------------------------------------------
