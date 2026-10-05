@@ -928,26 +928,40 @@ class GeoMetadata(
     """A format whose `repetition_time` is the image's time step (the
     image is a number here), or the record's when it has none."""
 
-    def _geometry(self, image) -> dict:  # noqa: ANN001
-        return {"repetition_time": image}
+    @classmethod
+    def _decode_raw(cls, raw, *, image=None) -> dict:  # noqa: ANN001
+        if image is not None:
+            return {"repetition_time": image}
+        return {"repetition_time": (raw or {}).get("tr")}
 
     def _encode_raw(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
-        if "repetition_time" in changed:
+        # The time step of an image is the writer's to store.
+        if "repetition_time" in changed and image is None:
             raw["tr"] = changed["repetition_time"]
         return raw
 
 
-def test_a_derived_field_the_data_model_gives_is_not_encoded() -> None:
+def test_a_field_the_record_does_not_hold_is_reported() -> None:
     meta = GeoMetadata(repetition_time=2.0)
     report = ConversionReport()
-    assert meta.update_raw(image=2.0, on_loss=report) == {}
+    raw = meta.update_raw(image=2.0, on_loss=report)
+    assert raw == {}
+    meta.check_raw(raw, image=2.0, on_loss=report)
     assert not report.lossy
     report = ConversionReport()
-    assert meta.update_raw(image=1.5, on_loss=report) == {}
+    raw = meta.update_raw(image=1.5, on_loss=report)
+    assert raw == {}
+    meta.check_raw(raw, image=1.5, on_loss=report)
     assert set(report.approximated) == {"repetition_time"}
+    assert "1.5" in report.approximated["repetition_time"]
     # The data model says nothing: the value is the format's to write.
-    assert meta.update_raw(image=None) == {"tr": 2.0}
+    raw = meta.update_raw(image=None)
+    assert raw == {"tr": 2.0}
+    assert not meta.check_raw(raw, on_loss="ignore").lossy
     assert meta.check_writable(image=1.5).approximated
+    assert not meta.check_writable(image=2.0).lossy
+    # Numbers, and sequences of numbers, agree within rounding.
+    assert not meta.check_raw({"tr": 2.0 + 1e-9}, on_loss="ignore").lossy
 
 
 # ----------------------------------------------------------------------
@@ -1299,3 +1313,10 @@ def test_the_pinned_format_narrows_the_field() -> None:
     with pytest.raises(Exception, match="test-lite"):
         LiteMetadata(format="test-dict")
     assert type(Metadata(format="test-lite")) is LiteMetadata
+
+
+def test_a_channel_color_is_held_as_rgba() -> None:
+    # One spelling per color, so that a record read back agrees with it.
+    assert Channel(color="#0000ff").color == "0000FFFF"
+    assert Channel(color="00FF0080").color == "00FF0080"
+    assert Channel().color is None

@@ -191,7 +191,7 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
         # Only the ITK version is recorded: the fixture names ITK alone.
         assert back.generated_by == FULL["generated_by"]
         return
-    # Fields that are views of geometry (see `_geometry`), which a bare
+    # Fields that are views of geometry (the writer sets them), which a bare
     # record does not hold.
     expected = set(VOCABULARY) & cls.supported_fields
     expected -= _GEOMETRY.get(cls, set())

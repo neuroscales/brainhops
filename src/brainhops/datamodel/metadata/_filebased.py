@@ -265,13 +265,12 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         over the record, such as the `tr=` option of the MGH writer, and a
         forced `None` clears the slot.
 
-        A field that the data model gives a value for (see `_geometry`) is
-        not encoded, because the writer stores the value of the data
-        model. When the field was changed to a value that disagrees with
-        the data model, the field is reported as approximated. A field
-        that the format does not support, but that was assigned after
-        construction, is reported as lost, as are the value-dependent
-        losses found by `_encode_raw`.
+        A field that the format does not support, but that was assigned
+        after construction, is reported as lost, as are the
+        value-dependent losses found by `_encode_raw`. What the writer
+        then changes in the record (a slot that the data model owns, such
+        as the time step of a NIfTI image) is found by `check_raw`, which
+        the writer calls once the record is finished.
 
         Parameters
         ----------
@@ -320,11 +319,72 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
             if name in FIELDS and name != "extra":
                 if name not in unsupported:
                     changed[name] = getattr(self, name)
-        self._check_derived(changed, image, report)
         raw = self._encode_raw(raw, changed, image=image, report=report)
         if not sink:
             apply_loss_policy(report, on_loss, stacklevel=2)
         return raw
+
+    def check_raw(
+        self,
+        raw: tx.Any,
+        *,
+        image: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+    ) -> ConversionReport:
+        """
+        Check that a finished record holds the fields that changed.
+
+        A writer encodes the fields with `update_raw`, then may set slots
+        of the record from the data model, whatever the metadata says: the
+        time step of a NIfTI image, the data type of the stored values.
+        Once the record is finished, it calls this method, which decodes
+        the record as a reader would (`from_raw`) and reports as
+        approximated every changed field whose value the record does not
+        hold. A field already reported (lost or approximated), an
+        unsupported field and `extra` are not checked again.
+
+        Parameters
+        ----------
+        raw : object
+            The finished record.
+        image : object, optional
+            The image or transformation being written, as a reader would
+            be given it.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the losses. By default, the policy in effect.
+            A writer passes the report of its whole write.
+
+        Returns
+        -------
+        ConversionReport
+            The report, `on_loss` itself when it is one.
+
+        Raises
+        ------
+        MetadataLossError
+            If something is approximated under the `"raise"` policy.
+        """
+        sink = isinstance(on_loss, ConversionReport)
+        if sink:
+            report = on_loss
+        else:
+            report = ConversionReport(source=self.format, target=self.format)
+        decoded = type(self).from_raw(raw, image=image)
+        unsupported = type(self).unsupported_fields
+        for name, value in self._changed_fields().items():
+            if (
+                name == "extra"
+                or name in unsupported
+                or name in report.lost
+                or name in report.approximated
+            ):
+                continue
+            held = getattr(decoded, name)
+            if not _agrees(held, value):
+                report.approximated[name] = f"the record holds {short(held)}"
+        if not sink:
+            apply_loss_policy(report, on_loss, stacklevel=2)
+        return report
 
     @classmethod
     def writable(
@@ -388,7 +448,8 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
             What would be lost or approximated.
         """
         report = ConversionReport(source=self.format, target=self.format)
-        self.update_raw(raw, image=image, on_loss=report)
+        raw = self.update_raw(raw, image=image, on_loss=report)
+        self.check_raw(raw, image=image, on_loss=report)
         return report
 
     # --- the record of a conversion -----------------------------------
@@ -485,35 +546,6 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
         """
         return raw
 
-    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
-        """
-        Give the values that the data model holds for some fields.
-
-        Some formats store, in the same slot, a value that is both a
-        common field and a piece of the geometry of the data model. NIfTI,
-        for instance, stores the repetition time as the time step of the
-        image, `pixdim[4]`. When such an image is written, the writer
-        stores the time step of the data model, whatever the metadata
-        says. For that reason, `update_raw` does not encode a field that
-        this hook gives a value for, and reports the field as approximated
-        when its changed value disagrees with the value of the data model.
-
-        A field that this hook leaves out, or gives as `None`, is one the
-        data model says nothing about, and `_encode_raw` handles its changed
-        value as usual. The default gives no field.
-
-        Parameters
-        ----------
-        image : object
-            The image or transformation being written.
-
-        Returns
-        -------
-        dict
-            Field name to the value that the data model gives.
-        """
-        return {}
-
     # --- internals ----------------------------------------------------
 
     @classmethod
@@ -533,25 +565,6 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
                 )
             decoded[key] = value
         return decoded
-
-    def _check_derived(
-        self,
-        changed: tx.Dict[str, tx.Any],
-        image: tx.Any,
-        report: ConversionReport,
-    ) -> None:
-        """Take out of `changed` the fields the data model gives values
-        for (`_geometry`), and report those that disagree with it."""
-        if image is None or not changed:
-            return
-        for name, given in self._geometry(image).items():
-            if given is None or name not in changed:
-                continue
-            value = changed.pop(name)
-            if value is not None and not _agrees(value, given):
-                report.approximated[name] = (
-                    f"derived from the data model ({short(given)})"
-                )
 
     def _raw_or_default(self) -> tx.Any:
         """A copy of `raw`, or a new, empty record when there is none."""
@@ -628,8 +641,20 @@ def _apply_diff(
 
 
 def _agrees(value: tx.Any, given: tx.Any) -> bool:
-    """Whether a value agrees with what the data model gives (numbers
-    within single-precision rounding)."""
-    if isinstance(value, (int, float)) and isinstance(given, (int, float)):
+    """Whether a value agrees with what a record holds: numbers, and
+    sequences of numbers element by element, within single-precision
+    rounding."""
+    if _is_number(value) and _is_number(given):
         return math.isclose(value, given, rel_tol=1e-6, abs_tol=1e-9)
+    if (
+        isinstance(value, (tuple, list))
+        and isinstance(given, (tuple, list))
+        and len(value) == len(given)
+        and all(_is_number(v) for v in (*value, *given))
+    ):
+        return all(_agrees(v, g) for v, g in zip(value, given))
     return not differs(value, given)
+
+
+def _is_number(value: tx.Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

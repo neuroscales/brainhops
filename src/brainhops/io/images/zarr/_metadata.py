@@ -30,9 +30,9 @@ it is the range of the data type (0 to 1 for floats). OME-Zarr has no
 unit for the values, so `data_unit` is unsupported, and the unit of a
 channel is dropped (approximated).
 
-In both, `data_type` is derived (see `_geometry`): it is the data type of
-the array that was read, and a writer stores the array as it is, so a
-`data_type` that disagrees with it is reported as approximated.
+In both, `data_type` is derived: it is the data type of the array that
+was read, and a writer stores the array as it is, so a `data_type` that
+disagrees with it is reported as approximated (by `check_raw`).
 
 Both raw records are rebuilt from the store on each read, so each
 remembers the node it was read from (`node`): a parser given metadata
@@ -354,9 +354,6 @@ class ZarrMetadata(
             attrs.pop(BRAINHOPS_KEY, None)
         return raw
 
-    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
-        return {"data_type": _array_dtype(image)}
-
 
 # ----------------------------------------------------------------------
 #   OME-ZARR
@@ -581,9 +578,6 @@ class OmeZarrMetadata(
                 raw.attrs, changed["extra"], reserved=OME_KEYS, report=report
             )
         return raw
-
-    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
-        return {"data_type": _array_dtype(image)}
 
     def _encode_omero(
         self,

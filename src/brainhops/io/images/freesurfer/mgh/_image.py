@@ -186,11 +186,12 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         target = metadata.update_raw(
             MghRaw(header, tags), image=self, on_loss=report, force=force
         )
-        apply_loss_policy(report, on_loss, stacklevel=4)
         header = target.header
         for name, value in overrides.items():
             header[name] = value
         header.set_data_dtype(dtype)
+        metadata.check_raw(target, image=self, on_loss=report)
+        apply_loss_policy(report, on_loss, stacklevel=4)
 
         vox2ras = _scanner_matrix(self.transformations)
         return _mgh.MGHImage(data, vox2ras, header=header), target.tags

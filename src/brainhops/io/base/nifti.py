@@ -1388,6 +1388,7 @@ def _apply_metadata(
             for name in ("scale_slope", "scale_intercept"):
                 if changed.get(name) is not None:
                     report.lost[name] = changed[name]
+        metadata.check_raw(image.header, image=obj, on_loss=report)
         apply_loss_policy(report, on_loss, stacklevel=4)
     return image
 

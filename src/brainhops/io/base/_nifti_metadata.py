@@ -24,9 +24,10 @@ covers:
 writer takes from the data model; a value that disagrees with it is
 reported, not written. `repetition_time` is the time step of the image
 (the scale of its time axis, `time_step`), which the writer stores as
-`pixdim[4]` (`_geometry` gives it); only an image whose data model has no
-time step gets the field's value there. `intent` and `space` are checked
-against the codes the writer set from the axes and the world space.
+`pixdim[4]`; only an image whose data model has no time step gets the
+field's value there (`check_raw` reports a value the written header does
+not hold). `intent` and `space` are checked against the codes the writer
+set from the axes and the world space.
 NIfTI has no free-form store, so `extra` is unsupported (open question 7
 of the design memo).
 
@@ -148,7 +149,7 @@ class NiftiMetadata(
 
         By default, the scratch record is the one the writer of `image`
         would start from: a copy of `raw` with the shape of the data of
-        the image, whatever the record says.
+        the image, and its time step, whatever the record says.
 
         Parameters
         ----------
@@ -170,6 +171,9 @@ class NiftiMetadata(
                     raw.set_data_shape(shape)
                 except Exception:
                     pass
+            step = time_step(image.transformations)
+            if step is not None and len(_shape(raw)) >= 4:
+                set_time_step(raw, step)
         return super().check_writable(image=image, raw=raw)
 
     # --- reading the header of a file ---------------------------------
@@ -324,8 +328,12 @@ class NiftiMetadata(
                 _encode_dim_info(h, name, changed[name], position, report)
         if "slice_timing" in changed:
             _encode_slice_timing(h, changed["slice_timing"], report)
-        if "repetition_time" in changed:
-            # Only when the data model has no time step (see `_geometry`).
+        if "repetition_time" in changed and (
+            not isinstance(image, Image)
+            or time_step(image.transformations) is None
+        ):
+            # The time step of an image is the data model's: the writer
+            # stores it, and `check_raw` reports a value that disagrees.
             _encode_repetition_time(h, changed["repetition_time"], report)
         if "intent" in changed:
             _encode_intent(h, changed["intent"], image, report)
@@ -343,11 +351,6 @@ class NiftiMetadata(
             except Exception:
                 report.lost["data_type"] = changed["data_type"]
         return h
-
-    def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
-        if not isinstance(image, Image):
-            return {}
-        return {"repetition_time": time_step(image.transformations)}
 
     def _reslice(
         self,

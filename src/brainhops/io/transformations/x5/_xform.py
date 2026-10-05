@@ -389,9 +389,11 @@ class X5Transform(
         if node is None or metadata.node is not node:
             # Not the node it was read from: everything is written.
             metadata = replace(metadata, snapshot={})
-        node = metadata.update_raw(
+        raw = metadata.update_raw(
             X5Raw(self.header, node), image=self, on_loss=report
-        ).node
+        )
+        metadata.check_raw(raw, image=self, on_loss=report)
+        node = raw.node
         if index is not None:
             nodes[index] = node
         return nodes

@@ -536,6 +536,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             copy.deepcopy(before.attrs) if before is not None else None,
         )
         target = metadata.update_raw(target, image=self, on_loss=report)
+        metadata.check_raw(target, image=self, on_loss=report)
         apply_loss_policy(report, on_loss, stacklevel=5)
         return target
 

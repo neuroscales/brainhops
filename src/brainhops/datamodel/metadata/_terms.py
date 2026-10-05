@@ -38,12 +38,32 @@ class GeneratedBy(DataModelBase):
     ] = None
 
 
+# The converter of `Channel.color`; above the class, which evaluates it.
+def _rgba(value: tx.Any) -> tx.Any:
+    """A color as an RGBA hex string: upper case, without `#`, with an
+    opaque alpha when it has none."""
+    if not isinstance(value, str):
+        return value
+    value = value.lstrip("#").upper()
+    if len(value) == 6:
+        value += "FF"
+    return value or None
+
+
 class Channel(DataModelBase):
     """The description of one channel of an image."""
 
     name: tx.Annotated[tx.Optional[str], tx.Doc("The channel label.")] = None
     color: tx.Annotated[
-        tx.Optional[str], tx.Doc("Display color, as an RGBA hex string.")
+        tx.Optional[str],
+        tx.Doc(
+            """
+            Display color, as an RGBA hex string. It is held in upper
+            case, without `#`, and an RGB string (6 digits) is given an
+            opaque alpha (`"0000ff"` is `"0000FFFF"`).
+            """
+        ),
+        ConvertTo(_rgba),
     ] = None
     display_range: tx.Annotated[
         tx.Optional[tx.Tuple[float, float]],
