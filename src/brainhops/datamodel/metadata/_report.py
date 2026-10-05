@@ -27,12 +27,18 @@ from ..base import DataModelBase
 
 class ConversionReport(DataModelBase):
     """
-    What a conversion or a write could not carry over.
+    The record of what a conversion or a write could not carry over.
 
-    `lost` maps a field to the value that was dropped; `approximated`
-    maps a field to a short description of what changed (`"truncated to
-    80 bytes"`); `passed_through` lists the keys that were moved into a
-    free-form store instead of a dedicated slot.
+    A conversion between metadata classes, or the write of metadata into
+    a file, fills a report as it goes. A field whose value was dropped is
+    listed in `lost`, with the value. A field whose value was stored, but
+    not exactly, is listed in `approximated`, with a short description of
+    the change (such as `"truncated to 80 bytes"`). A field that a
+    key/value format moved into its free-form store, instead of losing
+    it, is listed in `passed_through`.
+
+    The loss policy decides what happens to a report that is not empty
+    (see [`metadata_loss_policy`][]).
     """
 
     source: tx.Annotated[
@@ -61,11 +67,24 @@ class ConversionReport(DataModelBase):
 
     @property
     def lossy(self) -> bool:
-        """Whether anything was lost or approximated."""
+        """Whether the report lists a field as lost or approximated."""
         return bool(self.lost or self.approximated)
 
     def merge(self, other: "ConversionReport") -> tx.Self:
-        """Add the entries of another report to this one, in place."""
+        """
+        Add the entries of another report to this report, in place.
+
+        Parameters
+        ----------
+        other : ConversionReport
+            The report whose entries are added. An entry of `other`
+            replaces the entry of this report for the same field.
+
+        Returns
+        -------
+        ConversionReport
+            This report.
+        """
         self.lost.update(other.lost)
         self.approximated.update(other.approximated)
         self.passed_through = tuple(
@@ -76,9 +95,22 @@ class ConversionReport(DataModelBase):
     @classmethod
     def merged(cls, reports: tx.Sequence["ConversionReport"]) -> tx.Self:
         """
-        One report of several, in order: from the source of the first to
-        the target of the last, with the entries of all (a later entry
-        wins over an earlier one for the same field).
+        Merge several reports, in order, into a new report.
+
+        The merged report goes from the source of the first report to the
+        target of the last one, and holds the entries of all of them.
+        When two reports have an entry for the same field, the later
+        entry wins.
+
+        Parameters
+        ----------
+        reports : sequence of ConversionReport
+            The reports to merge, in the order the steps happened.
+
+        Returns
+        -------
+        ConversionReport
+            The merged report.
         """
         merged = cls(
             source=reports[0].source if reports else None,
@@ -89,8 +121,14 @@ class ConversionReport(DataModelBase):
         return merged
 
     def raise_if_lossy(self) -> None:
-        """Raise [`MetadataLossError`][] if anything was lost or
-        approximated."""
+        """
+        Raise an error when anything was lost or approximated.
+
+        Raises
+        ------
+        MetadataLossError
+            If the report lists a field as lost or approximated.
+        """
         if self.lossy:
             raise MetadataLossError(self)
 
@@ -111,24 +149,42 @@ class ConversionReport(DataModelBase):
 
 
 class MetadataLossWarning(UserWarning):
-    """Some metadata could not be carried over. `report` says what."""
+    """
+    The warning issued when some metadata could not be carried over.
+
+    The `report` attribute holds the [`ConversionReport`][] that says what
+    was lost or approximated.
+    """
 
     def __init__(self, report: ConversionReport) -> None:
+        """
+        Parameters
+        ----------
+        report : ConversionReport
+            What was lost or approximated.
+        """
         super().__init__(str(report))
         self.report = report
 
 
 class MetadataLossError(Exception):
     """
-    Some metadata could not be carried over, under the `"raise"` policy.
-    `report` says what.
+    The error raised, under the `"raise"` policy, when some metadata could
+    not be carried over.
 
-    It is deliberately neither a `TypeError` nor a `ValueError`: those
-    are what field converters turn into conversion errors, and a refused
-    loss must surface as itself.
+    The `report` attribute holds the [`ConversionReport`][] that says what
+    was lost or approximated. The error is deliberately neither a
+    `TypeError` nor a `ValueError`, because field converters turn those
+    two into conversion errors, and a refused loss must surface as itself.
     """
 
     def __init__(self, report: ConversionReport) -> None:
+        """
+        Parameters
+        ----------
+        report : ConversionReport
+            What was lost or approximated.
+        """
         super().__init__(str(report))
         self.report = report
 
@@ -147,13 +203,31 @@ raising.
 @contextlib.contextmanager
 def metadata_loss_policy(policy: LossPolicy) -> tx.Iterator[None]:
     """
-    Set the loss policy for the conversions and writes in this block.
+    Set the loss policy of the conversions and writes made in a block.
 
-    This is what governs the implicit conversions that `bagof`'s field
-    converters trigger (assigning a `NiftiMetadata` to a field typed
-    `Metadata`, saving an MGH image as NIfTI, ...), which take no
-    `on_loss=` argument.
+    The policy in effect governs every conversion that takes no
+    `on_loss=` argument, in particular the implicit conversions that field
+    converters trigger: assigning a `NiftiMetadata` to a field typed
+    `Metadata`, or saving an MGH image as NIfTI. Outside of any block, the
+    policy is `"warn"`.
 
+    Parameters
+    ----------
+    policy : {"ignore", "warn", "raise"}
+        The policy: ignore a loss, warn about it, or raise
+        [`MetadataLossError`][].
+
+    Yields
+    ------
+    None
+
+    Raises
+    ------
+    ValueError
+        If `policy` is not one of the three policies.
+
+    Examples
+    --------
     ```python
     with metadata_loss_policy("raise"):
         nifti = NiftiImage.from_other(mgh)  # raises if anything is lost
@@ -173,16 +247,42 @@ def apply_loss_policy(
     stacklevel: int = 2,
 ) -> ConversionReport:
     """
-    Act on a report: do nothing, warn once, raise, or fill another
-    report.
+    Act on a report, according to a loss policy.
 
-    `on_loss` defaults to the policy in effect (see
-    [`metadata_loss_policy`][]). A `ConversionReport` given as `on_loss`
-    is filled with the entries of `report` (and its `source` and
-    `target`, where it has none yet), whether anything was lost or not,
-    and nothing is warned or raised: the caller acts on it. A report
-    with nothing lost or approximated is otherwise silent. `report` is
-    returned.
+    Under the `"ignore"` policy nothing happens, under `"warn"` a
+    [`MetadataLossWarning`][] is issued, and under `"raise"` a
+    [`MetadataLossError`][] is raised. A report that lists nothing as lost
+    or approximated is silent under every policy. Inside a
+    [`collect_loss_reports`][] block, a report that would be warned about
+    is collected instead.
+
+    When `on_loss` is itself a report, the entries of `report` are added
+    to it, whether anything was lost or not, and nothing is warned or
+    raised: the caller acts on the report it passed. Its `source` and
+    `target` are set from `report` when it has none yet.
+
+    Parameters
+    ----------
+    report : ConversionReport
+        The report to act on.
+    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+        The policy to apply, or a report to fill. By default, the policy
+        in effect (see [`metadata_loss_policy`][]).
+    stacklevel : int, optional
+        The stack level of the warning, counted from the caller of this
+        function.
+
+    Returns
+    -------
+    ConversionReport
+        `report` itself.
+
+    Raises
+    ------
+    MetadataLossError
+        If the policy is `"raise"` and the report is lossy.
+    ValueError
+        If `on_loss` is not a policy nor a report.
     """
     if isinstance(on_loss, ConversionReport):
         if on_loss is not report:
@@ -207,13 +307,21 @@ def apply_loss_policy(
 @contextlib.contextmanager
 def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
     """
-    Collect, instead of warning them, the reports that the conversions
-    and writes in this block would warn about. Under the `"raise"`
-    policy a loss still raises where it happens.
+    Collect the reports that the conversions and writes made in a block
+    would warn about, instead of warning about them.
 
-    `io.save` uses it to warn once for a save that converts the object
-    into the format of the file and then writes it:
+    Under the `"raise"` policy, a loss still raises where it happens.
+    `io.save` uses this context manager to warn once for a save that
+    first converts the object into the format of the file and then
+    writes it.
 
+    Yields
+    ------
+    list of ConversionReport
+        The list that the collected reports are appended to.
+
+    Examples
+    --------
     ```python
     with collect_loss_reports() as reports:
         nifti = NiftiImage.from_other(mgh)

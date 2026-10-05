@@ -478,10 +478,22 @@ def time_step(
     transformations: tx.Optional[tx.Iterable[tx.Any]],
 ) -> tx.Optional[float]:
     """
-    The time step of an image, in seconds, as its data model gives it:
-    the scale of the time axis of the first scaling (voxel to physical
-    space, as the NIfTI and MGH readers build it) whose output has a
-    time axis with a physical time unit. `None` when there is none.
+    The time step of an image, in seconds, as its data model gives it.
+
+    The time step is the scale of the time axis of the first scaling
+    whose output has a time axis with a physical time unit. The NIfTI and
+    MGH readers build such a scaling, from the voxel space to the
+    physical space.
+
+    Parameters
+    ----------
+    transformations : iterable of Transformation or None
+        The transformations of the image.
+
+    Returns
+    -------
+    float or None
+        The time step in seconds, or `None` when no scaling gives one.
     """
     for xform in transformations or ():
         scale = getattr(xform, "scale", None)
@@ -507,8 +519,18 @@ def time_step(
 
 
 def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
-    """Store a time step, in seconds, as `pixdim[4]`, in the time unit of
-    the header (seconds when it has none)."""
+    """
+    Store a time step as `pixdim[4]`, in the time unit of the header.
+
+    A header without a time unit is given seconds.
+
+    Parameters
+    ----------
+    h : nibabel.Nifti1Header
+        The header to edit, in place.
+    seconds : float
+        The time step, in seconds.
+    """
     space, time = h.get_xyzt_units()
     if time not in _TIME_UNITS:
         h.set_xyzt_units(space, "sec")
@@ -524,15 +546,25 @@ def copy_record(
 ) -> None:
     """
     Copy what is safe to keep from the record of the file that was read
-    onto a header the writer just built.
+    onto a header that the writer has just built.
 
-    `descrip`, `aux_file` and `cal_*` are always kept, and the extensions
-    unless the writer added its own.
-    `dim_info` is kept when its axes still exist, and the `slice_*`
-    fields when the slice axis kept its length. With `intent`, a
-    non-structural intent (one that does not retype the axes) is kept
-    when the writer set none. Geometry, `xyzt_units`, the data type and
-    `scl_*` are never touched.
+    `descrip`, `aux_file`, `cal_min` and `cal_max` are always kept, and
+    so are the header extensions, unless the writer added its own.
+    `dim_info` is kept when its axes still exist, and the `slice_*` slots
+    are kept when the slice axis kept its length. An intent that does not
+    retype the axes is kept when the writer set none. The geometry,
+    `xyzt_units`, the data type and the intensity scaling are never
+    touched.
+
+    Parameters
+    ----------
+    target : nibabel.Nifti1Header
+        The header that the writer built, edited in place.
+    record : nibabel.Nifti1Header or None
+        The header of the file that was read. Nothing is copied when it
+        is `None`.
+    intent : bool, optional
+        Whether to keep the intent of the record.
     """
     if record is None:
         return

@@ -31,9 +31,19 @@ def parse_tags(
     tags: bytes,
 ) -> tx.Optional[tx.List[tx.Tuple[int, bytes]]]:
     """
-    Split trailing tags into `(tag id, chunk)` pairs, where `chunk` is the
-    tag's bytes verbatim (id, length and payload). `None` when they do not
-    parse as a FreeSurfer tag stream.
+    Split the trailing tags of an MGH file into individual tags.
+
+    Parameters
+    ----------
+    tags : bytes
+        The bytes that follow the footer.
+
+    Returns
+    -------
+    list of (int, bytes) or None
+        One `(tag id, chunk)` pair per tag, where `chunk` holds the bytes
+        of the tag verbatim (id, length and payload), or `None` when the
+        bytes do not parse as a FreeSurfer tag stream.
     """
     out = []
     pos, end = 0, len(tags)
@@ -67,8 +77,20 @@ def parse_tags(
 
 
 def decode_history(tags: bytes) -> tx.Optional[tx.Tuple[str, ...]]:
-    """The command lines of trailing tags, or `None` (none, or the tags
-    do not parse)."""
+    """
+    Read the command lines stored in the trailing tags of an MGH file.
+
+    Parameters
+    ----------
+    tags : bytes
+        The bytes that follow the footer.
+
+    Returns
+    -------
+    tuple of str or None
+        The command lines, oldest first, or `None` when there is none or
+        when the tags do not parse.
+    """
     parsed = parse_tags(tags)
     if not parsed:
         return None
@@ -82,9 +104,22 @@ def encode_history(
     tags: bytes, history: tx.Optional[tx.Sequence[str]]
 ) -> tx.Optional[bytes]:
     """
-    Replace the command-line tags of `tags` with `history`, keeping the
-    other tags in place (the new commands go where the first one was, or
-    at the end). `None` when the tags do not parse.
+    Replace the command lines stored in the trailing tags of an MGH file.
+
+    The other tags are kept in place. The new command lines go where the
+    first old one was, or at the end when there was none.
+
+    Parameters
+    ----------
+    tags : bytes
+        The bytes that follow the footer.
+    history : sequence of str or None
+        The new command lines. `None` removes them all.
+
+    Returns
+    -------
+    bytes or None
+        The new trailing tags, or `None` when `tags` does not parse.
     """
     parsed = parse_tags(tags)
     if parsed is None:

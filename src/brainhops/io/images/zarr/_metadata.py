@@ -299,8 +299,24 @@ class OmeZarrRaw:
         attrs: tx.Mapping[str, tx.Any],
         node: tx.Any = None,
     ) -> tx.Self:
-        """The raw record of a group, from its multiscale and its
-        attributes (as JSON)."""
+        """
+        Build the raw record of an OME-Zarr group.
+
+        Parameters
+        ----------
+        multiscale : object
+            The typed `abczarr` multiscale of the group, normalised to
+            OME-NGFF 0.6.
+        attrs : mapping
+            The attributes of the group, as JSON.
+        node : object, optional
+            The group the attributes were read from.
+
+        Returns
+        -------
+        OmeZarrRaw
+            The raw record.
+        """
         attrs = dict(attrs)
         block = attrs.get("ome")
         holder = block if isinstance(block, tx.Mapping) else attrs

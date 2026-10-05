@@ -69,23 +69,39 @@ class FileBasedMetadata(Metadata):
         """
         Build the metadata of a raw record that was just read.
 
-        The raw record is decoded into the common fields (`_decode`), and
-        what was decoded is kept as the read-time snapshot, so that an
-        untouched field keeps the record's value when it is written back.
-        A lazy field (`lazy=`) decoded as
-        [`Lazy`][brainhops._core.fields.Lazy] is decoded on first
-        access instead. Keyword arguments set fields over the decoded
-        values (they then count as changes).
+        The raw record is decoded into the common fields by the format's
+        `_decode` hook. The decoded values are kept as the read-time
+        snapshot, so that a field the user leaves untouched keeps the
+        value of the record when the record is written back. A field that
+        the format declares lazy (`lazy=`), and that `_decode` returns as a
+        [`Lazy`][brainhops._core.fields.Lazy] value, is decoded the first
+        time it is read instead.
+
+        Parameters
+        ----------
+        raw : object
+            The raw record, of the type the format declares for `raw`.
+        image : object, optional
+            The image or transformation the record was read with, for the
+            fields that the format decodes from the data model.
+        **values
+            Fields to set over the decoded values. They count as changes
+            on write.
+
+        Returns
+        -------
+        FileBasedMetadata
+            The metadata, with `raw` set to the record.
 
         Raises
         ------
         TypeError
-            If `_decode` returned a value for a field this class does not
-            support, or a `Lazy` for a field not declared `lazy=`. The
-            raw record is the format's own, so this is never about the
-            data: it is a bug of the format class, whose `_decode` and
-            `supports=` (or `lazy=`) disagree, and which would otherwise
-            drop the value without a report.
+            If `_decode` returned a value for a field that this class does
+            not support, or a `Lazy` value for a field that is not lazy.
+            The raw record belongs to the format, so this error never
+            comes from the data: it reveals a format class whose `_decode`
+            disagrees with its `supports=` or `lazy=` declaration, and
+            which would otherwise drop the value without a report.
         """
         decoded, pending = cls._checked_decode(raw, image)
         obj = cls(raw=raw, **decoded)
@@ -103,15 +119,28 @@ class FileBasedMetadata(Metadata):
 
     def update_from_raw(self, raw: tx.Any, *, image: tx.Any = None) -> tx.Self:
         """
-        The metadata of another raw record, keeping the changes made here.
+        Build the metadata of another raw record, keeping the changes made
+        to this metadata.
 
-        `raw` is decoded (`from_raw`), and every field that changed since
-        this object was read (`_changed_fields()`: all the fields that
-        are set, for an object built in memory) is set over the decoded
-        values, as a change. `extra` is merged key by key. This is what
-        an object given a new raw record holds (`replace(image,
-        header=...)`), and what `metadata=` given along with a raw record
-        becomes.
+        The new record is decoded as `from_raw` decodes it. Every field
+        that changed in this object since it was read is then set over the
+        decoded values, and counts as a change. For an object built in
+        memory, every field that is set counts as changed. The keys of
+        `extra` are merged one by one. This is how an image that is given
+        a new raw record (`replace(image, header=...)`) keeps the metadata
+        edits it carried.
+
+        Parameters
+        ----------
+        raw : object
+            The new raw record.
+        image : object, optional
+            The image or transformation the record belongs to.
+
+        Returns
+        -------
+        FileBasedMetadata
+            A new metadata object of the same class.
         """
         changed = {
             key: value
@@ -163,29 +192,48 @@ class FileBasedMetadata(Metadata):
         force: tx.Collection[str] = (),
     ) -> tx.Any:
         """
-        Encode the common fields over a raw record, and return it.
+        Encode the common fields over a raw record, and return the record.
 
-        `raw` is the record to write over: a writer passes its own fresh
-        record, already filled with what it keeps from `self.raw`. When
-        it is `None`, a copy of `self.raw` (or a default record) is used.
-        Only the fields that changed since the read are encoded, and
-        the fields named in `force`, whether they changed or not (a
-        writer keyword that must win over the record, such as MGH `tr=`;
-        a `None` there clears the slot).
+        Only the fields that changed since the read are encoded, so that a
+        field the user did not touch keeps the value that the record holds.
+        The fields named in `force` are encoded whether they changed or
+        not: a writer uses `force` for a keyword argument that must win
+        over the record, such as the `tr=` option of the MGH writer, and a
+        forced `None` clears the slot.
 
-        A field for which the data model gives a value (`_geometry`: a
-        view of geometry, such as the NIfTI repetition time) is not
-        encoded: the data model's value is what the writer stores, and a
-        changed value that disagrees with it is reported as
-        approximated. A field this format does not
-        support but that was assigned after construction is lost, as are
-        the value-dependent losses `_encode` finds.
+        A field that the data model gives a value for (see `_geometry`) is
+        not encoded, because the writer stores the value of the data
+        model. When the field was changed to a value that disagrees with
+        the data model, the field is reported as approximated. A field
+        that the format does not support, but that was assigned after
+        construction, is reported as lost, as are the value-dependent
+        losses found by `_encode`.
 
-        `on_loss` says what to do with them: the policy in effect by
-        default (see [`metadata_loss_policy`][]), `"ignore"`, `"warn"`,
-        `"raise"`, or a [`ConversionReport`][] to fill, which is what a
-        writer passes (the report of its whole write, which it then acts
-        on once).
+        Parameters
+        ----------
+        raw : object, optional
+            The record to encode over. A writer passes its own fresh
+            record, already filled with what it keeps from `self.raw`.
+            By default, a copy of `self.raw` is used, or a default record
+            when there is none.
+        image : object, optional
+            The image or transformation being written.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the losses. By default, the policy in effect
+            (see [`metadata_loss_policy`][]). A writer passes the report of
+            its whole write, which it then acts on once.
+        force : collection of str, optional
+            The fields to encode even when they did not change.
+
+        Returns
+        -------
+        object
+            The encoded record.
+
+        Raises
+        ------
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
         """
         sink = isinstance(on_loss, ConversionReport)
         if sink:
@@ -219,14 +267,26 @@ class FileBasedMetadata(Metadata):
         cls, metadata: Metadata
     ) -> tx.Tuple["FileBasedMetadata", ConversionReport]:
         """
-        The metadata a writer of this format writes, and the report its
-        write starts from.
+        Prepare metadata for a writer of this format.
 
-        `metadata` itself when it is of this class; otherwise its
-        conversion into this class, whose losses seed the report. The
-        loss policy is *not* applied: the writer encodes (`update_raw`)
-        into the same report (`on_loss=report`) and applies the policy
-        once, so that one write gives one report, and one warning.
+        Metadata that is already of this class is returned as it is.
+        Metadata of another class is converted into this class, and the
+        losses of the conversion seed the report. The loss policy is not
+        applied here: the writer encodes the fields into the same report
+        (`update_raw(..., on_loss=report)`) and applies the policy once, so
+        that one write gives one report and at most one warning.
+
+        Parameters
+        ----------
+        metadata : Metadata
+            The metadata of the object being written.
+
+        Returns
+        -------
+        metadata : FileBasedMetadata
+            The metadata to write, of this class.
+        report : ConversionReport
+            The report of the write so far.
         """
         if isinstance(metadata, cls):
             target = format_name(cls)
@@ -237,14 +297,25 @@ class FileBasedMetadata(Metadata):
 
     def check_writable(self, *, image: tx.Any = None) -> ConversionReport:
         """
-        What a write of this object would lose, without writing it.
+        Report what a write of this metadata would lose, without writing
+        anything.
 
-        Class-level declarations are the lower bound of loss; this runs
-        the encoder on a scratch raw record (the one the format's writer
-        would start from, see `_check_raw`), so value-dependent losses
-        (an over-long description, an irregular slice timing) are
-        included. Pass the image (or transformation) for the fields that
-        need it.
+        The class declarations only give a lower bound of what is lost.
+        This method runs the encoder on the record that the writer of the
+        format would start from (see `_check_raw`), so that the losses
+        that depend on the values, such as an over-long description or an
+        irregular slice timing, are included as well.
+
+        Parameters
+        ----------
+        image : object, optional
+            The image or transformation that would be written, for the
+            fields that depend on the data model.
+
+        Returns
+        -------
+        ConversionReport
+            What would be lost or approximated.
         """
         report = ConversionReport(source=self.format, target=self.format)
         self.update_raw(self._check_raw(image), image=image, on_loss=report)
@@ -269,12 +340,36 @@ class FileBasedMetadata(Metadata):
 
     @classmethod
     def _default_raw(cls) -> tx.Any:
-        """A fresh, empty raw record for this format."""
+        """
+        Build a fresh, empty raw record of this format.
+
+        Returns
+        -------
+        object
+            The empty record, or `None` for a format without one.
+        """
         return None
 
     @classmethod
     def _decode(cls, raw: tx.Any, *, image: tx.Any = None) -> tx.Dict:
-        """Raw record to common fields. Default: nothing to decode."""
+        """
+        Decode a raw record into common fields.
+
+        A format overrides this hook. The default decodes nothing.
+
+        Parameters
+        ----------
+        raw : object
+            The raw record.
+        image : object, optional
+            The image or transformation the record was read with.
+
+        Returns
+        -------
+        dict
+            Field name to decoded value. A value that is `None` or
+            `UNSUPPORTED` is ignored.
+        """
         return {}
 
     def _encode(
@@ -285,26 +380,77 @@ class FileBasedMetadata(Metadata):
         image: tx.Any = None,
         report: ConversionReport,
     ) -> tx.Any:
-        """Common fields to raw record. Default: the record is unchanged."""
+        """
+        Encode changed common fields into a raw record.
+
+        A format overrides this hook. The default leaves the record
+        unchanged.
+
+        Parameters
+        ----------
+        raw : object
+            The record to encode into, which may be edited in place.
+        changed : dict
+            Field name to new value, for the fields to encode. A `None`
+            value clears the slot of the field.
+        image : object, optional
+            The image or transformation being written.
+        report : ConversionReport
+            The report to fill with what cannot be stored exactly.
+
+        Returns
+        -------
+        object
+            The encoded record.
+        """
         return raw
 
     def _geometry(self, image: tx.Any) -> tx.Dict[str, tx.Any]:
         """
-        The fields that are, for this format, a view of geometry the data
-        model owns, and the values it gives for them (NIfTI: the time
-        step of the image as `repetition_time`). This is what makes a
-        field derived: on write, the data model's value wins, and a
-        changed value that disagrees with it is reported. A field left
-        out, or `None`, is one the data model says nothing about: its
-        changed value is then left to `_encode`. Default: nothing.
+        Give the values that the data model holds for some fields.
+
+        Some formats store, in the same slot, a value that is both a
+        common field and a piece of the geometry of the data model. NIfTI,
+        for instance, stores the repetition time as the time step of the
+        image, `pixdim[4]`. When such an image is written, the writer
+        stores the time step of the data model, whatever the metadata
+        says. For that reason, `update_raw` does not encode a field that
+        this hook gives a value for, and reports the field as approximated
+        when its changed value disagrees with the value of the data model.
+
+        A field that this hook leaves out, or gives as `None`, is one the
+        data model says nothing about, and `_encode` handles its changed
+        value as usual. The default gives no field.
+
+        Parameters
+        ----------
+        image : object
+            The image or transformation being written.
+
+        Returns
+        -------
+        dict
+            Field name to the value that the data model gives.
         """
         return {}
 
     def _check_raw(self, image: tx.Any) -> tx.Any:
         """
-        The raw record `check_writable` encodes over: what the writer of
-        this format would pass to `update_raw` for `image`. Default: a
-        copy of the record, or a default one.
+        Build the raw record that `check_writable` encodes over.
+
+        The record is the one that the writer of this format would pass
+        to `update_raw` for `image`. The default is a copy of `raw`, or a
+        default record when there is none.
+
+        Parameters
+        ----------
+        image : object
+            The image or transformation that would be written.
+
+        Returns
+        -------
+        object
+            A scratch record, which may be edited.
         """
         return self._raw_or_default()
 

@@ -11,17 +11,24 @@ import typing_extensions as tx
 
 class Lazy:
     """
-    A value that is not known yet, and how to get it.
+    A value that is not known yet, together with the function that
+    computes it.
 
-    `load` is called, with no argument, the first time the value is
-    needed (see [`LazyField`][]). A `load` that reads a file should be
-    picklable (a module-level function or a `functools.partial` of one),
-    so that an object still waiting for it can be pickled.
+    A [`LazyField`][] calls `load`, with no argument, the first time the
+    value is read. When `load` reads a file, it should be picklable (a
+    module-level function, or a `functools.partial` of one), so that an
+    object that is still waiting for its value can be pickled.
     """
 
     __slots__ = ("load",)
 
     def __init__(self, load: tx.Callable[[], tx.Any]) -> None:
+        """
+        Parameters
+        ----------
+        load : callable
+            The function that computes the value. It takes no argument.
+        """
         self.load = load
 
     def __repr__(self) -> str:
@@ -30,31 +37,46 @@ class Lazy:
 
 class LazyField:
     """
-    A data descriptor for a field whose value may still be pending.
+    A data descriptor for an attribute whose value may still be pending.
 
-    The value lives in the instance `__dict__`, under the field's name,
-    as for a plain attribute. When it is a [`Lazy`][], the first read
-    loads it: `load()` is called, its result goes through `prepare` (if
-    given) and is assigned through `setattr`, so that the class converts
-    it as it would any value, and `on_load(obj, name, value)` (if given)
-    is called with what was stored. An assignment over a pending value
-    loads it first, so `on_load` sees the value being replaced.
+    The value lives in the instance `__dict__`, under the attribute's
+    name, as the value of a plain attribute does. When that value is a
+    [`Lazy`][], the first read loads it: `load()` is called, its result
+    goes through `prepare` (when one is given), and the outcome is
+    assigned with `setattr`, so that the class converts it as it would
+    convert any assigned value. `on_load(obj, name, value)` is then called
+    with the value that was stored. Assigning a new value over a pending
+    one loads the pending value first, so that `on_load` sees the value
+    being replaced.
 
-    Install it on a class after the class is built (a `Magic` class keeps
-    its own field table, so the defaults and the constructor are not
-    affected), and inject a pending value with
-    `obj.__dict__[name] = Lazy(load)`, which bypasses conversion.
+    The descriptor is installed on a class after the class is built. On a
+    `Magic` class, the field table is built before the descriptor is
+    installed, so the defaults and the constructor are not affected. A
+    pending value is injected with `obj.__dict__[name] = Lazy(load)`,
+    which bypasses conversion.
 
-    Parameters
-    ----------
-    name : str, optional
-        The attribute name; set by `__set_name__` when omitted.
-    default : object, optional
-        What a read returns when the instance holds no value at all.
-    prepare : callable, optional
-        Maps a loaded value before it is assigned.
-    on_load : callable, optional
-        Called as `on_load(obj, name, value)` once a value is loaded.
+    Examples
+    --------
+    ```pycon
+    >>> from brainhops._core.fields import Lazy, LazyField
+    >>> class Record:
+    ...     pass
+    >>> Record.history = LazyField("history", default=())
+    >>> record = Record()
+    >>> record.history
+    ()
+    >>> def read_history():
+    ...     print("reading")
+    ...     return ("acquired", "resliced")
+    >>> record.__dict__["history"] = Lazy(read_history)
+    >>> Record.history.pending(record)
+    True
+    >>> record.history
+    reading
+    ('acquired', 'resliced')
+    >>> record.history
+    ('acquired', 'resliced')
+    ```
     """
 
     def __init__(
@@ -65,6 +87,20 @@ class LazyField:
         prepare: tx.Optional[tx.Callable[[tx.Any], tx.Any]] = None,
         on_load: tx.Optional[tx.Callable[[tx.Any, str, tx.Any], None]] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        name : str, optional
+            The name of the attribute. When it is omitted, `__set_name__`
+            sets it from the class body the descriptor is assigned in.
+        default : object, optional
+            What a read returns when the instance holds no value at all.
+        prepare : callable, optional
+            A function applied to a loaded value before it is assigned.
+        on_load : callable, optional
+            A function called as `on_load(obj, name, value)` once a value
+            has been loaded and stored.
+        """
         self.name = name
         self.default = default
         self.prepare = prepare
@@ -92,7 +128,20 @@ class LazyField:
         obj.__dict__[self.name] = value
 
     def pending(self, obj: tx.Any) -> bool:
-        """Whether `obj` still waits for its value."""
+        """
+        Whether an instance is still waiting for its value.
+
+        Parameters
+        ----------
+        obj : object
+            The instance to inspect.
+
+        Returns
+        -------
+        bool
+            `True` when the instance holds a [`Lazy`][] value that has
+            not been loaded yet.
+        """
         return isinstance(obj.__dict__.get(self.name), Lazy)
 
     def _load(self, obj: tx.Any, pending: Lazy) -> tx.Any:

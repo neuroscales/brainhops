@@ -45,8 +45,20 @@ from brainhops.datamodel.units import Unit
 
 
 def sidecar_key(name: str) -> str:
-    """The key of a vocabulary field in a JSON object: its BIDS key, or
-    its name in `CamelCase` when BIDS has none."""
+    """
+    The key of a vocabulary field in a JSON object.
+
+    Parameters
+    ----------
+    name : str
+        The name of the vocabulary field.
+
+    Returns
+    -------
+    str
+        The BIDS key of the field, or its name in `CamelCase` when BIDS
+        has no key for it.
+    """
     return BIDS_KEYS.get(name) or _camel(name)
 
 
@@ -54,8 +66,22 @@ def decode_object(
     obj: tx.Mapping[str, tx.Any], names: tx.Iterable[str]
 ) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, tx.Any]]:
     """
-    Split a JSON object into the values of the vocabulary fields `names`
-    (read from their sidecar keys) and the other keys, as they are.
+    Split a JSON object into vocabulary values and other keys.
+
+    Parameters
+    ----------
+    obj : mapping
+        The JSON object.
+    names : iterable of str
+        The vocabulary fields to read, each from its key (see
+        `sidecar_key`).
+
+    Returns
+    -------
+    values : dict
+        Field name to decoded value, for the fields found in `obj`.
+    others : dict
+        The other keys of `obj`, with their values as they are.
     """
     fields = {sidecar_key(name): name for name in names}
     values: tx.Dict[str, tx.Any] = {}
@@ -72,8 +98,17 @@ def decode_object(
 def encode_changes(
     obj: tx.Dict[str, tx.Any], changed: tx.Mapping[str, tx.Any]
 ) -> None:
-    """Write changed vocabulary values into a JSON object, in place,
-    under their sidecar keys; a `None` removes the key."""
+    """
+    Write changed vocabulary values into a JSON object, in place.
+
+    Parameters
+    ----------
+    obj : dict
+        The JSON object to edit.
+    changed : mapping
+        Field name to new value. Each value is written under the key of
+        its field (see `sidecar_key`), and a `None` value removes the key.
+    """
     for name, value in changed.items():
         key = sidecar_key(name)
         if value is None:
@@ -90,10 +125,23 @@ def encode_extra(
     reserved: tx.Collection[str] = (),
 ) -> None:
     """
-    Apply an `extra` diff (see `FileBasedMetadata._changed_fields`) to a
-    JSON object, in place: a `None` removes the key, any other value is
-    written as JSON. A key in `reserved` (one the format keeps for its
-    own use) is not written, and is reported as lost.
+    Apply a diff of `extra` to a JSON object, in place.
+
+    The diff is the one that `FileBasedMetadata._changed_fields` computes:
+    a `None` value removes the key, and any other value is written as
+    JSON. A key that the format keeps for its own use is not written, and
+    is reported as lost.
+
+    Parameters
+    ----------
+    obj : dict
+        The JSON object to edit.
+    diff : mapping
+        Key to new value, or to `None` for a removed key.
+    report : ConversionReport
+        The report to fill with the reserved keys that were refused.
+    reserved : collection of str, optional
+        The keys the format keeps for its own use.
     """
     # Not `FileBasedMetadata`'s diff helper: this one also writes JSON
     # and refuses the keys a format reserves, two things the data model
@@ -108,7 +156,22 @@ def encode_extra(
 
 
 def from_json(name: str, value: tx.Any) -> tx.Any:
-    """The value of the vocabulary field `name` from its JSON form."""
+    """
+    Decode the JSON form of a vocabulary value.
+
+    Parameters
+    ----------
+    name : str
+        The name of the vocabulary field.
+    value : object
+        The value, as JSON holds it.
+
+    Returns
+    -------
+    object
+        The value, ready to be assigned to the field, which converts it
+        further.
+    """
     if value is None:
         return None
     if name == "generated_by":
@@ -145,10 +208,25 @@ def from_json(name: str, value: tx.Any) -> tx.Any:
 
 
 def to_json(name: str, value: tx.Any) -> tx.Any:
-    """The JSON form of a value of the vocabulary field `name` (or of
-    an `extra` value): `GeneratedBy` and `Channel` entries as objects
-    with BIDS-style keys, an encoding direction as its BIDS string (or,
-    when BIDS cannot write it, an object `Vector`/`Space`)."""
+    """
+    Encode a vocabulary value, or a value of `extra`, as JSON.
+
+    `GeneratedBy` and `Channel` entries become objects with keys in the
+    BIDS style. An encoding direction becomes its BIDS string, or, when
+    BIDS cannot write it, an object with the keys `Vector` and `Space`.
+
+    Parameters
+    ----------
+    name : str
+        The name of the vocabulary field, or `"extra"`.
+    value : object
+        The value to encode.
+
+    Returns
+    -------
+    object
+        A value that can be serialised to JSON.
+    """
     if name == "generated_by":
         return [
             {
@@ -179,9 +257,23 @@ def to_json(name: str, value: tx.Any) -> tx.Any:
 
 
 def jsonable(value: tx.Any) -> tx.Any:
-    """A value made JSON-serialisable: times as ISO 8601 strings, terms
-    as their strings, a data type as its name, a unit as its symbol,
-    tuples and arrays as lists."""
+    """
+    Make a value serialisable to JSON.
+
+    Times become ISO 8601 strings, known terms become their strings, a
+    data type becomes its name, a unit becomes its symbol, and tuples and
+    arrays become lists.
+
+    Parameters
+    ----------
+    value : object
+        The value to convert.
+
+    Returns
+    -------
+    object
+        A value that can be serialised to JSON.
+    """
     if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, enum.Enum):

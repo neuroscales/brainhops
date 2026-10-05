@@ -24,7 +24,7 @@ AXES = "ijk"
 
 
 class GeneratedBy(DataModelBase):
-    """One entry of BIDS `GeneratedBy`: a program that made the data."""
+    """One entry of BIDS `GeneratedBy`: a program that produced the data."""
 
     name: tx.Annotated[str, tx.Doc("Name of the program (BIDS `Name`).")]
     version: tx.Annotated[
@@ -39,7 +39,7 @@ class GeneratedBy(DataModelBase):
 
 
 class Channel(DataModelBase):
-    """The description of one channel (or volume) of an image."""
+    """The description of one channel of an image."""
 
     name: tx.Annotated[tx.Optional[str], tx.Doc("The channel label.")] = None
     color: tx.Annotated[
@@ -81,22 +81,23 @@ def _snapped(value: float) -> float:
 
 class EncodingDirection(DataModelBase):
     """
-    The direction of an encoding axis (phase or slice encoding): a unit
-    vector in a named coordinate system.
+    The direction of an encoding axis, such as the phase-encoding or the
+    slice-encoding axis, as a unit vector in a named coordinate system.
 
-    `space=None` means the image's own voxel (array) axes, the frame of
-    BIDS `PhaseEncodingDirection`: `EncodingDirection("j-")` is
-    `EncodingDirection((0, -1, 0))` (compare with
-    `direction.to_bids() == "j-"`, or with `EncodingDirection("j-")`). A
-    direction in voxel axes that is aligned with one of them reads and
-    writes as a BIDS string (`to_bids()`); any other one (an oblique
-    direction, after a resampling) is kept exactly, and the formats that
-    can only store an axis report it as lost.
+    When `space` is `None`, the vector is expressed in the voxel axes of
+    the image, which is the frame BIDS uses for `PhaseEncodingDirection`.
+    In that frame, `EncodingDirection("j-")` is the same direction as
+    `EncodingDirection((0, -1, 0))`. A direction that is aligned with a
+    voxel axis reads and writes as a BIDS string (see `to_bids`). Any
+    other direction, such as an oblique direction obtained after a
+    resampling, is kept exactly, and a format that can only store an axis
+    reports it as lost.
 
-    Two directions are equal when their fields are. The vector is
-    normalised on construction, and a component within `1e-9` of 0 or
-    +-1 is snapped to it, so that `(0, 0, 2)`, `"k"` and a `"k"` mapped
-    through a permutation of the axes are the same vector.
+    Two directions are equal when their vectors and their spaces are
+    equal. The vector is normalised on construction, and a component
+    within `1e-9` of 0, 1 or -1 is snapped to that value, so that
+    `(0, 0, 2)`, `"k"`, and `"k"` mapped through a permutation of the
+    axes are the same vector.
     """
 
     vector: tx.Annotated[
@@ -130,9 +131,16 @@ class EncodingDirection(DataModelBase):
         self.vector = tuple(_snapped(float(v)) for v in vector / norm)
 
     def to_bids(self) -> tx.Optional[str]:
-        """The BIDS string of this direction (`"j-"`), or `None` when it
-        is not along one of the first three voxel axes (another space, or
-        an oblique direction)."""
+        """
+        The BIDS string of this direction, such as `"j-"`.
+
+        Returns
+        -------
+        str or None
+            The BIDS string, or `None` when the direction is not along one
+            of the first three voxel axes (because it is expressed in a
+            world space, or because it is oblique).
+        """
         if self.space is not None:
             return None
         vector = np.asarray(self.vector, dtype=float)
@@ -144,8 +152,19 @@ class EncodingDirection(DataModelBase):
         return AXES[index] + ("-" if vector[index] < 0 else "")
 
     def transform(self, linear: ArrayLike) -> tx.Self:
-        """The direction after a linear map of its space (`linear`, a
-        matrix from the old axes to the new ones)."""
+        """
+        The direction after a linear map of its coordinate system.
+
+        Parameters
+        ----------
+        linear : array-like
+            The matrix that maps the old axes to the new ones.
+
+        Returns
+        -------
+        EncodingDirection
+            The mapped direction, normalised, in the same `space`.
+        """
         matrix = np.asarray(linear, dtype=float)
         return replace(self, vector=tuple(matrix @ np.asarray(self.vector)))
 
@@ -181,8 +200,28 @@ def to_enum(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
 
 
 def unit(value: tx.Any) -> tx.Any:
-    """A unit name the units module parses, as a `Unit`; a name it
-    cannot parse stays a string, so that a file's own spelling survives."""
+    """
+    Convert the value of a unit field.
+
+    A unit name that the units module parses becomes a `Unit`. A name
+    that it cannot parse stays a string, so that the spelling of a file
+    survives.
+
+    Parameters
+    ----------
+    value : Unit, str, None or UNSUPPORTED
+        The value to convert.
+
+    Returns
+    -------
+    Unit, str, None or UNSUPPORTED
+        The converted value.
+
+    Raises
+    ------
+    TypeError
+        If `value` is neither a unit nor a string.
+    """
     if _passes(value) or isinstance(value, Unit):
         return value
     if isinstance(value, str):
@@ -194,16 +233,49 @@ def unit(value: tx.Any) -> tx.Any:
 
 
 def dtype(value: tx.Any) -> tx.Any:
-    """A numpy data type, in native byte order: the byte order is
-    storage encoding, never metadata (M1)."""
+    """
+    Convert the value of a data type field to a numpy data type in native
+    byte order.
+
+    The byte order is a detail of how a file encodes its values, never
+    metadata, so it is dropped.
+
+    Parameters
+    ----------
+    value : dtype-like, None or UNSUPPORTED
+        The value to convert.
+
+    Returns
+    -------
+    numpy.dtype, None or UNSUPPORTED
+        The converted value.
+    """
     if _passes(value):
         return value
     return np.dtype(value).newbyteorder("=")
 
 
 def direction(value: tx.Any) -> tx.Any:
-    """The converter of an encoding direction field: a BIDS string, a
-    vector, a mapping (`vector`/`space`, or the JSON `Vector`/`Space`)."""
+    """
+    Convert the value of an encoding direction field.
+
+    Parameters
+    ----------
+    value : EncodingDirection, str, array-like, mapping, None or UNSUPPORTED
+        A direction, a BIDS string such as `"j-"`, a vector, or a mapping
+        with the keys `vector` and `space` (or `Vector` and `Space`, as
+        JSON spells them).
+
+    Returns
+    -------
+    EncodingDirection, None or UNSUPPORTED
+        The converted value.
+
+    Raises
+    ------
+    ValueError
+        If the value does not describe a direction.
+    """
     if _passes(value) or isinstance(value, EncodingDirection):
         return value
     if isinstance(value, tx.Mapping):

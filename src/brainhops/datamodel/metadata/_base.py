@@ -53,24 +53,28 @@ class Metadata(
     repr=False,
 ):
     """
-    Format-agnostic metadata: the common vocabulary, and `extra`.
+    Metadata that does not depend on a file format: the common
+    vocabulary, and the free-form store `extra`.
 
-    This is what in-memory images and transformations carry, the hub
-    through which formats convert (`NiftiMetadata -> Metadata ->
-    MghMetadata` loses exactly what `NiftiMetadata -> MghMetadata`
-    loses), and what the BIDS sidecar codec reads and writes. Every
-    field is supported, and there is no raw record.
+    In-memory images and transformations carry this class of metadata,
+    and every conversion between two formats goes through it, so that a
+    conversion from NIfTI to MGH loses exactly what the two conversions
+    from NIfTI to `Metadata` and from `Metadata` to MGH lose. The BIDS
+    sidecar codec reads and writes it too. `Metadata` supports every
+    field of the vocabulary.
 
-    It is also the root of the metadata classes, selected on `format`:
-    `Metadata(format="nifti", ...)` builds a `NiftiMetadata` (once
-    `brainhops.io` is imported), and an unknown format builds a
-    `Metadata`. The vocabulary is declared by six groups (mixins), which
-    `Metadata` inherits: [`ProvenanceMetadata`][],
-    [`MRIMetadata`][], [`DiffusionMetadata`][], [`DisplayMetadata`][],
-    [`MicroscopyMetadata`][] and [`TransformMetadata`][]. Each field holds
-    a value, `None` (unknown) or `UNSUPPORTED` (a format has no slot for
-    it). The hooks of a format are described in the format author's
-    guide (`docs/dev/metadata-formats.md`).
+    `Metadata` is also the root of the metadata classes, and selects the
+    subclass from the `format` field: once `brainhops.io` is imported,
+    `Metadata(format="nifti", ...)` builds a `NiftiMetadata`, and an
+    unknown format builds a plain `Metadata`.
+
+    The vocabulary is declared by six groups, which `Metadata` inherits:
+    [`ProvenanceMetadata`][], [`MRIMetadata`][], [`DiffusionMetadata`][],
+    [`DisplayMetadata`][], [`MicroscopyMetadata`][] and
+    [`TransformMetadata`][]. Each field holds a value, `None` when the
+    value is unknown, or `UNSUPPORTED` when a format has no slot for the
+    field. The hooks that a format implements are described in the format
+    author's guide (`docs/dev/metadata-formats.md`).
     """
 
     # --- class attributes ---------------------------------------------
@@ -158,10 +162,17 @@ class Metadata(
 
     def copy(self) -> tx.Self:
         """
-        A copy of this metadata, which can be edited without editing this
-        object (`extra` is copied too). This is what an image or a
-        transformation holds when it is given metadata that another
-        object holds already (`replace()`, `from_other`, `metadata=`).
+        Copy this metadata, so that the copy can be edited without editing
+        the original.
+
+        An image or a transformation holds a copy when it is given
+        metadata that another object already holds (through `replace()`,
+        `from_other` or `metadata=`).
+
+        Returns
+        -------
+        Metadata
+            The copy, of the same class. `extra` is copied as well.
         """
         new = copy.copy(self)
         extra = self.__dict__.get("extra")
@@ -174,12 +185,27 @@ class Metadata(
     @classmethod
     def supports(cls, name: str) -> bool:
         """
-        Whether this format can store the vocabulary field `name` (or
-        `"extra"`), as its class declares it (`supports=`).
+        Whether this class can store a vocabulary field, as its
+        `supports=` declaration says.
 
-        A format whose capability depends on the instance holds
-        `UNSUPPORTED` where an instance cannot store a field: test
-        `meta.name is UNSUPPORTED` for that.
+        A format whose capabilities depend on the instance holds
+        `UNSUPPORTED` in a field that a particular instance cannot store,
+        so `meta.name is UNSUPPORTED` is the test for an instance.
+
+        Parameters
+        ----------
+        name : str
+            The name of a vocabulary field, or `"extra"`.
+
+        Returns
+        -------
+        bool
+            Whether the class can store the field.
+
+        Raises
+        ------
+        KeyError
+            If `name` is not a vocabulary field.
         """
         if name not in FIELDS:
             raise KeyError(f"{name!r} is not a vocabulary field.")
@@ -198,18 +224,20 @@ class Metadata(
         Convert this metadata into another class, as images and
         transformations convert with `to()`.
 
+        Each value of the vocabulary is copied, except where the target
+        class cannot store the field. Such a value is lost, and reported.
+
         Parameters
         ----------
         cls : type or str, optional
-            The `Metadata` subclass to convert to, or its format name
-            (`"generic"`, `"nifti"`, ...). `None` keeps the class: a copy
-            (a same-format copy shares the raw record).
+            The `Metadata` subclass to convert to, or the name of its
+            format (`"generic"`, `"nifti"`, ...). By default, the class of
+            this object, which makes a copy.
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do if anything is lost. Defaults to the policy in
+            What to do when something is lost. By default, the policy in
             effect (see [`metadata_loss_policy`][]). A
             [`ConversionReport`][] is filled with what was lost or
-            approximated, and nothing is warned or raised: the caller
-            acts on it.
+            approximated, and nothing is warned or raised.
         **values
             Fields to set on the result.
 
@@ -217,6 +245,13 @@ class Metadata(
         -------
         Metadata
             The converted metadata.
+
+        Raises
+        ------
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
+        ValueError
+            If `cls` names no known format.
 
         Examples
         --------
@@ -235,17 +270,30 @@ class Metadata(
     @classmethod
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """
-        Convert the metadata of another format into this one.
+        Convert the metadata of another format into this class.
 
-        The raw record and the snapshot are never copied across formats
-        (they are when `other` is already of this class). Each
-        vocabulary value is copied, except where this format declares the
-        field unsupported: the value is then lost, and reported.
-        `UNSUPPORTED` on the source side reads as `None`. The report is
-        handed to the loss policy in effect (see
-        [`metadata_loss_policy`][]); use
-        [`to`][brainhops.datamodel.metadata.Metadata.to]`(cls,
-        on_loss=report)` to get it back.
+        This is the conversion that field converters trigger. It behaves
+        as [`to`][brainhops.datamodel.metadata.Metadata.to] does, and hands
+        the report to the loss policy in effect (see
+        [`metadata_loss_policy`][]). An object that is not metadata is
+        handed to the data model.
+
+        Parameters
+        ----------
+        other : object
+            The object to convert.
+        *args, **kwargs
+            Constructor arguments.
+
+        Returns
+        -------
+        Metadata
+            The converted metadata.
+
+        Raises
+        ------
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
         """
         if not isinstance(other, Metadata):
             return super().from_instance(other, *args, **kwargs)
@@ -332,11 +380,21 @@ class Metadata(
     @classmethod
     def from_bids(cls, sidecar: tx.Any) -> "Metadata":
         """
-        Read a BIDS JSON sidecar: a mapping, a JSON string, or a path.
+        Read a BIDS JSON sidecar.
 
-        Keys that name a vocabulary field (through its BIDS key) fill
-        that field; every other key lands in `extra`. The result is
-        generic `Metadata`.
+        A key that names a vocabulary field, through its BIDS key, fills
+        that field, and every other key lands in `extra`.
+
+        Parameters
+        ----------
+        sidecar : mapping, str, path-like or file
+            The sidecar, as a decoded JSON object, a JSON string, a path
+            or an open file.
+
+        Returns
+        -------
+        Metadata
+            Generic metadata.
         """
         from brainhops.io.metadata.bids import from_bids
 
@@ -346,10 +404,22 @@ class Metadata(
         self, *, on_loss: tx.Optional[OnLoss] = None
     ) -> tx.Dict[str, tx.Any]:
         """
-        The BIDS JSON sidecar (a JSON-serialisable `dict`) of this
-        metadata. The diffusion fields are not sidecar keys, and are
-        reported as lost, as is an encoding direction BIDS cannot write
-        (one that is not along a voxel axis).
+        Write this metadata as a BIDS JSON sidecar.
+
+        The diffusion fields are not sidecar keys, and an encoding
+        direction that is not along a voxel axis has no BIDS string, so
+        both are reported as lost.
+
+        Parameters
+        ----------
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do when something is lost. By default, the policy in
+            effect.
+
+        Returns
+        -------
+        dict
+            The sidecar, which can be serialised to JSON.
         """
         from brainhops.io.metadata.bids import to_bids
 

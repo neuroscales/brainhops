@@ -20,18 +20,44 @@ def preferred_dtype(
     on_loss: tx.Optional[OnLoss] = None,
 ) -> np.dtype:
     """
-    The element type a writer stores an array as.
+    Choose the element type that a writer stores an array as.
 
-    In order: an explicit `dtype` (the writer option); the `data_type` of
-    the metadata (the type the file had when it was read, or the one
-    set), when the array's values are of its kind, so that a label map
-    read as `uint8` is written as `uint8` again but a resampled, floating
-    point version of it is not quantised; the array's own type. A
-    `data_type` set (or converted) by hand that is not used is reported
-    as approximated, according to `on_loss` (the policy in effect by
-    default; a writer passes the `ConversionReport` of its write); one
-    that was only read is dropped silently (the data changed kind since
-    the read).
+    An explicit `dtype`, the writer option, always wins. Otherwise, the
+    `data_type` of the metadata is used when the values of the array are
+    of the same kind (integers, floating-point numbers or complex
+    numbers). The `data_type` is the type the file had when it was read,
+    or the type set since, so a label map read as `uint8` is written as
+    `uint8` again, while a resampled floating-point version of the same
+    map is not quantised. In every other case the array keeps its own
+    type.
+
+    A `data_type` that was set or converted by hand, but cannot be used
+    because the values are of another kind, is reported as approximated.
+    A `data_type` that was only read is dropped silently, since the data
+    changed kind after the read.
+
+    Parameters
+    ----------
+    metadata : Metadata or None
+        The metadata of the object being written.
+    array_dtype : dtype-like
+        The element type of the array.
+    dtype : dtype-like, optional
+        The element type requested by the caller of the writer.
+    on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+        What to do with an unused `data_type` that was set by hand. By
+        default, the policy in effect; a writer passes the report of its
+        write.
+
+    Returns
+    -------
+    numpy.dtype
+        The element type to store the array as.
+
+    Raises
+    ------
+    MetadataLossError
+        If an unused `data_type` is reported under the `"raise"` policy.
     """
     array_dtype = np.dtype(array_dtype)
     if dtype is not None:

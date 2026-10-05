@@ -19,23 +19,42 @@ def sync_metadata(
     image: tx.Any = None,
 ) -> bool:
     """
-    Give `obj` the metadata of its raw record, unless it holds it already
-    (called from a parser's `__post_init__`).
+    Give a parser the metadata of its raw record, unless the parser
+    already holds it.
 
-    `raw` is the raw record, or a function that reads it, for a record
-    that is rebuilt on each read (Zarr) or costly to build (MGH): it is
-    then called only when needed. A metadata whose raw record is that
-    record already (`same(held)`; by default, `held is raw`) is kept as
-    it is. Otherwise the raw record is decoded, and the fields that
-    changed in the metadata `obj` holds (given explicitly, or carried
-    over by `replace()`) are set over the decoded ones, as changes (see
-    `FileBasedMetadata.update_from_raw`). With `force`, the record is
-    decoded afresh, and the changes are dropped. A metadata with no raw
-    record is decoded again every time: nothing tells whether it was
-    read already. The `metadata` field converts what it is given
-    (`MetadataField`), so it is already of `cls` here.
+    A parser calls this function from its `__post_init__`. When the
+    metadata that the parser holds already has the record as its `raw`,
+    the metadata is kept as it is. Otherwise the record is decoded, and
+    the fields that changed in the metadata the parser holds (because the
+    metadata was given explicitly, or carried over by `replace()`) are
+    set over the decoded values, as changes (see
+    `FileBasedMetadata.update_from_raw`). Metadata with no record is
+    decoded again every time, since nothing tells whether it was read
+    already. The `metadata` field converts what it is given, so the
+    metadata is already of class `cls` here.
 
-    Returns whether the metadata was read again.
+    Parameters
+    ----------
+    obj : object
+        The parser, which has a `metadata` field.
+    cls : type
+        The metadata class of the format.
+    raw : object or callable
+        The raw record, or a function without arguments that builds it.
+        A function suits a record that is rebuilt on each read (Zarr) or
+        costly to build (MGH): it is called only when needed.
+    same : callable, optional
+        Whether the record of the metadata held, passed as the argument,
+        is the parser's record. By default, `held is raw`.
+    force : bool, optional
+        Decode the record afresh, and drop the changes.
+    image : object, optional
+        The object passed to the decoder (usually `obj`).
+
+    Returns
+    -------
+    bool
+        Whether the metadata was read again.
     """
     metadata = obj.metadata
     held = getattr(metadata, "raw", None)
