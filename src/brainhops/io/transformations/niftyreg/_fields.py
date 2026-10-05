@@ -365,7 +365,12 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
         """The grid and the RAS displacements of a three-slot chain."""
         return split_ras_displacement_chain(
-            chain, self._WHAT, ndim=_NDIM, coeff=self.coeff
+            chain,
+            self._WHAT,
+            ndim=_NDIM,
+            coeff=self.coeff,
+            degree=self.degree,
+            bound=self.bound,
         )
 
     def _write(
@@ -605,15 +610,19 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
             affine = homogeneous_matrix(chain[0], self._WHAT, _NDIM)
             extensions.append(affine)
             chain = chain[1:]
+        # NiftyReg stores cubic and linear grids: a field of either degree
+        # is written at its own, and any other is refitted to a cubic one.
         degree = int(getattr(chain[1], "degree", 3)) if len(chain) == 3 else 3
         kinds = {degree: kind for kind, degree in _GRID_DEGREE.items()}
         if degree not in kinds:
-            raise WriterError(
-                f"NiftyReg stores cubic (3) and linear (1) control-point "
-                f"grids, not grids of degree {degree}."
-            )
+            degree = 3
         vox2world, vectors = split_ras_displacement_chain(
-            chain, self._WHAT, ndim=_NDIM, coeff=degree > 1
+            chain,
+            self._WHAT,
+            ndim=_NDIM,
+            coeff=degree > 1,
+            degree=degree,
+            bound=self.bound,
         )
         backend = get_array_backend(vectors)
         grid = voxel_grid_coordinates(

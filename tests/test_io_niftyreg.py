@@ -625,17 +625,78 @@ def test_grid_round_trips(
     )
 
 
-def test_grid_refuses_sampled_values() -> None:
+def _written_field(grid, tmp_path: Path) -> np.ndarray:  # noqa: ANN001
+    # The values of the field a grid reads back as, once written.
+    out = tmp_path / "out.nii.gz"
+    nb.save(grid.to_nibabel(), out)
+    back = load(out)
+    field = list(back)[-2]
+    assert (field.coeff, int(field.degree)) == (True, 3)
+    return np.asarray(field.field)
+
+
+def test_a_grid_of_another_degree_is_refitted_to_a_cubic_one(
+    tmp_path: Path, rng: np.random.RandomState
+) -> None:
+    # NiftyReg stores cubic and linear grids: a quadratic one is refitted.
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
 
     grid = NiftyRegControlPointGrid()
     grid.transformations = ras_displacement_chain(
-        np.zeros((4, 4, 4, 3)), np.eye(4), degree=2, coeff=True
+        rng.standard_normal((6, 6, 6, 3)), np.eye(4), degree=2, coeff=True
     )
-    with pytest.raises(WriterError, match="degree 2"):
-        grid.to_nibabel()
+    values = np.asarray(list(grid)[1].field)
+    np.testing.assert_allclose(
+        _written_field(grid, tmp_path), values, atol=1e-4
+    )
+
+
+def test_sampled_values_are_written_as_coefficients(
+    tmp_path: Path, rng: np.random.RandomState
+) -> None:
+    # A field of values written to a format of coefficients is encoded,
+    # and reads back as the same values.
+    from brainhops.io.transformations.base.fields import (
+        ras_displacement_chain,
+    )
+
+    values = rng.standard_normal((6, 6, 6, 3))
+    grid = NiftyRegControlPointGrid()
+    grid.transformations = ras_displacement_chain(
+        values, np.eye(4), degree=3, coeff=False
+    )
+    np.testing.assert_allclose(
+        _written_field(grid, tmp_path), values, atol=1e-4
+    )
+
+
+def test_stored_coefficients_are_written_without_refitting(
+    tmp_path: Path,
+    rng: np.random.RandomState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A grid already in the format's encoding is written as it is stored:
+    # nothing is fitted or decoded on the way out.
+    from brainhops.datamodel._transformations import concrete
+
+    positions, vox2world = _random_cpp(rng)
+    path = tmp_path / "cpp.nii.gz"
+    nb.save(_nreg_image(positions, vox2world, 2), path)  # a cubic grid
+    grid = load(path)
+    list(grid)  # build the chain before the spline filters are disabled
+
+    def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the stored coefficients were refitted")
+
+    monkeypatch.setattr(concrete, "value2coeff_field", refuse)
+    monkeypatch.setattr(concrete, "coeff2value_field", refuse)
+    out = tmp_path / "out.nii.gz"
+    grid.save(out)
+    np.testing.assert_allclose(
+        nb.load(out).get_fdata()[:, :, :, 0, :], positions, atol=1e-4
+    )
 
 
 # ----------------------------------------------------------------------

@@ -475,28 +475,74 @@ def test_bspline_read_is_written_back_with_its_domain(
     assert isinstance(again[0], X5BSplineField)
 
 
-def test_splines_x5_cannot_hold_are_refused(tmp_path: Path) -> None:
-    out = tmp_path / "bad.x5"
+@pytest.mark.parametrize(
+    "kwargs",
+    [dict(degree=1), dict(bound="nearest")],
+    ids=["linear", "nearest"],
+)
+def test_splines_x5_cannot_hold_are_refitted(
+    tmp_path: Path, kwargs: dict
+) -> None:
+    # X5 stores cubic coefficients with a zero boundary: coefficients of
+    # another degree or boundary are refitted to those, and the field
+    # reads back with the same values on its knots.
+    out = tmp_path / "refit.x5"
     ras2vox, field, vox2ras = X5BSplineField.from_ras(_ramp(), KNOTS)
-    for kwargs, match in (
-        (dict(degree=1), "cubic"),
-        (dict(bound="nearest"), "boundary"),
-    ):
-        spline = xforms.DisplacementField(
-            data=field.data,
-            input=field.input,
-            output=field.output,
-            coeff=True,
-            **{"degree": 3, "bound": "constant", **kwargs},
+    spline = xforms.DisplacementField(
+        data=field.data,
+        input=field.input,
+        output=field.output,
+        coeff=True,
+        **{"degree": 3, "bound": "constant", **kwargs},
+    )
+    chain = xforms.Sequence(
+        transformations=[ras2vox, spline, vox2ras],
+        input=systems.RASmm(),
+        output=systems.RASmm(),
+    )
+    X5Transform(transformations=[chain]).save(out)
+    again = io.load(out)[0]
+    assert isinstance(again, X5BSplineField)
+    back = again[1]
+    assert (back.coeff, int(back.degree)) == (True, 3)
+    np.testing.assert_allclose(
+        np.asarray(back.field), np.asarray(spline.field), atol=1e-4
+    )
+
+
+def test_stored_spline_coefficients_are_not_refitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cubic, zero-boundary spline is already what X5 stores: its
+    # coefficients are written as they are, without a refit.
+    from brainhops.datamodel._transformations import concrete
+
+    def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the stored coefficients were refitted")
+
+    monkeypatch.setattr(concrete, "value2coeff_field", refuse)
+    monkeypatch.setattr(concrete, "coeff2value_field", refuse)
+    out = tmp_path / "spline.x5"
+    X5Transform(
+        transformations=[X5BSplineField.from_ras(_ramp(), KNOTS)]
+    ).save(out)
+    with h5py.File(out, "r") as f:
+        np.testing.assert_allclose(
+            f["TransformGroup/0/Transform"], _ramp(), atol=1e-5
         )
-        chain = xforms.Sequence(
-            transformations=[ras2vox, spline, vox2ras],
-            input=systems.RASmm(),
-            output=systems.RASmm(),
-        )
-        with pytest.raises(UnrepresentableTransformationError, match=match):
-            X5Transform(transformations=[chain]).save(out)
-        assert not out.exists()
+
+
+def test_sampled_displacements_stay_sampled(tmp_path: Path) -> None:
+    # X5 stores either encoding, and the field's `coeff` flag selects
+    # which: a field of values is written as displacements.
+    out = tmp_path / "dense.x5"
+    X5Transform(
+        transformations=[X5DisplacementField.from_ras(_ramp(), VOX2RAS)]
+    ).save(out)
+    with h5py.File(out, "r") as f:
+        node = f["TransformGroup/0"]
+        assert node.attrs["Representation"] == "displacements"
+        np.testing.assert_allclose(node["Transform"], _ramp(), atol=1e-5)
 
 
 @pytest.mark.parametrize(
@@ -646,6 +692,31 @@ def test_a_coordinates_field_is_written_as_deformations(
         np.testing.assert_allclose(node["Transform"], _ramp())
         np.testing.assert_allclose(node["Domain/Mapping"], VOX2RAS)
         assert "TransformChain" not in f
+
+
+def test_coordinate_coefficients_are_written_as_deformations(
+    tmp_path: Path,
+) -> None:
+    # X5 stores sampled coordinates, so a field of coefficients is written
+    # as its values, and reads back as them.
+    ras2vox, field = X5CoordinatesField.from_ras(_ramp(), VOX2RAS)
+    spline = field.to(degree=3).to(coeff=True)
+    chain = xforms.Sequence(
+        transformations=[ras2vox, spline],
+        input=systems.RASmm(),
+        output=systems.RASmm(),
+    )
+    out = tmp_path / "def.x5"
+    X5Transform(transformations=[chain]).save(out)
+    with h5py.File(out, "r") as f:
+        node = f["TransformGroup/0"]
+        assert node.attrs["Representation"] == "deformations"
+        np.testing.assert_allclose(node["Transform"], _ramp(), atol=1e-6)
+    again = io.load(out)
+    assert isinstance(again[0], X5CoordinatesField)
+    np.testing.assert_allclose(
+        np.asarray(again[0][1].field), np.asarray(field.field), atol=1e-6
+    )
 
 
 def test_non_ras_transformations_are_refused(tmp_path: Path) -> None:

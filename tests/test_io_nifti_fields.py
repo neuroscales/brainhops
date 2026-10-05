@@ -379,24 +379,42 @@ def test_a_two_component_field_is_refused(tmp_path) -> None:  # noqa: ANN001
         field.transformations  # noqa: B018
 
 
-def test_a_spline_field_is_not_written(tmp_path) -> None:  # noqa: ANN001
-    from brainhops.io.base.parsers import WriterError
+def test_a_spline_field_is_written_as_its_values(tmp_path) -> None:  # noqa: ANN001
+    """A field of coefficients is decoded: NIfTI stores sampled values."""
+    from brainhops._core.bsplines import value2coeff_field
+    from brainhops.datamodel import systems
     from brainhops.io.transformations.base.affines import (
         RASToVoxel,
         VoxelToRAS,
     )
 
+    values = np.random.default_rng(0).normal(size=(*SHAPE, 3))
+    coefficients = value2coeff_field(values, degree=3, bound="nearest")
+    voxel = systems.VoxelCoordinateSystem()
     field = NiftiRASDisplacementField(
         transformations=(
             RASToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
-                data=np.zeros((*SHAPE, 3), "float32"), coeff=True
+                data=coefficients,
+                degree=3,
+                coeff=True,
+                input=voxel,
+                output=voxel,
             ),
             VoxelToRAS(matrix=np.eye(4)[:3]),
         )
     )
-    with pytest.raises(WriterError, match="coefficients"):
-        field.save(tmp_path / "spline.nii")
+    target = tmp_path / "spline.nii.gz"
+    field.save(target)
+
+    written = np.asarray(nb.load(str(target)).dataobj)[:, :, :, 0]
+    np.testing.assert_allclose(written, values, atol=1e-10)
+    reloaded = io.transformations.load(target)
+    assert type(reloaded) is NiftiRASDisplacementField
+    assert reloaded.displacement.coeff is False
+    np.testing.assert_allclose(
+        np.asarray(reloaded.displacement.field), values, atol=1e-10
+    )
 
 
 # ----------------------------------------------------------------------

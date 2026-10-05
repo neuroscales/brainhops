@@ -301,12 +301,8 @@ class M3zMorph(
                 "coordinates, source voxels to RAS) or two (atlas RAS to "
                 "node voxels, a field of source RAS coordinates)."
             )
-        if field.coeff:
-            raise UnrepresentableTransformationError(
-                "A morph stores sampled positions, and this field holds "
-                "spline coefficients. Convert it to values first."
-            )
-        positions = np.asarray(field.field, dtype=np.float32)
+        # A morph stores sampled positions.
+        positions = np.asarray(field.to(coeff=False).data, dtype=np.float32)
         if positions.ndim != 4 or positions.shape[-1] != 3:
             raise UnrepresentableTransformationError(
                 f"A morph holds one 3-vector per node of a 3-D grid, not "

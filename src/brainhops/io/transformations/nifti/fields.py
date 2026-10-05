@@ -150,7 +150,8 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         Keyword arguments override header fields last, so an explicit value
         wins.
         """
-        field = self.field
+        # NIfTI stores sampled coordinates.
+        field = self.to(coeff=False).data
         if field is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."

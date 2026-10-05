@@ -404,10 +404,12 @@ def transformation_to_nodes(
       NIfTI `DISPVECT` field, or any chain of an affine, a
       `DisplacementField` and an affine) is one `nonlinear` node that
       stores `displacements`.
-    - The same chain whose field holds cubic spline coefficients
-      (`coeff`, degree 3, zero boundary), such as an
-      [`X5BSplineField`][], is one `nonlinear` `bspline` node that
-      stores `coefficients`.
+    - The same chain whose field holds spline coefficients (`coeff`),
+      such as an [`X5BSplineField`][], is one `nonlinear` `bspline`
+      node that stores `coefficients`: the field's `coeff` flag selects
+      which of the two a displacement field is written as. X5 stores
+      cubic coefficients with a zero boundary, so coefficients of
+      another degree or boundary are refitted to those.
     - A field of RAS coordinates (an [`X5CoordinatesField`][], an SPM
       `y_` field, or any chain of an affine and a `CoordinatesField`) is
       one `nonlinear` node that stores `deformations`.
@@ -486,20 +488,16 @@ def _encode_bspline(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
     _check_ras(xform, "B-spline field")
-    what = "An X5 B-spline"
-    field = chain[1]
-    if int(field.degree) != _BSPLINE_DEGREE:
-        raise UnrepresentableTransformationError(
-            f"{what} is cubic, and this field is a spline of degree "
-            f"{int(field.degree)}."
-        )
-    if not _is_zero_bound(field.bound):
-        raise UnrepresentableTransformationError(
-            f"{what} has no coefficients beyond its grid of knots (a zero "
-            f"boundary), and this field's boundary is {field.bound!r}."
-        )
+    # X5 stores cubic coefficients with nothing beyond the grid of knots
+    # (a zero boundary). A field stored that way is written as it is; any
+    # other is refitted to it.
     vox2ras, coefficients = split_ras_displacement_chain(
-        chain, what, ndim=_NDIM, coeff=True
+        chain,
+        "An X5 B-spline",
+        ndim=_NDIM,
+        coeff=True,
+        degree=_BSPLINE_DEGREE,
+        bound=BoundaryCondition.zeros,
     )
     node = _field_node(coefficients, vox2ras, "coefficients")
     # nitransforms reads the affine of the knots from AdditionalParameters,
@@ -513,30 +511,19 @@ def _encode_bspline(
     )
 
 
-def _is_zero_bound(bound: tx.Any) -> bool:
-    # A field's bound is a `BoundaryCondition` or a constant fill value.
-    if isinstance(bound, str):
-        return bound == BoundaryCondition.zeros
-    return float(bound) == 0.0
-
-
 def _encode_coordinates(
     xform: _xforms.Transformation, chain: tx.Sequence
 ) -> X5Node:
     _check_ras(xform, "coordinates field")
     what = "An X5 coordinates field"
     ras2vox = homogeneous_matrix(chain[0], what, ndim=_NDIM)
-    field = chain[1]
-    if field.field is None:
+    # X5 stores sampled coordinates.
+    field = chain[1].to(coeff=False)
+    if field.data is None:
         raise UnrepresentableTransformationError(
             "This field has no coordinates, so there is nothing to write."
         )
-    if field.coeff:
-        raise UnrepresentableTransformationError(
-            f"{what} stores sampled coordinates, and this field holds "
-            f"spline coefficients. Convert it to values first."
-        )
-    coordinates = field.field
+    coordinates = field.data
     shape = tuple(int(s) for s in coordinates.shape)
     if len(shape) == _NDIM + 2 and shape[_NDIM] == 1:
         # The NIfTI layout, (X, Y, Z, 1, 3), keeps a singleton axis.
