@@ -97,3 +97,21 @@ def test_an_spm_field_inverts(tmp_path) -> None:  # noqa: ANN001
     assert len(inverse) == len(field)
     assert inverse.input == field.output
     assert inverse.output == field.input
+
+
+@pytest.mark.parametrize("cls", [NiftiRASToVoxel, NiftiVoxelToRAS])
+def test_reading_the_image_does_not_replace_the_matrix(cls) -> None:  # noqa: ANN001
+    # The parser's image `data` and the affine's matrix share a name, not
+    # a slot: loading the voxels must not turn them into the matrix.
+    from brainhops.io.base.nifti import NiftiParser
+
+    img = _image()
+    t = cls(image=img, header=img.header)
+    NiftiParser.data.fget(t)
+    assert t.matrix.shape == (3, 4)
+    expected = VOX2RAS if cls is NiftiVoxelToRAS else np.linalg.inv(VOX2RAS)
+    np.testing.assert_allclose(t.matrix, expected[:3])
+    # An explicit matrix still wins over the header.
+    explicit = cls(np.eye(4)[:3], image=img, header=img.header)
+    NiftiParser.data.fget(explicit)
+    np.testing.assert_array_equal(explicit.matrix, np.eye(4)[:3])
