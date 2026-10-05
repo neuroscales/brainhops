@@ -38,6 +38,7 @@ from brainhops.io.base._geometry import (
     embed_affine,
     ras_conversion,
     reduce_to_affine,
+    split_spatial,
 )
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
@@ -45,6 +46,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
     SnifferContentError,
+    UnrepresentableTransformationError,
     WriterError,
     WriterNotImplementedError,
     preserve_position,
@@ -960,17 +962,35 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
     """
     Compute the `(4, 4)` voxel-to-RAS matrix of a transformation.
 
+    See [`_voxel_to_ras_and_others`][], which also returns the scale and
+    offset of the axes that follow the spatial ones.
+    """
+    return _voxel_to_ras_and_others(xform)[0]
+
+
+def _voxel_to_ras_and_others(
+    xform: Transformation,
+) -> tx.Tuple[np.ndarray, tx.List[tx.Tuple[float, float]]]:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, and the
+    scale and offset of each axis that follows the spatial ones.
+
     The transformation must map voxel coordinates to a world space. An
     affine transformation is used directly. A transformation of any other
     kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
-    affines, is converted first. A two-dimensional affine is embedded in a
-    `(4, 4)` matrix, which is the shape NIfTI stores. The world space is
-    turned into RAS from the anatomical orientation of its axes.
+    affines, is converted first -- including the sequence of a spatial and
+    a temporal subspace transform that a space-and-time image is read as.
+    The NIfTI affine applies to the three spatial axes. The axes that
+    follow them (time, ...) are split off, each with its scale (its
+    spacing) and its offset, which the caller stores apart. A
+    two-dimensional affine is embedded in a `(4, 4)` matrix, which is the
+    shape NIfTI stores. The world space is turned into RAS from the
+    anatomical orientation of its axes.
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
-    `UnrepresentableTransformationError`. A spatial transformation of more
-    than three dimensions raises `WriterError`.
+    `UnrepresentableTransformationError`, as does one that mixes the
+    spatial axes with the others.
     """
     affine = reduce_to_affine(xform, "NIfTI")
     matrix = affine.homogeneous_matrix
@@ -978,11 +998,50 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
         matrix = np.eye(4)
     matrix = np.asarray(matrix, dtype=float)
     world_ndim = matrix.shape[0] - 1
+    matrix, others = split_spatial(matrix, "NIfTI")
     matrix = _embed_affine(matrix)
 
     world = _closed_world(getattr(affine, "output", None), world_ndim)
     conversion = ras_conversion(world)
-    return conversion @ matrix
+    return conversion @ matrix, others
+
+
+def _set_other_axes(
+    image: _NiftiObject, others: tx.Sequence[tx.Tuple[float, float]]
+) -> None:
+    """
+    Store the scale and offset of the axes that follow the spatial ones.
+
+    The scale of each becomes its spacing (`pixdim`), and the offset of
+    the first, the time axis, becomes `toffset`. NIfTI stores no origin
+    for any other axis, so a nonzero offset there, or a negative spacing,
+    raises `UnrepresentableTransformationError`. A transformation over
+    more axes than the data has raises `WriterError`.
+    """
+    if not others:
+        return
+    header = image.header
+    zooms = list(header.get_zooms())
+    if 3 + len(others) > len(zooms):
+        raise WriterError(
+            f"The voxel-to-world transformation maps {3 + len(others)} "
+            f"axes, but the data has {len(zooms)}."
+        )
+    for k, (scale, offset) in enumerate(others):
+        if scale < 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores the spacing of axis {3 + k} as a positive "
+                f"number, so a map that reverses it ({scale}) cannot be "
+                f"written."
+            )
+        if k and offset != 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores an origin for the time axis only, so a map "
+                f"that shifts axis {3 + k} ({offset}) cannot be written."
+            )
+        zooms[3 + k] = scale
+    header.set_zooms(zooms)
+    header["toffset"] = others[0][1]
 
 
 def _closed_world(
@@ -1257,6 +1316,10 @@ def _image_with_geometry(
     transformations when present, and the rigid part of the sform
     otherwise.
 
+    The NIfTI affine applies to the spatial axes. The spacing of each
+    axis that follows them, and the origin of the time axis (`toffset`),
+    are read from the preferred transformation too.
+
     The spatial and temporal units are read from the preferred
     transformation's output space. A spatial unit NIfTI cannot store is
     converted to the nearest one it can, and each form's affine is scaled
@@ -1269,7 +1332,7 @@ def _image_with_geometry(
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
 
-    sform_raw = _voxel_to_ras(transformation)
+    sform_raw, others = _voxel_to_ras_and_others(transformation)
     scode = _reference_code(preferred_output)
     qform_raw, qcode, qform_output = _sform_and_qform(
         transformations, sform_raw, scode
@@ -1279,6 +1342,7 @@ def _image_with_geometry(
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     image = _new_nifti(data, sform)
+    _set_other_axes(image, others)
     _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)

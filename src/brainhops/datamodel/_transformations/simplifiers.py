@@ -339,7 +339,10 @@ def _(
     because one inner is the lazy inverse of the other, or because both
     are already the identity. This is what lets a subspace-wrapped field
     meet its own subspace-wrapped inverse and cancel, rather than the field
-    being resampled through a neighbour first.
+    being resampled through a neighbour first. An inner sequence is undone
+    by a sequence of lazy inverses, not by one, so a pair whose inner is a
+    sequence cancels when the two inners, chained, simplify to the
+    identity -- each element meeting its own lazy inverse.
     """
     if (
         first.output_axes is None
@@ -362,7 +365,9 @@ def _(
         return None
     inner_first = first.transformation
     inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
+    if _cancels(inner_first, inner_second) or _chain_cancels(
+        inner_first, inner_second, policy
+    ):
         return Identity(input=first.input, output=second.output)
     # Structure only, never values: this rule is asked about every adjacent
     # subspace pair on every fixpoint iteration, and a numeric check would
@@ -391,36 +396,40 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     `first` is applied before `second`. The two cancel when `second` is the
     lazy inverse of `first`, or `first` is the lazy inverse of `second`. An
     `Inverse` names the transform it undoes as its `forward`, so the test is
-    first a plain identity check that materializes neither field. This
-    covers both a typed inverse and a generic `Inverse(forward=X)`.
-
-    A transform held by a few parameters (an affine, a scaling, ...) is
-    also recognized by value, since an equal transform built anew -- such
-    as one decoded again from a file header -- is a distinct object. A
-    field is never compared by value, which would read every sample.
+    a plain identity check that materializes neither field: it is O(1) and
+    decides from object identity alone. This covers both a typed inverse
+    and a generic `Inverse(forward=X)`.
     """
-    if isinstance(second, Inverse) and _same(second.forward, first):
+    if isinstance(second, Inverse) and second.forward is first:
         return True
-    if isinstance(first, Inverse) and _same(first.forward, second):
+    if isinstance(first, Inverse) and first.forward is second:
         return True
     return False
 
 
-# The transforms whose parameters are cheap enough to compare by value.
-# Only these exact types are, so a subclass whose equality is its own
-# (such as a format reader's) is recognized by identity alone.
-_BY_VALUE = (Affine, Linear, Rotation, Permutation, Scaling, Translation)
+def _chain_cancels(
+    first: tx.Optional[Transformation],
+    second: tx.Optional[Transformation],
+    policy: SimplifyTable,
+) -> bool:
+    """Whether ``[first, second]`` cancels to the identity, either a sequence.
 
-
-def _same(this: Transformation, that: Transformation) -> bool:
-    # Whether two transforms are one and the same, by identity or, for a
-    # transform held by a few parameters, by value (parameters and
-    # declared systems).
-    if this is that:
-        return True
-    return (
-        type(this) is type(that) and type(this) in _BY_VALUE and this == that
+    The inverse of a sequence is the sequence of the inverses of its
+    elements, in reverse order, rather than one lazy inverse, so
+    [`_cancels`][] cannot see that it undoes the sequence. Chained, the two
+    simplify to the identity when each element meets its own lazy inverse,
+    which is still decided from object identity alone. Only a pair in
+    which a sequence takes part is chained: any other pair is decided by
+    `_cancels`.
+    """
+    if first is None or second is None:
+        return False
+    if not (isinstance(first, Sequence) or isinstance(second, Sequence)):
+        return False
+    chained = _simplify(
+        Sequence(transformations=[first, second]), policy=policy
     )
+    return isinstance(chained, Identity)
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:

@@ -1,6 +1,6 @@
 # dependencies
 import typing_extensions as tx
-from bagof.magic import KwOnly, fields
+from bagof.magic import KwOnly
 
 # api
 from brainhops._core.properties import smartproperty
@@ -24,13 +24,7 @@ if tx.TYPE_CHECKING:
 
 @kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
-class Transformation(
-    DataModelBase,
-    reverse=True,
-    # The generated equality is kept under another name, and wrapped by
-    # the `__eq__` below so that an array-valued field compares as a whole.
-    eq="__fields_eq__",
-):
+class Transformation(DataModelBase, reverse=True, eq=False):
     """
     A transformation between coordinate systems.
 
@@ -56,6 +50,13 @@ class Transformation(
         that deforms an image from space A to space B, will actually
         map coordinates from space B to space A. In our model, this
         transformation would be represented as `Transform(input=B, output=A)`.
+
+    !!! warning "Transformations cannot be compared"
+        `==` and `!=` raise `TypeError` on a transformation. Whether two
+        transformations are "the same" has no single answer -- the same
+        object, the same map, the same parameters in the same systems --
+        so none is picked. Compare objects with `is`, and parameters or
+        systems explicitly. A transformation is not hashable either.
     """
 
     # --- class attributes ---------------------------------------------
@@ -121,33 +122,28 @@ class Transformation(
     input = smartproperty("input")
     output = smartproperty("output")
 
-    # --- equality -----------------------------------------------------
+    # --- comparison ---------------------------------------------------
 
-    def __eq__(self, other: object) -> bool:
-        """
-        Whether two transformations hold the same values.
+    def __eq__(self, other: object) -> tx.NoReturn:
+        _refuse_comparison(self, other, "==")
 
-        An array-valued field, such as the matrix of an affine, is equal
-        when both arrays have the same shape and every element matches.
-        """
-        try:
-            return self.__fields_eq__(other)
-        except ValueError:
-            # The generated comparison compares fields as a tuple, which
-            # asks an array comparison for a single truth value. It has
-            # already checked that the two classes compare, so the fields
-            # are compared again one by one, arrays as a whole.
-            pass
-        return all(
-            _same_value(
-                getattr(self, field.name, _UNSET),
-                getattr(other, field.name, _UNSET),
-            )
-            for field in fields(type(self))
-            if field.eq
-        )
+    def __ne__(self, other: object) -> tx.NoReturn:
+        _refuse_comparison(self, other, "!=")
 
     __hash__ = None
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        # A transformation that also derives from another struct -- a
+        # format reader's block, a geometry's fields -- takes its options
+        # from whichever base comes first, and may then be given a
+        # generated `__eq__` (and `__hash__`) that compares its fields,
+        # arrays included. The refusal above holds for every
+        # transformation, so it is put back on such a class -- and on any
+        # class that writes its own: no transformation compares.
+        super().__init_subclass__(**kwargs)
+        for name in ("__eq__", "__ne__", "__hash__"):
+            if getattr(cls, name) is not Transformation.__dict__[name]:
+                setattr(cls, name, Transformation.__dict__[name])
 
     # --- methods ------------------------------------------------------
 
@@ -435,27 +431,15 @@ compute]:
         return self.inverse()
 
 
-_UNSET = object()
-
-
-def _same_value(this: tx.Any, that: tx.Any) -> bool:
-    # Whether two field values match, comparing an array as a whole and
-    # a list or tuple element by element.
-    if this is that:
-        return True
-    if isinstance(this, Transformation) or isinstance(that, Transformation):
-        # A transformation (such as a grid, which has a shape) compares
-        # itself.
-        return bool(this == that)
-    if hasattr(this, "shape") or hasattr(that, "shape"):
-        shape = getattr(this, "shape", None)
-        if shape is None or tuple(shape) != tuple(getattr(that, "shape", ())):
-            return False
-        return bool((this == that).all())
-    if isinstance(this, (list, tuple)):
-        return (
-            type(this) is type(that)
-            and len(this) == len(that)
-            and all(_same_value(a, b) for a, b in zip(this, that))
-        )
-    return bool(this == that)
+def _refuse_comparison(this: object, that: object, op: str) -> tx.NoReturn:
+    # `==` and `!=` are refused on a transformation, whatever it is compared
+    # with: there is no single meaning of equality to give them, and a
+    # generated field-by-field comparison would ask an array comparison for
+    # a single truth value. Callers compare objects with `is`, and
+    # parameters or systems explicitly.
+    raise TypeError(
+        f"Transformations cannot be compared with {op!r} "
+        f"({type(this).__name__} {op} {type(that).__name__}). Use `is` to "
+        f"test whether two are the same object, or compare their "
+        f"parameters and systems explicitly."
+    )

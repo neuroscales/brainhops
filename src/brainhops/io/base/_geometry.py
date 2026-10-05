@@ -3,9 +3,10 @@ Voxel-to-world geometry helpers shared by file formats.
 
 Several formats (NIfTI, MRtrix, ...) store the geometry of an image as a
 three-dimensional voxel-to-RAS affine. The helpers here reduce a
-transformation to that matrix. They depend only on the datamodel and
-NumPy -- not on nibabel -- so that formats that do not need nibabel can
-use them.
+transformation to that matrix, and split off the axes that follow the
+spatial ones (such as time), which those formats store apart. They depend
+only on the datamodel and NumPy -- not on nibabel -- so that formats that
+do not need nibabel can use them.
 """
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "embed_affine",
     "ras_conversion",
     "reduce_to_affine",
+    "split_spatial",
 ]
 
 # externals
@@ -168,3 +170,81 @@ def embed_affine(
     embedded[:out_dim, :in_dim] = matrix[:out_dim, :in_dim]
     embedded[:out_dim, 3] = matrix[:out_dim, in_dim]
     return embedded
+
+
+def split_spatial(
+    matrix: np.ndarray, fmt: str, world: str = "world", nspace: int = 3
+) -> tx.Tuple[np.ndarray, tx.List[tx.Tuple[float, float]]]:
+    """
+    Split a homogeneous voxel-to-world matrix into its spatial block and
+    the scale and offset of each axis that follows the spatial ones.
+
+    A format that stores a spatial affine stores the axes that follow the
+    `nspace` spatial ones -- the time axis of a time series -- apart, each
+    by a spacing and, for some, an origin. A map over more axes splits
+    into those only when it does not couple the spatial axes with the
+    others, and maps each other axis onto itself alone: its matrix is
+    block-diagonal, with a diagonal second block.
+
+    A map over at most `nspace` axes is returned unchanged, with no other
+    axis.
+
+    Parameters
+    ----------
+    matrix : ndarray
+        The homogeneous voxel-to-world matrix, of shape
+        `(n_out + 1, n_in + 1)`.
+    fmt : str
+        The name of the format, used in error messages.
+    world : str
+        The name the format gives its world space, used in error
+        messages.
+    nspace : int
+        The number of leading axes that are spatial.
+
+    Returns
+    -------
+    spatial : ndarray
+        The homogeneous matrix of the spatial axes, of shape
+        `(nspace + 1, nspace + 1)`, or `matrix` unchanged.
+    others : list of (float, float)
+        The scale and the offset of each axis that follows the spatial
+        ones, in order.
+
+    Raises
+    ------
+    UnrepresentableTransformationError
+        If the map couples the spatial axes with the others, mixes two of
+        the others, or maps different numbers of axes in and out.
+    """
+    n_out, n_in = matrix.shape[0] - 1, matrix.shape[1] - 1
+    if n_out <= nspace and n_in <= nspace:
+        return matrix, []
+    if n_out != n_in:
+        raise UnrepresentableTransformationError(
+            f"{fmt} stores a {nspace}D voxel-to-{world} affine and a spacing "
+            f"for each other axis, so a map from {n_in} to {n_out} axes "
+            f"cannot be written."
+        )
+    linear = matrix[:n_out, :n_in]
+    others = linear[nspace:, nspace:]
+    coupled = (
+        np.any(linear[:nspace, nspace:] != 0)
+        or np.any(linear[nspace:, :nspace] != 0)
+        or np.any(others != np.diag(np.diag(others)))
+    )
+    if coupled:
+        raise UnrepresentableTransformationError(
+            f"{fmt} stores a {nspace}D voxel-to-{world} affine over the "
+            f"spatial axes and a spacing for each other axis (such as "
+            f"time), so a map that mixes the spatial axes with the others, "
+            f"or two of the others, cannot be written."
+        )
+    spatial = np.eye(nspace + 1)
+    spatial[:nspace, :nspace] = matrix[:nspace, :nspace]
+    spatial[:nspace, nspace] = matrix[:nspace, n_in]
+    extra = [
+        (float(matrix[d, d]), float(matrix[d, n_in]))
+        for d in range(nspace, n_out)
+    ]
+    return spatial, extra

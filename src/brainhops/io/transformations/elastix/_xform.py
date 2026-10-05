@@ -241,11 +241,12 @@ class ElastixTransform(
             if origin is not None:
                 visited = (*visited, os.path.realpath(str(origin)))
             initial_xform = _load_initial(filename, _visited=visited)
+        elif isinstance(initial, _xforms.Transformation):
+            # Tested first: a transformation cannot be compared with `==`,
+            # which `in` falls back on.
+            initial_xform = initial
         elif initial not in (True, False, None):
-            if isinstance(initial, _xforms.Transformation):
-                initial_xform = initial
-            else:
-                initial_xform = _load_initial(initial)
+            initial_xform = _load_initial(initial)
         if initial_xform is not None:
             how = get_string(pmap, "HowToCombineTransforms", "Compose")
             if how != "Compose":

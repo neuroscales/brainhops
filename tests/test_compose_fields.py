@@ -617,80 +617,34 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
     assert isinstance(cancelled, Identity)
 
 
-def test_compose_cancels_the_inverse_of_an_equal_affine_by_value(
-    monkeypatch,  # noqa: ANN001
-) -> None:
-    # An affine decoded twice from the same header is two distinct, equal
-    # objects. Composed with the inverse of the other, the pair cancels to
-    # the identity by value, without the numeric inversion.
-    real_inv = np.linalg.inv
-    calls = {"n": 0}
-
-    def counting(matrix):  # noqa: ANN001, ANN202
-        calls["n"] += 1
-        return real_inv(matrix)
-
-    monkeypatch.setattr(np.linalg, "inv", counting)
-    voxel, world = _full4("voxel"), _full4("world")
-    first = Affine(matrix=SUB_AFFINE, input=voxel, output=world)
-    second = Affine(matrix=SUB_AFFINE.copy(), input=voxel, output=world)
-    assert first is not second
-    assert isinstance(compose(second.inverse(), first), Identity)
-    assert isinstance(compose(first, second.inverse()), Identity)
-    assert calls["n"] == 0
-
-    # A different matrix, or different systems, does not cancel.
+def test_an_equal_but_distinct_transform_never_cancels() -> None:
+    # Cancellation is decided from object identity alone: the inverse of an
+    # equal-valued, distinct transform is not recognized, and recognizing
+    # it never compares the two (which would raise).
     from brainhops.datamodel._transformations import simplifiers
 
-    scaled = Affine(matrix=2 * SUB_AFFINE, input=voxel, output=world)
-    moved = Affine(matrix=SUB_AFFINE, input=_full4("other"), output=world)
-    for other in (scaled, moved):
-        assert not simplifiers._cancels(first, other.inverse())
-        assert not simplifiers._cancels(other.inverse(), first)
-
-
-def test_compose_does_not_compare_fields_by_value(
-    monkeypatch,  # noqa: ANN001
-) -> None:
-    # Comparing two fields by value reads every sample, so an equal but
-    # distinct field is never recognized as the forward of an inverse.
-    from brainhops.datamodel._transformations import simplifiers
-
+    affine = Affine(matrix=SUB_AFFINE)
+    twin = Affine(matrix=SUB_AFFINE.copy())
     field = DisplacementField(field=np.zeros((5, 6, 2)))
     copy = DisplacementField(field=np.zeros((5, 6, 2)))
-    assert field == copy
-    assert simplifiers._cancels(field, field.inverse())
-    assert not simplifiers._cancels(field, copy.inverse())
+    for first, second in ((affine, twin), (field, copy)):
+        assert simplifiers._cancels(first, first.inverse())
+        assert not simplifiers._cancels(first, second.inverse())
+        assert not simplifiers._cancels(second.inverse(), first)
 
 
-def test_affine_over_leading_axes_passes_trailing_coordinates_through() -> (
-    None
-):
-    # A three-dimensional affine declared over a space-and-time system (as
-    # a NIfTI voxel-to-world affine of a 4D image is) maps the spatial
-    # coordinates of a field and leaves its time coordinate unchanged.
-    rng = np.random.default_rng(0)
-    matrix = SUB_AFFINE
+def test_a_3d_affine_refuses_a_4d_field() -> None:
+    # A matrix acts on as many coordinates as it has columns. A 3D affine
+    # composed with a field of 4D coordinates is a mismatch, and is
+    # refused rather than applied to some of them.
+    points = np.random.default_rng(0).standard_normal((5, 4))
     system = _full4("world")
-    affine = Affine(matrix=matrix, input=system, output=system)
-    points = rng.standard_normal((5, 4))
-
-    for transform, linear, shift in (
-        (affine, matrix[:, :-1], matrix[:, -1]),
-        (
-            Linear(matrix=matrix[:, :-1], input=system, output=system),
-            matrix[:, :-1],
-            0,
-        ),
+    for transform in (
+        Affine(matrix=SUB_AFFINE, input=system, output=system),
+        Linear(matrix=SUB_AFFINE[:, :-1], input=system, output=system),
     ):
-        got = compose(transform, CoordinatesField(field=points)).field
-        assert np.allclose(got[:, :3], points[:, :3] @ linear.T + shift)
-        assert np.array_equal(got[:, 3], points[:, 3])
-
-    # Without systems that span the field, the matrix does not say which
-    # axes it acts on, and the composition is refused as before.
-    with pytest.raises(ValueError):
-        compose(Affine(matrix=matrix), CoordinatesField(field=points))
+        with pytest.raises(ValueError):
+            compose(transform, CoordinatesField(field=points))
 
 
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:

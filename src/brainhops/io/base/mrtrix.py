@@ -108,6 +108,7 @@ from brainhops.io.base._geometry import (
     embed_affine,
     ras_conversion,
     reduce_to_affine,
+    split_spatial,
 )
 from brainhops.io.base._utils_files import local_path as _local_path
 from brainhops.io.base._utils_files import open_path as _open_path
@@ -858,25 +859,29 @@ def voxel_to_ras(xform: Transformation) -> np.ndarray:
 
     The transformation is reduced to an affine (a `Scaling`, a `Sequence`
     of affines, ...). A map with fewer than three dimensions is embedded
-    in three, with unit extra axes. The world space is turned into RAS
-    from the anatomical orientation of its axes; a world space with no
-    orientation is taken to be RAS already.
+    in three, with unit extra axes. A map over more axes keeps its three
+    spatial ones, when it does not mix them with the others. The world
+    space is turned into RAS from the anatomical orientation of its axes;
+    a world space with no orientation is taken to be RAS already.
 
     Raises
     ------
     UnrepresentableTransformationError
-        If the transformation has no affine representation.
-    WriterError
-        If it maps more than three spatial dimensions.
+        If the transformation has no affine representation, or mixes the
+        spatial axes with the others.
     """
     affine = reduce_to_affine(xform, "MRtrix", "scanner")
     matrix = affine.homogeneous_matrix
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, float)
-    embedded = embed_affine(matrix, "MRtrix", "scanner")
+    world_ndim = matrix.shape[0] - 1
+    # The axes that follow the spatial ones (time, ...) get their voxel
+    # sizes elsewhere (see `_extra_vox`), so only the spatial block is kept.
+    spatial, _ = split_spatial(matrix, "MRtrix", "scanner")
+    embedded = embed_affine(spatial, "MRtrix", "scanner")
     output = getattr(affine, "output", None)
     try:
         if output is not None and output.ndim is None:
-            output = output.expand(matrix.shape[0] - 1)
+            output = output.expand(world_ndim)
     except Exception:
         output = None
     return ras_conversion(output) @ embedded

@@ -1899,3 +1899,68 @@ def test_copy_on_the_dask_backend_is_lazy_and_not_copied(
     assert isinstance(resliced, da.Array)
     assert resliced is not lazy
     assert np.array_equal(resliced.compute(), source)
+
+
+# ----------------------------------------------------------------------
+#   A PRODUCT OF SUBSPACES (A SPACE-AND-TIME GEOMETRY)
+# ----------------------------------------------------------------------
+
+
+def _space_and_time(angle: float, dz: float, dt: float) -> Sequence:
+    # The shape of the voxel-to-world transformation of a 4D image: an
+    # affine over (x, y, z), then a scaling and a translation over (t).
+    full = CoordinateSystem().expand(4)
+    c, s = np.cos(angle), np.sin(angle)
+    spatial = Affine(
+        matrix=np.array([[c, -s, 0, 1.0], [s, c, 0, -1.0], [0, 0, dz, 0]])
+    )
+    temporal = Sequence(
+        transformations=[Scaling(scale=[dt]), Translation(translation=[0.5])]
+    )
+    return Sequence(
+        transformations=[
+            SubspaceTransformation(
+                transformation=spatial,
+                input_axes=[0, 1, 2],
+                output_axes=[0, 1, 2],
+                input=full,
+                output=full,
+            ),
+            SubspaceTransformation(
+                transformation=temporal,
+                input_axes=[3],
+                output_axes=[3],
+                input=full,
+                output=full,
+            ),
+        ]
+    )
+
+
+def test_a_subspace_product_factors_into_space_and_time() -> None:
+    # Two space-and-time geometries: the rotation couples x and y, z is
+    # rescaled, and time is mapped onto itself with a whole-frame shift.
+    shape = (6, 7, 5, 4)
+    source = _space_and_time(0.3, 2.0, 2.0)
+    target = _space_and_time(0.0, 1.0, 2.0)
+    seq = source.inverse() @ target @ CartesianField(shape=shape)
+    opt = dict(degree=1, bound="reflect", coeff=False)
+    assert _plan(seq, shape, **opt) == {
+        (0, 1): "pull",
+        (2,): "matrix",
+        (3,): "gather",
+    }
+
+
+def test_a_subspace_product_against_its_inverse_is_the_grid() -> None:
+    # The same geometry on both sides cancels by identity, leaving the grid.
+    shape = (6, 7, 5, 4)
+    product = _space_and_time(0.3, 2.0, 2.0)
+    grid = CartesianField(shape=shape)
+    seq = product.inverse() @ product @ grid
+    nf = seq.compute(mode=kinds.Affine, factor=True)
+    assert isinstance(nf, CartesianField) and nf.shape == shape
+    data = np.random.default_rng(0).random(shape)
+    out = sep.pull_separable(data, seq, degree=1, bound="reflect", coeff=False)
+    assert np.shares_memory(out, data)
+    assert np.array_equal(out, data)

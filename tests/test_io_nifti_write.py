@@ -220,6 +220,13 @@ def test_the_units_survive_the_round_trip(tmp_path) -> None:  # noqa: ANN001
     io.images.load(source).save(target)
 
     assert nb.load(str(target)).header.get_xyzt_units() == ("mm", "sec")
+    reloaded = io.images.load(target).transformation.output
+    assert [str(axis.unit) for axis in reloaded.axes] == [
+        "millimeter",
+        "millimeter",
+        "millimeter",
+        "second",
+    ]
 
 
 def test_int64_data_is_reported_as_a_writer_error(tmp_path) -> None:  # noqa: ANN001
@@ -456,21 +463,80 @@ def test_the_ras_flip_follows_orientation_not_the_name(tmp_path) -> None:  # noq
     assert np.allclose(np.diag(affine_out), [-2, -3, 4, 1])
 
 
-def test_a_more_than_3d_geometry_is_rejected(tmp_path) -> None:  # noqa: ANN001
+def test_a_space_and_time_coupled_geometry_is_rejected(tmp_path) -> None:  # noqa: ANN001
     """
-    NIfTI stores a three-dimensional affine, so a 4D map is refused.
+    NIfTI stores a spatial affine and a time axis apart, so a 4D map that
+    mixes space and time is refused.
 
-    A spatial transformation of more than three dimensions has no NIfTI
-    geometry to be written into, and raises a clear error rather than being
-    truncated to three dimensions.
+    Such a map has no NIfTI geometry to be written into, and raises a clear
+    error rather than being truncated to three dimensions.
     """
+    for row, column in ((0, 3), (3, 0)):
+        matrix = np.eye(4, 5)
+        matrix[row, column] = 0.5
+        image = NiftiImage(
+            data=np.zeros((2, 2, 2, 2), dtype="float32"),
+            transformations=[Affine(matrix=matrix)],
+        )
+        with pytest.raises(UnrepresentableTransformationError) as info:
+            image.save(tmp_path / "four.nii")
+        assert "mixes the spatial axes" in str(info.value)
+
+
+def test_a_time_axis_that_is_not_a_spacing_is_rejected(tmp_path) -> None:  # noqa: ANN001
+    # A reversed time axis has no positive spacing to store.
     image = NiftiImage(
         data=np.zeros((2, 2, 2, 2), dtype="float32"),
-        transformations=[Affine(matrix=np.eye(4, 5))],
+        transformations=[Affine(matrix=np.diag([1.0, 1, 1, -2, 1])[:4])],
     )
-    with pytest.raises(WriterError) as info:
+    with pytest.raises(UnrepresentableTransformationError):
         image.save(tmp_path / "four.nii")
-    assert "three-dimensional" in str(info.value)
+
+
+def test_a_space_and_time_geometry_survives_the_round_trip(tmp_path) -> None:  # noqa: ANN001
+    """
+    The sform, the qform, their codes, the spacings (the repetition time
+    included), the time offset and the units are written back as read.
+    """
+    sform = np.array(
+        [[0, -2.0, 0, 10], [1.5, 0, 0, -3], [0, 0, 2.5, 4], [0, 0, 0, 1]]
+    )
+    nii = nb.Nifti1Image(np.random.rand(4, 5, 6, 4).astype("f4"), sform)
+    nii.header.set_xyzt_units("mm", "msec")
+    nii.header.set_zooms((2.0, 1.5, 2.5, 750.0))
+    nii.header["toffset"] = 125.0
+    nii.header.set_qform(np.diag([1.5, 2.0, 2.5, 1.0]), code=1)
+    nii.header.set_sform(sform, code=4)
+    source = tmp_path / "bold.nii"
+    nb.save(nii, str(source))
+
+    target = tmp_path / "out.nii"
+    io.images.load(source).save(target)
+
+    before, after = nb.load(str(source)).header, nb.load(str(target)).header
+    assert np.allclose(before.get_sform(), after.get_sform())
+    assert np.allclose(before.get_qform(), after.get_qform())
+    assert int(after["sform_code"]) == 4
+    assert int(after["qform_code"]) == 1
+    assert np.allclose(before.get_zooms(), after.get_zooms())
+    assert float(after["toffset"]) == 125.0
+    assert after.get_xyzt_units() == ("mm", "msec")
+
+
+def test_a_space_and_time_geometry_is_written_to_mrtrix(tmp_path) -> None:  # noqa: ANN001
+    # Another format that stores a spatial affine keeps the spatial block.
+    affine = np.diag([2.0, 3.0, 4.0, 1.0])
+    affine[:3, -1] = [1.0, 2.0, 3.0]
+    nii = nb.Nifti1Image(np.zeros((4, 5, 6, 2), dtype="f4"), affine)
+    nb.save(nii, str(tmp_path / "bold.nii"))
+
+    img = io.images.load(tmp_path / "bold.nii")
+    io.save(SingleScaleImage.from_instance(img), tmp_path / "bold.mif")
+
+    matrix = io.images.load(tmp_path / "bold.mif").transformation.to(Affine)
+    assert np.allclose(
+        np.asarray(matrix.matrix)[:3, [0, 1, 2, -1]], affine[:3]
+    )
 
 
 def test_a_large_image_is_written_as_nifti2() -> None:

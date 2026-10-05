@@ -7,7 +7,7 @@ run twice.
 """
 
 import numpy as np
-import pytest
+import typing_extensions as tx
 from bagof.magic import fields_dict, replace
 
 from brainhops._core.properties import smartproperty
@@ -18,6 +18,7 @@ from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
     CartesianField,
+    ConversionError,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -867,31 +868,146 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
         lin.to(Rotation, error=TypeError)
 
 
-def test_transformations_with_array_parameters_compare_by_value() -> None:
-    # A transformation's array-valued parameter is compared as a whole, so
-    # two affines built from equal matrices are equal, rather than raising
-    # on the ambiguous truth value of an element-wise comparison.
+def test_transformations_cannot_be_compared() -> None:
+    # `==` and `!=` have no single meaning on a transformation (the same
+    # object, the same map, the same parameters), so both raise rather than
+    # pick one -- whatever the other operand, and on either side.
+    import pytest
+
     system = CoordinateSystem(name="world", axes=[Axis(name="x")] * 2)
     matrix = np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -1.0]])
-    first = Affine(matrix=matrix, input=system, output=system)
+    affine = Affine(matrix=matrix, input=system, output=system)
+    others = (
+        affine,
+        Affine(matrix=matrix.copy(), input=system, output=system),
+        Identity(),
+        Sequence(transformations=[affine]),
+        None,
+        1,
+    )
+    for this in (affine, Identity(), Scaling(scale=[1.0, 2.0])):
+        for other in others:
+            with pytest.raises(TypeError, match="cannot be compared"):
+                this == other  # noqa: B015
+            with pytest.raises(TypeError, match="cannot be compared"):
+                this != other  # noqa: B015
+            with pytest.raises(TypeError, match="cannot be compared"):
+                other == this  # noqa: B015
+        with pytest.raises(TypeError):
+            hash(this)
+    # Identity is what decides whether two are the same.
+    assert affine is affine
 
-    assert first == Affine(matrix=matrix.copy(), input=system, output=system)
-    assert first != Affine(matrix=2 * matrix, input=system, output=system)
-    assert first != Affine(matrix=matrix[:1], input=system, output=system)
-    assert first != Affine(matrix=matrix)
-    assert first != Affine()
-    assert first != Linear(matrix=matrix[:, :-1])
-    assert Scaling(scale=[1.0, 2.0]) == Scaling(scale=np.array([1.0, 2.0]))
-    assert Sequence(transformations=[first, Scaling(scale=[1.0, 2.0])]) == (
-        Sequence(transformations=[first, Scaling(scale=[1.0, 2.0])])
+
+def test_every_transformation_type_refuses_comparison() -> None:
+    # A transformation that also derives from another struct -- a format
+    # reader's block, a geometry's fields -- takes its options from the
+    # base that comes first, which may generate a field-by-field equality.
+    # Every one of them refuses comparison all the same.
+    import brainhops.io  # noqa: F401  (registers every format)
+
+    def subclasses(cls: type) -> tx.Iterator[type]:
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from subclasses(sub)
+
+    for cls in subclasses(Transformation):
+        assert cls.__eq__ is Transformation.__eq__, cls
+        assert cls.__ne__ is Transformation.__ne__, cls
+        assert cls.__hash__ is None, cls
+
+
+def test_a_sequence_finds_its_members_by_identity() -> None:
+    # Membership and lookup in a sequence never compare with `==`.
+    import pytest
+
+    first = Affine(matrix=np.eye(2, 3))
+    twin = Affine(matrix=np.eye(2, 3))
+    seq = Sequence(transformations=[first, Scaling(scale=[2.0, 2.0]), first])
+    assert first in seq
+    assert twin not in seq
+    assert seq.index(first) == 0
+    assert seq.index(first, 1) == 2
+    assert seq.count(first) == 2
+    assert seq.count(twin) == 0
+    with pytest.raises(ValueError):
+        seq.index(twin)
+    with pytest.raises(ValueError):
+        seq.remove(twin)
+    seq.remove(first)
+    assert len(seq) == 2 and seq[1] is first
+
+
+def _subspace(inner: Transformation, axes: list, inp, out) -> object:  # noqa: ANN001
+    return SubspaceTransformation(
+        transformation=inner,
+        input_axes=axes,
+        output_axes=axes,
+        input=inp,
+        output=out,
     )
-    assert Sequence(transformations=[first]) != Sequence(
-        transformations=[Affine(matrix=2 * matrix)]
+
+
+def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
+    # A spatial and a temporal step act on disjoint axes, so they do not
+    # compose into one transform; as one affine, the sequence is the
+    # block-diagonal product of their full-space affines.
+    import pytest
+
+    from brainhops.datamodel.axes import SpaceAxis, TimeAxis
+
+    def system(*axes: Axis) -> CoordinateSystem:
+        return CoordinateSystem(axes=list(axes))
+
+    xyz = [SpaceAxis(name=n, unit="index") for n in "xyz"]
+    ras = [SpaceAxis(name=n, unit="mm") for n in "xyz"]
+    t_index = TimeAxis(name="t", unit="index")
+    t_sec = TimeAxis(name="t", unit="s")
+    voxel, middle = system(*xyz, t_index), system(*ras, t_index)
+    world = system(*ras, t_sec)
+    spatial = np.array(
+        [[0.0, -2.0, 0.0, 10.0], [1.5, 0.0, 0.0, -3.0], [0.0, 0.0, 2.5, 4.0]]
     )
-    grid = CartesianField(shape=(2, 3))
-    assert Sequence(transformations=[grid, first]) == Sequence(
-        transformations=[CartesianField(shape=(2, 3)), first]
+    temporal = Sequence(
+        transformations=[
+            Scaling(scale=[2.0], input=system(t_index), output=system(t_sec)),
+            Translation(
+                translation=[0.5], input=system(t_sec), output=system(t_sec)
+            ),
+        ]
     )
-    # Equality is by value, so a transformation is still not hashable.
-    with pytest.raises(TypeError):
-        hash(first)
+    product = Sequence(
+        transformations=[
+            _subspace(
+                Affine(
+                    matrix=spatial, input=system(*xyz), output=system(*ras)
+                ),
+                [0, 1, 2],
+                voxel,
+                middle,
+            ),
+            _subspace(temporal, [3], middle, world),
+        ]
+    )
+
+    affine = product.to(Affine)
+
+    expected = np.zeros((4, 5))
+    expected[:3, [0, 1, 2, 4]] = spatial
+    expected[3, 3:] = [2.0, 0.5]
+    assert np.allclose(affine.matrix, expected)
+    assert affine.input is voxel and affine.output is world
+
+    # The pieces must be affine: a subspace that wraps a field is not.
+    field = _subspace(
+        DisplacementField(field=np.zeros((2, 2, 2, 3))), [0, 1, 2], None, None
+    )
+    with pytest.raises(ConversionError):
+        Sequence(transformations=[field, product[1]]).to(Affine)
+    # An empty sequence is the identity.
+    assert np.array_equal(
+        Sequence(transformations=[], input=voxel, output=voxel)
+        .to(Affine)
+        .matrix,
+        np.eye(4, 5),
+    )

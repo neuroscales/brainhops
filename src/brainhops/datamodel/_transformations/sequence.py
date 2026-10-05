@@ -53,6 +53,26 @@ class SequenceMixin(AbcSequence):
     def __iter__(self) -> tx.Iterator[Transformation]:
         return iter(self.transformations or [])
 
+    # A transformation cannot be compared with `==`, so membership and
+    # lookup go by identity: they find the very object that was passed.
+
+    def __contains__(self, value: object) -> bool:
+        return any(t is value for t in self)
+
+    def index(
+        self, value: object, start: int = 0, stop: tx.Optional[int] = None
+    ) -> int:
+        n = len(self)
+        start = max(start + n, 0) if start < 0 else start
+        stop = n if stop is None else (max(stop + n, 0) if stop < 0 else stop)
+        for i in range(start, min(stop, n)):
+            if self[i] is value:
+                return i
+        raise ValueError("transformation is not in sequence")
+
+    def count(self, value: object) -> int:
+        return sum(1 for t in self if t is value)
+
 
 class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
     # Implements the abc.MutableSequence API, assuming the existence of a
@@ -91,7 +111,7 @@ class MutableSequenceMixin(SequenceMixin, AbcMutableSequence):
     def remove(self, value: Transformation) -> None:
         if self.transformations is None:
             raise ValueError("remove from empty sequence")
-        self.transformations.remove(value)
+        del self.transformations[self.index(value)]
 
 
 @register_sequence
