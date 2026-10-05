@@ -1,6 +1,6 @@
 # dependencies
 import typing_extensions as tx
-from bagof.magic import KwOnly
+from bagof.magic import KwOnly, fields
 
 # api
 from brainhops._core.properties import smartproperty
@@ -24,7 +24,13 @@ if tx.TYPE_CHECKING:
 
 @kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
-class Transformation(DataModelBase, reverse=True):
+class Transformation(
+    DataModelBase,
+    reverse=True,
+    # The generated equality is kept under another name, and wrapped by
+    # the `__eq__` below so that an array-valued field compares as a whole.
+    eq="__fields_eq__",
+):
     """
     A transformation between coordinate systems.
 
@@ -114,6 +120,34 @@ class Transformation(DataModelBase, reverse=True):
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    # --- equality -----------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Whether two transformations hold the same values.
+
+        An array-valued field, such as the matrix of an affine, is equal
+        when both arrays have the same shape and every element matches.
+        """
+        try:
+            return self.__fields_eq__(other)
+        except ValueError:
+            # The generated comparison compares fields as a tuple, which
+            # asks an array comparison for a single truth value. It has
+            # already checked that the two classes compare, so the fields
+            # are compared again one by one, arrays as a whole.
+            pass
+        return all(
+            _same_value(
+                getattr(self, field.name, _UNSET),
+                getattr(other, field.name, _UNSET),
+            )
+            for field in fields(type(self))
+            if field.eq
+        )
+
+    __hash__ = None
 
     # --- methods ------------------------------------------------------
 
@@ -399,3 +433,29 @@ compute]:
 
     def __invert__(self) -> "Transformation":
         return self.inverse()
+
+
+_UNSET = object()
+
+
+def _same_value(this: tx.Any, that: tx.Any) -> bool:
+    # Whether two field values match, comparing an array as a whole and
+    # a list or tuple element by element.
+    if this is that:
+        return True
+    if isinstance(this, Transformation) or isinstance(that, Transformation):
+        # A transformation (such as a grid, which has a shape) compares
+        # itself.
+        return bool(this == that)
+    if hasattr(this, "shape") or hasattr(that, "shape"):
+        shape = getattr(this, "shape", None)
+        if shape is None or tuple(shape) != tuple(getattr(that, "shape", ())):
+            return False
+        return bool((this == that).all())
+    if isinstance(this, (list, tuple)):
+        return (
+            type(this) is type(that)
+            and len(this) == len(that)
+            and all(_same_value(a, b) for a, b in zip(this, that))
+        )
+    return bool(this == that)

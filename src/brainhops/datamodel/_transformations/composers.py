@@ -137,6 +137,48 @@ def _(To: _AffineIsh, Ti: _AffineIsh) -> Affine:
 # ----------------------------------------------------------------------
 
 
+def _leading_block(
+    To: tx.Union[Linear, Affine], Ti: CoordinatesField
+) -> tx.Optional[int]:
+    # The number of leading components of the field that a matrix acts on,
+    # when it acts on fewer than the field holds, or `None` when it acts on
+    # all of them. A square matrix over fewer axes than the systems it
+    # declares acts on the leading axes of those systems and leaves the
+    # trailing ones unchanged -- this is how a NIfTI voxel-to-world affine,
+    # which is three-dimensional, maps the space-and-time axes of a 4D
+    # image. A matrix whose systems do not span the field is a genuine
+    # mismatch and is left to fail.
+    n = Ti.field.shape[-1]
+    no, ni = To.matrix.shape
+    if isinstance(To, Affine):
+        ni -= 1
+    if ni != no or ni >= n:
+        return None
+    for system in (To._input, To._output):
+        if _axes_or_unknown(system).ndim != n:
+            return None
+    return ni
+
+
+def _apply_matrix(
+    x: tx.Any,
+    linear: tx.Any,
+    shift: tx.Optional[tx.Any],
+    block: tx.Optional[int],
+) -> tx.Any:
+    # Apply `linear` (and `shift`) to the last dimension of a field. With a
+    # `block`, only that many leading components are transformed, and the
+    # others are carried through unchanged.
+    head = x if block is None else x[..., :block]
+    head = head @ linear.T
+    if shift is not None:
+        head = head + shift
+    if block is None:
+        return head
+    ba = get_array_backend(x)
+    return ba.concatenate([head, x[..., block:]], axis=-1)
+
+
 @composer
 def _(To: Translation, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
@@ -186,7 +228,7 @@ def _(To: Permutation, Ti: CoordinatesField) -> CoordinatesField:
 def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
-    field = Ti.field @ To.matrix.T
+    field = _apply_matrix(Ti.field, To.matrix, None, _leading_block(To, Ti))
     return CoordinatesField(
         field=field,
         input=Ti.input,
@@ -201,7 +243,12 @@ def _(To: Linear, Ti: CoordinatesField) -> CoordinatesField:
 def _(To: Affine, Ti: CoordinatesField) -> CoordinatesField:
     coeff = Ti.coeff
     Ti = Ti.compute().to(coeff=False)
-    field = Ti.field @ To.matrix[:, :-1].T + To.matrix[:, -1]
+    field = _apply_matrix(
+        Ti.field,
+        To.matrix[:, :-1],
+        To.matrix[:, -1],
+        _leading_block(To, Ti),
+    )
     return CoordinatesField(
         field=field,
         input=Ti.input,

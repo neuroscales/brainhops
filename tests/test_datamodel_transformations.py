@@ -7,6 +7,7 @@ run twice.
 """
 
 import numpy as np
+import pytest
 from bagof.magic import fields_dict, replace
 
 from brainhops._core.properties import smartproperty
@@ -864,3 +865,33 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
     # `error=<exception>` raises that one instead.
     with pytest.raises(TypeError):
         lin.to(Rotation, error=TypeError)
+
+
+def test_transformations_with_array_parameters_compare_by_value() -> None:
+    # A transformation's array-valued parameter is compared as a whole, so
+    # two affines built from equal matrices are equal, rather than raising
+    # on the ambiguous truth value of an element-wise comparison.
+    system = CoordinateSystem(name="world", axes=[Axis(name="x")] * 2)
+    matrix = np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -1.0]])
+    first = Affine(matrix=matrix, input=system, output=system)
+
+    assert first == Affine(matrix=matrix.copy(), input=system, output=system)
+    assert first != Affine(matrix=2 * matrix, input=system, output=system)
+    assert first != Affine(matrix=matrix[:1], input=system, output=system)
+    assert first != Affine(matrix=matrix)
+    assert first != Affine()
+    assert first != Linear(matrix=matrix[:, :-1])
+    assert Scaling(scale=[1.0, 2.0]) == Scaling(scale=np.array([1.0, 2.0]))
+    assert Sequence(transformations=[first, Scaling(scale=[1.0, 2.0])]) == (
+        Sequence(transformations=[first, Scaling(scale=[1.0, 2.0])])
+    )
+    assert Sequence(transformations=[first]) != Sequence(
+        transformations=[Affine(matrix=2 * matrix)]
+    )
+    grid = CartesianField(shape=(2, 3))
+    assert Sequence(transformations=[grid, first]) == Sequence(
+        transformations=[CartesianField(shape=(2, 3)), first]
+    )
+    # Equality is by value, so a transformation is still not hashable.
+    with pytest.raises(TypeError):
+        hash(first)

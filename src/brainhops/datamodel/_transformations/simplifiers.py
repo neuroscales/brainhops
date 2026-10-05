@@ -391,15 +391,36 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     `first` is applied before `second`. The two cancel when `second` is the
     lazy inverse of `first`, or `first` is the lazy inverse of `second`. An
     `Inverse` names the transform it undoes as its `forward`, so the test is
-    a plain identity check that materializes neither field: it is O(1) and
-    decides from object identity alone. This covers both a typed inverse
-    and a generic `Inverse(forward=X)`.
+    first a plain identity check that materializes neither field. This
+    covers both a typed inverse and a generic `Inverse(forward=X)`.
+
+    A transform held by a few parameters (an affine, a scaling, ...) is
+    also recognized by value, since an equal transform built anew -- such
+    as one decoded again from a file header -- is a distinct object. A
+    field is never compared by value, which would read every sample.
     """
-    if isinstance(second, Inverse) and second.forward is first:
+    if isinstance(second, Inverse) and _same(second.forward, first):
         return True
-    if isinstance(first, Inverse) and first.forward is second:
+    if isinstance(first, Inverse) and _same(first.forward, second):
         return True
     return False
+
+
+# The transforms whose parameters are cheap enough to compare by value.
+# Only these exact types are, so a subclass whose equality is its own
+# (such as a format reader's) is recognized by identity alone.
+_BY_VALUE = (Affine, Linear, Rotation, Permutation, Scaling, Translation)
+
+
+def _same(this: Transformation, that: Transformation) -> bool:
+    # Whether two transforms are one and the same, by identity or, for a
+    # transform held by a few parameters, by value (parameters and
+    # declared systems).
+    if this is that:
+        return True
+    return (
+        type(this) is type(that) and type(this) in _BY_VALUE and this == that
+    )
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:
