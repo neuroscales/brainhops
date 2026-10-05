@@ -74,7 +74,9 @@ def _note_format(name: str, model: type = Note, **attrs: tx.Any) -> type:
     def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
         yield f"{name}:{kwargs.get('suffix', '')}{self.text}"
 
-    namespace = {"to_lines": to_lines}
+    # `__qualname__` is given explicitly: bagof-magic 0.3.dev1 reads it
+    # from the namespace, where `type()` does not put it.
+    namespace = {"__qualname__": name, "to_lines": to_lines}
     namespace.update(attrs)
     return type(name, (model, WritableTextFileBasedObject), namespace)
 
