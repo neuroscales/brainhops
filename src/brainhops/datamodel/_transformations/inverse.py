@@ -502,6 +502,18 @@ class InverseDisplacementField(
     forward field's values are inverted, and the result is fitted back to
     spline coefficients when the forward field holds coefficients. Its
     `field` view is the inverse field, as values, either way.
+
+    !!! note "Accuracy"
+        The inversion only sees the forward field's values at the grid
+        nodes: it inverts the piecewise-affine map they define (see
+        [`brainhops._ext.invfield.inverse`][]), whatever the forward's
+        `degree`. The inverse is then interpolated with that degree. It
+        is exact at the level of that piecewise-affine map only, so a
+        cubic field is inverted about as accurately as a linear one,
+        and the error grows near the border. On smooth fields of a few
+        voxels' amplitude, `fwd(inv(x)) - x` is typically a few
+        hundredths of a voxel in the interior, and a few tenths near
+        the border.
     """
 
     # --- class attributes ---------------------------------------------
@@ -570,6 +582,13 @@ class InverseCoordinatesField(
     forward field's values are inverted, and the result is fitted back to
     spline coefficients when the forward field holds coefficients. Its
     `field` view is the inverse field, as values, either way.
+
+    !!! note "Accuracy"
+        As for [`InverseDisplacementField`][], the inversion only sees
+        the forward field's values at the grid nodes and inverts the
+        piecewise-affine map they define, whatever the forward's
+        `degree`; the result is approximate between nodes, and more so
+        near the border.
 
     Placed next to the field it inverts in a [`Sequence`][], the two cancel
     and nothing is computed. That is the cheap path, and the one worth
