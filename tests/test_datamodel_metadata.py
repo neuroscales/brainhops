@@ -552,9 +552,9 @@ def test_the_policy_governs_implicit_field_conversions() -> None:
 def test_a_report_raises_and_merges() -> None:
     report = ConversionReport(source="a", target="b")
     report.raise_if_lossy()
-    other = ConversionReport(lost={"x": 1}, passed_through=("y",))
+    other = ConversionReport(lost={"x": 1})
     report.merge(other)
-    assert report.lost == {"x": 1} and report.passed_through == ("y",)
+    assert report.lost == {"x": 1}
     with pytest.raises(MetadataLossError):
         report.raise_if_lossy()
     with pytest.raises(MetadataLossError):

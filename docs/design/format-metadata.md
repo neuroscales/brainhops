@@ -1912,8 +1912,8 @@ holds.
   a key/value format (MRtrix, NRRD) was to override to move into its
   free-form store what it has no slot for, was dropped: no format used
   it. A conversion reports what the target cannot store as lost.
-  `ConversionReport.passed_through` stays, for a format that moves a
-  field into its store.
+  `ConversionReport.passed_through`, which only that hook filled, was
+  dropped with it.
 
 ## Open questions for the maintainer
 

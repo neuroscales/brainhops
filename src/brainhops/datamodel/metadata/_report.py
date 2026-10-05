@@ -33,9 +33,7 @@ class ConversionReport(DataModelBase):
     a file, fills a report as it goes. A field whose value was dropped is
     listed in `lost`, with the value. A field whose value was stored, but
     not exactly, is listed in `approximated`, with a short description of
-    the change (such as `"truncated to 80 bytes"`). A field that a
-    key/value format moved into its free-form store, instead of losing
-    it, is listed in `passed_through`.
+    the change (such as `"truncated to 80 bytes"`).
 
     The loss policy decides what happens to a report that is not empty
     (see [`metadata_loss_policy`][]).
@@ -57,13 +55,6 @@ class ConversionReport(DataModelBase):
         tx.Doc("Field name -> what changed in the stored value."),
         Factory(),
     ]
-    passed_through: tx.Annotated[
-        tx.Tuple[str, ...],
-        tx.Doc(
-            "Fields a key/value format moved into its free-form store "
-            "(`extra`) instead of losing them."
-        ),
-    ] = ()
 
     @property
     def lossy(self) -> bool:
@@ -87,9 +78,6 @@ class ConversionReport(DataModelBase):
         """
         self.lost.update(other.lost)
         self.approximated.update(other.approximated)
-        self.passed_through = tuple(
-            dict.fromkeys(self.passed_through + other.passed_through)
-        )
         return self
 
     @classmethod
