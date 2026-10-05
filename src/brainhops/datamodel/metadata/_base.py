@@ -222,7 +222,7 @@ class Metadata(
         """
         new = copy.copy(self)
         new.extra = copy.copy(new.extra)
-        new._snapshot = dict(self._snapshot)
+        new._snapshot = copy.copy(self._snapshot)
         return new
 
     # --- capabilities -------------------------------------------------
@@ -579,7 +579,7 @@ class Metadata(
             # `copy()` does: to a copy, to the generic hub, or back to the
             # format whose class declares the type of the record.
             values["raw"] = other.raw
-            values["snapshot"] = dict(other._snapshot)
+            values["snapshot"] = copy.copy(other._snapshot)
         unsupported = target.unsupported_fields
         for name in FIELDS:
             value = getattr(other, name, None)

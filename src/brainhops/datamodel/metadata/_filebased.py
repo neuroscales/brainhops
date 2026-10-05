@@ -612,7 +612,7 @@ class FileBasedMetadata(Metadata):
         # `_reslice` or `_select` cleared is cleared in the record on write;
         # the record is the format's scrubbed copy (`_derive_raw`).
         values = super()._derive_values(changed=changed, history=history)
-        values["snapshot"] = dict(self._snapshot)
+        values["snapshot"] = copy.copy(self._snapshot)
         values["raw"] = self._derive_raw(self.raw, changed=changed)
         return values
 
