@@ -338,14 +338,23 @@ def _(t: SubspaceTransformation) -> Affine:
 
 @converter
 def _(t: DisplacementField) -> CoordinatesField:
-    if t.field is None:
-        return CoordinatesField(
-            coordinates=None, input=t.input, output=t.output
-        )
-    ba = get_array_backend(t.field)
-    g = ba.meshgrid(*(ba.arange(s) for s in t.field.shape[:-1]), indexing="ij")
-    g = ba.stack(g, axis=-1)
-    return CoordinatesField(field=t.field + g, input=t.input, output=t.output)
+    # The coordinate of a grid point is the point plus its displacement.
+    # The result keeps the encoding of `t` (its `coeff`, `degree` and
+    # `bound`). Fitting spline coefficients is linear, so the encoded
+    # arrays add up the same way the values do: the coordinates' `data`
+    # is the displacements' `data` plus the grid, encoded under the same
+    # flags. Nothing is decoded, and a field of coefficients stays one.
+    flags = t._flags()
+    data = t.data
+    if data is None:
+        return CoordinatesField(input=t.input, output=t.output, **flags)
+    ba = get_array_backend(data)
+    grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
+    grid = ba.stack(grid, axis=-1).astype(data.dtype)
+    grid = CoordinatesField._encode(grid, **flags)
+    return CoordinatesField(
+        data=data + grid, input=t.input, output=t.output, **flags
+    )
 
 
 # ----------------------------------------------------------------------
