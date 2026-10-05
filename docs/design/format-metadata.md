@@ -161,12 +161,12 @@ model, and only format subclasses live under io:
 # brainhops/datamodel/metadata/_base.py
 class Metadata(
     DataModelBase,
-    ProvenanceMetadata,
-    MRIMetadata,
-    DiffusionMetadata,
-    DisplayMetadata,
-    MicroscopyMetadata,
-    TransformMetadata,
+    ProvenanceVocabulary,
+    MRIVocabulary,
+    DiffusionVocabulary,
+    DisplayVocabulary,
+    MicroscopyVocabulary,
+    TransformVocabulary,
     polymorphic=True,
     kw_only=True,
 ):
@@ -241,19 +241,19 @@ file), `acquisition` (invariant under resampling), `grid` (tied to the
 voxel grid), `volume` (one entry per volume/channel).
 
 **Groups.** Each subsection below is a `Magic` mixin that declares its
-fields, and nothing else: `ProvenanceMetadata` (4.1), `MRIMetadata`
-(4.2), `DiffusionMetadata` (4.3), `DisplayMetadata` (4.4),
-`MicroscopyMetadata` (4.5), `TransformMetadata` (4.6). `Metadata`
+fields, and nothing else: `ProvenanceVocabulary` (4.1), `MRIVocabulary`
+(4.2), `DiffusionVocabulary` (4.3), `DisplayVocabulary` (4.4),
+`MicroscopyVocabulary` (4.5), `TransformVocabulary` (4.6). `Metadata`
 inherits all six (the "all metadata" class), and a field is defined in
 exactly one group, never on `Metadata` itself. The groups are an
 organisational device, and the memo says so plainly. They buy one place
 per topic for the docs (each group is an API entry with its fields'
-`Doc`/`Bids`/`Scope`), `supports=(ProvenanceMetadata, "echo_time")` in a
+`Doc`/`Bids`/`Scope`), `supports=(ProvenanceVocabulary, "echo_time")` in a
 format declaration, and a per-group rule in the codecs (BIDS keeps
-`DiffusionMetadata` in `.bval`/`.bvec` files, not in the sidecar). They
+`DiffusionVocabulary` in `.bval`/`.bvec` files, not in the sidecar). They
 do not shrink a format class (every format still exposes every field, so
 that each can answer `UNSUPPORTED`), and they do not narrow types (`def
-f(m: DiffusionMetadata)` accepts any metadata). `VOCABULARY` (the field
+f(m: DiffusionVocabulary)` accepts any metadata). `VOCABULARY` (the field
 names, group by group) and `GROUPS` (group class -> its field names) are
 module constants.
 
@@ -493,7 +493,7 @@ Rules:
   vocabulary field added later is unsupported everywhere until a format
   opts in, which is the safe default and what makes the vocabulary easy
   to extend. It takes field names, vocabulary groups (all their fields:
-  `supports=(ProvenanceMetadata, "echo_time")`), or `ALL`
+  `supports=(ProvenanceVocabulary, "echo_time")`), or `ALL`
   (`MrtrixMetadata`, `X5Metadata`); omitted, a subclass keeps its
   parent's (`Metadata`, the root, supports everything). The
   declaration gives `supported_fields`, a `ClassVar` frozenset of the
@@ -915,7 +915,7 @@ NRRD standard fields, AFNI `_GENERATED`) silently skips them, as today.
 `Metadata.to_bids() -> dict` in `brainhops/io/metadata/bids.py`:
 vocabulary fields through their `Bids(...)` name (units already match),
 `generated_by` as the BIDS list of dicts, unknown keys to and from
-`extra`. The `DiffusionMetadata` group (`bvalues`/`bvectors`) is not
+`extra`. The `DiffusionVocabulary` group (`bvalues`/`bvectors`) is not
 sidecar keys; a separate `to_bvals_bvecs(image)` rotates them into voxel
 axes. Wiring sidecars into `io.load`/`io.save` (`sidecar=True`) is open
 question 8.
@@ -1609,9 +1609,9 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   lives in `brainhops.datamodel.metadata`; format classes and the
   sidecar codec under `io`.
 - **M3** Vocabulary = BIDS names in snake_case with BIDS units, 37
-  fields declared in six group mixins (`ProvenanceMetadata`,
-  `MRIMetadata`, `DiffusionMetadata`, `DisplayMetadata`,
-  `MicroscopyMetadata`, `TransformMetadata`) that `Metadata` inherits,
+  fields declared in six group mixins (`ProvenanceVocabulary`,
+  `MRIVocabulary`, `DiffusionVocabulary`, `DisplayVocabulary`,
+  `MicroscopyVocabulary`, `TransformVocabulary`) that `Metadata` inherits,
   each field tagged with a propagation scope; `VOCABULARY` and `GROUPS`
   are module constants. A free-text field with known terms is
   `Union[<Enum>, str]` (`SpaceEnum`, `IntentEnum`, `Manufacturer`,

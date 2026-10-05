@@ -25,17 +25,17 @@ A field holds a value, `None` (unknown), or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] (this format has
 no place to store it). The vocabulary comes in six groups, each a class
 that `Metadata` inherits:
-[`ProvenanceMetadata`][brainhops.datamodel.metadata.ProvenanceMetadata]
+[`ProvenanceVocabulary`][brainhops.datamodel.metadata.ProvenanceVocabulary]
 (description, history, space, ...),
-[`MRIMetadata`][brainhops.datamodel.metadata.MRIMetadata] (repetition
+[`MRIVocabulary`][brainhops.datamodel.metadata.MRIVocabulary] (repetition
 time, slice timing, ...),
-[`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
+[`DiffusionVocabulary`][brainhops.datamodel.metadata.DiffusionVocabulary]
 (`bvalues`, `bvectors`),
-[`DisplayMetadata`][brainhops.datamodel.metadata.DisplayMetadata]
+[`DisplayVocabulary`][brainhops.datamodel.metadata.DisplayVocabulary]
 (display range, channels, unit and type of the values),
-[`MicroscopyMetadata`][brainhops.datamodel.metadata.MicroscopyMetadata]
+[`MicroscopyVocabulary`][brainhops.datamodel.metadata.MicroscopyVocabulary]
 and
-[`TransformMetadata`][brainhops.datamodel.metadata.TransformMetadata]
+[`TransformVocabulary`][brainhops.datamodel.metadata.TransformVocabulary]
 (`moving`, `fixed`, ...).
 
 The examples on this page run as they are. They write their files to a

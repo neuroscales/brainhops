@@ -5,7 +5,7 @@ A sidecar is the vocabulary as a flat JSON object, in the form that
 `brainhops.io.metadata._json` writes and reads (BIDS keys, or a field's
 name in `CamelCase` where BIDS has none; every other key is `extra`).
 The units already match (seconds, degrees, tesla). The fields of the
-[`DiffusionMetadata`][brainhops.datamodel.metadata.DiffusionMetadata]
+[`DiffusionVocabulary`][brainhops.datamodel.metadata.DiffusionVocabulary]
 group are not sidecar keys (BIDS keeps them in `.bval`/`.bvec` files, in
 voxel axes), and an encoding direction along no voxel axis has no BIDS
 string, so `to_bids` reports them as lost.
@@ -27,7 +27,7 @@ from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     VOCABULARY,
     ConversionReport,
-    DiffusionMetadata,
+    DiffusionVocabulary,
     EncodingDirection,
     Metadata,
     OnLoss,
@@ -106,7 +106,7 @@ def to_bids(
 
 # Not the diffusion fields: BIDS stores them as `.bval`/`.bvec` files.
 _SIDECAR_FIELDS = tuple(
-    name for name in VOCABULARY if name not in GROUPS[DiffusionMetadata]
+    name for name in VOCABULARY if name not in GROUPS[DiffusionVocabulary]
 )
 
 

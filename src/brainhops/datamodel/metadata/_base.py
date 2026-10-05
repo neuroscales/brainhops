@@ -29,24 +29,24 @@ from ._vocabulary import (
     SCOPES,
     VOCABULARY,
     VOLUME,
-    DiffusionMetadata,
-    DisplayMetadata,
-    MicroscopyMetadata,
-    MRIMetadata,
-    ProvenanceMetadata,
+    DiffusionVocabulary,
+    DisplayVocabulary,
+    MicroscopyVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
     Scope,
-    TransformMetadata,
+    TransformVocabulary,
 )
 
 
 class Metadata(
     DataModelBase,
-    ProvenanceMetadata,
-    MRIMetadata,
-    DiffusionMetadata,
-    DisplayMetadata,
-    MicroscopyMetadata,
-    TransformMetadata,
+    ProvenanceVocabulary,
+    MRIVocabulary,
+    DiffusionVocabulary,
+    DisplayVocabulary,
+    MicroscopyVocabulary,
+    TransformVocabulary,
     metaclass=MetadataMeta,
     polymorphic=True,
     kw_only=True,
@@ -69,9 +69,9 @@ class Metadata(
     unknown format builds a plain `Metadata`.
 
     The vocabulary is declared by six groups, which `Metadata` inherits:
-    [`ProvenanceMetadata`][], [`MRIMetadata`][], [`DiffusionMetadata`][],
-    [`DisplayMetadata`][], [`MicroscopyMetadata`][] and
-    [`TransformMetadata`][]. Each field holds a value, `None` when the
+    [`ProvenanceVocabulary`][], [`MRIVocabulary`][], [`DiffusionVocabulary`][],
+    [`DisplayVocabulary`][], [`MicroscopyVocabulary`][] and
+    [`TransformVocabulary`][]. Each field holds a value, `None` when the
     value is unknown, or `UNSUPPORTED` when a format has no slot for the
     field. The hooks that a format implements are described in the format
     author's guide (`docs/dev/metadata-formats.md`).

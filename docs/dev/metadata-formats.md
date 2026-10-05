@@ -29,7 +29,10 @@ side), and last the helpers its image classes import.
 class MyMetadata(
     FileBasedMetadata,
     on={"format": "my"},  # polymorphic discriminant
-    supports=(ProvenanceMetadata, "echo_time"),  # everything else UNSUPPORTED
+    supports=(
+        ProvenanceVocabulary,
+        "echo_time",
+    ),  # everything else UNSUPPORTED
     lazy=("history",),  # fields decoded on first access
 ):
     format: tx.Literal["my"] = "my"

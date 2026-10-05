@@ -38,8 +38,8 @@ from brainhops.datamodel.metadata import (
     VOCABULARY,
     Channel,
     ConversionReport,
-    DiffusionMetadata,
-    DisplayMetadata,
+    DiffusionVocabulary,
+    DisplayVocabulary,
     EncodingDirection,
     FileBasedMetadata,
     GeneratedBy,
@@ -49,11 +49,11 @@ from brainhops.datamodel.metadata import (
     MetadataField,
     MetadataLossError,
     MetadataLossWarning,
-    MicroscopyMetadata,
-    MRIMetadata,
+    MicroscopyVocabulary,
+    MRIVocabulary,
     OpaqueMetadata,
-    ProvenanceMetadata,
-    TransformMetadata,
+    ProvenanceVocabulary,
+    TransformVocabulary,
     Unsupported,
     apply_loss_policy,
     collect_loss_reports,
@@ -983,17 +983,17 @@ def test_the_hierarchy_mirrors_the_images() -> None:
 
 def test_the_vocabulary_is_the_groups_in_order() -> None:
     assert list(GROUPS) == [
-        ProvenanceMetadata,
-        MRIMetadata,
-        DiffusionMetadata,
-        DisplayMetadata,
-        MicroscopyMetadata,
-        TransformMetadata,
+        ProvenanceVocabulary,
+        MRIVocabulary,
+        DiffusionVocabulary,
+        DisplayVocabulary,
+        MicroscopyVocabulary,
+        TransformVocabulary,
     ]
     assert VOCABULARY == sum(GROUPS.values(), ())
     assert VOCABULARY[:2] == ("name", "description")
-    assert GROUPS[DiffusionMetadata] == ("bvalues", "bvectors")
-    assert "data_type" in GROUPS[DisplayMetadata]
+    assert GROUPS[DiffusionVocabulary] == ("bvalues", "bvectors")
+    assert "data_type" in GROUPS[DisplayVocabulary]
     assert "extra" not in VOCABULARY
     assert len(set(VOCABULARY)) == len(VOCABULARY)
     # A group's fields convert, as the class that inherits them does.
@@ -1007,12 +1007,12 @@ def test_supports_takes_groups() -> None:
     class ByGroup(
         FileBasedMetadata,
         on={"format": "test-group"},
-        supports=(ProvenanceMetadata, "echo_time"),
+        supports=(ProvenanceVocabulary, "echo_time"),
     ):
         pass
 
     assert ByGroup.supported_fields == set(
-        GROUPS[ProvenanceMetadata] + ("echo_time",)
+        GROUPS[ProvenanceVocabulary] + ("echo_time",)
     )
     assert ByGroup.supports("history") and not ByGroup.supports("bvalues")
     with pytest.raises(TypeError, match="not a vocabulary group"):

@@ -11,13 +11,13 @@ __all__ = [
     "VOCABULARY",
     "VOLUME",
     "Bids",
-    "DiffusionMetadata",
-    "DisplayMetadata",
-    "MRIMetadata",
-    "MicroscopyMetadata",
-    "ProvenanceMetadata",
+    "DiffusionVocabulary",
+    "DisplayVocabulary",
+    "MRIVocabulary",
+    "MicroscopyVocabulary",
+    "ProvenanceVocabulary",
     "Scope",
-    "TransformMetadata",
+    "TransformVocabulary",
 ]
 
 # stdlib
@@ -99,16 +99,20 @@ class Scope(Field):
 # ----------------------------------------------------------------------
 
 
-class _VocabularyGroup(Magic, kw_only=True, convert=True):
+class Vocabulary(Magic, kw_only=True, convert=True):
     """
-    Base of the vocabulary groups: `Magic` mixins that declare fields and
-    nothing else. They convert their fields (`convert=True`: a mixin's
-    fields keep the options of the class that declares them), and are
-    not meant to be instantiated: [`Metadata`][] inherits them all.
+    The base class of the vocabulary groups.
+
+    A vocabulary group is a `Magic` mixin that declares a few fields of
+    the common vocabulary, and nothing else. [`Metadata`][] inherits every
+    group, and a format names the groups it can store in its `supports=`
+    declaration. A group is not meant to be instantiated. The groups
+    convert their fields (`convert=True`), because the fields of a mixin
+    keep the options of the class that declares them.
     """
 
 
-class ProvenanceMetadata(_VocabularyGroup):
+class ProvenanceVocabulary(Vocabulary):
     """
     Vocabulary group: what the data is and where it comes from (`file`
     scope). Not meant to be instantiated; see [`Metadata`][].
@@ -174,7 +178,7 @@ class ProvenanceMetadata(_VocabularyGroup):
     ] = None
 
 
-class MRIMetadata(_VocabularyGroup):
+class MRIVocabulary(Vocabulary):
     """
     Vocabulary group: MRI acquisition parameters (`acquisition` scope,
     except the encoding directions and the slice timing, `grid`). Not
@@ -301,7 +305,7 @@ class MRIMetadata(_VocabularyGroup):
     ] = None
 
 
-class DiffusionMetadata(_VocabularyGroup):
+class DiffusionVocabulary(Vocabulary):
     """
     Vocabulary group: the diffusion gradient table (`volume` scope). BIDS
     stores it in `.bval`/`.bvec` files, not in the sidecar. Not meant to
@@ -324,7 +328,7 @@ class DiffusionMetadata(_VocabularyGroup):
     ] = None
 
 
-class DisplayMetadata(_VocabularyGroup):
+class DisplayVocabulary(Vocabulary):
     """
     Vocabulary group: how the values are shown and what they are
     (`volume` scope, except `data_type`, `grid`). Not meant to be
@@ -370,7 +374,7 @@ class DisplayMetadata(_VocabularyGroup):
     ] = None
 
 
-class MicroscopyMetadata(_VocabularyGroup):
+class MicroscopyVocabulary(Vocabulary):
     """
     Vocabulary group: microscopy acquisition (`acquisition` scope). Not
     meant to be instantiated; see [`Metadata`][].
@@ -403,7 +407,7 @@ class MicroscopyMetadata(_VocabularyGroup):
     ] = None
 
 
-class TransformMetadata(_VocabularyGroup):
+class TransformVocabulary(Vocabulary):
     """
     Vocabulary group: what a transformation relates (`file` scope). Not
     meant to be instantiated; see [`Metadata`][].
@@ -441,12 +445,12 @@ GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {
     # declares none.
     group: tuple(field.name for field in fields(group))
     for group in (
-        ProvenanceMetadata,
-        MRIMetadata,
-        DiffusionMetadata,
-        DisplayMetadata,
-        MicroscopyMetadata,
-        TransformMetadata,
+        ProvenanceVocabulary,
+        MRIVocabulary,
+        DiffusionVocabulary,
+        DisplayVocabulary,
+        MicroscopyVocabulary,
+        TransformVocabulary,
     )
 }
 """Each vocabulary group class, and the names of its fields."""

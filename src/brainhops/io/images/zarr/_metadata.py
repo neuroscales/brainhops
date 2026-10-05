@@ -57,12 +57,12 @@ from bagof.magic import NoEq, NoRepr
 from brainhops.datamodel.metadata import (
     Channel,
     ConversionReport,
-    DisplayMetadata,
+    DisplayVocabulary,
     FileBasedMetadata,
-    MicroscopyMetadata,
-    MRIMetadata,
-    ProvenanceMetadata,
-    TransformMetadata,
+    MicroscopyVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
+    TransformVocabulary,
 )
 from brainhops.io.metadata._json import (
     decode_object,
@@ -138,11 +138,11 @@ class ZarrMetadata(
     on={"format": "zarr"},
     # Not the diffusion fields: they are not sidecar keys.
     supports=(
-        ProvenanceMetadata,
-        MRIMetadata,
-        DisplayMetadata,
-        MicroscopyMetadata,
-        TransformMetadata,
+        ProvenanceVocabulary,
+        MRIVocabulary,
+        DisplayVocabulary,
+        MicroscopyVocabulary,
+        TransformVocabulary,
         "extra",
     ),
 ):
