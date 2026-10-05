@@ -30,6 +30,7 @@ from brainhops.datamodel.transformations import (  # noqa: E402
     Scaling,
     Sequence,
 )
+from brainhops.datamodel.units import is_indexunit  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
@@ -675,7 +676,7 @@ def test_axes_of_no_type_fill_the_spatial_slots(tmp_path) -> None:  # noqa: ANN0
     "voxel, message",
     [
         (["t", "x", "y", "t"], "one time axis"),
-        (["x", "y", "t"], "after three spatial axes"),
+        (["t"], "after 3 spatial axes"),
         (["x", "y", "z", "x"], "at most three spatial axes"),
     ],
 )
@@ -703,6 +704,238 @@ def test_axes_that_nifti_cannot_place_are_rejected(  # noqa: D103
     with pytest.raises(UnrepresentableTransformationError) as info:
         image.save(tmp_path / "bad.nii")
     assert message in str(info.value)
+
+
+def _typed(spec, space="index", time="index"):  # noqa: ANN001, ANN202
+    """A system of named axes: `x, y, z` (or any letter in `ijkab`) are
+    spatial, `t` is time and `c` a channel."""
+    from brainhops.datamodel.axes import Axis, SpaceAxis, TimeAxis
+
+    axes = []
+    for name in spec:
+        if name == "t":
+            axes.append(TimeAxis(name="t", unit=time))
+        elif name == "c":
+            axes.append(Axis(name="c", type="channel", unit="index"))
+        else:
+            axes.append(SpaceAxis(name=name, unit=space))
+    return CoordinateSystem(axes=axes)
+
+
+def _lazy(values, backend):  # noqa: ANN001, ANN202
+    if backend == "dask":
+        da = pytest.importorskip("dask.array")
+        return da.from_array(values, chunks=2)
+    return values
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_a_slice_time_series_is_given_a_z_axis(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+    backend: str,
+) -> None:
+    # (x, y, t) is written (X, Y, 1, T): time stays in `dim[4]`, and the
+    # inserted `z` maps by the identity.
+    values = np.random.rand(4, 5, 3).astype("f4")
+    matrix = np.array([[2.0, 0, 0, 1.0], [0, 3.0, 0, 2.0], [0, 0, 1.5, 0.5]])
+    xform = Affine(
+        matrix=matrix, input=_typed("xyt"), output=_typed("xyt", "mm", "s")
+    )
+    image = NiftiImage(data=_lazy(values, backend), transformations=[xform])
+    image.save(tmp_path / "slice.nii")
+
+    nii = nb.load(str(tmp_path / "slice.nii"))
+    assert nii.shape == (4, 5, 1, 3)
+    assert np.array_equal(np.asarray(nii.dataobj)[:, :, 0], values)
+    expected = np.diag([2.0, 3.0, 1.0, 1.0])
+    expected[:2, 3] = 1.0, 2.0
+    assert np.allclose(nii.affine, expected)
+    assert np.allclose(nii.header.get_zooms(), (2.0, 3.0, 1.0, 1.5))
+    assert float(nii.header["toffset"]) == 0.5
+
+    reloaded = io.images.load(tmp_path / "slice.nii")
+    assert [(a.name, a.type) for a in reloaded.system.axes] == [
+        ("x", "space"),
+        ("y", "space"),
+        ("z", "space"),
+        ("t", "time"),
+    ]
+    assert np.array_equal(np.asarray(reloaded.data)[:, :, 0], values)
+    expected = np.eye(5)
+    expected[[0, 1, 3], :] = 0
+    expected[0, [0, 4]] = 2.0, 1.0
+    expected[1, [1, 4]] = 3.0, 2.0
+    expected[3, [3, 4]] = 1.5, 0.5
+    assert np.allclose(
+        reloaded.transformation.to(Affine).homogeneous_matrix, expected
+    )
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+@pytest.mark.parametrize(
+    "spec, shape, stored",
+    [
+        ("xyzc", (4, 5, 6, 3), (4, 5, 6, 1, 3)),
+        ("cxyz", (3, 4, 5, 6), (4, 5, 6, 1, 3)),
+        ("xyc", (4, 5, 3), (4, 5, 1, 1, 3)),
+    ],
+)
+def test_channels_are_stored_after_a_singleton_time_axis(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+    backend: str,
+    spec: str,
+    shape: tuple,
+    stored: tuple,
+) -> None:
+    # The channels go to `dim[5]`, as in NIfTI's vector layout, so they are
+    # read back as channels, not as time. The time axis inserted before
+    # them has no repetition time.
+    values = np.random.rand(*shape).astype("f4")
+    scale = [{"x": 2.0, "y": 3.0, "z": 4.0, "c": 1.0}[n] for n in spec]
+    image = NiftiImage(
+        data=_lazy(values, backend),
+        transformations=[Scaling(scale=scale, input=_typed(spec))],
+    )
+    image.save(tmp_path / "channels.nii")
+
+    nii = nb.load(str(tmp_path / "channels.nii"))
+    assert nii.shape == stored
+    natural = values.transpose(
+        sorted(range(len(spec)), key=lambda i: "xyzc".index(spec[i]))
+    )
+    stored_values = np.asarray(nii.dataobj)
+    assert np.array_equal(stored_values.reshape(natural.shape), natural)
+    assert nii.header.get_zooms()[3] == 0.0
+    assert np.allclose(np.diag(nii.affine)[:2], (2.0, 3.0))
+
+    reloaded = io.images.load(tmp_path / "channels.nii")
+    axes = reloaded.system.axes
+    assert (axes[3].name, axes[3].type) == ("t", "time")
+    assert (axes[4].name, axes[4].type) == ("c", "channel")
+    assert is_indexunit(axes[4].unit)
+    assert np.array_equal(np.asarray(reloaded.data), np.asarray(nii.dataobj))
+
+    # Written again, the file is the same.
+    reloaded.save(tmp_path / "again.nii")
+    again = nb.load(str(tmp_path / "again.nii"))
+    assert again.shape == stored
+    assert np.allclose(again.affine, nii.affine)
+    assert np.allclose(again.header.get_zooms(), nii.header.get_zooms())
+    assert np.array_equal(np.asarray(again.dataobj), np.asarray(nii.dataobj))
+
+
+def test_a_slice_placed_in_space_completes_its_normal(tmp_path) -> None:  # noqa: ANN001
+    # A map from a slice's two voxel axes into a three-dimensional world
+    # states the world position of the slice (the third row's offset), and
+    # its plane: the inserted `z` points along the plane's normal (the
+    # cross product of the in-plane directions), with a unit spacing.
+    matrix = np.array(
+        [
+            [0.0, 2.0, 0.0, 10.0],  # world x <- voxel y
+            [0.0, 0.0, 0.0, 20.0],  # world y: the slice's position
+            [3.0, 0.0, 0.0, 30.0],  # world z <- voxel x
+            [0.0, 0.0, 1.5, 0.0],  # world t <- voxel t
+        ]
+    )
+    xform = Affine(
+        matrix=matrix, input=_typed("xyt"), output=_typed("xyzt", "mm", "s")
+    )
+    image = NiftiImage(
+        data=np.zeros((4, 5, 3), dtype="f4"), transformations=[xform]
+    )
+    image.save(tmp_path / "coronal.nii")
+
+    nii = nb.load(str(tmp_path / "coronal.nii"))
+    assert nii.shape == (4, 5, 1, 3)
+    # (0, 0, 3) x (2, 0, 0) = (0, 6, 0): the normal is +y.
+    expected = np.array(
+        [
+            [0.0, 2.0, 0.0, 10.0],
+            [0.0, 0.0, 1.0, 20.0],
+            [3.0, 0.0, 0.0, 30.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    assert np.allclose(nii.affine, expected)
+    assert np.allclose(nii.header.get_zooms(), (3.0, 2.0, 1.0, 1.5))
+
+    # A slice alone is completed the same way.
+    flat = Affine(matrix=matrix[:3][:, [0, 1, 3]])
+    NiftiImage(data=np.zeros((4, 5), dtype="f4"), transformations=[flat]).save(
+        tmp_path / "flat.nii"
+    )
+    assert np.allclose(nb.load(str(tmp_path / "flat.nii")).affine, expected)
+
+
+def test_an_lps_slice_is_turned_into_ras(tmp_path) -> None:  # noqa: ANN001
+    # The `z` axis inserted next to an LPS plane runs along the third RAS
+    # axis, so the plane still turns into RAS.
+    from brainhops.datamodel.axes import Axis, TimeAxis
+    from brainhops.datamodel.orientation import Orientation
+
+    def oriented(name: str, value: str) -> Axis:
+        orientation = Orientation(type="anatomical", value=value)
+        return Axis(name, "space", unit="mm", orientation=orientation)
+
+    world = CoordinateSystem(
+        axes=[
+            oriented("x", "right-to-left"),
+            oriented("y", "anterior-to-posterior"),
+            TimeAxis(name="t", unit="s"),
+        ]
+    )
+    xform = Affine(
+        matrix=np.diag([2.0, 3.0, 1.5, 1.0])[:3],
+        input=_typed("xyt"),
+        output=world,
+    )
+    NiftiImage(
+        data=np.zeros((4, 5, 3), dtype="f4"), transformations=[xform]
+    ).save(tmp_path / "lps.nii")
+    nii = nb.load(str(tmp_path / "lps.nii"))
+    assert np.allclose(nii.affine, np.diag([-2.0, -3.0, 1.0, 1.0]))
+
+
+@pytest.mark.parametrize(
+    "spec, stored",
+    [
+        ("zyx", "xyz"),
+        ("yxz", "xyz"),
+        ("zx", "xz"),
+        ("kij", "kij"),  # not named x, y, z: kept in declared order
+        ("jxz", "jxz"),  # not all named x, y, z: kept in declared order
+    ],
+)
+def test_spatial_axes_are_ordered_by_name_when_named_xyz(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+    spec: str,
+    stored: str,
+) -> None:
+    # Each spatial axis is scaled by its own factor, so the zooms say in
+    # which order they are stored. A time axis is added, so the axes are
+    # placed by their declared types.
+    sizes = {"x": 2, "y": 3, "z": 4, "i": 5, "j": 6, "k": 7}
+    factor = {"x": 1.5, "y": 2.5, "z": 3.5, "i": 4.5, "j": 5.5, "k": 6.5}
+    values = np.random.rand(*(sizes[n] for n in spec), 2).astype("f4")
+    image = NiftiImage(
+        data=values,
+        transformations=[
+            Scaling(
+                scale=[factor[n] for n in spec] + [2.0],
+                input=_typed(spec + "t"),
+            )
+        ],
+    )
+    image.save(tmp_path / "named.nii")
+
+    nii = nb.load(str(tmp_path / "named.nii"))
+    zooms = [factor[n] for n in stored] + [1.0] * (3 - len(stored)) + [2.0]
+    assert np.allclose(nii.header.get_zooms(), zooms)
+    order = [spec.index(n) for n in stored] + [len(spec)]
+    stored_values = values.transpose(order)
+    assert np.array_equal(
+        np.asarray(nii.dataobj).reshape(stored_values.shape), stored_values
+    )
 
 
 def test_a_large_image_is_written_as_nifti2() -> None:
