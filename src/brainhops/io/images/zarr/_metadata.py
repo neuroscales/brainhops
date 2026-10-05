@@ -71,6 +71,7 @@ from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
+    ParserNotImplementedError,
     ParserTypeError,
     SnifferContentError,
 )
@@ -155,16 +156,53 @@ class _ZarrMetadataParser(MetadataParser):
     """
     The metadata parser of a Zarr store: a store is a directory, read
     from its path, never from a stream. A format implements
-    `_score_node(node)` and `_read_node(node)` on the opened node.
+    `sniff_node(node)` and `from_node(node)` on the opened node, as
+    `ZarrImage` does.
     """
 
     @classmethod
-    def _score_node(cls, node: tx.Any) -> float:
-        return 0.0
+    def sniff_node(cls, node: tx.Any) -> float:
+        """
+        Score how confident the class is that an opened Zarr node is one
+        of its nodes.
+
+        Parameters
+        ----------
+        node : ZarrArray or ZarrGroup
+            The opened node.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`. By default, 0.
+        """
+        return Confidence.NO
 
     @classmethod
-    def _read_node(cls, node: tx.Any) -> tx.Any:
-        raise NotImplementedError
+    def from_node(cls, node: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        """
+        Read the metadata of an opened Zarr node, without its arrays.
+
+        Parameters
+        ----------
+        node : ZarrArray or ZarrGroup
+            The opened node.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        Metadata
+            The metadata of the node, with its raw record.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            By default: a format implements this method.
+        """
+        raise ParserNotImplementedError(
+            f"{cls.__name__} cannot read the metadata of a Zarr node."
+        )
 
     @classmethod
     def sniff_file(
@@ -194,7 +232,7 @@ class _ZarrMetadataParser(MetadataParser):
         score = 0.0
         try:
             node = _open(file, "r")
-            score = cls._score_node(node)
+            score = cls.sniff_node(node)
         except Exception:
             pass
         if not score and error:
@@ -238,13 +276,58 @@ class _ZarrMetadataParser(MetadataParser):
     sniff_bytes = sniff_fileobj
 
     @classmethod
-    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Any:
+    def from_file(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        """
+        Read the metadata of a store, without its arrays.
+
+        Parameters
+        ----------
+        file : str or path-like
+            The location of the store.
+        **kwargs
+            Options of `from_node`.
+
+        Returns
+        -------
+        Metadata
+            The metadata of the store, with its raw record.
+
+        Raises
+        ------
+        ParserTypeError
+            If `file` is an open file: a Zarr store is a directory.
+        ParserExistsError
+            If there is no store at the location.
+        """
         if hasattr(file, "read"):
-            raise ParserTypeError(
-                "A Zarr store is read from a store path, not from a file "
-                "object."
-            )
-        return cls._read_node(_open(file, "r"))
+            return cls.from_fileobj(file, **kwargs)
+        return cls.from_node(_open(file, "r"), **kwargs)
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> tx.Any:
+        """
+        Refuse an open file: a Zarr store is a directory.
+
+        Parameters
+        ----------
+        file : file object
+            An open file.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        Metadata
+            Never: the method always raises.
+
+        Raises
+        ------
+        ParserTypeError
+            Always.
+        """
+        raise ParserTypeError(
+            "A Zarr store is read from a store path, not from a file object."
+        )
 
 
 @register_format
@@ -287,18 +370,69 @@ class ZarrMetadata(
     # --- reading and writing the attributes of a store --------------
 
     @classmethod
-    def _score_node(cls, node: tx.Any) -> float:
+    def sniff_node(cls, node: tx.Any) -> float:
+        """
+        Score how confident the class is that an opened node is a plain
+        Zarr array.
+
+        Parameters
+        ----------
+        node : ZarrArray or ZarrGroup
+            The opened node.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
         return Confidence.LIKELY if isinstance(node, ZarrArray) else 0.0
 
     @classmethod
-    def _read_node(cls, node: tx.Any) -> ZarrRaw:
+    def from_node(cls, node: tx.Any, **kwargs: tx.Any) -> tx.Self:
+        """
+        Read the attributes of an opened array, without its data.
+
+        Parameters
+        ----------
+        node : ZarrArray
+            The opened array.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        ZarrMetadata
+            The metadata of the array, with its `ZarrRaw` as `raw`.
+        """
         from ._image import node_attributes
 
-        return ZarrRaw(node_attributes(node), node)
+        return cls.from_raw(ZarrRaw(node_attributes(node), node))
 
-    def _write_raw(self, raw: ZarrRaw, file: tx.Any) -> None:
+    def to_file(self, file: tx.Any, **kwargs: tx.Any) -> None:
+        """
+        Write the metadata into the attributes of an existing array.
+
+        The fields are encoded with `to_raw`, over a copy of the
+        attributes this metadata was read from, and the attributes that
+        changed are written into the array.
+
+        Parameters
+        ----------
+        file : str or path-like
+            The location of the array.
+        **kwargs
+            Options of `to_raw` (`image=`, `on_loss=`).
+
+        Raises
+        ------
+        ParserExistsError
+            If there is no store at the location.
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
+        """
         from ._image import write_attributes
 
+        raw = self.to_raw(**kwargs)
         node = _open(file, "r+")
         write_attributes(node, raw.attrs, self.attributes)
 
@@ -502,7 +636,21 @@ class OmeZarrMetadata(
     # --- reading the attributes of a store ---------------------------
 
     @classmethod
-    def _score_node(cls, node: tx.Any) -> float:
+    def sniff_node(cls, node: tx.Any) -> float:
+        """
+        Score how confident the class is that an opened node is an
+        OME-Zarr pyramid.
+
+        Parameters
+        ----------
+        node : ZarrArray or ZarrGroup
+            The opened node.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
         from ._ome import looks_like_multiscale
 
         if isinstance(node, ZarrGroup) and looks_like_multiscale(node):
@@ -510,13 +658,28 @@ class OmeZarrMetadata(
         return 0.0
 
     @classmethod
-    def _read_node(cls, node: tx.Any) -> OmeZarrRaw:
+    def from_node(cls, node: tx.Any, **kwargs: tx.Any) -> tx.Self:
+        """
+        Read the metadata of an opened pyramid, without its arrays.
+
+        Parameters
+        ----------
+        node : ZarrGroup
+            The opened group.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        OmeZarrMetadata
+            The metadata of the pyramid, with its `OmeZarrRaw` as `raw`.
+        """
         from ._image import node_attributes
         from ._ome import read_multiscale
 
         multiscale, _ = read_multiscale(node)
-        return OmeZarrRaw.from_attributes(
-            multiscale, node_attributes(node), node
+        return cls.from_raw(
+            OmeZarrRaw.from_attributes(multiscale, node_attributes(node), node)
         )
 
     # --- hooks --------------------------------------------------------

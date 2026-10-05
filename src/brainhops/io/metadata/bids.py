@@ -23,6 +23,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops._core import path
+from brainhops._core.streams import preserve_position
 from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     ConversionReport,
@@ -119,7 +120,6 @@ class BidsSidecar(MetadataParser):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".json",)
     HINTS = ("bids", "json")
-    _READ_MODE = "rb"
 
     @classmethod
     def sniff_fileobj(
@@ -189,12 +189,24 @@ class BidsSidecar(MetadataParser):
         return cls.sniff_fileobj(BytesIO(content), error=error)
 
     @classmethod
-    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Dict[str, tx.Any]:
-        return _read(file)
+    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> Metadata:
+        """
+        Read an open sidecar.
 
-    @classmethod
-    def _from_record(cls, raw: tx.Dict[str, tx.Any]) -> Metadata:
-        return from_bids(raw)
+        Parameters
+        ----------
+        file : file object
+            The sidecar, open for reading. Its position is restored.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        Metadata
+            Generic metadata (see [`from_bids`][]).
+        """
+        with preserve_position(file):
+            return from_bids(_read(file))
 
 
 # ----------------------------------------------------------------------

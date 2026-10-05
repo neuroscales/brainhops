@@ -158,22 +158,60 @@ class X5Metadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
     HINTS = ("x5",)
-    _READ_MODE = "rb"
 
     # --- reading the node of a file -----------------------------------
 
     @classmethod
-    def _sniff_h5(cls, h5file: tx.Any) -> float:
+    def sniff_h5(cls, h5file: tx.Any) -> float:
+        """
+        Score how confident the class is that an open HDF5 file is an X5
+        file.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
         return Confidence.CERTAIN if is_x5(h5file) else Confidence.NO
 
     @classmethod
-    def _read_raw_h5(
+    def from_h5(
         cls,
         h5file: tx.Any,
         chain: tx.Optional[int] = None,
         position: tx.Optional[int] = None,
         **kwargs: tx.Any,
-    ) -> X5Raw:
+    ) -> tx.Self:
+        """
+        Read the metadata of the transformation of an open X5 file that
+        `X5Transform` would read, without its arrays.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        chain : int, optional
+            The chain of `/TransformChain` to read.
+        position : int, optional
+            The single transform of `/TransformGroup` to read.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        X5Metadata
+            The metadata of the node, with the root and the node as `raw`.
+
+        Raises
+        ------
+        ParserContentError
+            If the file has no such transform.
+        """
         header, nodes = read_x5(h5file, load=False)
         try:
             index = metadata_index(header, chain, position)
@@ -183,7 +221,7 @@ class X5Metadata(
                 f"This X5 file has no transform for chain={chain}, "
                 f"position={position}."
             ) from None
-        return X5Raw(header, node)
+        return cls.from_raw(X5Raw(header, node))
 
     @property
     def header(self) -> tx.Optional[X5Header]:

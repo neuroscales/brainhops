@@ -46,18 +46,19 @@ from .parsers import (
 @format_registry
 class MetadataParser(FormatDispatcher):
     """
-    Reads and writes the raw record of a metadata class, and dispatches
-    among the formats that do.
+    Reads the metadata of a file, and dispatches among the formats that
+    do.
 
-    A format implements `_read_raw`, which reads the raw record from a
-    path or from an open file, and the sniffers that recognise its files.
-    Its `from_file`, `from_fileobj` and `from_bytes` then read the record
-    and build the metadata with `from_raw`. A format whose record is an
-    object of its own on disk (the attributes of a Zarr array) also
-    implements `_write_raw`, and its `to_file` writes the encoded record
-    (`to_raw`) back. Every other format refuses to write: its record is
-    written by the writer of its images or transformations, along with
-    the data.
+    A format implements `from_fileobj`, which reads the raw record of an
+    open file and builds the metadata with `from_raw`, and the sniffers
+    that recognise its files; a path is opened by `from_filename`, in
+    binary mode, and handed to `from_fileobj`. A format that reads paths
+    otherwise (MGH reads its tags lazily from a path) overrides
+    `from_filename` too. A format whose record is an object of its own on
+    disk (the attributes of a Zarr array) also overrides `to_file`, which
+    writes the encoded record (`to_raw`) back. Every other format refuses
+    to write: its record is written by the writer of its images or
+    transformations, along with the data.
 
     The class is a dispatcher: `MetadataParser.load(path)` picks the
     registered format that best matches the file, by name and by
@@ -66,62 +67,7 @@ class MetadataParser(FormatDispatcher):
     [`register_format`][brainhops.io.base.register_format].
     """
 
-    # --- reading ------------------------------------------------------
-
-    @classmethod
-    def from_file(cls, file: path.FileLike, **kwargs: tx.Any) -> tx.Any:
-        """
-        Read the metadata of a file, from a path or an open file.
-
-        Parameters
-        ----------
-        file : str, path-like or file object
-            The file.
-        **kwargs
-            Options of the format's reader (on a dispatcher, also `hint=`).
-
-        Returns
-        -------
-        Metadata
-            The metadata of the file, with its raw record.
-
-        Raises
-        ------
-        ParserExistsError
-            If the path does not exist.
-        ParserContentError
-            On a dispatcher, if no registered format reads the file.
-        """
-        if cls._is_dispatcher():
-            return super().from_file(file, **kwargs)
-        if isinstance(file, str):
-            file = path.Path(file)
-        if isinstance(file, path.PathLike) and not path.exists(file):
-            raise ParserExistsError(f"No such file: {file}")
-        return cls._from_record(cls._read_raw(file, **kwargs))
-
-    @classmethod
-    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> tx.Any:
-        """
-        Read the metadata of an open file.
-
-        Parameters
-        ----------
-        file : file object
-            The file, open for reading in binary mode. Its position is
-            restored afterwards.
-        **kwargs
-            Options of the format's reader.
-
-        Returns
-        -------
-        Metadata
-            The metadata of the file, with its raw record.
-        """
-        if cls._is_dispatcher():
-            return super().from_fileobj(file, **kwargs)
-        with preserve_position(file):
-            return cls._from_record(cls._read_raw(file, **kwargs))
+    _READ_MODE = "rb"
 
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs: tx.Any) -> tx.Any:
@@ -139,54 +85,24 @@ class MetadataParser(FormatDispatcher):
         -------
         Metadata
             The metadata of the file, with its raw record.
+
+        Raises
+        ------
+        ParserContentError
+            On a dispatcher, if no registered format reads the content.
         """
         if cls._is_dispatcher():
             return super().from_bytes(content, **kwargs)
         return cls.from_fileobj(BytesIO(content), **kwargs)
 
-    @classmethod
-    def _read_raw(cls, file: path.FileLike, **kwargs: tx.Any) -> tx.Any:
-        """
-        Read the raw record of a file, and nothing else.
-
-        A format overrides this hook.
-
-        Parameters
-        ----------
-        file : path-like or file object
-            The file: a path, or a file open for reading in binary mode.
-        **kwargs
-            Options of the format's reader.
-
-        Returns
-        -------
-        object
-            The raw record.
-
-        Raises
-        ------
-        ParserNotImplementedError
-            By default: the format cannot read its metadata on its own.
-        """
-        raise ParserNotImplementedError(
-            f"{cls.__name__} cannot read the metadata of a file on its own."
-        )
-
-    @classmethod
-    def _from_record(cls, raw: tx.Any) -> tx.Any:
-        """The metadata of a raw record that was just read: `from_raw`,
-        for the metadata class of a format."""
-        return cls.from_raw(raw)
-
-    # --- writing ------------------------------------------------------
-
     def to_file(self, file: path.FileLike, **kwargs: tx.Any) -> None:
         """
         Write the metadata into the raw record of a file.
 
-        The fields are encoded with `to_raw`, over a copy of the record
-        this metadata was read from, and the record is written into the
-        file, which must exist already.
+        A format whose record is an object of its own on disk overrides
+        this method: it encodes the fields with `to_raw`, over a copy of
+        the record this metadata was read from, and writes the record
+        into the file, which must exist already.
 
         Parameters
         ----------
@@ -194,27 +110,6 @@ class MetadataParser(FormatDispatcher):
             The file.
         **kwargs
             Options of `to_raw` (`image=`, `on_loss=`).
-
-        Raises
-        ------
-        WriterNotImplementedError
-            If the format writes its record along with the data only.
-        """
-        self._write_raw(self.to_raw(**kwargs), file)
-
-    def _write_raw(self, raw: tx.Any, file: path.FileLike) -> None:
-        """
-        Write a raw record into a file.
-
-        A format whose record is an object of its own on disk overrides
-        this hook.
-
-        Parameters
-        ----------
-        raw : object
-            The encoded record.
-        file : path-like or file object
-            The file.
 
         Raises
         ------
@@ -232,21 +127,53 @@ class Hdf5MetadataParser(MetadataParser):
     """
     The metadata parser of a format stored in an HDF5 file.
 
-    A format implements `_sniff_h5(h5file)`, a score, and
-    `_read_raw_h5(h5file, **kwargs)`, the raw record, both on an open
-    `h5py.File`. `h5py` is optional: it is imported when a file is
-    sniffed or read, and without it no file is recognised.
+    A format implements `sniff_h5`, a score, and `from_h5`, the
+    metadata, both on an open `h5py.File`, as the formats of
+    [`Hdf5Parser`][brainhops.io.base.hdf5.Hdf5Parser] do. `h5py` is
+    optional: it is imported when a file is sniffed or read, and without
+    it no file is recognised.
     """
 
     @classmethod
-    def _sniff_h5(cls, h5file: tx.Any) -> float:
-        """Score an open HDF5 file. A format overrides this hook."""
+    def sniff_h5(cls, h5file: tx.Any) -> float:
+        """
+        Score how confident the format is that an open HDF5 file is one
+        of its files.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`. By default, 0.
+        """
         return Confidence.NO
 
     @classmethod
-    def _read_raw_h5(cls, h5file: tx.Any, **kwargs: tx.Any) -> tx.Any:
-        """Read the raw record of an open HDF5 file. A format overrides
-        this hook."""
+    def from_h5(cls, h5file: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        """
+        Read the metadata of an open HDF5 file.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        **kwargs
+            Options of the format's reader.
+
+        Returns
+        -------
+        Metadata
+            The metadata of the file, with its raw record.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            By default: a format implements this method.
+        """
         raise ParserNotImplementedError(
             f"{cls.__name__} cannot read the metadata of a file on its own."
         )
@@ -263,7 +190,7 @@ class Hdf5MetadataParser(MetadataParser):
 
         Parameters
         ----------
-        file : str, path-like or file object
+        file : str, path-like, file object or h5py.File
             The file.
         error : bool or type, optional
             Raise an error (this one, or `SnifferContentError` for `True`)
@@ -276,12 +203,10 @@ class Hdf5MetadataParser(MetadataParser):
         float
             The confidence, in `[0, 1]`.
         """
-        if cls._is_dispatcher():
-            return super().sniff_file(file, error=error, **kwargs)
         score = Confidence.NO
         with contextlib.suppress(Exception):
             with _open_h5(file) as h5file:
-                score = cls._sniff_h5(h5file)
+                score = cls.sniff_h5(h5file)
         if not score and error:
             raise (SnifferContentError if error is True else error)(
                 f"Not a {cls.__name__} HDF5 file: {file}"
@@ -316,14 +241,64 @@ class Hdf5MetadataParser(MetadataParser):
         float
             The confidence, in `[0, 1]`.
         """
-        if cls._is_dispatcher():
-            return super().sniff_bytes(content, error=error, **kwargs)
         return cls.sniff_file(BytesIO(content), error=error)
 
     @classmethod
-    def _read_raw(cls, file: path.FileLike, **kwargs: tx.Any) -> tx.Any:
+    def from_file(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        """
+        Read the metadata of a file: a path, an open binary stream or an
+        open `h5py.File`.
+
+        Parameters
+        ----------
+        file : str, path-like, file object or h5py.File
+            The file.
+        **kwargs
+            Options of the format's reader (`from_h5`).
+
+        Returns
+        -------
+        Metadata
+            The metadata of the file, with its raw record.
+
+        Raises
+        ------
+        ParserExistsError
+            If the path does not exist.
+        """
+        if isinstance(file, str):
+            file = path.Path(file)
+        if isinstance(file, path.PathLike) and not path.exists(file):
+            raise ParserExistsError(f"No such file: {file}")
         with _open_h5(file) as h5file:
-            return cls._read_raw_h5(h5file, **kwargs)
+            return cls.from_h5(h5file, **kwargs)
+
+    from_filename = from_file
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> tx.Any:
+        """
+        Read the metadata of an open binary stream.
+
+        Parameters
+        ----------
+        file : file object
+            The stream. Its position is restored.
+        **kwargs
+            Options of the format's reader (`from_h5`).
+
+        Returns
+        -------
+        Metadata
+            The metadata of the file, with its raw record.
+        """
+        with _open_h5(file) as h5file:
+            return cls.from_h5(h5file, **kwargs)
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
 
 
 @contextlib.contextmanager

@@ -101,20 +101,48 @@ class ItkH5Metadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5",)
     HINTS = ("itk", "h5")
-    _READ_MODE = "rb"
 
     @classmethod
-    def _sniff_h5(cls, h5file: tx.Any) -> float:
-        # An ITK transform file records the ITK version at the root.
+    def sniff_h5(cls, h5file: tx.Any) -> float:
+        """
+        Score how confident the class is that an open HDF5 file is an ITK
+        transform file: one that records the ITK version at its root.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
         if "ITKVersion" in h5file.keys():
             return Confidence.CERTAIN
         return Confidence.NO
 
     @classmethod
-    def _read_raw_h5(cls, h5file: tx.Any, **kwargs: tx.Any) -> H5Header:
+    def from_h5(cls, h5file: tx.Any, **kwargs: tx.Any) -> tx.Self:
+        """
+        Read the root header of an open ITK `.h5` file, without its
+        transforms.
+
+        Parameters
+        ----------
+        h5file : h5py.File
+            The open file.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        ItkH5Metadata
+            The metadata of the file, with its root header as `raw`.
+        """
         from .h5._parser import read_h5_header
 
-        return read_h5_header(h5file)
+        return cls.from_raw(read_h5_header(h5file))
 
     @property
     def header(self) -> tx.Optional[H5Header]:

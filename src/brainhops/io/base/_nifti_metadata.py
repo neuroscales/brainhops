@@ -133,7 +133,6 @@ class NiftiMetadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
     HINTS = ("nifti",)
-    _READ_MODE = "rb"
 
     @property
     def header(self) -> tx.Optional[nb.Nifti1Header]:
@@ -240,10 +239,25 @@ class NiftiMetadata(
         return cls.sniff_fileobj(BytesIO(content), error=error)
 
     @classmethod
-    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> nb.Nifti1Header:
+    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> tx.Self:
+        """
+        Read the header of an open NIfTI file, without its voxels.
+
+        Parameters
+        ----------
+        file : file object
+            A binary stream, possibly gzipped. Its position is restored.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        NiftiMetadata
+            The metadata of the header, with the header as `raw`.
+        """
         from brainhops.io.base.nifti import _load_nifti_header
 
-        return _load_nifti_header(file)
+        return cls.from_raw(_load_nifti_header(file))
 
     # --- hooks --------------------------------------------------------
 

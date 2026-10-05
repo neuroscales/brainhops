@@ -53,12 +53,17 @@ import typing_extensions as tx
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
+from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base._mgh_tags import decode_history, encode_history
-from brainhops.io.base.parsers import Confidence, SnifferContentError
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserExistsError,
+    SnifferContentError,
+)
 
 # The voxel types MGH stores.
 _MGH_DTYPES = tuple(
@@ -184,7 +189,6 @@ class MghMetadata(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
     HINTS = ("mgh", "mgz")
-    _READ_MODE = "rb"
 
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
@@ -260,10 +264,60 @@ class MghMetadata(
         return cls.sniff_fileobj(BytesIO(content), error=error)
 
     @classmethod
-    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> MghRaw:
+    def from_filename(
+        cls, filename: path.FilenameLike, **kwargs: tx.Any
+    ) -> tx.Self:
+        """
+        Read the header and the footer of an MGH file at a path. The tags,
+        which follow the voxels, are read the first time they are used
+        (see `MghRaw`).
+
+        Parameters
+        ----------
+        filename : str or path-like
+            The path, local or remote.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        MghMetadata
+            The metadata of the file, with its `MghRaw` as `raw`.
+
+        Raises
+        ------
+        ParserExistsError
+            If the path does not exist.
+        """
         from brainhops.io.base.mgh import read_mgh_raw
 
-        return read_mgh_raw(file)
+        if isinstance(filename, str):
+            filename = path.Path(filename)
+        if not path.exists(filename):
+            raise ParserExistsError(f"No such file: {filename}")
+        return cls.from_raw(read_mgh_raw(filename))
+
+    @classmethod
+    def from_fileobj(cls, file: tx.IO, **kwargs: tx.Any) -> tx.Self:
+        """
+        Read the header, the footer and the tags of an open MGH file,
+        without its voxels.
+
+        Parameters
+        ----------
+        file : file object
+            A binary stream, gzipped or not. Its position is restored.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        MghMetadata
+            The metadata of the file, with its `MghRaw` as `raw`.
+        """
+        from brainhops.io.base.mgh import read_mgh_raw
+
+        return cls.from_raw(read_mgh_raw(file))
 
     # --- hooks --------------------------------------------------------
 
