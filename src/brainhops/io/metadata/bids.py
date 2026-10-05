@@ -28,6 +28,7 @@ from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     ConversionReport,
     EncodingDirection,
+    FileBasedMetadata,
     Metadata,
 )
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -36,7 +37,6 @@ from brainhops.datamodel.metadata._vocabulary import (
     VOCABULARY,
     DiffusionVocabulary,
 )
-from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 
@@ -106,7 +106,6 @@ def to_bids(
     return sidecar
 
 
-@register_format
 class BidsSidecar(MetadataParser):
     """
     The reader of BIDS JSON sidecars, for
@@ -115,7 +114,8 @@ class BidsSidecar(MetadataParser):
     A sidecar is a file of metadata only, with no format class of its
     own: it reads as generic `Metadata` (see [`from_bids`][]). Any JSON
     object is accepted, and its keys that are not BIDS keys of the
-    vocabulary land in `extra`.
+    vocabulary land in `extra`. Not being a `FileBasedMetadata`, it is
+    added to the registry of that dispatcher by hand.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".json",)
@@ -207,6 +207,11 @@ class BidsSidecar(MetadataParser):
         """
         with preserve_position(file):
             return from_bids(_read(file))
+
+
+# `register_format` registers a class into the registries of its
+# ancestors, and the sidecar reader is not a `FileBasedMetadata`.
+FileBasedMetadata._REGISTRY.add(BidsSidecar)
 
 
 # ----------------------------------------------------------------------

@@ -53,8 +53,9 @@ __all__ = [
     "metadata_loss_policy",
 ]
 
+import typing_extensions as tx
+
 from ._base import Metadata
-from ._filebased import FileBasedMetadata
 from ._report import (
     ConversionReport,
     MetadataLossError,
@@ -70,3 +71,17 @@ from ._vocabulary import Scope
 # `inspect.getsource`, IPython's `??` and doctest discovery, which look
 # the source up through `__module__`. Pickles name the private module,
 # and load as well.
+
+if tx.TYPE_CHECKING:
+    from ._filebased import FileBasedMetadata
+
+
+def __getattr__(name: str) -> tx.Any:
+    # `FileBasedMetadata` derives from the dispatcher of `brainhops.io`,
+    # which imports this package: it is imported on first use, once
+    # `brainhops.datamodel` is loaded (see `_filebased`).
+    if name == "FileBasedMetadata":
+        from ._filebased import FileBasedMetadata
+
+        return FileBasedMetadata
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

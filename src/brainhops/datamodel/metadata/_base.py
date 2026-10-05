@@ -406,10 +406,11 @@ class Metadata(
         read: a NIfTI header, the footer and the tags of an MGH file, the
         attributes of a Zarr node, the JSON of an x5 node.
 
-        The metadata class of a format overrides this method by its bases:
-        one whose files hold metadata lists its parser before
-        `FileBasedMetadata`, and reads the file as a file of that format;
-        any other inherits `FileBasedMetadata.load`, which refuses.
+        This is the `load` of the dispatcher of the formats,
+        [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata].
+        The metadata class of a format whose files hold metadata reads the
+        file as a file of that format; one whose files hold none (FLIRT,
+        ITK `.tfm` and `.mat`) refuses.
 
         Parameters
         ----------
@@ -447,9 +448,10 @@ class Metadata(
         ```
         """
         import brainhops.io  # noqa: F401  (registers the formats)
-        from brainhops.io.base._metadata_parser import MetadataParser
 
-        return MetadataParser.load(file, **kwargs)
+        from ._filebased import FileBasedMetadata
+
+        return FileBasedMetadata.load(file, **kwargs)
 
     # --- BIDS ---------------------------------------------------------
 

@@ -1,4 +1,11 @@
-"""`FileBasedMetadata`: the metadata of a file format, and its hooks."""
+"""
+`FileBasedMetadata`: the metadata of a file format, its hooks, and the
+dispatcher among the formats whose files hold metadata.
+
+This module imports `brainhops.io`, whose dispatcher it derives from, so
+the package (`brainhops.datamodel.metadata`) imports it lazily: no module
+of `brainhops.datamodel` imports it while `brainhops.datamodel` loads.
+"""
 
 __all__ = ["FileBasedMetadata", "OpaqueMetadata"]
 
@@ -12,6 +19,8 @@ from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
+from brainhops.io.base._base import FormatDispatcher, format_registry
+from brainhops.io.base.parsers import ParserNotImplementedError
 
 from ..enums import AxisType
 from ._base import FIELDS, Metadata, _format_name, _History
@@ -22,7 +31,8 @@ RawT = tx.TypeVar("RawT")
 """The type of the raw record of a format (see `FileBasedMetadata`)."""
 
 
-class FileBasedMetadata(Metadata, tx.Generic[RawT]):
+@format_registry
+class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     """
     The metadata of a file format: the common vocabulary, decoded from and
     encoded into the format's own raw record.
@@ -40,6 +50,19 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
 
     A new, empty record is the type called without arguments, so the
     type of a record must build one that way.
+
+    The class is also the dispatcher of the formats whose files hold
+    metadata: `FileBasedMetadata.load(path)`, which is what
+    [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls,
+    picks the registered format that best matches the file. The class of
+    such a format lists its parser (a
+    [`MetadataParser`][brainhops.io.base._metadata_parser.MetadataParser])
+    first among its bases, and registers with
+    [`register_format`][brainhops.io.base.register_format]. The registry
+    is separate from that of
+    [`FileBasedObject`][brainhops.io.base.FileBasedObject], which this
+    class is not, so that `brainhops.io.load` never returns metadata
+    where an image or a transformation was asked for.
     """
 
     raw: tx.Annotated[
@@ -67,37 +90,36 @@ class FileBasedMetadata(Metadata, tx.Generic[RawT]):
     @classmethod
     def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
         """
-        Refuse to read the metadata of a file on its own.
+        Read the metadata of a file, without reading its data.
 
-        The metadata class of a format whose files hold metadata lists its
-        parser (`MetadataParser`) before `FileBasedMetadata` among its
-        bases, so that the parser's `load` wins; every other format, whose
-        metadata is written with its data or not at all, inherits this
-        refusal. [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load]
-        finds the format of a file.
+        On `FileBasedMetadata` itself, the dispatcher, the format is found
+        among the registered formats whose files hold metadata, by the
+        name of the file and by its content, as `brainhops.io.load` finds
+        the format of an image; `hint=` restricts the candidates. On the
+        class of a format, the file is read as a file of that format, by
+        its parser (`MetadataParser`), which comes first among its bases.
 
         Parameters
         ----------
-        file : str, path-like or file object
-            The file.
+        file : str, path-like, file object or bytes
+            The file, or the Zarr store.
         **kwargs
-            Ignored.
+            Options of the reader of the format, and, on the dispatcher,
+            `hint=` (a format name such as `"nifti"`, or several).
 
         Returns
         -------
         Metadata
-            Never: the method always raises.
+            The metadata of the file, with its raw record.
 
         Raises
         ------
-        ParserNotImplementedError
-            Always.
+        ParserContentError
+            On the dispatcher, if no registered format reads the file.
+        ParserExistsError
+            If the file does not exist.
         """
-        from brainhops.io.base.parsers import ParserNotImplementedError
-
-        raise ParserNotImplementedError(
-            f"{cls.__name__} stores no metadata that can be read on its own."
-        )
+        return super().load(file, **kwargs)
 
     @classmethod
     def from_raw(
@@ -603,6 +625,33 @@ class OpaqueMetadata(
     `FileBasedMetadata` with a `supports=` list instead. Its `raw` is
     always `None`.
     """
+
+    @classmethod
+    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
+        """
+        Refuse to read the metadata of a file: the files of the format
+        hold none.
+
+        Parameters
+        ----------
+        file : str, path-like or file object
+            The file.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        Metadata
+            Never: the method always raises.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            Always.
+        """
+        raise ParserNotImplementedError(
+            f"{cls.__name__} stores no metadata that can be read on its own."
+        )
 
 
 # ----------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """
 `Metadata.load`: reading the metadata of a file without its data, through
-the `MetadataParser` registry (NIfTI, MGH, plain Zarr and OME-Zarr, x5,
+the `FileBasedMetadata` registry (NIfTI, MGH, plain Zarr and OME-Zarr, x5,
 ITK `.h5`, BIDS sidecars), and the `to_raw` / `to_file` side.
 """
 
@@ -87,8 +87,12 @@ def test_metadata_files_stay_out_of_the_generic_load(tmp_path) -> None:  # noqa:
     # `io.load` still reads an image; the metadata formats have their
     # own registry.
     assert not isinstance(io.load(path), Metadata)
-    assert NiftiMetadata in MetadataParser._REGISTRY
+    assert NiftiMetadata in FileBasedMetadata._REGISTRY
     assert NiftiMetadata not in io.FileBasedObject._REGISTRY
+    assert not issubclass(FileBasedMetadata, io.FileBasedObject)
+    # The parsers own no registry: `FileBasedMetadata` dispatches.
+    assert "_REGISTRY" not in vars(MetadataParser)
+    assert type(FileBasedMetadata.load(path)) is NiftiMetadata
 
 
 def test_an_unknown_file_is_refused(tmp_path) -> None:  # noqa: ANN001
@@ -125,11 +129,17 @@ def test_load_is_resolved_by_the_bases() -> None:
     def owner(cls: type) -> type:
         return next(c for c in cls.__mro__ if "load" in c.__dict__)
 
-    # A format whose files hold metadata lists its parser first.
-    assert owner(NiftiMetadata) is FormatDispatcher
-    assert owner(MghMetadata) is FormatDispatcher
-    assert owner(FlirtMetadata) is FileBasedMetadata
-    assert owner(OpaqueMetadata) is FileBasedMetadata
+    # `FileBasedMetadata` dispatches; on the class of a format whose
+    # files hold metadata, its `load` reads the file with the parser.
+    assert owner(FileBasedMetadata) is FileBasedMetadata
+    assert FileBasedMetadata._is_dispatcher()
+    assert issubclass(FileBasedMetadata, FormatDispatcher)
+    assert owner(NiftiMetadata) is FileBasedMetadata
+    assert owner(MghMetadata) is FileBasedMetadata
+    assert not NiftiMetadata._is_dispatcher()
+    # A format whose files hold none refuses, explicitly.
+    assert owner(FlirtMetadata) is FlirtMetadata
+    assert owner(OpaqueMetadata) is OpaqueMetadata
     assert owner(Metadata) is Metadata
 
 

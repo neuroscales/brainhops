@@ -137,7 +137,7 @@ class FormatDispatcher(FileParser):
 
     This mixin owns no registry itself, so that a kind of object that
     the generic `load` must not return, such as the metadata of a file
-    (`MetadataParser`), can dispatch among its own formats without being
+    (`FileBasedMetadata`), can dispatch among its own formats without being
     registered into the registry of [`FileBasedObject`][].
 
     !!! note "`sniff*` means something different on a dispatcher"

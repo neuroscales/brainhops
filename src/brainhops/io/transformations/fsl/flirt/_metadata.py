@@ -16,6 +16,7 @@ import typing_extensions as tx
 
 # internals
 from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
+from brainhops.io.base.parsers import ParserNotImplementedError
 
 
 class FlirtMetadata(
@@ -29,6 +30,32 @@ class FlirtMetadata(
     a copy keep them; a write reports them as lost). There is no raw
     record: `raw` is always `None`.
     """
+
+    @classmethod
+    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "FlirtMetadata":
+        """
+        Refuse to read the metadata of a file: a `.mat` file holds none.
+
+        Parameters
+        ----------
+        file : str, path-like or file object
+            The file.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        FlirtMetadata
+            Never: the method always raises.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            Always.
+        """
+        raise ParserNotImplementedError(
+            f"{cls.__name__} stores no metadata that can be read on its own."
+        )
 
     @classmethod
     def _decode_raw(

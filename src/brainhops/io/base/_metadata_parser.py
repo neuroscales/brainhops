@@ -6,18 +6,14 @@ attributes of a Zarr array, the JSON of an x5 node, ...), which the
 metadata class of the format decodes with `from_raw` and encodes with
 `to_raw` and `update_raw`. [`MetadataParser`][] adds the file side: its
 `from_*` methods read the raw record of a file, and nothing else, then
-defer to `from_raw`; its `to_*` methods encode the fields with `to_raw`,
-then write the record. The metadata class of a format inherits from it,
-as the image class of a format inherits from its parser.
+build the metadata with `from_raw`. The metadata class of a format lists
+it first among its bases, as the image class of a format lists its
+parser.
 
-`MetadataParser` is also a dispatcher, with a registry of its own:
-`MetadataParser.load(path)`, which is what
-[`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls,
-sniffs the file and hands it to the metadata class of its format. The
-registry is separate from that of
-[`FileBasedObject`][brainhops.io.base.FileBasedObject], so that the
-generic `brainhops.io.load` never returns metadata where an image or a
-transformation was asked for.
+The parsers own no registry: the dispatcher among the formats is
+[`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata],
+whose `load` is what
+[`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls.
 """
 
 __all__ = ["Hdf5MetadataParser", "MetadataParser"]
@@ -33,9 +29,9 @@ import typing_extensions as tx
 from brainhops._core import path
 from brainhops._core.streams import preserve_position
 
-from ._base import FormatDispatcher, format_registry
 from .parsers import (
     Confidence,
+    FileParser,
     ParserExistsError,
     ParserNotImplementedError,
     SnifferContentError,
@@ -43,11 +39,9 @@ from .parsers import (
 )
 
 
-@format_registry
-class MetadataParser(FormatDispatcher):
+class MetadataParser(FileParser):
     """
-    Reads the metadata of a file, and dispatches among the formats that
-    do.
+    Reads the metadata of a file of one format.
 
     A format implements `from_fileobj`, which reads the raw record of an
     open file and builds the metadata with `from_raw`, and the sniffers
@@ -60,10 +54,10 @@ class MetadataParser(FormatDispatcher):
     to write: its record is written by the writer of its images or
     transformations, along with the data.
 
-    The class is a dispatcher: `MetadataParser.load(path)` picks the
-    registered format that best matches the file, by name and by
-    content, as `brainhops.io.load` does, and `hint=` restricts the
-    candidates. A format registers with
+    The parser of a format owns no registry: the class of the format
+    also derives from
+    [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata],
+    and registers into its registry with
     [`register_format`][brainhops.io.base.register_format].
     """
 
@@ -85,14 +79,7 @@ class MetadataParser(FormatDispatcher):
         -------
         Metadata
             The metadata of the file, with its raw record.
-
-        Raises
-        ------
-        ParserContentError
-            On a dispatcher, if no registered format reads the content.
         """
-        if cls._is_dispatcher():
-            return super().from_bytes(content, **kwargs)
         return cls.from_fileobj(BytesIO(content), **kwargs)
 
     def to_file(self, file: path.FileLike, **kwargs: tx.Any) -> None:
