@@ -12,7 +12,6 @@ from bagof.magic import NoEq, NoRepr, fields
 
 # internals
 from brainhops._core.compare import differs
-from brainhops._core.fields import Lazy
 
 from ..enums import AxisType
 from ._base import FIELDS, Metadata, _format_name, _History
@@ -83,10 +82,7 @@ class FileBasedMetadata(Metadata):
         The raw record is decoded into the common fields by the format's
         `_decode` hook. The decoded values are kept as the read-time
         snapshot, so that a field the user leaves untouched keeps the
-        value of the record when the record is written back. A field that
-        the format declares lazy (`lazy=`), and that `_decode` returns as a
-        [`Lazy`][brainhops._core.fields.Lazy] value, is decoded the first
-        time it is read instead.
+        value of the record when the record is written back.
 
         Parameters
         ----------
@@ -108,22 +104,18 @@ class FileBasedMetadata(Metadata):
         ------
         TypeError
             If `_decode` returned a value for a field that this class does
-            not support, or a `Lazy` value for a field that is not lazy.
-            The raw record belongs to the format, so this error never
-            comes from the data: it reveals a format class whose `_decode`
-            disagrees with its `supports=` or `lazy=` declaration, and
-            which would otherwise drop the value without a report.
+            not support. The raw record belongs to the format, so this
+            error never comes from the data: it reveals a format class
+            whose `_decode` disagrees with its `supports=` declaration,
+            and which would otherwise drop the value without a report.
         """
-        decoded, pending = cls._checked_decode(raw, image)
+        decoded = cls._checked_decode(raw, image)
         obj = cls(raw=raw, **decoded)
         # Snapshot the *converted* values, so that a decoded list held as
         # a tuple does not count as a change.
         obj._snapshot = {
             key: copy.deepcopy(getattr(obj, key)) for key in decoded
         }
-        for key, value in pending.items():
-            # Injected as is (no conversion): the first read loads it.
-            obj.__dict__[key] = value
         for key, value in values.items():
             setattr(obj, key, value)
         return obj
@@ -571,11 +563,10 @@ class FileBasedMetadata(Metadata):
     @classmethod
     def _checked_decode(
         cls, raw: tx.Any, image: tx.Any
-    ) -> tx.Tuple[tx.Dict[str, tx.Any], tx.Dict[str, Lazy]]:
-        """`_decode`, split into the values and the lazy ones, and
-        checked against the declarations of the class (see `from_raw`)."""
+    ) -> tx.Dict[str, tx.Any]:
+        """`_decode`, without its absent values, and checked against the
+        declarations of the class (see `from_raw`)."""
         decoded: tx.Dict[str, tx.Any] = {}
-        pending: tx.Dict[str, Lazy] = {}
         for key, value in cls._decode(raw, image=image).items():
             if value is None or value is UNSUPPORTED:
                 continue
@@ -584,16 +575,8 @@ class FileBasedMetadata(Metadata):
                     f"{cls.__name__}._decode returned {key}={value!r}, "
                     f"but {cls.__name__} does not support {key!r}."
                 )
-            if not isinstance(value, Lazy):
-                decoded[key] = value
-            elif key in cls.lazy_fields:
-                pending[key] = value
-            else:
-                raise TypeError(
-                    f"{cls.__name__}._decode returned a Lazy {key!r}, "
-                    f"which is not one of its lazy= fields."
-                )
-        return decoded, pending
+            decoded[key] = value
+        return decoded
 
     def _check_derived(
         self,

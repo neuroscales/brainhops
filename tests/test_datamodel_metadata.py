@@ -3,12 +3,12 @@ Tests for the format-agnostic metadata framework
 (`brainhops.datamodel.metadata`), on synthetic formats.
 
 What is checked: the `UNSUPPORTED` sentinel; the class hierarchy and the
-vocabulary groups; the `supports=`/`lazy=` class keywords; the
+vocabulary groups; the `supports=` class keyword; the
 typed terms (enums, units, data types, encoding directions); the read-time
 snapshot and the change-detecting write (cases 1-4 of section 6 of the
 design memo); `to()`, conversion loss reports and the loss policies;
-`derive`; the BIDS sidecar codec; and the `metadata` field of the data
-model roots.
+`derive` and the propagation hooks; the BIDS sidecar codec; and the
+`metadata` field of the data model roots.
 """
 
 import copy
@@ -22,7 +22,6 @@ import pytest
 import typing_extensions as tx
 from bagof.magic import Factory, Magic, NoEq, NoRepr, fields, replace
 
-from brainhops._core.fields import Lazy, LazyField
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     AxisType,
@@ -963,63 +962,6 @@ def test_a_derived_field_the_data_model_gives_is_not_encoded() -> None:
 
 
 # ----------------------------------------------------------------------
-#   LAZY FIELDS
-# ----------------------------------------------------------------------
-
-_LOADS = []
-
-
-def _load_history() -> tuple:
-    _LOADS.append(1)
-    return ("cmd a", "cmd b")
-
-
-class LazyMetadata(
-    FileBasedMetadata,
-    on={"format": "test-lazy"},
-    supports=("description", "history"),
-    lazy=("history",),
-):
-    """A format whose `history` sits in a lazy part of the record."""
-
-    @classmethod
-    def _default_raw(cls) -> dict:
-        return {}
-
-    @classmethod
-    def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
-        return {"description": raw.get("desc"), "history": Lazy(_load_history)}
-
-    def _encode(self, raw, changed, *, image=None, report) -> dict:  # noqa: ANN001
-        if "history" in changed:
-            raw["history"] = changed["history"]
-        return raw
-
-
-def test_a_lazy_field_is_decoded_on_first_access() -> None:
-    _LOADS.clear()
-    meta = LazyMetadata.from_raw({"desc": "d"})
-    copied = meta.copy()
-    assert _LOADS == []
-    assert meta.description == "d"
-    assert meta.history == ("cmd a", "cmd b")
-    assert meta.history == ("cmd a", "cmd b")
-    assert _LOADS == [1]
-    assert meta._changed_fields() == {}
-    # The copy waits for its own read.
-    assert copied._changed_fields() == {}
-    assert _LOADS == [1, 1]
-
-
-def test_assigning_a_lazy_field_snapshots_it_first() -> None:
-    meta = LazyMetadata.from_raw({})
-    meta.history = None
-    assert meta._changed_fields() == {"history": None}
-    meta = pickle.loads(pickle.dumps(LazyMetadata.from_raw({})))
-    assert meta.history == ("cmd a", "cmd b")
-
-
-# ----------------------------------------------------------------------
 #   ONE WARNING
 # ----------------------------------------------------------------------
 
@@ -1349,49 +1291,13 @@ def test_metadata_field_is_an_annotation() -> None:
     assert type(held.meta) is LiteMetadata
 
 
-# ----------------------------------------------------------------------
-#   LAZY FIELDS AS DESCRIPTORS
-# ----------------------------------------------------------------------
+def test_lazy_is_not_a_class_keyword() -> None:
+    with pytest.raises(TypeError, match="unknown class keyword"):
 
-
-def test_lazy_fields_are_descriptors() -> None:
-    assert LazyMetadata.lazy_fields == {"history"}
-    assert isinstance(
-        inspect.getattr_static(LazyMetadata, "history"), LazyField
-    )
-    # No attribute access is intercepted but that of the lazy fields.
-    assert "__getattribute__" not in vars(FileBasedMetadata)
-    assert "__getattribute__" not in vars(LazyMetadata)
-    meta = LazyMetadata.from_raw({})
-    assert isinstance(meta.__dict__["history"], Lazy)
-
-    # A subclass that redeclares the field keeps it lazy.
-    class Narrower(LazyMetadata, supports=("history",)):
-        pass
-
-    assert isinstance(inspect.getattr_static(Narrower, "history"), LazyField)
-    assert Narrower.from_raw({}).history == ("cmd a", "cmd b")
-
-
-def test_lazy_is_declared() -> None:
-    with pytest.raises(TypeError, match="lazy"):
-
-        class NotStored(
-            FileBasedMetadata, supports=("description",), lazy=("history",)
+        class Lazy(
+            FileBasedMetadata, supports=("history",), lazy=("history",)
         ):
             pass
-
-    class Undeclared(
-        FileBasedMetadata,
-        on={"format": "test-undeclared"},
-        supports=("history",),
-    ):
-        @classmethod
-        def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
-            return {"history": Lazy(_load_history)}
-
-    with pytest.raises(TypeError, match="lazy"):
-        Undeclared.from_raw({})
 
 
 def test_the_pinned_format_narrows_the_field() -> None:

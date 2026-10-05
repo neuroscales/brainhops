@@ -397,11 +397,11 @@ def test_a_nifti_image_becomes_an_mgh_image(tmp_path) -> None:  # noqa: ANN001
 
 
 # ----------------------------------------------------------------------
-#   LAZY TAGS
+#   TAGS
 # ----------------------------------------------------------------------
 
 
-def test_the_tags_are_read_lazily(scan, monkeypatch) -> None:  # noqa: ANN001
+def test_the_tags_are_read_once(scan, monkeypatch) -> None:  # noqa: ANN001
     from brainhops.io.base import mgh
 
     reads = []
@@ -414,10 +414,8 @@ def test_the_tags_are_read_lazily(scan, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(mgh, "_read_tags_file", counting)
     image = io.load(scan)
     meta = image.metadata
-    # The footer is in the header: no need for the tags.
+    # `history` is decoded with the rest of the metadata.
     assert meta.repetition_time == 2.3
-    assert not meta.raw.tags_loaded
-    assert reads == []
     assert meta.history == (
         "mri_convert in.nii orig.mgz",
         "mri_normalize orig.mgz T1.mgz",
@@ -428,7 +426,7 @@ def test_the_tags_are_read_lazily(scan, monkeypatch) -> None:  # noqa: ANN001
     assert reads == [1]
 
 
-def test_lazy_tags_survive_an_untouched_save(scan, tmp_path) -> None:  # noqa: ANN001
+def test_the_tags_survive_an_untouched_save(scan, tmp_path) -> None:  # noqa: ANN001
     io.load(scan).save(tmp_path / "out.mgz")
     assert io.load(tmp_path / "out.mgz").tags == io.load(scan).tags
 

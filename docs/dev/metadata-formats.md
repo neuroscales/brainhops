@@ -39,7 +39,6 @@ rest from the private modules that define it:
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
 | `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |
 | `brainhops.datamodel.metadata._sentinel` | `ALL`, `Maybe`, `Unsupported` |
-| `brainhops._core.fields` | `Lazy`, `LazyField` |
 | `brainhops.io.base._metadata_parser` | `MetadataParser`, `Hdf5MetadataParser` |
 | `brainhops.io.metadata._json` | the JSON codec of key/value stores |
 | `brainhops.io.metadata._sync` | `sync_metadata` |
@@ -56,7 +55,6 @@ class MyMetadata(
         ProvenanceVocabulary,
         "echo_time",
     ),  # everything else UNSUPPORTED
-    lazy=("history",),  # fields decoded on first access
 ):
     raw: tx.Annotated[tx.Optional[MyRaw], NoRepr(), NoEq()] = None
 
@@ -131,7 +129,7 @@ the image or transformation shares the code that reads the record with
 format whose files hold no metadata (FLIRT, ITK `.tfm`) is not a
 `MetadataParser`.
 
-## Class keywords
+## Class keyword
 
 - `supports=`: the vocabulary fields (and `"extra"`) the format can
   store, as names, group classes (all the fields of the group) or
@@ -141,13 +139,6 @@ format whose files hold no metadata (FLIRT, ITK `.tfm`) is not a
   refused at construction. `supported_fields` lists what the class
   stores, `unsupported_fields` the rest. A new vocabulary field is
   unsupported by every format until one opts in.
-- `lazy=`: supported fields whose decoding would read a lazy part of the
-  raw record (the MGH tags, after the whole compressed volume). Each
-  gets a [`LazyField`][brainhops._core.fields.LazyField]
-  descriptor, and `_decode` may return
-  [`Lazy`][brainhops._core.fields.Lazy]`(load)` for it: the field is
-  decoded on first access (or assignment), and joins the snapshot then.
-  Any other attribute access is plain.
 
 ## Hooks
 
@@ -170,9 +161,8 @@ All the hooks are optional, and all private.
   read. Returns field names (and `"extra"`) to values; `None` values may
   be left out. `image` is the image or transformation the raw record
   belongs to, for fields that need it. A value for a field the class
-  does not support (or a `Lazy` for a field not in `lazy=`) is a bug of
-  the format class, and `from_raw` raises `TypeError` rather than drop
-  it unreported.
+  does not support is a bug of the format class, and `from_raw` raises
+  `TypeError` rather than drop it unreported.
 - `_encode(raw, changed, *, image=None, report) -> raw`: vocabulary to
   raw record, on write. `raw` is the record to write over (already a
   copy, or the writer's own fresh record) and `changed` holds only the

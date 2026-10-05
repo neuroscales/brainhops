@@ -148,8 +148,7 @@ def test_mgh_metadata_reads_the_footer_and_the_tags(tmp_path) -> None:  # noqa: 
     meta = Metadata.load(path)
     assert type(meta) is MghMetadata
     assert meta.repetition_time == 2.3
-    # From a path, the tags are read when `history` is first used.
-    assert not meta.raw.tags_loaded
+    # The tags, after the voxels, are read for `history`.
     assert meta.history == ("recon-all -s bert",)
     with open(path, "rb") as f:
         assert MghMetadata.load(f).history == ("recon-all -s bert",)

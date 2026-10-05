@@ -102,11 +102,6 @@ class Metadata(
         ),
     ] = frozenset()
 
-    lazy_fields: tx.Annotated[
-        tx.ClassVar[tx.FrozenSet[str]],
-        tx.Doc("The vocabulary fields decoded on first access."),
-    ] = frozenset()
-
     # --- format and extras --------------------------------------------
 
     format: tx.Annotated[
@@ -218,8 +213,7 @@ class Metadata(
 
         The raw record is shared, as `replace()` shares it, while the
         read-time snapshot and `extra` are copied, so that editing the
-        copy never edits the original. A field that is still waiting to
-        be decoded (see `lazy=`) stays so in both.
+        copy never edits the original.
 
         Returns
         -------

@@ -88,7 +88,6 @@ nav = [
         {"typing" = "api/_core/typing.md"},
         {"path" = "api/_core/path.md"},
         {"properties" = "api/_core/properties.md"},
-        {"fields" = "api/_core/fields.md"},
         {"numeric" = "api/_core/numeric.md"},
         {"enum" = "api/_core/enum.md"},
         {"invfield" = "api/_ext/invfield/index.md"},

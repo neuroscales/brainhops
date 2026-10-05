@@ -35,12 +35,9 @@ tag stream after the footer (the command lines, `TAG_CMDLINE`), which
 tag stream parses; otherwise the tags are kept verbatim and `history` is
 unknown (and a new value cannot be written: it is reported as lost).
 Writing `history` replaces the command-line tags and keeps every other
-tag as it was. The tags sit after the whole volume, so a raw record read
-from a file reads them lazily, and `history` is a lazy field
-(`lazy=("history",)`, see
-[`LazyField`][brainhops._core.fields.LazyField]), decoded on first
-access: a load that never touches it never decompresses an MGZ to its
-end.
+tag as it was. The tags sit after the whole volume; `history` is
+decoded when the metadata is built, so reading the metadata of an MGZ
+decompresses it to its end.
 """
 
 __all__ = ["MghMetadata", "MghRaw"]
@@ -55,8 +52,6 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
-
-from brainhops._core.fields import Lazy
 
 # internals
 from brainhops._core.numeric import shortest_decimal
@@ -175,7 +170,6 @@ class MghMetadata(
         "history",
         "data_type",
     ),
-    lazy=("history",),
 ):
     """
     The metadata of an MGH/MGZ file; its raw record is an `MghRaw`
@@ -183,8 +177,8 @@ class MghMetadata(
 
     `header` and `tags` are the parts of the raw record under their
     familiar names. `MghMetadata.load(path)` reads the header and the
-    footer of a file without its voxels; the tags, which follow the
-    voxels, are read when `history` is first used.
+    footer of a file, and its tags, which follow the voxels, for
+    `history`.
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
@@ -315,12 +309,7 @@ class MghMetadata(
             out["data_type"] = raw.header.get_data_dtype()
         except Exception:
             pass
-        if raw.tags_loaded:
-            out["history"] = decode_history(raw.tags)
-        else:
-            # Decoded on first access: reading the tags reads the file
-            # to its end (see `MghRaw`).
-            out["history"] = Lazy(functools.partial(_lazy_history, raw))
+        out["history"] = decode_history(raw.tags)
         return out
 
     def _encode(
@@ -370,7 +359,3 @@ class MghMetadata(
 def _divide(factor: float, value: float) -> float:
     """A value in the vocabulary unit, in the unit of the footer."""
     return value / factor
-
-
-def _lazy_history(raw: MghRaw) -> tx.Optional[tx.Tuple[str, ...]]:
-    return decode_history(raw.tags)

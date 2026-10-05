@@ -1,11 +1,7 @@
 """
-The metaclass of `Metadata`: it reads the `supports=` and `lazy=` class
-keywords of a subclass, and sets its capabilities.
+The metaclass of `Metadata`: it reads the `supports=` class keyword of a
+subclass, and sets its capabilities.
 """
-
-# stdlib
-import copy
-import inspect
 
 # externals
 import typing_extensions as tx
@@ -14,7 +10,6 @@ from bagof.magic._options import Options
 
 # internals
 from brainhops._core.compat import own_annotations
-from brainhops._core.fields import LazyField
 
 from ..base import DataModelBase
 from ._sentinel import ALL, UNSUPPORTED
@@ -26,12 +21,11 @@ _BAGOF_KEYWORDS = frozenset(Options._DEFAULTS) | {"on", "priority"}
 
 class MetadataMeta(type(DataModelBase)):
     """
-    Reads the `supports=` and `lazy=` class keywords of a `Metadata`
-    subclass.
+    Reads the `supports=` class keyword of a `Metadata` subclass.
 
-    A class hook cannot read them: `bagof` builds the fields of a class
+    A class hook cannot read it: `bagof` builds the fields of a class
     before `__init_subclass__` runs, and ignores the class keywords it
-    does not know. So the keywords are popped here, the namespace is
+    does not know. So the keyword is popped here, the namespace is
     completed (`_declare`) before `bagof` reads it, and the class is
     finished (`_finish`) once built; any other keyword `bagof` does not
     read is refused, rather than ignored. No metadata class overrides
@@ -44,7 +38,6 @@ class MetadataMeta(type(DataModelBase)):
         bases: tx.Tuple[type, ...],
         namespace: tx.Dict[str, tx.Any],
         supports: tx.Any = None,
-        lazy: tx.Optional[tx.Iterable[str]] = None,
         **kwargs: tx.Any,
     ) -> type:
         unknown = sorted(set(kwargs) - _BAGOF_KEYWORDS)
@@ -57,14 +50,14 @@ class MetadataMeta(type(DataModelBase)):
             )
             raise TypeError(
                 f"{name}: unknown class keyword(s) {unknown}; a metadata "
-                f"class takes supports=, lazy= and the bagof options{hint}."
+                f"class takes supports= and the bagof options{hint}."
             )
         parent = next((b for b in bases if isinstance(b, metacls)), None)
         if parent is None:
             # `Metadata` itself, whose capabilities are in its body.
-            if (supports, lazy) != (None, None):
+            if supports is not None:
                 raise TypeError(
-                    f"{name}: supports= and lazy= are for Metadata subclasses."
+                    f"{name}: supports= is for Metadata subclasses."
                 )
             return super().__new__(metacls, name, bases, namespace, **kwargs)
         if supports is not None:
@@ -74,7 +67,7 @@ class MetadataMeta(type(DataModelBase)):
         cls = super().__new__(metacls, name, bases, namespace, **kwargs)
         if "__magic_discard__" not in name:
             # Not one of the transient classes `bagof` builds.
-            cls._finish(lazy)
+            cls._finish()
         return cls
 
     @staticmethod
@@ -112,13 +105,11 @@ class MetadataMeta(type(DataModelBase)):
             namespace.pop(key, None)
         namespace["__annotations__"] = annotations
 
-    def _finish(cls, lazy: tx.Optional[tx.Iterable[str]] = None) -> None:
+    def _finish(cls) -> None:
         """
         Set the capabilities of a class once `bagof` has built it: its
         `supported_fields` (the fields whose default is not
-        `UNSUPPORTED`), `unsupported_fields` and `lazy_fields` (`lazy=`,
-        or the inherited ones it still supports), and a `LazyField`
-        descriptor per lazy field.
+        `UNSUPPORTED`) and `unsupported_fields`.
         """
         supported = frozenset(
             field.name
@@ -127,38 +118,6 @@ class MetadataMeta(type(DataModelBase)):
         )
         cls.supported_fields = supported
         cls.unsupported_fields = frozenset(FIELDS) - supported
-        if lazy is None:
-            cls.lazy_fields = cls.lazy_fields & supported
-        else:
-            cls.lazy_fields = frozenset(lazy)
-            wrong = cls.lazy_fields - (supported - {"extra"})
-            if wrong:
-                raise TypeError(
-                    f"{cls.__name__} declares lazy={sorted(wrong)}, which "
-                    f"are not vocabulary fields it supports."
-                )
-        # The descriptors are installed once the class is built, for two
-        # reasons. Nothing of the field is lost: `bagof` keeps the `Field`
-        # in the field table of the class (`fields(cls)`), and only the
-        # class attribute is replaced. That attribute is the plain default
-        # that `bagof` set, and the descriptor returns the same default.
-        # And a descriptor placed in the namespace before the build would
-        # be read by `bagof` as the default value of the field. The
-        # descriptor is not a field, by design: it only changes how the
-        # attribute is read.
-        for field in fields(cls):
-            # Installed on every class that has a lazy field: a subclass
-            # that redeclares the field (`supports=`) hides its parent's.
-            if field.name in cls.lazy_fields and not isinstance(
-                inspect.getattr_static(cls, field.name), LazyField
-            ):
-                descriptor = LazyField(
-                    field.name,
-                    default=field.default,
-                    prepare=_unsupported_as_none,
-                    on_load=_join_snapshot,
-                )
-                setattr(cls, field.name, descriptor)
 
 
 # ----------------------------------------------------------------------
@@ -217,15 +176,3 @@ def _without_factory(hint: tx.Any) -> tx.Any:
     base, *extras = tx.get_args(hint)
     kept = [extra for extra in extras if not isinstance(extra, Factory)]
     return tx.Annotated[(base, *kept)] if kept else base
-
-
-def _unsupported_as_none(value: tx.Any) -> tx.Any:
-    return None if value is UNSUPPORTED else value
-
-
-def _join_snapshot(obj: tx.Any, name: str, value: tx.Any) -> None:
-    """A lazy field, once loaded, joins the read-time snapshot, as if it
-    had been decoded with the rest."""
-    snapshot = obj.__dict__.get("_snapshot")
-    if value is not None and snapshot is not None:
-        snapshot[name] = copy.deepcopy(value)

@@ -147,9 +147,6 @@ model, and only format subclasses live under io:
   the addendum to the decisions). Its names are imported from
   `brainhops.datamodel.metadata`: like the other submodules,
   `brainhops.datamodel` exposes the submodule, not its members.
-- `brainhops/_core/fields.py`: `Lazy` and the `LazyField`
-  descriptor (section 6); they are field descriptors, not properties,
-  so they are not in `_core/properties.py`.
 - `brainhops/datamodel/enums.py`: the enums of the known terms (section
   4).
 - `brainhops/io/metadata/`: the BIDS sidecar codec (it reads files).
@@ -693,8 +690,14 @@ def _encode(
 data model: diffusion b-vector frames, slice timing expansion from
 `slice_code` (needs the slice axis length), AFNI per-brick checks, and
 the geometry-derived fields below. Decoding is eager on read (raw
-records are small; a read metadata object is complete when `repr`-ed),
-with one exception: **a lazy part of the raw record**. Where part of the
+records are small; a read metadata object is complete when `repr`-ed).
+
+> **Dropped (fourth review).** The exception below, lazy fields, was
+> removed: no field is lazy, and MGH decodes `history` eagerly. It waits
+> for generic support of lazy fields upstream, in `bagof`. The text is
+> kept as the record of the design.
+
+The exception was **a lazy part of the raw record**. Where part of the
 raw record is expensive to reach and few users need it (the MGH tags
 follow the whole volume, so reading them decompresses an MGZ to its
 end), the raw record holds a loader for that part, the format declares
@@ -961,13 +964,14 @@ question 8.
   does not know and builds the fields before `__init_subclass__` runs.
   It holds the logic: its `_declare` completes the namespace before
   `bagof` builds the class, and its `_finish` sets the capabilities and
-  the lazy descriptors after. No metadata class overrides either, so
+  (until the fourth review) the lazy descriptors after. No metadata
+  class overrides either, so
   they live on the metaclass rather than on `Metadata` (they were
   classmethods of `Metadata` at first). `Metadata` is built
   with `bagof`'s `repr=False`, which its subclasses inherit, and has one
   hand-written `__repr__`.
 - **Descriptors** for the lazy fields (`LazyField`), installed on the
-  class after `bagof` built it.
+  class after `bagof` built it; dropped by the fourth review.
 - **Not `Magic`:** the sentinel (a plain singleton, like `_ABSENT` in
   `datamodel/base.py`), nibabel headers (wrapped as they are inside
   `raw`), and the raw records that already exist as frozen `Magic`
@@ -1431,7 +1435,7 @@ for a JSON-capable node.
 
 | Format | `raw` | `supports=` (highlights) | `extra` store / notes |
 |---|---|---|---|
-| MGH | `MghRaw(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag, lazy), `data_type` (`type`) | none |
+| MGH | `MghRaw(header, tags)` | TR/TE/TI/flip (ms→s, rad→deg; one scalar TR, else `approximated`), `history` (cmdline tag), `data_type` (`type`) | none |
 | AFNI | `AfniHeader` | `history`, `channels` (`BRICK_LABS`), `repetition_time` (unit code), `slice_timing`, `space`, `creation_time` | remaining attributes; `_GENERATED`/`_PER_BRICK`/`_PER_GRID` rules move into `_encode` (count mismatch → `lost`) and `_derive_raw` |
 | TIFF/OME/ImageJ | `TiffStruct` (renamed) + `ome_xml`/ImageJ dict | `name`, `description`, `generated_by`, `creation_time`, `manufacturer*`, `channels` (per instance by dialect) | ImageJ extras or plain tags; OME-XML round-trips whole, `_encode` patches `Name`/`Channel` only |
 | Pillow | `dict(info)` | `description`, `creation_time` | text chunks, `exif`, `icc_profile` |
@@ -1466,7 +1470,8 @@ for a JSON-capable node.
 > it is reported as lost. `MghParser` syncs the metadata in `__post_init__`
 > and when `header` or `tags` are assigned, but the tags stay lazy (6, a
 > lazy part of the raw record): `MghRaw` holds a loader for them,
-> `history` is a lazy field (`lazy=("history",)`), and a load reads the
+> `history` was a lazy field (`lazy=("history",)`, dropped by the fourth
+> review: it is now decoded on read), and a load read the
 > header and footer only (a first
 > prototype read the tags on load, a third of the load time of a 38 MB
 > MGZ). The record and the image share one read of the tags. The writer
@@ -1662,8 +1667,8 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   (`_geometry(image)`) gives the data model's value, which the writer
   stores, and a changed value that disagrees with it is reported as
   `approximated` (never compared with the raw record). Decoding is
-  eager, except for a lazy part of the raw record (MGH tags), whose
-  fields (`lazy=`) are `LazyField` descriptors decoded on first access.
+  eager (the lazy fields of a lazy part of the raw record, the MGH tags,
+  were dropped by the fourth review, pending generic support upstream).
   A writer stores the data as `data_type` when the values are of its
   kind; `dtype=` wins.
 - **M7** `ConversionReport`; class-level support is the lower bound,
@@ -1809,6 +1814,28 @@ the sections above disagree, this addendum holds.
   `shortest_decimal(value, encode)`, which the MGH reader also uses for
   its milliseconds and radians; a format declares `format` through
   `on=` alone.
+
+### Addendum: the fourth review
+
+Where this addendum and the sections above disagree, this addendum
+holds.
+
+- **Propagation (M9).** The image class owns the operation (section 9):
+  `Metadata.derive(*, history=)` is public, and the image operations
+  call two private hooks with what they resolve from their geometry,
+  `_select(axis_type, positions)` and `_reslice(linear)`.
+  `SingleScaleImage.__getitem__`, `reslice` and `__call__` and the
+  OME-Zarr levels derive their metadata.
+- **`Metadata.load`** only dispatches. The class of a format reads its
+  own files by the MRO: its parser comes before `FileBasedMetadata`,
+  whose `load` refuses, among its bases.
+- **No lazy fields.** `lazy=`, `lazy_fields`, `Lazy` and `LazyField`
+  (`_core/fields.py`) were removed. A lazy field cannot be a
+  `bagof.magic` field (a `Field` declares a slot; it is not a
+  descriptor, and `Magic` has no read hook), so the framework installed
+  its own descriptor after `bagof` built the class; that waits for
+  generic support upstream. MGH decodes `history` when the metadata is
+  built, which reads an MGZ to its end.
 
 ## Open questions for the maintainer
 
