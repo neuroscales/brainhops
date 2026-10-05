@@ -25,6 +25,7 @@ from brainhops.datamodel.transformations import (
     Inverse,
     Linear,
     Permutation,
+    Projection,
     Scaling,
     Sequence,
     SubspaceTransformation,
@@ -1012,3 +1013,30 @@ def test_a_sequence_of_disjoint_subspaces_converts_to_a_block_affine() -> None:
         .matrix,
         np.eye(4, 5),
     )
+    # Pieces that declare no system take the full space from the endpoints
+    # of the sequence, which `compute` declares on its first and last
+    # pieces.
+    bare = Sequence(
+        transformations=[
+            SubspaceTransformation(
+                transformation=product[0].transformation,
+                input_axes=[0, 1, 2],
+                output_axes=[0, 1, 2],
+            ),
+            SubspaceTransformation(
+                transformation=temporal, input_axes=[3], output_axes=[3]
+            ),
+        ],
+        input=voxel,
+        output=world,
+    )
+    assert np.allclose(bare.to(Affine).matrix, expected)
+    # A sequence that leaves something other than subspace transforms has
+    # no affine form.
+    with pytest.raises(ConversionError):
+        Sequence(
+            transformations=[
+                Affine(matrix=np.eye(4, 5)),
+                Projection(dropped=[3]),
+            ]
+        ).to(Affine)

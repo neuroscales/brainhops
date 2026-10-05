@@ -539,6 +539,172 @@ def test_a_space_and_time_geometry_is_written_to_mrtrix(tmp_path) -> None:  # no
     )
 
 
+def _xyzt_system(order, unit_space, unit_time):  # noqa: ANN001, ANN202
+    """A system of the axes `x, y, z, t`, listed in `order`."""
+    from brainhops.datamodel.axes import SpaceAxis, TimeAxis
+
+    axes = {n: SpaceAxis(name=n, unit=unit_space) for n in "xyz"}
+    axes["t"] = TimeAxis(name="t", unit=unit_time)
+    return CoordinateSystem(axes=[axes[n] for n in order])
+
+
+# A voxel-to-world map in `x, y, z, t` order: a spatial affine, and a
+# repetition time of 2 s with an offset of 0.5 s.
+XYZT = np.array(
+    [
+        [0.0, -2.0, 0.0, 0.0, 10.0],
+        [1.5, 0.0, 0.0, 0.0, -3.0],
+        [0.0, 0.0, 2.5, 0.0, 4.0],
+        [0.0, 0.0, 0.0, 2.0, 0.5],
+    ]
+)
+
+
+def _reordered(voxel_order, world_order):  # noqa: ANN001, ANN202
+    # `XYZT`, with its columns (voxel axes) and rows (world axes) listed in
+    # the given orders.
+    columns = ["xyzt".index(n) for n in voxel_order] + [4]
+    rows = ["xyzt".index(n) for n in world_order]
+    return XYZT[rows][:, columns]
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+@pytest.mark.parametrize(
+    "voxel_order, world_order",
+    [("txyz", "xyzt"), ("xtyz", "xyzt"), ("txyz", "txyz"), ("xyzt", "tzyx")],
+)
+def test_the_axes_are_written_in_nifti_order(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+    backend: str,
+    voxel_order: str,
+    world_order: str,
+) -> None:
+    # The axes are placed by the types the spaces declare: the data is
+    # transposed to `x, y, z, t`, and the geometry with it.
+    shape = dict(zip("xyzt", (4, 5, 6, 3)))
+    values = np.random.rand(*(shape[n] for n in "xyzt")).astype("f4")
+    data = values.transpose(["xyzt".index(n) for n in voxel_order])
+    if backend == "dask":
+        da = pytest.importorskip("dask.array")
+        data = da.from_array(data, chunks=2)
+    voxel = _xyzt_system(voxel_order, "index", "index")
+    world = _xyzt_system(world_order, "mm", "s")
+    xform = Affine(
+        matrix=_reordered(voxel_order, world_order), input=voxel, output=world
+    )
+    image = NiftiImage(data=data, transformations=[xform])
+    target = tmp_path / "bold.nii"
+    image.save(target)
+
+    nii = nb.load(str(target))
+    assert np.array_equal(np.asarray(nii.dataobj), values)
+    assert np.allclose(nii.header.get_sform()[:3], XYZT[:3, [0, 1, 2, 4]])
+    assert np.allclose(nii.header.get_zooms(), (1.5, 2.0, 2.5, 2.0))
+    assert float(nii.header["toffset"]) == 0.5
+    assert nii.header.get_xyzt_units() == ("mm", "sec")
+
+    reloaded = io.images.load(target)
+    assert np.allclose(reloaded.transformation.to(Affine).matrix, XYZT)
+    assert [a.name for a in reloaded.transformation.input.axes] == list("xyzt")
+
+
+def test_a_world_that_declares_no_axes_follows_the_voxel_axes(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # A world space that says nothing about its axes lists them as the
+    # voxel space does: a scaling of `(t, x, y, z)` scales `t` by its first
+    # factor.
+    data = np.random.rand(3, 4, 5, 6).astype("f4")
+    voxel = _xyzt_system("txyz", "index", "index")
+    image = NiftiImage(
+        data=data,
+        transformations=[Scaling(scale=[2.0, 1.5, 2.5, 3.0], input=voxel)],
+    )
+    image.save(tmp_path / "bold.nii")
+
+    nii = nb.load(str(tmp_path / "bold.nii"))
+    assert np.array_equal(np.asarray(nii.dataobj), data.transpose(1, 2, 3, 0))
+    assert np.allclose(nii.header.get_zooms(), (1.5, 2.5, 3.0, 2.0))
+    assert np.allclose(np.diag(nii.header.get_sform()), (1.5, 2.5, 3.0, 1.0))
+
+
+def test_a_coupled_space_and_time_is_rejected_by_declared_axes(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # The voxel space lists time first, so the coupling of time with the
+    # first spatial axis is found by the declared axes, not by position.
+    matrix = _reordered("txyz", "xyzt")
+    matrix[0, 0] = 0.5  # world x reads voxel t
+    image = NiftiImage(
+        data=np.zeros((3, 4, 5, 6), dtype="f4"),
+        transformations=[
+            Affine(
+                matrix=matrix,
+                input=_xyzt_system("txyz", "index", "index"),
+                output=_xyzt_system("xyzt", "mm", "s"),
+            )
+        ],
+    )
+    with pytest.raises(UnrepresentableTransformationError) as info:
+        image.save(tmp_path / "bold.nii")
+    assert "mixes the spatial axes" in str(info.value)
+
+
+def test_axes_of_no_type_fill_the_spatial_slots(tmp_path) -> None:  # noqa: ANN001, D103
+    # Only time is typed: the axes of no type are read as spatial, and the
+    # data is transposed to put time fourth.
+    from brainhops.datamodel.axes import Axis, TimeAxis
+
+    data = np.random.rand(3, 4, 5, 6).astype("f4")
+    voxel = CoordinateSystem(
+        axes=[TimeAxis(name="t", unit="index")]
+        + [Axis(name=n, unit="index") for n in "ijk"]
+    )
+    image = NiftiImage(
+        data=data,
+        transformations=[Scaling(scale=[2.0, 1.5, 2.5, 3.0], input=voxel)],
+    )
+    image.save(tmp_path / "bold.nii")
+
+    nii = nb.load(str(tmp_path / "bold.nii"))
+    assert np.array_equal(np.asarray(nii.dataobj), data.transpose(1, 2, 3, 0))
+    assert np.allclose(nii.header.get_zooms(), (1.5, 2.5, 3.0, 2.0))
+
+
+@pytest.mark.parametrize(
+    "voxel, message",
+    [
+        (["t", "x", "y", "t"], "one time axis"),
+        (["x", "y", "t"], "after three spatial axes"),
+        (["x", "y", "z", "x"], "at most three spatial axes"),
+    ],
+)
+def test_axes_that_nifti_cannot_place_are_rejected(  # noqa: D103
+    tmp_path,  # noqa: ANN001
+    voxel: list,
+    message: str,
+) -> None:
+    from brainhops.datamodel.axes import SpaceAxis, TimeAxis
+
+    axes = [
+        TimeAxis(name="t", unit="index")
+        if n == "t"
+        else SpaceAxis(name=n, unit="index")
+        for n in voxel
+    ]
+    image = NiftiImage(
+        data=np.zeros((2,) * len(voxel), dtype="f4"),
+        transformations=[
+            Scaling(
+                scale=[1.0] * len(voxel), input=CoordinateSystem(axes=axes)
+            )
+        ],
+    )
+    with pytest.raises(UnrepresentableTransformationError) as info:
+        image.save(tmp_path / "bad.nii")
+    assert message in str(info.value)
+
+
 def test_a_large_image_is_written_as_nifti2() -> None:
     """
     An array too large for NIfTI-1's dimension fields becomes NIfTI-2.

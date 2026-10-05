@@ -26,7 +26,7 @@ from .concrete import (
 from .convert import convert, converter
 from .errors import CompositionError, ConversionError, LossyConversionError
 from .meta import SubspaceTransformation, _close_subspace
-from .sequence import Sequence, _unnest
+from .sequence import Sequence
 from .utils import get_ndim
 
 
@@ -310,64 +310,57 @@ def _(t: SubspaceTransformation) -> Affine:
 
 @converter
 def _(t: Sequence) -> Affine:
-    # The map a sequence describes, as one affine over its endpoints. The
-    # sequence is computed first, so that every boundary whose systems
-    # disagree is bridged and every pair that composes is composed. What
-    # is left are pieces that do not compose with each other -- such as
-    # two subspace transforms over disjoint axes, a spatial map and a
-    # temporal one. Each of them is converted to an affine over the full
-    # space it states, and their product is the affine of the sequence:
-    # block-diagonal when the pieces act on disjoint axes. A piece with no
-    # affine form (a field) makes the whole sequence unconvertible.
+    # The map a sequence describes, as one affine over its endpoints.
+    #
+    # `compute()` (every kind admitted) hands each adjacent pair to
+    # `compose` and keeps the two side by side only when the composer
+    # raises `CompositionError` (`sequence._compose_mode`). Among pieces
+    # that each have an affine form, the one composer that does so is
+    # `SubspaceTransformation @ SubspaceTransformation` when the axes the
+    # second writes are not the axes the first reads -- such as the
+    # spatial and the temporal subspace a 4D NIfTI image is read as. An
+    # affine-like piece next to a subspace composes with it, and every
+    # other refusal involves a piece with no affine form (a field, bare or
+    # in a subspace, or a `Projection`). So a sequence that `compute()`
+    # leaves is reduced here only when it is a chain of subspace
+    # transforms: each is embedded in an affine over its full space, and
+    # their product is the affine of the sequence (block-diagonal when the
+    # axes are disjoint). Anything else has no affine form.
     reduced = t.compute()
     if not isinstance(reduced, Sequence):
         return convert(reduced, Affine)
-    pieces = _unnest(reduced.transformations)
-    if not pieces:
-        return convert(Identity(input=t.input, output=t.output), Affine)
-    affines = []
-    for i, piece in enumerate(pieces):
-        if isinstance(piece, SubspaceTransformation):
-            # A subspace transform takes the size of the full space it
-            # acts in from the spaces its neighbours state, when it does
-            # not state it itself: the space between two pieces is one.
-            before = pieces[i - 1].output if i else reduced.input
-            after = (
-                pieces[i + 1].input if i + 1 < len(pieces) else reduced.output
-            )
-            try:
-                piece = _close_subspace(
-                    piece,
-                    _axes_or_unknown(before).ndim,
-                    _axes_or_unknown(after).ndim,
-                )
-            except CompositionError as error:
-                raise ConversionError(str(error)) from error
-        affines.append(convert(piece, Affine))
+    pieces = reduced.transformations
+    # The space between two pieces is one, so the number of axes a piece
+    # does not state is read from its neighbour, carried along the chain
+    # from the start of the sequence, and from its end for the last piece.
+    # The endpoints are those of `t`: a sequence that `compute()` leaves
+    # is a new one, which does not carry the endpoints `t` declares.
+    n = _axes_or_unknown(t.input).ndim
+    n_end = _axes_or_unknown(t.output).ndim
     matrix = None
-    for affine in affines:
-        if affine.matrix is None:
-            # A matrix-less affine is an identity of a size it does not
-            # state, which leaves the product as it is.
-            continue
-        if matrix is None:
-            matrix = affine.matrix
-            continue
-        if affine.matrix.shape[1] - 1 != matrix.shape[0]:
+    for i, piece in enumerate(pieces):
+        if not isinstance(piece, SubspaceTransformation):
             raise ConversionError(
-                f"A piece of this sequence maps {matrix.shape[0]} axes into "
-                f"one that reads {affine.matrix.shape[1] - 1}, so the "
-                f"sequence has no affine form."
+                f"This sequence does not compose into one transform, and "
+                f"its {type(piece).__name__} has no affine form, so the "
+                f"sequence has none either."
             )
-        ba = get_array_backend(affine.matrix)
-        product = ba.empty_like(
-            affine.matrix, shape=(affine.matrix.shape[0], matrix.shape[1])
-        )
-        product[:, :-1] = affine.matrix[:, :-1] @ matrix[:, :-1]
-        shift = affine.matrix[:, :-1] @ matrix[:, -1:]
-        product[:, -1:] = shift + affine.matrix[:, -1:]
+        last = i == len(pieces) - 1
+        try:
+            piece = _close_subspace(piece, n, n_end if last else None)
+        except CompositionError as error:
+            raise ConversionError(str(error)) from error
+        n = _axes_or_unknown(piece.output).ndim
+        block = convert(piece, Affine).matrix
+        if matrix is None:
+            matrix = block
+            continue
+        ba = get_array_backend(block)
+        product = ba.empty_like(block, shape=(block.shape[0], matrix.shape[1]))
+        product[:, :-1] = block[:, :-1] @ matrix[:, :-1]
+        product[:, -1:] = block[:, :-1] @ matrix[:, -1:] + block[:, -1:]
         matrix = product
-    return Affine(matrix=matrix, input=reduced.input, output=reduced.output)
+    return Affine(matrix=matrix, input=t.input, output=t.output)
 
 
 @converter
