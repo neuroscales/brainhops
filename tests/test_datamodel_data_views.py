@@ -198,18 +198,41 @@ def test_a_coordinates_inverse_keeps_the_encoding(coeff: bool) -> None:
     np.testing.assert_allclose(np.asarray(inverse.field), expected, atol=1e-8)
 
 
-def test_a_new_encoding_of_a_lazy_inverse_materializes_it() -> None:
-    forward = DisplacementField(field=_small(), degree=DEGREE)
+@pytest.mark.parametrize(
+    "start, change",
+    [
+        (dict(coeff=False), dict(coeff=True)),
+        (dict(coeff=True), dict(coeff=False)),
+        (dict(coeff=True), dict(degree=1)),
+    ],
+    ids=["encode", "decode", "refit"],
+)
+def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
+    start: dict, change: dict
+) -> None:
+    # `inverse.to(...)` is `replace(inverse, forward=forward.to(...))`:
+    # the inverse stays lazy. It is computed from the values of the
+    # forward at its nodes, which no encoding changes, so it matches the
+    # inverse materialized first and encoded after, to round-off.
+    forward = DisplacementField(field=_small(), degree=DEGREE).to(**start)
     inverse = forward.inverse()
-    coefficients = inverse.to(coeff=True)
-    assert type(coefficients) is DisplacementField
-    assert coefficients.coeff is True
+    lazy = inverse.to(**change)
+    assert isinstance(lazy, InverseDisplacementField)
+    for name, value in change.items():
+        assert getattr(lazy.forward, name) == value
+        assert getattr(lazy, name) == value
+    eager = inverse.compute().to(**change)
     np.testing.assert_allclose(
-        np.asarray(coefficients.field), np.asarray(inverse.field), atol=1e-8
+        np.asarray(lazy.field), np.asarray(eager.field), atol=1e-12
     )
-    # An endpoint edit keeps the inverse lazy.
+    np.testing.assert_allclose(
+        np.asarray(lazy.data), np.asarray(eager.data), atol=1e-12
+    )
+    # An endpoint edit keeps the inverse lazy, and its forward as it is.
     system = CoordinateSystem(name="elsewhere")
-    assert isinstance(inverse.to(input=system), InverseDisplacementField)
+    moved = inverse.to(input=system)
+    assert isinstance(moved, InverseDisplacementField)
+    assert moved.forward is forward
 
 
 @pytest.mark.parametrize("cls, view, values", MATRIX_FAMILY, ids=MATRIX_IDS)

@@ -185,16 +185,18 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         **kwargs,
     ) -> Transformation:
         if cls is None or cls is type(self):
+            # An edit of the wrapper's own fields (its endpoints, say)
+            # keeps the inverse unresolved, reusing the forward transform
+            # and its cached materialization. Any other change -- a new
+            # encoding (`coeff=True`), say -- is made to the transform it
+            # inverts, and the inverse stays unresolved too: it is
+            # `replace(self, forward=self.forward.to(**others))`.
             own = {f.public_name for f in fields(type(self)) if f.init}
-            if not set(kwargs) - own - {"error"}:
-                # An edit of the wrapper's own fields (its endpoints, say)
-                # keeps the inverse unresolved, reusing the forward
-                # transform and its cached materialization.
-                return super().to(cls, **kwargs)
-            # Anything else -- a new encoding (`coeff=True`), a new
-            # parameter -- changes the inverse itself, which only its
-            # materialization holds.
-            return self._materialize().to(lossy=lossy, **kwargs)
+            own.add("error")
+            others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
+            if others:
+                kwargs["forward"] = self.forward.to(**others)
+            return super().to(cls, **kwargs)
         # A conversion to another type, including the forward type,
         # materializes the concrete inverse first, then converts onward.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
