@@ -56,7 +56,7 @@ from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
-from brainhops._core.numeric import float32_repr
+from brainhops._core.numeric import shortest_decimal
 from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
@@ -210,13 +210,19 @@ class MghMetadata(
             return {}
         out: tx.Dict[str, tx.Any] = {}
         for name, (slot, factor) in _FOOTER.items():
-            value = float32_repr(raw.header[slot])
-            if not value:
+            stored = float(raw.header[slot])
+            if not stored:
                 continue
+            # The shortest decimal that is stored as the same number: a
+            # flip angle of `9.0`, not `9.000000250447817`.
             if factor is None:
-                out[name] = _degrees(raw.header[slot])
+                out[name] = shortest_decimal(
+                    math.degrees(stored), math.radians
+                )
             else:
-                out[name] = round(value * factor, 12)
+                out[name] = shortest_decimal(
+                    stored * factor, functools.partial(_divide, factor)
+                )
         try:
             out["data_type"] = raw.header.get_data_dtype()
         except Exception:
@@ -273,17 +279,9 @@ class MghMetadata(
 # ----------------------------------------------------------------------
 
 
-def _degrees(radians: tx.Any) -> float:
-    """A single-precision angle in radians, in degrees, as the shortest
-    decimal that is stored as the same radians (`9.0`, not
-    `9.000000419`)."""
-    stored = np.float32(radians)
-    exact = math.degrees(float(stored))
-    for digits in range(10):
-        candidate = round(exact, digits)
-        if np.float32(math.radians(candidate)) == stored:
-            return candidate
-    return exact
+def _divide(factor: float, value: float) -> float:
+    """A value in the vocabulary unit, in the unit of the footer."""
+    return value / factor
 
 
 def _lazy_history(raw: MghRaw) -> tx.Optional[tx.Tuple[str, ...]]:
