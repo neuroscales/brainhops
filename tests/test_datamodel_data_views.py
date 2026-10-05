@@ -302,13 +302,6 @@ def test_a_grid_takes_neither_data_nor_field() -> None:
         CartesianField(shape=(2, 3), field=np.zeros((2, 3, 2)))
 
 
-def test_equality_compares_data_and_flags() -> None:
-    assert DisplacementField() == DisplacementField()
-    assert DisplacementField() != DisplacementField(coeff=True)
-    assert DisplacementField() != CoordinatesField()
-    assert Affine() == Affine()
-
-
 @pytest.mark.parametrize(
     "cls, view, values",
     MATRIX_FAMILY + [(cls, "field", _values()) for cls in FIELDS],

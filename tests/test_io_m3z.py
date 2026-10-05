@@ -490,3 +490,19 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
     morph = M3zMorph(transformations=[RASToVoxel(), field, VoxelToRAS()])
     with pytest.raises(UnrepresentableTransformationError):
         morph.save(tmp_path / "out.m3z")
+
+
+def test_a_morph_compares_by_identity() -> None:
+    # A morph is a transformation, which compares by identity, even though
+    # the parser it also derives from comes first. The parser alone
+    # compares by identity too, never by the arrays of its struct.
+    from brainhops.io.transformations.freesurfer.m3z._xform import M3zParser
+
+    def make() -> M3zMorph:
+        return M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
+
+    morph = make()
+    assert morph == morph
+    assert morph != make()
+    assert {morph: 1}[morph] == 1
+    assert M3zParser.__eq__ is object.__eq__

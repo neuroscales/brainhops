@@ -948,3 +948,71 @@ def test_an_unpaired_type_is_unchanged_on_every_path(cls: type) -> None:
     assert type(materialized) is cls
     assert materialized.input == ras
     assert materialized.output == lps
+
+
+# ----------------------------------------------------------------------
+#   A PRODUCT OF SUBSPACES (A SPACE-AND-TIME GEOMETRY)
+# ----------------------------------------------------------------------
+
+
+def _space_and_time() -> Sequence:
+    # The shape of the voxel-to-world transformation of a 4D image: an
+    # affine over (x, y, z), then a scaling and a translation over (t).
+    from brainhops.datamodel.transformations import SubspaceTransformation
+
+    spatial = Affine(
+        matrix=np.array(
+            [[0.0, -2.0, 0.0, 1.0], [1.5, 0.0, 0.0, 2.0], [0.0, 0.0, 3, 0]]
+        )
+    )
+    temporal = Sequence(
+        transformations=[
+            Scaling(scale=[2.0]),
+            Translation(translation=[0.5]),
+        ]
+    )
+    # Four axes, about which nothing else is said.
+    full = CoordinateSystem().expand(4)
+    return Sequence(
+        transformations=[
+            SubspaceTransformation(
+                transformation=spatial,
+                input_axes=[0, 1, 2],
+                output_axes=[0, 1, 2],
+                input=full,
+                output=full,
+            ),
+            SubspaceTransformation(
+                transformation=temporal,
+                input_axes=[3],
+                output_axes=[3],
+                input=full,
+                output=full,
+            ),
+        ]
+    )
+
+
+def test_a_subspace_product_cancels_its_inverse_by_identity() -> None:
+    # The inverse of the product is the product of the inverses, each of
+    # them lazy, so the product next to its own inverse cancels, step by
+    # step, from object identity alone: nothing is inverted.
+    product = _space_and_time()
+    with mock.patch.object(_inv, "inverse_affine", side_effect=AssertionError):
+        for chain in (
+            [product, product.inverse()],
+            [product.inverse(), product],
+        ):
+            result = Sequence(transformations=chain).compute(mode=False)
+            assert isinstance(result, Identity)
+
+
+def test_an_equal_subspace_product_does_not_cancel() -> None:
+    # A product rebuilt with the same values is a distinct object. Its
+    # inverse is not recognized, and nothing is compared by value (which
+    # would raise): the pair is composed numerically instead.
+    product, twin = _space_and_time(), _space_and_time()
+    chain = Sequence(transformations=[product, twin.inverse()])
+    assert not isinstance(chain.compute(mode=False), Identity)
+    matrix = np.asarray(chain.to(Affine).matrix)
+    assert np.allclose(matrix, np.eye(4, 5))

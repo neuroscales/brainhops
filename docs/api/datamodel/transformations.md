@@ -57,9 +57,13 @@ one, and a flag passed
 through it (as in `replace(t, coeff=True)`) reinterprets the stored
 array instead of re-encoding it.
 
-Equality compares the class, `data` and the flags, so the same map
-stored as values and as coefficients does not compare equal. Comparing
-two transformations whose `data` are arrays raises today, as an array
-has no single truth value (see #235).
+Transformations compare, and hash, by identity: `a == b` is `a is b`,
+so two distinct transformations are never equal, whatever their `data`
+and flags (see [Comparing transformations and
+images](../../start/python.md#comparing-transformations-and-images)).
+The same map stored as values and as coefficients is two different
+objects either way. To test whether two transformations are the same
+map, use `is_identity((a.inverse() @ b).compute(), compute=True)`; to
+compare how they are stored, compare their `data` and flags explicitly.
 
 # ::: brainhops.datamodel.transformations

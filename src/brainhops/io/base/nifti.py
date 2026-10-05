@@ -30,14 +30,16 @@ from brainhops.datamodel.systems import (
 )
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import (
+    is_indexunit,
     is_physicalunit,
     is_spaceunit,
     is_timeunit,
 )
 from brainhops.io.base._geometry import (
+    AxisLayout,
+    arrange_voxel_to_ras,
+    declared_axes,
     embed_affine,
-    ras_conversion,
-    reduce_to_affine,
 )
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
@@ -45,6 +47,7 @@ from brainhops.io.base.parsers import (
     Confidence,
     ParserExistsError,
     SnifferContentError,
+    UnrepresentableTransformationError,
     WriterError,
     WriterNotImplementedError,
     preserve_position,
@@ -956,57 +959,217 @@ def _embed_affine(matrix: np.ndarray) -> np.ndarray:
     return embed_affine(matrix, "NIfTI")
 
 
-def _voxel_to_ras(xform: Transformation) -> np.ndarray:
+def _voxel_to_ras(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> np.ndarray:
     """
     Compute the `(4, 4)` voxel-to-RAS matrix of a transformation.
+
+    See [`_voxel_to_ras_and_others`][], which also returns the scale and
+    offset of the axes that follow the spatial ones.
+    """
+    return _voxel_to_ras_and_others(xform, voxel_axes)[0]
+
+
+_NIFTI_POLICY = dict(fill_space=True, fill_time=True, time_slot=3)
+"""
+Where NIfTI stores the axes of an array (see
+[`plan_axes`][brainhops.io.base._geometry.plan_axes]).
+
+NIfTI stores the spatial axes first (`dim[1..3]`), then time (`dim[4]`),
+then the components of a vector or the channels (`dim[5]`), then any
+other axis -- the order the reader declares them in (see `_NIFTI_AXES`).
+A slice with other axes is given a `z` axis of size one, so they follow
+three spatial axes; and an image with channels, or other axes, but no
+time is given a time axis of size one, so they are not read as time --
+the `(X, Y, Z, 1, C)` layout of a NIfTI vector image.
+"""
+
+
+def _nifti_geometry(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> tx.Tuple[
+    np.ndarray,
+    tx.List[tx.Optional[tx.Tuple[float, float]]],
+    bool,
+    tx.Optional[AxisLayout],
+]:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, the
+    scale and offset of each axis that follows the spatial ones, whether
+    the first of those is a time axis, and where each axis of the data is
+    stored.
 
     The transformation must map voxel coordinates to a world space. An
     affine transformation is used directly. A transformation of any other
     kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
-    affines, is converted first. A two-dimensional affine is embedded in a
-    `(4, 4)` matrix, which is the shape NIfTI stores. The world space is
-    turned into RAS from the anatomical orientation of its axes.
+    affines, is converted first -- including the sequence of a spatial and
+    a temporal subspace transform that a space-and-time image is read as.
+
+    The axes are placed by what the spaces declare, not by position (see
+    [`arrange_voxel_to_ras`][brainhops.io.base._geometry.
+    arrange_voxel_to_ras]). The voxel axes are `voxel_axes`, the axes of
+    the data (see [`_declared_axes`][]), and the world axes are those of
+    the transformation's output space. Each side is put in the order NIfTI
+    stores (see `_NIFTI_POLICY`): its spatial axes, then its time axis,
+    then the channel-like axes, then the others. The caller puts the data
+    in the returned layout, which may insert singleton axes: a `z` axis
+    for a slice that has other axes, and a time axis for an image with
+    channels but no time. A side that declares nothing is taken in NIfTI's
+    positional order -- except a world space that declares nothing, of as
+    many axes as the voxel space, which is taken to list its axes as the
+    voxel space does.
+
+    The NIfTI affine applies to the spatial axes. The axes that follow
+    them (time, ...) are split off, each with its scale (its spacing) and
+    its offset, which the caller stores apart. A map that mixes the
+    spatial axes with the others, or two of the others, or that maps the
+    time axis of one space to an axis of another type in the other, has
+    no NIfTI form and raises `UnrepresentableTransformationError`. A
+    two-dimensional affine is embedded in a `(4, 4)` matrix, which is the
+    shape NIfTI stores. The world space is turned into RAS from the
+    anatomical orientation of its axes.
+
+    A time axis that the transformation leaves as it is -- scale `1`,
+    offset `0` -- and that still counts frames (unit `index`) in the world
+    space is not mapped to time: it is returned as `None`, and its
+    repetition time is written as missing (see [`_set_other_axes`][]). So
+    is a time axis the layout inserted.
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
-    `UnrepresentableTransformationError`. A spatial transformation of more
-    than three dimensions raises `WriterError`.
+    `UnrepresentableTransformationError`.
     """
-    affine = reduce_to_affine(xform, "NIfTI")
-    matrix = affine.homogeneous_matrix
-    if matrix is None:
-        matrix = np.eye(4)
-    matrix = np.asarray(matrix, dtype=float)
-    world_ndim = matrix.shape[0] - 1
-    matrix = _embed_affine(matrix)
+    arranged = arrange_voxel_to_ras(
+        xform, voxel_axes, "NIfTI", **_NIFTI_POLICY
+    )
+    others = list(arranged.others)
 
-    world = _closed_world(getattr(affine, "output", None), world_ndim)
-    conversion = ras_conversion(world)
-    return conversion @ matrix
+    # >> The axis NIfTI stores fourth is time, unless a space declares
+    #    it is not. Both sides must agree on it.
+    timed = [
+        groups[3] == "time"
+        for groups in (arranged.voxel_groups, arranged.world_groups)
+        if groups is not None and len(groups) > 3
+    ]
+    if len(set(timed)) > 1:
+        raise UnrepresentableTransformationError(
+            "This transformation maps the time axis of one space to an "
+            "axis of another type, so it cannot be written as NIfTI "
+            "geometry, which maps time to time."
+        )
+    timed = timed[0] if timed else True
+
+    if (
+        timed
+        and others
+        and others[0] == (1.0, 0.0)
+        and (arranged.filled_time or _is_frame_index(arranged.world, 3))
+    ):
+        # The time axis is not mapped to time: it still counts frames in
+        # the world space, so the repetition time is missing.
+        others = [None, *others[1:]]
+    return arranged.matrix, others, timed, arranged.layout
 
 
-def _closed_world(
+def _voxel_to_ras_and_others(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> tx.Tuple[np.ndarray, tx.List[tx.Optional[tx.Tuple[float, float]]], bool]:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, the
+    scale and offset of each axis that follows the spatial ones, and
+    whether the first of those is a time axis.
+
+    See [`_nifti_geometry`][], which also returns where each axis of the
+    data is stored.
+    """
+    return _nifti_geometry(xform, voxel_axes)[:3]
+
+
+def _declared_axes(
     system: tx.Optional[CoordinateSystem], ndim: int
-) -> tx.Optional[CoordinateSystem]:
+) -> tx.Optional[tx.List[Axis]]:
     """
-    The world space, closed to the `ndim` axes the affine maps into.
+    The axes of a system, when they say where NIfTI stores each of them.
 
-    NIfTI cannot store an open world space, one whose axes hold `...`, so
-    it is closed from the shape of the voxel-to-world matrix. The axes that
-    `...` stands for carry no orientation, as any axis NIfTI knows nothing
-    about. A world space that states more axes than the matrix has rows
-    raises `WriterError`.
+    See [`declared_axes`][brainhops.io.base._geometry.declared_axes].
     """
-    if system is None or system.ndim is not None:
-        return system
-    try:
-        return system.expand(ndim)
-    except ValueError as error:
+    return declared_axes(system, ndim)
+
+
+def _voxel_axes(
+    transformation: Transformation, data: ArrayProtocol
+) -> tx.Optional[tx.List[Axis]]:
+    """
+    The axes of an image's data, when its voxel space declares them.
+
+    They are the axes of the input space of the preferred transformation,
+    which indexes the data, when it declares where each goes (see
+    [`_declared_axes`][]); `None` otherwise.
+    """
+    ndim = len(getattr(data, "shape", ()) or ())
+    return _declared_axes(getattr(transformation, "input", None), ndim)
+
+
+def _is_frame_index(system: tx.Optional[CoordinateSystem], k: int) -> bool:
+    """Whether axis `k` of a system is a time axis that counts frames."""
+    axes = list(getattr(system, "axes", None) or [])
+    if k >= len(axes) or axes[k] is Ellipsis:
+        return False
+    axis = axes[k]
+    return getattr(axis, "type", None) == "time" and is_indexunit(
+        getattr(axis, "unit", None)
+    )
+
+
+def _set_other_axes(
+    image: _NiftiObject,
+    others: tx.Sequence[tx.Optional[tx.Tuple[float, float]]],
+    timed: bool = True,
+) -> None:
+    """
+    Store the scale and offset of the axes that follow the spatial ones.
+
+    The scale of each becomes its spacing (`pixdim`), and the offset of
+    the first, when it is the time axis (`timed`), becomes `toffset`.
+    NIfTI stores no origin for any other axis, so a nonzero offset there,
+    or a negative spacing, raises `UnrepresentableTransformationError`. A
+    transformation over more axes than the data has raises `WriterError`.
+
+    A time axis that is not mapped to time (`None` in `others`, see
+    [`_voxel_to_ras_and_others`][]) has no repetition time: its spacing is
+    written as `0`, which NIfTI reads as missing, and `toffset` is left
+    alone.
+    """
+    if not others:
+        return
+    header = image.header
+    zooms = list(header.get_zooms())
+    if 3 + len(others) > len(zooms):
         raise WriterError(
-            f"The world space of this transformation states more axes than "
-            f"the {ndim} its voxel-to-world matrix maps into, so it cannot "
-            f"be written as NIfTI geometry."
-        ) from error
+            f"The voxel-to-world transformation maps {3 + len(others)} "
+            f"axes, but the data has {len(zooms)}."
+        )
+    for k, other in enumerate(others):
+        if other is None:
+            zooms[3 + k] = 0.0
+            continue
+        scale, offset = other
+        if scale < 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores the spacing of axis {3 + k} as a positive "
+                f"number, so a map that reverses it ({scale}) cannot be "
+                f"written."
+            )
+        if (k or not timed) and offset != 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores an origin for the time axis only, so a map "
+                f"that shifts axis {3 + k} ({offset}) cannot be written."
+            )
+        zooms[3 + k] = scale
+    header.set_zooms(zooms)
+    if timed and others[0] is not None:
+        header["toffset"] = others[0][1]
 
 
 def _reference_code(system: tx.Optional[CoordinateSystem]) -> int:
@@ -1029,6 +1192,8 @@ def _sform_and_qform(
     transformations: tx.Sequence[Transformation],
     sform: np.ndarray,
     scode: int,
+    voxel_axes: tx.Optional[tx.List[Axis]] = None,
+    layout: tx.Optional[AxisLayout] = None,
 ) -> tx.Tuple[np.ndarray, int, tx.Optional[CoordinateSystem]]:
     """
     Choose the qform matrix, code and world space to store with an sform.
@@ -1043,8 +1208,20 @@ def _sform_and_qform(
     The world space that supplies the matrix is returned alongside it, so
     the caller can read the qform's own spatial unit rather than assuming
     it matches the sform's.
+
+    Each matrix is computed with the voxel axes in the order the data is
+    written in (`voxel_axes`, see [`_nifti_geometry`][]). A transformation
+    that does not place the data's axes as the preferred one does
+    (`layout`) -- one that maps another number of axes -- describes
+    another array, and is passed over.
     """
     preferred = transformations[-1] if transformations else None
+
+    def _placed(xform: Transformation) -> tx.Optional[np.ndarray]:
+        matrix, _, _, placed = _nifti_geometry(xform, voxel_axes)
+        if _layout_key(placed) != _layout_key(layout):
+            return None
+        return matrix
 
     for xform in transformations:
         if xform is preferred:
@@ -1052,18 +1229,27 @@ def _sform_and_qform(
         output = getattr(xform, "output", None)
         name = getattr(output, "name", None)
         if _NIFTI_XFORM_CODE_BY_NAME.get(name):
-            return (
-                _voxel_to_ras(xform),
-                _NIFTI_XFORM_CODE_BY_NAME[name],
-                output,
-            )
+            matrix = _placed(xform)
+            if matrix is not None:
+                return matrix, _NIFTI_XFORM_CODE_BY_NAME[name], output
 
     for xform in transformations:
         output = getattr(xform, "output", None)
         if getattr(output, "name", None) == _QFORM_NAME:
-            return _voxel_to_ras(xform), scode, output
+            matrix = _placed(xform)
+            if matrix is not None:
+                return matrix, scode, output
 
     return sform, scode, getattr(preferred, "output", None)
+
+
+def _layout_key(
+    layout: tx.Optional[AxisLayout],
+) -> tx.Optional[tx.Tuple[tx.Tuple[int, ...], tx.Tuple[int, ...]]]:
+    """What a layout does to the data: its order and inserted axes."""
+    if layout is None or layout.trivial:
+        return None
+    return tuple(layout.order), tuple(layout.inserted)
 
 
 def _space_unit_meters(
@@ -1257,6 +1443,22 @@ def _image_with_geometry(
     transformations when present, and the rigid part of the sform
     otherwise.
 
+    The NIfTI affine applies to the spatial axes. The spacing of each
+    axis that follows them, and the origin of the time axis (`toffset`),
+    are read from the preferred transformation too.
+
+    The axes are written in the order NIfTI stores them: the spatial axes,
+    then time, then the channels, then the others. When the voxel space of
+    the preferred transformation declares its axes in another order, such
+    as `(t, x, y, z)`, the data is transposed into that order (lazily, for
+    a lazy array), and every form is written for the transposed data. A
+    slice with other axes is given a `z` axis of size one, and an image
+    with channels but no time a time axis of size one, so `(x, y, t)` is
+    written `(X, Y, 1, T)`, `(x, y, z, c)` `(X, Y, Z, 1, C)` and `(x, y,
+    c)` `(X, Y, 1, 1, C)` (see [`_nifti_geometry`][]). A voxel space that
+    declares nothing is written in the order it has, as NIfTI's positional
+    convention reads it (see [`_declared_axes`][]).
+
     The spatial and temporal units are read from the preferred
     transformation's output space. A spatial unit NIfTI cannot store is
     converted to the nearest one it can, and each form's affine is scaled
@@ -1269,16 +1471,22 @@ def _image_with_geometry(
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
 
-    sform_raw = _voxel_to_ras(transformation)
+    voxel_axes = _voxel_axes(transformation, data)
+    sform_raw, others, timed, layout = _nifti_geometry(
+        transformation, voxel_axes
+    )
     scode = _reference_code(preferred_output)
     qform_raw, qcode, qform_output = _sform_and_qform(
-        transformations, sform_raw, scode
+        transformations, sform_raw, scode, voxel_axes, layout
     )
+    if layout is not None:
+        data = layout.apply(data)
 
     sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     image = _new_nifti(data, sform)
+    _set_other_axes(image, others, timed)
     _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)

@@ -339,7 +339,10 @@ def _(
     because one inner is the lazy inverse of the other, or because both
     are already the identity. This is what lets a subspace-wrapped field
     meet its own subspace-wrapped inverse and cancel, rather than the field
-    being resampled through a neighbour first.
+    being resampled through a neighbour first. An inner sequence is undone
+    by a sequence of lazy inverses, not by one, so a pair whose inner is a
+    sequence cancels when the two inners, chained, simplify to the
+    identity -- each element meeting its own lazy inverse.
     """
     if (
         first.output_axes is None
@@ -362,7 +365,9 @@ def _(
         return None
     inner_first = first.transformation
     inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
+    if _cancels(inner_first, inner_second) or _chain_cancels(
+        inner_first, inner_second, policy
+    ):
         return Identity(input=first.input, output=second.output)
     # Structure only, never values: this rule is asked about every adjacent
     # subspace pair on every fixpoint iteration, and a numeric check would
@@ -400,6 +405,31 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     if isinstance(first, Inverse) and first.forward is second:
         return True
     return False
+
+
+def _chain_cancels(
+    first: tx.Optional[Transformation],
+    second: tx.Optional[Transformation],
+    policy: SimplifyTable,
+) -> bool:
+    """Whether ``[first, second]`` cancels to the identity, either a sequence.
+
+    The inverse of a sequence is the sequence of the inverses of its
+    elements, in reverse order, rather than one lazy inverse, so
+    [`_cancels`][] cannot see that it undoes the sequence. Chained, the two
+    simplify to the identity when each element meets its own lazy inverse,
+    which is still decided from object identity alone. Only a pair in
+    which a sequence takes part is chained: any other pair is decided by
+    `_cancels`.
+    """
+    if first is None or second is None:
+        return False
+    if not (isinstance(first, Sequence) or isinstance(second, Sequence)):
+        return False
+    chained = _simplify(
+        Sequence(transformations=[first, second]), policy=policy
+    )
+    return isinstance(chained, Identity)
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:

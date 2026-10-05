@@ -63,8 +63,14 @@ class M3zParser(
     Magic,
     BinaryFileParserWriter,
     repr=HIDE_IF_NONE,
+    eq=False,
 ):
-    """Reads and writes the raw content of a FreeSurfer morph file."""
+    """Reads and writes the raw content of a FreeSurfer morph file.
+
+    It compares by identity (`eq=False`), as its struct holds arrays. The
+    morph built on it is a transformation, which compares by identity
+    too, as every transformation does.
+    """
 
     struct: tx.Optional[M3zStruct] = field(default=None, repr=False)
     """The raw content of the file, every node and every tag (see

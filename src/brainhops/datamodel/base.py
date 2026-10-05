@@ -1,6 +1,6 @@
 """The base class shared by every data model, and its converter."""
 
-__all__ = ["DataModelBase", "DataModelConverter"]
+__all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
 
 # externals
 import re
@@ -9,6 +9,29 @@ from collections.abc import Mapping
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
 from bagof.magic import HIDE_IF_NONE, Field, Magic, fields
+
+
+class IdentityComparison:
+    """Mixin that makes a class, and every subclass, compare by identity.
+
+    `==` and `!=` are those of `object` (`a == b` is `a is b`) and never
+    raise, and `__hash__` is that of `object`, so instances are hashable
+    and can be put in a set or used as dictionary keys.
+
+    A subclass that also derives from another struct takes its options
+    from whichever base comes first, and may be given a generated
+    `__eq__` (and `__hash__`) that compares its fields. Identity is put
+    back on every subclass, so none compares by value.
+    """
+
+    __eq__ = object.__eq__
+    __ne__ = object.__ne__
+    __hash__ = object.__hash__
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name in ("__eq__", "__ne__", "__hash__"):
+            setattr(cls, name, getattr(object, name))
 
 
 class DataModelBase(
