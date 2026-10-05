@@ -188,6 +188,17 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
         **kwargs,
     ) -> Transformation:
         if cls is None or cls is type(self):
+            # The map of an inverse is derived from its forward: what a
+            # typed inverse lists in `derived_fields` (`data`, and its
+            # view, such as `field` or `matrix`) cannot be set.
+            derived = [k for k in kwargs if k in type(self).derived_fields]
+            if derived:
+                raise TypeError(
+                    f"{type(self).__name__}.to() got {derived[0]}=, but "
+                    f"the map of an inverse is derived from its forward; "
+                    f"change the forward instead: "
+                    f"inv.forward.to({derived[0]}=...)."
+                )
             # An edit of the wrapper's own fields (its endpoints, say)
             # keeps the inverse unresolved, reusing the forward transform
             # and its cached materialization. Any other change -- a new
@@ -267,6 +278,7 @@ class InverseTranslation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Translation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "translation")
 
     # --- attributes ---------------------------------------------------
@@ -301,6 +313,7 @@ class InverseScaling(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Scaling
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "scale")
 
     # --- attributes ---------------------------------------------------
@@ -335,6 +348,7 @@ class InversePermutation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Permutation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "permutation")
 
     # --- attributes ---------------------------------------------------
@@ -377,6 +391,7 @@ class InverseRotation(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Rotation
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
 
     # --- attributes ---------------------------------------------------
@@ -412,6 +427,7 @@ class InverseLinear(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Linear
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
 
     # --- attributes ---------------------------------------------------
@@ -447,6 +463,7 @@ class InverseAffine(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = Affine
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
         "data",
         "matrix",

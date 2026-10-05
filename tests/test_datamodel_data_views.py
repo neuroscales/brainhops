@@ -289,6 +289,26 @@ def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
     assert moved.forward is forward
 
 
+@pytest.mark.parametrize(
+    "cls, view, values",
+    MATRIX_FAMILY + [(cls, "field", _small()) for cls in FIELDS],
+    ids=MATRIX_IDS + [cls.__name__ for cls in FIELDS],
+)
+@pytest.mark.parametrize("keyword", ["data", "view"])
+def test_the_map_of_a_lazy_inverse_cannot_be_set(
+    cls: type, view: str, values: np.ndarray, keyword: str
+) -> None:
+    # The map of an inverse is derived from its forward: `data=` and the
+    # view's keyword are refused, and the error points at the forward.
+    if cls is CoordinatesField:
+        values = values + _grid(values.shape[:-1])
+    inverse = cls(values).inverse()
+    name = view if keyword == "view" else "data"
+    with pytest.raises(TypeError, match="derived from its forward") as error:
+        inverse.to(**{name: values})
+    assert f"inv.forward.to({name}=...)" in str(error.value)
+
+
 @pytest.mark.parametrize("cls, view, values", MATRIX_FAMILY, ids=MATRIX_IDS)
 def test_a_matrix_family_inverse_derives_its_data(
     cls: type, view: str, values: np.ndarray
