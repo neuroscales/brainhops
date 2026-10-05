@@ -11,7 +11,7 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, replace
 
 # internals
-from brainhops._core.enum import to_enum as _to_enum
+from brainhops._core.enum import EnumConverter
 from brainhops._core.typing import ArrayLike
 
 from ..base import DataModelBase
@@ -115,7 +115,7 @@ class EncodingDirection(DataModelBase):
             "The coordinate system of `vector`: `None` for the image's "
             "voxel axes, or the label of a world space."
         ),
-        ConvertTo(_to_enum(SpaceEnum)),
+        ConvertTo(EnumConverter(SpaceEnum)),
     ] = None
 
     def __post_init__(self) -> None:
@@ -190,15 +190,40 @@ def _is_absent(value: tx.Any) -> bool:
     return value is None or value is UNSUPPORTED
 
 
-def to_enum(enum: type) -> tx.Callable[[tx.Any], tx.Any]:
-    """The converter of a vocabulary field with known terms
-    (`brainhops._core.enum.to_enum`), which lets `UNSUPPORTED` through."""
-    convert = _to_enum(enum)
+class MaybeEnumConverter(EnumConverter):
+    """
+    The converter of a vocabulary field that has a list of known terms.
 
-    def converter(value: tx.Any) -> tx.Any:
-        return value if value is UNSUPPORTED else convert(value)
+    It converts as [`EnumConverter`][brainhops._core.enum.EnumConverter]
+    does, and lets `UNSUPPORTED` through, as every vocabulary converter
+    does.
+    """
 
-    return converter
+    __slots__ = ()
+
+    def __call__(self, value: tx.Any) -> tx.Any:
+        """
+        Convert a value.
+
+        Parameters
+        ----------
+        value : Enum, str, None or UNSUPPORTED
+            The value to convert.
+
+        Returns
+        -------
+        Enum, str, None or UNSUPPORTED
+            The converted value.
+
+        Raises
+        ------
+        TypeError
+            If `value` is neither a member, a string, `None` nor
+            `UNSUPPORTED`.
+        """
+        if value is UNSUPPORTED:
+            return value
+        return super().__call__(value)
 
 
 def unit(value: tx.Any) -> tx.Any:

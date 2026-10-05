@@ -43,9 +43,9 @@ from ._terms import (
     Channel,
     EncodingDirection,
     GeneratedBy,
+    MaybeEnumConverter,
     direction,
     dtype,
-    to_enum,
     unit,
 )
 
@@ -160,7 +160,7 @@ class ProvenanceMetadata(_VocabularyGroup):
         ),
         Bids("SpatialReference"),
         Scope(FILE),
-        ConvertTo(to_enum(SpaceEnum)),
+        ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
     intent: tx.Annotated[
@@ -170,7 +170,7 @@ class ProvenanceMetadata(_VocabularyGroup):
             "an `IntentEnum`)."
         ),
         Scope(FILE),
-        ConvertTo(to_enum(IntentEnum)),
+        ConvertTo(MaybeEnumConverter(IntentEnum)),
     ] = None
 
 
@@ -223,7 +223,7 @@ class MRIMetadata(_VocabularyGroup):
         ),
         Bids("Manufacturer"),
         Scope(ACQUISITION),
-        ConvertTo(to_enum(Manufacturer)),
+        ConvertTo(MaybeEnumConverter(Manufacturer)),
     ] = None
 
     manufacturers_model_name: tx.Annotated[
@@ -392,14 +392,14 @@ class MicroscopyMetadata(_VocabularyGroup):
         Maybe[tx.Union[IlluminationType, str]],
         tx.Doc("Illumination type (a known one is an `IlluminationType`)."),
         Scope(ACQUISITION),
-        ConvertTo(to_enum(IlluminationType)),
+        ConvertTo(MaybeEnumConverter(IlluminationType)),
     ] = None
 
     contrast_method: tx.Annotated[
         Maybe[tx.Union[ContrastMethod, str]],
         tx.Doc("Contrast method (a known one is a `ContrastMethod`)."),
         Scope(ACQUISITION),
-        ConvertTo(to_enum(ContrastMethod)),
+        ConvertTo(MaybeEnumConverter(ContrastMethod)),
     ] = None
 
 
@@ -425,14 +425,14 @@ class TransformMetadata(_VocabularyGroup):
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps from."),
         Scope(FILE),
-        ConvertTo(to_enum(SpaceEnum)),
+        ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
     output_space: tx.Annotated[
         Maybe[tx.Union[SpaceEnum, str]],
         tx.Doc("Label of the space a transformation maps to."),
         Scope(FILE),
-        ConvertTo(to_enum(SpaceEnum)),
+        ConvertTo(MaybeEnumConverter(SpaceEnum)),
     ] = None
 
 
