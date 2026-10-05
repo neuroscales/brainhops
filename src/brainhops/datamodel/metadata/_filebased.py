@@ -14,7 +14,7 @@ from bagof.magic import Factory, NoEq, NoRepr
 from brainhops._core.compare import differs
 from brainhops._core.fields import Lazy
 
-from ._base import FIELDS, Metadata, format_name
+from ._base import FIELDS, Metadata, _format_name
 from ._report import ConversionReport, OnLoss, apply_loss_policy, short
 from ._sentinel import UNSUPPORTED
 
@@ -289,7 +289,7 @@ class FileBasedMetadata(Metadata):
             The report of the write so far.
         """
         if isinstance(metadata, cls):
-            target = format_name(cls)
+            target = _format_name(cls)
             return metadata, ConversionReport(
                 source=metadata.format, target=target
             )

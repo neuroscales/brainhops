@@ -137,6 +137,15 @@ class MetadataMeta(type(DataModelBase)):
                     f"{cls.__name__} declares lazy={sorted(wrong)}, which "
                     f"are not vocabulary fields it supports."
                 )
+        # The descriptors are installed once the class is built, for two
+        # reasons. Nothing of the field is lost: `bagof` keeps the `Field`
+        # in the field table of the class (`fields(cls)`), and only the
+        # class attribute is replaced. That attribute is the plain default
+        # that `bagof` set, and the descriptor returns the same default.
+        # And a descriptor placed in the namespace before the build would
+        # be read by `bagof` as the default value of the field. The
+        # descriptor is not a field, by design: it only changes how the
+        # attribute is read.
         for field in fields(cls):
             # Installed on every class that has a lazy field: a subclass
             # that redeclares the field (`supports=`) hides its parent's.

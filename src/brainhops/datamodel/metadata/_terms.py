@@ -183,8 +183,10 @@ class EncodingDirection(DataModelBase):
 # ----------------------------------------------------------------------
 
 
-def _passes(value: tx.Any) -> bool:
-    """`None` and `UNSUPPORTED` go through every vocabulary converter."""
+def _is_absent(value: tx.Any) -> bool:
+    """Whether a value is absent, so that there is nothing to convert:
+    `None` (unknown) or `UNSUPPORTED` (no slot). Every vocabulary
+    converter lets an absent value through unchanged."""
     return value is None or value is UNSUPPORTED
 
 
@@ -222,7 +224,7 @@ def unit(value: tx.Any) -> tx.Any:
     TypeError
         If `value` is neither a unit nor a string.
     """
-    if _passes(value) or isinstance(value, Unit):
+    if _is_absent(value) or isinstance(value, Unit):
         return value
     if isinstance(value, str):
         try:
@@ -250,7 +252,7 @@ def dtype(value: tx.Any) -> tx.Any:
     numpy.dtype, None or UNSUPPORTED
         The converted value.
     """
-    if _passes(value):
+    if _is_absent(value):
         return value
     return np.dtype(value).newbyteorder("=")
 
@@ -276,7 +278,7 @@ def direction(value: tx.Any) -> tx.Any:
     ValueError
         If the value does not describe a direction.
     """
-    if _passes(value) or isinstance(value, EncodingDirection):
+    if _is_absent(value) or isinstance(value, EncodingDirection):
         return value
     if isinstance(value, tx.Mapping):
         vector = value.get("vector", value.get("Vector"))

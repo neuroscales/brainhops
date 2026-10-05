@@ -175,9 +175,7 @@ class Metadata(
             The copy, of the same class. `extra` is copied as well.
         """
         new = copy.copy(self)
-        extra = self.__dict__.get("extra")
-        if isinstance(extra, dict):
-            new.__dict__["extra"] = dict(extra)
+        new.extra = copy.copy(new.extra)
         return new
 
     # --- capabilities -------------------------------------------------
@@ -491,11 +489,11 @@ class Metadata(
     ) -> tx.Tuple["Metadata", ConversionReport]:
         """`from_instance`, returning the report instead of acting on it."""
         kwargs = dict(kwargs or {})
-        same = fits(other, cls)
+        same = _is_already(other, cls)
         # A copy keeps the most specific class.
         target = type(other) if same else cls
         report = ConversionReport(
-            source=format_name(other), target=format_name(target)
+            source=_format_name(other), target=_format_name(target)
         )
         values = other._format_state() if same else {}
         unsupported = target.unsupported_fields
@@ -617,16 +615,54 @@ def _select_volumes(
     return None if volumes_changed else value
 
 
-def fits(value: tx.Any, cls: type) -> bool:
-    """Whether a metadata object is one of `cls` already: of the class
-    itself, or of a subclass of a format class (generic `Metadata` holds
-    generic metadata only)."""
+def _is_already(value: tx.Any, cls: type) -> bool:
+    """
+    Whether a metadata object can stand for `cls` as it is, without a
+    conversion.
+
+    An object of `cls` itself can, and so can an object of a subclass of
+    a format class: a subclass of `NiftiMetadata` is still NIfTI
+    metadata. Generic `Metadata` is the exception, because its subclasses
+    are the formats: a `NiftiMetadata` given where generic metadata is
+    expected is converted, so that the result supports every field.
+
+    Parameters
+    ----------
+    value : object
+        The metadata object.
+    cls : type
+        The metadata class that is expected.
+
+    Returns
+    -------
+    bool
+        Whether `value` is used as it is.
+    """
     if type(value) is cls:
         return True
     return cls is not Metadata and isinstance(value, cls)
 
 
-def format_name(obj: tx.Any) -> str:
+def _format_name(obj: tx.Any) -> str:
+    """
+    The name of the format of a metadata class or object.
+
+    For a class, the name is the default of its `format` field, which the
+    class pins with `on={"format": ...}` (`"nifti"` for `NiftiMetadata`,
+    `"generic"` for `Metadata`). A class whose `format` has no string
+    default is named after the class. For an object, the name is the
+    value of its `format` field.
+
+    Parameters
+    ----------
+    obj : type or object
+        A metadata class or object.
+
+    Returns
+    -------
+    str
+        The name of the format, as conversion reports print it.
+    """
     if isinstance(obj, type):
         for field in fields(obj):
             if field.name == "format":
@@ -647,7 +683,7 @@ def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
         stack = list(Metadata.__subclasses__())
         while stack:
             klass = stack.pop()
-            if format_name(klass) == target:
+            if _format_name(klass) == target:
                 return klass
             stack.extend(klass.__subclasses__())
         raise ValueError(f"No metadata class for the format {target!r}.")

@@ -362,15 +362,15 @@ def _check_policy(policy: str) -> str:
     return policy
 
 
-_POLICY: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+# Not annotated: `ContextVar[...]` is not subscriptable on Python 3.8, and
+# the type is inferred from the default anyway.
+_POLICY = contextvars.ContextVar(
     "brainhops_metadata_loss_policy", default="warn"
 )
 
 
-_Reports = tx.Optional[tx.List[ConversionReport]]
-
-
-# The reports collected by `collect_loss_reports`, when one is active.
-_COLLECTED: "contextvars.ContextVar[_Reports]" = contextvars.ContextVar(
+# The reports collected by `collect_loss_reports`, when one is active (a
+# list of `ConversionReport`), else `None`.
+_COLLECTED = contextvars.ContextVar(
     "brainhops_metadata_loss_reports", default=None
 )

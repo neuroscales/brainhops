@@ -30,8 +30,6 @@ import typing_extensions as tx
 from bagof.magic import ConvertTo, Field, Magic, fields
 
 # internals
-from brainhops._core.compat import own_annotations
-
 from ..enums import (
     ContrastMethod,
     IlluminationType,
@@ -439,7 +437,9 @@ class TransformMetadata(_VocabularyGroup):
 
 
 GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {
-    group: tuple(own_annotations(group))
+    # `fields` lists exactly the fields of the group: the base class
+    # declares none.
+    group: tuple(field.name for field in fields(group))
     for group in (
         ProvenanceMetadata,
         MRIMetadata,
