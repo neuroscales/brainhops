@@ -155,13 +155,7 @@ def note_formats() -> tx.Iterator[tx.Tuple[type, type]]:
         def to_lines(self, **kwargs) -> tx.Iterator[str]:  # noqa: ANN001
             yield f"{name}:{self.text}"
 
-        # `__qualname__` is given explicitly: bagof-magic 0.3.dev1 reads
-        # it from the namespace, where `type()` does not put it.
-        namespace = {
-            "__qualname__": name,
-            "to_lines": to_lines,
-            "EXTENSIONS": extensions,
-        }
+        namespace = {"to_lines": to_lines, "EXTENSIONS": extensions}
         bases = (Note, WritableTextFileBasedObject)
         return register_format(type(name, bases, namespace))
 
