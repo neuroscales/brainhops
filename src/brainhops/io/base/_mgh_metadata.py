@@ -164,8 +164,8 @@ class MghRaw:
 
 @register_format
 class MghMetadata(
-    FileBasedMetadata,
     MetadataParser,
+    FileBasedMetadata,
     on={"format": "mgh"},
     supports=(
         "repetition_time",

@@ -1800,6 +1800,10 @@ the sections above disagree, this addendum holds.
   ITK `.h5` and BIDS sidecars, with `hint=`, while `io.load` never
   returns metadata. The dispatching methods moved from `FileBasedObject`
   to a `FormatDispatcher` mixin that both registries share.
+  `Metadata.load` only dispatches; the class of a format reads its own
+  files because its parser comes first among its bases, and a format
+  without one inherits `FileBasedMetadata.load`, which refuses (no name
+  check).
 - **Names.** The groups are `*Vocabulary` on a `Vocabulary` base;
   `to_enum` is the class `EnumConverter`; `float32_repr` is built on
   `shortest_decimal(value, encode)`, which the MGH reader also uses for

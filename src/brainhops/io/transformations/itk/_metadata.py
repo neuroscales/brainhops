@@ -86,8 +86,8 @@ class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
 
 @register_format
 class ItkH5Metadata(
-    FileBasedMetadata,
     Hdf5MetadataParser,
+    FileBasedMetadata,
     on={"format": "itk-h5"},
     supports=("generated_by",),
 ):

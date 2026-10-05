@@ -134,8 +134,8 @@ def metadata_index(
 
 @register_format
 class X5Metadata(
-    FileBasedMetadata,
     Hdf5MetadataParser,
+    FileBasedMetadata,
     on={"format": "x5"},
     supports=ALL,
 ):

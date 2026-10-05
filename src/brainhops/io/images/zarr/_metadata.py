@@ -152,7 +152,7 @@ class ZarrRaw:
         return f"ZarrRaw(attrs={sorted(self.attrs)})"
 
 
-class _ZarrMetadataParser(FileBasedMetadata, MetadataParser):
+class _ZarrMetadataParser(MetadataParser, FileBasedMetadata):
     """
     The metadata parser of a Zarr store: a store is a directory, read
     from its path, never from a stream. A format implements

@@ -105,6 +105,34 @@ def test_a_format_without_metadata_in_its_files_refuses(tmp_path) -> None:  # no
         FlirtMetadata.load(path)
 
 
+@pytest.mark.parametrize("name", ["ItkMetadata", "OpaqueMetadata"])
+def test_an_opaque_format_refuses(tmp_path, name) -> None:  # noqa: ANN001
+    from brainhops.datamodel.metadata._filebased import OpaqueMetadata
+    from brainhops.io.transformations.itk._metadata import ItkMetadata
+
+    cls = {"ItkMetadata": ItkMetadata, "OpaqueMetadata": OpaqueMetadata}
+    path = _nifti(tmp_path / "a.nii")
+    # Even a file that another format reads: the class decides, not the
+    # file.
+    with pytest.raises(ParserNotImplementedError, match=name):
+        cls[name].load(path)
+
+
+def test_load_is_resolved_by_the_bases() -> None:
+    from brainhops.datamodel.metadata._filebased import OpaqueMetadata
+    from brainhops.io.base._base import FormatDispatcher
+
+    def owner(cls: type) -> type:
+        return next(c for c in cls.__mro__ if "load" in c.__dict__)
+
+    # A format whose files hold metadata lists its parser first.
+    assert owner(NiftiMetadata) is FormatDispatcher
+    assert owner(MghMetadata) is FormatDispatcher
+    assert owner(FlirtMetadata) is FileBasedMetadata
+    assert owner(OpaqueMetadata) is FileBasedMetadata
+    assert owner(Metadata) is Metadata
+
+
 # ----------------------------------------------------------------------
 #   FORMATS
 # ----------------------------------------------------------------------

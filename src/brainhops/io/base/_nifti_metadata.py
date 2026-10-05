@@ -103,8 +103,8 @@ _AUX_FILE_BYTES = 24
 
 @register_format
 class NiftiMetadata(
-    FileBasedMetadata,
     MetadataParser,
+    FileBasedMetadata,
     on={"format": "nifti"},
     supports=(
         "description",

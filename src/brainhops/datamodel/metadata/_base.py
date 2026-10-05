@@ -404,15 +404,18 @@ class Metadata(
         """
         Read the metadata of a file, without reading its data.
 
-        On `Metadata`, the format of the file is found as `brainhops.io`
-        finds it, from the name of the file and from its content, among
-        the formats whose metadata can be read on its own: NIfTI, MGH,
-        plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars.
-        `hint=` restricts the candidates, as for `brainhops.io.load`. On
-        the metadata class of a format, the file is read as a file of that
-        format. Only the raw record is read: a NIfTI header, the footer
-        and the tags of an MGH file, the attributes of a Zarr node, the
-        JSON of an x5 node.
+        The format of the file is found as `brainhops.io` finds it, from
+        the name of the file and from its content, among the formats whose
+        metadata can be read on its own: NIfTI, MGH, plain Zarr and
+        OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars. `hint=` restricts
+        the candidates, as for `brainhops.io.load`. Only the raw record is
+        read: a NIfTI header, the footer and the tags of an MGH file, the
+        attributes of a Zarr node, the JSON of an x5 node.
+
+        The metadata class of a format overrides this method by its bases:
+        one whose files hold metadata lists its parser before
+        `FileBasedMetadata`, and reads the file as a file of that format;
+        any other inherits `FileBasedMetadata.load`, which refuses.
 
         Parameters
         ----------
@@ -446,22 +449,12 @@ class Metadata(
         meta.repetition_time        # read from the header alone
         Metadata.load("sub-01_bold.json").extra["TaskName"]  # a sidecar
         Metadata.load("scan.mgz", hint="mgh")
+        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
         ```
         """
         import brainhops.io  # noqa: F401  (registers the formats)
         from brainhops.io.base._metadata_parser import MetadataParser
-        from brainhops.io.base.parsers import ParserNotImplementedError
 
-        if issubclass(cls, MetadataParser):
-            # The metadata class of a format: read the file as one.
-            return MetadataParser.load.__func__(cls, file, **kwargs)
-        if _format_name(cls) != _format_name(Metadata) and (
-            cls.__name__ != "FileBasedMetadata"
-        ):
-            raise ParserNotImplementedError(
-                f"{cls.__name__} stores no metadata that can be read on "
-                f"its own."
-            )
         return MetadataParser.load(file, **kwargs)
 
     # --- BIDS ---------------------------------------------------------

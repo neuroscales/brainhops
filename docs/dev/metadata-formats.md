@@ -49,8 +49,8 @@ rest from the private modules that define it:
 ```python
 @register_format
 class MyMetadata(
-    FileBasedMetadata,
     MetadataParser,  # reads the raw record of a file (see below)
+    FileBasedMetadata,
     on={"format": "my"},  # polymorphic discriminant
     supports=(
         ProvenanceVocabulary,
@@ -112,7 +112,10 @@ and do not declare a subclass of the type of another format.
 declares `None`. A read alias under the familiar name of the record
 (`header`, `tags`, `node`) is a plain property over `raw`.
 
-The format registers itself into the registry of `MetadataParser` with
+The parser comes before `FileBasedMetadata` among the bases, so that
+its `load` wins by the MRO: a format without a parser inherits
+`FileBasedMetadata.load`, which refuses. The format registers itself
+into the registry of `MetadataParser` with
 `@register_format`, which is what `Metadata.load(path)` dispatches over:
 its `EXTENSIONS`, `HINTS` and sniffers work as those of an image parser.
 `_read_raw(file)` reads the raw record from a path or an open binary

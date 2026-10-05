@@ -39,6 +39,41 @@ class FileBasedMetadata(Metadata):
     # --- reading ------------------------------------------------------
 
     @classmethod
+    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
+        """
+        Refuse to read the metadata of a file on its own.
+
+        The metadata class of a format whose files hold metadata lists its
+        parser (`MetadataParser`) before `FileBasedMetadata` among its
+        bases, so that the parser's `load` wins; every other format, whose
+        metadata is written with its data or not at all, inherits this
+        refusal. [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load]
+        finds the format of a file.
+
+        Parameters
+        ----------
+        file : str, path-like or file object
+            The file.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        Metadata
+            Never: the method always raises.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            Always.
+        """
+        from brainhops.io.base.parsers import ParserNotImplementedError
+
+        raise ParserNotImplementedError(
+            f"{cls.__name__} stores no metadata that can be read on its own."
+        )
+
+    @classmethod
     def from_raw(
         cls, raw: tx.Any, *, image: tx.Any = None, **values: tx.Any
     ) -> tx.Self:
