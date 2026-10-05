@@ -26,13 +26,17 @@ __all__ = ["H5Header", "ItkH5Metadata", "ItkMetadata"]
 import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Magic, NoEq, NoRepr, replace
 
-# internals
 from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
     GeneratedBy,
     OpaqueMetadata,
 )
+
+# internals
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import Hdf5MetadataParser
+from brainhops.io.base.parsers import Confidence
 
 _ITK = "ITK"
 
@@ -81,13 +85,36 @@ class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
     format: tx.Annotated[tx.Literal["itk"], tx.Doc("Always `'itk'`.")] = "itk"
 
 
+@register_format
 class ItkH5Metadata(
-    FileBasedMetadata, on={"format": "itk-h5"}, supports=("generated_by",)
+    FileBasedMetadata,
+    Hdf5MetadataParser,
+    on={"format": "itk-h5"},
+    supports=("generated_by",),
 ):
     """
     The metadata of an ITK `.h5` file: the version of ITK that wrote
     it, as `generated_by`. Its raw record is the root header.
+    `ItkH5Metadata.load(path)` reads the root header alone (which needs
+    `h5py`).
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".h5",)
+    HINTS = ("itk", "h5")
+    _READ_MODE = "rb"
+
+    @classmethod
+    def _sniff_h5(cls, h5file: tx.Any) -> float:
+        # An ITK transform file records the ITK version at the root.
+        if "ITKVersion" in h5file.keys():
+            return Confidence.CERTAIN
+        return Confidence.NO
+
+    @classmethod
+    def _read_raw_h5(cls, h5file: tx.Any, **kwargs: tx.Any) -> H5Header:
+        from .h5._parser import read_h5_header
+
+        return read_h5_header(h5file)
 
     raw: tx.Annotated[
         tx.Optional[H5Header],

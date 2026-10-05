@@ -49,6 +49,9 @@ A `dtype=` writer option wins over both.
 
 __all__ = ["NiftiMetadata"]
 
+# stdlib
+from io import BytesIO
+
 # dependencies
 import nibabel as nb
 import numpy as np
@@ -66,6 +69,9 @@ from brainhops.datamodel.metadata import (
 )
 from brainhops.datamodel.metadata._terms import AXES
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import MetadataParser
+from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
 _XCODES = {
@@ -95,8 +101,10 @@ _DESCRIP_BYTES = 80
 _AUX_FILE_BYTES = 24
 
 
+@register_format
 class NiftiMetadata(
     FileBasedMetadata,
+    MetadataParser,
     on={"format": "nifti"},
     supports=(
         "description",
@@ -117,7 +125,13 @@ class NiftiMetadata(
     The metadata of a NIfTI file; its raw record is the `nibabel` header.
 
     `header` is the raw record under its familiar name.
+    `NiftiMetadata.load(path)` reads the header of a NIfTI-1 or NIfTI-2
+    file, gzipped or not, without its voxels.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+    HINTS = ("nifti",)
+    _READ_MODE = "rb"
 
     raw: tx.Annotated[
         tx.Optional[nb.Nifti1Header],
@@ -136,6 +150,75 @@ class NiftiMetadata(
     def header(self) -> tx.Optional[nb.Nifti1Header]:
         """The `nibabel` header (the raw record, `raw`)."""
         return self.raw
+
+    # --- reading the header of a file ---------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the class is that an open file holds a NIfTI
+        header.
+
+        Parameters
+        ----------
+        file : file object
+            A binary stream, possibly gzipped.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        from brainhops.io.base.nifti import is_nifti_stream
+
+        if is_nifti_stream(file):
+            return Confidence.CERTAIN
+        if error:
+            raise (SnifferContentError if error is True else error)(
+                "Content is not a NIfTI file"
+            )
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the class is that bytes hold a NIfTI header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, possibly gzipped.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        return cls.sniff_fileobj(BytesIO(content), error=error)
+
+    @classmethod
+    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> nb.Nifti1Header:
+        from brainhops.io.base.nifti import _load_nifti_header
+
+        return _load_nifti_header(file)
 
     # --- hooks --------------------------------------------------------
 

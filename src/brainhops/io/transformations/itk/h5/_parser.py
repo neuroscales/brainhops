@@ -21,7 +21,28 @@ from brainhops.io.metadata._sync import sync_metadata
 from .._common import ItkStruct, ItkTransformClass, _application_order
 from .._metadata import H5Header, ItkH5Metadata
 
-__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
+__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser", "read_h5_header"]
+
+
+def read_h5_header(h5file: h5py.File) -> H5Header:
+    """
+    Read the root header of an open ITK `.h5` file.
+
+    Parameters
+    ----------
+    h5file : h5py.File
+        The open file.
+
+    Returns
+    -------
+    H5Header
+        The versions recorded at the root of the file.
+    """
+    header = H5Header()
+    for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion"):
+        if f"/{name}" in h5file:
+            setattr(header, name, _readstr(h5file[f"/{name}"]))
+    return header
 
 
 class H5TransformParser(
@@ -119,15 +140,7 @@ class H5TransformParser(
         obj
             The parsed object.
         """
-        header = H5Header()
-        if "/HDFVersion" in h5file:
-            header.HDFVersion = _readstr(h5file["/HDFVersion"])
-        if "/ITKVersion" in h5file:
-            header.ITKVersion = _readstr(h5file["/ITKVersion"])
-        if "/OSName" in h5file:
-            header.OSName = _readstr(h5file["/OSName"])
-        if "/OSVersion" in h5file:
-            header.OSVersion = _readstr(h5file["/OSVersion"])
+        header = read_h5_header(h5file)
 
         obj = cls(header=header, file=h5file if keep_open else None)
         nodes = h5file.get("/TransformGroup", {})

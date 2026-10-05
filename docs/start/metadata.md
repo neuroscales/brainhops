@@ -114,6 +114,30 @@ UNSUPPORTED
 
 ```
 
+### Reading the metadata alone
+
+[`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] reads the
+metadata of a file without its data: only the raw record is read, here
+the NIfTI header. The format is found as `io.load` finds it, from the
+name and the content of the file, and the result is the metadata of that
+format, with its record:
+
+```python
+>>> meta = Metadata.load(os.path.join(tmp, "bold.nii.gz"))
+>>> type(meta).__name__, meta.description
+('NiftiMetadata', 'resting state, run 1')
+>>> meta.slice_timing == bold.metadata.slice_timing
+True
+
+```
+
+The formats whose metadata can be read on their own are NIfTI, MGH,
+plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars, which
+read as generic metadata. `hint=` names the format when the file cannot
+tell, as for `io.load`, and the class of a format reads a file as one of
+its own (`NiftiMetadata.load(path)`). Formats whose files hold no
+metadata, such as FLIRT matrices, have nothing to read.
+
 ## Editing and saving
 
 Reading and saving again keeps the header: the description, the slice

@@ -11,11 +11,12 @@ voxel axes), and an encoding direction along no voxel axis has no BIDS
 string, so `to_bids` reports them as lost.
 """
 
-__all__ = ["from_bids", "to_bids"]
+__all__ = ["BidsSidecar", "from_bids", "to_bids"]
 
 # stdlib
 import json
 import os
+from io import BytesIO
 
 # externals
 import typing_extensions as tx
@@ -33,6 +34,9 @@ from brainhops.datamodel.metadata import (
     OnLoss,
     apply_loss_policy,
 )
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import MetadataParser
+from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 from ._json import decode_object, jsonable, sidecar_key, to_json
 
@@ -98,6 +102,98 @@ def to_bids(
         sidecar[sidecar_key(name)] = to_json(name, value)
     apply_loss_policy(report, on_loss, stacklevel=3)
     return sidecar
+
+
+@register_format
+class BidsSidecar(MetadataParser):
+    """
+    The reader of BIDS JSON sidecars, for
+    [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load].
+
+    A sidecar is a file of metadata only, with no format class of its
+    own: it reads as generic `Metadata` (see [`from_bids`][]). Any JSON
+    object is accepted, and its keys that are not BIDS keys of the
+    vocabulary land in `extra`.
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".json",)
+    HINTS = ("bids", "json")
+    _READ_MODE = "rb"
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the reader is that an open file holds a
+        sidecar: a JSON object.
+
+        Parameters
+        ----------
+        file : file object
+            A binary stream. Its position is restored.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            `MAYBE` for a JSON object (many JSON files are not sidecars),
+            else 0.
+        """
+        start = file.tell()
+        try:
+            is_object = isinstance(json.load(file), dict)
+        except Exception:
+            is_object = False
+        finally:
+            file.seek(start)
+        if is_object:
+            return Confidence.MAYBE
+        if error:
+            raise (SnifferContentError if error is True else error)(
+                "Content is not a JSON object"
+            )
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the reader is that bytes hold a sidecar.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        return cls.sniff_fileobj(BytesIO(content), error=error)
+
+    @classmethod
+    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Dict[str, tx.Any]:
+        return _read(file)
+
+    @classmethod
+    def _from_record(cls, raw: tx.Dict[str, tx.Any]) -> Metadata:
+        return from_bids(raw)
 
 
 # ----------------------------------------------------------------------

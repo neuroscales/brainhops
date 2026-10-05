@@ -897,15 +897,63 @@ def _load_nifti(
 
 
 def _load_nifti_header(
-    file: path.FilenameLike,
+    file: tx.Union[path.FilenameLike, tx.BinaryIO],
 ) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
-    """Read the header of a NIfTI file at a path, local or remote,
-    without reading its voxels."""
-    if _is_local(file):
-        return _load_nifti(file).header
-    with path.Path(file).open("rb") as f:
-        header_class = _NIFTI_HEADERS[_nifti_version(f)]
-        return header_class.from_fileobj(open_compressed(f))
+    """
+    Read the header of a NIfTI file, without reading its voxels.
+
+    The header is read as it is stored, intensity scaling included
+    (`nibabel` moves the scaling of a loaded image into its array proxy,
+    and leaves NaN in the header of the image). This is the reader of
+    `NiftiMetadata`, and of the `like=` templates of the writers.
+
+    Parameters
+    ----------
+    file : path-like or file object
+        A path, local or remote, or a binary stream, possibly gzipped.
+        The position of a stream is restored.
+
+    Returns
+    -------
+    nibabel.Nifti1Header or nibabel.Nifti2Header
+        The header.
+    """
+    if isinstance(file, (str, path.PathLike)):
+        with path.Path(file).open("rb") as f:
+            return _read_nifti_header(f)
+    with preserve_position(file):
+        return _read_nifti_header(file)
+
+
+def _read_nifti_header(
+    fileobj: tx.BinaryIO,
+) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
+    """Read the header of an open, possibly gzipped, NIfTI stream."""
+    header_class = _NIFTI_HEADERS[_nifti_version(fileobj)]
+    return header_class.from_fileobj(open_compressed(fileobj))
+
+
+def is_nifti_stream(fileobj: tx.BinaryIO) -> bool:
+    """
+    Whether an open, possibly gzipped, stream holds a NIfTI-1 or NIfTI-2
+    header, judged from its size and magic string.
+
+    Parameters
+    ----------
+    fileobj : file object
+        A binary stream. Its position is restored.
+
+    Returns
+    -------
+    bool
+        Whether the stream starts with a NIfTI header.
+    """
+    try:
+        with preserve_position(fileobj):
+            head = open_compressed(fileobj).read(_NIFTI_HEADER_SIZES[2])
+    except Exception:
+        return False
+    return any(_has_nifti_magic(head, version) for version in (1, 2))
 
 
 def _save_nifti(

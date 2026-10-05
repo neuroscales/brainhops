@@ -159,6 +159,40 @@ class FileBasedMetadata(Metadata):
                 changed[name] = value
         return changed
 
+    def to_raw(
+        self,
+        *,
+        image: tx.Any = None,
+        on_loss: tx.Optional[OnLoss] = None,
+    ) -> tx.Any:
+        """
+        Encode the common fields into a new raw record, and return it.
+
+        This is the counterpart of `from_raw`: the record is a copy of
+        `raw` (or a default record, for metadata built in memory), with
+        the fields that changed since the read encoded over it. It is what
+        a metadata writer writes (see `MetadataParser.to_file`). A writer
+        that builds its own fresh record calls `update_raw` instead.
+
+        Parameters
+        ----------
+        image : object, optional
+            The image or transformation the metadata belongs to.
+        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
+            What to do with the losses. By default, the policy in effect.
+
+        Returns
+        -------
+        object
+            The encoded record. `raw` itself is left unchanged.
+
+        Raises
+        ------
+        MetadataLossError
+            If something is lost under the `"raise"` policy.
+        """
+        return self.update_raw(None, image=image, on_loss=on_loss)
+
     def update_raw(
         self,
         raw: tx.Any = None,

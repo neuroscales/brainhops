@@ -459,6 +459,73 @@ class Metadata(
         )
         return type(self)(**values)
 
+    # --- files ------------------------------------------------------
+
+    @classmethod
+    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
+        """
+        Read the metadata of a file, without reading its data.
+
+        On `Metadata`, the format of the file is found as `brainhops.io`
+        finds it, from the name of the file and from its content, among
+        the formats whose metadata can be read on its own: NIfTI, MGH,
+        plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars.
+        `hint=` restricts the candidates, as for `brainhops.io.load`. On
+        the metadata class of a format, the file is read as a file of that
+        format. Only the raw record is read: a NIfTI header, the footer
+        and the tags of an MGH file, the attributes of a Zarr node, the
+        JSON of an x5 node.
+
+        Parameters
+        ----------
+        file : str, path-like or file object
+            The file, or the Zarr store.
+        **kwargs
+            Options of the reader of the format, and `hint=` (a format
+            name such as `"nifti"`, or several).
+
+        Returns
+        -------
+        Metadata
+            The metadata of the format, with its raw record. Convert it
+            with `to(Metadata)` for generic metadata (which keeps the
+            record).
+
+        Raises
+        ------
+        ParserContentError
+            If no format reads the metadata of the file.
+        ParserNotImplementedError
+            If called on the class of a format whose files hold no
+            metadata (FLIRT, ITK `.tfm` and `.mat`, ...).
+        ParserExistsError
+            If the file does not exist.
+
+        Examples
+        --------
+        ```python
+        meta = Metadata.load("sub-01_bold.nii.gz")
+        meta.repetition_time        # read from the header alone
+        Metadata.load("sub-01_bold.json").extra["TaskName"]  # a sidecar
+        Metadata.load("scan.mgz", hint="mgh")
+        ```
+        """
+        import brainhops.io  # noqa: F401  (registers the formats)
+        from brainhops.io.base._metadata_parser import MetadataParser
+        from brainhops.io.base.parsers import ParserNotImplementedError
+
+        if issubclass(cls, MetadataParser):
+            # The metadata class of a format: read the file as one.
+            return MetadataParser.load.__func__(cls, file, **kwargs)
+        if _format_name(cls) != _format_name(Metadata) and (
+            cls.__name__ != "FileBasedMetadata"
+        ):
+            raise ParserNotImplementedError(
+                f"{cls.__name__} stores no metadata that can be read on "
+                f"its own."
+            )
+        return MetadataParser.load(file, **kwargs)
+
     # --- BIDS ---------------------------------------------------------
 
     @classmethod

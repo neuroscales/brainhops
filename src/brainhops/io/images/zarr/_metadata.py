@@ -51,6 +51,7 @@ import copy
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from abczarr import ZarrArray, ZarrGroup
 from bagof.magic import NoEq, NoRepr
 
 # internals
@@ -63,6 +64,14 @@ from brainhops.datamodel.metadata import (
     MRIVocabulary,
     ProvenanceVocabulary,
     TransformVocabulary,
+)
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import MetadataParser
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserExistsError,
+    ParserTypeError,
+    SnifferContentError,
 )
 from brainhops.io.metadata._json import (
     decode_object,
@@ -133,8 +142,105 @@ class ZarrRaw:
         return f"ZarrRaw(attrs={sorted(self.attrs)})"
 
 
+class _ZarrMetadataParser(FileBasedMetadata, MetadataParser):
+    """
+    The metadata parser of a Zarr store: a store is a directory, read
+    from its path, never from a stream. A format implements
+    `_score_node(node)` and `_read_node(node)` on the opened node.
+    """
+
+    @classmethod
+    def _score_node(cls, node: tx.Any) -> float:
+        return 0.0
+
+    @classmethod
+    def _read_node(cls, node: tx.Any) -> tx.Any:
+        raise NotImplementedError
+
+    @classmethod
+    def sniff_file(
+        cls,
+        file: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the class is that a store is one of its
+        stores.
+
+        Parameters
+        ----------
+        file : str or path-like
+            The location of the store.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        score = 0.0
+        try:
+            node = _open(file, "r")
+            score = cls._score_node(node)
+        except Exception:
+            pass
+        if not score and error:
+            raise (SnifferContentError if error is True else error)(
+                f"Not a {cls.__name__} store: {file}"
+            )
+        return score
+
+    sniff_filename = sniff_file
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Refuse an open file: a Zarr store is a directory.
+
+        Parameters
+        ----------
+        file : file object
+            An open file.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            0.
+        """
+        if error:
+            raise (ParserTypeError if error is True else error)(
+                "A Zarr store is a directory, not a file object."
+            )
+        return Confidence.NO
+
+    sniff_bytes = sniff_fileobj
+
+    @classmethod
+    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> tx.Any:
+        if hasattr(file, "read"):
+            raise ParserTypeError(
+                "A Zarr store is read from a store path, not from a file "
+                "object."
+            )
+        return cls._read_node(_open(file, "r"))
+
+
+@register_format
 class ZarrMetadata(
-    FileBasedMetadata,
+    _ZarrMetadataParser,
     on={"format": "zarr"},
     # Not the diffusion fields: they are not sidecar keys.
     supports=(
@@ -155,8 +261,13 @@ class ZarrMetadata(
     array.
 
     `attributes` is the raw record's attributes under their familiar
-    name.
+    name. `ZarrMetadata.load(store)` reads the attributes of an array
+    without its data, and `metadata.save(store)` writes them back into
+    the array.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
+    HINTS = ("zarr",)
 
     raw: tx.Annotated[
         tx.Optional[ZarrRaw],
@@ -170,6 +281,24 @@ class ZarrMetadata(
         """The attributes of the raw record, as JSON."""
         return {} if self.raw is None else self.raw.attrs
 
+    # --- reading and writing the attributes of a store --------------
+
+    @classmethod
+    def _score_node(cls, node: tx.Any) -> float:
+        return Confidence.LIKELY if isinstance(node, ZarrArray) else 0.0
+
+    @classmethod
+    def _read_node(cls, node: tx.Any) -> ZarrRaw:
+        from ._image import node_attributes
+
+        return ZarrRaw(node_attributes(node), node)
+
+    def _write_raw(self, raw: ZarrRaw, file: tx.Any) -> None:
+        from ._image import write_attributes
+
+        node = _open(file, "r+")
+        write_attributes(node, raw.attrs, self.attributes)
+
     # --- hooks --------------------------------------------------------
 
     @classmethod
@@ -180,7 +309,8 @@ class ZarrMetadata(
     def _decode(
         cls, raw: tx.Optional[ZarrRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
-        out: tx.Dict[str, tx.Any] = {"data_type": _array_dtype(image)}
+        dtype = _array_dtype(image) if image is not None else _node_dtype(raw)
+        out: tx.Dict[str, tx.Any] = {"data_type": dtype}
         attrs = None if raw is None else raw.attrs
         if not attrs:
             return out
@@ -328,8 +458,9 @@ class OmeZarrRaw:
         )
 
 
+@register_format
 class OmeZarrMetadata(
-    FileBasedMetadata,
+    _ZarrMetadataParser,
     on={"format": "ome-zarr"},
     supports=("name", "channels", "display_range", "extra", "data_type"),
 ):
@@ -339,8 +470,12 @@ class OmeZarrMetadata(
     attributes). `data_type` is the data type of the arrays.
 
     `multiscale` and `omero` are the parts of the raw record under their
-    familiar names.
+    familiar names. `OmeZarrMetadata.load(store)` reads the metadata of a
+    pyramid without its arrays.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
+    HINTS = ("ome-zarr", "ome")
 
     raw: tx.Annotated[
         tx.Optional[OmeZarrRaw],
@@ -366,6 +501,26 @@ class OmeZarrMetadata(
         """The `omero` block of the raw record, as JSON."""
         return None if self.raw is None else self.raw.omero
 
+    # --- reading the attributes of a store ---------------------------
+
+    @classmethod
+    def _score_node(cls, node: tx.Any) -> float:
+        from ._ome import looks_like_multiscale
+
+        if isinstance(node, ZarrGroup) and looks_like_multiscale(node):
+            return Confidence.CERTAIN
+        return 0.0
+
+    @classmethod
+    def _read_node(cls, node: tx.Any) -> OmeZarrRaw:
+        from ._image import node_attributes
+        from ._ome import read_multiscale
+
+        multiscale, _ = read_multiscale(node)
+        return OmeZarrRaw.from_attributes(
+            multiscale, node_attributes(node), node
+        )
+
     # --- hooks --------------------------------------------------------
 
     @classmethod
@@ -376,7 +531,8 @@ class OmeZarrMetadata(
     def _decode(
         cls, raw: tx.Optional[OmeZarrRaw], *, image: tx.Any = None
     ) -> tx.Dict[str, tx.Any]:
-        out: tx.Dict[str, tx.Any] = {"data_type": _array_dtype(image)}
+        dtype = _array_dtype(image) if image is not None else _node_dtype(raw)
+        out: tx.Dict[str, tx.Any] = {"data_type": dtype}
         if raw is None:
             return out
         name = getattr(raw.multiscale, "name", None)
@@ -482,6 +638,32 @@ class OmeZarrMetadata(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+
+def _open(location: tx.Any, mode: str) -> tx.Any:
+    """Open the node of a store, or raise if there is none."""
+    from abczarr import open as open_node
+
+    node = open_node(location, mode)
+    if node is None:
+        raise ParserExistsError(f"No Zarr store at {location}")
+    return node
+
+
+def _node_dtype(raw: tx.Any) -> tx.Optional[np.dtype]:
+    """The data type of the array a raw record was read from (of the
+    first level of a pyramid), without reading its data."""
+    node = getattr(raw, "node", None)
+    if node is None:
+        return None
+    multiscale = getattr(raw, "multiscale", None)
+    try:
+        if multiscale is not None:
+            node = node[str(list(multiscale.datasets)[0].path)]
+        dtype = getattr(node, "dtype", None)
+        return None if dtype is None else np.dtype(dtype)
+    except Exception:
+        return None
 
 
 def _array_dtype(image: tx.Any) -> tx.Optional[np.dtype]:

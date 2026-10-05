@@ -48,6 +48,7 @@ __all__ = ["MghMetadata", "MghRaw"]
 # stdlib
 import functools
 import math
+from io import BytesIO
 
 # dependencies
 import numpy as np
@@ -62,7 +63,10 @@ from brainhops.datamodel.metadata import (
     FileBasedMetadata,
     Lazy,
 )
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base._mgh_tags import decode_history, encode_history
+from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # The voxel types MGH stores.
 _MGH_DTYPES = tuple(
@@ -149,8 +153,10 @@ class MghRaw:
         return f"MghRaw(header=..., tags={tags})"
 
 
+@register_format
 class MghMetadata(
     FileBasedMetadata,
+    MetadataParser,
     on={"format": "mgh"},
     supports=(
         "repetition_time",
@@ -167,8 +173,14 @@ class MghMetadata(
     (the `nibabel` header and the trailing tags).
 
     `header` and `tags` are the parts of the raw record under their
-    familiar names.
+    familiar names. `MghMetadata.load(path)` reads the header and the
+    footer of a file without its voxels; the tags, which follow the
+    voxels, are read when `history` is first used.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mgh", ".mgz", ".mgh.gz")
+    HINTS = ("mgh", "mgz")
+    _READ_MODE = "rb"
 
     raw: tx.Annotated[
         tx.Optional[MghRaw],
@@ -193,6 +205,75 @@ class MghMetadata(
     def tags(self) -> bytes:
         """The trailing tags of the raw record."""
         return b"" if self.raw is None else self.raw.tags
+
+    # --- reading the record of a file ---------------------------------
+
+    @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the class is that an open file holds an MGH
+        header, gzipped or not.
+
+        Parameters
+        ----------
+        file : file object
+            A binary stream.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        from brainhops.io.base.mgh import is_mgh_stream
+
+        if is_mgh_stream(file):
+            return Confidence.LIKELY
+        if error:
+            raise (SnifferContentError if error is True else error)(
+                "Content is not a valid MGH/MGZ file"
+            )
+        return Confidence.NO
+
+    @classmethod
+    def sniff_bytes(
+        cls,
+        content: bytes,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs: tx.Any,
+    ) -> float:
+        """
+        Score how confident the class is that bytes hold an MGH header.
+
+        Parameters
+        ----------
+        content : bytes
+            The content of a file, gzipped or not.
+        error : bool or type, optional
+            Raise an error instead of returning 0.
+        **kwargs
+            Ignored.
+
+        Returns
+        -------
+        float
+            The confidence, in `[0, 1]`.
+        """
+        return cls.sniff_fileobj(BytesIO(content), error=error)
+
+    @classmethod
+    def _read_raw(cls, file: tx.Any, **kwargs: tx.Any) -> MghRaw:
+        from brainhops.io.base.mgh import read_mgh_raw
+
+        return read_mgh_raw(file)
 
     # --- hooks --------------------------------------------------------
 

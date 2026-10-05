@@ -36,7 +36,7 @@ from brainhops.io.transformations.base import WritableFileBasedTransformation
 
 # locals
 from ._blocks import node_to_transformation, transformation_to_nodes
-from ._metadata import X5Metadata, X5Raw
+from ._metadata import X5Metadata, X5Raw, metadata_index
 from ._struct import (
     X5_VERSION,
     X5Header,
@@ -107,15 +107,7 @@ class X5TransformParser(
     def _metadata_index(self) -> tx.Optional[int]:
         """The node the metadata is that of: the single node read, or
         `None` for a chain of several (composition does not merge)."""
-        if self.position is not None:
-            return int(self.position)
-        if self.chain is not None:
-            chain = self.header.chains[self.chain]
-        elif self.header.chains:
-            chain = self.header.chains[0]
-        else:
-            return 0
-        return chain[0] if len(chain) == 1 else None
+        return metadata_index(self.header, self.chain, self.position)
 
     # --- sniff --------------------------------------------------------
 

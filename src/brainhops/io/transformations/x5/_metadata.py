@@ -14,7 +14,7 @@ unsupported.
 coordinates there (`"cartesian"`), not the label of a space.
 """
 
-__all__ = ["X5Metadata", "X5Raw"]
+__all__ = ["X5Metadata", "X5Raw", "metadata_index"]
 
 # dependencies
 import typing_extensions as tx
@@ -27,6 +27,9 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
 )
+from brainhops.io.base._base import register_format
+from brainhops.io.base._metadata_parser import Hdf5MetadataParser
+from brainhops.io.base.parsers import Confidence, ParserContentError
 from brainhops.io.metadata._json import (
     decode_object,
     encode_changes,
@@ -34,7 +37,7 @@ from brainhops.io.metadata._json import (
 )
 
 # locals
-from ._struct import X5Header, X5Node
+from ._struct import X5Header, X5Node, is_x5, read_x5
 
 
 class X5Raw:
@@ -96,12 +99,85 @@ class X5Raw:
         return f"X5Raw(header=..., node={self.node is not None})"
 
 
-class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
+def metadata_index(
+    header: X5Header,
+    chain: tx.Optional[int] = None,
+    position: tx.Optional[int] = None,
+) -> tx.Optional[int]:
+    """
+    The node whose metadata is the metadata of a transformation.
+
+    Parameters
+    ----------
+    header : X5Header
+        The root of the file.
+    chain : int, optional
+        The chain of `/TransformChain` the transformation is.
+    position : int, optional
+        The single transform of `/TransformGroup` the transformation is.
+
+    Returns
+    -------
+    int or None
+        The index of the node: the single node read, or `None` for a
+        chain of several nodes, which has no metadata of its own
+        (composition does not merge).
+    """
+    if position is not None:
+        return int(position)
+    if chain is not None:
+        nodes = header.chains[chain]
+    elif header.chains:
+        nodes = header.chains[0]
+    else:
+        return 0
+    return nodes[0] if len(nodes) == 1 else None
+
+
+@register_format
+class X5Metadata(
+    FileBasedMetadata,
+    Hdf5MetadataParser,
+    on={"format": "x5"},
+    supports=ALL,
+):
     """
     The metadata of an X5 transform node, stored in its JSON `Metadata`.
 
     `node` and `header` are the two halves of the raw record.
+    `X5Metadata.load(path)` reads the metadata of the transformation that
+    `X5Transform.load(path)` would read (`chain=` and `position=` select
+    another one), without reading its arrays.
     """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
+    HINTS = ("x5",)
+    _READ_MODE = "rb"
+
+    # --- reading the node of a file -----------------------------------
+
+    @classmethod
+    def _sniff_h5(cls, h5file: tx.Any) -> float:
+        return Confidence.CERTAIN if is_x5(h5file) else Confidence.NO
+
+    @classmethod
+    def _read_raw_h5(
+        cls,
+        h5file: tx.Any,
+        chain: tx.Optional[int] = None,
+        position: tx.Optional[int] = None,
+        **kwargs: tx.Any,
+    ) -> X5Raw:
+        header, nodes = read_x5(h5file, load=False)
+        try:
+            index = metadata_index(header, chain, position)
+            node = None if index is None else nodes[index]
+        except IndexError:
+            raise ParserContentError(
+                f"This X5 file has no transform for chain={chain}, "
+                f"position={position}."
+            ) from None
+        return X5Raw(header, node)
 
     raw: tx.Annotated[
         tx.Optional[X5Raw],

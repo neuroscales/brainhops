@@ -133,6 +133,8 @@ def test_every_format_is_in_the_matrix() -> None:
         for cls in _subclasses(Metadata)
         if cls not in (FileBasedMetadata, OpaqueMetadata)
         and cls.__module__.startswith("brainhops.io")
+        # A shared base, not a format (`_ZarrMetadataParser`).
+        and not cls.__name__.startswith("_")
     }
     assert formats == set(FORMATS)
 
@@ -225,8 +227,10 @@ def _format_classes() -> list:
         cls = stack.pop()
         for sub in cls.__subclasses__():
             stack.append(sub)
-            if sub.__module__.startswith("brainhops.") and issubclass(
-                sub, FileBasedMetadata
+            if (
+                sub.__module__.startswith("brainhops.")
+                and issubclass(sub, FileBasedMetadata)
+                and not sub.__name__.startswith("_")
             ):
                 found.append(sub)
     return found
