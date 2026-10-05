@@ -787,11 +787,11 @@ writes the nearest type it can (MGH: `uint8`, `int16`, `int32`,
 writers call.
 
 > **Prototype note.** The plan was "`dtype=` > `data_type` > the array",
-> unconditionally. That would quantise a resampled label map as long as
-> data-model operations do not call `derive()` yet (section 9), and would
-> write an integer image read from a scaled file back as floats or the
-> other way round; the "same kind" condition keeps the common case (an
-> unchanged type round-trips) without either surprise.
+> unconditionally. That would quantise a resampled label map (the
+> data-model operations keep `data_type`, a `FILE` field: section 9),
+> and would write an integer image read from a scaled file back as
+> floats or the other way round; the "same kind" condition keeps the
+> common case (an unchanged type round-trips) without either surprise.
 
 > **Prototype note.** For NIfTI, `space` follows the geometry too (the
 > sform code is the world space's name, which the writer takes from the
@@ -982,63 +982,71 @@ to match on (`format`), and nothing is dispatched on a parsed name.
 ## 9. Propagation (M9)
 
 Answer to issue question 4. Propagation is driven by the field `Scope`
-tags, through one method:
+tags. The image class owns the operation: the metadata does not know the
+coordinate system, the shape or the transformation of the image, so the
+image resolves what changed from its geometry, and hands the result to
+the metadata. One method is public; two private hooks serve the image
+operations. Each returns a new object of the same class.
 
 ```python
-def derive(
-    self, *, grid_changed=False, grid_map=None, volumes=None, step=None
-) -> tx.Self:
-    """Metadata for an object derived from this one. Always a new object."""
+def derive(self, *, history=None) -> tx.Self:
+    """Provenance only: same axes, same fields."""
+
+
+def _select(self, axis_type, positions, *, history=None) -> tx.Self:
+    """The axes of one non-spatial type kept `positions` (or None)."""
+
+
+def _reslice(self, linear, *, history=None) -> tx.Self:
+    """The spatial axes changed; `linear` maps old voxels to new."""
 ```
 
-> **Prototype note.** `derive` gains `volumes_changed=False`, the flag
-> that "the volume count changed and no selection is known" needs.
-> `display_range` and `data_unit` are one value for all volumes, so a
-> selection keeps them. The only caller so far is the OME-Zarr reader
-> (each level gets `derive(grid_changed=level > 0)`, and keeps the
-> pyramid's `data_type`: its levels share it). Writers do not call
-> it on a conversion yet (the first item of the list below): a converted
-> object carries the converted values with no snapshot, which
-> writes the same thing for the fields the prototype formats hold; the
-> data-model operations are a follow-up PR.
+`positions` is a resolved integer array (`None` when the axis was
+dropped), and `linear` the linear part of the old-to-new voxel map, as an
+ndarray (`None` when it is unknown or not affine): the metadata never
+interprets a raw index or a `Transformation`. `history` is one entry (a
+string) or several. The three share one pipeline,
+`_derive_values(changed={AxisType: positions or linear}, history=)`,
+which applies the rules below field by field:
 
-- `file`-scoped fields are kept, except `creation_time` (cleared) and
-  `history`, to which `step` (a short string such as
-  `"brainhops resample ..."`) is appended. `generated_by` gains a
+- `FILE`-scoped fields are kept, except `creation_time` (cleared) and
+  `history`, to which the `history` entries (a short string such as
+  `"getitem"` or `"reslice"`) are appended. `generated_by` gains a
   brainhops entry once.
-- `acquisition`-scoped fields are kept.
-- `grid`-scoped fields (`slice_timing`, `slice_encoding_direction`,
-  `phase_encoding_direction`, `data_type`) are cleared when
-  `grid_changed`, with one exception: given `grid_map`, the linear part
-  of the map from the old voxel axes to the new ones, an encoding
-  direction in voxel axes is pushed through it (`v' = normalize(grid_map
-  @ v)`, section 4.2) instead, so a permutation or flip remaps `"j-"`
-  and an oblique resampling keeps an oblique direction; a direction in
-  a named world space does not move with the grid. The slice timing is
-  still cleared. Without `grid_map`, the directions are cleared, as
-  before; the image-level call sites pass it once they have the
-  affine.
-- `volume`-scoped fields (`channels`, `diffusion_*`, per-volume
-  `display_range`) are indexed by `volumes` (the selected volume
-  indices) or cleared when the volume count changed and no selection is
-  known. This is today's AFNI `_PER_BRICK` and NRRD `_PER_AXIS` rule,
-  made generic.
+- `ACQUISITION`-scoped fields are kept.
+- `SPATIAL`-scoped fields (`slice_timing`, `slice_encoding_direction`,
+  `phase_encoding_direction`) are cleared by `_reslice`, with one
+  exception: an encoding direction in voxel axes is pushed through
+  `linear` (`v' = normalize(L @ v)`, section 4.2), so a
+  permutation or flip remaps `"j-"` and an oblique resampling keeps an
+  oblique direction. The map of a 4-D image has more axes than the
+  direction, which lies in its first three; the direction is kept only
+  when it still lies there. Without a map, or with a map that is not
+  affine, the direction is cleared; a direction in a named world space
+  does not move with the voxels. The slice timing is always cleared.
+- `AXIS`-scoped fields (`channels`, `bvalues`, `bvectors`) keep, by
+  `_select`, their entries at the positions the image kept along the
+  axis type their `Along` names (the image resolves them with
+  `np.arange(size)[component]`, so a slice, integers or a boolean mask
+  all work). A dropped axis (an integer index) or a position beyond the
+  field clears it. This is today's AFNI
+  `_PER_BRICK` and NRRD `_PER_AXIS` rule, made generic.
 - `extra` is kept verbatim; nothing in it is understood.
 - `raw` and the snapshot are **kept**, so a same-format read, resample,
   save keeps extensions, `aux_file` and the rest of the record. The
-  fields `derive` clears are set to `None` on the new object, which
+  fields a primitive clears are set to `None` on the new object, which
   differs from the snapshot, so the write *clears* them in the record
   (case 4 of section 6): NIfTI `slice_code` goes to 0 after a
   resampling, the keyval `SliceTiming` is removed. Record content that
-  is grid- or volume-bound but outside the vocabulary (NIfTI
+  is tied to some axes but outside the vocabulary (NIfTI
   `slice_start/end`, AFNI `TAXIS_OFFSETS` and the `_PER_GRID`/
   `_PER_BRICK` attributes, NRRD `_PER_AXIS` fields) is scrubbed by a
-  per-format hook, `_derive_raw(raw, *, grid_changed, volumes)`, which
-  is where today's AFNI and NRRD rules move. Without both, case 1 would
-  write stale slice timing from an untouched record. The hook's default
-  is a deep copy of the record (a derived object never shares it, as
-  M10 copies rather than aliases), so a format overrides it only to
-  scrub.
+  per-format hook, `_derive_raw(raw, *, changed)`, which receives the
+  same mapping and only tests which axis types are in it. Without both,
+  case 1 would write stale slice timing from an untouched record. The
+  hook's default is a deep copy of the record (a derived object never
+  shares it, as M10 copies rather than aliases), so a format overrides
+  it only to scrub.
 
 Where it is called:
 
@@ -1047,9 +1055,12 @@ Where it is called:
 - **Multiscale.** The pyramid's metadata is one object on the
   `MultiScaleImage` (OME-Zarr `omero` is per multiscale, TIFF tags are
   per file). Each level is a `SingleScaleImage` and so has a `metadata`
-  field too; it holds a *derived copy* (`derive(grid_changed=level >
-  0)`), built when the level is materialised, never the parent object by
-  identity. Sharing by identity would let `levels[2].metadata.description
+  field too; it holds a *derived copy*, built when the level is
+  materialised, never the parent object by identity: the first level
+  gets `derive()`, and level `i` gets `_reslice` with the linear part of
+  `level_i.transformation.inverse() @ level_0.transformation`, the map
+  from the voxels of the first level to its own, so a direction in voxel
+  axes survives the coarser sampling. Sharing by identity would let `levels[2].metadata.description
   = ...` silently edit the pyramid, and would make a level's
   `slice_timing` wrong. The price is that editing a level's metadata
   does not reach the pyramid, which is the right direction: the pyramid
@@ -1070,10 +1081,19 @@ Where it is called:
   A call on the sequence itself is covered by `DataModelBase.from_other`,
   which passes the `metadata` of a data model it hands to a constructor
   (section 10).
-- **Data-model operations** (`resample`, channel selection, cropping)
-  call `derive` in a follow-up PR; until then the field is copied by
-  `replace()` (a copy, not the same object: section 10), which is no
-  worse than today.
+- **Data-model operations.** `SingleScaleImage.__getitem__` expands
+  its index to one component per data axis: a component that changes an
+  axis typed `time`, `channel`, ... calls `_select(type,
+  np.arange(size)[component])` (`None` for an integer), and one that
+  changes a spatial axis (or an untyped one, or moves one to another
+  position) calls `_reslice` last, with the pseudo-inverse of the linear
+  part of the map of the index (`_index2transform`); the step is
+  recorded once, as `"getitem"`. `reslice` calls `_reslice` with the
+  linear part of `new2old.inverse()`, where `new2old` is the
+  voxel-to-voxel map without the grid (a field, which has no affine
+  form), and `history="reslice"`. `__call__` keeps the metadata as it
+  is. A `MultiScaleImage` reslices through one of its levels, so it
+  inherits the rule.
 
 ## 10. Datamodel field (M10) and the `metadata_fields` clash (M11)
 
@@ -1483,8 +1503,9 @@ for a JSON-capable node.
 > `omero` key was not worth it); a `Channel.unit` and a non-opaque alpha
 > are reported as approximated. The writer keeps the multiscale `name`,
 > `type` and downsampling `metadata` of the record. Levels get
-> `derive(grid_changed=level > 0)` when the pyramid is read; a pyramid
-> built in memory keeps the levels it was given. For plain Zarr the
+> `derive()` (the first) or `_reslice()` (the others, section 9) when
+> the pyramid is read; a pyramid built in memory keeps the levels it was
+> given. For plain Zarr the
 > generic option was taken: `ZarrMetadata` (format `"zarr"`) stores the
 > vocabulary as a BIDS sidecar (the codec of `to_bids`) under the array
 > attribute `"brainhops"`, `extra` is the other attributes, and the
@@ -1653,8 +1674,11 @@ per-brick list) asserting the exact `lost`/`approximated` entries;
   explicit conversion, symmetric to images and transformations.
 - **M8** `extra` passes unknown keys through to any free-form store;
   BIDS JSON sidecar is a codec on `Metadata`.
-- **M9** `derive(grid_changed, grid_map, volumes, step)` driven by
-  scope (an encoding direction goes through `grid_map`); a multiscale
+- **M9** propagation driven by scope and owned by the image
+  operations: `derive(*, history)` is public, and the image calls two
+  private hooks with what it resolved from its geometry,
+  `_select(axis_type, positions)` and `_reslice(linear)` (an encoding
+  direction goes through `linear`); a multiscale
   level holds a derived copy, never the pyramid's object; composition
   does not merge; a single-block file puts its metadata on the block as
   well as on the file object.
@@ -1753,9 +1777,10 @@ the sections above disagree, this addendum holds.
   per-axis field declares the brainhops axis type its entries run along
   with `Along(AxisType...)`: the channels run along `channel`, the
   diffusion table along `time` (NIfTI dimension 4; no `volume` axis
-  type was added). `derive(changed={axis type: kept indices or None},
-  spatial_map=, step=)` replaces the grid and volume flags, and
-  `_derive_raw(raw, *, changed)` takes the same mapping. The display
+  type was added). The axis types replace the grid and volume flags,
+  and `_derive_raw(raw, *, changed)` is keyed by them. (The fourth
+  review then moved the operation to the image, with `derive` and two
+  private hooks: section 9 holds.) The display
   range and the data unit are `FILE` fields. A writer maps the axes of
   an image to its slots by type, and reports a per-axis field whose axis
   the image lacks.

@@ -606,10 +606,10 @@ def test_a_report_raises_and_merges() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_derive_follows_the_scopes() -> None:
+def _scoped() -> Metadata:
     import datetime
 
-    meta = Metadata(
+    return Metadata(
         description="d",
         creation_time=datetime.datetime(2020, 1, 1),
         history=("acquired",),
@@ -621,44 +621,105 @@ def test_derive_follows_the_scopes() -> None:
         display_range=(0, 1),
         extra={"Key": 1},
     )
-    same_grid = meta.derive(step="smooth")
-    assert same_grid is not meta
-    assert same_grid.description == "d"
-    assert same_grid.creation_time is None
-    assert same_grid.history == ("acquired", "smooth")
-    assert same_grid.echo_time == 0.03
-    assert same_grid.slice_timing == (0.0, 0.5)
-    assert same_grid.extra == {"Key": 1}
-    assert same_grid.extra is not meta.extra
-    assert [g.name for g in same_grid.generated_by] == ["brainhops"]
+
+
+def test_derive_records_provenance() -> None:
+    meta = _scoped()
+    derived = meta.derive(history="smooth")
+    assert derived is not meta
+    assert derived.description == "d"
+    assert derived.creation_time is None
+    assert derived.history == ("acquired", "smooth")
+    assert derived.echo_time == 0.03
+    assert derived.slice_timing == (0.0, 0.5)
+    assert derived.phase_encoding_direction == EncodingDirection("j-")
+    assert derived.bvalues == (0.0, 1000.0, 2000.0)
+    assert derived.extra == {"Key": 1}
+    assert derived.extra is not meta.extra
+    assert [g.name for g in derived.generated_by] == ["brainhops"]
     # The brainhops entry is added once.
-    assert len(same_grid.derive().generated_by) == 1
+    assert len(derived.derive().generated_by) == 1
+    # A string is one entry; a sequence, several; `None`, none.
+    assert meta.derive().history == ("acquired",)
+    assert meta.derive(history=["a", "b"]).history == ("acquired", "a", "b")
 
-    resampled = meta.derive(changed={"space": None})
-    assert resampled.slice_timing is None
-    assert resampled.phase_encoding_direction is None
-    assert resampled.echo_time == 0.03
 
-    # Each per-axis field follows its own axis.
-    selected = meta.derive(changed={"time": [2, 0]})
-    assert selected.bvalues == (2000.0, 0.0)
+def test_select_indexes_a_field_along_its_axis() -> None:
+    # The hook of `image[index]`: the image resolves the kept positions.
+    meta = _scoped()
+    assert meta._select("time", [2, 0]).bvalues == (2000.0, 0.0)
+    assert meta._select(AxisType.time, np.arange(1, 3)).bvalues == (
+        1000.0,
+        2000.0,
+    )
+    assert meta._select("time", np.array([], int)).bvalues == ()
+    # A dropped axis, or a position beyond the field, clears it.
+    assert meta._select("time", None).bvalues is None
+    assert meta._select("time", [5]).bvalues is None
+    assert meta._select("time", [-1]).bvalues is None
+    # The other axes, and the other fields, are untouched.
+    selected = meta._select("time", [2, 0], history="select")
     assert [c.name for c in selected.channels] == ["a", "b", "c"]
+    assert selected.slice_timing == (0.0, 0.5)
     assert selected.display_range == (0.0, 1.0)
-    channel = meta.derive(changed={AxisType.channel: [2, 0]})
+    assert selected.history == ("acquired", "select")
+    assert selected.creation_time is None
+    channel = meta._select(AxisType.channel, [2, 0])
     assert [c.name for c in channel.channels] == ["c", "a"]
     assert channel.bvalues == (0.0, 1000.0, 2000.0)
-
-    changed = meta.derive(changed={"time": None, "channel": None})
-    assert changed.channels is None and changed.bvalues is None
-    with pytest.raises(ValueError, match="axis type"):
-        meta.derive(changed={"volume": None})
+    with pytest.raises(ValueError, match="_reslice"):
+        meta._select("space", [0])
 
 
-def test_derive_keeps_the_record_and_clears_through_it() -> None:
+def test_reslice_maps_directions_through_a_linear_map() -> None:
+    # The hook of `image.reslice()`: the image computes the linear map
+    # from the old voxel axes to the new ones.
+    meta = Metadata(
+        phase_encoding_direction="j-",
+        slice_encoding_direction=EncodingDirection((0, 0, 1), space="mni"),
+        slice_timing=(0.0, 0.5),
+        echo_time=0.03,
+        bvalues=(0, 1000),
+    )
+    swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
+    derived = meta._reslice(swap, history="reslice")
+    assert derived.phase_encoding_direction == EncodingDirection("i-")
+    # A direction in a world space does not move with the voxels.
+    assert derived.slice_encoding_direction == EncodingDirection(
+        (0, 0, 1), space="mni"
+    )
+    # The slice timing is cleared; the rest is kept.
+    assert derived.slice_timing is None
+    assert derived.echo_time == 0.03
+    assert derived.bvalues == (0.0, 1000.0)
+    assert derived.history == ("reslice",)
+    flip = np.diag([1.0, -1.0, 1.0])
+    assert meta._reslice(flip).phase_encoding_direction == EncodingDirection(
+        "j"
+    )
+    # The map of a 4-D image: the direction lies in its first three axes.
+    flip4 = np.diag([1.0, -1.0, 1.0, 1.0])
+    assert meta._reslice(flip4).phase_encoding_direction == (
+        EncodingDirection("j")
+    )
+    onto_time = np.eye(4)[[0, 3, 2, 1]]
+    assert meta._reslice(onto_time).phase_encoding_direction is None
+    rotated = meta._reslice(
+        [[1, 0, 0], [0, 2**-0.5, -(2**-0.5)], [0, 2**-0.5, 2**-0.5]]
+    )
+    assert rotated.phase_encoding_direction.to_bids() is None
+    # Without a map, a change of the spatial axes clears it.
+    cleared = meta._reslice(None)
+    assert cleared.phase_encoding_direction is None
+    assert cleared.slice_encoding_direction.space == "mni"
+    assert cleared.slice_timing is None
+
+
+def test_reslice_keeps_the_record_and_clears_through_it() -> None:
     meta = DictMetadata.from_raw(
         {"desc": "d", "slices": [0, 1], "slice_hint": "x"}
     )
-    derived = meta.derive(changed={"space": None})
+    derived = meta._reslice(None)
     assert type(derived) is DictMetadata
     assert derived._snapshot == meta._snapshot
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
@@ -1122,8 +1183,8 @@ def test_data_type_is_a_native_dtype() -> None:
     assert Metadata.from_bids({"DataType": "uint8"}).data_type == np.uint8
     # A resampling changes the kind of the values: it is grid-bound.
     # How the file stores the values: kept by `derive` (`file` scope).
-    assert meta.derive(changed={"space": None}).data_type == np.int16
-    assert meta.derive(changed={"time": [0]}).data_type == np.int16
+    assert meta._reslice(None).data_type == np.int16
+    assert meta._select("time", [0]).data_type == np.int16
 
 
 def test_preferred_dtype() -> None:
@@ -1203,34 +1264,6 @@ def test_an_oblique_direction_is_lost_in_a_sidecar() -> None:
     with pytest.raises(MetadataLossError) as info:
         meta.to_bids(on_loss="raise")
     assert set(info.value.report.lost) == {"phase_encoding_direction"}
-
-
-def test_derive_maps_a_direction_through_the_grid() -> None:
-    meta = Metadata(
-        phase_encoding_direction="j-",
-        slice_encoding_direction=EncodingDirection((0, 0, 1), space="mni"),
-        slice_timing=(0.0, 0.5),
-    )
-    swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
-    derived = meta.derive(changed={"space": None}, spatial_map=swap)
-    assert derived.phase_encoding_direction == EncodingDirection("i-")
-    # A direction in a world space does not move with the grid.
-    assert derived.slice_encoding_direction.space == "mni"
-    # The slice timing is still cleared.
-    assert derived.slice_timing is None
-    rotated = meta.derive(
-        changed={"space": None},
-        spatial_map=[
-            [1, 0, 0],
-            [0, 2**-0.5, -(2**-0.5)],
-            [0, 2**-0.5, 2**-0.5],
-        ],
-    )
-    assert rotated.phase_encoding_direction.to_bids() is None
-    # Without a map, a grid change clears it.
-    assert (
-        meta.derive(changed={"space": None}).phase_encoding_direction is None
-    )
 
 
 # ----------------------------------------------------------------------

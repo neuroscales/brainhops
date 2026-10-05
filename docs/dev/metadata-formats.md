@@ -13,7 +13,8 @@ the format can store, and how to decode them from the format's own
 **raw record** (a `nibabel` header, a dict of attributes, ...) and encode
 them back. The framework does the rest: the read-time snapshot, change
 detection, conversion between formats, loss reports, propagation
-(`derive`), the `metadata` field of images and transformations.
+(`derive`, and the image operations), the `metadata` field of images
+and transformations.
 
 `brainhops/io/base/_nifti_metadata.py` is the worked example. A format's
 metadata module reads in one order: its docstring (what each field is
@@ -156,7 +157,7 @@ All the hooks are optional, and all private.
 | `_encode(raw, changed, *, image, report)` | `update_raw` | the raw record to write |
 | `_geometry(image)` | `update_raw` | the fields the data model owns, and their values |
 | `_check_raw(image)` | `check_writable` | the raw record a writer starts from |
-| `_derive_raw(raw, *, changed)` | `derive` | a scrubbed copy of the raw record |
+| `_derive_raw(raw, *, changed)` | `derive`, `_select`, `_reslice` | a scrubbed copy of the raw record |
 | `_import(other, values, *, report)` | `to`, `from_other` | recovered losses (key/value formats) |
 
 - `_default_raw() -> raw`: a fresh, empty raw record, for an object
@@ -194,12 +195,15 @@ All the hooks are optional, and all private.
   check reads the same state as a real write. Defaults to a copy of the
   record, or a default one.
 - `_derive_raw(raw, *, changed) -> raw`: called by
-  [`derive`][brainhops.datamodel.metadata.Metadata.derive] for the raw
-  record of the derived object. `changed` maps an
-  `AxisType` to the indices kept
-  along the axes of that type, or to `None` when they changed in a way
-  that is not a selection. The default is a deep copy of `raw`, so that
-  a derived object never shares its record. A format whose record holds
+  [`derive`][brainhops.datamodel.metadata.Metadata.derive] and by the
+  hooks the image operations call (`_select(axis, positions)` for
+  `image[index]` along a time or channel axis, `_reslice(linear)` for a
+  change of the spatial axes) for the raw record of the derived object.
+  `changed` maps the `AxisType` of each changed axis to what changed it:
+  the kept positions for `_select`, the linear map of the voxel axes (or
+  `None`) for `_reslice`; it is empty for `derive`. A format only tests
+  which types are in it. The default is a deep copy of `raw`, so that a
+  derived object never shares its record. A format whose record holds
   content tied to some axes, but outside the vocabulary, removes it from
   the copy: NIfTI clears its slice slots and `dim_info` when
   `AxisType.space` is in `changed`. The hook never modifies `raw` in

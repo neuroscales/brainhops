@@ -348,7 +348,7 @@ class NiftiMetadata(
         self,
         raw: tx.Optional[nb.Nifti1Header],
         *,
-        changed: tx.Mapping[AxisType, tx.Optional[tx.Tuple[int, ...]]],
+        changed: tx.Mapping[AxisType, tx.Any],
     ) -> tx.Optional[nb.Nifti1Header]:
         raw = super()._derive_raw(raw, changed=changed)
         if raw is not None and AxisType.space in changed:

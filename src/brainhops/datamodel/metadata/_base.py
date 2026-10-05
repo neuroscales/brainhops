@@ -4,7 +4,6 @@ __all__ = ["Metadata"]
 
 # stdlib
 import copy
-import types
 
 # externals
 import numpy as np
@@ -40,9 +39,9 @@ from ._vocabulary import (
     TransformVocabulary,
 )
 
-# The default of `derive(changed=...)`: no axis changed. A mapping proxy,
-# so that the shared default cannot be edited.
-_NOTHING_CHANGED: tx.Mapping[tx.Any, tx.Any] = types.MappingProxyType({})
+# The `history=` argument of `derive`, `_select` and `_reslice`: one
+# entry, several, or none.
+_History = tx.Union[str, tx.Sequence[str], None]
 
 
 class Metadata(
@@ -355,109 +354,48 @@ class Metadata(
 
     # --- propagation --------------------------------------------------
 
-    def derive(
-        self,
-        *,
-        changed: tx.Mapping[
-            tx.Union[AxisType, str], tx.Optional[tx.Sequence[int]]
-        ] = _NOTHING_CHANGED,
-        spatial_map: tx.Optional[ArrayLike] = None,
-        step: tx.Optional[str] = None,
-    ) -> tx.Self:
+    def derive(self, *, history: _History = None) -> tx.Self:
         """
-        Build the metadata of an image derived from the image this
-        metadata describes, such as a resampled, cropped or selected
-        version of it.
+        Build the metadata of an image computed from the image this
+        metadata describes, on the same axes, such as a smoothed or a
+        denoised version of it.
 
-        The caller says which axes of the image changed, by type. A key
-        of `changed` is an axis type, and its value is the list of the
-        indices that were kept along the axes of that type, or `None` when
-        the axes changed in a way that is not a selection (or when the
-        selection is unknown). Each field then propagates according to
-        its [`Scope`][brainhops.datamodel.metadata.Scope]:
+        Every field is kept, except three provenance fields, which record
+        the derivation: `creation_time` is cleared, the entries of
+        `history` are appended to `history`, and `generated_by` gains a
+        brainhops entry, once.
 
-        - A field in the `FILE` scope is kept. Three provenance fields
-          record the derivation instead: `creation_time` is cleared,
-          `step` is appended to `history`, and `generated_by` gains a
-          brainhops entry, once.
-        - A field in the `ACQUISITION` scope is kept.
-        - A field in the `SPATIAL` scope is cleared when `"space"` is a
-          key of `changed`. An encoding direction expressed in voxel axes
-          is the exception: given `spatial_map`, the linear part of the
-          map from the old voxel axes to the new ones, the direction is
-          mapped through it instead. A direction expressed in a named
-          world space is kept.
-        - A field in the `AXIS` scope runs along the axes of one type.
-          When that type is a key of `changed`, the entries of the field
-          are indexed by the kept indices, or the field is cleared when
-          the value is `None`.
-        - `extra` is kept as it is.
-
-        The metadata does not know the coordinate system of the image,
-        so the caller, an image operation, translates the names of the
-        axes it changed into their types.
+        An image operation that changes axes (`image[index]`,
+        `image.reslice(...)`) derives the metadata of its result itself,
+        and records the derivation in the same way: an index along a
+        time or a channel axis selects the entries of the fields that run
+        along it, and a change of the spatial axes clears the fields tied
+        to the spatial sampling, except an encoding direction, which
+        follows the map of the voxel axes. See the user guide (`Derived
+        images`).
 
         Parameters
         ----------
-        changed : mapping, optional
-            Axis type (an `AxisType`, or its name) to the indices kept
-            along the axes of that type, or to `None`. By default, no
-            axis changed.
-        spatial_map : array-like, optional
-            The linear map from the old voxel axes to the new ones, when
-            the spatial axes changed by a permutation, a flip or a
-            rotation.
-        step : str, optional
-            A description of the derivation, appended to `history`.
+        history : str or sequence of str, optional
+            A description of the derivation, appended to `history`: one
+            entry, or several.
 
         Returns
         -------
         Metadata
             New metadata, of the same class. Generic metadata derived this
             way carries no raw record, since no format hook can scrub it.
-            The metadata of a file format keeps a copy of its record, from
-            which the format removes what the changed axes invalidate.
-
-        Raises
-        ------
-        ValueError
-            If a key of `changed` is not an axis type.
+            The metadata of a file format keeps a copy of its record, and
+            of its read-time snapshot.
 
         Examples
         --------
-        Reslicing onto a grid whose voxel axes are the old ones swapped
-        (`i <-> j`) maps the phase-encoding direction, which is given in
-        voxel axes, and clears the slice timing, which belongs to the
-        acquired slices. The repetition time describes the acquisition,
-        and is kept:
-
         ```python
-        meta = Metadata(phase_encoding_direction="j-",
-                        slice_timing=(0, 0.5, 1, 1.5), repetition_time=2)
-        swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
-        new = meta.derive(changed={"space": None}, spatial_map=swap,
-                          step="reslice")
-        new.phase_encoding_direction  # EncodingDirection('i-')
-        new.slice_timing              # None
-        new.repetition_time           # 2
-        meta.derive(changed={"space": None}).phase_encoding_direction
-        # None: without a map, the direction is unknown
-        ```
-
-        Selecting the volumes 0 to 2 of a diffusion series, along its
-        time axis, keeps the matching b-values and b-vectors:
-
-        ```python
-        dwi = Metadata(bvalues=(0, 1000, 1000, 2000),
-                       bvectors=((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)))
-        dwi.derive(changed={"time": [0, 1, 2]}).bvalues  # (0, 1000, 1000)
-        dwi.derive(changed={"time": None}).bvalues       # None
+        meta = Metadata(description="T1w", history=("acquired",))
+        meta.derive(history="smooth").history  # ('acquired', 'smooth')
         ```
         """
-        values = self._derive_values(
-            changed=_axis_changes(changed), spatial_map=spatial_map, step=step
-        )
-        return type(self)(**values)
+        return type(self)(**self._derive_values(changed={}, history=history))
 
     # --- files ------------------------------------------------------
 
@@ -672,15 +610,102 @@ class Metadata(
         values.update(kwargs)
         return target(*args, **values), report
 
+    def _select(
+        self,
+        axis: AxisType,
+        positions: tx.Optional[ArrayLike],
+        *,
+        history: _History = None,
+    ) -> tx.Self:
+        """
+        The metadata of an image indexed along its axes of one type, other
+        than `space`: a hook of the image operations.
+
+        A field in the `AXIS` scope that runs along `axis` keeps its
+        entries at `positions`, the positions kept along the axis, which
+        the image resolves from its index. `None` (the axis was dropped,
+        or the selection is unknown), or a position beyond the field,
+        clears the field. Every other field is kept, and the derivation
+        is recorded as `derive` records it.
+
+        Parameters
+        ----------
+        axis : AxisType
+            The type of the indexed axis.
+        positions : array-like of int, optional
+            The kept positions, in order.
+        history : str or sequence of str, optional
+            A description of the derivation, appended to `history`.
+
+        Returns
+        -------
+        Metadata
+            New metadata, of the same class.
+
+        Raises
+        ------
+        ValueError
+            If `axis` is `space`: a change of the spatial axes goes
+            through `_reslice`.
+        """
+        axis = AxisType(axis)
+        if axis is AxisType.space:
+            raise ValueError("The spatial axes change through _reslice().")
+        values = self._derive_values(
+            changed={axis: positions}, history=history
+        )
+        return type(self)(**values)
+
+    def _reslice(
+        self,
+        linear: tx.Optional[ArrayLike],
+        *,
+        history: _History = None,
+    ) -> tx.Self:
+        """
+        The metadata of an image whose spatial axes changed: a hook of the
+        image operations.
+
+        A field in the `SPATIAL` scope is cleared, except an encoding
+        direction in voxel axes, which is mapped through `linear`, the
+        linear part of the map from the old voxel coordinates to the new
+        ones (new axes by old axes), which the image computes from its
+        geometry. Without it (`None`: the map is unknown or not affine),
+        the direction is cleared. A direction in a named world space is
+        kept. Every other field is kept, and the derivation is recorded
+        as `derive` records it.
+
+        Parameters
+        ----------
+        linear : array-like, optional
+            The linear map from the old voxel axes to the new ones.
+        history : str or sequence of str, optional
+            A description of the derivation, appended to `history`.
+
+        Returns
+        -------
+        Metadata
+            New metadata, of the same class.
+        """
+        values = self._derive_values(
+            changed={AxisType.space: linear}, history=history
+        )
+        return type(self)(**values)
+
     def _derive_values(
         self,
         *,
-        changed: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]],
-        spatial_map: tx.Any,
-        step: tx.Optional[str],
+        changed: tx.Mapping[AxisType, tx.Any],
+        history: _History,
     ) -> tx.Dict[str, tx.Any]:
-        """The constructor values of `derive`, field by field, from the
-        scope of each field (see `derive`)."""
+        """
+        The constructor values of `derive`, `_select` and `_reslice`,
+        field by field, from the scope of each field.
+
+        `changed` maps the type of each changed axis to what changed it:
+        the linear voxel map (or `None`) for `space`, the kept positions
+        (or `None`) for any other type. It is empty for `derive`.
+        """
         values: tx.Dict[str, tx.Any] = {}
         for name in FIELDS:
             value = getattr(self, name, None)
@@ -690,11 +715,11 @@ class Metadata(
             if name == "extra":
                 value = dict(value or {})
             elif scope is Scope.SPATIAL and AxisType.space in changed:
-                value = _map_direction(value, spatial_map)
+                value = _map_direction(value, changed[AxisType.space])
             elif scope is Scope.AXIS and ALONG[name] in changed:
-                value = _select(value, changed[ALONG[name]])
+                value = _index(value, changed[ALONG[name]])
             values[name] = value
-        _derive_provenance(values, step)
+        _derive_provenance(values, history)
         return values
 
     @classmethod
@@ -710,40 +735,26 @@ class Metadata(
 # ----------------------------------------------------------------------
 
 
-def _axis_changes(
-    changed: tx.Mapping[tx.Any, tx.Optional[tx.Sequence[int]]],
-) -> tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]]:
-    """The `changed=` argument of `derive`, keyed by `AxisType`, with the
-    kept indices as tuples."""
-    out: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]] = {}
-    for key, kept in dict(changed or {}).items():
-        try:
-            axis = AxisType(key)
-        except ValueError:
-            raise ValueError(
-                f"derive(changed=...) is keyed by axis type, one of "
-                f"{[t.value for t in AxisType]}, not {key!r}."
-            ) from None
-        out[axis] = None if kept is None else tuple(int(i) for i in kept)
-    return out
-
-
 def _derive_provenance(
-    values: tx.Dict[str, tx.Any], step: tx.Optional[str]
+    values: tx.Dict[str, tx.Any], history: _History
 ) -> None:
     """
     Record a derivation in the provenance fields, in place.
 
     The derived object is a new object, so its `creation_time` is
-    cleared. The step, when one is given, is appended to `history`, and
-    brainhops is added to `generated_by` unless it is there already. A
-    field that the format does not support is absent from `values`, and
-    is left alone.
+    cleared. The entries of `history` (one, when it is a string) are
+    appended to the `history` field, and brainhops is added to
+    `generated_by` unless it is there already. A field that the format
+    does not support is absent from `values`, and is left alone.
     """
+    if isinstance(history, str):
+        steps: tx.Tuple[str, ...] = (history,)
+    else:
+        steps = tuple(history or ())
     if "creation_time" in values:
         values["creation_time"] = None
-    if "history" in values and step is not None:
-        values["history"] = tuple(values["history"] or ()) + (step,)
+    if "history" in values and steps:
+        values["history"] = tuple(values["history"] or ()) + steps
     if "generated_by" in values:
         values["generated_by"] = _with_brainhops(values["generated_by"])
 
@@ -761,35 +772,57 @@ def _with_brainhops(
     return entries + (GeneratedBy(name="brainhops", version=version),)
 
 
-def _map_direction(value: tx.Any, spatial_map: tx.Any) -> tx.Any:
-    """A `SPATIAL` field after a change of the spatial axes: an encoding
-    direction in voxel axes goes through `spatial_map` when it is given
-    (and fits), one in a world space is kept; anything else is cleared."""
+def _map_direction(value: tx.Any, linear: tx.Any) -> tx.Any:
+    """
+    A `SPATIAL` field after a change of the spatial axes (see `_reslice`).
+
+    An encoding direction in a world space is kept. One in voxel axes
+    goes through `linear`, when it is given. The map may have more axes
+    than the direction, which lies in the first ones (`ijk`), as for a
+    4-D image: the direction is then mapped as a vector of the old axes
+    that is zero beyond its own, and is kept only when it still lies in
+    the first axes. Anything else is cleared.
+    """
     if not isinstance(value, EncodingDirection):
         return None
     if value.space is not None:
         return value
-    if spatial_map is None:
+    if linear is None:
         return None
-    matrix = np.asarray(spatial_map, dtype=float)
-    if matrix.ndim != 2 or matrix.shape[1] != len(value.vector):
+    linear = np.asarray(linear, dtype=float)
+    vector = np.asarray(value.vector, dtype=float)
+    size = len(vector)
+    if linear.ndim != 2 or min(linear.shape) < size:
+        return None
+    beyond = linear[size:, :size] @ vector
+    if np.any(np.abs(beyond) > 1e-9 * np.abs(linear).max()):
+        # The direction moved onto an axis it cannot be expressed on.
         return None
     try:
-        return value.transform(matrix)
+        return value.transform(linear[:size, :size])
     except ValueError:
+        # Mapped to zero: its axis was dropped.
         return None
 
 
-def _select(value: tx.Any, kept: tx.Optional[tx.Tuple[int, ...]]) -> tx.Any:
-    """An `AXIS` field after a change of its axis: indexed by the kept
-    indices when they are known, cleared when they are not (or when they
-    do not fit the field)."""
-    if value is None or kept is None:
+def _index(value: tx.Any, positions: tx.Any) -> tx.Any:
+    """
+    An `AXIS` field after an index of its axis (see `_select`): the
+    entries at `positions`. No positions (the axis was dropped), or a
+    position beyond the field, clears it.
+    """
+    if value is None or positions is None:
+        return None
+    positions = np.asarray(positions)
+    if positions.ndim != 1 or positions.dtype.kind not in "iu":
         return None
     try:
-        return tuple(value[i] for i in kept)
-    except (IndexError, TypeError):
+        size = len(value)
+    except TypeError:
         return None
+    if positions.size and not (0 <= positions.min() <= positions.max() < size):
+        return None
+    return tuple(value[int(i)] for i in positions)
 
 
 def _is_already(value: tx.Any, cls: type) -> bool:

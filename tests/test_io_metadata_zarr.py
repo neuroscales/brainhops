@@ -202,6 +202,52 @@ def test_each_level_holds_a_derived_copy(stained) -> None:  # noqa: ANN001
     assert image.metadata.name == "brain"
 
 
+def test_a_coarser_level_is_resliced_through_its_voxel_map(
+    tmp_path,  # noqa: ANN001
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    from brainhops.datamodel.metadata import EncodingDirection
+    from brainhops.datamodel.transformations import Affine
+
+    path = str(tmp_path / "scaled.ome.zarr")
+    data = np.zeros((4, 4, 6, 2), "uint16")
+    images = [
+        SingleScaleImage(
+            data=data[:: 2**i, :: 2**i, :: 2**i],
+            transformations=[
+                Affine(np.diag([2.0**i] * 3 + [1.0, 1.0])[:-1]),
+            ],
+        )
+        for i in range(2)
+    ]
+    OmeZarrImage(
+        images=images, axes=AXES, metadata=OmeZarrMetadata(name="b")
+    ).save(path)
+    # OME-Zarr stores no spatial field: the map a level is resliced
+    # through is caught, and applied to metadata that holds some.
+    maps = []
+    reslice = OmeZarrMetadata._reslice
+
+    def spy(self, linear, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        maps.append(linear)
+        return reslice(self, linear, **kwargs)
+
+    monkeypatch.setattr(OmeZarrMetadata, "_reslice", spy)
+    image = io.load(path)
+    coarse = image.images[1]
+    assert coarse.metadata is not image.metadata
+    assert coarse.metadata is not image.images[0].metadata
+    assert coarse.metadata.name == "b"
+    # One map, for the coarser level: from the voxels of the first level
+    # to its own, half as many.
+    assert len(maps) == 1
+    assert np.allclose(maps[0], np.diag([0.5, 0.5, 0.5, 1.0]))
+    meta = Metadata(phase_encoding_direction="j-", slice_timing=(0.0, 0.5))
+    derived = meta._reslice(maps[0])
+    assert derived.phase_encoding_direction == EncodingDirection("j-")
+    assert derived.slice_timing is None
+
+
 def test_a_shared_window_is_the_display_range(tmp_path) -> None:  # noqa: ANN001
     path = str(tmp_path / "p.zarr")
     _pyramid(OmeZarrMetadata(display_range=(0.0, 100.0))).save(path)

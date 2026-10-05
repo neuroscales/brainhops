@@ -417,19 +417,19 @@ An encoding direction (`phase_encoding_direction`,
 [`EncodingDirection`][brainhops.datamodel.metadata.EncodingDirection]: a
 unit vector, by default in the voxel axes of the image, where the BIDS
 string `"j-"` stands for `(0, -1, 0)` (`to_bids()` gives the string
-back). A resampling that maps the voxel axes maps the direction too,
-even when it is no longer along an axis (see the next section):
+back). An operation that maps the voxel axes, such as a flip or a
+resampling, maps the direction too, even when it is no longer along an
+axis (see the next section):
 
 ```python
 >>> bold.metadata.slice_encoding_direction
 EncodingDirection('k')
 >>> bold.metadata.slice_encoding_direction.to_bids()
 'k'
->>> swap = [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
->>> Metadata(phase_encoding_direction="j-").derive(
-...     changed={"space": None}, spatial_map=swap
-... ).phase_encoding_direction
-EncodingDirection('i-')
+>>> bold.metadata.phase_encoding_direction
+EncodingDirection('j')
+>>> bold[:, ::-1].metadata.phase_encoding_direction
+EncodingDirection('j-')
 
 ```
 
@@ -438,9 +438,9 @@ direction that is along none as lost.
 
 ## Derived images
 
-An image computed from another one (resampled, cropped, or a selection
-of its volumes) gets metadata derived from the metadata of its source,
-with `derive`. What a field becomes depends on its
+An image computed from another one (indexed, resampled, or a selection
+of its volumes) gets metadata derived from the metadata of its source.
+What a field becomes depends on its
 [`Scope`][brainhops.datamodel.metadata.Scope], which says what the field
 is tied to:
 
@@ -450,27 +450,61 @@ is tied to:
   echo time, is kept;
 - a field tied to the spatial sampling (`SPATIAL`), such as the slice
   timing, is cleared when the spatial axes change, except an encoding
-  direction, which follows a known map of the voxel axes;
+  direction, which follows the map of the voxel axes;
 - a field with one entry per index along a non-spatial axis (`AXIS`) is
-  indexed when that axis changes. The b-values and b-vectors run along
-  the time axis, and the channel descriptions along the channel axis.
+  indexed as that axis is. The b-values and b-vectors run along the time
+  axis, and the channel descriptions along the channel axis.
 
-The caller says which axes changed, by
-`AxisType`, and gives the indices
-that were kept along them, or `None` when the change is not a selection:
+Indexing an image selects along the axes it indexes, by their type:
 
 ```python
->>> dwi = Metadata(
-...     bvalues=(0.0, 1000.0, 1000.0, 2000.0),
-...     slice_timing=(0.0, 0.5, 1.0),
-...     echo_time=0.08,
+>>> from brainhops.datamodel.images import SingleScaleImage
+>>> dwi = SingleScaleImage.from_instance(bold)
+>>> dwi.metadata.bvalues = (0.0,) + (1000.0,) * 4 + (2000.0,) * 5
+>>> dwi.metadata.echo_time = 0.08
+>>> first = dwi[..., :3]
+>>> first.metadata.bvalues, first.metadata.slice_timing[:2]
+((0.0, 1000.0, 1000.0), (0.0, 0.5))
+>>> dwi[..., 0].metadata.bvalues is None  # the time axis is gone
+True
+>>> flipped = dwi[:, ::-1]
+>>> flipped.metadata.bvalues == dwi.metadata.bvalues
+True
+>>> flipped.metadata.slice_timing, flipped.metadata.echo_time
+(None, 0.08)
+>>> flipped.metadata.history
+('getitem',)
+
+```
+
+`reslice()` derives the metadata of the image it returns in the same
+way, through the map from the old voxels to the new ones: here, a grid
+whose first two voxel axes are those of the image, swapped:
+
+```python
+>>> from brainhops.datamodel.transformations import Affine
+>>> epi = SingleScaleImage(
+...     np.zeros((4, 5, 6), "float32"),
+...     metadata=Metadata(
+...         phase_encoding_direction="j-", slice_timing=(0.0, 0.5, 1.0)
+...     ),
 ... )
->>> first = dwi.derive(changed={"time": [0, 1, 2]}, step="select")
->>> first.bvalues, first.slice_timing, first.history
-((0.0, 1000.0, 1000.0), (0.0, 0.5, 1.0), ('select',))
->>> resliced = dwi.derive(changed={"space": None})
->>> resliced.bvalues, resliced.slice_timing, resliced.echo_time
-((0.0, 1000.0, 1000.0, 2000.0), None, 0.08)
+>>> swap = Affine([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0]])
+>>> swapped = epi.reslice(swap, degree=0)
+>>> swapped.metadata.phase_encoding_direction, swapped.metadata.slice_timing
+(EncodingDirection('i-'), None)
+>>> swapped.metadata.history
+('reslice',)
+
+```
+
+[`derive`][brainhops.datamodel.metadata.Metadata.derive] records a
+derivation that keeps the axes, such as a smoothing, and keeps every
+other field:
+
+```python
+>>> dwi.metadata.derive(history="smooth").history
+('smooth',)
 
 ```
 

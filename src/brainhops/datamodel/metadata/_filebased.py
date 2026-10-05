@@ -15,7 +15,7 @@ from brainhops._core.compare import differs
 from brainhops._core.fields import Lazy
 
 from ..enums import AxisType
-from ._base import FIELDS, Metadata, _format_name
+from ._base import FIELDS, Metadata, _format_name, _History
 from ._report import ConversionReport, OnLoss, apply_loss_policy, short
 from ._sentinel import UNSUPPORTED
 
@@ -501,10 +501,11 @@ class FileBasedMetadata(Metadata):
         self,
         raw: tx.Any,
         *,
-        changed: tx.Mapping[AxisType, tx.Optional[tx.Tuple[int, ...]]],
+        changed: tx.Mapping[AxisType, tx.Any],
     ) -> tx.Any:
         """
-        Build the raw record of derived metadata (see `derive`).
+        Build the raw record of derived metadata (see `derive`, and the
+        hooks of the image operations, `_select` and `_reslice`).
 
         The record is a copy of `raw`. A format overrides this hook to
         remove from the copy what the changed axes invalidate but the
@@ -517,8 +518,11 @@ class FileBasedMetadata(Metadata):
         raw : object
             The record of this metadata.
         changed : mapping
-            The changed axes, as `derive` received them: `AxisType` to the
-            indices kept along the axes of that type, or to `None`.
+            The changed axes: `AxisType` to what changed the axes of that
+            type, the kept positions for `_select` and the linear voxel
+            map (or `None`) for `_reslice`. It is empty for `derive`. A
+            format only tests which types are in it
+            (`AxisType.space in changed`).
 
         Returns
         -------
@@ -583,16 +587,13 @@ class FileBasedMetadata(Metadata):
     def _derive_values(
         self,
         *,
-        changed: tx.Dict[AxisType, tx.Optional[tx.Tuple[int, ...]]],
-        spatial_map: tx.Any,
-        step: tx.Optional[str],
+        changed: tx.Mapping[AxisType, tx.Any],
+        history: _History,
     ) -> tx.Dict[str, tx.Any]:
         # The raw record and the snapshot are kept, so that a field
-        # `derive` cleared is cleared in the record on write; the record
-        # is the format's scrubbed copy (`_derive_raw`).
-        values = super()._derive_values(
-            changed=changed, spatial_map=spatial_map, step=step
-        )
+        # `_reslice` or `_select` cleared is cleared in the record on write;
+        # the record is the format's scrubbed copy (`_derive_raw`).
+        values = super()._derive_values(changed=changed, history=history)
         values["snapshot"] = dict(self._snapshot)
         values["raw"] = self._derive_raw(self.raw, changed=changed)
         return values
