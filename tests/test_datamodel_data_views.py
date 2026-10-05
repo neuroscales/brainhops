@@ -120,10 +120,10 @@ def test_the_grid_view_is_the_grid(coeff: bool) -> None:
     shape = (6, 7)
     t = CartesianField(shape=shape, degree=DEGREE, bound=BOUND, coeff=coeff)
     np.testing.assert_array_equal(np.asarray(t.field), _grid(shape))
-    expected = _grid(shape)
+    expected = _grid(shape).astype(float)
     if coeff:
-        expected = _coefficients(expected.astype(float))
-    np.testing.assert_allclose(np.asarray(t.data), expected, atol=1e-4)
+        expected = _coefficients(expected)
+    np.testing.assert_allclose(np.asarray(t.data), expected, atol=1e-10)
 
 
 @pytest.mark.parametrize("cls, view, values", MATRIX_FAMILY, ids=MATRIX_IDS)
@@ -444,9 +444,13 @@ def test_the_coefficients_dtype(cls: type, dtype: str, expected: str) -> None:
     assert cls(field=values, degree=DEGREE, coeff=True).data.dtype == expected
 
 
-def test_the_grid_coefficients_are_float32() -> None:
-    t = CartesianField(shape=(7, 8), degree=DEGREE, coeff=True)
-    assert np.asarray(t.data).dtype == np.float32
+@pytest.mark.parametrize("coeff", [False, True])
+def test_the_grid_is_float64(coeff: bool) -> None:
+    # A grid holds real coordinates: they, and their coefficients, are
+    # float64, the default floating dtype of NumPy.
+    t = CartesianField(shape=(7, 8), degree=DEGREE, coeff=coeff)
+    assert np.asarray(t.field).dtype == np.float64
+    assert np.asarray(t.data).dtype == np.float64
 
 
 def test_an_unchanged_encoding_is_a_pass_through() -> None:

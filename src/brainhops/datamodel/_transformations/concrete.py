@@ -438,14 +438,21 @@ class CartesianField(CoordinatesField):
 
     @property
     def field(self) -> tx.Optional[ArrayProtocol]:
-        """The coordinates of the grid points, of shape `(*shape, ndim)`."""
+        """
+        The coordinates of the grid points, of shape `(*shape, ndim)`.
+
+        They are real coordinates, so they are built in the backend's
+        default floating dtype (`float64` with NumPy), and so are their
+        spline coefficients in `data`.
+        """
         if self.shape is None:
             return None
         if getattr(self, "_grid", None) is None:
             ab = get_array_backend()
             self._grid = ab.stack(
                 ab.meshgrid(
-                    *[ab.arange(s) for s in self.shape], indexing="ij"
+                    *[ab.arange(s, dtype=float) for s in self.shape],
+                    indexing="ij",
                 ),
                 -1,
             )
