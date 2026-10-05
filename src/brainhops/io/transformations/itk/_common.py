@@ -100,8 +100,8 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
 
     It compares by identity (`eq=False`): its parameters are arrays, which
     have no single truth value to compare by. A concrete block is a
-    transformation, and comparing one with `==` raises `TypeError`, as for
-    every transformation.
+    transformation, which compares by identity too, as every
+    transformation does.
     """
 
     type: ItkTransformClass

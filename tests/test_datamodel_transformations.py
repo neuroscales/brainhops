@@ -868,42 +868,43 @@ def test_to_reports_a_lossy_conversion_rather_than_performing_it() -> None:
         lin.to(Rotation, error=TypeError)
 
 
-def test_transformations_cannot_be_compared() -> None:
-    # `==` and `!=` have no single meaning on a transformation (the same
-    # object, the same map, the same parameters), so both raise rather than
-    # pick one -- whatever the other operand, and on either side.
-    import pytest
-
+def test_transformations_compare_by_identity() -> None:
+    # `==` is `is`: a transformation equals itself only, never a distinct
+    # one with the same parameters, and `==` never raises -- whatever the
+    # other operand, and on either side.
     system = CoordinateSystem(name="world", axes=[Axis(name="x")] * 2)
     matrix = np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -1.0]])
     affine = Affine(matrix=matrix, input=system, output=system)
+    twin = Affine(matrix=matrix.copy(), input=system, output=system)
     others = (
-        affine,
-        Affine(matrix=matrix.copy(), input=system, output=system),
+        twin,
         Identity(),
         Sequence(transformations=[affine]),
         None,
         1,
     )
     for this in (affine, Identity(), Scaling(scale=[1.0, 2.0])):
+        assert this == this
+        assert not (this != this)
         for other in others:
-            with pytest.raises(TypeError, match="cannot be compared"):
-                this == other  # noqa: B015
-            with pytest.raises(TypeError, match="cannot be compared"):
-                this != other  # noqa: B015
-            with pytest.raises(TypeError, match="cannot be compared"):
-                other == this  # noqa: B015
-        with pytest.raises(TypeError):
-            hash(this)
-    # Identity is what decides whether two are the same.
-    assert affine is affine
+            if other is this:
+                continue
+            assert not (this == other)
+            assert this != other
+            assert not (other == this)
+        assert hash(this) == object.__hash__(this)
+    assert Identity() != Identity()
+    # Hashable by identity: usable in a set and as a dictionary key.
+    assert len({affine, twin, affine}) == 2
+    names = {affine: "affine", twin: "twin"}
+    assert names[affine] == "affine" and names[twin] == "twin"
 
 
-def test_every_transformation_type_refuses_comparison() -> None:
+def test_every_transformation_type_compares_by_identity() -> None:
     # A transformation that also derives from another struct -- a format
     # reader's block, a geometry's fields -- takes its options from the
     # base that comes first, which may generate a field-by-field equality.
-    # Every one of them refuses comparison all the same.
+    # Every one of them compares and hashes by identity all the same.
     import brainhops.io  # noqa: F401  (registers every format)
 
     def subclasses(cls: type) -> tx.Iterator[type]:
@@ -911,14 +912,14 @@ def test_every_transformation_type_refuses_comparison() -> None:
             yield sub
             yield from subclasses(sub)
 
-    for cls in subclasses(Transformation):
-        assert cls.__eq__ is Transformation.__eq__, cls
-        assert cls.__ne__ is Transformation.__ne__, cls
-        assert cls.__hash__ is None, cls
+    for cls in (Transformation, *subclasses(Transformation)):
+        assert cls.__eq__ is object.__eq__, cls
+        assert cls.__ne__ is object.__ne__, cls
+        assert cls.__hash__ is object.__hash__, cls
 
 
 def test_a_sequence_finds_its_members_by_identity() -> None:
-    # Membership and lookup in a sequence never compare with `==`.
+    # Membership and lookup in a sequence go by identity, as `==` does.
     import pytest
 
     first = Affine(matrix=np.eye(2, 3))

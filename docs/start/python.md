@@ -197,3 +197,40 @@ specification, with additional flexibility:
 - Additional transformations are available. For example, non-matrix
   representations of some affine subgroups (quaternions, lie algebra, ...)
   are implemented in `brainhops`.
+
+## Comparing transformations and images
+
+Transformations and images compare, and hash, **by identity**, not by
+value: `a == b` is the same as `a is b`, and `==` never raises.
+
+```python
+from brainhops.datamodel.transformations import Affine
+
+a = Affine(matrix)
+b = Affine(matrix)
+a == a  # -> True
+a == b  # -> False: two distinct objects, even with the same matrix
+{a, b}  # -> a set of two transformations
+```
+
+This means that a transformation (or an image) can be put in a `set`, used
+as a dictionary key, or looked up in a list with `in`, `index` or `remove`,
+and is always found by identity: a distinct object with the same parameters
+is a different element.
+
+!!! note "Testing whether two transformations are the same map"
+    Whether two transformations are "the same" -- the same object, the same
+    map, or the same parameters in the same coordinate systems -- has no
+    single answer, so `==` does not pick one. To test whether two
+    transformations map coordinates the same way, check that one composed
+    with the inverse of the other is the identity, and compare their
+    coordinate systems explicitly:
+
+    ```python
+    from brainhops.datamodel.transformations import is_identity
+
+    is_identity((a.inverse() @ b).compute(), compute=True)  # -> True
+    ```
+
+    Likewise, compare the data of two images explicitly
+    (e.g., `numpy.array_equal(img1, img2)`).

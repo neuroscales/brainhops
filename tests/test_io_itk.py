@@ -970,14 +970,13 @@ def test_composite_order_matches_nitransforms(tmp_path) -> None:  # noqa: ANN001
     np.testing.assert_allclose(expected, _itk_order(POINTS))
 
 
-def test_a_block_cannot_be_compared() -> None:
-    # A block is a transformation, which refuses `==`, even though the
-    # struct it also derives from comes first. The struct alone compares by
-    # identity, never by its array parameters.
+def test_a_block_compares_by_identity() -> None:
+    # A block is a transformation, which compares by identity, even though
+    # the struct it also derives from comes first. The struct alone
+    # compares by identity too, never by its array parameters.
     block = _versor_rigid_3d((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (0, 0, 0))
     assert isinstance(block, xforms.Transformation)
-    with pytest.raises(TypeError, match="cannot be compared"):
-        block == block  # noqa: B015
-    with pytest.raises(TypeError, match="cannot be compared"):
-        block != _versor_rigid_3d((0, 0, 0), (1, 2, 3), (0, 0, 0))  # noqa: B015
+    assert block == block
+    assert block != _versor_rigid_3d((0, 0, 0), (1, 2, 3), (0, 0, 0))
+    assert len({block, block}) == 1
     assert itk.ItkStruct.__eq__ is object.__eq__

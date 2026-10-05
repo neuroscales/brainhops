@@ -478,13 +478,17 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
         morph.save(tmp_path / "out.m3z")
 
 
-def test_a_morph_cannot_be_compared() -> None:
-    # A morph is a transformation, which refuses `==`, even though the
-    # parser it also derives from comes first. The parser alone compares by
-    # identity, never by the arrays of its struct.
+def test_a_morph_compares_by_identity() -> None:
+    # A morph is a transformation, which compares by identity, even though
+    # the parser it also derives from comes first. The parser alone
+    # compares by identity too, never by the arrays of its struct.
     from brainhops.io.transformations.freesurfer.m3z._xform import M3zParser
 
-    morph = M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
-    with pytest.raises(TypeError, match="cannot be compared"):
-        morph == morph  # noqa: B015
+    def make() -> M3zMorph:
+        return M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
+
+    morph = make()
+    assert morph == morph
+    assert morph != make()
+    assert {morph: 1}[morph] == 1
     assert M3zParser.__eq__ is object.__eq__

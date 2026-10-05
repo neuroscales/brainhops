@@ -6,7 +6,7 @@ from bagof.magic import KwOnly
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
-from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
@@ -24,7 +24,9 @@ if tx.TYPE_CHECKING:
 
 @kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
-class Transformation(DataModelBase, reverse=True, eq=False):
+class Transformation(
+    IdentityComparison, DataModelBase, reverse=True, eq=False
+):
     """
     A transformation between coordinate systems.
 
@@ -51,12 +53,17 @@ class Transformation(DataModelBase, reverse=True, eq=False):
         map coordinates from space B to space A. In our model, this
         transformation would be represented as `Transform(input=B, output=A)`.
 
-    !!! warning "Transformations cannot be compared"
-        `==` and `!=` raise `TypeError` on a transformation. Whether two
-        transformations are "the same" has no single answer -- the same
-        object, the same map, the same parameters in the same systems --
-        so none is picked. Compare objects with `is`, and parameters or
-        systems explicitly. A transformation is not hashable either.
+    !!! note "Transformations compare by identity"
+        `t1 == t2` is `t1 is t2`: two distinct transformations are never
+        equal, even when they hold the same parameters in the same
+        systems, and `==` never raises. A transformation hashes by
+        identity too, so it can be put in a set or used as a dictionary
+        key. Whether two transformations represent the same map has no
+        single answer, so none is picked. To test whether two map
+        coordinates the same way, check that one composed with the
+        inverse of the other is the identity --
+        `is_identity((t1.inverse() @ t2).compute(), compute=True)` -- and
+        compare their `input`/`output` systems explicitly.
     """
 
     # --- class attributes ---------------------------------------------
@@ -121,29 +128,6 @@ class Transformation(DataModelBase, reverse=True, eq=False):
 
     input = smartproperty("input")
     output = smartproperty("output")
-
-    # --- comparison ---------------------------------------------------
-
-    def __eq__(self, other: object) -> tx.NoReturn:
-        _refuse_comparison(self, other, "==")
-
-    def __ne__(self, other: object) -> tx.NoReturn:
-        _refuse_comparison(self, other, "!=")
-
-    __hash__ = None
-
-    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
-        # A transformation that also derives from another struct -- a
-        # format reader's block, a geometry's fields -- takes its options
-        # from whichever base comes first, and may then be given a
-        # generated `__eq__` (and `__hash__`) that compares its fields,
-        # arrays included. The refusal above holds for every
-        # transformation, so it is put back on such a class -- and on any
-        # class that writes its own: no transformation compares.
-        super().__init_subclass__(**kwargs)
-        for name in ("__eq__", "__ne__", "__hash__"):
-            if getattr(cls, name) is not Transformation.__dict__[name]:
-                setattr(cls, name, Transformation.__dict__[name])
 
     # --- methods ------------------------------------------------------
 
@@ -429,17 +413,3 @@ compute]:
 
     def __invert__(self) -> "Transformation":
         return self.inverse()
-
-
-def _refuse_comparison(this: object, that: object, op: str) -> tx.NoReturn:
-    # `==` and `!=` are refused on a transformation, whatever it is compared
-    # with: there is no single meaning of equality to give them, and a
-    # generated field-by-field comparison would ask an array comparison for
-    # a single truth value. Callers compare objects with `is`, and
-    # parameters or systems explicitly.
-    raise TypeError(
-        f"Transformations cannot be compared with {op!r} "
-        f"({type(this).__name__} {op} {type(that).__name__}). Use `is` to "
-        f"test whether two are the same object, or compare their "
-        f"parameters and systems explicitly."
-    )

@@ -16,7 +16,7 @@ from ._transformations.multiscale import (
     _at_resolution,
     _nearest_resolution_index,
 )
-from .base import DataModelBase
+from .base import DataModelBase, IdentityComparison
 from .geometry import Geometry
 from .transformations import (
     CartesianField,
@@ -25,8 +25,17 @@ from .transformations import (
 )
 
 
-class Image(DataModelBase):
-    """Base class for all images."""
+class Image(IdentityComparison, DataModelBase, eq=False):
+    """Base class for all images.
+
+    !!! note "Images compare by identity"
+        `a == b` is `a is b`: two distinct images are never equal, even
+        when they hold the same data and transformations, and `==` never
+        raises. An image hashes by identity too, so it can be put in a
+        set or used as a dictionary key. Compare data and geometry
+        explicitly (e.g., `numpy.array_equal(a, b)`) to test whether two
+        images hold the same values.
+    """
 
     # --- array API ----------------------------------------------------
 
@@ -100,9 +109,10 @@ class SingleScaleImage(Image):
         moves it to the end. Assigning a transformation that is already
         in the list moves it to the end instead of adding a copy.
 
-        A transformation is recognized as already present by identity. A
-        distinct transformation that merely compares equal to one in the
-        list is appended as a new preferred transformation.
+        A transformation is recognized as already present by identity
+        (transformations compare by identity): a distinct transformation
+        with the same parameters is appended as a new preferred
+        transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -348,9 +358,10 @@ class MultiScaleImage(Image):
         moves it to the end. Assigning a transformation that is already
         in the list moves it to the end instead of adding a copy.
 
-        A transformation is recognized as already present by identity. A
-        distinct transformation that merely compares equal to one in the
-        list is appended as a new preferred transformation.
+        A transformation is recognized as already present by identity
+        (transformations compare by identity): a distinct transformation
+        with the same parameters is appended as a new preferred
+        transformation.
         """
         if self.transformations:
             return self.transformations[-1]
