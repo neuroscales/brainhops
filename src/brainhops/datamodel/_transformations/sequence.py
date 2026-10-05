@@ -202,42 +202,7 @@ class Sequence(SequenceMixin, Transformation):
         NotImplementedError
             If the chain does not compose to a single transformation.
         """
-        return _chain_operator(self, "sqrt", "square root", compute, kwargs)
-
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        """Return the exponential of this chain.
-
-        The chain is reduced as in [`sqrt`][brainhops.datamodel.\
-transformations.Sequence.sqrt]: a change of coordinates `[P, *X, P^-1]`
-        has the exponential `[P, exp(X), P^-1]`, and any other chain is
-        composed now.
-
-        Raises
-        ------
-        DomainError
-            If the chain does not map a space to itself.
-        NotImplementedError
-            If the chain does not compose to a single transformation.
-        """
-        return _chain_operator(self, "exp", "exponential", compute, kwargs)
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        """Return the principal logarithm of this chain.
-
-        The chain is reduced as in [`sqrt`][brainhops.datamodel.\
-transformations.Sequence.sqrt]: a change of coordinates `[P, *X, P^-1]`
-        has the logarithm `[P, log(X), P^-1]`, and any other chain is
-        composed now.
-
-        Raises
-        ------
-        DomainError
-            If the chain does not map a space to itself, or if the logarithm
-            of what it reduces to is not defined.
-        NotImplementedError
-            If the chain does not compose to a single transformation.
-        """
-        return _chain_operator(self, "log", "logarithm", compute, kwargs)
+        return _chain_sqrt(self, compute, kwargs)
 
     def compute(
         self,
@@ -647,21 +612,16 @@ def _factor_cap(flat: tx.List[Transformation]) -> int:
 # ----------------------------------------------------------------------
 
 
-def _chain_operator(
-    seq: Sequence,
-    method: str,
-    operator: str,
-    compute: bool,
-    kwargs: tx.Dict[str, tx.Any],
+def _chain_sqrt(
+    seq: Sequence, compute: bool, kwargs: tx.Dict[str, tx.Any]
 ) -> Transformation:
-    # The square root, exponential or logarithm of a chain (see
-    # `Sequence.sqrt`). None of them distributes over a composition, except
-    # over a change of coordinates, which every one of them commutes with:
-    # `f(P^-1 X P) = P^-1 f(X) P`.
-    require_endomorphism(seq, operator)
+    # The square root of a chain (see `Sequence.sqrt`). It does not
+    # distribute over a composition, except over a change of coordinates,
+    # which it commutes with: `sqrt(P^-1 X P) = P^-1 sqrt(X) P`.
+    require_endomorphism(seq, "square root")
     chain = seq.simplify()
     if not isinstance(chain, Sequence):
-        return getattr(chain, method)(compute, **kwargs)
+        return chain.sqrt(compute, **kwargs)
     leaves = list(chain.transformations or [])
     if len(leaves) >= 3 and _undoes(leaves[0], leaves[-1]):
         middle = leaves[1:-1]
@@ -670,7 +630,7 @@ def _chain_operator(
         else:
             inner = Sequence(transformations=middle)
         obj = Sequence(
-            transformations=[leaves[0], getattr(inner, method)(), leaves[-1]],
+            transformations=[leaves[0], inner.sqrt(), leaves[-1]],
             input=chain._input,
             output=chain._output,
         )
@@ -679,12 +639,12 @@ def _chain_operator(
     if isinstance(reduced, Sequence):
         names = ", ".join(type(t).__name__ for t in reduced.transformations)
         raise NotImplementedError(
-            f"The {operator} of a chain is implemented only when it composes "
-            f"to a single transformation, or when it is a change of "
-            f"coordinates [P, ..., P^-1], but this one composes to "
+            f"The square root of a chain is implemented only when it "
+            f"composes to a single transformation, or when it is a change "
+            f"of coordinates [P, ..., P^-1], but this one composes to "
             f"[{names}]."
         )
-    return getattr(reduced, method)(compute, **kwargs)
+    return reduced.sqrt(compute, **kwargs)
 
 
 def _undoes(first: Transformation, last: Transformation) -> bool:

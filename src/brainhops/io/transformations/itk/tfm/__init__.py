@@ -15,19 +15,44 @@ variety of (chained) transformations.
     FixedParameters: 50 50
     ```
 
-!!! example "Chained transformations"
+!!! example "Composite transformation"
     ```text
     # Insight Transform File V1.0
     # Transform 0
+    Transform: CompositeTransform_double_3_3
+    # Transform 1
     Transform: TranslationTransform_double_3_3
     Parameters: 10.5 -5.0 20.0
     FixedParameters:
 
-    # Transform 1
+    # Transform 2
     Transform: Euler3DTransform_double_3_3
     Parameters: 0.1 0.0 -0.2 0.0 0.0 0.0
     FixedParameters: 128.0 128.0 64.0
     ```
+
+    ITK applies the blocks of a composite last to first: this file
+    rotates a point, then translates it. The reader lists the blocks in
+    the order they apply, `[Euler3D, Translation]`.
+
+## Composite transformations
+
+ITK writes a `CompositeTransform` as a header block of class
+`CompositeTransform`, which has no parameters, followed by the blocks of
+its transform queue, front to back. `CompositeTransform::TransformPoint`
+applies the queue back to front: a file `[Composite, T0, T1]` maps `x`
+to `T0(T1(x))`. A brainhops
+[`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+transformations in the order they apply, so the reader lists the blocks
+of a composite in reverse file order, `[T1, T0]`.
+
+A file with several blocks but no `CompositeTransform` header is a list
+of separate transforms, which ITK does not compose. The reader loads one
+of them: the first, as SimpleITK's `ReadTransform` does, with a warning
+that the file holds several, or the one at `position=`
+(`TfmTransform.from_file(path, position=1)`). A composite file holds a
+single transform, the composite, at position 0. A `CompositeTransform`
+that is not the first block is refused, as ITK never writes one there.
 
 ## Approximate specification
 
@@ -104,9 +129,9 @@ affine transformations.
 
 # ruff: enable[E501]
 __all__ = [
-    "TFMTransform",
-    "TFMTransformParser",
+    "TfmTransform",
+    "TfmTransformParser",
 ]
 
-from ._parser import TFMTransformParser
-from ._xform import TFMTransform
+from ._parser import TfmTransformParser
+from ._xform import TfmTransform

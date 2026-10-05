@@ -1,11 +1,12 @@
 # dependencies
 import typing_extensions as tx
+from bagof.magic import KwOnly
 
 # api
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
-from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
@@ -24,7 +25,9 @@ if tx.TYPE_CHECKING:
 
 @kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
-class Transformation(DataModelBase, reverse=True):
+class Transformation(
+    IdentityComparison, DataModelBase, reverse=True, eq=False
+):
     """
     A transformation between coordinate systems.
 
@@ -50,6 +53,18 @@ class Transformation(DataModelBase, reverse=True):
         that deforms an image from space A to space B, will actually
         map coordinates from space B to space A. In our model, this
         transformation would be represented as `Transform(input=B, output=A)`.
+
+    !!! note "Transformations compare by identity"
+        `t1 == t2` is `t1 is t2`: two distinct transformations are never
+        equal, even when they hold the same parameters in the same
+        systems, and `==` never raises. A transformation hashes by
+        identity too, so it can be put in a set or used as a dictionary
+        key. Whether two transformations represent the same map has no
+        single answer, so none is picked. To test whether two map
+        coordinates the same way, check that one composed with the
+        inverse of the other is the identity --
+        `is_identity((t1.inverse() @ t2).compute(), compute=True)` -- and
+        compare their `input`/`output` systems explicitly.
     """
 
     # --- class attributes ---------------------------------------------
@@ -79,6 +94,15 @@ class Transformation(DataModelBase, reverse=True):
     # `replace()` freeze the derived value into a declared one, and a
     # sequence that declares nothing would come back claiming the systems
     # its children happen to name.
+    #
+    # The endpoints are keyword-only. A positional parameter's place in
+    # `__init__` follows the order bagof collects fields in, which follows
+    # the MRO, so it would move whenever a class reorders its bases and
+    # differ between families. Only the fields that define a
+    # transformation (`matrix`, `field`, `transformations`, `forward`...)
+    # are positional. bagof does not carry `KwOnly` over to a field that
+    # a subclass declares again: a subclass that gives an endpoint a new
+    # default must write `KwOnly[...]` itself.
     _input: tx.Annotated[
         tx.Optional[CoordinateSystem],
         tx.Doc(
@@ -88,6 +112,7 @@ class Transformation(DataModelBase, reverse=True):
             from the coordinate system of the image being transformed).
             """
         ),
+        KwOnly(),
     ] = None
 
     _output: tx.Annotated[
@@ -99,6 +124,7 @@ class Transformation(DataModelBase, reverse=True):
             from the coordinate system of the image being transformed).
             """
         ),
+        KwOnly(),
     ] = None
 
     input = smartproperty("input")
@@ -255,104 +281,12 @@ Transformation.compute] when `compute` is true.
             square root.
         NotImplementedError
             If brainhops does not compute the square root of this kind of
-            transformation. A displacement field has one only when it is an
-            exponential: `v.exp().sqrt()` is `exp(v / 2)`.
+            transformation. A displacement field has one only when it is a
+            stationary velocity field (`log=True`), whose square root
+            halves its velocity.
         """
         raise NotImplementedError(
             f"The square root of a {type(self).__name__} is not implemented."
-        )
-
-    def exp(self, compute: bool = False, **kwargs) -> "Transformation":
-        """
-        Return the exponential of this transformation.
-
-        The transformation is read as the stationary velocity field of its
-        displacement, `v(x) = T(x) - x`, and its exponential is the flow of
-        that velocity at time one:
-
-        * a [`DisplacementField`][] is the velocity it stores, in the
-          voxels of its own grid, and it is integrated by scaling and
-          squaring (see [`Exp`][]);
-        * an affine `x -> M x + t` has the linear velocity
-          `x -> (M - I) x + t`, whose flow is the matrix exponential of
-          `[[M - I, t], [0, 0]]`. A scaling `s` gives the scaling
-          `exp(s - 1)`, a linear `M` gives `expm(M - I)`, and a
-          translation, the flow of a constant velocity, is its own
-          exponential. This is not the matrix exponential of the stored
-          matrix, which would not fix the identity.
-
-        This reading does not depend on the coordinates, so the
-        exponential of `P^-1 @ T @ P` is `P^-1 @ exp(T) @ P`, and an affine
-        has the same exponential as the field that samples it.
-
-        The exponential is lazy: an [`Exp`][] wrapper is returned, and
-        computed when it is applied, computed or converted. A
-        transformation that is its own exponential (an identity, a
-        translation) is returned as is. A [`Sequence`][] is reduced first
-        (see [`Sequence.exp`][]).
-
-        Parameters
-        ----------
-        compute : bool, default=False
-            Whether to compute the result now rather than return it lazily.
-        **kwargs
-            Passed to [`compute`][brainhops.datamodel.transformations.\
-Transformation.compute] when `compute` is true.
-
-        Raises
-        ------
-        DomainError
-            If the transformation does not map a space to itself.
-        NotImplementedError
-            If brainhops does not compute the exponential of this kind of
-            transformation.
-        """
-        raise NotImplementedError(
-            f"The exponential of a {type(self).__name__} is not implemented."
-        )
-
-    def log(self, compute: bool = False, **kwargs) -> "Transformation":
-        """
-        Return the principal logarithm of this transformation.
-
-        The logarithm is the inverse of [`exp`][brainhops.datamodel.\
-transformations.Transformation.exp]: it is the transformation
-        `x -> x + v(x)`, where `v` is the principal stationary velocity
-        whose flow at time one is this transformation, so that
-        `T.log().exp()` is `T`. For an affine `T`, with `[[L, l], [0, 0]]`
-        the principal matrix logarithm of its homogeneous matrix, it is
-        `x -> (I + L) x + l`: a scaling `s` gives the scaling `1 + log(s)`,
-        and a translation is its own logarithm.
-
-        The logarithm is lazy: a [`Log`][] wrapper is returned, and
-        computed when it is applied, computed or converted. A
-        transformation that is its own logarithm (an identity, a
-        translation) is returned as is. A [`Sequence`][] is reduced first
-        (see [`Sequence.log`][]).
-
-        Parameters
-        ----------
-        compute : bool, default=False
-            Whether to compute the result now rather than return it lazily.
-        **kwargs
-            Passed to [`compute`][brainhops.datamodel.transformations.\
-Transformation.compute] when `compute` is true.
-
-        Raises
-        ------
-        DomainError
-            If the transformation does not map a space to itself, or, when
-            the result is computed, if its linear part has an eigenvalue on
-            the closed negative real axis (a reflection, a rotation by a
-            half turn, a singular matrix), so that it has no real principal
-            logarithm.
-        NotImplementedError
-            If brainhops does not compute the logarithm of this kind of
-            transformation. A displacement field has one only when it is an
-            exponential: `v.exp().log()` is `v`.
-        """
-        raise NotImplementedError(
-            f"The logarithm of a {type(self).__name__} is not implemented."
         )
 
     def to(
@@ -389,7 +323,11 @@ Transformation.compute] when `compute` is true.
             This allows transformations to be modified within their type.
             For example, a [`DisplacementField`][] can be converted from
             a field of values to a field of spline coefficients by
-            setting `coeff=True` in `kwargs`.
+            setting `coeff=True` in `kwargs`: a change of encoding flag
+            re-encodes the stored `data`, and keeps the map. A view's
+            name (`field=`, `matrix=`, ...) sets the map, as values, and
+            it is stored in the encoding of the result; `data=` is
+            stored as given.
 
         Returns
         -------

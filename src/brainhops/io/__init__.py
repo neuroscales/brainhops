@@ -16,10 +16,11 @@ __all__ = [
     "base",
     "images",
     "load",
+    "save",
     "sniff",
     "transformations",
     "vectors",
 ]
 
 from . import base, images, transformations, vectors
-from .base import FileBasedObject, WritableFileBasedObject, load, sniff
+from .base import FileBasedObject, WritableFileBasedObject, load, save, sniff

@@ -16,6 +16,10 @@ dependencies = [
     # it inherits, which the axes and coordinate systems rely on.
     "bagof-magic >= 0.3.dev0",
     "bagof-paths >= 0.2",
+    # Units are parsed by pint, imported on first use. 0.21.1 is the last
+    # release for Python 3.8; 0.24 is the first to support numpy 2.
+    "pint >= 0.21; python_version < '3.9'",
+    "pint >= 0.24; python_version >= '3.9'",
 ]
 dynamic = ["version"]
 
@@ -25,16 +29,31 @@ brainhops = "brainhops.cli:main"
 [project.optional-dependencies]
 
 # backends
-dask = ["dask[array]", "dask-image"]
+dask = ["dask[array]"]
 cupy = ["cupy"]
 backends = ["brainhops[dask]", "brainhops[cupy]"]
 
 # io
-itk = ["h5py"]
+h5py = ["h5py"]
+itk = ["brainhops[h5py]"]
+x5 = ["brainhops[h5py]"]
+# MATLAB v7.3 (HDF5) .mat matrices; text, .npy, .npz and v4-v7 .mat need
+# only numpy and scipy.
+matrix = ["brainhops[h5py]"]
 nibabel = ["nibabel"]
+pillow = ["pillow"]
+tiff = ["tifffile"]
+# openslide-python needs the OpenSlide C library, which openslide-bin
+# ships as wheels (where it has none, install it with the system's
+# package manager).
+openslide = ["openslide-python", "openslide-bin"]
 nifti = ["brainhops[nibabel]"]
+mgh = ["brainhops[nibabel]"]
+# MINC1 is read with nibabel; MINC2 (HDF5) also needs h5py.
+minc = ["brainhops[nibabel]", "brainhops[h5py]"]
 spm = ["brainhops[nifti]"]
 fsl = ["brainhops[nifti]"]
+niftyreg = ["brainhops[nifti]"]
 # abczarr reads and writes Zarr through a driver; the default pulls in the
 # zarr-python driver, and the other drivers are available on their own. The
 # zarr-python driver needs zarr-python 3, which requires Python 3.11 or
@@ -55,15 +74,25 @@ zarr = [
 zarr-python = ["abczarr[zarr-py] >= 0.2.1"]
 zarr-tensorstore = ["abczarr[tensorstore] >= 0.2.1", "tensorstore >= 0.1.43"]
 zarr-zarrista = ["abczarr[zarrista] >= 0.2.1"]
-io = ["brainhops[itk]", "brainhops[nibabel]", "brainhops[zarr]"]
+io = [
+    "brainhops[h5py]",
+    "brainhops[nibabel]",
+    "brainhops[pillow]",
+    "brainhops[tiff]",
+    "brainhops[openslide]",
+    "brainhops[zarr]",
+]
 
 # test
 test = [
     "pytest",
     "pytest-cov",
     "brainhops[dask]",
-    "brainhops[itk]",
+    "brainhops[h5py]",
     "brainhops[nibabel]",
+    "brainhops[pillow]",
+    "brainhops[tiff]",
+    "brainhops[openslide]",
     "brainhops[zarr]"
 ]
 

@@ -46,7 +46,7 @@ def _sub(inner: object, in_axes: list, out_axes: list = None) -> object:
 def _warp(ndim: int) -> DisplacementField:
     rng = np.random.default_rng(0)
     shape = (3,) * ndim + (ndim,)
-    return DisplacementField(field=rng.normal(size=shape), order=1)
+    return DisplacementField(field=rng.normal(size=shape), degree=1)
 
 
 def _matrix(t: object) -> np.ndarray:
@@ -328,7 +328,7 @@ def test_embed_refuses_a_transform_that_contradicts_its_axes() -> None:
 
 def _system(n: int) -> CoordinateSystem:
     return CoordinateSystem(
-        axes=[SpaceAxis(name=f"a{i}", unit="sample") for i in range(n)]
+        axes=[SpaceAxis(name=f"a{i}", unit="index") for i in range(n)]
     )
 
 

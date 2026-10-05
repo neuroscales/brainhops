@@ -20,9 +20,11 @@ __all__ = [
     "FileOrContentLike",
     "TextFileOrContentLike",
     "BinaryFileOrContentLike",
+    "exists",
 ]
 
 # stdlib
+import errno
 from os import PathLike
 from pathlib import Path as LocalPath
 
@@ -70,3 +72,25 @@ BinaryFileOrContentLike = tx.Union[BinaryFileLike, BinaryContentLike]
 A path to a binary file, a binary file object, or the content of a
 binary file.
 """
+
+
+# utilities
+
+
+def exists(filename: FilenameLike) -> bool:
+    """
+    Whether a file exists.
+
+    A name too long for the file system to look up names no file. Such
+    a "name" is usually file content handed over where a path was
+    expected, and is reported as a missing file rather than as an
+    `OSError` from deep inside `stat`. Any other error is raised.
+    """
+    if isinstance(filename, str):
+        filename = Path(filename)
+    try:
+        return filename.exists()
+    except OSError as e:
+        if e.errno == errno.ENAMETOOLONG:
+            return False
+        raise

@@ -4,7 +4,11 @@ NIfTI-based image and transformation format."""
 __all__ = ["NiftiParser"]
 
 # stdlib
+import gzip
+import inspect
+import warnings
 from io import BytesIO
+from urllib.parse import urlsplit
 
 # dependencies
 import nibabel as nb
@@ -24,16 +28,18 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
 )
-from brainhops.datamodel.transformations import (
-    Affine,
-    ConversionError,
-    Sequence,
-    Transformation,
-)
+from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import (
+    is_indexunit,
     is_physicalunit,
     is_spaceunit,
     is_timeunit,
+)
+from brainhops.io.base._geometry import (
+    AxisLayout,
+    arrange_voxel_to_ras,
+    declared_axes,
+    embed_affine,
 )
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
@@ -52,31 +58,31 @@ _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
 
 
 # The axes of a NIfTI array, by position. They are the axes of its voxel
-# space, so they count samples (`SampleUnit`): reversing one shifts its
+# space, so they count samples (`IndexUnit`): reversing one shifts its
 # origin by one less than its extent. A reader that builds a physical space
 # from them gives them its own unit.
-_SAMPLE = "sample"
+_INDEX = "index"
 _NIFTI_AXES = [
-    Axis("x", "space", unit=_SAMPLE),
-    Axis("y", "space", unit=_SAMPLE),
-    Axis("z", "space", unit=_SAMPLE),
-    Axis("t", "time", unit=_SAMPLE),
-    Axis("c", "channel", unit=_SAMPLE),
-    Axis("dim5", unit=_SAMPLE),
-    Axis("dim6", unit=_SAMPLE),
+    Axis("x", "space", unit=_INDEX),
+    Axis("y", "space", unit=_INDEX),
+    Axis("z", "space", unit=_INDEX),
+    Axis("t", "time", unit=_INDEX),
+    Axis("c", "channel", unit=_INDEX),
+    Axis("dim5", unit=_INDEX),
+    Axis("dim6", unit=_INDEX),
 ]
 _FLAT_AXES = {
     # number of points / vertices / triangles / ...
-    0: Axis("n", unit=_SAMPLE),
-    1: Axis("x", unit=_SAMPLE),
-    2: Axis("y", unit=_SAMPLE),
-    3: Axis("z", unit=_SAMPLE),
+    0: Axis("n", unit=_INDEX),
+    1: Axis("x", unit=_INDEX),
+    2: Axis("y", unit=_INDEX),
+    3: Axis("z", unit=_INDEX),
 }
-_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_SAMPLE)}
-_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_SAMPLE)}
-_AXES_DISP = {4: Axis("c", "displacement", unit=_SAMPLE)}
+_FLAT_AXES_CHANNEL = {**_FLAT_AXES, 4: Axis("c", "channel", unit=_INDEX)}
+_FLAT_AXES_TIME = {**_FLAT_AXES, 4: Axis("t", "time", unit=_INDEX)}
+_AXES_DISP = {4: Axis("c", "displacement", unit=_INDEX)}
 _NIFTI_SPECIFIC_AXES = {
-    1004: {5: Axis("k", "channel", unit=_SAMPLE)},  # GENMATRIX
+    1004: {5: Axis("k", "channel", unit=_INDEX)},  # GENMATRIX
     1006: _AXES_DISP,  # DISPVECT
     1008: _FLAT_AXES_CHANNEL,  # POINTSET
     1009: _FLAT_AXES_CHANNEL,  # TRIANGLE
@@ -125,7 +131,48 @@ _NIFTI_INTENT_NONE = 0
 """Intent code of a plain image: no specialized interpretation."""
 
 _NIFTI_INTENT_DISPVECT = 1006
-"""Intent code that marks a NIfTI file as a displacement or vector field."""
+"""
+Intent code of a field of displacement vectors.
+
+The NIfTI-1 standard reserves it "specifically for displacements", and
+ITK 5.4 and later reads a three-component `DISPVECT` image as RAS
+displacements in millimetres. brainhops reads it the same way, and
+writes it only for displacement fields.
+"""
+
+_NIFTI_INTENT_VECTOR = 1007
+"""
+Intent code of a generic vector image.
+
+The NIfTI-1 standard reserves it "for any other type of vector" than a
+displacement. brainhops writes its fields of RAS coordinates with it,
+as SPM writes its `y_` deformations (coordinate maps), and ITK writes it
+for every vector image unless told otherwise, so it is also the code of
+ITK's (LPS) displacement fields. It says nothing about the frame its
+vectors are in; the intent name `"Mapping"` (see below) marks the RAS
+coordinate maps.
+"""
+
+_NIFTI_INTENT_NAME_NIFTYREG = "NREG_TRANS"
+"""
+The intent name NiftyReg gives every transformation it writes.
+
+NiftyReg stores its deformation and displacement fields and its
+control-point grids as `VECTOR` (1007) images named `"NREG_TRANS"`, and
+tells them apart with `intent_p1` (`reg-lib/cpu/Maths.hpp`,
+`NREG_TRANS_TYPE`). The name is evidence of a NiftyReg file, which only
+the NiftyReg readers decode, so the generic `VECTOR` readers decline it.
+"""
+
+_NIFTI_INTENT_NAME_MAPPING = "Mapping"
+"""
+The intent name SPM gives a field of coordinates (`y_` files).
+
+brainhops writes it next to `VECTOR` on a field of RAS coordinates, so
+the file says what its vectors are, not only that they are vectors. ITK's
+`NiftiImageIO` never writes an intent name, so neither ITK nor ANTs
+files carry it, and it also tells such a map from an ITK (LPS) field.
+"""
 
 
 _NIFTI_XCODES = {
@@ -151,24 +198,6 @@ _NIFTI_XFORM_CODE_BY_NAME = {
 
 _QFORM_NAME = "qform"
 """The name the reader gives the rigid voxel-to-RAS affine of the qform."""
-
-_RAS_FROM_ORIENTATION = {
-    "left-to-right": (0, 1.0),
-    "right-to-left": (0, -1.0),
-    "posterior-to-anterior": (1, 1.0),
-    "anterior-to-posterior": (1, -1.0),
-    "inferior-to-superior": (2, 1.0),
-    "superior-to-inferior": (2, -1.0),
-}
-"""
-The RAS axis and sign that an anatomical orientation points along.
-
-Each key is the value of an anatomical orientation carried by an axis. The
-first element of the pair is the index of the RAS axis the orientation runs
-along, and the second is its sign. This drives the conversion of a
-voxel-to-world affine into voxel-to-RAS from the axes themselves, rather
-than from the world space's name.
-"""
 
 _NIFTI_DEFAULT_XFORM_CODE = 2
 """
@@ -196,6 +225,38 @@ def _nifti_intent(header: "_NiftiObject") -> tx.Optional[int]:
         return int(header["intent_code"])
     except Exception:
         return None
+
+
+def _nifti_intent_name(header: "_NiftiObject") -> tx.Optional[str]:
+    """The intent name of a NIfTI header, or `None` if unreadable."""
+    try:
+        if isinstance(header, nb.Nifti1Image):
+            header = header.header
+        return str(header.get_intent()[2])
+    except Exception:
+        return None
+
+
+def _nifti_vector_field(data: ArrayProtocol) -> ArrayProtocol:
+    """
+    Drop the singleton time axis of a NIfTI vector field.
+
+    NIfTI stores a 3-D vector field as `(X, Y, Z, 1, 3)`, with the
+    components in the fifth axis and a singleton in place of time. Every
+    reader of a field wants it as `(X, Y, Z, 3)`, or it would sample it
+    as a 4-D grid of 3-vectors, so the singleton is dropped here, in one
+    place. Any other array -- a 4-D `(X, Y, Z, 3)` field, a 5-D one with
+    several time points -- is returned as it is, for the caller to
+    accept or refuse.
+
+    The shared `NiftiParser.data` keeps the axis on purpose: it is the
+    array that matches the header, and is what writers that copy a file
+    back store.
+    """
+    shape = tuple(int(d) for d in data.shape)
+    if len(shape) == 5 and shape[3] == 1:
+        data = data[:, :, :, 0, :]
+    return data
 
 
 def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
@@ -349,37 +410,31 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         """
         Build the object from a NIfTI file.
 
-        For a real path, `nibabel` is handed the path rather than an open
-        stream, so that it owns the file handle. Its array proxy reads
-        the voxels lazily, long after the call returns, and would find a
-        closed file if we opened the stream ourselves.
+        A local path is handed to `nibabel` by name, so that it owns the
+        file handle and can memory-map the voxels: its array proxy reads
+        them lazily, long after the call returns. A remote path is opened
+        through its own backend instead, since `nibabel` would take its
+        name for a local file. See `_load_nifti`.
         """
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, path.PathLike):
             if not file.exists():
                 raise ParserExistsError(f"No such file: {file}")
-            return cls.from_nibabel(nb.load(str(file), **kwargs))
+            return cls.from_nibabel(_load_nifti(file, **kwargs))
         return super().from_file(file, **kwargs)
 
     @classmethod
     def from_fileobj(cls, fileobj: tx.BinaryIO, **kwargs) -> tx.Self:
         """Build the object from an open NIfTI file object, image data
         included when the stream allows reading it."""
-        # `from_file_map` wants `FileHolder`s, not raw file objects; handed
-        # a bare stream it raises, and the header-only fallback below used
-        # to swallow that -- so the image data was never read at all.
-        # `ImageOpener` transparently handles gzipped streams.
         with preserve_position(fileobj):
-            f = open_compressed(fileobj)
             try:
-                holder = nb.FileHolder(fileobj=f)
-                obj = nb.Nifti1Image.from_file_map(
-                    {"header": holder, "image": holder}, **kwargs
-                )
+                obj = _nifti_from_stream(fileobj, **kwargs)
             except Exception:
                 f = open_compressed(fileobj)
-                obj = nb.Nifti1Header.from_fileobj(f, **kwargs)
+                read = nb.Nifti1Header.from_fileobj
+                obj = read(f, **_accepted(read, kwargs))
         return cls.from_nibabel(obj)
 
     @classmethod
@@ -416,15 +471,15 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         """
         Write the object to a NIfTI file.
 
-        For a real path, `nibabel` is handed the path rather than an open
-        stream, so that it chooses gzip compression from the `.nii.gz`
-        extension. A file-like object is written the uncompressed NIfTI-1
-        bytes.
+        A path is written gzipped when its name ends in `.gz`: a local
+        path is handed to `nibabel` by name, and a remote one is opened
+        through its own backend. See `_save_nifti`. A file-like object is
+        written the uncompressed NIfTI bytes.
         """
         if isinstance(file, str):
             file = path.Path(file)
         if isinstance(file, path.PathLike):
-            nb.save(self.to_nibabel(**kwargs), str(file))
+            _save_nifti(self.to_nibabel(**kwargs), file)
             return
         return super().to_file(file, **kwargs)
 
@@ -484,8 +539,23 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
                     nbkwargs["check"] = kwargs.pop("check")
                 else:
                     nbkwargs["check"] = False
-                obj = NiftiHeader.from_fileobj(f, **nbkwargs)
-                result = cls.sniff_nibabel(obj, **kwargs)
+                # Check the magic before asking `nibabel`, which parses
+                # anything it is given -- and warns about the garbage
+                # it finds in a file that is not a NIfTI at all.
+                start = _tell(f)
+                head = f.read(_NIFTI_HEADER_SIZES[version])
+                if not _has_nifti_magic(head, version):
+                    raise ValueError(f"No NIfTI-{version} magic number")
+                if start is not None:
+                    f.seek(start)
+                else:
+                    f = BytesIO(head)
+                # A probe must not leak warnings: actual reads still
+                # surface what `nibabel` has to say.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    obj = NiftiHeader.from_fileobj(f, **nbkwargs)
+                    result = cls.sniff_nibabel(obj, **kwargs)
         except Exception as e:
             base_error = e
             result = Confidence.NO
@@ -583,6 +653,235 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         return cls.sniff_fileobj(BytesIO(data), **kwargs)
 
 
+# ----------------------------------------------------------------------
+#   READING AND WRITING THROUGH A PATH
+# ----------------------------------------------------------------------
+#
+# `nibabel` opens a file it is handed by name with the built-in `open`,
+# so it takes any name for a local file: given `s3://bucket/x.nii` or
+# `memory://x.nii`, it looks for a local file of that name. The helpers
+# below are the one place in `io` that hands `nibabel` a path. A local
+# path goes to `nibabel` by name, so the voxels are memory-mapped as
+# before. A remote path is opened through its own backend, and `nibabel`
+# is handed the open file.
+
+# The protocols of a path on the local file system, as `bagof.paths`
+# reports them: none, `file://` and `local://`.
+_LOCAL_PROTOCOLS = frozenset({"", "file", "local"})
+
+
+def _is_local(file: path.FilenameLike) -> bool:
+    """Whether a path names a file that `nibabel` can open by name."""
+    return path.Path(file).protocol.lower() in _LOCAL_PROTOCOLS
+
+
+# A NIfTI image or header class, by NIfTI version.
+_NIFTI_IMAGES = {1: nb.Nifti1Image, 2: nb.Nifti2Image}
+_NIFTI_HEADERS = {1: nb.Nifti1Header, 2: nb.Nifti2Header}
+
+
+def _tell(fileobj: tx.IO) -> tx.Optional[int]:
+    """The position of a stream, or `None` if it cannot seek back."""
+    try:
+        return fileobj.tell() if fileobj.seekable() else None
+    except Exception:
+        return None
+
+
+# The size of the header, and where and what its magic string is, by
+# NIfTI version. NIfTI-1 keeps it near the end of its header, NIfTI-2
+# right after `sizeof_hdr`, followed by a DOS/Unix line-ending check.
+_NIFTI_HEADER_SIZES = {1: 348, 2: 540}
+_NIFTI_MAGICS = {
+    1: (344, (b"n+1\0", b"ni1\0")),
+    2: (4, (b"n+2\0\r\n\032\n", b"ni2\0\r\n\032\n")),
+}
+
+
+def _has_nifti_magic(head: bytes, version: int) -> bool:
+    """
+    Whether the first bytes of a (decompressed) file hold the header
+    size and magic string of a NIfTI header of the given version.
+
+    This is cheap and exact, so a file that is not a NIfTI is turned
+    away before `nibabel` is asked to make sense of it.
+    """
+    size = _NIFTI_HEADER_SIZES[version]
+    if len(head) < size:
+        return False
+    sizes = {int.from_bytes(head[:4], order) for order in ("little", "big")}
+    if size not in sizes:
+        return False
+    offset, magics = _NIFTI_MAGICS[version]
+    return any(head[offset : offset + len(m)] == m for m in magics)
+
+
+def _nifti_version(fileobj: tx.BinaryIO) -> int:
+    """
+    The NIfTI version of an open, possibly gzipped, file object: 2 if
+    its header size is that of NIfTI-2, else 1.
+
+    The stream is left where it was. One that cannot seek back is not
+    peeked at, and taken for NIfTI-1.
+    """
+    start = _tell(fileobj)
+    if start is None:
+        return 1
+    head = open_compressed(fileobj).read(4)
+    fileobj.seek(start)
+    # `sizeof_hdr`, in either byte order.
+    sizes = {int.from_bytes(head, order) for order in ("little", "big")}
+    return 2 if 540 in sizes else 1
+
+
+def _accepted(func: tx.Callable, kwargs: tx.Mapping[str, tx.Any]) -> dict:
+    """
+    The keyword arguments, of `kwargs`, that `func` accepts: all of them
+    if it takes `**kwargs`.
+
+    The options for reading a NIfTI file differ with how it is read: a
+    file `nibabel` opens by name takes `mmap` and `keep_file_open`, a
+    stream does not. Each `nibabel` call is handed the ones it knows.
+    """
+    Parameter = inspect.Parameter
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    if any(p.kind is Parameter.VAR_KEYWORD for p in parameters):
+        return dict(kwargs)
+    named = (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    names = {p.name for p in parameters if p.kind in named}
+    return {key: value for key, value in kwargs.items() if key in names}
+
+
+def _image_from_stream(
+    image_class: type, fileobj: tx.BinaryIO, **kwargs
+) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    """
+    Build a NIfTI image from an open, uncompressed file object.
+
+    `from_stream` arrived in nibabel 5.0; before, the stream goes in a
+    file map, as `nibabel` 4's own `from_bytes` does.
+    """
+    if hasattr(image_class, "from_stream"):
+        read = image_class.from_stream
+        return read(fileobj, **_accepted(read, kwargs))
+    file_map = image_class.make_file_map({"image": fileobj, "header": fileobj})
+    read = image_class.from_file_map
+    return read(file_map, **_accepted(read, kwargs))
+
+
+def _image_to_stream(
+    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], fileobj: tx.BinaryIO
+) -> None:
+    """
+    Write a NIfTI image to an open file object, uncompressed.
+
+    `to_stream` arrived in nibabel 5.0; before, the stream goes in a file
+    map, as `nibabel` 4's own `to_bytes` does.
+    """
+    if hasattr(image, "to_stream"):
+        image.to_stream(fileobj)
+        return
+    image.to_file_map(
+        image.make_file_map({"image": fileobj, "header": fileobj})
+    )
+
+
+def _nifti_from_stream(
+    fileobj: tx.BinaryIO, **kwargs
+) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    """
+    Build a NIfTI-1 or NIfTI-2 image from an open, possibly gzipped, file
+    object.
+
+    A stream has no name for `nibabel` to tell a `.gz` from, so the
+    compression is sniffed from its magic bytes. The image's array proxy
+    reads the voxels from `fileobj` lazily, so the caller keeps it open
+    for as long as they may be read. On failure, the stream is put back
+    where it was.
+
+    `nibabel` cannot memory-map a stream: given `mmap`, it falls back to
+    reading the voxels, and `keep_file_open` has no effect on an open
+    file object.
+    """
+    image_class = _NIFTI_IMAGES[_nifti_version(fileobj)]
+    start = _tell(fileobj)
+    try:
+        return _image_from_stream(
+            image_class, open_compressed(fileobj), **kwargs
+        )
+    except Exception:
+        if start is not None:
+            fileobj.seek(start)
+        raise
+
+
+def _load_nifti(
+    file: path.FilenameLike, **kwargs
+) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+    """
+    Load a NIfTI image from a path, local or remote.
+
+    A local path is handed to `nibabel`'s `from_filename`, which
+    memory-maps the voxels and reads them only when asked. A remote path
+    is opened through its own backend (universal-pathlib or
+    cloudpathlib, through `bagof.paths`) and read into memory: the array
+    proxy reads long after this returns, when the remote stream would be
+    closed, and reading the voxels fetches them all anyway. Each is
+    handed the `kwargs` it accepts; see `_nifti_from_stream`.
+    """
+    if _is_local(file):
+        filename = str(path.Path(file))
+        with open(filename, "rb") as f:
+            image_class = _NIFTI_IMAGES[_nifti_version(f)]
+        read = image_class.from_filename
+        return read(filename, **_accepted(read, kwargs))
+    with path.Path(file).open("rb") as f:
+        buffer = BytesIO(f.read())
+    return _nifti_from_stream(buffer, **kwargs)
+
+
+def _load_nifti_header(
+    file: path.FilenameLike,
+) -> tx.Union[nb.Nifti1Header, nb.Nifti2Header]:
+    """Read the header of a NIfTI file at a path, local or remote,
+    without reading its voxels."""
+    if _is_local(file):
+        return _load_nifti(file).header
+    with path.Path(file).open("rb") as f:
+        header_class = _NIFTI_HEADERS[_nifti_version(f)]
+        return header_class.from_fileobj(open_compressed(f))
+
+
+def _save_nifti(
+    image: tx.Union[nb.Nifti1Image, nb.Nifti2Image], file: path.FilenameLike
+) -> None:
+    """
+    Write a NIfTI image to a path, local or remote, gzipped when its name
+    ends in `.gz`.
+
+    A local path is handed to `nibabel`'s `to_filename`, which picks the
+    compression from the extension. A remote path is opened through its
+    own backend, and the image written to the stream.
+    """
+    if _is_local(file):
+        image.to_filename(str(path.Path(file)))
+        return
+    # The name is read from the URL's text: a backend may not know it,
+    # and a query (`?token=...`) is not part of it. A stream is written
+    # what it is given, so compression is ours to add. `open_compressed`
+    # only reads (`indexed_gzip` cannot write), so this is `gzip`'s.
+    compress = urlsplit(str(file)).path.lower().endswith(".gz")
+    with path.Path(file).open("wb") as f:
+        if compress:
+            with gzip.GzipFile(fileobj=f, mode="wb") as gz:
+                _image_to_stream(image, gz)
+        else:
+            _image_to_stream(image, f)
+
+
 def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
     """
     Compute the axes of a NIfTI file, based on its header.
@@ -592,7 +891,7 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
     Axes that are deemed irrelevant by the intent code are given a name
     of `None`. Every axis is an axis of the voxel space, so its unit is
-    the sample.
+    the index unit.
     """
 
     ndim = len(header.get_data_shape())
@@ -655,130 +954,222 @@ def _embed_affine(matrix: np.ndarray) -> np.ndarray:
     """
     Embed a homogeneous voxel-to-world matrix in the `(4, 4)` NIfTI stores.
 
-    NIfTI stores a three-dimensional voxel-to-world affine. A
-    two-dimensional map yields a `(3, 3)` homogeneous matrix, whose
-    rotation and translation are placed in a `(4, 4)` matrix whose extra
-    axis is the identity. A three-dimensional map is already `(4, 4)` and
-    is returned unchanged.
-
-    A spatial map of more than three dimensions has no NIfTI geometry to be
-    written into, and raises `WriterError`.
+    See [`embed_affine`][brainhops.io.base._geometry.embed_affine].
     """
-    out_dim = matrix.shape[0] - 1
-    in_dim = matrix.shape[1] - 1
-    if out_dim > 3 or in_dim > 3:
-        raise WriterError(
-            f"NIfTI stores a three-dimensional voxel-to-world affine, so a "
-            f"{out_dim}D-to-{in_dim}D transformation cannot be written. "
-            f"Reduce the transformation to three spatial dimensions before "
-            f"writing it to NIfTI."
-        )
-    embedded = np.eye(4)
-    embedded[:out_dim, :in_dim] = matrix[:out_dim, :in_dim]
-    embedded[:out_dim, 3] = matrix[:out_dim, in_dim]
-    return embedded
+    return embed_affine(matrix, "NIfTI")
 
 
-def _ras_conversion(system: tx.Optional[CoordinateSystem]) -> np.ndarray:
-    """
-    The `(4, 4)` matrix that maps a world space's coordinates into RAS.
-
-    The matrix is built from the anatomical orientation carried by each
-    axis, not from the world space's name. An LPS space becomes a flip of
-    the first two axes, an RSA space becomes a permutation, and a space
-    already in RAS becomes the identity.
-
-    The conversion is derived only when all three leading axes carry a
-    recognized anatomical orientation. When any of them does not, the
-    identity is returned, so a space with no orientation is stored as it
-    is.
-    """
-    # An axis about which nothing is known, including the `...` of a
-    # missing space, carries no orientation.
-    axes = _axes_or_unknown(system)[:3]
-    mapping = []
-    for axis in axes:
-        value = getattr(getattr(axis, "orientation", None), "value", None)
-        if value not in _RAS_FROM_ORIENTATION:
-            return np.eye(4)
-        mapping.append(_RAS_FROM_ORIENTATION[value])
-    if len(mapping) != 3:
-        return np.eye(4)
-    conversion = np.zeros((4, 4))
-    conversion[3, 3] = 1.0
-    for column, (row, sign) in enumerate(mapping):
-        conversion[row, column] = sign
-    return conversion
-
-
-def _voxel_to_ras(xform: Transformation) -> np.ndarray:
+def _voxel_to_ras(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> np.ndarray:
     """
     Compute the `(4, 4)` voxel-to-RAS matrix of a transformation.
+
+    See [`_voxel_to_ras_and_others`][], which also returns the scale and
+    offset of the axes that follow the spatial ones.
+    """
+    return _voxel_to_ras_and_others(xform, voxel_axes)[0]
+
+
+_NIFTI_POLICY = dict(fill_space=True, fill_time=True, time_slot=3)
+"""
+Where NIfTI stores the axes of an array (see
+[`plan_axes`][brainhops.io.base._geometry.plan_axes]).
+
+NIfTI stores the spatial axes first (`dim[1..3]`), then time (`dim[4]`),
+then the components of a vector or the channels (`dim[5]`), then any
+other axis -- the order the reader declares them in (see `_NIFTI_AXES`).
+A slice with other axes is given a `z` axis of size one, so they follow
+three spatial axes; and an image with channels, or other axes, but no
+time is given a time axis of size one, so they are not read as time --
+the `(X, Y, Z, 1, C)` layout of a NIfTI vector image.
+"""
+
+
+def _nifti_geometry(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> tx.Tuple[
+    np.ndarray,
+    tx.List[tx.Optional[tx.Tuple[float, float]]],
+    bool,
+    tx.Optional[AxisLayout],
+]:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, the
+    scale and offset of each axis that follows the spatial ones, whether
+    the first of those is a time axis, and where each axis of the data is
+    stored.
 
     The transformation must map voxel coordinates to a world space. An
     affine transformation is used directly. A transformation of any other
     kind that reduces to an affine, such as a `Scaling` or a `Sequence` of
-    affines, is converted first. A two-dimensional affine is embedded in a
-    `(4, 4)` matrix, which is the shape NIfTI stores. The world space is
-    turned into RAS from the anatomical orientation of its axes.
+    affines, is converted first -- including the sequence of a spatial and
+    a temporal subspace transform that a space-and-time image is read as.
+
+    The axes are placed by what the spaces declare, not by position (see
+    [`arrange_voxel_to_ras`][brainhops.io.base._geometry.
+    arrange_voxel_to_ras]). The voxel axes are `voxel_axes`, the axes of
+    the data (see [`_declared_axes`][]), and the world axes are those of
+    the transformation's output space. Each side is put in the order NIfTI
+    stores (see `_NIFTI_POLICY`): its spatial axes, then its time axis,
+    then the channel-like axes, then the others. The caller puts the data
+    in the returned layout, which may insert singleton axes: a `z` axis
+    for a slice that has other axes, and a time axis for an image with
+    channels but no time. A side that declares nothing is taken in NIfTI's
+    positional order -- except a world space that declares nothing, of as
+    many axes as the voxel space, which is taken to list its axes as the
+    voxel space does.
+
+    The NIfTI affine applies to the spatial axes. The axes that follow
+    them (time, ...) are split off, each with its scale (its spacing) and
+    its offset, which the caller stores apart. A map that mixes the
+    spatial axes with the others, or two of the others, or that maps the
+    time axis of one space to an axis of another type in the other, has
+    no NIfTI form and raises `UnrepresentableTransformationError`. A
+    two-dimensional affine is embedded in a `(4, 4)` matrix, which is the
+    shape NIfTI stores. The world space is turned into RAS from the
+    anatomical orientation of its axes.
+
+    A time axis that the transformation leaves as it is -- scale `1`,
+    offset `0` -- and that still counts frames (unit `index`) in the world
+    space is not mapped to time: it is returned as `None`, and its
+    repetition time is written as missing (see [`_set_other_axes`][]). So
+    is a time axis the layout inserted.
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
-    `UnrepresentableTransformationError`. A spatial transformation of more
-    than three dimensions raises `WriterError`.
+    `UnrepresentableTransformationError`.
     """
-    reduced = xform.compute() if isinstance(xform, Sequence) else xform
-    error = None
-    affine = reduced
-    if not isinstance(affine, Affine):
-        try:
-            affine = reduced.to(Affine)
-        except ConversionError as exc:
-            error = exc
-    if not isinstance(affine, Affine):
-        # A field returns itself from a conversion to `Affine`, and a
-        # `Sequence` of a non-affine reduces to one, so the result has to
-        # be checked rather than trusted.
+    arranged = arrange_voxel_to_ras(
+        xform, voxel_axes, "NIfTI", **_NIFTI_POLICY
+    )
+    others = list(arranged.others)
+
+    # >> The axis NIfTI stores fourth is time, unless a space declares
+    #    it is not. Both sides must agree on it.
+    timed = [
+        groups[3] == "time"
+        for groups in (arranged.voxel_groups, arranged.world_groups)
+        if groups is not None and len(groups) > 3
+    ]
+    if len(set(timed)) > 1:
         raise UnrepresentableTransformationError(
-            f"A {type(xform).__name__} cannot be written as NIfTI geometry: "
-            f"NIfTI stores an affine voxel-to-world matrix, and this "
-            f"transformation has no affine representation."
-        ) from error
+            "This transformation maps the time axis of one space to an "
+            "axis of another type, so it cannot be written as NIfTI "
+            "geometry, which maps time to time."
+        )
+    timed = timed[0] if timed else True
 
-    matrix = affine.homogeneous_matrix
-    if matrix is None:
-        matrix = np.eye(4)
-    matrix = np.asarray(matrix, dtype=float)
-    world_ndim = matrix.shape[0] - 1
-    matrix = _embed_affine(matrix)
+    if (
+        timed
+        and others
+        and others[0] == (1.0, 0.0)
+        and (arranged.filled_time or _is_frame_index(arranged.world, 3))
+    ):
+        # The time axis is not mapped to time: it still counts frames in
+        # the world space, so the repetition time is missing.
+        others = [None, *others[1:]]
+    return arranged.matrix, others, timed, arranged.layout
 
-    world = _closed_world(getattr(affine, "output", None), world_ndim)
-    conversion = _ras_conversion(world)
-    return conversion @ matrix
+
+def _voxel_to_ras_and_others(
+    xform: Transformation, voxel_axes: tx.Optional[tx.List[Axis]] = None
+) -> tx.Tuple[np.ndarray, tx.List[tx.Optional[tx.Tuple[float, float]]], bool]:
+    """
+    Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, the
+    scale and offset of each axis that follows the spatial ones, and
+    whether the first of those is a time axis.
+
+    See [`_nifti_geometry`][], which also returns where each axis of the
+    data is stored.
+    """
+    return _nifti_geometry(xform, voxel_axes)[:3]
 
 
-def _closed_world(
+def _declared_axes(
     system: tx.Optional[CoordinateSystem], ndim: int
-) -> tx.Optional[CoordinateSystem]:
+) -> tx.Optional[tx.List[Axis]]:
     """
-    The world space, closed to the `ndim` axes the affine maps into.
+    The axes of a system, when they say where NIfTI stores each of them.
 
-    NIfTI cannot store an open world space, one whose axes hold `...`, so
-    it is closed from the shape of the voxel-to-world matrix. The axes that
-    `...` stands for carry no orientation, as any axis NIfTI knows nothing
-    about. A world space that states more axes than the matrix has rows
-    raises `WriterError`.
+    See [`declared_axes`][brainhops.io.base._geometry.declared_axes].
     """
-    if system is None or system.ndim is not None:
-        return system
-    try:
-        return system.expand(ndim)
-    except ValueError as error:
+    return declared_axes(system, ndim)
+
+
+def _voxel_axes(
+    transformation: Transformation, data: ArrayProtocol
+) -> tx.Optional[tx.List[Axis]]:
+    """
+    The axes of an image's data, when its voxel space declares them.
+
+    They are the axes of the input space of the preferred transformation,
+    which indexes the data, when it declares where each goes (see
+    [`_declared_axes`][]); `None` otherwise.
+    """
+    ndim = len(getattr(data, "shape", ()) or ())
+    return _declared_axes(getattr(transformation, "input", None), ndim)
+
+
+def _is_frame_index(system: tx.Optional[CoordinateSystem], k: int) -> bool:
+    """Whether axis `k` of a system is a time axis that counts frames."""
+    axes = list(getattr(system, "axes", None) or [])
+    if k >= len(axes) or axes[k] is Ellipsis:
+        return False
+    axis = axes[k]
+    return getattr(axis, "type", None) == "time" and is_indexunit(
+        getattr(axis, "unit", None)
+    )
+
+
+def _set_other_axes(
+    image: _NiftiObject,
+    others: tx.Sequence[tx.Optional[tx.Tuple[float, float]]],
+    timed: bool = True,
+) -> None:
+    """
+    Store the scale and offset of the axes that follow the spatial ones.
+
+    The scale of each becomes its spacing (`pixdim`), and the offset of
+    the first, when it is the time axis (`timed`), becomes `toffset`.
+    NIfTI stores no origin for any other axis, so a nonzero offset there,
+    or a negative spacing, raises `UnrepresentableTransformationError`. A
+    transformation over more axes than the data has raises `WriterError`.
+
+    A time axis that is not mapped to time (`None` in `others`, see
+    [`_voxel_to_ras_and_others`][]) has no repetition time: its spacing is
+    written as `0`, which NIfTI reads as missing, and `toffset` is left
+    alone.
+    """
+    if not others:
+        return
+    header = image.header
+    zooms = list(header.get_zooms())
+    if 3 + len(others) > len(zooms):
         raise WriterError(
-            f"The world space of this transformation states more axes than "
-            f"the {ndim} its voxel-to-world matrix maps into, so it cannot "
-            f"be written as NIfTI geometry."
-        ) from error
+            f"The voxel-to-world transformation maps {3 + len(others)} "
+            f"axes, but the data has {len(zooms)}."
+        )
+    for k, other in enumerate(others):
+        if other is None:
+            zooms[3 + k] = 0.0
+            continue
+        scale, offset = other
+        if scale < 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores the spacing of axis {3 + k} as a positive "
+                f"number, so a map that reverses it ({scale}) cannot be "
+                f"written."
+            )
+        if (k or not timed) and offset != 0:
+            raise UnrepresentableTransformationError(
+                f"NIfTI stores an origin for the time axis only, so a map "
+                f"that shifts axis {3 + k} ({offset}) cannot be written."
+            )
+        zooms[3 + k] = scale
+    header.set_zooms(zooms)
+    if timed and others[0] is not None:
+        header["toffset"] = others[0][1]
 
 
 def _reference_code(system: tx.Optional[CoordinateSystem]) -> int:
@@ -801,6 +1192,8 @@ def _sform_and_qform(
     transformations: tx.Sequence[Transformation],
     sform: np.ndarray,
     scode: int,
+    voxel_axes: tx.Optional[tx.List[Axis]] = None,
+    layout: tx.Optional[AxisLayout] = None,
 ) -> tx.Tuple[np.ndarray, int, tx.Optional[CoordinateSystem]]:
     """
     Choose the qform matrix, code and world space to store with an sform.
@@ -815,8 +1208,20 @@ def _sform_and_qform(
     The world space that supplies the matrix is returned alongside it, so
     the caller can read the qform's own spatial unit rather than assuming
     it matches the sform's.
+
+    Each matrix is computed with the voxel axes in the order the data is
+    written in (`voxel_axes`, see [`_nifti_geometry`][]). A transformation
+    that does not place the data's axes as the preferred one does
+    (`layout`) -- one that maps another number of axes -- describes
+    another array, and is passed over.
     """
     preferred = transformations[-1] if transformations else None
+
+    def _placed(xform: Transformation) -> tx.Optional[np.ndarray]:
+        matrix, _, _, placed = _nifti_geometry(xform, voxel_axes)
+        if _layout_key(placed) != _layout_key(layout):
+            return None
+        return matrix
 
     for xform in transformations:
         if xform is preferred:
@@ -824,18 +1229,27 @@ def _sform_and_qform(
         output = getattr(xform, "output", None)
         name = getattr(output, "name", None)
         if _NIFTI_XFORM_CODE_BY_NAME.get(name):
-            return (
-                _voxel_to_ras(xform),
-                _NIFTI_XFORM_CODE_BY_NAME[name],
-                output,
-            )
+            matrix = _placed(xform)
+            if matrix is not None:
+                return matrix, _NIFTI_XFORM_CODE_BY_NAME[name], output
 
     for xform in transformations:
         output = getattr(xform, "output", None)
         if getattr(output, "name", None) == _QFORM_NAME:
-            return _voxel_to_ras(xform), scode, output
+            matrix = _placed(xform)
+            if matrix is not None:
+                return matrix, scode, output
 
     return sform, scode, getattr(preferred, "output", None)
+
+
+def _layout_key(
+    layout: tx.Optional[AxisLayout],
+) -> tx.Optional[tx.Tuple[tx.Tuple[int, ...], tx.Tuple[int, ...]]]:
+    """What a layout does to the data: its order and inserted axes."""
+    if layout is None or layout.trivial:
+        return None
+    return tuple(layout.order), tuple(layout.inserted)
 
 
 def _space_unit_meters(
@@ -938,7 +1352,7 @@ def _like_header(like: tx.Any) -> tx.Optional[nb.Nifti1Header]:
     if header is not None:
         return header
     if isinstance(like, (str, path.PathLike)):
-        return nb.load(str(like)).header
+        return _load_nifti_header(like)
     return None
 
 
@@ -1029,6 +1443,22 @@ def _image_with_geometry(
     transformations when present, and the rigid part of the sform
     otherwise.
 
+    The NIfTI affine applies to the spatial axes. The spacing of each
+    axis that follows them, and the origin of the time axis (`toffset`),
+    are read from the preferred transformation too.
+
+    The axes are written in the order NIfTI stores them: the spatial axes,
+    then time, then the channels, then the others. When the voxel space of
+    the preferred transformation declares its axes in another order, such
+    as `(t, x, y, z)`, the data is transposed into that order (lazily, for
+    a lazy array), and every form is written for the transposed data. A
+    slice with other axes is given a `z` axis of size one, and an image
+    with channels but no time a time axis of size one, so `(x, y, t)` is
+    written `(X, Y, 1, T)`, `(x, y, z, c)` `(X, Y, Z, 1, C)` and `(x, y,
+    c)` `(X, Y, 1, 1, C)` (see [`_nifti_geometry`][]). A voxel space that
+    declares nothing is written in the order it has, as NIfTI's positional
+    convention reads it (see [`_declared_axes`][]).
+
     The spatial and temporal units are read from the preferred
     transformation's output space. A spatial unit NIfTI cannot store is
     converted to the nearest one it can, and each form's affine is scaled
@@ -1041,16 +1471,22 @@ def _image_with_geometry(
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
 
-    sform_raw = _voxel_to_ras(transformation)
+    voxel_axes = _voxel_axes(transformation, data)
+    sform_raw, others, timed, layout = _nifti_geometry(
+        transformation, voxel_axes
+    )
     scode = _reference_code(preferred_output)
     qform_raw, qcode, qform_output = _sform_and_qform(
-        transformations, sform_raw, scode
+        transformations, sform_raw, scode, voxel_axes, layout
     )
+    if layout is not None:
+        data = layout.apply(data)
 
     sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     image = _new_nifti(data, sform)
+    _set_other_axes(image, others, timed)
     _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)

@@ -3,14 +3,14 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.io.transformations.base import FileBasedTransformation
 
 
-class ITKTransform(_xforms.Sequence, FileBasedTransformation):
+class ItkTransform(_xforms.Sequence, FileBasedTransformation):
     """
     A transformation that is stored in an ITK file.
 
     ITK transforms are chains of transform blocks, so this class is a
     `Sequence`. Each block that a parser reads is itself a
-    `Transformation` -- an [`ITKAffineBase`][] or an
-    [`ITKDisplacementBase`][] -- so the parser stores the blocks
+    `Transformation` -- an [`ItkAffineBase`][] or an
+    [`ItkDisplacementBase`][] -- so the parser stores the blocks
     directly in `transformations`, and nothing has to be converted
     afterwards.
 
@@ -19,4 +19,4 @@ class ITKTransform(_xforms.Sequence, FileBasedTransformation):
     and register themselves.
     """
 
-    HINTS = ("itk",)
+    HINTS = ("itk", "ants")

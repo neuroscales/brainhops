@@ -3,22 +3,22 @@
 import pytest
 
 from brainhops.datamodel.systems import FVoxelCoordinateSystem
-from brainhops.datamodel.units import SampleUnit, Unit
+from brainhops.datamodel.units import IndexUnit, Unit
 from brainhops.io.transformations.freesurfer.lta import (
-    LTAPhysicalSystem,
-    LTAScaledSystem,
-    LTAVoxelSystem,
+    LtaPhysicalSystem,
+    LtaScaledSystem,
+    LtaVoxelSystem,
 )
-from brainhops.io.transformations.freesurfer.lta._enums import LTAType
-from brainhops.io.transformations.freesurfer.lta._struct import LTAStruct
+from brainhops.io.transformations.freesurfer.lta._enums import LtaType
+from brainhops.io.transformations.freesurfer.lta._struct import LtaStruct
 from brainhops.io.transformations.freesurfer.lta._xforms import (
-    LTATransformation,
+    LtaTransformation,
 )
 
 _SYSTEMS = [
-    (LTAVoxelSystem, SampleUnit()),
-    (LTAScaledSystem, Unit("mm")),
-    (LTAPhysicalSystem, Unit("mm")),
+    (LtaVoxelSystem, IndexUnit()),
+    (LtaScaledSystem, Unit("mm")),
+    (LtaPhysicalSystem, Unit("mm")),
 ]
 
 
@@ -32,7 +32,7 @@ def test_default_axes_carry_their_unit(cls: type, unit: object) -> None:
 def test_from_struct_gives_axes_their_unit(cls: type, unit: object) -> None:
     # Regression: the scaled and physical systems passed `units="mm"`,
     # which is no field of theirs, and raised a `TypeError`.
-    struct = LTAStruct.SrcVolumeInfo(filename="a.nii")
+    struct = LtaStruct.SrcVolumeInfo(filename="a.nii")
     system = cls.from_struct(struct)
     assert type(system) is cls
     assert system.name == "a.nii"
@@ -50,33 +50,33 @@ def test_from_struct_names_an_anonymous_volume(
     cls: type, unit: object
 ) -> None:
     # A volume with no file name is named after its role in the transform.
-    assert cls.from_struct(LTAStruct.SrcVolumeInfo()).name == "src"
-    assert cls.from_struct(LTAStruct.DstVolumeInfo()).name == "dst"
+    assert cls.from_struct(LtaStruct.SrcVolumeInfo()).name == "src"
+    assert cls.from_struct(LtaStruct.DstVolumeInfo()).name == "dst"
     # Regression: a bare volume has no role either, and `struct.NAME`
     # raised an `AttributeError`. The system keeps its class's name.
-    assert cls.from_struct(LTAStruct.VolumeInfo()).name == cls().name
+    assert cls.from_struct(LtaStruct.VolumeInfo()).name == cls().name
 
 
 def test_the_voxel_system_is_a_voxel_system() -> None:
-    assert isinstance(LTAVoxelSystem(), FVoxelCoordinateSystem)
+    assert isinstance(LtaVoxelSystem(), FVoxelCoordinateSystem)
 
 
 @pytest.mark.parametrize(
     "type, cls",
     [
-        (LTAType.LINEAR_VOX_TO_VOX, LTAVoxelSystem),
-        (LTAType.LINEAR_PHYSVOX_TO_PHYSVOX, LTAPhysicalSystem),
+        (LtaType.LINEAR_VOX_TO_VOX, LtaVoxelSystem),
+        (LtaType.LINEAR_PHYSVOX_TO_PHYSVOX, LtaPhysicalSystem),
     ],
 )
 def test_an_lta_transform_reads_its_systems_from_its_volumes(
-    type: LTAType, cls: type
+    type: LtaType, cls: type
 ) -> None:
-    struct = LTAStruct(
+    struct = LtaStruct(
         type=type,
-        src=LTAStruct.SrcVolumeInfo(filename="src.nii"),
-        dst=LTAStruct.DstVolumeInfo(filename="dst.nii"),
+        src=LtaStruct.SrcVolumeInfo(filename="src.nii"),
+        dst=LtaStruct.DstVolumeInfo(filename="dst.nii"),
     )
-    transform = LTATransformation(struct=struct)
+    transform = LtaTransformation(struct=struct)
     assert isinstance(transform.input, cls)
     assert isinstance(transform.output, cls)
     assert (transform.input.name, transform.output.name) == (

@@ -93,7 +93,12 @@ class AmbiguousFormatError(ParserError):
     meaningful way to choose between them, and picking one at random
     would silently return the wrong kind of object.
 
-    The fix belongs in the parsers, not in the caller: give one of them a
+    The message is written for the user who hit it: it names each
+    candidate format, and the `hint=` value (or the format's own `load`)
+    that reads the content as that format.
+
+    If the formats should be able to tell such content apart, the fix
+    belongs in the parsers, not in the caller: give one of them a
     sniffer that can tell the two apart (a magic number, an intent code,
     a filename constraint), or set an explicit `PRIORITY`.
     """
@@ -324,7 +329,7 @@ class FileSniffer:
             filename = path.Path(filename)
 
         if isinstance(filename, path.PathLike):
-            if not filename.exists():
+            if not path.exists(filename):
                 if error:
                     if error is True:
                         error = SnifferExistsError
@@ -541,6 +546,11 @@ class FileParser(FileSniffer):
         This is the generic front door to the `from_*` family: it looks
         at what it was handed and calls the right one.
 
+        A `str` is always a path, whether or not the file exists, so a
+        missing file raises `FileNotFoundError` whichever way its path
+        was spelled. Text held in memory is read with `from_text` or
+        `from_content`.
+
         Parameters
         ----------
         other : FileOrContentLike
@@ -552,8 +562,14 @@ class FileParser(FileSniffer):
         -------
         obj
             The parsed object.
+
+        Raises
+        ------
+        ParserExistsError
+            If `other` is a path to a file that does not exist. It is a
+            `FileNotFoundError`.
         """
-        if isinstance(other, str) and path.Path(other).exists():
+        if isinstance(other, str):
             other = path.Path(other)
 
         if isinstance(other, path.PathLike):
@@ -624,7 +640,7 @@ class FileParser(FileSniffer):
         if isinstance(filename, str):
             filename = path.Path(filename)
 
-        if not filename.exists():
+        if not path.exists(filename):
             raise ParserExistsError(f"No such file: {filename}")
         with filename.open(cls._READ_MODE) as f:
             return cls.from_fileobj(f, **kwargs)
@@ -929,6 +945,40 @@ class TextFileSniffer(FileSniffer):
     _READ_MODE: str = "rt"
 
     @classmethod
+    def sniff_fileobj(
+        cls,
+        file: tx.IO,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+        **kwargs,
+    ) -> float:
+        """
+        Determine if the given file-like object is of the type that this
+        parser can handle.
+
+        A text stream decodes as it is read, so content that is not text
+        -- a binary file that shares an extension with a text format --
+        fails there. That is a "no", not a failure to sniff.
+
+        Parameters
+        ----------
+        file : IO
+            A file object open for reading.
+        error : bool | type[Exception], optional
+            If not False, raise an error if the file cannot be sniffed.
+        **kwargs
+            Parser-specific options.
+
+        Returns
+        -------
+        float
+            Confidence that the file is of this type, in `[0, 1]`.
+        """
+        try:
+            return super().sniff_fileobj(file, error=error, **kwargs)
+        except UnicodeDecodeError as e:
+            return _not_text(cls, error, e)
+
+    @classmethod
     def sniff_bytes(
         cls,
         content: path.BinaryContentLike,
@@ -938,6 +988,7 @@ class TextFileSniffer(FileSniffer):
         """
         Determine if the given bytes are of the type that this parser can
         handle, by decoding them to text and delegating to `sniff_text`.
+        Bytes that do not decode are not text, so they score `NO`.
 
         Parameters
         ----------
@@ -956,7 +1007,26 @@ class TextFileSniffer(FileSniffer):
         """
         kwargs["error"] = error
         encoding = kwargs.pop("encoding", "utf-8")
-        return cls.sniff_text(content.decode(encoding), **kwargs)
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError as e:
+            return _not_text(cls, error, e)
+        return cls.sniff_text(text, **kwargs)
+
+
+def _not_text(
+    cls: type, error: tx.Union[bool, tx.Type[Exception]], cause: Exception
+) -> float:
+    """Decline content that does not decode as text, or raise if the
+    caller asked for it."""
+    if error:
+        if error is True:
+            error = SnifferContentError
+        raise error(
+            f"{cls.__name__} reads text, but the content does not decode "
+            f"as text."
+        ) from cause
+    return Confidence.NO
 
 
 class TextFileParser(TextFileSniffer, FileParser):

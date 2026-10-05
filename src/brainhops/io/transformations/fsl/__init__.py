@@ -8,14 +8,14 @@ transformation as a NIfTI warp field or coefficient field.
 """
 
 __all__ = [
-    "FSLCoordinateSystem",
+    "FslCoordinateSystem",
     "flirt",
     "fnirt",
-    "FLIRTTransform",
-    "FNIRTWarpField",
+    "FlirtTransform",
+    "FnirtWarpField",
 ]
 
 from . import flirt, fnirt
-from ._systems import FSLCoordinateSystem
-from .flirt import FLIRTTransform
-from .fnirt import FNIRTWarpField
+from ._systems import FslCoordinateSystem
+from .flirt import FlirtTransform
+from .fnirt import FnirtWarpField

@@ -16,9 +16,9 @@ from brainhops import io
 
 src = io.load("source.nii.gz")  # -> Nifti1Image
 dst = io.load("dest.nii.gz")  # -> Nifti1Image
-aff = io.load("affine.lta")  # -> LTATransformationRAS2RAS
+aff = io.load("affine.lta")  # -> LtaTransformation
 dsp = io.load("disp.nii.gz", hint="voxdisp")  # -> NiftiVoxelDisplacementField
-wrp = io.load("warp.nii.gz", hint="spmy")  # -> SPMCoordinatesField
+wrp = io.load("warp.nii.gz", hint="spmy")  # -> SpmCoordinatesField
 ```
 
 Alternatively, the appropriate classes could have been used:
@@ -26,9 +26,9 @@ Alternatively, the appropriate classes could have been used:
 ```python
 src = io.Nifti1Image.load("source.nii.gz")
 dst = io.Nifti1Image.load("dest.nii.gz")
-aff = io.LTATransformationRAS2RAS.load("affine.lta")
+aff = io.LtaTransformation.load("affine.lta")
 dsp = io.NiftiVoxelDisplacementField.load("disp.nii.gz")
-wrp = io.SPMCoordinatesField.load("warp.nii.gz")
+wrp = io.SpmCoordinatesField.load("warp.nii.gz")
 ```
 
 or loaders specific to subtypes of objects:
@@ -70,6 +70,43 @@ wrp = io.transformations.load("warp.nii.gz", hint="spmy")
         set_backend("cupy")
         src = io.images.load("source.nii.gz")
         ```
+
+## Save data to files
+
+`save` writes an object in the format its file name calls for. An object
+read from a file can be written back, or written in another format that
+holds the same kind of object:
+
+```python
+img = io.images.load("source.nii.gz")
+io.save(img, "copy.nii.gz")  # -> NIfTI
+io.save(img, "copy.zarr")  # -> Zarr
+```
+
+An image computed in memory is written the same way, since NIfTI and Zarr
+both hold a plain image. `save` does not change what an object means to
+fit a format: a general `Affine` is not written as the voxel-to-RAS
+affine a NIfTI file holds. Build that format explicitly when it is what
+you mean:
+
+```python
+from brainhops.io.transformations.nifti import NiftiVoxelToRAS
+
+NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+```
+
+An LTA file says which coordinate systems its affine maps between, so a
+general `Affine` is written to one when its `input` and `output` say it
+too: both `RASmm` (or both `RSAmm`), or both the voxel or physical
+system of an LTA volume. An affine read from an LTA file is written back
+as it was read:
+
+```python
+from brainhops.datamodel.systems import RASmm
+
+io.save(Affine(matrix, input=RASmm(), output=RASmm()), "affine.lta")
+io.save(io.load("affine.lta"), "copy.lta")  # -> the same file
+```
 
 ## Images Are Transformed Arrays
 
@@ -163,25 +200,56 @@ specification, with additional flexibility:
 
 ### Operators
 
-A transformation that maps a space to itself has an inverse, a square, a
-principal square root, an exponential and a principal logarithm. Each is a
-method, and each is lazy, like the inverse: the result is computed when it
-is applied, computed or converted, and a typed result stays an instance
-of the family it belongs to (the square root of a `Rotation` is a
-`Rotation`).
+A transformation that maps a space to itself has an inverse, a square and a
+principal square root. Each is a method, and each is lazy, like the
+inverse: the result is computed when it is applied, computed or converted,
+and a typed result stays an instance of the family it belongs to (the
+square root of a `Rotation` is a `Rotation`).
 
 ```python
 half = xform.sqrt()  # the half-transformation: half @ half == xform
 twice = xform.square()  # xform @ xform
-warp = velocity.exp()  # integrate a stationary velocity field
-expr = a.inverse() @ b.sqrt() @ c.exp()
+expr = a.inverse() @ b.sqrt()
 result = expr.compute()
 ```
 
-The exponential reads a transformation as the stationary velocity field of
-its displacement, `v(x) = T(x) - x`: a `DisplacementField` is the velocity
-it stores, in voxels, and is integrated by scaling and squaring, while an
-affine `x -> M x + t` has the flow of `x -> (M - I) x + t`. The logarithm
-is its inverse. A transformation outside an operator's domain, such as a
-reflection under `sqrt` or `log`, raises a `DomainError` rather than
-returning a complex or non-principal result.
+A transformation outside an operator's domain, such as a reflection under
+`sqrt`, raises a `DomainError` rather than returning a complex or
+non-principal result.
+
+## Comparing transformations and images
+
+Transformations and images compare, and hash, **by identity**, not by
+value: `a == b` is the same as `a is b`, and `==` never raises.
+
+```python
+from brainhops.datamodel.transformations import Affine
+
+a = Affine(matrix)
+b = Affine(matrix)
+a == a  # -> True
+a == b  # -> False: two distinct objects, even with the same matrix
+{a, b}  # -> a set of two transformations
+```
+
+This means that a transformation (or an image) can be put in a `set`, used
+as a dictionary key, or looked up in a list with `in`, `index` or `remove`,
+and is always found by identity: a distinct object with the same parameters
+is a different element.
+
+!!! note "Testing whether two transformations are the same map"
+    Whether two transformations are "the same" -- the same object, the same
+    map, or the same parameters in the same coordinate systems -- has no
+    single answer, so `==` does not pick one. To test whether two
+    transformations map coordinates the same way, check that one composed
+    with the inverse of the other is the identity, and compare their
+    coordinate systems explicitly:
+
+    ```python
+    from brainhops.datamodel.transformations import is_identity
+
+    is_identity((a.inverse() @ b).compute(), compute=True)  # -> True
+    ```
+
+    Likewise, compare the data of two images explicitly
+    (e.g., `numpy.array_equal(img1, img2)`).

@@ -6,31 +6,31 @@ geometry of its source and destination volumes.
 """
 
 __all__ = [
-    "LTAType",
-    "LTAMatrixType",
-    "LTAValidity",
-    "LTAStruct",
-    "LTACoordinateSystem",
-    "LTAVoxelSystem",
-    "LTAScaledSystem",
-    "LTAPhysicalSystem",
-    "LTATransformation",
-    "LTATransformationVoxToVox",
-    "LTATransformationPhysToPhys",
-    "LTATransformationRASToRAS",
+    "LtaType",
+    "LtaMatrixType",
+    "LtaValidity",
+    "LtaStruct",
+    "LtaCoordinateSystem",
+    "LtaVoxelSystem",
+    "LtaScaledSystem",
+    "LtaPhysicalSystem",
+    "LtaTransformation",
+    "LtaTransformationVoxToVox",
+    "LtaTransformationPhysToPhys",
+    "LtaTransformationRASToRAS",
 ]
 
-from ._enums import LTAMatrixType, LTAType, LTAValidity
-from ._struct import LTAStruct
+from ._enums import LtaMatrixType, LtaType, LtaValidity
+from ._struct import LtaStruct
 from ._systems import (
-    LTACoordinateSystem,
-    LTAPhysicalSystem,
-    LTAScaledSystem,
-    LTAVoxelSystem,
+    LtaCoordinateSystem,
+    LtaPhysicalSystem,
+    LtaScaledSystem,
+    LtaVoxelSystem,
 )
 from ._xforms import (
-    LTATransformation,
-    LTATransformationPhysToPhys,
-    LTATransformationRASToRAS,
-    LTATransformationVoxToVox,
+    LtaTransformation,
+    LtaTransformationPhysToPhys,
+    LtaTransformationRASToRAS,
+    LtaTransformationVoxToVox,
 )

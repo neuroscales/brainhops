@@ -11,9 +11,11 @@ __all__ = [
 
 # dependencies
 import typing_extensions as tx
+from bagof.magic import Field, fields
 
 # internals
 from brainhops._core import path
+from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._dispatch import Source, parse, sniff
 from brainhops.io.base.parsers import (
     BinaryFileParser,
@@ -165,7 +167,9 @@ class FileBasedObject(FileParser):
         `file`, in any supported form, is its own."""
         if not cls._is_dispatcher():
             return super().sniff(file, error=error, **kwargs)
-        return sniff(file, cls._REGISTRY, "sniff", error, f"{file}", **kwargs)
+        return sniff(
+            Source(file), cls._REGISTRY, "sniff", error, f"{file}", **kwargs
+        )
 
     @classmethod
     def sniff_file(
@@ -180,7 +184,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_file(file, error=error, **kwargs)
         return sniff(
-            file, cls._REGISTRY, "sniff_file", error, f"file: {file}", **kwargs
+            Source(file),
+            cls._REGISTRY,
+            "sniff_file",
+            error,
+            f"file: {file}",
+            **kwargs,
         )
 
     @classmethod
@@ -196,7 +205,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_fileobj(file, error=error, **kwargs)
         return sniff(
-            file,
+            Source(file),
             cls._REGISTRY,
             "sniff_fileobj",
             error,
@@ -217,7 +226,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_content(content, error=error, **kwargs)
         return sniff(
-            content,
+            Source.content(content),
             cls._REGISTRY,
             "sniff_content",
             error,
@@ -238,7 +247,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_bytes(content, error=error, **kwargs)
         return sniff(
-            content,
+            Source.content(content),
             cls._REGISTRY,
             "sniff_bytes",
             error,
@@ -259,7 +268,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_text(text, error=error, **kwargs)
         return sniff(
-            text, cls._REGISTRY, "sniff_text", error, "input text", **kwargs
+            Source.content(text),
+            cls._REGISTRY,
+            "sniff_text",
+            error,
+            "input text",
+            **kwargs,
         )
 
     @classmethod
@@ -275,7 +289,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_lines(lines, error=error, **kwargs)
         return sniff(
-            lines, cls._REGISTRY, "sniff_lines", error, "input lines", **kwargs
+            Source.content(lines),
+            cls._REGISTRY,
+            "sniff_lines",
+            error,
+            "input lines",
+            **kwargs,
         )
 
     @classmethod
@@ -291,7 +310,12 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().sniff_line(line, error=error, **kwargs)
         return sniff(
-            line, cls._REGISTRY, "sniff_line", error, "input line", **kwargs
+            Source.content(line),
+            cls._REGISTRY,
+            "sniff_line",
+            error,
+            "input line",
+            **kwargs,
         )
 
     # ---- from --------------------------------------------------------
@@ -332,7 +356,11 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
         return parse(
-            Source(file), cls._REGISTRY, "from_file", "sniff_file", **kwargs
+            Source(file),
+            cls._REGISTRY,
+            "from_file",
+            "sniff_file",
+            **kwargs,
         )
 
     @classmethod
@@ -359,7 +387,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_content(content, **kwargs)
         return parse(
-            Source(content),
+            Source.content(content),
             cls._REGISTRY,
             "from_content",
             "sniff_content",
@@ -374,7 +402,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_bytes(content, **kwargs)
         return parse(
-            Source(content),
+            Source.content(content),
             cls._REGISTRY,
             "from_bytes",
             "sniff_bytes",
@@ -389,7 +417,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_text(text, **kwargs)
         return parse(
-            Source(text),
+            Source.content(text),
             cls._REGISTRY,
             "from_text",
             "sniff_text",
@@ -404,7 +432,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_lines(lines, **kwargs)
         return parse(
-            Source(lines),
+            Source.content(lines),
             cls._REGISTRY,
             "from_lines",
             "sniff_lines",
@@ -419,7 +447,7 @@ class FileBasedObject(FileParser):
         if not cls._is_dispatcher():
             return super().from_line(line, **kwargs)
         return parse(
-            Source(line),
+            Source.content(line),
             cls._REGISTRY,
             "from_line",
             "sniff_line",
@@ -454,3 +482,174 @@ class WritableBinaryFileBasedObject(
     BinaryFileParserWriter, WritableFileBasedObject
 ):
     """An object that is stored in a binary file and can be written back."""
+
+
+# ----------------------------------------------------------------------
+#   DATA MODELS
+# ----------------------------------------------------------------------
+
+
+class _FileBasedModelMixin:
+    """
+    Gives a file-based data model a `from_other` that reads files.
+
+    A data model's `from_other` builds an instance from a mapping, from
+    an instance of a similar class, or from constructor arguments. A
+    file-based one can also be built from the file that stores it, so
+    this mixin tries that first: a path, an open file, bytes or a
+    structured source are read with `load`, and everything else is left
+    to the data model.
+
+    It sits where the data models meet the file formats, ahead of the
+    data model in the bases (`FileBasedImage`, `FileBasedTransformation`),
+    so that the data models themselves never deal with files.
+
+    !!! note "Why this is not part of `FileBasedObject`"
+        To win, this `from_other` must come before
+        `DataModelBase.from_other` in the MRO, and `FileBasedObject`
+        comes after `DataModelBase` in the MRO of every file-based class.
+        Nor can it be moved ahead. A format's parser base declares
+        itself a data model first, as in
+        `NiftiParser(DataModelBase, BinaryFileParserWriter)` and
+        `ZarrParser(DataModelBase, FileParser)`. Its parser chain then
+        leads, through `FileParserWriter`, to `FileBasedObject`. Listing
+        `FileBasedObject` first in `FileBasedImage`'s bases therefore
+        makes the MRO of `NiftiImage` inconsistent: "Cannot create a
+        consistent method resolution order (MRO) for bases
+        DataModelBase, FileParserWriter, Image".
+
+        Listing the data models last everywhere does give a consistent
+        MRO, with `FileBasedObject` ahead of `DataModelBase`. That means
+        reordering the parser bases (`NiftiParser`, `ZarrParser`, the
+        ITK and FLIRT parsers), the dispatchers and the formats. But the
+        file machinery is itself a generic data model
+        (`FileBasedTransformation` is a `Transformation`). Moved ahead of
+        the specific data model a format refines, its declarations of a
+        field shadow the specific ones:
+
+        - `NiftiVoxelToRAS`, `NiftiRASToVoxel` and
+          `NiftiRASCoordinatesField` lose their voxel and RAS endpoint
+          defaults.
+        - The ITK formats no longer take their chain as their first
+          positional argument.
+
+        A mixin that is not a parser has none of these constraints, and
+        goes ahead of the data model.
+
+    !!! note "Every string is a file"
+        No file-based class takes a string as its first constructor
+        argument, so a string always names a file, or a store, and is
+        read with `load`. A file that cannot be read fails there, rather
+        than being handed to the constructor as if it were data.
+    """
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from a file, or from anything the data model
+        reads.
+
+        A path (`str` or `os.PathLike`), an open file, `bytes` or a
+        structured source ([`SourceSpec`][brainhops.io.base.SourceSpec])
+        is read with `load`: on a dispatcher such as `FileBasedImage`,
+        the best-matching registered format reads it, and on a concrete
+        format, that format does. Any other value is handed to the data
+        model's own `from_other`, which reads a mapping field by field,
+        copies an instance of a similar class, and passes anything else
+        to the constructor.
+
+        Parameters
+        ----------
+        other : Any
+            A file, its content, a mapping, or an instance of a similar
+            class.
+        *args
+            Constructor arguments. A file is read with keyword options
+            only.
+        **kwargs
+            Format-specific options when reading a file, and field
+            values otherwise.
+
+        Returns
+        -------
+        obj
+            The object that was built.
+
+        Raises
+        ------
+        TypeError
+            If positional arguments come with a file to read.
+        """
+        if not _is_file_or_content(other):
+            return super().from_other(other, *args, **kwargs)
+        if args:
+            raise TypeError(
+                f"{cls.__name__}.from_other() reads a file with keyword "
+                f"options only, but was given {len(args)} positional "
+                f"argument(s)."
+            )
+        return cls.load(other, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        The data model copies the fields both classes share, by name.
+        A field that a file format declares for its own use -- such as
+        the `nibabel` `image` and `header` of the NIfTI and MGH formats
+        -- is only copied from an object of that same format: from any
+        other object, a field of the same name holds something else
+        (a NIfTI image is no MGH image), so this class's default is
+        kept instead. Saving a NIfTI image to MGH, or the converse,
+        therefore converts the data model only, and the format-specific
+        state is rebuilt by the writer.
+        """
+        for field in _foreign_format_fields(cls, other):
+            if field.factory is True:
+                default = field.default()
+            else:
+                default = field.default
+            kwargs.setdefault(field.public_name, default)
+        return super().from_instance(other, *args, **kwargs)
+
+
+def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
+    """
+    The fields of `cls` that only file formats declare, and that `other`
+    does not inherit from any of the formats that declare them.
+
+    A field is format-specific when every data model of the MRO that
+    declares it is a file parser; one that a plain data model declares
+    too (`data`, `transformations`, ...) is shared by every format.
+    """
+    if isinstance(other, cls):
+        return []
+    shared: tx.Set[str] = set()
+    owners: tx.Dict[str, tx.List[type]] = {}
+    for klass in cls.__mro__:
+        if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        names = [field.name for field in fields(klass)]
+        if issubclass(klass, FileParser):
+            for name in names:
+                owners.setdefault(name, []).append(klass)
+        else:
+            shared.update(names)
+    no_default = Field().default
+    return [
+        field
+        for field in fields(cls)
+        if field.init
+        and field.kw
+        and field.name not in shared
+        and field.default is not no_default
+        and not any(isinstance(other, k) for k in owners.get(field.name, ()))
+    ]
+
+
+def _is_file_or_content(other: tx.Any) -> bool:
+    """Whether `load` reads `other` as a file or as file content."""
+    return isinstance(
+        other, (str, path.PathLike, bytes, bytearray, SourceSpec)
+    ) or hasattr(other, "read")

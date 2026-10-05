@@ -17,10 +17,17 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import NoPolymorphError
+from bagof.magic import InitVar, KwOnly, NoPolymorphError
 
 # core
-from brainhops._core.typing import ArrayProtocol, Derived, npmatrix, npvector
+from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.typing import (
+    ArrayProtocol,
+    Deactivated,
+    npmatrix,
+    npvector,
+)
 
 # api
 from brainhops.backends import get_array_backend
@@ -32,6 +39,7 @@ from . import registries
 from .base import Transformation
 from .check import is_kind
 from .modes import ModeLike
+from .registries import INVERSE_CACHE
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
 from .utils import require_endomorphism
@@ -144,36 +152,21 @@ class ConcreteTransformation(Transformation):
         return obj
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        return self._operate(registries.SQRT, "square root", compute, kwargs)
-
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        return self._operate(registries.EXP, "exponential", compute, kwargs)
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        return self._operate(registries.LOG, "logarithm", compute, kwargs)
-
-    def _operate(
-        self,
-        front_door: type,
-        operator: str,
-        compute: bool,
-        kwargs: tx.Dict[str, tx.Any],
-    ) -> Transformation:
-        # The shared `sqrt()`, `exp()` and `log()` of every forward type
-        # whose operator is a typed lazy wrapper. The front door builds the
-        # wrapper of this transform's family, and refuses a family that has
-        # none; the wrapper computes its parameter only when it is read.
-        require_endomorphism(self, operator)
+        # The shared `sqrt()` of every forward type whose square root is a
+        # typed lazy wrapper. The front door builds the wrapper of this
+        # transform's family, and refuses a family that has none; the
+        # wrapper computes its parameter only when it is read.
+        require_endomorphism(self, "square root")
         if self._is_unparameterized():
-            # An unset parameter reads as the identity, which each of these
-            # operators fixes. There is nothing to defer.
+            # An unset parameter reads as the identity, which is its own
+            # square root. There is nothing to defer.
             obj = self
         else:
             try:
-                obj = front_door(self)
+                obj = registries.SQRT(self)
             except NoPolymorphError:
                 raise NotImplementedError(
-                    f"The {operator} of a {type(self).__name__} is not "
+                    f"The square root of a {type(self).__name__} is not "
                     "implemented."
                 ) from None
         return obj.compute(**kwargs) if compute else obj
@@ -188,25 +181,51 @@ class ConcreteTransformation(Transformation):
 class TransformationField(ConcreteTransformation):
     """
     Base class for dense transformation fields (displacements or coordinates)
+
+    The field is stored in `data`, either as values or, when `coeff` is
+    true, as the coefficients of the spline of degree `degree` that
+    interpolates them. Its `field` view is always the values.
+
+    The `field=` keyword is the map, as values, and the flags say how it
+    is stored: `DisplacementField(field=u, degree=3, coeff=True)` holds
+    the cubic coefficients of `u` in `data`, the same `data` as
+    `DisplacementField(field=u, degree=3).to(coeff=True)`. To store an
+    array as it is already encoded, pass it as `data=`.
+
+    The `field` view is decoded once and cached. Assigning `data` or a
+    flag (`t.coeff = True`) clears it, so the next read reflects the
+    change. Unlike `.to(coeff=True)`, which re-encodes, assigning a flag
+    reinterprets the stored array.
     """
 
     # --- class attributes ---------------------------------------------
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "degree", "bound", "coeff"
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
 
     # --- attributes ---------------------------------------------------
+    # `data` and the flags are stored under private names, and exposed
+    # through properties whose setters clear the views they key (see
+    # `_forget_views`). The constructor still takes `data=`, `degree=`...,
+    # as it takes `input=` for the private `_input`.
 
-    field: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[ArrayProtocol],
-        tx.Doc("An array of shape `(*shape, ndim)`."),
+        tx.Doc(
+            """
+            The stored field, an array of shape `(*shape, ndim)`: its
+            values, or their spline coefficients when `coeff` is true.
+            Read the map through `field`, which is always the values.
+            """
+        ),
     ] = None
 
-    order: tx.Annotated[
-        InterpolationOrder, tx.Doc("The spline interpolation order")
-    ] = InterpolationOrder.linear
+    _degree: tx.Annotated[InterpolationOrder, tx.Doc("The spline degree")] = (
+        InterpolationOrder.linear
+    )
 
-    bound: tx.Annotated[
+    _bound: tx.Annotated[
         tx.Union[BoundaryCondition, float],
         tx.Doc(
             """
@@ -217,15 +236,79 @@ class TransformationField(ConcreteTransformation):
         ),
     ] = BoundaryCondition.nearest
 
-    coeff: tx.Annotated[
+    _coeff: tx.Annotated[
         bool,
         tx.Doc(
             """
-            If `True`, the field is treated as a field of spline coefficients,
-            rather than a field if values to interpolate.
+            If `True`, `data` holds the spline coefficients of the field,
+            rather than its values. The map, read through `field`, is the
+            same either way.
             """
         ),
     ] = False
+
+    _field: tx.Annotated[
+        InitVar[tx.Optional[ArrayProtocol]],
+        tx.Doc(
+            """
+            The field, as values: a convenience for `data`. It is stored
+            as the flags say, so with `coeff=True` its spline
+            coefficients are what `data` holds. It cannot be combined
+            with `data=`.
+            """
+        ),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `field=` is the map, as values: it fills `data`, encoded as the
+        # flags say.
+        field = arguments.get("field")
+        if field is not None:
+            _refuse_data_too(self, arguments, "field")
+            self.data = _encode(field, self.coeff, self.degree, self.bound)
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _forget_views(self) -> None:
+        # The cached views (`field`, and the `data` a grid derives), and
+        # the inverse cached on this transform, are computed from `data`
+        # and the flags: a new value of either clears them.
+        for name in ("_cache_field", "_cache_data", INVERSE_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    def _set_degree(self, value: InterpolationOrder) -> None:
+        self._degree = value
+        self._forget_views()
+
+    def _set_bound(self, value: tx.Union[BoundaryCondition, float]) -> None:
+        self._bound = value
+        self._forget_views()
+
+    def _set_coeff(self, value: bool) -> None:
+        self._coeff = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+    degree = smartproperty("degree", _set_degree)
+    bound = smartproperty("bound", _set_bound)
+    coeff = smartproperty("coeff", _set_coeff)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The field, as values: an array of shape `(*shape, ndim)`.
+
+        It is `data` itself when `coeff` is false, and `data` decoded
+        from spline coefficients (once, then cached) when it is true.
+        """
+        return _decode(self.data, self.coeff, self.degree, self.bound)
 
 
 class DisplacementField(TransformationField):
@@ -238,28 +321,14 @@ class DisplacementField(TransformationField):
     # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        if (
-            not isinstance(self, registries.EXP)
-            and not self._is_unparameterized()
-        ):
-            raise NotImplementedError(
-                "The square root of a displacement field is implemented only "
-                "for a field built as an exponential: `v.exp().sqrt()` is "
-                "`exp(v / 2)`. A general field has no principal square root "
-                "that brainhops computes."
-            )
-        return super().sqrt(compute, **kwargs)
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        # An exponential overrides this with its velocity.
         if not self._is_unparameterized():
             raise NotImplementedError(
-                "The logarithm of a displacement field is implemented only "
-                "for a field built as an exponential: `v.exp().log()` is "
-                "`v`. A general field has no principal logarithm, and the "
-                "iterative approximations of one are not computed here."
+                "The square root of a displacement field is implemented only "
+                "for a stationary velocity field (log=True), whose square "
+                "root halves its velocity. A general field has no principal "
+                "square root that brainhops computes."
             )
-        return super().log(compute, **kwargs)
+        return super().sqrt(compute, **kwargs)
 
 
 class CoordinatesField(TransformationField):
@@ -273,19 +342,11 @@ class CoordinatesField(TransformationField):
     # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        raise NotImplementedError(_COORDINATES_OPERATOR.format("square root"))
-
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        raise NotImplementedError(_COORDINATES_OPERATOR.format("exponential"))
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        raise NotImplementedError(_COORDINATES_OPERATOR.format("logarithm"))
-
-
-_COORDINATES_OPERATOR = (
-    "The {} of a coordinates field is not implemented. A velocity, or a "
-    "map to take the square root of, is stored as a DisplacementField."
-)
+        raise NotImplementedError(
+            "The square root of a coordinates field is not implemented. A "
+            "map to take the square root of is stored as a "
+            "StationaryVelocityField."
+        )
 
 
 class CartesianField(CoordinatesField):
@@ -294,40 +355,57 @@ class CartesianField(CoordinatesField):
 
     Both the input and output spaces correspond to the underlying grid.
 
-    Its `field` attribute is fully defined by the shape of the grid,
-    and is generated on demand when accessed.
+    It stores the `shape` of the grid rather than an array. Its `field`
+    (the coordinates of the grid points) and its `data` (the same
+    coordinates, encoded under the flags) are generated on demand, and
+    cached until `shape` or a flag is assigned.
     """
 
     # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("shape",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
-    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "order", "bound", "coeff"
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = "degree", "bound", "coeff"
 
     # --- attributes ---------------------------------------------------
 
-    shape: tx.Annotated[
+    _shape: tx.Annotated[
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
+    def _set_shape(self, value: tx.Optional[tx.Tuple[int, ...]]) -> None:
+        self._shape = value
+        self._forget_views()
+
+    shape = smartproperty("shape", _set_shape)
+
     # --- derived attributes -------------------------------------------
-    # Mark them as `ClassVar` to keep them out of `__init__`.
+    # Mark them as `ClassVar` to keep them out of `__init__`. The grid is
+    # fully defined by its shape, so neither `data=` nor `field=` is
+    # taken.
 
-    field: Derived[tx.Optional[ArrayProtocol]]
+    _data: Deactivated[tx.Optional[ArrayProtocol]]
+    _field: Deactivated[tx.Optional[ArrayProtocol]]
 
-    @property
+    @lazyproperty
     def field(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The coordinates of the grid points, of shape `(*shape, ndim)`.
+
+        They are real coordinates, so they are built in the backend's
+        default floating dtype (`float64` with NumPy), and so are their
+        spline coefficients in `data`.
+        """
         if self.shape is None:
             return None
-        if getattr(self, "_field", None) is None:
-            ab = get_array_backend()
-            self._field = ab.stack(
-                ab.meshgrid(
-                    *[ab.arange(s) for s in self.shape], indexing="ij"
-                ),
-                -1,
-            )
-        return self._field
+        ab = get_array_backend()
+        grid = [ab.arange(s, dtype=float) for s in self.shape]
+        return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
+
+    @lazyproperty
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        """The coordinates of the grid points, encoded under the flags."""
+        return _encode(self.field, self.coeff, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
 
@@ -338,9 +416,9 @@ class CartesianField(CoordinatesField):
         cls = type(self)
         return cls(shape=self.shape, input=self.output, output=self.input)
 
-    # A grid is the identity map, which every operator fixes. It is
-    # returned as is, rather than as an `Identity`, because it is also the
-    # sampling domain.
+    # A grid is the identity map, which its square and its square root
+    # are too. It is returned as is, rather than as an `Identity`, because
+    # it is also the sampling domain.
 
     def square(self, compute: bool = False, **kwargs) -> Transformation:
         return _fixed_point(self, "square", compute, kwargs)
@@ -348,23 +426,20 @@ class CartesianField(CoordinatesField):
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         return _fixed_point(self, "square root", compute, kwargs)
 
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "exponential", compute, kwargs)
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "logarithm", compute, kwargs)
-
 
 @kinds.Affine
 class Affine(ConcreteTransformation):
     """An affine transformation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("homogeneous_matrix",)
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
+        "matrix",
+        "homogeneous_matrix",
+    )
 
     # --- attributes ---------------------------------------------------
 
-    matrix: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -377,7 +452,28 @@ class Affine(ConcreteTransformation):
         ),
     ] = None
 
-    # --- derived attributes -------------------------------------------
+    _matrix: tx.Annotated[
+        InitVar[tx.Optional[npmatrix[Real]]],
+        tx.Doc("The matrix: a convenience for `data`."),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it fills `data`.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = matrix
+
+    # --- views --------------------------------------------------------
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The affine matrix, of shape `(No, Ni + 1)`, whose last column is
+        the translation component.
+        """
+        return self.data
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -386,13 +482,14 @@ class Affine(ConcreteTransformation):
         `(No + 1, Ni + 1)`. The last row of the homogeneous matrix is
         `[0, 0, ..., 1]`.
         """
-        if self.matrix is None:
+        matrix = self.matrix
+        if matrix is None:
             return None
-        ab = get_array_backend(self.matrix)
-        No, NiPlus1 = self.matrix.shape
+        ab = get_array_backend(matrix)
+        No, NiPlus1 = matrix.shape
         homogeneous_matrix = ab.zeros((No + 1, NiPlus1))
-        homogeneous_matrix[:-1, :-1] = self.matrix[:, :-1]
-        homogeneous_matrix[:-1, -1:] = self.matrix[:, -1:]
+        homogeneous_matrix[:-1, :-1] = matrix[:, :-1]
+        homogeneous_matrix[:-1, -1:] = matrix[:, -1:]
         homogeneous_matrix[-1, -1] = 1
         return homogeneous_matrix
 
@@ -401,11 +498,12 @@ class Affine(ConcreteTransformation):
 class Linear(ConcreteTransformation):
     """A linear transformation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
 
-    matrix: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -415,6 +513,26 @@ class Linear(ConcreteTransformation):
             """
         ),
     ] = None
+
+    _matrix: tx.Annotated[
+        InitVar[tx.Optional[npmatrix[Real]]],
+        tx.Doc("The matrix: a convenience for `data`."),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it fills `data`.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = matrix
+
+    # --- views --------------------------------------------------------
+
+    @property
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        """The matrix, of shape `(No, Ni)`."""
+        return self.data
 
 
 @kinds.SpecialOrthogonal
@@ -426,7 +544,7 @@ class Rotation(Linear):
 
     # --- attributes ---------------------------------------------------
 
-    matrix: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -443,11 +561,12 @@ class Rotation(Linear):
 class Permutation(ConcreteTransformation):
     """A permutation of axes."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
 
     # --- attributes ---------------------------------------------------
 
-    permutation: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npvector[Integral]],
         tx.Doc(
             """
@@ -460,16 +579,37 @@ class Permutation(ConcreteTransformation):
         ),
     ] = None
 
+    _permutation: tx.Annotated[
+        InitVar[tx.Optional[npvector[Integral]]],
+        tx.Doc("The permutation: a convenience for `data`."),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `permutation=` is the map: it fills `data`.
+        permutation = arguments.get("permutation")
+        if permutation is not None:
+            _refuse_data_too(self, arguments, "permutation")
+            self.data = permutation
+
+    # --- views --------------------------------------------------------
+
+    @property
+    def permutation(self) -> tx.Optional[ArrayProtocol]:
+        """The permutation vector, of shape `(N,)`."""
+        return self.data
+
 
 @kinds.Diagonal
 class Scaling(ConcreteTransformation):
     """A scaling of axes."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
 
     # --- attributes ---------------------------------------------------
 
-    scale: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npvector[Real]],
         tx.Doc(
             """
@@ -480,16 +620,37 @@ class Scaling(ConcreteTransformation):
         ),
     ] = None
 
+    _scale: tx.Annotated[
+        InitVar[tx.Optional[npvector[Real]]],
+        tx.Doc("The scaling factors: a convenience for `data`."),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `scale=` is the map: it fills `data`.
+        scale = arguments.get("scale")
+        if scale is not None:
+            _refuse_data_too(self, arguments, "scale")
+            self.data = scale
+
+    # --- views --------------------------------------------------------
+
+    @property
+    def scale(self) -> tx.Optional[ArrayProtocol]:
+        """The scaling factors, of shape `(N,)`."""
+        return self.data
+
 
 @kinds.Translation
 class Translation(ConcreteTransformation):
     """A translation."""
 
-    data_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
 
     # --- attributes ---------------------------------------------------
 
-    translation: tx.Annotated[
+    data: tx.Annotated[
         tx.Optional[npvector[Real]],
         tx.Doc(
             """
@@ -500,16 +661,25 @@ class Translation(ConcreteTransformation):
         ),
     ] = None
 
-    # --- methods ------------------------------------------------------
+    _translation: tx.Annotated[
+        InitVar[tx.Optional[npvector[Real]]],
+        tx.Doc("The translation vector: a convenience for `data`."),
+        KwOnly(),
+    ] = None
 
-    # A translation is the flow of the constant velocity it translates by,
-    # so it is its own exponential and its own logarithm.
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `translation=` is the map: it fills `data`.
+        translation = arguments.get("translation")
+        if translation is not None:
+            _refuse_data_too(self, arguments, "translation")
+            self.data = translation
 
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "exponential", compute, kwargs)
+    # --- views --------------------------------------------------------
 
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "logarithm", compute, kwargs)
+    @property
+    def translation(self) -> tx.Optional[ArrayProtocol]:
+        """The translation vector, of shape `(N,)`."""
+        return self.data
 
 
 @kinds.Identity
@@ -518,7 +688,17 @@ class Identity(ConcreteTransformation):
 
     If the `input` and `output` coordinate systems are different, it maps
     the input axes to the output axes, while preserving their orders.
+
+    It has no parameter: its `data` is always `None`, and is not a
+    constructor argument.
     """
+
+    # --- views --------------------------------------------------------
+
+    @property
+    def data(self) -> None:
+        """Always `None`: the identity has no parameter to store."""
+        return None
 
     # --- methods ------------------------------------------------------
 
@@ -526,19 +706,13 @@ class Identity(ConcreteTransformation):
         cls = type(self)
         return cls(input=self.output, output=self.input)
 
-    # The identity is fixed by every operator.
+    # The identity is its own square and its own square root.
 
     def square(self, compute: bool = False, **kwargs) -> Transformation:
         return _fixed_point(self, "square", compute, kwargs)
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         return _fixed_point(self, "square root", compute, kwargs)
-
-    def exp(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "exponential", compute, kwargs)
-
-    def log(self, compute: bool = False, **kwargs) -> Transformation:
-        return _fixed_point(self, "logarithm", compute, kwargs)
 
 
 def _fixed_point(
@@ -663,3 +837,62 @@ def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     recognizes it as the identity, which is itself affine.
     """
     return is_kind(xform, kinds.Affine, compute)
+
+
+# ----------------------------------------------------------------------
+#    HELPERS
+# ----------------------------------------------------------------------
+
+
+def _refuse_data_too(
+    xform: Transformation, arguments: tx.Any, keyword: str
+) -> None:
+    # A convenience keyword (`field=`, `matrix=`, ...) is the map, as
+    # values, and fills `data`, so it cannot come with `data=` as well.
+    # `replace()` reaches here too: it carries `data` over.
+    if arguments.get("data") is None:
+        return
+    raise TypeError(
+        f"{type(xform).__name__}() got both data= and {keyword}=: "
+        f"{keyword}= is the map, as values, and fills data, so it cannot "
+        f"be combined with data=, which replace() also passes on. To "
+        f"change the map of an existing transformation, use "
+        f"t.to({keyword}=...), which encodes it under the flags of t; to "
+        f"store an array as it is encoded, pass data= alone."
+    )
+
+
+def _encode(
+    values: tx.Optional[ArrayProtocol],
+    coeff: bool,
+    degree: InterpolationOrder,
+    bound: tx.Union[BoundaryCondition, float],
+) -> tx.Optional[ArrayProtocol]:
+    # A field, given as values, as the `data` that stores it: the values
+    # themselves, or their spline coefficients when `coeff` is true.
+    if values is None or not coeff:
+        return values
+    values = _prefilter_dtype(values)
+    return value2coeff_field(values, degree=degree, bound=bound)
+
+
+def _decode(
+    data: tx.Optional[ArrayProtocol],
+    coeff: bool,
+    degree: InterpolationOrder,
+    bound: tx.Union[BoundaryCondition, float],
+) -> tx.Optional[ArrayProtocol]:
+    # The values of a field, from the `data` that stores it.
+    if data is None or not coeff:
+        return data
+    return coeff2value_field(data, degree=degree, bound=bound)
+
+
+def _prefilter_dtype(values: ArrayProtocol) -> ArrayProtocol:
+    # The coefficients of integer or boolean values are not integers, and
+    # fitting them in an integer array would truncate them: such an array
+    # is fitted in `float32`, on its own backend. A floating array keeps
+    # its dtype.
+    if values.dtype.kind in "biu":
+        return values.astype("float32")
+    return values

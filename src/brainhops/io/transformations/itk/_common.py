@@ -1,5 +1,6 @@
 # stdlib
 import math
+from warnings import warn
 
 # dependencies
 import numpy as np
@@ -21,13 +22,14 @@ from brainhops.datamodel import transformations as _xforms
 
 # io
 from brainhops.datamodel.enums import BoundaryCondition
+from brainhops.io.base.parsers import ParserContentError
 from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 
 # locals
 from ._systems import _make_system
 
 
-class ITKTransformClass(StrEnum):
+class ItkTransformClass(StrEnum):
     """Enumeration of ITK transform class names."""
 
     IdentityTransform = "IdentityTransform"
@@ -55,6 +57,7 @@ class ITKTransformClass(StrEnum):
 
     # Affines
     AffineTransform = "AffineTransform"
+    MatrixOffsetTransformBase = "MatrixOffsetTransformBase"
 
     # Non-linear
     DisplacementFieldTransform = "DisplacementFieldTransform"
@@ -64,42 +67,47 @@ class ITKTransformClass(StrEnum):
     CompositeTransform = "CompositeTransform"
 
 
-_ITKT = ITKTransformClass  # Alias for brevity in type hints
+_ITKT = ItkTransformClass  # Alias for brevity in type hints
 
 
-class ITKPrecision(StrEnum):
+class ItkPrecision(StrEnum):
     """Enumeration of ITK transform precision types."""
 
     Float = "float"
     Double = "double"
 
 
-class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
+class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
     """This object represents a single ITK transform block.
 
     It holds what an ITK file stores about one block -- its transform
     class, its precision, its dimensions, and its parameter vectors --
-    and nothing else. Concrete blocks inherit from [`ITKAffineBase`][]
-    or [`ITKDisplacementBase`][], which both combine this provenance with
+    and nothing else. Concrete blocks inherit from [`ItkAffineBase`][]
+    or [`ItkDisplacementBase`][], which both combine this provenance with
     [`Sequence`][brainhops.datamodel.transformations.Sequence] through
-    [`ITKBlockBase`][], so a parsed block is already a brainhops
+    [`ItkBlockBase`][], so a parsed block is already a brainhops
     transformation.
 
     It is `polymorphic`: each concrete block registers the transform
     class it stands for with `on={"type": ...}`, so building
-    `ITKStruct(type=..., ...)` -- which is what a parser does for every
+    `ItkStruct(type=..., ...)` -- which is what a parser does for every
     block it reads -- dispatches to the right subtype from the `type`
     field alone, and a `type` no block claims falls back to a bare
-    `ITKStruct`. A block registers with every polymorphic class above it
-    -- `ITKStruct` and the intermediate family bases alike -- so the whole
+    `ItkStruct`. A block registers with every polymorphic class above it
+    -- `ItkStruct` and the intermediate family bases alike -- so the whole
     table is reachable from the one door the parsers knock on, and each
     family base reaches its own blocks.
+
+    It compares by identity (`eq=False`): its parameters are arrays, which
+    have no single truth value to compare by. A concrete block is a
+    transformation, which compares by identity too, as every
+    transformation does.
     """
 
-    type: ITKTransformClass
+    type: ItkTransformClass
     """The ITK transform class name (e.g., "AffineTransform")."""
 
-    precision: ITKPrecision
+    precision: ItkPrecision
     """The ITK transform precision type (e.g., "float" or "double")."""
 
     ndim_input: int
@@ -152,7 +160,7 @@ class ITKStruct(Magic, kw_only=True, convert=True, polymorphic=True):
 # ----------------------------------------------------------------------
 
 
-class ITKBlockBase(ITKStruct, _xforms.Sequence):
+class ItkBlockBase(ItkStruct, _xforms.ImmutableSequence):
     """What every ITK block shares: its endpoints and its inverse.
 
     Whatever a block encodes, it maps LPS world coordinates to LPS world
@@ -162,6 +170,11 @@ class ITKBlockBase(ITKStruct, _xforms.Sequence):
     [`Sequence`][brainhops.datamodel.transformations.Sequence] reads
     them: reading them off the chain would build the chain, and building
     a warp block's chain decodes its warp data.
+
+    A block's chain is made of named slots, so a block is an
+    [`ImmutableSequence`][brainhops.datamodel.transformations.ImmutableSequence]:
+    the chain is a tuple, and editing it in place raises `TypeError`.
+    Assigning a whole new chain, or `replace`-ing it, still works.
     """
 
     @smartproperty(cache=True)
@@ -179,7 +192,7 @@ class ITKBlockBase(ITKStruct, _xforms.Sequence):
         return _inverse_chain(self, compute=compute, **kwargs)
 
 
-class ITKAffineBase(ITKBlockBase):
+class ItkAffineBase(ItkBlockBase):
     """An ITK block that encodes an affine-like transformation.
 
     ITK does not store an affine-like block as a single matrix. It stores
@@ -267,7 +280,7 @@ class ITKAffineBase(ITKBlockBase):
         return tuple(child for child in chain if child is not None)
 
 
-class ITKDisplacementBase(ITKBlockBase):
+class ItkDisplacementBase(ItkBlockBase):
     """An ITK block that encodes a dense or spline-based warp.
 
     The warp lives on its own voxel grid, whose geometry the fixed
@@ -286,13 +299,13 @@ class ITKDisplacementBase(ITKBlockBase):
     cached, so opening a file never touches the warp data: a dask-backed
     or delayed array stays unread until the chain is asked for.
 
-    `order`, `coeff` and `bound` are the spline parameters handed to the
+    `degree`, `coeff` and `bound` are the spline parameters handed to the
     [`DisplacementField`][brainhops.datamodel.transformations.DisplacementField],
     and a subclass overrides them to describe its own encoding.
-    """  # noqa: E501
+    """
 
-    order: tx.ClassVar[int] = 1
-    """The spline order used to interpolate the field."""
+    degree: tx.ClassVar[int] = 1
+    """The spline degree used to interpolate the field."""
 
     coeff: tx.ClassVar[bool] = False
     """Whether the field holds spline coefficients rather than values."""
@@ -328,7 +341,10 @@ class ITKDisplacementBase(ITKBlockBase):
 
     @smartproperty(cache=True)
     def field(self) -> ArrayProtocol:
-        """The warp values on their own grid, in voxel units.
+        """The warp array on its own grid, in voxel units.
+
+        It holds the warp's values, or their spline coefficients when
+        `coeff` is set, and becomes the `data` of the `displacement`.
 
         ITK stores them as a flat, C-ordered block of world-space
         displacements, laid out either interleaved or planar -- see
@@ -382,10 +398,10 @@ class ITKDisplacementBase(ITKBlockBase):
         """The displacement field, defined on the warp grid."""
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.DisplacementField(
-            field=self.field,
+            data=self.field,
             input=VOX,
             output=VOX,
-            order=self.order,
+            degree=self.degree,
             coeff=self.coeff,
             bound=self.bound,
         )
@@ -406,7 +422,7 @@ class ITKDisplacementBase(ITKBlockBase):
         overrides the derived chain.
 
         It is a tuple rather than a list for the same reason as on
-        [`ITKAffineBase`][]: the cached chain is handed out as is, and a
+        [`ItkAffineBase`][]: the cached chain is handed out as is, and a
         list would let `del block[0]` edit the cache in place.
         """
         return (self.lps2voxel, self.displacement, self.voxel2lps)
@@ -417,7 +433,7 @@ class ITKDisplacementBase(ITKBlockBase):
 # ----------------------------------------------------------------------
 
 
-class ITKIdentityStruct(ITKAffineBase, on={"type": _ITKT.IdentityTransform}):
+class ItkIdentityStruct(ItkAffineBase, on={"type": _ITKT.IdentityTransform}):
     """Identity transform with no parameters."""
 
     parameters: tx.Tuple[tx.Any, ...] = ()
@@ -433,8 +449,8 @@ class ITKIdentityStruct(ITKAffineBase, on={"type": _ITKT.IdentityTransform}):
         return _xforms.Identity(input=self.input, output=self.output)
 
 
-class ITKTranslationStruct(
-    ITKAffineBase, on={"type": _ITKT.TranslationTransform}
+class ItkTranslationStruct(
+    ItkAffineBase, on={"type": _ITKT.TranslationTransform}
 ):
     """
     Translation transform with parameters for translation in each dimension.
@@ -452,7 +468,7 @@ class ITKTranslationStruct(
         return _xforms.Translation(self.parameters)
 
 
-class ITKScaleStruct(ITKAffineBase, on={"type": _ITKT.ScaleTransform}):
+class ItkScaleStruct(ItkAffineBase, on={"type": _ITKT.ScaleTransform}):
     """Scale transform with parameters for scaling in each dimension."""
 
     def __post_init__(self) -> None:
@@ -465,8 +481,8 @@ class ITKScaleStruct(ITKAffineBase, on={"type": _ITKT.ScaleTransform}):
         return _xforms.Scaling(self.parameters)
 
 
-class ITKScaleLogarithmicStruct(
-    ITKAffineBase, on={"type": _ITKT.ScaleLogarithmicTransform}
+class ItkScaleLogarithmicStruct(
+    ItkAffineBase, on={"type": _ITKT.ScaleLogarithmicTransform}
 ):
     """
     Scale logarithmic transform with parameters for scaling in each dimension.
@@ -482,7 +498,7 @@ class ITKScaleLogarithmicStruct(
         return _xforms.Scaling(np.exp(self.parameters))
 
 
-class ITKEuler2DStruct(ITKAffineBase, on={"type": _ITKT.Euler2DTransform}):
+class ItkEuler2DStruct(ItkAffineBase, on={"type": _ITKT.Euler2DTransform}):
     """Euler 2D transform with parameters for rotation and translation."""
 
     ndim_input: tx.Literal[2] = 2
@@ -505,7 +521,7 @@ class ITKEuler2DStruct(ITKAffineBase, on={"type": _ITKT.Euler2DTransform}):
         return _xforms.Translation(self.parameters[1:3])
 
 
-class ITKEuler3DStruct(ITKAffineBase, on={"type": _ITKT.Euler3DTransform}):
+class ItkEuler3DStruct(ItkAffineBase, on={"type": _ITKT.Euler3DTransform}):
     """Euler 3D transform with parameters for rotation and translation."""
 
     ndim_input: tx.Literal[3] = 3
@@ -559,7 +575,7 @@ class ITKEuler3DStruct(ITKAffineBase, on={"type": _ITKT.Euler3DTransform}):
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKVersorStruct(ITKAffineBase, on={"type": _ITKT.VersorTransform}):
+class ItkVersorStruct(ItkAffineBase, on={"type": _ITKT.VersorTransform}):
     """Versor transform with parameters for rotation in each dimension."""
 
     ndim_input: tx.Literal[3] = 3
@@ -580,8 +596,8 @@ class ITKVersorStruct(ITKAffineBase, on={"type": _ITKT.VersorTransform}):
         return _xforms.Rotation(_versor_to_matrix(self.parameters[:3]))
 
 
-class ITKVersorRigid3DStruct(
-    ITKAffineBase, on={"type": _ITKT.VersorRigid3DTransform}
+class ItkVersorRigid3DStruct(
+    ItkAffineBase, on={"type": _ITKT.VersorRigid3DTransform}
 ):
     """
     Versor rigid 3D transform with parameters for rotation and translation.
@@ -607,8 +623,8 @@ class ITKVersorRigid3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKSimilarity2DStruct(
-    ITKAffineBase, on={"type": _ITKT.Similarity2DTransform}
+class ItkSimilarity2DStruct(
+    ItkAffineBase, on={"type": _ITKT.Similarity2DTransform}
 ):
     """
     Similarity 2D transform with parameters for rotation, translation,
@@ -650,8 +666,8 @@ class ITKSimilarity2DStruct(
         return _xforms.Translation(self.parameters[2:4])
 
 
-class ITKSimilarity3DStruct(
-    ITKAffineBase, on={"type": _ITKT.Similarity3DTransform}
+class ItkSimilarity3DStruct(
+    ItkAffineBase, on={"type": _ITKT.Similarity3DTransform}
 ):
     """
     Similarity 3D transform with parameters for rotation, translation,
@@ -696,8 +712,8 @@ class ITKSimilarity3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKScaleVersor3DStruct(
-    ITKAffineBase, on={"type": _ITKT.ScaleVersor3DTransform}
+class ItkScaleVersor3DStruct(
+    ItkAffineBase, on={"type": _ITKT.ScaleVersor3DTransform}
 ):
     """
     Scale versor 3D transform with parameters for rotation, translation,
@@ -732,8 +748,8 @@ class ITKScaleVersor3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKScaleSkewVersor3DStruct(
-    ITKAffineBase, on={"type": _ITKT.ScaleSkewVersor3DTransform}
+class ItkScaleSkewVersor3DStruct(
+    ItkAffineBase, on={"type": _ITKT.ScaleSkewVersor3DTransform}
 ):
     """
     Scale skew versor 3D transform with parameters for rotation, translation,
@@ -788,9 +804,10 @@ class ITKScaleSkewVersor3DStruct(
         return _xforms.Translation(self.parameters[3:6])
 
 
-class ITKAffineStruct(ITKAffineBase, on={"type": _ITKT.AffineTransform}):
+class _ItkMatrixOffsetBase(ItkAffineBase):
     """
-    Affine transform with parameters for linear transformation and translation.
+    A full matrix and a translation, as `MatrixOffsetTransformBase` and
+    its subclass `AffineTransform` both store them.
     """
 
     def __post_init__(self) -> None:
@@ -815,8 +832,25 @@ class ITKAffineStruct(ITKAffineBase, on={"type": _ITKT.AffineTransform}):
         )
 
 
-class ITKDisplacementFieldStruct(
-    ITKDisplacementBase, on={"type": _ITKT.DisplacementFieldTransform}
+class ItkAffineStruct(
+    _ItkMatrixOffsetBase, on={"type": _ITKT.AffineTransform}
+):
+    """
+    Affine transform with parameters for linear transformation and translation.
+    """
+
+
+class ItkMatrixOffsetStruct(
+    _ItkMatrixOffsetBase, on={"type": _ITKT.MatrixOffsetTransformBase}
+):
+    """
+    The base class of ITK's affine transforms, which older ANTs releases
+    write in place of `AffineTransform`. Its parameters are the same.
+    """
+
+
+class ItkDisplacementFieldStruct(
+    ItkDisplacementBase, on={"type": _ITKT.DisplacementFieldTransform}
 ):
     """
     Displacement field transform with parameters for a dense deformation map.
@@ -830,8 +864,8 @@ class ITKDisplacementFieldStruct(
     interleaved: tx.ClassVar[bool] = True
 
 
-class ITKBSplineStruct(
-    ITKDisplacementBase, on={"type": _ITKT.BSplineTransform}
+class ItkBSplineStruct(
+    ItkDisplacementBase, on={"type": _ITKT.BSplineTransform}
 ):
     """
     B-spline transform with parameters for a dense deformation map.
@@ -843,7 +877,7 @@ class ITKBSplineStruct(
     back, so the components are planar rather than interleaved.
     """
 
-    order: tx.ClassVar[int] = 3
+    degree: tx.ClassVar[int] = 3
     coeff: tx.ClassVar[bool] = True
     bound: tx.ClassVar[tx.Union[BoundaryCondition, float]] = (
         BoundaryCondition.zeros
@@ -854,6 +888,76 @@ class ITKBSplineStruct(
 # ----------------------------------------------------------------------
 #   UTILITIES
 # ----------------------------------------------------------------------
+
+
+def _application_order(
+    blocks: tx.List[tx.Any],
+    composites: tx.List[int],
+    position: tx.Optional[int] = None,
+) -> tx.List[tx.Any]:
+    """The blocks of the transform that an ITK file is read as, in the
+    order they apply to points.
+
+    `blocks` are the blocks of the file in file order, without the
+    `CompositeTransform` header, and `composites` the positions (in the
+    file) of every `CompositeTransform` header that was skipped.
+
+    ITK writes a `CompositeTransform` as a header block followed by its
+    transform queue, front to back
+    (`CompositeTransformIOHelperTemplate::GetTransformList`), and reads
+    the blocks after the header back into the queue in the same order
+    (`SetTransformList`, which calls `AddTransform`). But
+    `CompositeTransform::TransformPoint` applies the queue from back to
+    front: a queue `[T0, T1]` maps `x` to `T0(T1(x))`. A brainhops
+    [`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+    transformations in the order they apply, so the blocks of a
+    composite file are reversed.
+
+    The top-level transforms of a file are:
+
+    * the composite, if the file starts with a `CompositeTransform`
+      header: it is then the file's only top-level transform;
+    * otherwise each block, as ITK reads a file without a composite
+      header as a list of unrelated transforms.
+
+    `position` selects one of them. By default, the first one is read,
+    as SimpleITK's `ReadTransform` does, with a warning if the file
+    holds several.
+
+    Raises
+    ------
+    ParserContentError
+        If a `CompositeTransform` header is not the first block (ITK
+        only writes one there, and refuses to write it anywhere else),
+        or if the file has no top-level transform `position`.
+    """
+    if composites:
+        if list(composites) != [0]:
+            raise ParserContentError(
+                "ITK only writes a CompositeTransform as the first block "
+                "of a file, and it cannot be nested."
+            )
+        transforms = [list(reversed(blocks))]
+    else:
+        transforms = [[block] for block in blocks]
+
+    if position is None:
+        if len(transforms) > 1:
+            warn(
+                f"This ITK file holds {len(transforms)} transforms and no "
+                f"composite, so only the first one is read. Pass "
+                f"`position=` to read another one.",
+                stacklevel=2,
+            )
+        position = 0
+    if not transforms and position == 0:
+        return []
+    if not 0 <= position < len(transforms):
+        raise ParserContentError(
+            f"This ITK file has {len(transforms)} transform(s), so it has "
+            f"no transform {position}."
+        )
+    return transforms[position]
 
 
 def _inverse_chain(

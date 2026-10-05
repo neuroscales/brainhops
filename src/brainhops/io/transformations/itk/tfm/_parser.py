@@ -19,7 +19,7 @@ from brainhops.io.base.parsers import (
     TextFileParser,
 )
 
-from .._common import ITKStruct, ITKTransformClass
+from .._common import ItkStruct, ItkTransformClass, _application_order
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -34,7 +34,7 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TFMTransformParser(
+class TfmTransformParser(
     Magic,
     TextFileParser,
     convert=True,
@@ -42,6 +42,10 @@ class TFMTransformParser(
 ):
     """Parses an ITK text (`.tfm`) transform file into a chain of
     transform blocks.
+
+    The blocks of a `CompositeTransform` are listed in the order they
+    apply to points, which is the reverse of their order in the file
+    (ITK applies the last block of a composite first).
 
     Each block is itself a brainhops transformation, so the parsed blocks
     are stored straight into the `transformations` of the sequence that
@@ -76,15 +80,33 @@ class TFMTransformParser(
     # --- from ---------------------------------------------------------
 
     @classmethod
-    def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
+    def from_lines(
+        cls,
+        lines: tx.Iterable[str],
+        position: tx.Optional[int] = None,
+        **kwargs,
+    ) -> tx.Self:
         """Build the transform chain from an iterable over lines of a
-        `.tfm` file."""
+        `.tfm` file.
+
+        Parameters
+        ----------
+        lines : iterable of str
+            Lines of the file.
+        position : int, optional
+            Which top-level transform of the file to read: the
+            composite, if the file starts with a `CompositeTransform`
+            header, else one of its blocks. By default, the first one,
+            with a warning if the file holds several.
+        """
 
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
         obj = cls()
         blocks = []
+        composites = []
+        index = 0
 
         while True:
             if not lines.peek():
@@ -122,15 +144,17 @@ class TFMTransformParser(
             else:
                 fixed_parameters = []
 
+            index += 1
             if transform_type == "CompositeTransform":
-                # skip composite transforms, they just point to the
-                # following transforms.
+                # A composite header has no parameters of its own: its
+                # queue is the blocks that follow it.
+                composites.append(index - 1)
                 continue
 
-            transform_type = ITKTransformClass(transform_type)
+            transform_type = ItkTransformClass(transform_type)
 
             blocks.append(
-                ITKStruct(
+                ItkStruct(
                     type=transform_type,
                     precision=precision,
                     ndim_input=input_dim,
@@ -140,7 +164,7 @@ class TFMTransformParser(
                 )
             )
 
-        obj.transformations = blocks
+        obj.transformations = _application_order(blocks, composites, position)
         return obj
 
 

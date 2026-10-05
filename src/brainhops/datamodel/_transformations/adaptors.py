@@ -61,7 +61,7 @@ from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
 )
-from brainhops.datamodel.units import Unit, is_physicalunit, is_sampleunit
+from brainhops.datamodel.units import Unit, is_indexunit, is_physicalunit
 
 # internals
 from .base import Transformation
@@ -954,7 +954,7 @@ def _is_sampled(unit: _UnitLike) -> bool:
     """Whether an axis (or a unit) counts samples."""
     if isinstance(unit, Axis):
         unit = unit.unit
-    return is_sampleunit(unit)
+    return is_indexunit(unit)
 
 
 def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
@@ -982,8 +982,9 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
         if physical is None:
             return 1.0
         raise AdaptationError(
-            f"One axis is sampled (its unit is 'sample') and the axis it "
-            f"matches is in {physical.name}, so no conversion factor exists "
+            f"One axis is sampled (its unit is an index unit, such as "
+            f"'index' or 'voxel') and the axis it matches is in "
+            f"{physical.name}, so no conversion factor exists "
             f"between them: the size of a sample in {physical.name} is what "
             f"a scaling transformation states, not the axes. Map the "
             f"samples to {physical.name} with a transformation, or give "
@@ -1002,9 +1003,11 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
     # millimetre to a micrometre is then exactly 1000, and a ratio and its
     # reciprocal multiply back to exactly one, which a division of the two
     # scales does not guarantee.
+    # A non-SI unit, such as the inch, has a fractional exponent, so the
+    # ratio is then the division of the two scales.
     source_log10 = getattr(source_unit, "log10_scale", None)
     target_log10 = getattr(target_unit, "log10_scale", None)
-    if source_log10 is not None and target_log10 is not None:
+    if isinstance(source_log10, int) and isinstance(target_log10, int):
         return 10 ** (source_log10 - target_log10)
     return float(source_unit.scale) / float(target_unit.scale)
 
@@ -1041,7 +1044,7 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     Three signals mark an array-index axis. Its system is an array
     coordinate system, such as a voxel grid, even one whose axes are
     named and oriented and carry a length unit. Or the axis is discrete.
-    Or the axis is measured in samples, which is what [`SampleUnit`][]
+    Or the axis is measured in an index unit, which is what [`IndexUnit`][]
     states -- and only what it states: an axis whose unit is `None` has an
     *unspecified* unit, which says nothing about whether it indexes an
     array, so it is not read as one.
@@ -1050,7 +1053,7 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
         return True
     if axis.discrete:
         return True
-    return is_sampleunit(axis.unit)
+    return is_indexunit(axis.unit)
 
 
 def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:

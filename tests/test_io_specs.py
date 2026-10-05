@@ -222,12 +222,12 @@ def test_qualification_distinguishes_ambiguous_leaf_hints() -> None:
 
 
 def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
-    from brainhops.io.transformations.fsl.flirt import FLIRTTransform
-    from brainhops.io.transformations.itk.tfm import TFMTransform
+    from brainhops.io.transformations.fsl.flirt import FlirtTransform
+    from brainhops.io.transformations.itk.tfm import TfmTransform
     from brainhops.io.transformations.nifti.affines import NiftiVoxelToRAS
 
     assert {"flirt", "fsl.flirt", "affine.flirt"} <= format_hints(
-        FLIRTTransform
+        FlirtTransform
     )
-    assert {"tfm", "itk.tfm", "xform.itk.tfm"} <= format_hints(TFMTransform)
+    assert {"tfm", "itk.tfm", "xform.itk.tfm"} <= format_hints(TfmTransform)
     assert {"nifti", "affine.nifti"} <= format_hints(NiftiVoxelToRAS)

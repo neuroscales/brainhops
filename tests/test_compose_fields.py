@@ -2,7 +2,7 @@
 
 Composing an affine-like transformation with a ``CoordinatesField`` or a
 ``DisplacementField`` folds the affine into the stored field. The folded
-field must keep the interpolation settings of the input field (``order``,
+field must keep the interpolation settings of the input field (``degree``,
 ``bound`` and ``coeff``); otherwise it is later re-interpolated at the wrong
 settings. A field of spline coefficients must be converted to sampled values
 before the affine arithmetic and converted back afterwards; otherwise the
@@ -10,7 +10,7 @@ arithmetic runs on coefficients and yields garbage.
 
 Both faults were present in the affine-into-field composers. This file locks
 the fix in two ways: it checks that the folded field reports the same
-``order``, ``bound`` and ``coeff`` as its input, and it checks that
+``degree``, ``bound`` and ``coeff`` as its input, and it checks that
 evaluating the folded field at interior points reproduces the in-order
 reference ``A(interp(f))``.
 """
@@ -18,7 +18,11 @@ reference ``A(interp(f))``.
 import numpy as np
 import pytest
 
-from brainhops.backends import backend, get_array_backend
+from brainhops.backends import (
+    available_backends,
+    backend,
+    get_array_backend,
+)
 from brainhops.datamodel._transformations.compose import compose
 from brainhops.datamodel._transformations.sequence import (
     normalize_modes,
@@ -55,14 +59,26 @@ AFFINE_MATRIX = np.array([[1.7, 0.4, 2.0], [-0.3, 0.9, -1.5]])
 GRID_SHAPE = (14, 15)
 
 # Query points in the interior of the grid, offset from the nodes so that a
-# wrong interpolation order changes the result.
+# wrong spline degree changes the result.
 QUERY_POINTS = np.array(
     [[5.5, 6.5], [7.2, 8.1], [6.3, 5.7], [8.0, 9.0], [5.8, 7.4]]
 )
 
-# Coefficients require a spline order of at least two, so `coeff=True` is
-# paired only with the cubic order.
-ORDER_COEFF = [(1, False), (3, False), (3, True)]
+# Coefficients require a spline degree of at least two, so `coeff=True` is
+# paired only with the cubic degree.
+DEGREE_COEFF = [(1, False), (3, False), (3, True)]
+
+ARRAY_BACKENDS = [
+    "numpy",
+    pytest.param(
+        "dask",
+        marks=pytest.mark.skipif(
+            "dask" not in available_backends(),
+            reason="dask is not installed",
+        ),
+    ),
+]
+"""The array backends a fold is checked on: both now prefilter exactly."""
 
 
 def _evaluate(field, points):  # noqa: ANN001, ANN202
@@ -78,49 +94,46 @@ def _evaluate(field, points):  # noqa: ANN001, ANN202
 
 
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("order, coeff", ORDER_COEFF)
+@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
 def test_fold_affine_into_field_keeps_interpolation_settings(
     field_type: type,
-    order: int,
+    degree: int,
     coeff: bool,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
     field = field_type(
-        field=values, order=order, bound=BoundaryCondition.mirror
+        field=values, degree=degree, bound=BoundaryCondition.mirror
     ).to(coeff=coeff)
 
     folded = (Affine(matrix=AFFINE_MATRIX) @ field).compute()
 
-    assert folded.order == field.order
+    assert folded.degree == field.degree
     assert folded.bound == field.bound
     assert folded.coeff == field.coeff
 
 
+@pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
 @pytest.mark.parametrize("field_type", [CoordinatesField, DisplacementField])
-@pytest.mark.parametrize("order, coeff", ORDER_COEFF)
+@pytest.mark.parametrize("degree, coeff", DEGREE_COEFF)
 def test_fold_affine_into_field_matches_inorder_reference(
     field_type: type,
-    order: int,
+    degree: int,
     coeff: bool,
+    array_backend: str,
 ) -> None:
     rng = np.random.default_rng(0)
     scale = 1.0 if field_type is CoordinatesField else 0.1
     values = rng.standard_normal((*GRID_SHAPE, 2)) * scale
 
-    # Pinned to the exact backend. Folding builds its node grid with
-    # `CartesianField`, so under the dask backend the folded field is a
-    # dask array and its spline prefilter is `dask_image`'s, which is
-    # applied patch-wise rather than along the whole axis. That is a
-    # deliberate trade -- a real IIR filter over a large volume is what
-    # dask exists to avoid -- and it costs about 3e-2 here, far above the
-    # tolerance this test is about. The arithmetic under test is the
-    # composer's, not the interpolator's, so it is checked where the
-    # interpolation is exact.
-    with backend("numpy"):
+    # Folding builds its node grid with `CartesianField`, so under the dask
+    # backend the folded field is a dask array, prefiltered chunk by chunk.
+    # That prefilter reads a halo around each chunk wide enough to match
+    # the whole-axis one, so the fold is exact on either backend.
+    with backend(array_backend):
         field = field_type(
-            field=values, order=order, bound=BoundaryCondition.mirror
+            field=values, degree=degree, bound=BoundaryCondition.mirror
         ).to(coeff=coeff)
 
         matrix = AFFINE_MATRIX
@@ -133,10 +146,10 @@ def test_fold_affine_into_field_matches_inorder_reference(
     # Folding a coordinate field is exact within the field of view, because
     # interpolation is linear and the affine is affine. Folding a
     # displacement field carries an additional interior term under a spline
-    # order above one: the representation subtracts the node grid, whose
+    # degree above one: the representation subtracts the node grid, whose
     # cubic interpolation departs from the identity by an amount that decays
     # away from the edges but does not vanish on a finite grid.
-    interior_term = field_type is DisplacementField and order > 1
+    interior_term = field_type is DisplacementField and degree > 1
     atol = 1e-3 if interior_term else 1e-10
     np.testing.assert_allclose(result, reference, atol=atol, rtol=0)
 
@@ -181,7 +194,7 @@ def _coords_4d(seed: int = 0) -> CoordinatesField:
     return CoordinatesField(
         field=field,
         output=_full4("in"),
-        order=3,
+        degree=3,
         bound=BoundaryCondition.mirror,
     )
 
@@ -224,11 +237,11 @@ def test_subspace_coords_permuted_positions_align() -> None:
 
 
 def test_subspace_coords_preserves_interpolation_settings() -> None:
-    # C1. The order, bound and coeff of the input field are preserved.
+    # C1. The degree, bound and coeff of the input field are preserved.
     To = _subspace_affine([0, 1, 2])
     Ti = _coords_4d()
     got = compose(To, Ti)
-    assert got.order == Ti.order
+    assert got.degree == Ti.degree
     assert got.bound == Ti.bound
     assert got.coeff == Ti.coeff
 
@@ -324,7 +337,7 @@ def test_empty_subspace_coords_matching_axes_is_unchanged() -> None:
     assert isinstance(got, CoordinatesField)
     np.testing.assert_array_equal(np.asarray(got.field), np.asarray(Ti.field))
     assert got.output == _sub3("out")
-    assert got.order == Ti.order
+    assert got.degree == Ti.degree
     assert got.bound == Ti.bound
 
 
@@ -602,6 +615,36 @@ def test_compose_cancels_inverse_by_identity_without_materializing(
     field = DisplacementField(field=np.zeros((5, 6, 2)))
     cancelled = compose(field, field.inverse())
     assert isinstance(cancelled, Identity)
+
+
+def test_an_equal_but_distinct_transform_never_cancels() -> None:
+    # Cancellation is decided from object identity alone: the inverse of an
+    # equal-valued, distinct transform is not recognized, and recognizing
+    # it never compares the two (which would raise).
+    from brainhops.datamodel._transformations import simplifiers
+
+    affine = Affine(matrix=SUB_AFFINE)
+    twin = Affine(matrix=SUB_AFFINE.copy())
+    field = DisplacementField(field=np.zeros((5, 6, 2)))
+    copy = DisplacementField(field=np.zeros((5, 6, 2)))
+    for first, second in ((affine, twin), (field, copy)):
+        assert simplifiers._cancels(first, first.inverse())
+        assert not simplifiers._cancels(first, second.inverse())
+        assert not simplifiers._cancels(second.inverse(), first)
+
+
+def test_a_3d_affine_refuses_a_4d_field() -> None:
+    # A matrix acts on as many coordinates as it has columns. A 3D affine
+    # composed with a field of 4D coordinates is a mismatch, and is
+    # refused rather than applied to some of them.
+    points = np.random.default_rng(0).standard_normal((5, 4))
+    system = _full4("world")
+    for transform in (
+        Affine(matrix=SUB_AFFINE, input=system, output=system),
+        Linear(matrix=SUB_AFFINE[:, :-1], input=system, output=system),
+    ):
+        with pytest.raises(ValueError):
+            compose(transform, CoordinatesField(field=points))
 
 
 def test_restrictive_mode_prevents_field_through_field_composition() -> None:

@@ -1,8 +1,8 @@
 __all__ = [
-    "LTACoordinateSystem",
-    "LTAVoxelSystem",
-    "LTAScaledSystem",
-    "LTAPhysicalSystem",
+    "LtaCoordinateSystem",
+    "LtaVoxelSystem",
+    "LtaScaledSystem",
+    "LtaPhysicalSystem",
 ]
 
 # externals
@@ -15,7 +15,7 @@ from brainhops.datamodel import systems as _systems
 
 # local
 from ._matrix_utils import _get_orient
-from ._struct import LTAStruct
+from ._struct import LtaStruct
 
 # type hints
 _3SpatialAxes = tx.Tuple[
@@ -40,7 +40,7 @@ def _make_axes(
     )
 
 
-def _name(struct: LTAStruct.VolumeInfo) -> tx.Dict[str, str]:
+def _name(struct: LtaStruct.VolumeInfo) -> tx.Dict[str, str]:
     """The name a volume gives its system, as keyword arguments.
 
     The file name of the volume, or else the role of the volume in the
@@ -54,11 +54,11 @@ def _name(struct: LTAStruct.VolumeInfo) -> tx.Dict[str, str]:
 
 # A voxel space counts samples; the scaled and physical spaces are in
 # millimetres.
-_SAMPLE = "sample"
+_INDEX = "index"
 _MM = "mm"
 
 
-class LTACoordinateSystem(
+class LtaCoordinateSystem(
     _systems.SpatialCoordinateSystem3D,
     reverse=False,  # We want `struct` to be the last field.
 ):
@@ -66,17 +66,17 @@ class LTACoordinateSystem(
 
     Concrete subclasses
     -------------------
-    LTAVoxelSystem
+    LtaVoxelSystem
         Voxel space (unitless) of a volume.
         Coordinate (0,0,0) is the center of the first (corner) voxel.
         Axes correspond to the F-ordered dimensions of the volume,
         where the first axis is the fastest changing in memory.
-    LTAScaledSystem
+    LtaScaledSystem
         Scaled voxel space (in mm) of a volume.
         Coordinate (0,0,0) is the center of the first (corner) voxel.
         Axes correspond to the F-ordered dimensions of the volume,
         where the first axis is the fastest changing in memory.
-    LTAPhysicalSystem
+    LtaPhysicalSystem
         Physical space of a volume (source or destination).
         Coordinate (0,0,0) is the center of volume.
         Axes correspond to the F-ordered dimensions of the volume,
@@ -86,40 +86,40 @@ class LTACoordinateSystem(
     ...
 
 
-class LTAVoxelSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
+class LtaVoxelSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (unscaled) of a volume (source or destination)."""
 
     name: tx.Optional[str] = "voxel"
-    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_SAMPLE)
-    struct: tx.Optional[LTAStruct.VolumeInfo] = None
+    axes: _3SpatialAxes = _make_axes(("i", "j", "k"), unit=_INDEX)
+    struct: tx.Optional[LtaStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
-        struct: LTAStruct.VolumeInfo,
+        struct: LtaStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("i", "j", "k"),
     ) -> tx.Self:
         """Build the voxel system of the volume described by `struct`."""
         return cls(
             **_name(struct),
             axes=_make_axes(
-                names, unit=_SAMPLE, orientation=_get_orient(struct)
+                names, unit=_INDEX, orientation=_get_orient(struct)
             ),
             struct=struct,
         )
 
 
-class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
+class LtaScaledSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Voxel space (scaled) of a volume (source or destination)."""
 
     name: tx.Optional[str] = "scaled"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LTAStruct.VolumeInfo] = None
+    struct: tx.Optional[LtaStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
-        struct: LTAStruct.VolumeInfo,
+        struct: LtaStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
         """Build the scaled voxel system of the volume described by
@@ -131,7 +131,7 @@ class LTAScaledSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
         )
 
 
-class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
+class LtaPhysicalSystem(LtaCoordinateSystem, _systems.FVoxelCoordinateSystem):
     """Physical space of a volume (source or destination).
 
     This is the scaled voxel space, with an additional shift such that
@@ -140,12 +140,12 @@ class LTAPhysicalSystem(LTACoordinateSystem, _systems.FVoxelCoordinateSystem):
 
     name: tx.Optional[str] = "physical"
     axes: _3SpatialAxes = _make_axes(("x", "y", "z"), unit=_MM)
-    struct: tx.Optional[LTAStruct.VolumeInfo] = None
+    struct: tx.Optional[LtaStruct.VolumeInfo] = None
 
     @classmethod
     def from_struct(
         cls,
-        struct: LTAStruct.VolumeInfo,
+        struct: LtaStruct.VolumeInfo,
         names: tx.Tuple[str, str, str] = ("x", "y", "z"),
     ) -> tx.Self:
         """Build the physical system of the volume described by `struct`."""

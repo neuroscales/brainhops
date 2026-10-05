@@ -359,7 +359,7 @@ def _widened_chain() -> Sequence:
     embed[2, 3], embed[3, 3] = 1.0, 0.5
     rng = np.random.default_rng(0)
     warp = DisplacementField(
-        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, order=1, bound="reflect"
+        field=rng.normal(size=(4, 5, 2, 3)) * 0.3, degree=1, bound="reflect"
     )
     sub = SubspaceTransformation(
         transformation=warp,
@@ -634,7 +634,7 @@ def test_subspace_without_inner_is_read_as_the_identity() -> None:
 # monolithic `compute()` can embed their subspaces; the normal form's
 # trailing permutation is applied by hand (see above).
 _XYZ = CoordinateSystem(
-    name="voxel", axes=[SpaceAxis(name=n, unit="sample") for n in "xyz"]
+    name="voxel", axes=[SpaceAxis(name=n, unit="index") for n in "xyz"]
 )
 _SHAPE = (4, 5, 6)
 

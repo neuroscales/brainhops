@@ -27,8 +27,6 @@ __all__ = [
     "InverseCoordinatesField",
     # operators
     "Sqrt",
-    "Exp",
-    "Log",
     "UNARY_OPERATORS",
     # meta
     "Bijection",
@@ -109,6 +107,6 @@ from .inverse import (
 from .meta import Bijection, Projection, SubspaceTransformation
 from .modes import ModeLike
 from .multiscale import Multiscale, MultiscaleField
-from .operators import UNARY_OPERATORS, Exp, Log, Sqrt
+from .operators import UNARY_OPERATORS, Sqrt
 from .sequence import ImmutableSequence, MutableSequence, Sequence
 from .simplify import SimplifyLike, SimplifyPolicy, SimplifyTable

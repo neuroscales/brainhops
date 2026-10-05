@@ -22,14 +22,14 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.backends import backend  # noqa: E402
+from brainhops.backends import available_backends, backend  # noqa: E402
 from brainhops.datamodel import transformations as _xforms  # noqa: E402
-from brainhops.io.transformations.fsl import FLIRTTransform  # noqa: E402
+from brainhops.io.transformations.fsl import FlirtTransform  # noqa: E402
 from brainhops.io.transformations.fsl._affines import (  # noqa: E402
-    VoxelToScaledMM,
+    VoxelToScaledMm,
     _ImageGeometry,
 )
-from brainhops.io.transformations.fsl.fnirt import FNIRTWarpField  # noqa: E402
+from brainhops.io.transformations.fsl.fnirt import FnirtWarpField  # noqa: E402
 from brainhops.io.transformations.fsl.fnirt._base import (  # noqa: E402
     _anchor_offsets,
     _detect_deformation_type,
@@ -94,7 +94,7 @@ def test_scaled_mm_does_not_flip_a_radiological_image() -> None:
 
 def test_scaled_mm_affine_object_matches_geometry() -> None:
     geom = _ImageGeometry(_image(REF_SHAPE, REF_AFFINE))
-    xform = VoxelToScaledMM(matrix=geom.vox2fsl[:-1])
+    xform = VoxelToScaledMm(matrix=geom.vox2fsl[:-1])
     assert np.allclose(xform.matrix, geom.vox2fsl[:-1])
 
 
@@ -158,7 +158,7 @@ EXPECTED_FLIRT_REF2MOV = np.array(
 
 
 def _flirt(**kwargs):  # noqa: ANN003, ANN202
-    return FLIRTTransform(flirt_matrix=FLIRT_MATRIX, **kwargs)
+    return FlirtTransform(flirt_matrix=FLIRT_MATRIX, **kwargs)
 
 
 def test_flirt_is_an_affine() -> None:
@@ -195,6 +195,21 @@ def test_flirt_matrix_is_the_documented_composition() -> None:
     assert np.allclose(flirt.homogeneous_matrix, oracle)
 
 
+def test_a_sequence_holding_flirt_inverts() -> None:
+    """`Sequence.inverse` passes `compute` on to the FLIRT inverse."""
+    flirt = _flirt(
+        reference=_image(REF_SHAPE, REF_AFFINE),
+        moving=_image(MOV_SHAPE, MOV_AFFINE),
+    )
+    inverse = _xforms.Sequence([flirt]).inverse(compute=True)
+    assert len(inverse) == 1
+    assert np.allclose(
+        inverse[0].homogeneous_matrix,
+        np.linalg.inv(EXPECTED_FLIRT_REF2MOV),
+        atol=1e-4,
+    )
+
+
 def test_flirt_requires_both_images() -> None:
     flirt = _flirt()
     with pytest.raises(ValueError, match="reference and the moving image"):
@@ -203,28 +218,28 @@ def test_flirt_requires_both_images() -> None:
 
 def test_flirt_repr_does_not_raise() -> None:
     flirt = _flirt()
-    assert "FLIRTTransform" in repr(flirt)
+    assert "FlirtTransform" in repr(flirt)
 
 
 def test_flirt_from_lines_accepts_an_array_moving() -> None:
     lines = ["1 0 0 0", "0 1 0 0", "0 0 1 0", "0 0 0 1"]
     moving = np.eye(4)
-    flirt = FLIRTTransform.from_lines(lines, moving=moving)
+    flirt = FlirtTransform.from_lines(lines, moving=moving)
     assert flirt.moving is moving
-    other = FLIRTTransform.from_lines(lines, src=moving)
+    other = FlirtTransform.from_lines(lines, src=moving)
     assert other.moving is moving
 
 
 def test_flirt_is_dispatched_from_a_mat_file(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "src2ref.mat"
     np.savetxt(str(path), FLIRT_MATRIX, fmt="%.8g")
-    assert io.transformations.sniff(path) is FLIRTTransform
+    assert io.transformations.sniff(path) is FlirtTransform
     loaded = io.transformations.load(
         path,
         reference=_image(REF_SHAPE, REF_AFFINE),
         moving=_image(MOV_SHAPE, MOV_AFFINE),
     )
-    assert type(loaded) is FLIRTTransform
+    assert type(loaded) is FlirtTransform
     assert np.allclose(loaded.flirt_matrix, FLIRT_MATRIX)
     assert np.allclose(
         loaded.homogeneous_matrix, EXPECTED_FLIRT_REF2MOV, atol=1e-4
@@ -232,7 +247,7 @@ def test_flirt_is_dispatched_from_a_mat_file(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_matlab_like_text_is_not_claimed_as_flirt() -> None:
-    assert FLIRTTransform.sniff_lines(["1 2 3", "4 5 6"]) == 0.0
+    assert FlirtTransform.sniff_lines(["1 2 3", "4 5 6"]) == 0.0
 
 
 # ----------------------------------------------------------------------
@@ -254,7 +269,7 @@ def _fnirt_setup():  # noqa: ANN202
 def _warp(field, intent=2006):  # noqa: ANN001, ANN202
     img = nb.Nifti1Image(field.astype(np.float32), REF_AFFINE)
     img.header["intent_code"] = intent
-    warp = FNIRTWarpField.from_nibabel(img)
+    warp = FnirtWarpField.from_nibabel(img)
     warp.moving = _image(MOV_SHAPE, MOV_AFFINE)
     return warp
 
@@ -290,14 +305,14 @@ def test_fnirt_maps_to_moving_ras() -> None:
     assert np.allclose(out, expected, atol=1e-3)
 
 
-def test_fnirt_deformation_field_is_a_first_order_displacement() -> None:
+def test_fnirt_deformation_field_is_a_first_degree_displacement() -> None:
     _, absolute, _ = _fnirt_setup()
     warp = _warp(absolute)
-    assert warp.order == 1
+    assert warp.degree == 1
     assert warp.coeff is False
     field = warp.transformations[1]
     assert type(field) is _xforms.DisplacementField
-    assert field.order == 1
+    assert field.degree == 1
     assert field.coeff is False
     assert np.asarray(field.field).shape == REF_SHAPE + (3,)
 
@@ -346,7 +361,7 @@ def test_fnirt_requires_a_moving_image() -> None:
     _, absolute, _ = _fnirt_setup()
     img = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
     img.header["intent_code"] = 2006
-    warp = FNIRTWarpField.from_nibabel(img)
+    warp = FnirtWarpField.from_nibabel(img)
     with pytest.raises(ValueError, match="moving image is needed"):
         _ = warp.transformations
 
@@ -355,8 +370,8 @@ def test_fnirt_repr_and_inspection_do_not_raise() -> None:
     _, absolute, _ = _fnirt_setup()
     img = nb.Nifti1Image(absolute.astype(np.float32), REF_AFFINE)
     img.header["intent_code"] = 2006
-    warp = FNIRTWarpField.from_nibabel(img)
-    assert "FNIRTWarpField" in repr(warp)
+    warp = FnirtWarpField.from_nibabel(img)
+    assert "FnirtWarpField" in repr(warp)
     assert list(warp) == []
     assert len(warp) == 0
 
@@ -378,8 +393,8 @@ def test_both_fnirt_fixtures_dispatch_to_one_reader() -> None:
     """Deformation (2006) and coefficient (2007) both read as one class."""
     for name in ("displacementfield.nii.gz", "coefficientfield.nii.gz"):
         path = fsl_dir / name
-        assert io.transformations.sniff(path) is FNIRTWarpField
-        assert type(io.transformations.load(path)) is FNIRTWarpField
+        assert io.transformations.sniff(path) is FnirtWarpField
+        assert type(io.transformations.load(path)) is FnirtWarpField
 
 
 def test_generic_reader_does_not_claim_fsl_intents() -> None:
@@ -393,9 +408,9 @@ def test_generic_reader_does_not_claim_fsl_intents() -> None:
     assert NiftiRASCoordinatesField._score_nibabel(img.header) < 1.0
 
 
-def test_coefficient_field_exposes_order_and_coeff() -> None:
+def test_coefficient_field_exposes_degree_and_coeff() -> None:
     coef = io.transformations.load(fsl_dir / "coefficientfield.nii.gz")
-    assert coef.order == 3  # cubic
+    assert coef.degree == 3  # cubic
     assert coef.coeff is True
     # The stored knot spacing and reference pixel sizes are read from the
     # header for the chain, in reference voxels.
@@ -403,9 +418,9 @@ def test_coefficient_field_exposes_order_and_coeff() -> None:
     assert np.allclose(coef._reference_pixdim(), [2.0, 2.0, 2.0])
 
 
-def test_deformation_field_exposes_order_and_coeff() -> None:
+def test_deformation_field_exposes_degree_and_coeff() -> None:
     warp = io.transformations.load(fsl_dir / "displacementfield.nii.gz")
-    assert warp.order == 1
+    assert warp.degree == 1
     assert warp.coeff is False
 
 
@@ -429,7 +444,7 @@ def test_coefficient_field_chain_shape() -> None:
     assert names == ["RASToWarpField", "DisplacementField", "WarpFieldToRAS"]
     field = chain[1]
     assert type(field) is _xforms.DisplacementField
-    assert field.order == 3
+    assert field.degree == 3
     assert field.coeff is True
     # The coefficients stay on the coarse knot grid.
     assert np.asarray(field.field).shape == (6, 13, 7, 3)
@@ -475,10 +490,10 @@ def test_dct_coefficient_field_is_refused() -> None:
         np.asarray(img.dataobj, np.float32), img.affine, img.header
     )
     img.header["intent_code"] = 2008
-    coef = FNIRTWarpField.from_nibabel(img)
+    coef = FnirtWarpField.from_nibabel(img)
     coef.reference = _real_ref()
     coef.moving = _real_src()
-    assert type(coef) is FNIRTWarpField
+    assert type(coef) is FnirtWarpField
     assert list(coef) == []
     with pytest.raises(NotImplementedError, match="discrete-cosine"):
         _ = coef.transformations
@@ -486,7 +501,7 @@ def test_dct_coefficient_field_is_refused() -> None:
 
 def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
     coef = io.transformations.load(fsl_dir / "coefficientfield.nii.gz")
-    assert "FNIRTWarpField" in repr(coef)
+    assert "FnirtWarpField" in repr(coef)
     assert list(coef) == []
     assert len(coef) == 0
 
@@ -496,11 +511,11 @@ def test_coefficient_field_repr_and_inspection_do_not_raise() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_anchor_offset_is_floor_order_over_two() -> None:
-    """The knot offset is `order // 2`, the same for cubic and quadratic."""
+def test_anchor_offset_is_floor_degree_over_two() -> None:
+    """The knot offset is `degree // 2`, the same for cubic and quadratic."""
     assert np.allclose(_anchor_offsets(3, [5, 5, 5]), [1, 1, 1])
     assert np.allclose(_anchor_offsets(2, [5, 5, 5]), [1, 1, 1])
-    # A dense field (order 1, spacing 1) has no offset.
+    # A dense field (degree 1, spacing 1) has no offset.
     assert np.allclose(_anchor_offsets(1, [1, 1, 1]), [0, 0, 0])
 
 
@@ -533,7 +548,23 @@ def test_constant_boundary_maps_to_grid_constant() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
+ARRAY_BACKENDS = [
+    "numpy",
+    pytest.param(
+        "dask",
+        marks=pytest.mark.skipif(
+            "dask" not in available_backends(),
+            reason="dask is not installed",
+        ),
+    ),
+]
+"""The array backends a fold is checked on: both now prefilter exactly."""
+
+
+@pytest.mark.parametrize("array_backend", ARRAY_BACKENDS)
+def test_affine_folds_into_coefficient_field_warp_stays_correct(
+    array_backend: str,
+) -> None:
     """Folding the trailing affine into a coefficient field keeps the warp.
 
     An explicit ``compute()`` with no leading sampling domain folds the
@@ -542,18 +573,13 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
     the warp instead leads with a sampling grid, it is evaluated exactly and
     reproduces the fslpy reference across the field of view.
 
-    Pinned to the exact backend, from the load onwards: the interpolation
-    backend is chosen from the array, not from the ambient setting, so the
-    field has to be read as a numpy array to begin with. Folding converts
-    the field back to spline coefficients, and `dask_image` runs that
-    filter with `map_overlap`, which refuses an axis shorter than its
-    overlap depth -- "the overlapping depth 14 is larger than your array
-    6", and this coefficient grid has such an axis. Filtering whole axes
-    instead is precisely what dask exists to avoid on a real volume, so
-    the limitation is accepted and the fold is checked where the filter is
-    exact.
+    Checked on each backend from the load onwards: the interpolation
+    backend is chosen from the array, not from the ambient setting. Folding
+    converts the field back to spline coefficients, and this coefficient
+    grid has an axis of six samples, shorter than the prefilter's halo:
+    the dask prefilter merges such chunks rather than refusing them.
     """
-    with backend("numpy"):
+    with backend(array_backend):
         coef = io.transformations.load(
             fsl_dir / "coefficientfield.nii.gz",
             reference=_real_ref(),
@@ -587,7 +613,7 @@ def test_affine_folds_into_coefficient_field_warp_stays_correct() -> None:
 def test_affine_folds_into_a_dense_field_and_warp_stays_correct() -> None:
     """Folding the trailing affine into a dense field is exact in the FOV.
 
-    A dense displacement field has spline order one, so interpolation
+    A dense displacement field has spline degree one, so interpolation
     reproduces an affine exactly at every grid node. Folding the trailing
     affine into the field and evaluating the collapsed two-step warp against
     a sampling grid therefore agrees with the full three-step warp and with

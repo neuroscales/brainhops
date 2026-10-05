@@ -16,7 +16,7 @@ from ._transformations.multiscale import (
     _at_resolution,
     _nearest_resolution_index,
 )
-from .base import DataModelBase
+from .base import DataModelBase, IdentityComparison
 from .geometry import Geometry
 from .transformations import (
     CartesianField,
@@ -25,8 +25,17 @@ from .transformations import (
 )
 
 
-class Image(DataModelBase):
-    """Base class for all images."""
+class Image(IdentityComparison, DataModelBase, eq=False):
+    """Base class for all images.
+
+    !!! note "Images compare by identity"
+        `a == b` is `a is b`: two distinct images are never equal, even
+        when they hold the same data and transformations, and `==` never
+        raises. An image hashes by identity too, so it can be put in a
+        set or used as a dictionary key. Compare data and geometry
+        explicitly (e.g., `numpy.array_equal(a, b)`) to test whether two
+        images hold the same values.
+    """
 
     # --- array API ----------------------------------------------------
 
@@ -100,9 +109,10 @@ class SingleScaleImage(Image):
         moves it to the end. Assigning a transformation that is already
         in the list moves it to the end instead of adding a copy.
 
-        A transformation is recognized as already present by identity. A
-        distinct transformation that merely compares equal to one in the
-        list is appended as a new preferred transformation.
+        A transformation is recognized as already present by identity
+        (transformations compare by identity): a distinct transformation
+        with the same parameters is appended as a new preferred
+        transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -160,7 +170,7 @@ class SingleScaleImage(Image):
         geometry: tx.Optional[
             tx.Union[tx.Self, Geometry, Transformation]
         ] = None,
-        order: int = 1,
+        degree: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -180,8 +190,8 @@ class SingleScaleImage(Image):
             output image. Otherwise, the current shape of the image is used.
 
             If it is `None`, the image is resampled onto its own grid.
-        order : {0..5}
-            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        degree : {0..5}
+            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
         bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
             The boundary condition. If a string, one of:
             - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -210,7 +220,7 @@ class SingleScaleImage(Image):
         Image
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
 
         # Guess geometry of output image
         if geometry is None:
@@ -348,9 +358,10 @@ class MultiScaleImage(Image):
         moves it to the end. Assigning a transformation that is already
         in the list moves it to the end instead of adding a copy.
 
-        A transformation is recognized as already present by identity. A
-        distinct transformation that merely compares equal to one in the
-        list is appended as a new preferred transformation.
+        A transformation is recognized as already present by identity
+        (transformations compare by identity): a distinct transformation
+        with the same parameters is appended as a new preferred
+        transformation.
         """
         if self.transformations:
             return self.transformations[-1]
@@ -404,7 +415,7 @@ class MultiScaleImage(Image):
         geometry: tx.Optional[
             tx.Union[Image, Geometry, Transformation]
         ] = None,
-        order: int = 1,
+        degree: int = 1,
         bound: str = "reflect",
         coeff: bool = False,
         copy: bool = False,
@@ -430,8 +441,8 @@ class MultiScaleImage(Image):
             If provided, it is used to compute the geometry of each
             level in the output pyramid. If not provided, this function
             returns a single-scale image instead.
-        order : {0..5}
-            The interpolation order. 0=nearest, 1=linear, 2=quadratic, etc.
+        degree : {0..5}
+            The spline degree. 0=nearest, 1=linear, 2=quadratic, etc.
         bound : {'nearest', 'reflect', 'mirror', 'grid-wrap', 'wrap'} or float
             The boundary condition. If a string, one of:
             - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
@@ -460,7 +471,7 @@ class MultiScaleImage(Image):
         SingleScaleImage
             The resliced image.
         """
-        opt = dict(order=order, bound=bound, coeff=coeff, copy=copy)
+        opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
         level = _nearest_resolution_index(
             _level_voxel_sizes(self),
             _as_affine_ignoring_fields(_reslice_voxel2world(self, geometry)),

@@ -8,13 +8,13 @@ back as labels (`header.get_xyzt_units()`) and writes them from labels
 | Slot  | Code | Label       | brainhops unit             |
 | ----- | ---- | ----------- | -------------------------- |
 | space | 0    | `"unknown"` | millimetre (see below)     |
-| space | 1    | `"meter"`   | [`Meter`][]                |
-| space | 2    | `"mm"`      | `MilliMeter`               |
-| space | 3    | `"micron"`  | `MicroMeter`               |
+| space | 1    | `"meter"`   | `Unit("meter")`            |
+| space | 2    | `"mm"`      | `Unit("millimeter")`       |
+| space | 3    | `"micron"`  | `Unit("micrometer")`       |
 | time  | 0    | `"unknown"` | `None` (unspecified)       |
-| time  | 8    | `"sec"`     | [`Second`][]               |
-| time  | 16   | `"msec"`    | `MilliSecond`              |
-| time  | 24   | `"usec"`    | `MicroSecond`              |
+| time  | 8    | `"sec"`     | `Unit("second")`           |
+| time  | 16   | `"msec"`    | `Unit("millisecond")`      |
+| time  | 24   | `"usec"`    | `Unit("microsecond")`      |
 | time  | 32   | `"hz"`      | none -- `None`, and a warning |
 | time  | 40   | `"ppm"`     | none -- `None`, and a warning |
 | time  | 48   | `"rads"`    | none -- `None`, and a warning |
@@ -41,9 +41,8 @@ Reading
 
 Writing
 -------
-* `None` (an unspecified unit) is written as `"unknown"`, and so is a
-  unit that measures nothing (a name [`Unit`][] did not recognise).
-* The **sample is never written**: it says that an axis indexes an array,
+* `None` (an unspecified unit) is written as `"unknown"`.
+* An **index unit is never written**: it says that an axis indexes an array,
   which a NIfTI voxel space always does, and has no code. Asking for one
   raises a `ValueError`.
 * A unit of the wrong kind for its slot (a second for the spatial unit)
@@ -72,11 +71,10 @@ from math import log10
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel import units as _units
 from brainhops.datamodel.units import (
     Unit,
+    is_indexunit,
     is_physicalunit,
-    is_sampleunit,
     is_spaceunit,
     is_timeunit,
 )
@@ -104,24 +102,25 @@ NIFTI_TIME_CODES: tx.Dict[str, int] = {
 
 _CODES = {"space": NIFTI_SPACE_CODES, "time": NIFTI_TIME_CODES}
 
-# The brainhops unit of each label that has one. `"unknown"` is a policy,
-# not a unit, and is handled on its own.
+# The name of the brainhops unit of each label that has one. `"unknown"` is
+# a policy, not a unit, and is handled on its own. Units are built from
+# these names when they are needed, since building one may import pint.
 _UNITS = {
     "space": {
-        "meter": _units.Meter,
-        "mm": _units.MilliMeter,
-        "micron": _units.MicroMeter,
+        "meter": "meter",
+        "mm": "millimeter",
+        "micron": "micrometer",
     },
     "time": {
-        "sec": _units.Second,
-        "msec": _units.MilliSecond,
-        "usec": _units.MicroSecond,
+        "sec": "second",
+        "msec": "millisecond",
+        "usec": "microsecond",
     },
 }
 
-# The label of each brainhops unit that has one, by unit class.
+# The label of each brainhops unit that has one, by unit name.
 _LABELS = {
-    kind: {cls: label for label, cls in table.items()}
+    kind: {name: label for label, name in table.items()}
     for kind, table in _UNITS.items()
 }
 
@@ -180,7 +179,7 @@ def nifti_to_unit(
     """
     label = _label(value, kind)
     if label == _UNKNOWN:
-        return _units.MilliMeter() if kind == "space" else None
+        return Unit("millimeter") if kind == "space" else None
     unit = _UNITS[kind].get(label)
     if unit is None:
         warnings.warn(
@@ -190,7 +189,7 @@ def nifti_to_unit(
             stacklevel=2,
         )
         return None
-    return unit()
+    return Unit(unit)
 
 
 def unit_to_nifti(
@@ -221,14 +220,14 @@ def unit_to_nifti(
     Raises
     ------
     ValueError
-        If `unit` is the sample, which is never written, or a unit of
+        If `unit` is an index unit, which is never written, or a unit of
         another kind than `kind`.
     """
     if unit is None:
         return _UNKNOWN
-    if is_sampleunit(unit):
+    if is_indexunit(unit):
         raise ValueError(
-            "The sample unit is never written to a NIfTI header: it says "
+            "An index unit is never written to a NIfTI header: it says "
             "that an axis indexes an array, which has no NIfTI unit."
         )
     if not is_physicalunit(unit):
@@ -238,7 +237,7 @@ def unit_to_nifti(
             f"{unit!r} is not a unit of {kind}, so it cannot be written as "
             f"the {kind} unit of a NIfTI header."
         )
-    label = _LABELS[kind].get(type(unit))
+    label = _LABELS[kind].get(unit.name)
     if label is not None:
         return label
     if nearest and kind == "space":
@@ -246,7 +245,8 @@ def unit_to_nifti(
         return min(
             _LABELS["space"].values(),
             key=lambda label: abs(
-                log10(meters) - log10(float(_UNITS["space"][label].scale))
+                log10(meters)
+                - log10(float(Unit(_UNITS["space"][label]).scale))
             ),
         )
     warnings.warn(
@@ -259,5 +259,5 @@ def unit_to_nifti(
 
 def nifti_unit_meters(label: str) -> tx.Optional[float]:
     """The size in metres of a NIfTI spatial label, or `None`."""
-    unit = _UNITS["space"].get(label)
-    return None if unit is None else float(unit.scale)
+    name = _UNITS["space"].get(label)
+    return None if name is None else float(Unit(name).scale)

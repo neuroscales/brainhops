@@ -6,7 +6,6 @@ import pytest
 from brainhops.cli import main
 from brainhops.cli._errors import CliError, WritingUnavailable
 from brainhops.cli._io import (
-    _writable_image_formats,
     load_image,
     load_transform,
 )
@@ -90,15 +89,13 @@ def test_unknown_image_format_hint_reports_available_hints() -> None:
         load_image(ImageSpec(path="image.dat", hints=("not-a-format",)))
 
 
-def test_reslice_command_reports_when_writing_is_unavailable(
+def test_reslice_command_writes_the_output(
     tmp_path,  # noqa: ANN001
+    capsys,  # noqa: ANN001
 ) -> None:
     source = _write_nifti(tmp_path / "input.nii.gz")
-    reference = _write_nifti(tmp_path / "ref.nii.gz")
+    reference = _write_nifti(tmp_path / "ref.nii.gz", shape=(3, 3, 3))
     output = tmp_path / "out.nii.gz"
-
-    if _writable_image_formats():
-        pytest.skip("An image writer is registered; nothing to assert here.")
 
     code = main(
         [
@@ -111,8 +108,33 @@ def test_reslice_command_reports_when_writing_is_unavailable(
         ]
     )
 
-    # The reslice succeeds but the output cannot be written yet.
+    assert code == 0
+    assert "Wrote" in capsys.readouterr().out
+    assert nb.load(str(output)).shape == (3, 3, 3)
+
+
+def test_reslice_command_reports_when_writing_is_unavailable(
+    tmp_path,  # noqa: ANN001
+    capsys,  # noqa: ANN001
+) -> None:
+    source = _write_nifti(tmp_path / "input.nii.gz")
+    reference = _write_nifti(tmp_path / "ref.nii.gz")
+    output = tmp_path / "out.unknown-extension"
+
+    code = main(
+        [
+            "reslice",
+            source,
+            "--reference",
+            reference,
+            "--output",
+            str(output),
+        ]
+    )
+
+    # The reslice succeeds but the output cannot be written.
     assert code == WritingUnavailable.exit_code
+    assert "could not be saved" in capsys.readouterr().err
     assert not output.exists()
 
 
@@ -209,7 +231,7 @@ def test_format_hint_selects_reader_without_a_matching_extension(
 
     transform = load_transform(str(path), hint="flirt")
 
-    assert type(transform).__name__ == "FLIRTTransform"
+    assert type(transform).__name__ == "FlirtTransform"
     np.testing.assert_array_equal(transform.flirt_matrix, np.eye(4))
 
 
@@ -227,8 +249,8 @@ def test_io_dispatch_accepts_singular_and_union_hints(
     singular = io.transformations.load(str(path), hint="flirt")
     union = io.transformations.load(str(path), hint=("flirt", "fnirt"))
 
-    assert type(singular).__name__ == "FLIRTTransform"
-    assert type(union).__name__ == "FLIRTTransform"
+    assert type(singular).__name__ == "FlirtTransform"
+    assert type(union).__name__ == "FlirtTransform"
 
 
 def test_flirt_options_load_nested_images_without_a_top_level_hint(
@@ -246,7 +268,7 @@ def test_flirt_options_load_nested_images_without_a_top_level_hint(
         f"{matrix}|ref:[{reference}|nifti]|mov:[{moving}]"
     )
 
-    assert type(transform).__name__ == "FLIRTTransform"
+    assert type(transform).__name__ == "FlirtTransform"
     assert type(transform.reference).__name__ == "NiftiImage"
     assert type(transform.moving).__name__ == "NiftiImage"
     assert transform.matrix.shape == (3, 4)

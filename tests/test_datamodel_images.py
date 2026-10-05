@@ -276,3 +276,45 @@ def test_multiscale_reslice_with_copy_is_fresh() -> None:
     assert not np.shares_memory(resliced.data, level0)
     resliced.data[...] = -1
     assert np.array_equal(level0, before)
+
+
+def test_images_compare_by_identity() -> None:
+    # `==` is `is`: an image equals itself only, never a distinct image
+    # holding the same data and transformations, and `==` never raises
+    # (the data and the transformations are arrays and transformations,
+    # which have no single truth value to compare by).
+    data = np.zeros((2, 3, 4))
+    affine = Affine(matrix=np.eye(4)[:3])
+    image = SingleScaleImage(data=data, transformations=[affine])
+    twin = SingleScaleImage(data=data, transformations=[affine])
+    pyramid = MultiScaleImage(images=[image])
+    for this, other in (
+        (image, twin),
+        (pyramid, MultiScaleImage(images=[image])),
+    ):
+        assert this == this
+        assert not (this != this)
+        assert not (this == other)
+        assert this != other
+        assert not (this == None)  # noqa: E711
+    # Hashable by identity: usable in a set and as a dictionary key.
+    assert len({image, twin, image, pyramid}) == 3
+    assert {image: 1, twin: 2}[twin] == 2
+
+
+def test_every_image_type_compares_by_identity() -> None:
+    # A format image takes its options from its parser, which comes first
+    # and may generate a field-by-field equality; identity holds all the
+    # same.
+    import brainhops.io  # noqa: F401  (registers every format)
+    from brainhops.datamodel.images import Image
+
+    def subclasses(cls: type) -> list:
+        return [
+            x for sub in cls.__subclasses__() for x in (sub, *subclasses(sub))
+        ]
+
+    for cls in (Image, *subclasses(Image)):
+        assert cls.__eq__ is object.__eq__, cls
+        assert cls.__ne__ is object.__ne__, cls
+        assert cls.__hash__ is object.__hash__, cls

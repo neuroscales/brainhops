@@ -1,7 +1,7 @@
 """Tests for the lazy inverse of transformations.
 
 These cover which families defer their inversion to a type-transparent
-lazy wrapper and which stay eager, the preservation of ``order``,
+lazy wrapper and which stay eager, the preservation of ``degree``,
 ``bound`` and ``coeff`` across an inversion, double-inverse cancellation,
 adjacent transform/inverse cancellation in a ``Sequence``, and the
 equivalence of a materialized lazy inverse with the former eager inverse.
@@ -182,12 +182,12 @@ def test_affine_cancels_symbolically_with_zero_matrix_inversions() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_displacement_inverse_preserves_order_coeff_bound() -> None:
+def test_displacement_inverse_preserves_degree_coeff_bound() -> None:
     df = DisplacementField(
-        field=_small_field(), order=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, coeff=True
     )
     inv = df.inverse()
-    assert inv.order == 3
+    assert inv.degree == 3
     assert inv.bound == 2.0
     assert inv.coeff is True
     # The endpoints are swapped.
@@ -195,10 +195,10 @@ def test_displacement_inverse_preserves_order_coeff_bound() -> None:
     assert inv.output is df.input
 
 
-def test_coordinates_inverse_preserves_order_coeff_bound() -> None:
-    cf = CoordinatesField(field=_small_field(), order=2, bound=1.0, coeff=True)
+def test_coordinates_inverse_preserves_degree_coeff_bound() -> None:
+    cf = CoordinatesField(data=_small_field(), degree=2, bound=1.0, coeff=True)
     inv = cf.inverse()
-    assert inv.order == 2
+    assert inv.degree == 2
     assert inv.bound == 1.0
     assert inv.coeff is True
 
@@ -210,7 +210,9 @@ def test_coordinates_inverse_preserves_order_coeff_bound() -> None:
 
 def test_materialized_field_matches_eager_inverse() -> None:
     values = _small_field(seed=3)
-    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    df = DisplacementField(
+        field=values, degree=1, bound="nearest", coeff=False
+    )
     inv = df.inverse()
     np.testing.assert_allclose(np.asarray(inv.field), inverse_disp(values))
 
@@ -226,11 +228,11 @@ def test_coefficient_inverse_is_a_coefficient_field() -> None:
     # The inverse of a coefficient field is itself a coefficient field. The
     # metadata carries across without materializing anything.
     df = DisplacementField(
-        field=_small_field(), order=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, coeff=True
     )
     inv = df.inverse()
     assert inv.coeff is True
-    assert inv.order == 3
+    assert inv.degree == 3
     assert inv.bound == 2.0
 
 
@@ -243,18 +245,20 @@ def test_coefficient_inverse_refits_to_coefficients() -> None:
     # A coefficient field is inverted by re-fitting: coeff -> value ->
     # inverse -> coeff. The numeric round-trip depends on the corrected
     # bsplines conversions (#63).
-    order, bound = 3, "nearest"
+    degree, bound = 3, "nearest"
     values = _small_field(seed=7)
-    df = DisplacementField(field=values, order=order, bound=bound, coeff=False)
+    df = DisplacementField(
+        field=values, degree=degree, bound=bound, coeff=False
+    )
     coeff = df.to(coeff=True)
-    materialized = coeff.inverse().field
+    materialized = coeff.inverse().data
     expected = inverse_disp(values)
     # Reading the coefficient inverse back as values should recover the
     # inverse displacement field.
     from brainhops._core.bsplines import coeff2value_field
 
     recovered = coeff2value_field(
-        np.asarray(materialized), order=order, bound=bound
+        np.asarray(materialized), degree=degree, bound=bound
     )
     np.testing.assert_allclose(np.asarray(recovered), expected, atol=1e-6)
 
@@ -294,12 +298,12 @@ def test_coordinate_inverse_of_coefficients_stays_coefficients() -> None:
     # A field of spline coefficients is inverted by re-fitting: the
     # coefficients are read out as coordinates, inverted, and fitted back.
     cf, _grid, _values = _coordinate_field(seed=2)
-    coeffs = cf.to(order=3).to(coeff=True)
+    coeffs = cf.to(degree=3).to(coeff=True)
     inverse = coeffs.inverse()
     assert inverse.coeff is True
-    assert inverse.order == coeffs.order
+    assert inverse.degree == coeffs.degree
     recovered = coeff2value_field(
-        np.asarray(inverse.field), order=coeffs.order, bound=coeffs.bound
+        np.asarray(inverse.data), degree=coeffs.degree, bound=coeffs.bound
     )
     np.testing.assert_allclose(
         recovered, np.asarray(cf.inverse().field), atol=1e-6
@@ -330,7 +334,7 @@ def test_coordinate_inverse_cancels_rather_than_inverting() -> None:
 
 def test_double_inverse_returns_operand() -> None:
     df = DisplacementField(
-        field=_small_field(), order=3, coeff=True, bound=2.0
+        data=_small_field(), degree=3, coeff=True, bound=2.0
     )
     assert df.inverse().inverse() is df
 
@@ -363,7 +367,7 @@ def test_cancellation_does_not_materialize() -> None:
     # cancellation touched the field it would raise. It collapses to the
     # identity instead, which proves the pair is removed before any
     # numeric inversion.
-    df = DisplacementField(field=_small_field(), order=3, coeff=True)
+    df = DisplacementField(data=_small_field(), degree=3, coeff=True)
     result = Sequence(transformations=[df, df.inverse()]).compute()
     assert isinstance(result, Identity)
 
@@ -406,12 +410,14 @@ def test_lazy_inverse_of_lazy_inverse_cancels() -> None:
 
 def test_composed_lazy_inverse_equals_composed_eager_inverse() -> None:
     values = _small_field(seed=5)
-    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    df = DisplacementField(
+        field=values, degree=1, bound="nearest", coeff=False
+    )
     t = Translation(translation=[1.0, 2.0])
 
     lazy = Sequence(transformations=[df.inverse(), t]).compute()
     eager = DisplacementField(
-        field=inverse_disp(values), order=1, bound="nearest", coeff=False
+        field=inverse_disp(values), degree=1, bound="nearest", coeff=False
     )
     expected = Sequence(transformations=[eager, t]).compute()
 
@@ -490,7 +496,7 @@ def test_is_identity_compute_false_does_not_materialize() -> None:
     # inverse never can. is_identity(compute=False) must answer from the
     # operand without reading the lazy field, so it must not raise.
     for operand in (
-        DisplacementField(field=_small_field(), order=3, coeff=True),
+        DisplacementField(data=_small_field(), degree=3, coeff=True),
         CoordinatesField(field=_small_field()),
     ):
         inv = operand.inverse()
@@ -622,7 +628,9 @@ def test_materialization_cached_across_replace_and_to() -> None:
 
 def test_compute_materializes_to_a_plain_instance() -> None:
     values = _small_field(seed=9)
-    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    df = DisplacementField(
+        field=values, degree=1, bound="nearest", coeff=False
+    )
     computed = df.inverse().compute()
     assert type(computed) is DisplacementField
     np.testing.assert_allclose(
@@ -632,7 +640,9 @@ def test_compute_materializes_to_a_plain_instance() -> None:
 
 def test_to_plain_type_materializes() -> None:
     values = _small_field(seed=10)
-    df = DisplacementField(field=values, order=1, bound="nearest", coeff=False)
+    df = DisplacementField(
+        field=values, degree=1, bound="nearest", coeff=False
+    )
     plain = df.inverse().to(DisplacementField)
     assert type(plain) is DisplacementField
     np.testing.assert_allclose(np.asarray(plain.field), inverse_disp(values))
@@ -938,3 +948,71 @@ def test_an_unpaired_type_is_unchanged_on_every_path(cls: type) -> None:
     assert type(materialized) is cls
     assert materialized.input == ras
     assert materialized.output == lps
+
+
+# ----------------------------------------------------------------------
+#   A PRODUCT OF SUBSPACES (A SPACE-AND-TIME GEOMETRY)
+# ----------------------------------------------------------------------
+
+
+def _space_and_time() -> Sequence:
+    # The shape of the voxel-to-world transformation of a 4D image: an
+    # affine over (x, y, z), then a scaling and a translation over (t).
+    from brainhops.datamodel.transformations import SubspaceTransformation
+
+    spatial = Affine(
+        matrix=np.array(
+            [[0.0, -2.0, 0.0, 1.0], [1.5, 0.0, 0.0, 2.0], [0.0, 0.0, 3, 0]]
+        )
+    )
+    temporal = Sequence(
+        transformations=[
+            Scaling(scale=[2.0]),
+            Translation(translation=[0.5]),
+        ]
+    )
+    # Four axes, about which nothing else is said.
+    full = CoordinateSystem().expand(4)
+    return Sequence(
+        transformations=[
+            SubspaceTransformation(
+                transformation=spatial,
+                input_axes=[0, 1, 2],
+                output_axes=[0, 1, 2],
+                input=full,
+                output=full,
+            ),
+            SubspaceTransformation(
+                transformation=temporal,
+                input_axes=[3],
+                output_axes=[3],
+                input=full,
+                output=full,
+            ),
+        ]
+    )
+
+
+def test_a_subspace_product_cancels_its_inverse_by_identity() -> None:
+    # The inverse of the product is the product of the inverses, each of
+    # them lazy, so the product next to its own inverse cancels, step by
+    # step, from object identity alone: nothing is inverted.
+    product = _space_and_time()
+    with mock.patch.object(_inv, "inverse_affine", side_effect=AssertionError):
+        for chain in (
+            [product, product.inverse()],
+            [product.inverse(), product],
+        ):
+            result = Sequence(transformations=chain).compute(mode=False)
+            assert isinstance(result, Identity)
+
+
+def test_an_equal_subspace_product_does_not_cancel() -> None:
+    # A product rebuilt with the same values is a distinct object. Its
+    # inverse is not recognized, and nothing is compared by value (which
+    # would raise): the pair is composed numerically instead.
+    product, twin = _space_and_time(), _space_and_time()
+    chain = Sequence(transformations=[product, twin.inverse()])
+    assert not isinstance(chain.compute(mode=False), Identity)
+    matrix = np.asarray(chain.to(Affine).matrix)
+    assert np.allclose(matrix, np.eye(4, 5))

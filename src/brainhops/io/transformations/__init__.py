@@ -4,16 +4,19 @@ __all__ = [
     "FileBasedTransformation",
     "WritableFileBasedTransformation",
     "base",
+    "elastix",
     "freesurfer",
     "itk",
     "load",
+    "matrix",
+    "niftyreg",
     "sniff",
 ]
 
 # internals
 from brainhops._core.dependencies import has_abczarr_driver
 
-from . import base, freesurfer, itk
+from . import base, elastix, freesurfer, itk, matrix, niftyreg
 from .base import (
     FileBasedTransformation,
     WritableFileBasedTransformation,
@@ -43,6 +46,14 @@ try:
 
     __all__ += ["fsl"]
 except ImportError:  # nibabel is optional
+    pass
+
+# The X5 reader needs h5py, which is optional.
+try:
+    from . import x5
+
+    __all__ += ["x5"]
+except ImportError:  # h5py is optional
     pass
 
 # The OME-Zarr field reader needs abczarr and at least one backend driver.

@@ -165,7 +165,7 @@ def test_index2transform_inserted_axis_has_no_spurious_diagonal() -> None:
     assert shape == (4, 1, 5, 6)
 
 
-@pytest.mark.parametrize("order", [0, 1])
+@pytest.mark.parametrize("degree", [0, 1])
 @pytest.mark.parametrize(
     "index",
     [
@@ -176,7 +176,7 @@ def test_index2transform_inserted_axis_has_no_spurious_diagonal() -> None:
     ],
 )
 def test_sub_geometry_reslice_reproduces_numpy_indexing(
-    index: tuple, order: int
+    index: tuple, degree: int
 ) -> None:
     # Reslicing an image onto the geometry of a sub-array must reproduce the
     # sub-array exactly. The identity affine keeps the voxel grid untouched,
@@ -185,7 +185,7 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     # would read the wrong voxels.
     system = CoordinateSystem(
         name="voxel",
-        axes=[SpaceAxis(name=name, unit="sample") for name in "xyz"],
+        axes=[SpaceAxis(name=name, unit="index") for name in "xyz"],
     )
     data = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     img = SingleScaleImage(
@@ -196,5 +196,5 @@ def test_sub_geometry_reslice_reproduces_numpy_indexing(
     )
     geometry = img.geometry[index]
     with backend("numpy"):
-        got = img.reslice(geometry, order=order, bound="reflect").data
+        got = img.reslice(geometry, degree=degree, bound="reflect").data
     assert np.array_equal(np.asarray(got), data[index])

@@ -67,7 +67,6 @@ from brainhops.datamodel.transformations import (
     Translation,
     is_identity,
 )
-from brainhops.datamodel.units import SampleUnit
 
 # The physical anatomical axes, in millimetres. `R`/`A`/`S` fix a direction
 # and leave the metric unspecified, which is a different thing -- an array
@@ -200,7 +199,7 @@ def test_an_unspecified_anatomical_system_bridges_to_millimetres() -> None:
 
 def test_a_sample_matched_to_a_physical_unit_raises() -> None:
     sampled = CoordinateSystem(
-        axes=[SpaceAxis(name="x", unit="sample", orientation=LeftToRight())]
+        axes=[SpaceAxis(name="x", unit="index", orientation=LeftToRight())]
     )
     world = CoordinateSystem(axes=[LeftToRightAxis(name="x", unit="mm")])
     for source, target in ((sampled, world), (world, sampled)):
@@ -218,7 +217,7 @@ def _oriented_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 
@@ -467,7 +466,7 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     pytest.importorskip("abczarr")
     nb = pytest.importorskip("nibabel")
     from brainhops.io.images.zarr import ZarrImage
-    from brainhops.io.transformations.fsl.flirt import FLIRTTransform
+    from brainhops.io.transformations.fsl.flirt import FlirtTransform
 
     path = str(tmp_path / "image.zarr")
     data = np.arange(2 * 3 * 4, dtype="float32").reshape(2, 3, 4)
@@ -490,7 +489,7 @@ def test_fsl_transform_applied_to_a_zarr_image_bridges_lps_and_ras(
     moving = nb.load(str(data_dir / "fsl" / "src.nii.gz"))
     flirt_matrix = np.eye(4)
     flirt_matrix[0, 3] = 5.0
-    fsl = FLIRTTransform(
+    fsl = FlirtTransform(
         flirt_matrix=flirt_matrix, reference=reference, moving=moving
     )  # RAS -> RAS
 
@@ -814,7 +813,7 @@ def _oriented_named_index_system(
 ) -> CoordinateSystem:
     return CoordinateSystem(
         name=name,
-        axes=[SpaceAxis(name="i", unit=SampleUnit(), orientation=orientation)],
+        axes=[SpaceAxis(name="i", unit="index", orientation=orientation)],
     )
 
 
@@ -1331,7 +1330,7 @@ def _image_4d() -> SingleScaleImage:
 
 
 def _reference_4d(
-    image: SingleScaleImage, warp: Sequence, order: int
+    image: SingleScaleImage, warp: Sequence, degree: int
 ) -> np.ndarray:
     # The per-time-point 3D reference: reslice each spatial volume through
     # the 3D warp on the image's own grid.
@@ -1350,7 +1349,7 @@ def _reference_4d(
     ref = np.empty(shape)
     for t in range(shape[3]):
         ref[..., t] = pull(
-            data[..., t], coords3, order=order, bound="reflect", coeff=False
+            data[..., t], coords3, degree=degree, bound="reflect", coeff=False
         )
     return ref
 
@@ -1362,20 +1361,20 @@ def test_4d_reslice_through_a_3d_warp_field_matches_reference() -> None:
     # coordinate is carried through untouched.
     image = _image_4d()
     warp = _spatial_warp()
-    got = np.asarray(image(warp).reslice(image, order=1).data)
-    ref = _reference_4d(image, warp, order=1)
+    got = np.asarray(image(warp).reslice(image, degree=1).data)
+    ref = _reference_4d(image, warp, degree=1)
     np.testing.assert_allclose(got, ref, atol=1e-12)
 
 
-def test_4d_reslice_through_a_3d_warp_field_order3() -> None:
-    # T1, at a higher spline order. The tolerance is looser, because the
+def test_4d_reslice_through_a_3d_warp_field_degree3() -> None:
+    # T1, at a higher spline degree. The tolerance is looser, because the
     # boundary prefilter runs over the whole 4D array once here and per
     # volume in the reference.
     image = _image_4d()
     warp = _spatial_warp()
-    got = np.asarray(image(warp).reslice(image, order=3).data)
-    ref = _reference_4d(image, warp, order=3)
-    # The tolerance is loose because the order-3 prefilter runs over the
+    got = np.asarray(image(warp).reslice(image, degree=3).data)
+    ref = _reference_4d(image, warp, degree=3)
+    # The tolerance is loose because the degree-3 prefilter runs over the
     # whole 4D array once here and per volume in the reference, which couples
     # the boundary time points. The interior agrees far more closely.
     np.testing.assert_allclose(got, ref, rtol=5e-3, atol=5e-3)
@@ -1408,7 +1407,7 @@ def test_3d_affine_applied_to_a_4d_image_via_reslice() -> None:
         output=RASmm(),
     )
     warp_aff.matrix[:, 3] = [0.5, 0.0, 0.0]
-    out = image(warp_aff).reslice(image, order=1)
+    out = image(warp_aff).reslice(image, degree=1)
     assert np.asarray(out.data).shape == np.asarray(image.data).shape
 
 
@@ -1428,7 +1427,7 @@ def test_own_geometry_reslice_is_exact_and_never_inverts_a_field(
     image = _image_4d()
     warp = _spatial_warp()
     warped = image(warp)
-    got = np.asarray(warped.reslice(warped, order=1).data)
+    got = np.asarray(warped.reslice(warped, degree=1).data)
     np.testing.assert_array_equal(got, np.asarray(image.data))
 
 
@@ -1643,7 +1642,7 @@ def test_embedding_in_voxel_axes_keeps_the_extent_offset() -> None:
     # The axes of a voxel system count samples, so a subset rebuilt from
     # them is still read as array-index, and reversing x maps index i to
     # 3 - i rather than to -i.
-    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "sample")
+    matrix = _embedded_matrix(list(FRASCoordinateSystem().axes), "index")
     np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
     np.testing.assert_array_equal(matrix[:4, 4], [3, 0, 0, 0])
 
@@ -1652,3 +1651,31 @@ def test_embedding_in_world_axes_is_a_pure_sign_flip() -> None:
     matrix = _embedded_matrix(list(RASmm().axes), "s")
     np.testing.assert_array_equal(np.diag(matrix), [-1, 1, 1, 1, 1])
     np.testing.assert_array_equal(matrix[:4, 4], [0, 0, 0, 0])
+
+
+@pytest.mark.parametrize(
+    "src, dst, kind, factor",
+    [
+        # Issue #257: the non-SI units convert by their true scale.
+        ("inch", "millimeter", "space", 25.4),
+        ("millimeter", "inch", "space", 1 / 25.4),
+        ("foot", "meter", "space", 0.3048),
+        ("yard", "foot", "space", 3.0),
+        ("mile", "kilometer", "space", 1.609344),
+        ("angstrom", "nanometer", "space", 0.1),
+        ("minute", "second", "time", 60.0),
+        ("hour", "second", "time", 3600.0),
+        ("hour", "minute", "time", 60.0),
+        ("day", "hour", "time", 24.0),
+        ("second", "millisecond", "time", 1000.0),
+    ],
+)
+def test_non_si_unit_difference_is_a_scaling(
+    src: str, dst: str, kind: str, factor: float
+) -> None:
+    Ax = SpaceAxis if kind == "space" else TimeAxis
+    source = CoordinateSystem(name="a", axes=[Ax(name="x", unit=src)])
+    target = CoordinateSystem(name="b", axes=[Ax(name="x", unit=dst)])
+    result = bridge(source, target)
+    assert isinstance(result, Scaling)
+    np.testing.assert_allclose(result.scale, [factor], rtol=1e-12)

@@ -5,14 +5,14 @@ import typing_extensions as tx
 from brainhops.io.base._base import register_format
 
 # locals
-from .._xform import ITKTransform
-from ._parser import TFMTransformParser
+from .._xform import ItkTransform
+from ._parser import TfmTransformParser
 
 
 @register_format
-class TFMTransform(
-    TFMTransformParser,
-    ITKTransform,
+class TfmTransform(
+    TfmTransformParser,
+    ItkTransform,
 ):
     """A transformation stored in an ITK text (`.tfm`) file."""
 
