@@ -7,6 +7,7 @@ __all__ = [
     "GROUPS",
     "SCOPES",
     "VOCABULARY",
+    "Vocabulary",
     "Along",
     "Bids",
     "DiffusionVocabulary",

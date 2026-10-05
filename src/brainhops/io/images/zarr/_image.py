@@ -13,10 +13,8 @@ from brainhops._core.typing import ArrayProtocol
 # backends
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.metadata import (
-    MetadataField,
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (

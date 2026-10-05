@@ -20,10 +20,8 @@ from brainhops.datamodel.axes import (
     TimeAxis,
 )
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
-from brainhops.datamodel.metadata import (
-    MetadataField,
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format

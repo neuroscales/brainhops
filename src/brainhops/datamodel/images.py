@@ -18,7 +18,8 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase
 from .geometry import Geometry
-from .metadata import Metadata, MetadataField
+from .metadata import Metadata
+from .metadata._field import MetadataField
 from .transformations import (
     CartesianField,
     Identity,

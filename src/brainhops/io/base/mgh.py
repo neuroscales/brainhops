@@ -59,7 +59,7 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import MetadataField
+from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base._mgh_metadata import MghMetadata, MghRaw
 from brainhops.io.base.freesurfer import (

@@ -7,7 +7,8 @@ from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import Metadata, MetadataField
+from brainhops.datamodel.metadata import Metadata
+from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals

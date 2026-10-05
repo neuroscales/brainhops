@@ -1,114 +1,69 @@
 """
 Non-spatial metadata, shared across file formats.
 
-Every file format keeps descriptive metadata (a description, a repetition
-time, slice timing, provenance, ...) under its own names and types. This
-package gives them one representation, in a class hierarchy that mirrors
-the images' (`Image` -> `FileBasedImage` -> `NiftiImage`):
+Every file format keeps descriptive metadata, such as a description, a
+repetition time, a slice timing or a provenance, under its own names
+and types. This package gives that metadata one representation, in a
+class hierarchy that mirrors the hierarchy of the images (`Image`,
+`FileBasedImage`, `NiftiImage`):
 
-- [`Metadata`][brainhops.datamodel.metadata.Metadata]: the **common
-  vocabulary**, one field per concept, named after its BIDS key in snake
-  case and stored in BIDS units, declared in six groups
-  ([`GROUPS`][brainhops.datamodel.metadata.GROUPS]), plus `extra`, a
-  free-form `str -> Any` store. It is what in-memory images and
-  transformations carry, and the hub through which formats convert.
+- [`Metadata`][brainhops.datamodel.metadata.Metadata] holds the common
+  vocabulary, one field per concept, named after its BIDS key in snake
+  case and stored in BIDS units, plus `extra`, a free-form store of
+  string keys. In-memory images and transformations carry it, and
+  formats convert through it.
 - [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata]
-  adds the format's own **raw record**, `raw` (a `nibabel` header, ...),
-  and the read-time snapshot of what was decoded from it.
-- One `<Fmt>Metadata` per format, next to its parser under
-  `brainhops.io`.
+  is the base of the metadata of a file format, which reads its fields
+  from the raw record of the format (a `nibabel` header, the attributes
+  of a Zarr array, ...) and writes them back.
+- Each format has its own `<Fmt>Metadata` class, next to its parser
+  under `brainhops.io`. `Metadata.load(path)` reads the metadata of a
+  file without its data.
 
-**Three values per field.** A vocabulary field holds a value, `None`
-("unknown") or [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED]
-("this format has no slot for it"). Converting into a format
-(`metadata.to(NiftiMetadata)`) reports what it cannot hold in a
+A vocabulary field holds a value, `None` when the value is unknown, or
+[`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] when the format
+has no slot for the field. Converting into a format, with
+`metadata.to(NiftiMetadata)`, records what the format cannot hold in a
 [`ConversionReport`][brainhops.datamodel.metadata.ConversionReport], and
-the loss policy (`"ignore"`, `"warn"`, `"raise"`) decides what happens to
-the report; `on_loss=` also takes a `ConversionReport`, which is filled
-instead (no warning, no error).
+the loss policy (`"ignore"`, `"warn"` or `"raise"`, see
+[`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy])
+decides what happens to the report. A
+[`Scope`][brainhops.datamodel.metadata.Scope] says how each field
+propagates to a derived image.
 
-Read next: the user guide (`docs/start/metadata.md`), and, to add a
-format, the format author's guide (`docs/dev/metadata-formats.md`).
+The names exported here are those a user of the library needs. What a
+format author needs (the vocabulary groups, the field annotations, the
+`metadata` field of images, the loss helpers) is imported from the
+private modules of this package, which the format author's guide lists
+(`docs/dev/metadata-formats.md`). The user guide is
+`docs/start/metadata.md`.
 """
 
 __all__ = [
-    "ALL",
+    "Metadata",
+    "FileBasedMetadata",
     "UNSUPPORTED",
-    "Unsupported",
-    "Maybe",
-    "Bids",
     "Scope",
-    "VOCABULARY",
-    "GROUPS",
-    "BIDS_KEYS",
-    "SCOPES",
-    "ALONG",
-    "Scoped",
-    "Along",
     "GeneratedBy",
     "Channel",
     "EncodingDirection",
-    "ProvenanceVocabulary",
-    "MRIVocabulary",
-    "DiffusionVocabulary",
-    "DisplayVocabulary",
-    "StorageVocabulary",
-    "MicroscopyVocabulary",
-    "TransformVocabulary",
-    "Metadata",
-    "FileBasedMetadata",
-    "OpaqueMetadata",
-    "MetadataField",
     "ConversionReport",
     "MetadataLossWarning",
     "MetadataLossError",
     "metadata_loss_policy",
-    "apply_loss_policy",
-    "collect_loss_reports",
-    "LossPolicy",
-    "OnLoss",
-    "preferred_dtype",
-    "preferred_storage",
-    "Lazy",
-    "LazyField",
 ]
 
-from brainhops._core.fields import Lazy, LazyField
-
 from ._base import Metadata
-from ._dtype import preferred_dtype, preferred_storage
-from ._field import MetadataField
-from ._filebased import FileBasedMetadata, OpaqueMetadata
+from ._filebased import FileBasedMetadata
 from ._report import (
     ConversionReport,
-    LossPolicy,
     MetadataLossError,
     MetadataLossWarning,
-    OnLoss,
-    apply_loss_policy,
-    collect_loss_reports,
     metadata_loss_policy,
 )
-from ._sentinel import ALL, UNSUPPORTED, Maybe, Unsupported
+from ._sentinel import UNSUPPORTED
 from ._terms import Channel, EncodingDirection, GeneratedBy
-from ._vocabulary import (
-    ALONG,
-    BIDS_KEYS,
-    GROUPS,
-    SCOPES,
-    VOCABULARY,
-    Along,
-    Bids,
-    DiffusionVocabulary,
-    DisplayVocabulary,
-    MicroscopyVocabulary,
-    MRIVocabulary,
-    ProvenanceVocabulary,
-    Scope,
-    Scoped,
-    StorageVocabulary,
-    TransformVocabulary,
-)
+from ._vocabulary import Scope
 
 # The public names keep the `__module__` of the private module that
 # defines them: rewriting it to this package's name would break

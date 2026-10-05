@@ -30,8 +30,10 @@ from brainhops.datamodel.metadata import (  # noqa: E402
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
-    OpaqueMetadata,
     metadata_loss_policy,
+)
+from brainhops.datamodel.metadata._filebased import (  # noqa: E402
+    OpaqueMetadata,
 )
 from brainhops.io.base._base import FileBasedObject  # noqa: E402
 from brainhops.io.transformations.fsl.flirt import (  # noqa: E402

@@ -7,7 +7,7 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 # io
-from brainhops.datamodel.metadata import MetadataField
+from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.io.base.hdf5 import (
     DelayedH5Array,
     Hdf5Parser,

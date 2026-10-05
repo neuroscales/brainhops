@@ -26,14 +26,16 @@ from brainhops.datamodel.axes import ChannelAxis, SpaceAxis  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
-    VOCABULARY,
     Channel,
     ConversionReport,
     FileBasedMetadata,
     GeneratedBy,
     Metadata,
+)
+from brainhops.datamodel.metadata._filebased import (  # noqa: E402
     OpaqueMetadata,
 )
+from brainhops.datamodel.metadata._vocabulary import VOCABULARY  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiMetadata  # noqa: E402
 from brainhops.io.transformations.fsl.flirt import FlirtMetadata  # noqa: E402

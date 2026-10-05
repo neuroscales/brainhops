@@ -56,13 +56,11 @@ import typing_extensions as tx
 from bagof.magic import NoEq, NoRepr
 from nibabel.freesurfer import mghformat as _mgh
 
+from brainhops._core.fields import Lazy
+
 # internals
 from brainhops._core.numeric import shortest_decimal
-from brainhops.datamodel.metadata import (
-    ConversionReport,
-    FileBasedMetadata,
-    Lazy,
-)
+from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base._mgh_tags import decode_history, encode_history
@@ -105,6 +103,17 @@ class MghRaw:
         *,
         loader: tx.Optional[tx.Callable[[], bytes]] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        header : nibabel.freesurfer.mghformat.MGHHeader, optional
+            The header, footer included. By default, an empty header.
+        tags : bytes or None, optional
+            The trailing tags, or `None` to read them with `loader`.
+        loader : callable, optional
+            A function without arguments that reads the tags, called the
+            first time they are used.
+        """
         self.header = _mgh.MGHHeader() if header is None else header
         if tags is None and loader is None:
             tags = b""

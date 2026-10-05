@@ -33,14 +33,15 @@ import enum
 import numpy as np
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel.metadata import (
-    BIDS_KEYS,
     Channel,
     ConversionReport,
     EncodingDirection,
     GeneratedBy,
 )
+
+# internals
+from brainhops.datamodel.metadata._vocabulary import BIDS_KEYS
 from brainhops.datamodel.units import Unit
 
 

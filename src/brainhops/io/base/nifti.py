@@ -24,11 +24,9 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata import (
-    MetadataField,
-    apply_loss_policy,
-    preferred_storage,
-)
+from brainhops.datamodel.metadata._dtype import preferred_storage
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,

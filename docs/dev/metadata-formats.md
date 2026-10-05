@@ -23,11 +23,33 @@ of `raw` names it), the metadata class with its hooks in the order of
 the table below, its private codec helpers (decode side, then encode
 side), and last the helpers its image classes import.
 
+## Where the names live
+
+The package `brainhops.datamodel.metadata` exports what a user needs
+(`Metadata`, `FileBasedMetadata`, `UNSUPPORTED`, `Scope`, the value
+classes, the report and the loss policy). A format author imports the
+rest from the private modules that define it:
+
+| Module | Names |
+|---|---|
+| `brainhops.datamodel.metadata._vocabulary` | the groups (`ProvenanceVocabulary`, ..., `StorageVocabulary`, the base `Vocabulary`), the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
+| `brainhops.datamodel.metadata._filebased` | `OpaqueMetadata` |
+| `brainhops.datamodel.metadata._field` | `MetadataField` |
+| `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
+| `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |
+| `brainhops.datamodel.metadata._sentinel` | `ALL`, `Maybe`, `Unsupported` |
+| `brainhops._core.fields` | `Lazy`, `LazyField` |
+| `brainhops.io.base._metadata_parser` | `MetadataParser`, `Hdf5MetadataParser` |
+| `brainhops.io.metadata._json` | the JSON codec of key/value stores |
+| `brainhops.io.metadata._sync` | `sync_metadata` |
+
 ## The class
 
 ```python
+@register_format
 class MyMetadata(
     FileBasedMetadata,
+    MetadataParser,  # reads the raw record of a file (see below)
     on={"format": "my"},  # polymorphic discriminant
     supports=(
         ProvenanceVocabulary,
@@ -35,8 +57,18 @@ class MyMetadata(
     ),  # everything else UNSUPPORTED
     lazy=("history",),  # fields decoded on first access
 ):
-    format: tx.Literal["my"] = "my"
     raw: tx.Annotated[tx.Optional[MyRaw], NoRepr(), NoEq()] = None
+
+    EXTENSIONS = (".my",)
+    HINTS = ("my",)
+
+    @classmethod
+    def sniff_fileobj(cls, file, error=False, **kwargs) -> float: ...
+
+    @classmethod
+    def _read_raw(cls, file, **kwargs) -> MyRaw: ...
+
+    def _write_raw(self, raw, file) -> None: ...  # a record of its own
 
     @classmethod
     def _default_raw(cls) -> MyRaw: ...
@@ -58,17 +90,48 @@ class MyMetadata(
     ) -> None: ...  # key/value formats
 ```
 
-`format` is the discriminant of the polymorphic root:
-`Metadata(format="my", ...)` builds a `MyMetadata`, and `"my"` is the name
-`metadata.to("my")` takes. `raw` narrows the type of the raw record, and
-stays out of `repr` and `==`. A read alias under the format's familiar
-name (`header`, `tags`, `node`) is a plain property over `raw`.
+`format` is the discriminant of the polymorphic root, and `on=` declares
+it: `bagof` narrows the field to the literal `"my"`, with that default,
+so the class does not declare `format` itself. `Metadata(format="my",
+...)` builds a `MyMetadata`, and `"my"` is the name `metadata.to("my")`
+takes. The one exception is a format that subclasses another format
+(`ItkMetadata` under `OpaqueMetadata`): its field is narrowed to the
+value of its parent, so it declares its own.
+
+`raw` declares the type of the raw record, and stays out of `repr` and
+`==`. The type matters beyond documentation. `raw` and the read-time
+snapshot are fields of `Metadata`, so generic metadata carries the record
+of the metadata it was converted from, and a conversion gives the record
+back to a format only when the record is an instance of the type that the
+format declares (`FileBasedMetadata._accepts_raw`). Every format must
+therefore declare a type of its own: wrap a plain `dict` or `tuple` in a
+small class (`ZarrRaw`, `X5Raw`), never share a type with another format,
+and do not declare a subclass of the type of another format.
+`tests/test_io_metadata_matrix.py` checks it. A format with no record
+declares `None`. A read alias under the familiar name of the record
+(`header`, `tags`, `node`) is a plain property over `raw`.
+
+The format registers itself into the registry of `MetadataParser` with
+`@register_format`, which is what `Metadata.load(path)` dispatches over:
+its `EXTENSIONS`, `HINTS` and sniffers work as those of an image parser.
+`_read_raw(file)` reads the raw record from a path or an open binary
+file, and nothing else (a NIfTI header, never the voxels); the parser
+then builds the metadata with `from_raw`. A format stored in HDF5 derives
+from `Hdf5MetadataParser` instead, and implements `_sniff_h5(h5file)` and
+`_read_raw_h5(h5file)`. A format whose record is an object of its own on
+disk (the attributes of a Zarr array) implements `_write_raw(raw, file)`,
+and `metadata.to_file(path)` writes `to_raw()` there; every other format
+refuses, since its record is written along with the data. The reader of
+the image or transformation shares the code that reads the record with
+`_read_raw` (`_load_nifti_header`, `read_mgh_raw`, `read_h5_header`). A
+format whose files hold no metadata (FLIRT, ITK `.tfm`) is not a
+`MetadataParser`.
 
 ## Class keywords
 
 - `supports=`: the vocabulary fields (and `"extra"`) the format can
   store, as names, group classes (all the fields of the group) or
-  [`ALL`][brainhops.datamodel.metadata.ALL]. Omitted, a subclass keeps
+  [`ALL`][brainhops.datamodel.metadata._sentinel.ALL]. Omitted, a subclass keeps
   its parent's capabilities. Every other field defaults to
   [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] and is
   refused at construction. `supported_fields` lists what the class
@@ -133,7 +196,7 @@ All the hooks are optional, and all private.
 - `_derive_raw(raw, *, changed) -> raw`: called by
   [`derive`][brainhops.datamodel.metadata.Metadata.derive] for the raw
   record of the derived object. `changed` maps an
-  [`AxisType`][brainhops.datamodel.enums.AxisType] to the indices kept
+  `AxisType` to the indices kept
   along the axes of that type, or to `None` when they changed in a way
   that is not a selection. The default is a deep copy of `raw`, so that
   a derived object never shares its record. A format whose record holds
@@ -221,10 +284,10 @@ its raw record, calls
 with it and that report, as `on_loss=report` (a report given as
 `on_loss` is filled, never warned about; `force=` names a writer keyword
 that must win over the record, such as MGH `tr=`), and hands the report to
-[`apply_loss_policy`][brainhops.datamodel.metadata.apply_loss_policy]:
+[`apply_loss_policy`][brainhops.datamodel.metadata._report.apply_loss_policy]:
 one write, one report, one warning.
 `io.save` collects the reports of a conversion and of the write that
-follows ([`collect_loss_reports`][brainhops.datamodel.metadata.collect_loss_reports])
+follows ([`collect_loss_reports`][brainhops.datamodel.metadata._report.collect_loss_reports])
 and warns once, with
 [`ConversionReport.merged`][brainhops.datamodel.metadata.ConversionReport.merged].
 
@@ -248,7 +311,7 @@ the `_import` hook.
 (keyword-only, out of `repr` and `==`). A format narrows it to its own
 class, with a default factory, which is what makes a change of format
 convert (and report). Both are written with
-[`MetadataField`][brainhops.datamodel.metadata.MetadataField]`[hint,
+[`MetadataField`][brainhops.datamodel.metadata._field.MetadataField]`[hint,
 *annotations]`, whose converter also converts on a class that does not
 convert its fields (a plain `Magic` parser), converts a metadata object
 of another class into the field's class (a `NiftiMetadata` given to a
@@ -272,14 +335,17 @@ converts it and reports the loss.
 
 ## Checklist
 
-1. Write `<Fmt>Metadata` next to the parser: `on=`, `supports=`,
-   `format`, `raw`, then the hooks it needs.
-2. In the parser's `__post_init__`, read the metadata from the raw
+1. Write `<Fmt>Metadata` next to the parser: `on=`, `supports=`, `raw`
+   with a record type of its own, then the hooks it needs.
+2. When the file holds metadata, make it a `MetadataParser`
+   (`@register_format`, `EXTENSIONS`, `HINTS`, a sniffer and
+   `_read_raw`), so that `Metadata.load` reads it.
+3. In the parser's `__post_init__`, read the metadata from the raw
    record (`sync_metadata`); in the writer, encode it (`update_raw`) and
    apply the loss policy.
-3. Narrow the `metadata` field of the image or transformation class
+4. Narrow the `metadata` field of the image or transformation class
    with `MetadataField`.
-4. Add the class to the matrix test, `tests/test_io_metadata_matrix.py`:
+5. Add the class to the matrix test, `tests/test_io_metadata_matrix.py`:
    a format class that is not in its table fails it.
-5. Describe what the format stores in the "Formats" section of the
+6. Describe what the format stores in the "Formats" section of the
    user guide.

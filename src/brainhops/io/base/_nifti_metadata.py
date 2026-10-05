@@ -43,7 +43,7 @@ always come from the data model. The image writer stores the data as
 intensity scaling `scale_slope` and `scale_intercept` when the values
 fit it, so that a scaled integer file is written back as it was read
 (see
-[`preferred_storage`][brainhops.datamodel.metadata.preferred_storage]).
+[`preferred_storage`][brainhops.datamodel.metadata._dtype.preferred_storage]).
 A `dtype=` writer option wins over both.
 """
 

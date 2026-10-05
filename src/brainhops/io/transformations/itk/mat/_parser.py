@@ -16,10 +16,8 @@ from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 
 # core
-from brainhops.datamodel.metadata import (
-    MetadataField,
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
     Confidence,

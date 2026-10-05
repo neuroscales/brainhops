@@ -24,9 +24,11 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
     ConversionReport,
     MetadataLossError,
+    metadata_loss_policy,
+)
+from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     collect_loss_reports,
-    metadata_loss_policy,
 )
 from brainhops.io.base._base import WritableFileBasedObject
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename

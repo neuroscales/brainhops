@@ -344,6 +344,21 @@ def collect_loss_reports() -> tx.Iterator[tx.List[ConversionReport]]:
 
 
 def short(value: tx.Any, width: int = 40) -> str:
+    """
+    A short text for a value in a report.
+
+    Parameters
+    ----------
+    value : object
+        The value. A known term reads as its string.
+    width : int, optional
+        The maximum number of characters.
+
+    Returns
+    -------
+    str
+        The `repr` of the value, cut with `...` when it is too long.
+    """
     if isinstance(value, enum.Enum):
         # A known term reads as the term (`'scanner'`).
         value = value.value

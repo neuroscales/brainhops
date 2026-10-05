@@ -12,7 +12,7 @@ from brainhops._core.typing import ArrayLike
 from brainhops.datamodel.images import Image
 
 # core
-from brainhops.datamodel.metadata import MetadataField
+from brainhops.datamodel.metadata._field import MetadataField
 
 # io
 from brainhops.io.base.arrays import ArrayContainerError, read_text_rows

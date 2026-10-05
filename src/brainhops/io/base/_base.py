@@ -470,7 +470,7 @@ class FileBasedObject(FormatDispatcher):
     their own kind of object (images, transformations, ...). Concrete
     parsers decorated with `@register_format` land in *every* ancestor
     registry, so both the scoped and the generic entry points see them.
-    The dispatching itself is described in [`FormatDispatcher`][].
+    The dispatching itself is described in `FormatDispatcher`.
     """
 
 

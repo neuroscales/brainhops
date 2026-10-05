@@ -2,9 +2,8 @@
 The metadata of ITK transformation files.
 
 - `.tfm` and `.mat` store a bare chain of parameters, and no metadata:
-  [`ItkMetadata`][] is an
-  [`OpaqueMetadata`][brainhops.datamodel.metadata.OpaqueMetadata], and
-  every field is unsupported.
+  [`ItkMetadata`][] is an `OpaqueMetadata`, and every field is
+  unsupported.
 - `.h5` records the version of ITK that wrote it (`/ITKVersion`):
   [`ItkH5Metadata`][] reads it as `generated_by`, with the small root
   header ([`H5Header`][brainhops.io.transformations.itk.h5.H5Header]) as
@@ -30,8 +29,8 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     FileBasedMetadata,
     GeneratedBy,
-    OpaqueMetadata,
 )
+from brainhops.datamodel.metadata._filebased import OpaqueMetadata
 
 # internals
 from brainhops.io.base._base import register_format

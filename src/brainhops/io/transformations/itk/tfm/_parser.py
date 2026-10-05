@@ -12,7 +12,7 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops._core.peek import peekable_lines
 
 # core
-from brainhops.datamodel.metadata import MetadataField
+from brainhops.datamodel.metadata._field import MetadataField
 
 # io
 from brainhops.io.base.parsers import (

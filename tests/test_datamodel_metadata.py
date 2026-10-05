@@ -22,6 +22,7 @@ import pytest
 import typing_extensions as tx
 from bagof.magic import Factory, Magic, NoEq, NoRepr, fields, replace
 
+from brainhops._core.fields import Lazy, LazyField
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     AxisType,
@@ -33,37 +34,38 @@ from brainhops.datamodel.enums import (
 )
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
-    ALL,
-    GROUPS,
     UNSUPPORTED,
-    VOCABULARY,
-    Along,
     Channel,
     ConversionReport,
-    DiffusionVocabulary,
-    DisplayVocabulary,
     EncodingDirection,
     FileBasedMetadata,
     GeneratedBy,
-    Lazy,
-    LazyField,
     Metadata,
-    MetadataField,
     MetadataLossError,
     MetadataLossWarning,
+    Scope,
+    metadata_loss_policy,
+)
+from brainhops.datamodel.metadata._dtype import preferred_dtype
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._filebased import OpaqueMetadata
+from brainhops.datamodel.metadata._report import (
+    apply_loss_policy,
+    collect_loss_reports,
+)
+from brainhops.datamodel.metadata._sentinel import ALL, Unsupported
+from brainhops.datamodel.metadata._vocabulary import (
+    GROUPS,
+    VOCABULARY,
+    Along,
+    DiffusionVocabulary,
+    DisplayVocabulary,
     MicroscopyVocabulary,
     MRIVocabulary,
-    OpaqueMetadata,
     ProvenanceVocabulary,
-    Scope,
     Scoped,
     StorageVocabulary,
     TransformVocabulary,
-    Unsupported,
-    apply_loss_policy,
-    collect_loss_reports,
-    metadata_loss_policy,
-    preferred_dtype,
 )
 from brainhops.datamodel.transformations import Affine, Translation
 

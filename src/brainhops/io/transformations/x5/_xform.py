@@ -16,12 +16,9 @@ from brainhops._core.properties import smartproperty
 from brainhops.datamodel import transformations as _xforms
 
 # core
-from brainhops.datamodel.metadata import (
-    ConversionReport,
-    MetadataField,
-    OnLoss,
-    apply_loss_policy,
-)
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
 
 # io
 from brainhops.io.base._base import register_format

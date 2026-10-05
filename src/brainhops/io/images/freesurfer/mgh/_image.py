@@ -10,11 +10,9 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
-from brainhops.datamodel.metadata import (
-    ConversionReport,
-    apply_loss_policy,
-    preferred_dtype,
-)
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._dtype import preferred_dtype
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation

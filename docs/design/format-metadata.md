@@ -1723,6 +1723,64 @@ these:
   of the key/value formats (MRtrix, NRRD) that move what they have no
   slot for into their free-form store.
 
+### Addendum: the third review
+
+The third review changed the following decisions. Where this addendum and
+the sections above disagree, this addendum holds.
+
+- **Public surface.** `brainhops.datamodel.metadata` exports eleven
+  names, those a user needs: `Metadata`, `FileBasedMetadata`,
+  `UNSUPPORTED`, `Scope`, `GeneratedBy`, `Channel`, `EncodingDirection`,
+  `ConversionReport`, `MetadataLossWarning`, `MetadataLossError` and
+  `metadata_loss_policy`. A format author imports the rest from the
+  private modules, which the format author's guide lists.
+- **The raw record on `Metadata` (M2, M6).** `raw` and the read-time
+  snapshot are fields of `Metadata`; `from_raw`, `update_from_raw`,
+  `to_raw` (new: `update_raw(None, ...)`) and `update_raw` stay on
+  `FileBasedMetadata`. A conversion keeps the record when the target is
+  generic `Metadata`, a copy of the same class, or a format whose `raw`
+  annotation declares a type the record is an instance of. No tag
+  records the format of a record: the type is the tag. Every format
+  therefore declares a type of its own (`X5Raw` and `H5Header` were
+  added for that), and a test checks that no two formats declare the
+  same type or related types. `NiftiMetadata -> Metadata ->
+  NiftiMetadata` round-trips, header extensions included, and the same
+  record converted to MGH is left behind. Generic metadata loses its
+  record through `derive`, since no format hook can remove what the
+  derivation invalidates. `copy()` has one implementation.
+- **Scopes in terms of axes (M9).** `Scope` is an enum: `FILE`,
+  `ACQUISITION`, `SPATIAL` (was `grid`) and `AXIS` (was `volume`). A
+  per-axis field declares the brainhops axis type its entries run along
+  with `Along(AxisType...)`: the channels run along `channel`, the
+  diffusion table along `time` (NIfTI dimension 4; no `volume` axis
+  type was added). `derive(changed={axis type: kept indices or None},
+  spatial_map=, step=)` replaces the grid and volume flags, and
+  `_derive_raw(raw, *, changed)` takes the same mapping. The display
+  range and the data unit are `FILE` fields. A writer maps the axes of
+  an image to its slots by type, and reports a per-axis field whose axis
+  the image lacks.
+- **Storage vocabulary (M3).** `data_type` moved to a new
+  `StorageVocabulary` group, with `scale_slope` and `scale_intercept`
+  (NIfTI `scl_slope` and `scl_inter`), all `FILE` scope. The NIfTI image
+  writer stores the values as `data_type` with the scaling when they fit
+  it (`preferred_storage`), so a scaled integer file is written back as
+  it was read.
+- **Reading metadata alone.** `MetadataParser`
+  (`io/base/_metadata_parser.py`) is the file side of a metadata class:
+  `from_*` read the raw record (`_read_raw`) and defer to `from_raw`,
+  `to_file` writes `to_raw()` (`_write_raw`, for plain Zarr only; the
+  other formats write their record with their data). It has a format
+  registry of its own, separate from that of `FileBasedObject`, so
+  `Metadata.load(path)` dispatches among NIfTI, MGH, Zarr, OME-Zarr, x5,
+  ITK `.h5` and BIDS sidecars, with `hint=`, while `io.load` never
+  returns metadata. The dispatching methods moved from `FileBasedObject`
+  to a `FormatDispatcher` mixin that both registries share.
+- **Names.** The groups are `*Vocabulary` on a `Vocabulary` base;
+  `to_enum` is the class `EnumConverter`; `float32_repr` is built on
+  `shortest_decimal(value, encode)`, which the MGH reader also uses for
+  its milliseconds and radians; a format declares `format` through
+  `on=` alone.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

@@ -20,13 +20,11 @@ __all__ = ["X5Metadata", "X5Raw", "metadata_index"]
 import typing_extensions as tx
 from bagof.magic import NoEq, NoRepr, replace
 
+from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
+
 # internals
-from brainhops.datamodel.metadata import (
-    ALL,
-    VOCABULARY,
-    ConversionReport,
-    FileBasedMetadata,
-)
+from brainhops.datamodel.metadata._sentinel import ALL
+from brainhops.datamodel.metadata._vocabulary import VOCABULARY
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import Hdf5MetadataParser
 from brainhops.io.base.parsers import Confidence, ParserContentError

@@ -8,7 +8,7 @@ from brainhops.datamodel import transformations as _xforms
 
 # externals
 # datamodel
-from brainhops.datamodel.metadata import MetadataField
+from brainhops.datamodel.metadata._field import MetadataField
 
 # io
 from brainhops.io.base._base import register_format

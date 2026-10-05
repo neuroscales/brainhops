@@ -58,8 +58,10 @@ from bagof.magic import NoEq, NoRepr
 from brainhops.datamodel.metadata import (
     Channel,
     ConversionReport,
-    DisplayVocabulary,
     FileBasedMetadata,
+)
+from brainhops.datamodel.metadata._vocabulary import (
+    DisplayVocabulary,
     MicroscopyVocabulary,
     MRIVocabulary,
     ProvenanceVocabulary,
@@ -119,6 +121,14 @@ class ZarrRaw:
         attrs: tx.Optional[tx.Mapping[str, tx.Any]] = None,
         node: tx.Any = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        attrs : mapping, optional
+            The attributes of the array, as JSON.
+        node : object, optional
+            The array they were read from.
+        """
         self.attrs = dict(attrs or {})
         self.node = node
 
@@ -380,6 +390,18 @@ class OmeZarrRaw:
         attrs: tx.Optional[tx.Dict[str, tx.Any]] = None,
         node: tx.Any = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        multiscale : object, optional
+            The typed `abczarr` multiscale, normalised to OME-NGFF 0.6.
+        omero : dict, optional
+            The `omero` block, as JSON.
+        attrs : dict, optional
+            The group attributes that are not OME metadata.
+        node : object, optional
+            The group they were read from.
+        """
         self.multiscale = multiscale
         self.omero = omero
         self.attrs = dict(attrs or {})

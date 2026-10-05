@@ -25,19 +25,19 @@ A field holds a value, `None` (unknown), or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] (this format has
 no place to store it). The vocabulary comes in seven groups, each a class
 that `Metadata` inherits:
-[`ProvenanceVocabulary`][brainhops.datamodel.metadata.ProvenanceVocabulary]
+[`ProvenanceVocabulary`][brainhops.datamodel.metadata._vocabulary.ProvenanceVocabulary]
 (description, history, space, ...),
-[`MRIVocabulary`][brainhops.datamodel.metadata.MRIVocabulary] (repetition
+[`MRIVocabulary`][brainhops.datamodel.metadata._vocabulary.MRIVocabulary] (repetition
 time, slice timing, ...),
-[`DiffusionVocabulary`][brainhops.datamodel.metadata.DiffusionVocabulary]
+[`DiffusionVocabulary`][brainhops.datamodel.metadata._vocabulary.DiffusionVocabulary]
 (`bvalues`, `bvectors`),
-[`DisplayVocabulary`][brainhops.datamodel.metadata.DisplayVocabulary]
+[`DisplayVocabulary`][brainhops.datamodel.metadata._vocabulary.DisplayVocabulary]
 (display range, channels, unit of the values),
-[`StorageVocabulary`][brainhops.datamodel.metadata.StorageVocabulary]
+[`StorageVocabulary`][brainhops.datamodel.metadata._vocabulary.StorageVocabulary]
 (type and intensity scaling of the stored values),
-[`MicroscopyVocabulary`][brainhops.datamodel.metadata.MicroscopyVocabulary]
+[`MicroscopyVocabulary`][brainhops.datamodel.metadata._vocabulary.MicroscopyVocabulary]
 and
-[`TransformVocabulary`][brainhops.datamodel.metadata.TransformVocabulary]
+[`TransformVocabulary`][brainhops.datamodel.metadata._vocabulary.TransformVocabulary]
 (`moving`, `fixed`, ...).
 
 The examples on this page run as they are. They write their files to a
@@ -456,7 +456,7 @@ is tied to:
   the time axis, and the channel descriptions along the channel axis.
 
 The caller says which axes changed, by
-[`AxisType`][brainhops.datamodel.enums.AxisType], and gives the indices
+`AxisType`, and gives the indices
 that were kept along them, or `None` when the change is not a selection:
 
 ```python

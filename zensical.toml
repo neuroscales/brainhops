@@ -28,6 +28,7 @@ nav = [
       "api/datamodel/images.md",
       "api/datamodel/kinds.md",
       "api/datamodel/metadata.md",
+      {"metadata (format authors)" = "api/datamodel/metadata-formats.md"},
     ]},
     {"io" = [
       "api/io/index.md",
@@ -88,6 +89,8 @@ nav = [
         {"path" = "api/_core/path.md"},
         {"properties" = "api/_core/properties.md"},
         {"fields" = "api/_core/fields.md"},
+        {"numeric" = "api/_core/numeric.md"},
+        {"enum" = "api/_core/enum.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
     ]}
   ]},
