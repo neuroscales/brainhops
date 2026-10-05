@@ -23,7 +23,7 @@ from .concrete import (
     Identity,
     is_identity,
 )
-from .errors import CompositionError
+from .errors import CompositionError, ConversionError
 from .factor import PatternCache, factor_sequence
 from .inverse import Inverse
 from .meta import SubspaceTransformation
@@ -203,6 +203,29 @@ class Sequence(SequenceMixin, Transformation):
             If the chain does not compose to a single transformation.
         """
         return _chain_sqrt(self, compute, kwargs)
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        """Convert this chain to a different type or encoding.
+
+        See [`Transformation.to`][brainhops.datamodel.transformations.\
+Transformation.to]. A chain has no tangent of its own -- the tangent of a
+        composition is not the sum of the tangents -- so `log=` is the
+        encoding of the single transformation the chain composes to: it is
+        composed first, and refused when it does not compose to one.
+        """
+        if "log" in kwargs:
+            reduced = self.compute()
+            if isinstance(reduced, Sequence):
+                names = ", ".join(type(t).__name__ for t in reduced)
+                raise ConversionError(
+                    f"A chain is stored as its tangent (log=) only when it "
+                    f"composes to a single transformation, but this one "
+                    f"composes to [{names}]."
+                )
+            return reduced.to(cls, **kwargs)
+        return super().to(cls, **kwargs)
 
     def compute(
         self,

@@ -3,16 +3,22 @@ __all__ = [
     "CoordinatesField",
     "CartesianField",
     "DisplacementField",
+    "StationaryVelocityField",
     "Affine",
+    "AffineExponential",
     "Linear",
+    "LinearExponential",
     "Rotation",
+    "RotationExponential",
     "Permutation",
     "Scaling",
+    "ScalingExponential",
     "Translation",
     "Identity",
 ]
 
 # stdlib
+import math
 from numbers import Integral, Real
 
 # dependencies
@@ -38,8 +44,11 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from . import registries
 from .base import Transformation
 from .check import is_kind
+from .compose import compose
+from .errors import DomainError
+from .matfuncs import affine_expm, affine_logm, expm, log_scale, logm
 from .modes import ModeLike
-from .registries import INVERSE_CACHE
+from .registries import INVERSE_CACHE, OPERATION_CACHE
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
 from .utils import require_endomorphism
@@ -311,12 +320,56 @@ class TransformationField(ConcreteTransformation):
         return _decode(self.data, self.coeff, self.degree, self.bound)
 
 
-class DisplacementField(TransformationField):
+class DisplacementField(TransformationField, polymorphic=True):
     """
     A field of displacements defined on a regular grid.
 
     Both the input and output spaces correspond to the underlying grid.
+
+    The `log` flag says which function `data` describes: the displacement
+    itself, or, when `log` is true, the stationary velocity whose flow at
+    time one is the map. `log=True` builds a
+    [`StationaryVelocityField`][], whose `field` view integrates that
+    velocity; a plain `DisplacementField` always holds displacements.
     """
+
+    # --- class attributes ---------------------------------------------
+
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = (
+        "degree",
+        "bound",
+        "coeff",
+        "log",
+    )
+
+    # --- attributes ---------------------------------------------------
+
+    _log: tx.Annotated[
+        bool,
+        tx.Doc(
+            """
+            If `True`, `data` holds the stationary velocity whose flow at
+            time one is the map (its tangent about the identity), rather
+            than its displacement: the field is a
+            [`StationaryVelocityField`][]. Unset or zero `data` is the
+            identity either way.
+            """
+        ),
+        KwOnly(),
+    ] = False
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        _refuse_log(self, arguments.get("log"), "StationaryVelocityField")
+        super().__post_init__(arguments)
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        _refuse_log(self, value, "StationaryVelocityField")
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
 
     # --- methods ------------------------------------------------------
 
@@ -329,6 +382,127 @@ class DisplacementField(TransformationField):
                 "square root that brainhops computes."
             )
         return super().sqrt(compute, **kwargs)
+
+
+class StationaryVelocityField(DisplacementField, on={"_log": True}):
+    """
+    A displacement field stored as its stationary velocity (`log=True`).
+
+    `data` holds the velocity `v`, the tangent of the map about the
+    identity: its values, or their spline coefficients when `coeff` is
+    true (as NiftyReg's `-vel -cpp` grids and torch-diffeo store it). The
+    map is the flow of `v` at time one, `exp(v)`, and the `field` view is
+    always its displacement, as values. It is integrated by scaling and
+    squaring: `v` is divided by `2 ** steps`, which is its own flow to
+    first order, and composed with itself `steps` times, with the field
+    composition and the field's own `degree` and `bound`. A field of
+    coefficients is refitted at each step, so its squaring stays in
+    coefficients. The displacements are in the voxels of the field's own
+    grid, as for any [`DisplacementField`][].
+
+    `DisplacementField(data=v, log=True)`, `d.to(log=True)` (for an unset
+    `d`) and `StationaryVelocityField(data=v)` build the same object.
+    Unset or zero `data` is the identity.
+
+    The tangent makes some operations exact: the inverse is `exp(-v)`, the
+    square root `exp(v / 2)` and the square `exp(2 v)`. A displacement has
+    no logarithm that brainhops computes, so `.to(log=True)` refuses a
+    `DisplacementField` that holds one; `.to(log=False)` integrates a
+    velocity into a plain `DisplacementField`.
+    """
+
+    # --- class attributes ---------------------------------------------
+
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = (
+        "degree",
+        "bound",
+        "coeff",
+        "log",
+        "steps",
+    )
+
+    # --- attributes ---------------------------------------------------
+
+    _steps: tx.Annotated[
+        tx.Optional[int],
+        tx.Doc(
+            """
+            The number of squaring steps. If `None`, the smallest number
+            for which the first step, `v / 2 ** steps`, moves no point by
+            more than an eighth of a voxel.
+            """
+        ),
+        KwOnly(),
+    ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `field=` is the map, as displacement values, which would be
+        # stored here as its velocity: a field has no logarithm that
+        # brainhops computes.
+        if arguments.get("field") is not None:
+            raise NotImplementedError(
+                f"{type(self).__name__}() got field=, which is the map, as "
+                f"displacement values: storing it as a velocity needs the "
+                f"logarithm of a field, which is not implemented. Pass the "
+                f"velocity as data=."
+            )
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        self._log = value
+        self._forget_views()
+
+    def _set_steps(self, value: tx.Optional[int]) -> None:
+        self._steps = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+    steps = smartproperty("steps", _set_steps)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The displacement of the map, as values: the flow at time one of
+        the velocity `data` holds, integrated once, then cached.
+        """
+        flags = self.coeff, self.degree, self.bound
+        return _integrate(self.data, *flags, self.steps)
+
+    # --- methods ------------------------------------------------------
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        # `log=False` asks for the map itself, which a plain
+        # `DisplacementField` holds and this class does not.
+        if cls is None and not kwargs.get("log", True):
+            cls = DisplacementField
+        return super().to(cls, **kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        # Half the velocity, which integrates with one squaring fewer.
+        require_endomorphism(self, "square root")
+        steps = self.steps
+        if steps is not None:
+            steps = max(steps - 1, 0)
+        obj = self
+        if self.data is not None:
+            obj = _velocity(self, self.data / 2, steps)
+        return obj.compute(**kwargs) if compute else obj
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        # Twice the velocity, which integrates with one squaring more.
+        require_endomorphism(self, "square")
+        steps = self.steps
+        if steps is not None:
+            steps = steps + 1
+        obj = self
+        if self.data is not None:
+            obj = _velocity(self, self.data * 2, steps)
+        return obj.compute(**kwargs) if compute else obj
 
 
 class CoordinatesField(TransformationField):
@@ -428,18 +602,30 @@ class CartesianField(CoordinatesField):
 
 
 @kinds.Affine
-class Affine(ConcreteTransformation):
-    """An affine transformation."""
+class Affine(ConcreteTransformation, polymorphic=True):
+    """
+    An affine transformation.
+
+    `data` holds its `(No, Ni + 1)` matrix. `log=True` builds an
+    [`AffineExponential`][], whose `data` is the tangent of the map about
+    the identity instead.
+    """
+
+    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ("log",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = (
         "matrix",
         "homogeneous_matrix",
     )
 
     # --- attributes ---------------------------------------------------
+    # `data` and `log` are stored under private names, and exposed through
+    # properties whose setters clear the views they key (see
+    # `_forget_views`), as a field's are.
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -452,6 +638,18 @@ class Affine(ConcreteTransformation):
         ),
     ] = None
 
+    _log: tx.Annotated[
+        bool,
+        tx.Doc(
+            """
+            If `True`, `data` holds the tangent of the map about the
+            identity, rather than its matrix: the transformation is an
+            [`AffineExponential`][].
+            """
+        ),
+        KwOnly(),
+    ] = False
+
     _matrix: tx.Annotated[
         InitVar[tx.Optional[npmatrix[Real]]],
         tx.Doc("The matrix: a convenience for `data`."),
@@ -459,11 +657,33 @@ class Affine(ConcreteTransformation):
     ] = None
 
     def __post_init__(self, arguments: tx.Any) -> None:
+        _refuse_log(self, arguments.get("log"), "AffineExponential")
         # `matrix=` is the map: it fills `data`.
         matrix = arguments.get("matrix")
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
             self.data = matrix
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _forget_views(self) -> None:
+        # The cached view, and the inverse and square root cached on this
+        # transform, are computed from `data` and `log`: a new value of
+        # either clears them.
+        for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    def _set_log(self, value: bool) -> None:
+        _refuse_log(self, value, "AffineExponential")
+        self._log = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -494,16 +714,96 @@ class Affine(ConcreteTransformation):
         return homogeneous_matrix
 
 
+@kinds.PositiveAffine
+class AffineExponential(Affine, on={"_log": True}):
+    """
+    An affine transformation stored as its tangent (`log=True`).
+
+    `data` is the `(N, N + 1)` tangent `[L, l]` of the map about the
+    identity, and the map is its exponential: `matrix` is the top `N`
+    rows of `expm([[L, l], [0, ..., 0]])`, computed once, then cached.
+    `L` may be singular -- a translation has the tangent `[0, t]`. Unset or
+    zero `data` is the identity, and `AffineExponential(data=I)` is the
+    scaling by `e`, not the identity: a tangent is never a matrix.
+
+    The exponential of a real tangent has a positive determinant, so it is
+    a `PositiveAffine`. Its inverse, square root and square are exact: the
+    tangent negated, halved and doubled. `.to(log=False)` gives the plain
+    [`Affine`][] of `matrix`, and `Affine.to(log=True)` takes the principal
+    logarithm of a matrix, which is refused (`DomainError`) when its
+    linear part has an eigenvalue on the closed negative real axis.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it is stored as its principal logarithm.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = affine_logm(matrix, _logarithm_of(self))
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The affine matrix, of shape `(N, N + 1)`: the exponential of the
+        tangent `data`.
+        """
+        if self.data is None:
+            return None
+        return affine_expm(self.data)
+
+    # --- methods ------------------------------------------------------
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        # `log=False` asks for the map itself, which a plain `Affine`
+        # holds and this class does not.
+        if cls is None and not kwargs.get("log", True):
+            cls = Affine
+        return super().to(cls, **kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        # Half the tangent.
+        require_endomorphism(self, "square root")
+        obj = _tangent(AffineExponential, self, 0.5)
+        return obj.compute(**kwargs) if compute else obj
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        # Twice the tangent.
+        require_endomorphism(self, "square")
+        obj = _tangent(AffineExponential, self, 2.0)
+        return obj.compute(**kwargs) if compute else obj
+
+
 @kinds.Linear
-class Linear(ConcreteTransformation):
-    """A linear transformation."""
+class Linear(ConcreteTransformation, polymorphic=True):
+    """
+    A linear transformation.
+
+    `data` holds its `(No, Ni)` matrix. `log=True` builds a
+    [`LinearExponential`][], whose `data` is the tangent of the map about
+    the identity instead.
+    """
+
+    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ("log",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
 
     # --- attributes ---------------------------------------------------
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -514,6 +814,18 @@ class Linear(ConcreteTransformation):
         ),
     ] = None
 
+    _log: tx.Annotated[
+        bool,
+        tx.Doc(
+            """
+            If `True`, `data` holds the tangent of the map about the
+            identity, rather than its matrix: the transformation is a
+            [`LinearExponential`][] (or a [`RotationExponential`][]).
+            """
+        ),
+        KwOnly(),
+    ] = False
+
     _matrix: tx.Annotated[
         InitVar[tx.Optional[npmatrix[Real]]],
         tx.Doc("The matrix: a convenience for `data`."),
@@ -521,11 +833,33 @@ class Linear(ConcreteTransformation):
     ] = None
 
     def __post_init__(self, arguments: tx.Any) -> None:
+        _refuse_log(self, arguments.get("log"), "LinearExponential")
         # `matrix=` is the map: it fills `data`.
         matrix = arguments.get("matrix")
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
             self.data = matrix
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _forget_views(self) -> None:
+        # The cached view, and the inverse and square root cached on this
+        # transform, are computed from `data` and `log`: a new value of
+        # either clears them.
+        for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    def _set_log(self, value: bool) -> None:
+        _refuse_log(self, value, "LinearExponential")
+        self._log = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -535,16 +869,94 @@ class Linear(ConcreteTransformation):
         return self.data
 
 
+@kinds.PositiveLinear
+class LinearExponential(
+    Linear,
+    on={"_log": True},
+    # A `RotationExponential` is a `Linear` selected by `log=True` too.
+    # `Linear(log=True)` builds this class, not the rotation.
+    priority=1,
+):
+    """
+    A linear transformation stored as its tangent (`log=True`).
+
+    `data` is the `(N, N)` tangent `L` of the map about the identity, and
+    the map is its exponential: `matrix` is `expm(L)`, computed once, then
+    cached. Unset or zero `data` is the identity, and
+    `LinearExponential(data=I)` is the scaling by `e`.
+
+    The exponential of a real tangent has a positive determinant, so it is
+    a `PositiveLinear`. Its inverse, square root and square are exact: the
+    tangent negated, halved and doubled. `.to(log=False)` gives the plain
+    [`Linear`][] of `matrix`, and `Linear.to(log=True)` takes the principal
+    logarithm of a matrix, which is refused (`DomainError`) when it has an
+    eigenvalue on the closed negative real axis.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it is stored as its principal logarithm.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = logm(matrix, _logarithm_of(self))
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        """The matrix, of shape `(N, N)`: the exponential of `data`."""
+        if self.data is None:
+            return None
+        return expm(self.data)
+
+    # --- methods ------------------------------------------------------
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        # `log=False` asks for the map itself, which a plain `Linear`
+        # holds and this class does not.
+        if cls is None and not kwargs.get("log", True):
+            cls = Linear
+        return super().to(cls, **kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        # Half the tangent.
+        require_endomorphism(self, "square root")
+        obj = _tangent(LinearExponential, self, 0.5)
+        return obj.compute(**kwargs) if compute else obj
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        # Twice the tangent.
+        require_endomorphism(self, "square")
+        obj = _tangent(LinearExponential, self, 2.0)
+        return obj.compute(**kwargs) if compute else obj
+
+
 @kinds.SpecialOrthogonal
 class Rotation(Linear):
-    """An orthogonal transformation with determinant 1, i.e., a rotation."""
+    """
+    An orthogonal transformation with determinant 1, i.e., a rotation.
+
+    `data` holds its `(N, N)` matrix. `log=True` builds a
+    [`RotationExponential`][], whose `data` is the tangent of the map about
+    the identity instead.
+    """
 
     # TODO: Implement Rotation subclasses that use other representations
     # (e.g., quaternions, Euler angles, etc.)
 
     # --- attributes ---------------------------------------------------
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npmatrix[Real]],
         tx.Doc(
             """
@@ -555,6 +967,89 @@ class Rotation(Linear):
             """
         ),
     ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        _refuse_log(self, arguments.get("log"), "RotationExponential")
+        # `matrix=` is the map: it fills `data`.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = matrix
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        _refuse_log(self, value, "RotationExponential")
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+
+
+class RotationExponential(Rotation, on={"_log": True}):
+    """
+    A rotation stored as its tangent (`log=True`).
+
+    `data` is the `(N, N)` antisymmetric tangent `L` of the rotation about
+    the identity -- its axis and angle -- and the map is its exponential:
+    `matrix` is `expm(L)`, computed once, then cached. Unset or zero `data`
+    is the identity.
+
+    Its inverse, square root and square are exact: the tangent negated,
+    halved and doubled. `.to(log=False)` gives the plain [`Rotation`][] of
+    `matrix`, and `Rotation.to(log=True)` takes the principal logarithm of
+    a rotation, which is refused (`DomainError`) for a rotation by a half
+    turn, whose logarithm is not unique.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it is stored as its principal logarithm.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            self.data = logm(matrix, _logarithm_of(self))
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def matrix(self) -> tx.Optional[ArrayProtocol]:
+        """
+        The rotation matrix, of shape `(N, N)`: the exponential of `data`.
+        """
+        if self.data is None:
+            return None
+        return expm(self.data)
+
+    # --- methods ------------------------------------------------------
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        # `log=False` asks for the map itself, which a plain `Rotation`
+        # holds and this class does not.
+        if cls is None and not kwargs.get("log", True):
+            cls = Rotation
+        return super().to(cls, **kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        # Half the tangent: half the angle, about the same axis.
+        require_endomorphism(self, "square root")
+        obj = _tangent(RotationExponential, self, 0.5)
+        return obj.compute(**kwargs) if compute else obj
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        # Twice the tangent.
+        require_endomorphism(self, "square")
+        obj = _tangent(RotationExponential, self, 2.0)
+        return obj.compute(**kwargs) if compute else obj
 
 
 @kinds.Permutation
@@ -601,15 +1096,23 @@ class Permutation(ConcreteTransformation):
 
 
 @kinds.Diagonal
-class Scaling(ConcreteTransformation):
-    """A scaling of axes."""
+class Scaling(ConcreteTransformation, polymorphic=True):
+    """
+    A scaling of axes.
+
+    `data` holds its scaling factors. `log=True` builds a
+    [`ScalingExponential`][], whose `data` is their logarithm instead.
+    """
+
+    # --- class attributes ---------------------------------------------
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
+    metadata_fields: tx.ClassVar[tx.Tuple[str]] = ("log",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
 
     # --- attributes ---------------------------------------------------
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[npvector[Real]],
         tx.Doc(
             """
@@ -620,6 +1123,18 @@ class Scaling(ConcreteTransformation):
         ),
     ] = None
 
+    _log: tx.Annotated[
+        bool,
+        tx.Doc(
+            """
+            If `True`, `data` holds the logarithm of the scaling factors,
+            the tangent of the map about the identity: the transformation
+            is a [`ScalingExponential`][].
+            """
+        ),
+        KwOnly(),
+    ] = False
+
     _scale: tx.Annotated[
         InitVar[tx.Optional[npvector[Real]]],
         tx.Doc("The scaling factors: a convenience for `data`."),
@@ -627,11 +1142,33 @@ class Scaling(ConcreteTransformation):
     ] = None
 
     def __post_init__(self, arguments: tx.Any) -> None:
+        _refuse_log(self, arguments.get("log"), "ScalingExponential")
         # `scale=` is the map: it fills `data`.
         scale = arguments.get("scale")
         if scale is not None:
             _refuse_data_too(self, arguments, "scale")
             self.data = scale
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _forget_views(self) -> None:
+        # The cached view, and the inverse and square root cached on this
+        # transform, are computed from `data` and `log`: a new value of
+        # either clears them.
+        for name in ("_cache_scale", INVERSE_CACHE, OPERATION_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    def _set_log(self, value: bool) -> None:
+        _refuse_log(self, value, "ScalingExponential")
+        self._log = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -639,6 +1176,69 @@ class Scaling(ConcreteTransformation):
     def scale(self) -> tx.Optional[ArrayProtocol]:
         """The scaling factors, of shape `(N,)`."""
         return self.data
+
+
+@kinds.PositiveDiagonal
+class ScalingExponential(Scaling, on={"_log": True}):
+    """
+    A scaling stored as the logarithm of its factors (`log=True`).
+
+    `data` is the tangent `s` of the map about the identity, and `scale`
+    is `exp(s)`, computed once, then cached: the factors are positive, so
+    it is a `PositiveDiagonal`. Unset or zero `data` is the identity.
+
+    Its inverse, square root and square are exact: the tangent negated,
+    halved and doubled. `.to(log=False)` gives the plain [`Scaling`][] of
+    `scale`, and `Scaling.to(log=True)` takes the logarithm of the factors,
+    which is refused (`DomainError`) unless they are all positive.
+    """
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `scale=` is the map: it is stored as its logarithm.
+        scale = arguments.get("scale")
+        if scale is not None:
+            _refuse_data_too(self, arguments, "scale")
+            self.data = log_scale(scale, _logarithm_of(self))
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _set_log(self, value: bool) -> None:
+        self._log = value
+        self._forget_views()
+
+    log = smartproperty("log", _set_log)
+
+    # --- views --------------------------------------------------------
+
+    @lazyproperty
+    def scale(self) -> tx.Optional[ArrayProtocol]:
+        """The scaling factors, of shape `(N,)`: `exp(data)`."""
+        if self.data is None:
+            return None
+        return get_array_backend(self.data).exp(self.data)
+
+    # --- methods ------------------------------------------------------
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        # `log=False` asks for the map itself, which a plain `Scaling`
+        # holds and this class does not.
+        if cls is None and not kwargs.get("log", True):
+            cls = Scaling
+        return super().to(cls, **kwargs)
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        # Half the tangent.
+        require_endomorphism(self, "square root")
+        obj = _tangent(ScalingExponential, self, 0.5)
+        return obj.compute(**kwargs) if compute else obj
+
+    def square(self, compute: bool = False, **kwargs) -> Transformation:
+        # Twice the tangent.
+        require_endomorphism(self, "square")
+        obj = _tangent(ScalingExponential, self, 2.0)
+        return obj.compute(**kwargs) if compute else obj
 
 
 @kinds.Translation
@@ -896,3 +1496,132 @@ def _prefilter_dtype(values: ArrayProtocol) -> ArrayProtocol:
     if values.dtype.kind in "biu":
         return values.astype("float32")
     return values
+
+
+def _refuse_log(
+    xform: Transformation, log: tx.Optional[bool], tangent: str
+) -> None:
+    # `log=True` builds the tangent subclass (`tangent`). An instance of
+    # any other class reads its `data` as the map, so it refuses the flag,
+    # whether it is passed to a class that `log=True` does not select (an
+    # io subclass, say) or assigned in place, which cannot change the
+    # class of an instance.
+    if not log:
+        return
+    raise TypeError(
+        f"A {type(xform).__name__} holds the map, not its tangent about the "
+        f"identity, so its log flag cannot be set: log=True builds a "
+        f"{tangent}. To convert a transformation to its tangent, use "
+        f"t.to(log=True)."
+    )
+
+
+def _logarithm_of(xform: Transformation) -> str:
+    # "The logarithm of this AffineExponential's matrix", for error
+    # messages.
+    return f"The logarithm of the matrix of this {type(xform).__name__}"
+
+
+def _tangent(
+    cls: tx.Type[Transformation], xform: Transformation, factor: float
+) -> Transformation:
+    # The power `factor` of a map stored as its tangent: the same map with
+    # its tangent multiplied by `factor`, exactly. It is built as `cls`
+    # explicitly, so that a lazy inverse, whose `data` is derived, gives a
+    # plain tangent. An unset tangent is the identity, which every power
+    # leaves alone.
+    if xform.data is None:
+        return xform
+    return cls(
+        data=xform.data * factor, input=xform.input, output=xform.output
+    )
+
+
+def _velocity(
+    xform: "StationaryVelocityField",
+    data: ArrayProtocol,
+    steps: tx.Optional[int],
+) -> "StationaryVelocityField":
+    # A velocity field with the flags and endpoints of `xform`, built as a
+    # plain `StationaryVelocityField` (see `_tangent`).
+    return StationaryVelocityField(
+        data=data,
+        degree=xform.degree,
+        bound=xform.bound,
+        coeff=xform.coeff,
+        steps=steps,
+        input=xform.input,
+        output=xform.output,
+    )
+
+
+_FIRST_STEP = 0.125
+"""
+The largest displacement, in voxels, of the first step of scaling and
+squaring. Arsigny et al. (2006) bound it by half a voxel; a smaller step
+keeps the first-order step `id + v / 2**steps` accurate for velocities
+whose gradient is large, at the price of two or three more squarings.
+"""
+
+_MAX_STEPS = 64
+"""A velocity that would need more squarings than this is refused."""
+
+
+def _integrate(
+    data: tx.Optional[ArrayProtocol],
+    coeff: bool,
+    degree: InterpolationOrder,
+    bound: tx.Union[BoundaryCondition, float],
+    steps: tx.Optional[int],
+) -> tx.Optional[ArrayProtocol]:
+    # The displacement, as values, of the flow at time one of the
+    # stationary velocity that `data` stores, by scaling and squaring.
+    if data is None:
+        return None
+    if steps is None:
+        steps = _squaring_steps(_decode(data, coeff, degree, bound))
+    if isinstance(steps, bool) or not isinstance(steps, Integral) or steps < 0:
+        raise ValueError(
+            f"The number of squaring steps must be a non-negative integer, "
+            f"not {steps!r}."
+        )
+    # Scaling: a small enough velocity is its own flow, to first order.
+    # Scaling is linear, so the coefficients of a velocity are scaled as
+    # its values are.
+    step = DisplacementField(
+        data=data * (0.5**steps), degree=degree, bound=bound, coeff=coeff
+    )
+    # Squaring: the flow at time `2 s` is the flow at time `s`, twice. The
+    # field composition keeps the encoding of its left operand, so a
+    # velocity of coefficients is refitted at each step.
+    for _ in range(steps):
+        step = compose(step, step)
+        # A lazy (dask) array is evaluated before the next step reads it:
+        # each task of a lazy sample rebuilds the window of the field it
+        # reads, so the cost of an unevaluated chain doubles with each
+        # squaring.
+        if hasattr(step.data, "persist"):
+            step.data = step.data.persist()
+    return step.field
+
+
+def _squaring_steps(velocity: ArrayProtocol) -> int:
+    # The smallest number of squarings for which the first step moves no
+    # point by more than `_FIRST_STEP` voxels.
+    backend = get_array_backend(velocity)
+    norm = float(backend.max(backend.sqrt((velocity**2).sum(axis=-1))))
+    if not math.isfinite(norm):
+        raise DomainError(
+            "The exponential of this velocity field is not defined: it is "
+            "not finite."
+        )
+    if norm <= _FIRST_STEP:
+        return 0
+    steps = int(math.ceil(math.log2(norm / _FIRST_STEP)))
+    if steps > _MAX_STEPS:
+        raise DomainError(
+            "The exponential of this velocity field is not computed: its "
+            f"largest displacement, {norm} voxels, would need more than "
+            f"{_MAX_STEPS} squaring steps."
+        )
+    return steps

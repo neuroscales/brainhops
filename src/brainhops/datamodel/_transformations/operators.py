@@ -288,7 +288,7 @@ class SqrtScaling(
         tx.Doc("The scaling whose square root this represents."),
     ] = None
 
-    data: Derived[tx.Optional[npvector[Real]]]
+    _data: Derived[tx.Optional[npvector[Real]]]
     _scale: Deactivated[None]
 
     @_cached
@@ -320,7 +320,7 @@ class SqrtRotation(
         tx.Doc("The rotation whose square root this represents."),
     ] = None
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
     _matrix: Deactivated[None]
 
     @_cached
@@ -343,7 +343,7 @@ class SqrtLinear(
         tx.Doc("The linear transformation whose square root this is."),
     ] = None
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
     _matrix: Deactivated[None]
 
     @_cached
@@ -373,7 +373,7 @@ class SqrtAffine(
         tx.Doc("The affine transformation whose square root this is."),
     ] = None
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
     _matrix: Deactivated[None]
 
     @_cached

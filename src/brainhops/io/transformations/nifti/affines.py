@@ -113,6 +113,16 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     def data(self, value: np.ndarray) -> None:
         self._explicit_matrix = value
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        # The constructor stores `data=` in `_data`, which is also the slot
+        # the NIfTI parser caches its image in: it is moved to the matrix's
+        # own.
+        data = arguments.get("data")
+        if data is not None:
+            self._data = None
+            self._explicit_matrix = data
+
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_explicit_matrix", None) is None:
@@ -153,6 +163,16 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     @data.setter
     def data(self, value: np.ndarray) -> None:
         self._explicit_matrix = value
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        # The constructor stores `data=` in `_data`, which is also the slot
+        # the NIfTI parser caches its image in: it is moved to the matrix's
+        # own.
+        data = arguments.get("data")
+        if data is not None:
+            self._data = None
+            self._explicit_matrix = data
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""

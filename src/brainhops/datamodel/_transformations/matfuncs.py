@@ -1,4 +1,4 @@
-"""Matrix functions: the principal square root of a matrix or an affine.
+"""Matrix functions: the principal square root, exponential and logarithm.
 
 The functions run on the host, in float64, whatever backend the parameter
 lives on, and return their result on that backend, in its floating dtype.
@@ -52,6 +52,68 @@ def affine_sqrtm(matrix: ArrayProtocol, what: str) -> ArrayProtocol:
     # so its principal square root keeps the last row `[0, ..., 0, 1]`.
     root = _real(scipy.linalg.sqrtm(_homogeneous(host)), what)
     return _like(root[:n], matrix)
+
+
+# ----------------------------------------------------------------------
+#   EXPONENTIAL
+# ----------------------------------------------------------------------
+
+
+def expm(tangent: ArrayProtocol) -> ArrayProtocol:
+    """The exponential of a square matrix: every real one has one."""
+    host = _to_host(tangent)
+    _require_square(host, "The exponential of this tangent")
+    return _like(scipy.linalg.expm(host), tangent)
+
+
+def affine_expm(tangent: ArrayProtocol) -> ArrayProtocol:
+    """The exponential of a compact `(N, N + 1)` affine tangent.
+
+    The tangent `[L, l]` is the top of the homogeneous generator
+    `[[L, l], [0, ..., 0]]`, whose exponential is a homogeneous affine;
+    its top `N` rows are returned. `L` may be singular: a translation has
+    the tangent `[0, t]`.
+    """
+    host = _to_host(tangent)
+    n = host.shape[0]
+    _require_square(host[:, :-1], "The exponential of this tangent")
+    generator = np.zeros((n + 1, n + 1))
+    generator[:n] = host
+    return _like(scipy.linalg.expm(generator)[:n], tangent)
+
+
+# ----------------------------------------------------------------------
+#   LOGARITHM
+# ----------------------------------------------------------------------
+
+
+def logm(matrix: ArrayProtocol, what: str) -> ArrayProtocol:
+    """The principal logarithm of a square matrix."""
+    host = _to_host(matrix)
+    _require_square(host, what)
+    _require_principal(host, what)
+    return _like(_real(scipy.linalg.logm(host), what), matrix)
+
+
+def affine_logm(matrix: ArrayProtocol, what: str) -> ArrayProtocol:
+    """The principal logarithm of a compact `(N, N + 1)` affine.
+
+    It is the tangent `[L, l]`: the top `N` rows of the principal
+    logarithm of the homogeneous matrix, whose last row is `[0, ..., 0]`.
+    """
+    host = _to_host(matrix)
+    n = host.shape[0]
+    _require_square(host[:, :-1], what)
+    _require_principal(host[:, :-1], what)
+    log = _real(scipy.linalg.logm(_homogeneous(host)), what)
+    return _like(log[:n], matrix)
+
+
+def log_scale(scale: ArrayProtocol, what: str) -> ArrayProtocol:
+    """The logarithm of positive scaling factors."""
+    require_positive(scale, what)
+    backend = get_array_backend(scale)
+    return backend.log(backend.asarray(scale, dtype=_float_dtype(scale)))
 
 
 # ----------------------------------------------------------------------
@@ -122,10 +184,16 @@ def _to_host(array: ArrayProtocol) -> np.ndarray:
 def _like(result: np.ndarray, like: ArrayProtocol) -> ArrayProtocol:
     # Return a host result on the backend, and in the floating dtype, of
     # the parameter it was computed from.
-    dtype = np.dtype(like.dtype)
+    dtype = _float_dtype(like)
+    return get_array_backend(like).asarray(result.astype(dtype))
+
+
+def _float_dtype(like: ArrayProtocol) -> np.dtype:
+    # The dtype of `like` if it is floating, else float64.
+    dtype = np.dtype(getattr(like, "dtype", np.float64))
     if not np.issubdtype(dtype, np.floating):
         dtype = np.dtype(np.float64)
-    return get_array_backend(like).asarray(result.astype(dtype))
+    return dtype
 
 
 def _real(result: np.ndarray, what: str) -> np.ndarray:

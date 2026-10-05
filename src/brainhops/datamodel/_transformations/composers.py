@@ -332,7 +332,9 @@ def _(To: DisplacementField, Ti: DisplacementField) -> DisplacementField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            To.to(coeff=True).data,
+            # The displacement of `To`, as coefficients: not the velocity
+            # a `StationaryVelocityField` stores as its `data`.
+            To.to(log=False, coeff=True).data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,
@@ -356,7 +358,9 @@ def _(To: DisplacementField, Ti: CoordinatesField) -> CoordinatesField:
     x2 = Ti.to(CoordinatesField)
     field = (
         pull_field(
-            To.to(coeff=True).data,
+            # The displacement of `To`, as coefficients: not the velocity
+            # a `StationaryVelocityField` stores as its `data`.
+            To.to(log=False, coeff=True).data,
             coords=x2.field,
             degree=To.degree,
             bound=To.bound,

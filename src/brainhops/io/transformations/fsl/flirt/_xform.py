@@ -60,7 +60,7 @@ class FlirtTransform(
     # `__init__` and `fields()`, while the property below serves reads
     # (and, through it, the `matrix` view). The `matrix=` convenience is
     # deactivated with it.
-    data: tx.ClassVar[tx.Optional[tx.Any]]
+    _data: tx.ClassVar[tx.Optional[tx.Any]]
     _matrix: Deactivated[None]
 
     @property
