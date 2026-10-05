@@ -548,7 +548,8 @@ class MultiScaleImage(Image):
         Returns
         -------
         MultiScaleImage
-            The transformed image.
+            The transformed image. No voxel moves, so it keeps (a copy
+            of) this image's metadata.
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -557,7 +558,9 @@ class MultiScaleImage(Image):
         else:
             transformations = [transform]
         return MultiScaleImage(
-            images=self.images, transformations=transformations
+            images=self.images,
+            transformations=transformations,
+            metadata=self.metadata,
         )
 
 

@@ -369,3 +369,23 @@ def test_reslice_derives_the_metadata() -> None:
     moved = dwi(Affine(matrix=np.eye(5)[:-1]))
     assert moved.metadata == dwi.metadata
     assert moved.metadata is not dwi.metadata
+
+
+def test_multiscale_call_keeps_the_pyramid_metadata() -> None:
+    from brainhops.datamodel.metadata import Metadata
+
+    pyramid = _pyramid()
+    pyramid.metadata = Metadata(description="pyramid")
+    identity = Affine(
+        matrix=np.eye(4)[:-1],
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+
+    moved = pyramid(identity)
+
+    # Applying a world transformation moves no voxel: the metadata is kept,
+    # as a copy.
+    assert moved.metadata.description == "pyramid"
+    assert moved.metadata is not pyramid.metadata
+    assert len(moved.transformations) == len(pyramid.transformations) + 1
