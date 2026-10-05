@@ -105,6 +105,60 @@ def test_a_decoded_view_is_cached(cls: type) -> None:
 
 
 @pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("name", ["data", "coeff", "degree", "bound"])
+def test_assigning_data_or_a_flag_refreshes_the_view(
+    cls: type, name: str
+) -> None:
+    # The `field` view is cached; assigning what it is decoded from clears
+    # it, so the next read reflects the assignment. An assigned flag
+    # reinterprets the array stored in `data`.
+    coefficients = _coefficients(_values())
+    t = cls(data=coefficients, degree=DEGREE, bound=BOUND, coeff=True)
+    before = t.field  # cached
+    new = {
+        "data": 2 * coefficients,
+        "coeff": False,
+        "degree": 2,
+        "bound": "reflect",
+    }[name]
+    setattr(t, name, new)
+    assert getattr(t, name) == new if name != "data" else t.data is new
+    expected = coeff2value_field(
+        np.asarray(t.data), degree=t.degree, bound=t.bound
+    )
+    if not t.coeff:
+        expected = t.data
+    assert t.field is not before
+    np.testing.assert_allclose(np.asarray(t.field), expected, atol=1e-10)
+
+
+def test_assigning_data_refreshes_a_cached_inverse() -> None:
+    forward = DisplacementField(field=_small(), degree=DEGREE)
+    inverse = forward.inverse()
+    before = inverse.field  # cached, on the forward
+    forward.data = 2 * forward.data
+    assert inverse.field is not before
+    np.testing.assert_allclose(
+        np.asarray(inverse.field),
+        inverse_disp(np.asarray(forward.field)),
+        atol=1e-8,
+    )
+
+
+@pytest.mark.parametrize("name", ["shape", "coeff"])
+def test_assigning_the_shape_or_a_flag_refreshes_a_grid(name: str) -> None:
+    t = CartesianField(shape=(6, 7), degree=DEGREE, bound=BOUND)
+    before = t.field, t.data  # cached
+    setattr(t, name, {"shape": (4, 5), "coeff": True}[name])
+    assert t.data is not before[1]
+    np.testing.assert_array_equal(np.asarray(t.field), _grid(t.shape))
+    expected = _grid(t.shape).astype(float)
+    if t.coeff:
+        expected = _coefficients(expected)
+    np.testing.assert_allclose(np.asarray(t.data), expected, atol=1e-10)
+
+
+@pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
 def test_a_new_encoding_is_reached_by_conversion(cls: type) -> None:
     values = _values()
     t = cls(field=values, degree=DEGREE, bound=BOUND)

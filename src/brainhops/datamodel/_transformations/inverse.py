@@ -36,6 +36,7 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
+    _decode,
     _encode,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
@@ -59,9 +60,11 @@ def _invcache(func: tx.Callable) -> property:
     the cache survives the rebuild and an expensive inversion is not run
     twice.
 
-    The cache assumes the forward transform is not mutated in place after
-    it is wrapped: a forward transform whose parameter is replaced by
-    editing the same object would keep serving the stale inverse.
+    A field clears it when its `data` or a flag is assigned. The other
+    families do not: their cache assumes the forward transform is not
+    mutated in place after it is wrapped, and one whose parameter is
+    replaced by editing the same object would keep serving the stale
+    inverse.
     """
     name = func.__name__
 
@@ -488,15 +491,11 @@ class InverseDisplacementField(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    # The flags are still what `data` is encoded under (so they stay in
-    # `metadata_fields`), but they are the forward's, read on demand.
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "data",
-        "field",
-        "degree",
-        "bound",
-        "coeff",
-    )
+    # The map is derived from the forward, and cannot be set. The flags
+    # are the forward's too, read on demand, and a change of flag is made
+    # to the forward (see `Inverse.to`), so they stay in
+    # `metadata_fields`.
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
 
     # --- attributes ---------------------------------------------------
 
@@ -508,10 +507,10 @@ class InverseDisplacementField(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
+    _data: Derived[tx.Optional[ArrayProtocol]]
+    _degree: Derived[InterpolationOrder]
+    _bound: Derived[tx.Union[BoundaryCondition, float]]
+    _coeff: Derived[bool]
     _field: Deactivated[None]
 
     @_invcache
@@ -534,6 +533,12 @@ class InverseDisplacementField(
     @property
     def coeff(self) -> bool:
         return self.forward.coeff
+
+    @_invcache
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        # Cached with `data`, on the forward, which clears both when its
+        # own `data` or flags are assigned.
+        return _decode(self.data, self.coeff, self.degree, self.bound)
 
 
 class InverseCoordinatesField(
@@ -569,15 +574,11 @@ class InverseCoordinatesField(
 
     _inverseof: tx.ClassVar[tx.Type[Transformation]] = CoordinatesField
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
-    # The flags are still what `data` is encoded under (so they stay in
-    # `metadata_fields`), but they are the forward's, read on demand.
-    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
-        "data",
-        "field",
-        "degree",
-        "bound",
-        "coeff",
-    )
+    # The map is derived from the forward, and cannot be set. The flags
+    # are the forward's too, read on demand, and a change of flag is made
+    # to the forward (see `Inverse.to`), so they stay in
+    # `metadata_fields`.
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
 
     # --- attributes ---------------------------------------------------
 
@@ -589,10 +590,10 @@ class InverseCoordinatesField(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[ArrayProtocol]]
-    degree: Derived[InterpolationOrder]
-    bound: Derived[tx.Union[BoundaryCondition, float]]
-    coeff: Derived[bool]
+    _data: Derived[tx.Optional[ArrayProtocol]]
+    _degree: Derived[InterpolationOrder]
+    _bound: Derived[tx.Union[BoundaryCondition, float]]
+    _coeff: Derived[bool]
     _field: Deactivated[None]
 
     @_invcache
@@ -615,6 +616,12 @@ class InverseCoordinatesField(
     @property
     def coeff(self) -> bool:
         return self.forward.coeff
+
+    @_invcache
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        # Cached with `data`, on the forward, which clears both when its
+        # own `data` or flags are assigned.
+        return _decode(self.data, self.coeff, self.degree, self.bound)
 
 
 # ----------------------------------------------------------------------

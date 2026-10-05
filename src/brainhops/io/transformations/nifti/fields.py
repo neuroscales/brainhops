@@ -115,9 +115,10 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         way. The singleton axis before the components is dropped, or the
         field would be sampled as a 4-D grid of 3-vectors.
         """
-        # `CoordinatesField` declares `data` as a stored field, which
-        # shadows the parser's lazy `data` property: the two are one
-        # value here, read through the parser.
+        # `CoordinatesField` exposes its stored `_data` as `data`, which
+        # shadows the parser's lazy `data` property. The parser keeps the
+        # image it reads in `_data` too, so the two are one value here,
+        # read through the parser.
         data = NiftiParser.data.fget(self)
         if data is None:
             return None
@@ -125,9 +126,8 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
     @data.setter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
-        # Without a setter the generated `__init__` cannot assign the
-        # inherited `data` field at all.
         NiftiParser.data.fset(self, value)
+        self._forget_views()
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides

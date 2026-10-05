@@ -17,15 +17,14 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import Frozen, InitVar, KwOnly
+from bagof.magic import InitVar, KwOnly
 
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
-from brainhops._core.properties import lazyproperty
+from brainhops._core.properties import lazyproperty, smartproperty
 from brainhops._core.typing import (
     ArrayProtocol,
     Deactivated,
-    Derived,
     npmatrix,
     npvector,
 )
@@ -40,6 +39,7 @@ from . import registries
 from .base import Transformation
 from .check import is_kind
 from .modes import ModeLike
+from .registries import INVERSE_CACHE
 from .simplify import SimplifyLike
 from .simplify import simplify as _simplify
 
@@ -171,8 +171,10 @@ class TransformationField(ConcreteTransformation):
     `DisplacementField(field=u, degree=3).to(coeff=True)`. To store an
     array as it is already encoded, pass it as `data=`.
 
-    `data` and the flags are frozen: a field is changed by `.to(...)`,
-    which builds a new one, so its cached `field` view never goes stale.
+    The `field` view is decoded once and cached. Assigning `data` or a
+    flag (`t.coeff = True`) clears it, so the next read reflects the
+    change. Unlike `.to(coeff=True)`, which re-encodes, assigning a flag
+    reinterprets the stored array.
     """
 
     # --- class attributes ---------------------------------------------
@@ -182,8 +184,12 @@ class TransformationField(ConcreteTransformation):
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
 
     # --- attributes ---------------------------------------------------
+    # `data` and the flags are stored under private names, and exposed
+    # through properties whose setters clear the views they key (see
+    # `_forget_views`). The constructor still takes `data=`, `degree=`...,
+    # as it takes `input=` for the private `_input`.
 
-    data: tx.Annotated[
+    _data: tx.Annotated[
         tx.Optional[ArrayProtocol],
         tx.Doc(
             """
@@ -192,14 +198,13 @@ class TransformationField(ConcreteTransformation):
             Read the map through `field`, which is always the values.
             """
         ),
-        Frozen(),
     ] = None
 
-    degree: tx.Annotated[
-        InterpolationOrder, tx.Doc("The spline degree"), Frozen()
-    ] = InterpolationOrder.linear
+    _degree: tx.Annotated[InterpolationOrder, tx.Doc("The spline degree")] = (
+        InterpolationOrder.linear
+    )
 
-    bound: tx.Annotated[
+    _bound: tx.Annotated[
         tx.Union[BoundaryCondition, float],
         tx.Doc(
             """
@@ -208,10 +213,9 @@ class TransformationField(ConcreteTransformation):
             a constant value.
             """
         ),
-        Frozen(),
     ] = BoundaryCondition.nearest
 
-    coeff: tx.Annotated[
+    _coeff: tx.Annotated[
         bool,
         tx.Doc(
             """
@@ -220,7 +224,6 @@ class TransformationField(ConcreteTransformation):
             same either way.
             """
         ),
-        Frozen(),
     ] = False
 
     _field: tx.Annotated[
@@ -242,8 +245,37 @@ class TransformationField(ConcreteTransformation):
         field = arguments.get("field")
         if field is not None:
             _refuse_data_too(self, arguments, "field")
-            data = _encode(field, self.coeff, self.degree, self.bound)
-            object.__setattr__(self, "data", data)
+            self.data = _encode(field, self.coeff, self.degree, self.bound)
+
+    # --- stored attributes, which key the views -----------------------
+
+    def _forget_views(self) -> None:
+        # The cached views (`field`, and the `data` a grid derives), and
+        # the inverse cached on this transform, are computed from `data`
+        # and the flags: a new value of either clears them.
+        for name in ("_cache_field", "_cache_data", INVERSE_CACHE):
+            self.__dict__.pop(name, None)
+
+    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+        self._data = value
+        self._forget_views()
+
+    def _set_degree(self, value: InterpolationOrder) -> None:
+        self._degree = value
+        self._forget_views()
+
+    def _set_bound(self, value: tx.Union[BoundaryCondition, float]) -> None:
+        self._bound = value
+        self._forget_views()
+
+    def _set_coeff(self, value: bool) -> None:
+        self._coeff = value
+        self._forget_views()
+
+    data = smartproperty("data", _set_data)
+    degree = smartproperty("degree", _set_degree)
+    bound = smartproperty("bound", _set_bound)
+    coeff = smartproperty("coeff", _set_coeff)
 
     # --- views --------------------------------------------------------
 
@@ -283,7 +315,8 @@ class CartesianField(CoordinatesField):
 
     It stores the `shape` of the grid rather than an array. Its `field`
     (the coordinates of the grid points) and its `data` (the same
-    coordinates, encoded under the flags) are generated on demand.
+    coordinates, encoded under the flags) are generated on demand, and
+    cached until `shape` or a flag is assigned.
     """
 
     # --- class attributes ---------------------------------------------
@@ -294,18 +327,22 @@ class CartesianField(CoordinatesField):
 
     # --- attributes ---------------------------------------------------
 
-    shape: tx.Annotated[
-        tx.Optional[tx.Tuple[int, ...]],
-        tx.Doc("The shape of the grid."),
-        Frozen(),
+    _shape: tx.Annotated[
+        tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
+
+    def _set_shape(self, value: tx.Optional[tx.Tuple[int, ...]]) -> None:
+        self._shape = value
+        self._forget_views()
+
+    shape = smartproperty("shape", _set_shape)
 
     # --- derived attributes -------------------------------------------
     # Mark them as `ClassVar` to keep them out of `__init__`. The grid is
     # fully defined by its shape, so neither `data=` nor `field=` is
     # taken.
 
-    data: Derived[tx.Optional[ArrayProtocol]]
+    _data: Deactivated[tx.Optional[ArrayProtocol]]
     _field: Deactivated[tx.Optional[ArrayProtocol]]
 
     @lazyproperty
@@ -361,7 +398,6 @@ class Affine(ConcreteTransformation):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
-        Frozen(),
     ] = None
 
     _matrix: tx.Annotated[
@@ -375,7 +411,7 @@ class Affine(ConcreteTransformation):
         matrix = arguments.get("matrix")
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
-            object.__setattr__(self, "data", matrix)
+            self.data = matrix
 
     # --- views --------------------------------------------------------
 
@@ -424,7 +460,6 @@ class Linear(ConcreteTransformation):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
-        Frozen(),
     ] = None
 
     _matrix: tx.Annotated[
@@ -438,7 +473,7 @@ class Linear(ConcreteTransformation):
         matrix = arguments.get("matrix")
         if matrix is not None:
             _refuse_data_too(self, arguments, "matrix")
-            object.__setattr__(self, "data", matrix)
+            self.data = matrix
 
     # --- views --------------------------------------------------------
 
@@ -467,7 +502,6 @@ class Rotation(Linear):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
-        Frozen(),
     ] = None
 
 
@@ -491,7 +525,6 @@ class Permutation(ConcreteTransformation):
             transformation.
             """
         ),
-        Frozen(),
     ] = None
 
     _permutation: tx.Annotated[
@@ -505,7 +538,7 @@ class Permutation(ConcreteTransformation):
         permutation = arguments.get("permutation")
         if permutation is not None:
             _refuse_data_too(self, arguments, "permutation")
-            object.__setattr__(self, "data", permutation)
+            self.data = permutation
 
     # --- views --------------------------------------------------------
 
@@ -533,7 +566,6 @@ class Scaling(ConcreteTransformation):
             transformation.
             """
         ),
-        Frozen(),
     ] = None
 
     _scale: tx.Annotated[
@@ -547,7 +579,7 @@ class Scaling(ConcreteTransformation):
         scale = arguments.get("scale")
         if scale is not None:
             _refuse_data_too(self, arguments, "scale")
-            object.__setattr__(self, "data", scale)
+            self.data = scale
 
     # --- views --------------------------------------------------------
 
@@ -575,7 +607,6 @@ class Translation(ConcreteTransformation):
             transformation.
             """
         ),
-        Frozen(),
     ] = None
 
     _translation: tx.Annotated[
@@ -589,7 +620,7 @@ class Translation(ConcreteTransformation):
         translation = arguments.get("translation")
         if translation is not None:
             _refuse_data_too(self, arguments, "translation")
-            object.__setattr__(self, "data", translation)
+            self.data = translation
 
     # --- views --------------------------------------------------------
 
