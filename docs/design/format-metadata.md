@@ -1837,6 +1837,58 @@ holds.
   generic support upstream. MGH decodes `history` when the metadata is
   built, which reads an MGZ to its end.
 
+### Addendum: the fifth review (two hooks)
+
+Where this addendum and the sections above disagree, this addendum
+holds. The private override points of a format are now two hooks, and
+everything else is public.
+
+- **The type of the record (M6).** `FileBasedMetadata` is generic in
+  its record: a format declares `FileBasedMetadata[nb.Nifti1Header]`
+  (or `[None]`) rather than redeclaring `raw`, and the metaclass keeps
+  the type argument as `_raw_class`, which `_accepts_raw` reads. A new
+  record is that type called without arguments, so `_default_raw` is
+  gone (`X5Raw()` builds an empty node). A shared base of several
+  formats must not derive from `FileBasedMetadata`, or its `raw` field
+  would win by the MRO: `_ZarrMetadataParser` is a parser only.
+- **Two hooks.** `_decode_raw` and `_encode_raw` (were `_decode` and
+  `_encode`). `_derive_raw` is gone: derived metadata holds a deep copy
+  of `raw`, and a format scrubs it by overriding `_reslice` or
+  `_select` with `super()` (NIfTI clears its slice slots and
+  `dim_info` in `_reslice`). `_check_raw` is gone:
+  `check_writable(*, image=None, raw=None)` takes the scratch record,
+  and NIfTI builds its own in a public override.
+- **Fields the data model owns (M6).** `_geometry` and the
+  check in `update_raw` are gone. A writer calls the public
+  `check_raw(raw, *, image=None, on_loss=None)` on its finished record,
+  after the slots it takes from the data model are set (NIfTI settles
+  `data_type` and `scl_*` after `update_raw`, so the check could not
+  live there). It decodes the record as a reader would, and reports as
+  approximated each changed field whose value the record does not hold
+  (numbers, and sequences of numbers, within single-precision
+  rounding). A format that must not overwrite a slot the writer owns
+  says so in `_encode_raw`: NIfTI writes `repetition_time` only for an
+  image without a time step, and the Zarr formats never write
+  `data_type`. A channel color is held as upper-case RGBA, so that the
+  `RRGGBB` of OME-Zarr reads back equal.
+- **The parsers.** `MetadataParser` is a `FileParser` mixin with no
+  registry and no private hook: a format implements `from_fileobj`
+  (NIfTI, BIDS) and `FileParser` routes a path to it, opened in binary
+  mode; MGH also overrides `from_filename`, to keep its tags lazy. The
+  HDF5 formats implement `sniff_h5` and `from_h5` (as `Hdf5Parser`
+  formats do), the Zarr formats `sniff_node` and `from_node` (as
+  `ZarrImage` does), and plain Zarr overrides `to_file`.
+- **The dispatcher.** `FileBasedMetadata` is the `@format_registry`
+  dispatcher (a `FormatDispatcher`, not a `FileBasedObject`):
+  `FileBasedMetadata.load(path, hint=...)` picks the format, and
+  `Metadata.load` delegates to it. The formats keep their parser first
+  among their bases and register into its registry; the BIDS sidecar
+  reader, not a `FileBasedMetadata`, is added to it by hand.
+  `OpaqueMetadata` (and so `ItkMetadata`) and `FlirtMetadata` refuse
+  `load` in public overrides. Since `_filebased` derives from a class
+  of `brainhops.io`, which imports `brainhops.datamodel`, the package
+  exports `FileBasedMetadata` lazily (PEP 562).
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

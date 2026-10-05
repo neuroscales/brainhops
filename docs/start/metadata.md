@@ -542,11 +542,12 @@ is the `nibabel` header, also available as `metadata.header`.
 | `space` | `sform_code`, `qform_code` | derived from the world space name |
 
 A *derived* field is read from the header, but on save the image's own
-geometry wins, and a value that disagrees with it is reported as
-approximated. The repetition time is the time step of the image, so a
-4-D image keeps it through a read and a save; an image whose geometry has
-no time step (one built in memory) stores the field's value there. NIfTI
-has no free-form store, so `extra` is unsupported.
+geometry wins: once the header is written, a changed value that the
+header does not hold is reported as approximated. The repetition time is
+the time step of the image, so a 4-D image keeps it through a read and a
+save; an image whose geometry has no time step (one built in memory)
+stores the field's value there. NIfTI has no free-form store, so `extra`
+is unsupported.
 
 Transformations keep their metadata through a read and a save as images
 do, and the readers that need them (FSL FNIRT, NiftyReg) still read
