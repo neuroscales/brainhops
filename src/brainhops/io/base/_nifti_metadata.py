@@ -112,10 +112,6 @@ class NiftiMetadata(
     `header` is the raw record under its familiar name.
     """
 
-    format: tx.Annotated[tx.Literal["nifti"], tx.Doc("Always `'nifti'`.")] = (
-        "nifti"
-    )
-
     raw: tx.Annotated[
         tx.Optional[nb.Nifti1Header],
         tx.Doc(

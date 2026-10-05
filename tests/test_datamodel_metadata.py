@@ -81,8 +81,6 @@ class LiteMetadata(
 ):
     """A format that stores three fields and free-form keys."""
 
-    format: tx.Literal["test-lite"] = "test-lite"
-
 
 class DictMetadata(
     FileBasedMetadata,
@@ -91,8 +89,6 @@ class DictMetadata(
 ):
     """A format whose record is a dict: `desc`, `cal`, `slices`, and any
     other key is free-form."""
-
-    format: tx.Literal["test-dict"] = "test-dict"
 
     _KNOWN = {"desc": "description", "cal": "display_range"}
 
@@ -153,8 +149,6 @@ class KeyvalMetadata(
 ):
     """A key/value format: what it has no slot for goes into `extra`."""
 
-    format: tx.Literal["test-keyval"] = "test-keyval"
-
     @classmethod
     def _import(cls, other, values, *, report) -> None:  # noqa: ANN001
         extra = dict(values.get("extra") or {})
@@ -173,7 +167,6 @@ class DialectMetadata(
 ):
     """A format whose `channels` support depends on the instance."""
 
-    format: tx.Literal["test-dialect"] = "test-dialect"
     dialect: str = "rich"
 
     def __post_init__(self) -> None:
@@ -803,8 +796,6 @@ def test_a_decoder_may_not_return_an_unsupported_field() -> None:
         on={"format": "test-wrong"},
         supports=("description",),
     ):
-        format: tx.Literal["test-wrong"] = "test-wrong"
-
         @classmethod
         def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
             return {"description": "d", "echo_time": 0.03}
@@ -854,8 +845,6 @@ class GeoMetadata(
     """A format whose `repetition_time` is the image's time step (the
     image is a number here), or the record's when it has none."""
 
-    format: tx.Literal["test-geo"] = "test-geo"
-
     @classmethod
     def _default_raw(cls) -> dict:
         return {}
@@ -901,8 +890,6 @@ class LazyMetadata(
     lazy=("history",),
 ):
     """A format whose `history` sits in a lazy part of the record."""
-
-    format: tx.Literal["test-lazy"] = "test-lazy"
 
     @classmethod
     def _default_raw(cls) -> dict:
@@ -1022,7 +1009,7 @@ def test_supports_takes_groups() -> None:
         on={"format": "test-group"},
         supports=(ProvenanceMetadata, "echo_time"),
     ):
-        format: tx.Literal["test-group"] = "test-group"
+        pass
 
     assert ByGroup.supported_fields == set(
         GROUPS[ProvenanceMetadata] + ("echo_time",)
@@ -1127,8 +1114,6 @@ def test_preferred_dtype() -> None:
     class Typed(
         FileBasedMetadata, on={"format": "test-typed"}, supports=("data_type",)
     ):
-        format: tx.Literal["test-typed"] = "test-typed"
-
         @classmethod
         def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
             return {"data_type": raw}
@@ -1329,11 +1314,21 @@ def test_lazy_is_declared() -> None:
         on={"format": "test-undeclared"},
         supports=("history",),
     ):
-        format: tx.Literal["test-undeclared"] = "test-undeclared"
-
         @classmethod
         def _decode(cls, raw, *, image=None) -> dict:  # noqa: ANN001
             return {"history": Lazy(_load_history)}
 
     with pytest.raises(TypeError, match="lazy"):
         Undeclared.from_raw({})
+
+
+def test_the_pinned_format_narrows_the_field() -> None:
+    # `on={"format": ...}` alone gives the field its literal type and its
+    # default, and refuses any other format.
+    field = next(f for f in fields(LiteMetadata) if f.name == "format")
+    assert field.default == "test-lite"
+    assert tx.get_args(field.type) == ("test-lite",)
+    assert LiteMetadata().format == "test-lite"
+    with pytest.raises(Exception, match="test-lite"):
+        LiteMetadata(format="test-dict")
+    assert type(Metadata(format="test-lite")) is LiteMetadata

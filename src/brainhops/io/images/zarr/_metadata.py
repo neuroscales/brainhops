@@ -157,10 +157,6 @@ class ZarrMetadata(
     name.
     """
 
-    format: tx.Annotated[tx.Literal["zarr"], tx.Doc("Always `'zarr'`.")] = (
-        "zarr"
-    )
-
     raw: tx.Annotated[
         tx.Optional[ZarrRaw],
         tx.Doc("The attributes of the array that was read, as JSON."),
@@ -344,10 +340,6 @@ class OmeZarrMetadata(
     `multiscale` and `omero` are the parts of the raw record under their
     familiar names.
     """
-
-    format: tx.Annotated[
-        tx.Literal["ome-zarr"], tx.Doc("Always `'ome-zarr'`.")
-    ] = "ome-zarr"
 
     raw: tx.Annotated[
         tx.Optional[OmeZarrRaw],

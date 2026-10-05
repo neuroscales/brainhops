@@ -170,8 +170,6 @@ class MghMetadata(
     familiar names.
     """
 
-    format: tx.Annotated[tx.Literal["mgh"], tx.Doc("Always `'mgh'`.")] = "mgh"
-
     raw: tx.Annotated[
         tx.Optional[MghRaw],
         tx.Doc(

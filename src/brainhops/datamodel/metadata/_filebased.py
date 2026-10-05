@@ -566,10 +566,6 @@ class OpaqueMetadata(FileBasedMetadata, on={"format": "opaque"}, supports=()):
     `FileBasedMetadata` with a `supports=` list instead.
     """
 
-    format: tx.Annotated[
-        tx.Literal["opaque"], tx.Doc("Always `'opaque'`.")
-    ] = "opaque"
-
     raw: tx.Annotated[
         None, tx.Doc("Always `None`: no raw record."), NoRepr(), NoEq()
     ] = None

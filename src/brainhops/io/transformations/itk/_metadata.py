@@ -44,6 +44,8 @@ _ITK = "ITK"
 class ItkMetadata(OpaqueMetadata, on={"format": "itk"}):
     """The metadata of an ITK `.tfm` or `.mat` file: none."""
 
+    # Declared again: the field of a subclass of a pinned format is
+    # narrowed to the parent's value (`'opaque'`), which `'itk'` is not.
     format: tx.Annotated[tx.Literal["itk"], tx.Doc("Always `'itk'`.")] = "itk"
 
 
@@ -54,10 +56,6 @@ class ItkH5Metadata(
     The metadata of an ITK `.h5` file: the version of ITK that wrote
     it, as `generated_by`. Its raw record is the root header.
     """
-
-    format: tx.Annotated[
-        tx.Literal["itk-h5"], tx.Doc("Always `'itk-h5'`.")
-    ] = "itk-h5"
 
     raw: tx.Annotated[
         tx.Optional[H5Header],

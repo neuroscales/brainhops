@@ -43,8 +43,6 @@ class X5Metadata(FileBasedMetadata, on={"format": "x5"}, supports=ALL):
     `node` and `header` are the two halves of the raw record.
     """
 
-    format: tx.Annotated[tx.Literal["x5"], tx.Doc("Always `'x5'`.")] = "x5"
-
     raw: tx.Annotated[
         tx.Optional[tx.Tuple[X5Header, tx.Optional[X5Node]]],
         tx.Doc(

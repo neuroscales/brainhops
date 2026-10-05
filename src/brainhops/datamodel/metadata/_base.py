@@ -674,19 +674,35 @@ def _format_name(obj: tx.Any) -> str:
 
 
 def _metadata_class(target: tx.Any) -> tx.Type[Metadata]:
-    """The class a `to()` target names: a class, or a format name."""
+    """
+    The class that a `to()` target names.
+
+    Parameters
+    ----------
+    target : type or str
+        A `Metadata` subclass, or the name of a format. A name is resolved
+        by the polymorphic constructor of `Metadata`, which selects the
+        subclass from `format`.
+
+    Returns
+    -------
+    type
+        The metadata class.
+
+    Raises
+    ------
+    ValueError
+        If `target` names no known format.
+    TypeError
+        If `target` is neither a class nor a string.
+    """
     if isinstance(target, type) and issubclass(target, Metadata):
         return target
     if isinstance(target, str):
-        if target == "generic":
-            return Metadata
-        stack = list(Metadata.__subclasses__())
-        while stack:
-            klass = stack.pop()
-            if _format_name(klass) == target:
-                return klass
-            stack.extend(klass.__subclasses__())
-        raise ValueError(f"No metadata class for the format {target!r}.")
+        cls = type(Metadata(format=target))
+        if cls is Metadata and target != _format_name(Metadata):
+            raise ValueError(f"No metadata class for the format {target!r}.")
+        return cls
     raise TypeError(
         f"Expected a Metadata subclass or a format name, got {target!r}."
     )

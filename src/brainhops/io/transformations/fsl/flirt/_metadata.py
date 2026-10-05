@@ -30,10 +30,6 @@ class FlirtMetadata(
     record.
     """
 
-    format: tx.Annotated[tx.Literal["flirt"], tx.Doc("Always `'flirt'`.")] = (
-        "flirt"
-    )
-
     raw: tx.Annotated[
         None, tx.Doc("Always `None`: no raw record."), NoRepr(), NoEq()
     ] = None
