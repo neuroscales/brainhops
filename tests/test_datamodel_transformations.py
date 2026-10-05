@@ -6,10 +6,13 @@ overrides, and the non-idempotent coefficient conversion that must not
 run twice.
 """
 
+import inspect
+
 import numpy as np
 from bagof.magic import fields_dict, replace
 
 from brainhops._core.properties import smartproperty
+from brainhops.datamodel._transformations import concrete as xconcrete
 from brainhops.datamodel._transformations import converters as xc
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
@@ -179,11 +182,14 @@ def test_computing_an_identity_only_sequence_still_simplifies() -> None:
 
 
 def test_cartesian_field_is_not_an_init_field_but_base_is() -> None:
-    # `field` is computed from `shape` on a CartesianField, so it is not a
-    # constructor-taken field there. The base CoordinatesField keeps
-    # `field` as a normal init field.
-    assert "field" not in fields_dict(CartesianField)
-    assert "field" in fields_dict(CoordinatesField)
+    # `data` and `field` are computed from `shape` on a CartesianField, so
+    # neither is taken by its constructor. The base CoordinatesField
+    # stores `data` as a normal init field, and takes `field=` as the
+    # convenience keyword for it.
+    assert "data" not in fields_dict(CartesianField)
+    assert "data" in fields_dict(CoordinatesField)
+    assert "field" not in inspect.signature(CartesianField).parameters
+    assert "field" in inspect.signature(CoordinatesField).parameters
 
 
 def test_replace_cartesian_field_changes_endpoints_and_keeps_shape() -> None:
@@ -233,16 +239,16 @@ def test_to_same_type_cartesian_field_changes_output() -> None:
 
 
 def test_replace_coordinates_field_round_trips_explicit_field() -> None:
-    # Guard against regressing the base: CoordinatesField takes `field` as
-    # a normal init field, so replace carries an explicit array over.
+    # Guard against regressing the base: CoordinatesField takes `data` as
+    # a normal init field, so replace carries the stored array over as is.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(field=values.copy(), degree=3, coeff=True)
+    cf = CoordinatesField(data=values.copy(), degree=3, coeff=True)
     replaced = replace(cf, degree=1)
     assert isinstance(replaced, CoordinatesField)
     assert not isinstance(replaced, CartesianField)
     assert replaced.degree == 1
     assert replaced.coeff is True
-    np.testing.assert_array_equal(np.asarray(replaced.field), values)
+    np.testing.assert_array_equal(np.asarray(replaced.data), values)
 
 
 def _contains_cartesian_field(result) -> bool:  # noqa: ANN001
@@ -350,21 +356,21 @@ def test_coeff_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
         calls["count"] += 1
         return field + 1.0
 
-    monkeypatch.setattr(xc, "value2coeff_field", spy)
+    monkeypatch.setattr(xconcrete, "value2coeff_field", spy)
     values = np.zeros((5, 6, 2))
     field = DisplacementField(field=values.copy(), degree=3, coeff=False)
     coeffs = field.to(coeff=True)
     assert coeffs.coeff is True
     assert calls["count"] == 1
-    np.testing.assert_allclose(coeffs.field, values + 1.0)
+    np.testing.assert_allclose(coeffs.data, values + 1.0)
 
-    # Passing `field=` explicitly supplies the already-converted field,
+    # Passing `data=` explicitly supplies the already-converted array,
     # so the conversion is suppressed rather than run a second time.
     calls["count"] = 0
     supplied = np.full((5, 6, 2), 7.0)
-    result = field.to(coeff=True, field=supplied)
+    result = field.to(coeff=True, data=supplied)
     assert calls["count"] == 0
-    np.testing.assert_allclose(result.field, supplied)
+    np.testing.assert_allclose(result.data, supplied)
 
 
 def test_identity_composes_with_affine_in_both_orders() -> None:

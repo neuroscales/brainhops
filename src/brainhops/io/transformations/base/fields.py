@@ -109,7 +109,7 @@ def ras_displacement_chain(
     return (
         RASToVoxel(matrix=_affines.inv(compact)),
         _xforms.DisplacementField(
-            field=field,
+            data=field,
             input=voxel,
             output=voxel,
             degree=degree,
@@ -163,7 +163,7 @@ def split_ras_displacement_chain(
             f"RAS to voxel, a displacement field, and voxel to RAS."
         )
     displacement = chain[1]
-    if displacement.field is None:
+    if displacement.data is None:
         raise WriterError(
             "This field has no displacements, so there is nothing to write."
         )
@@ -179,7 +179,9 @@ def split_ras_displacement_chain(
         )
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
-    field = displacement.field
+    # The array is written as it is stored: its encoding was checked
+    # against the format's above.
+    field = displacement.data
     backend = get_array_backend(field)
     field = backend.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:

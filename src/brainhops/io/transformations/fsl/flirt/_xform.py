@@ -3,6 +3,9 @@ import numpy as np
 import typing_extensions as tx
 from bagof.magic import KwOnly
 
+# core
+from brainhops._core.typing import Deactivated
+
 # externals
 # datamodel
 from brainhops.datamodel import systems as _systems
@@ -50,21 +53,24 @@ class FlirtTransform(
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
 
-    # `matrix` is computed on demand from the raw FLIRT matrix and the two
-    # image geometries, so it is not a stored, constructor-taken field
-    # here. Declaring it a `ClassVar` overrides the inherited init-field
-    # from `Affine` and keeps `matrix` out of `__init__` and `fields()`,
-    # while the property below serves reads.
-    matrix: tx.ClassVar[tx.Optional[tx.Any]]
+    # The affine is computed on demand from the raw FLIRT matrix and the
+    # two image geometries, so its `data` is not a stored,
+    # constructor-taken field here. Declaring it a `ClassVar` overrides
+    # the inherited init-field from `Affine` and keeps `data` out of
+    # `__init__` and `fields()`, while the property below serves reads
+    # (and, through it, the `matrix` view). The `matrix=` convenience is
+    # deactivated with it.
+    data: tx.ClassVar[tx.Optional[tx.Any]]
+    _matrix: Deactivated[None]
 
     @property
-    def matrix(self) -> tx.Optional[np.ndarray]:
+    def data(self) -> tx.Optional[np.ndarray]:
         """The reference-RAS to moving-RAS affine, as a `(3, 4)` matrix.
 
-        Reading this resolves the affine from the raw FLIRT matrix and the
-        two image geometries. It raises when the raw matrix is present but
-        either image is missing, because the affine cannot be placed in
-        world coordinates without both.
+        Reading this (or the `matrix` view) resolves the affine from the
+        raw FLIRT matrix and the two image geometries. It raises when the
+        raw matrix is present but either image is missing, because the
+        affine cannot be placed in world coordinates without both.
         """
         raw = self.flirt_matrix
         if raw is None:
@@ -82,8 +88,8 @@ class FlirtTransform(
         full = mov.fsl2ras @ np.linalg.inv(flirt) @ ref.ras2fsl
         return full[:-1]
 
-    @matrix.setter
-    def matrix(self, value: None) -> None:
+    @data.setter
+    def data(self, value: None) -> None:
         if value is not None:
             raise ValueError(
                 "The FLIRT affine is computed from the raw matrix and the "

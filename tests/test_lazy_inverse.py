@@ -184,7 +184,7 @@ def test_affine_cancels_symbolically_with_zero_matrix_inversions() -> None:
 
 def test_displacement_inverse_preserves_degree_coeff_bound() -> None:
     df = DisplacementField(
-        field=_small_field(), degree=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, coeff=True
     )
     inv = df.inverse()
     assert inv.degree == 3
@@ -196,9 +196,7 @@ def test_displacement_inverse_preserves_degree_coeff_bound() -> None:
 
 
 def test_coordinates_inverse_preserves_degree_coeff_bound() -> None:
-    cf = CoordinatesField(
-        field=_small_field(), degree=2, bound=1.0, coeff=True
-    )
+    cf = CoordinatesField(data=_small_field(), degree=2, bound=1.0, coeff=True)
     inv = cf.inverse()
     assert inv.degree == 2
     assert inv.bound == 1.0
@@ -230,7 +228,7 @@ def test_coefficient_inverse_is_a_coefficient_field() -> None:
     # The inverse of a coefficient field is itself a coefficient field. The
     # metadata carries across without materializing anything.
     df = DisplacementField(
-        field=_small_field(), degree=3, bound=2.0, coeff=True
+        data=_small_field(), degree=3, bound=2.0, coeff=True
     )
     inv = df.inverse()
     assert inv.coeff is True
@@ -253,7 +251,7 @@ def test_coefficient_inverse_refits_to_coefficients() -> None:
         field=values, degree=degree, bound=bound, coeff=False
     )
     coeff = df.to(coeff=True)
-    materialized = coeff.inverse().field
+    materialized = coeff.inverse().data
     expected = inverse_disp(values)
     # Reading the coefficient inverse back as values should recover the
     # inverse displacement field.
@@ -305,7 +303,7 @@ def test_coordinate_inverse_of_coefficients_stays_coefficients() -> None:
     assert inverse.coeff is True
     assert inverse.degree == coeffs.degree
     recovered = coeff2value_field(
-        np.asarray(inverse.field), degree=coeffs.degree, bound=coeffs.bound
+        np.asarray(inverse.data), degree=coeffs.degree, bound=coeffs.bound
     )
     np.testing.assert_allclose(
         recovered, np.asarray(cf.inverse().field), atol=1e-6
@@ -336,7 +334,7 @@ def test_coordinate_inverse_cancels_rather_than_inverting() -> None:
 
 def test_double_inverse_returns_operand() -> None:
     df = DisplacementField(
-        field=_small_field(), degree=3, coeff=True, bound=2.0
+        data=_small_field(), degree=3, coeff=True, bound=2.0
     )
     assert df.inverse().inverse() is df
 
@@ -369,7 +367,7 @@ def test_cancellation_does_not_materialize() -> None:
     # cancellation touched the field it would raise. It collapses to the
     # identity instead, which proves the pair is removed before any
     # numeric inversion.
-    df = DisplacementField(field=_small_field(), degree=3, coeff=True)
+    df = DisplacementField(data=_small_field(), degree=3, coeff=True)
     result = Sequence(transformations=[df, df.inverse()]).compute()
     assert isinstance(result, Identity)
 
@@ -498,7 +496,7 @@ def test_is_identity_compute_false_does_not_materialize() -> None:
     # inverse never can. is_identity(compute=False) must answer from the
     # operand without reading the lazy field, so it must not raise.
     for operand in (
-        DisplacementField(field=_small_field(), degree=3, coeff=True),
+        DisplacementField(data=_small_field(), degree=3, coeff=True),
         CoordinatesField(field=_small_field()),
     ):
         inv = operand.inverse()

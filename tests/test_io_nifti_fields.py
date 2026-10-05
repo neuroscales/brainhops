@@ -390,7 +390,7 @@ def test_a_spline_field_is_not_written(tmp_path) -> None:  # noqa: ANN001
         transformations=(
             RASToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
-                field=np.zeros((*SHAPE, 3), "float32"), coeff=True
+                data=np.zeros((*SHAPE, 3), "float32"), coeff=True
             ),
             VoxelToRAS(matrix=np.eye(4)[:3]),
         )

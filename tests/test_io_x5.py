@@ -483,7 +483,7 @@ def test_splines_x5_cannot_hold_are_refused(tmp_path: Path) -> None:
         (dict(bound="nearest"), "boundary"),
     ):
         spline = xforms.DisplacementField(
-            field=field.field,
+            data=field.data,
             input=field.input,
             output=field.output,
             coeff=True,

@@ -742,7 +742,7 @@ def test_spline_coefficients_are_not_written() -> None:
         transformations=[
             LPSToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
-                field=np.zeros((*SHAPES[3], 3)),
+                data=np.zeros((*SHAPES[3], 3)),
                 input=voxel,
                 output=voxel,
                 degree=3,

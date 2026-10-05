@@ -149,7 +149,10 @@ def axis_counts(
             if t.shape is not None:
                 ni = no = len(t.shape)
         elif isinstance(t, (DisplacementField, CoordinatesField)):
-            field = t.field
+            # Only the shape is read, and it is the same in every
+            # encoding: it is read off the stored array, so that a count
+            # never decodes a field of spline coefficients.
+            field = t.data
             if field is not None:
                 no = int(field.shape[-1])
                 if isinstance(t, DisplacementField):
