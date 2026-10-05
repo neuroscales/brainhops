@@ -12,10 +12,11 @@ class hierarchy that mirrors the hierarchy of the images (`Image`,
   case and stored in BIDS units, plus `extra`, a free-form store of
   string keys. In-memory images and transformations carry it, and
   formats convert through it.
-- [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata]
-  is the base of the metadata of a file format, which reads its fields
-  from the raw record of the format (a `nibabel` header, the attributes
-  of a Zarr array, ...) and writes them back.
+- [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata], which
+  lives in `brainhops.io.metadata` as `FileBasedImage` lives in
+  `brainhops.io.images`, is the base of the metadata of a file format,
+  which reads its fields from the raw record of the format (a `nibabel`
+  header, the attributes of a Zarr array, ...) and writes them back.
 - Each format has its own `<Fmt>Metadata` class, next to its parser
   under `brainhops.io`. `Metadata.load(path)` reads the metadata of a
   file without its data.
@@ -41,7 +42,6 @@ private modules of this package, which the format author's guide lists
 
 __all__ = [
     "Metadata",
-    "FileBasedMetadata",
     "UNSUPPORTED",
     "Scope",
     "GeneratedBy",
@@ -52,8 +52,6 @@ __all__ = [
     "MetadataLossError",
     "metadata_loss_policy",
 ]
-
-import typing_extensions as tx
 
 from ._base import Metadata
 from ._report import (
@@ -71,17 +69,3 @@ from ._vocabulary import Scope
 # `inspect.getsource`, IPython's `??` and doctest discovery, which look
 # the source up through `__module__`. Pickles name the private module,
 # and load as well.
-
-if tx.TYPE_CHECKING:
-    from ._filebased import FileBasedMetadata
-
-
-def __getattr__(name: str) -> tx.Any:
-    # `FileBasedMetadata` derives from the dispatcher of `brainhops.io`,
-    # which imports this package: it is imported on first use, once
-    # `brainhops.datamodel` is loaded (see `_filebased`).
-    if name == "FileBasedMetadata":
-        from ._filebased import FileBasedMetadata
-
-        return FileBasedMetadata
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

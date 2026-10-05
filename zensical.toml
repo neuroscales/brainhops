@@ -80,7 +80,11 @@ nav = [
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         "api/io/transformations/zarr.md",
       ]},
-      {"metadata" = "api/io/metadata.md"},
+      {"metadata" = [
+        "api/io/metadata/index.md",
+        "api/io/metadata/base.md",
+        "api/io/metadata/bids.md",
+      ]},
       {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [

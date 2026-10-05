@@ -27,15 +27,17 @@ from bagof.magic import HIDE_IF_NONE, Magic, replace
 
 from brainhops.datamodel.metadata import (
     ConversionReport,
-    FileBasedMetadata,
     GeneratedBy,
 )
-from brainhops.datamodel.metadata._filebased import OpaqueMetadata
 
 # internals
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import Hdf5MetadataParser
 from brainhops.io.base.parsers import Confidence
+from brainhops.io.metadata import (
+    FileBasedMetadata,
+    OpaqueMetadata,
+)
 
 _ITK = "ITK"
 

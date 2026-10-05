@@ -7,7 +7,7 @@ reads, edits and converts it, is in the user guide
 design memo (`docs/design/format-metadata.md`).
 
 A format's metadata is one class, `<Fmt>Metadata`, a subclass of
-[`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata]
+[`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata]
 that lives next to the format's parser. It says which vocabulary fields
 the format can store, and how to decode them from the format's own
 **raw record** (a `nibabel` header, a dict of attributes, ...) and encode
@@ -29,14 +29,16 @@ image classes import.
 ## Where the names live
 
 The package `brainhops.datamodel.metadata` exports what a user needs
-(`Metadata`, `FileBasedMetadata`, `UNSUPPORTED`, `Scope`, the value
-classes, the report and the loss policy). A format author imports the
-rest from the private modules that define it:
+(`Metadata`, `UNSUPPORTED`, `Scope`, the value classes, the report and
+the loss policy). The base of a format's metadata lives in `brainhops.io`,
+as `FileBasedImage` does, since it derives from the dispatcher of the
+formats: `from brainhops.io.metadata import FileBasedMetadata,
+OpaqueMetadata`. The data model never imports it. A format author imports
+the rest from the private modules that define it:
 
 | Module | Names |
 |---|---|
 | `brainhops.datamodel.metadata._vocabulary` | the groups (`ProvenanceVocabulary`, ..., `StorageVocabulary`, the base `Vocabulary`), the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
-| `brainhops.datamodel.metadata._filebased` | `OpaqueMetadata` |
 | `brainhops.datamodel.metadata._field` | `MetadataField` |
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
 | `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |
@@ -175,7 +177,7 @@ stores what the data model says, whatever the metadata says, so
 value for it (NIfTI writes `repetition_time` only for an image without a
 time step; the Zarr formats never write `data_type`). The writer then
 calls the public
-[`check_raw`][brainhops.datamodel.metadata.FileBasedMetadata.check_raw]
+[`check_raw`][brainhops.io.metadata.FileBasedMetadata.check_raw]
 on its finished record: it decodes the record as a reader would, and
 reports as approximated each changed field whose value the record does
 not hold. So a field the data model owns needs no declaration.
@@ -183,7 +185,7 @@ not hold. So a field the data model owns needs no declaration.
 **Public overrides.** What else a format needs, it does by overriding a
 public method and calling `super()`:
 
-- [`check_writable(*, image=None, raw=None)`][brainhops.datamodel.metadata.FileBasedMetadata.check_writable]
+- [`check_writable(*, image=None, raw=None)`][brainhops.io.metadata.FileBasedMetadata.check_writable]
   runs `update_raw` and `check_raw` on a scratch record, a copy of `raw`
   by default. A format whose writer starts from another record builds it
   and passes it on (NIfTI: the record, with the shape and the time step
@@ -258,11 +260,11 @@ field as lost rather than writing entries that describe nothing.
 
 **One word for the raw record.** Every name says "raw". A reader builds
 the metadata with
-[`from_raw`][brainhops.datamodel.metadata.FileBasedMetadata.from_raw],
+[`from_raw`][brainhops.io.metadata.FileBasedMetadata.from_raw],
 which decodes the raw record and keeps the read-time snapshot. A parser
 given a raw record and a `metadata` that is not that record's (explicit,
 or carried by `replace()`) uses
-[`update_from_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_from_raw],
+[`update_from_raw`][brainhops.io.metadata.FileBasedMetadata.update_from_raw],
 which decodes the new raw record and keeps the changes. A parser does
 both in one call from its `__post_init__`,
 `sync_metadata(self, MyMetadata, raw, image=self)`
@@ -273,16 +275,16 @@ and `force=True` decodes it afresh.
 
 A writer starts from
 `metadata, report = MyMetadata.writable(obj.metadata)`
-([`writable`][brainhops.datamodel.metadata.FileBasedMetadata.writable]:
+([`writable`][brainhops.io.metadata.FileBasedMetadata.writable]:
 the metadata converted to its class when it is of another, and a report
 that holds the conversion's losses, with no policy applied yet), builds
 its raw record, calls
-[`update_raw`][brainhops.datamodel.metadata.FileBasedMetadata.update_raw]
+[`update_raw`][brainhops.io.metadata.FileBasedMetadata.update_raw]
 with it and that report, as `on_loss=report` (a report given as
 `on_loss` is filled, never warned about; `force=` names a writer keyword
 that must win over the record, such as MGH `tr=`), sets what it takes
 from the data model, calls
-[`check_raw`][brainhops.datamodel.metadata.FileBasedMetadata.check_raw]
+[`check_raw`][brainhops.io.metadata.FileBasedMetadata.check_raw]
 on the finished record with the same report, and hands the report to
 [`apply_loss_policy`][brainhops.datamodel.metadata._report.apply_loss_policy]:
 one write, one report, one warning.

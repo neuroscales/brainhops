@@ -57,7 +57,6 @@ from abczarr import ZarrArray, ZarrGroup
 from brainhops.datamodel.metadata import (
     Channel,
     ConversionReport,
-    FileBasedMetadata,
 )
 from brainhops.datamodel.metadata._vocabulary import (
     DisplayVocabulary,
@@ -75,6 +74,7 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     SnifferContentError,
 )
+from brainhops.io.metadata import FileBasedMetadata
 from brainhops.io.metadata._json import (
     decode_object,
     encode_changes,

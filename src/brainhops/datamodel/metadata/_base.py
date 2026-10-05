@@ -102,6 +102,12 @@ class Metadata(
         ),
     ] = frozenset()
 
+    # The type of raw record that the class declares, as the type argument
+    # of a generic base (`FileBasedMetadata[nb.Nifti1Header]`), set by the
+    # metaclass: `type(None)` for `[None]`. `None` on `Metadata`, which
+    # keeps any record (see `raw` and `_accepts_raw`).
+    _raw_class: tx.ClassVar[tx.Optional[type]] = None
+
     # --- format and extras --------------------------------------------
 
     format: tx.Annotated[
@@ -407,7 +413,7 @@ class Metadata(
         attributes of a Zarr node, the JSON of an x5 node.
 
         This is the `load` of the dispatcher of the formats,
-        [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata].
+        [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata].
         The metadata class of a format whose files hold metadata reads the
         file as a file of that format; one whose files hold none (FLIRT,
         ITK `.tfm` and `.mat`) refuses.
@@ -447,9 +453,9 @@ class Metadata(
         NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
         ```
         """
+        # The dispatcher lives in `brainhops.io`, which imports this module.
         import brainhops.io  # noqa: F401  (registers the formats)
-
-        from ._filebased import FileBasedMetadata
+        from brainhops.io.metadata import FileBasedMetadata
 
         return FileBasedMetadata.load(file, **kwargs)
 

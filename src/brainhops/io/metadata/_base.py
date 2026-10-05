@@ -2,9 +2,9 @@
 `FileBasedMetadata`: the metadata of a file format, its hooks, and the
 dispatcher among the formats whose files hold metadata.
 
-This module imports `brainhops.io`, whose dispatcher it derives from, so
-the package (`brainhops.datamodel.metadata`) imports it lazily: no module
-of `brainhops.datamodel` imports it while `brainhops.datamodel` loads.
+It lives in `brainhops.io`, next to `FileBasedImage`, because it derives
+from the dispatcher of the formats; the format-agnostic `Metadata` it
+extends lives in `brainhops.datamodel.metadata`, which never imports it.
 """
 
 __all__ = ["FileBasedMetadata", "OpaqueMetadata"]
@@ -19,13 +19,22 @@ from bagof.magic import NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
+from brainhops.datamodel.enums import AxisType
+from brainhops.datamodel.metadata._base import (
+    FIELDS,
+    Metadata,
+    _format_name,
+    _History,
+)
+from brainhops.datamodel.metadata._report import (
+    ConversionReport,
+    OnLoss,
+    apply_loss_policy,
+    short,
+)
+from brainhops.datamodel.metadata._sentinel import UNSUPPORTED
 from brainhops.io.base._base import FormatDispatcher, format_registry
 from brainhops.io.base.parsers import ParserNotImplementedError
-
-from ..enums import AxisType
-from ._base import FIELDS, Metadata, _format_name, _History
-from ._report import ConversionReport, OnLoss, apply_loss_policy, short
-from ._sentinel import UNSUPPORTED
 
 RawT = tx.TypeVar("RawT")
 """The type of the raw record of a format (see `FileBasedMetadata`)."""
@@ -44,7 +53,8 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     `FileBasedMetadata[None]` for a format without one), and decodes and
     encodes the record with the hooks described in the format author's
     guide (`docs/dev/metadata-formats.md`). The record itself and the
-    read-time snapshot are fields of [`Metadata`][], so that generic
+    read-time snapshot are fields of
+    [`Metadata`][brainhops.datamodel.metadata.Metadata], so that generic
     metadata carries them through a conversion; reading and writing them
     is what this class adds.
 
@@ -79,11 +89,6 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         NoRepr(),
         NoEq(),
     ] = None
-
-    # The type argument of the base (`FileBasedMetadata[T]`), set by the
-    # metaclass: `type(None)` for `[None]`, and `None` when the class
-    # declares no type.
-    _raw_class: tx.ClassVar[tx.Optional[type]] = None
 
     # --- reading ------------------------------------------------------
 
@@ -305,8 +310,10 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
             The image or transformation being written.
         on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
             What to do with the losses. By default, the policy in effect
-            (see [`metadata_loss_policy`][]). A writer passes the report of
-            its whole write, which it then acts on once.
+            (see
+            [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy]).
+            A writer passes the report of its whole write, which it then
+            acts on once.
         force : collection of str, optional
             The fields to encode even when they did not change.
 

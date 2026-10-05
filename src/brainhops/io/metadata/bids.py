@@ -28,7 +28,6 @@ from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     ConversionReport,
     EncodingDirection,
-    FileBasedMetadata,
     Metadata,
 )
 from brainhops.datamodel.metadata._report import OnLoss, apply_loss_policy
@@ -40,6 +39,7 @@ from brainhops.datamodel.metadata._vocabulary import (
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 
+from ._base import FileBasedMetadata
 from ._json import decode_object, jsonable, sidecar_key, to_json
 
 

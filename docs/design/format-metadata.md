@@ -1889,6 +1889,26 @@ everything else is public.
   of `brainhops.io`, which imports `brainhops.datamodel`, the package
   exports `FileBasedMetadata` lazily (PEP 562).
 
+### Addendum: the sixth review
+
+Where this addendum and the sections above disagree, this addendum
+holds.
+
+- **`FileBasedMetadata` lives in `brainhops.io`.** It derives from the
+  dispatcher of the formats, so it moved, with `OpaqueMetadata`, from
+  `brainhops.datamodel.metadata._filebased` to
+  `brainhops.io.metadata._base`, as `FileBasedImage` lives in
+  `brainhops.io.images.base`; both are imported from
+  `brainhops.io.metadata`. `brainhops.datamodel.metadata` exports ten
+  names (no `FileBasedMetadata`, and no lazy `__getattr__`), and no module
+  of the data model imports `brainhops.io` at module level. What the
+  data model knows about a format's record is generic: `Metadata`
+  declares `_raw_class` (`None`, any record), which the metaclass sets
+  from the type argument of any generic `Metadata` base, and
+  `Metadata.load` imports the dispatcher when it is called.
+  `preferred_dtype` asks the metadata for `_changed_fields` rather than
+  checking its class.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

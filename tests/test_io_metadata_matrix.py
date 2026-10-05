@@ -28,16 +28,16 @@ from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
     Channel,
     ConversionReport,
-    FileBasedMetadata,
     GeneratedBy,
     Metadata,
-)
-from brainhops.datamodel.metadata._filebased import (  # noqa: E402
-    OpaqueMetadata,
 )
 from brainhops.datamodel.metadata._vocabulary import VOCABULARY  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiMetadata  # noqa: E402
+from brainhops.io.metadata import (  # noqa: E402  # noqa: E402
+    FileBasedMetadata,
+    OpaqueMetadata,
+)
 from brainhops.io.transformations.fsl.flirt import FlirtMetadata  # noqa: E402
 from brainhops.io.transformations.itk import (  # noqa: E402
     ItkH5Metadata,
@@ -137,6 +137,8 @@ def test_every_format_is_in_the_matrix() -> None:
         and cls.__module__.startswith("brainhops.io")
         # A shared base, not a format (`_ZarrMetadataParser`).
         and not cls.__name__.startswith("_")
+        # A parametrized base (`FileBasedMetadata[nb.Nifti1Header]`).
+        and "[" not in cls.__name__
     }
     assert formats == set(FORMATS)
 

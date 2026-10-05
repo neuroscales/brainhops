@@ -37,7 +37,6 @@ from brainhops.datamodel.metadata import (
     Channel,
     ConversionReport,
     EncodingDirection,
-    FileBasedMetadata,
     GeneratedBy,
     Metadata,
     MetadataLossError,
@@ -47,7 +46,6 @@ from brainhops.datamodel.metadata import (
 )
 from brainhops.datamodel.metadata._dtype import preferred_dtype
 from brainhops.datamodel.metadata._field import MetadataField
-from brainhops.datamodel.metadata._filebased import OpaqueMetadata
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     collect_loss_reports,
@@ -67,6 +65,10 @@ from brainhops.datamodel.metadata._vocabulary import (
     TransformVocabulary,
 )
 from brainhops.datamodel.transformations import Affine, Translation
+from brainhops.io.metadata import (
+    FileBasedMetadata,
+    OpaqueMetadata,
+)
 
 
 def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202

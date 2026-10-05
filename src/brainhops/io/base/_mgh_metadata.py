@@ -55,7 +55,7 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops._core.numeric import shortest_decimal
-from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
+from brainhops.datamodel.metadata import ConversionReport
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base._mgh_tags import decode_history, encode_history
@@ -64,6 +64,7 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     SnifferContentError,
 )
+from brainhops.io.metadata import FileBasedMetadata
 
 # The voxel types MGH stores.
 _MGH_DTYPES = tuple(

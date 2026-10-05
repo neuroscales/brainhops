@@ -11,7 +11,7 @@ it first among its bases, as the image class of a format lists its
 parser.
 
 The parsers own no registry: the dispatcher among the formats is
-[`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata],
+[`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata],
 whose `load` is what
 [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls.
 """
@@ -56,7 +56,7 @@ class MetadataParser(FileParser):
 
     The parser of a format owns no registry: the class of the format
     also derives from
-    [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata],
+    [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata],
     and registers into its registry with
     [`register_format`][brainhops.io.base.register_format].
     """

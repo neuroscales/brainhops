@@ -6,7 +6,7 @@ __all__ = ["sync_metadata"]
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel.metadata import FileBasedMetadata
+from ._base import FileBasedMetadata
 
 
 def sync_metadata(

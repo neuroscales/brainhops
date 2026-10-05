@@ -15,8 +15,9 @@ __all__ = ["FlirtMetadata"]
 import typing_extensions as tx
 
 # internals
-from brainhops.datamodel.metadata import ConversionReport, FileBasedMetadata
+from brainhops.datamodel.metadata import ConversionReport
 from brainhops.io.base.parsers import ParserNotImplementedError
+from brainhops.io.metadata import FileBasedMetadata
 
 
 class FlirtMetadata(

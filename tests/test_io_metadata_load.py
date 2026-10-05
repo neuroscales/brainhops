@@ -16,10 +16,7 @@ nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
 from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
-from brainhops.datamodel.metadata import (  # noqa: E402
-    FileBasedMetadata,
-    Metadata,
-)
+from brainhops.datamodel.metadata import Metadata  # noqa: E402
 from brainhops.io.base._metadata_parser import MetadataParser  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
@@ -31,6 +28,7 @@ from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghMetadata,
 )
 from brainhops.io.images.nifti import NiftiMetadata  # noqa: E402
+from brainhops.io.metadata import FileBasedMetadata  # noqa: E402
 from brainhops.io.transformations.fsl.flirt import FlirtMetadata  # noqa: E402
 
 
@@ -111,7 +109,7 @@ def test_a_format_without_metadata_in_its_files_refuses(tmp_path) -> None:  # no
 
 @pytest.mark.parametrize("name", ["ItkMetadata", "OpaqueMetadata"])
 def test_an_opaque_format_refuses(tmp_path, name) -> None:  # noqa: ANN001
-    from brainhops.datamodel.metadata._filebased import OpaqueMetadata
+    from brainhops.io.metadata import OpaqueMetadata
     from brainhops.io.transformations.itk._metadata import ItkMetadata
 
     cls = {"ItkMetadata": ItkMetadata, "OpaqueMetadata": OpaqueMetadata}
@@ -123,8 +121,8 @@ def test_an_opaque_format_refuses(tmp_path, name) -> None:  # noqa: ANN001
 
 
 def test_load_is_resolved_by_the_bases() -> None:
-    from brainhops.datamodel.metadata._filebased import OpaqueMetadata
     from brainhops.io.base._base import FormatDispatcher
+    from brainhops.io.metadata import OpaqueMetadata
 
     def owner(cls: type) -> type:
         return next(c for c in cls.__mro__ if "load" in c.__dict__)

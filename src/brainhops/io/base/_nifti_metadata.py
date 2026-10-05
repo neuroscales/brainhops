@@ -64,13 +64,13 @@ from brainhops.datamodel.images import Image
 from brainhops.datamodel.metadata import (
     ConversionReport,
     EncodingDirection,
-    FileBasedMetadata,
 )
 from brainhops.datamodel.metadata._terms import AXES
 from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import Confidence, SnifferContentError
+from brainhops.io.metadata import FileBasedMetadata
 
 # NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
 _XCODES = {

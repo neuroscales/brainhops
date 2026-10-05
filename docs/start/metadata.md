@@ -14,8 +14,8 @@ classes mirror the image classes (`Image`, `FileBasedImage`,
   [`Metadata`][brainhops.datamodel.metadata.Metadata] (or `None`);
 - objects read from a file hold the metadata of their format, such as
   [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata], a
-  [`FileBasedMetadata`][brainhops.datamodel.metadata.FileBasedMetadata]
-  whose `raw` attribute is the format's own raw record (the `nibabel`
+  [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata]
+  (from `brainhops.io.metadata`) whose `raw` attribute is the format's own raw record (the `nibabel`
   header, for NIfTI).
 
 All metadata classes share one vocabulary of fields, named after the
@@ -104,6 +104,9 @@ A field NIfTI has no place for is `UNSUPPORTED`. The class says which:
 >>> bold.metadata.echo_time
 UNSUPPORTED
 >>> from brainhops.io.images.nifti import NiftiMetadata
+>>> from brainhops.io.metadata import FileBasedMetadata
+>>> isinstance(bold.metadata, FileBasedMetadata)
+True
 >>> NiftiMetadata.supports("echo_time"), NiftiMetadata.supports("description")
 (False, True)
 >>> sorted(NiftiMetadata.supported_fields)  # doctest: +NORMALIZE_WHITESPACE

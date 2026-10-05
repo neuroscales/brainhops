@@ -8,7 +8,6 @@ import numpy as np
 import typing_extensions as tx
 
 # internals
-from ._filebased import FileBasedMetadata
 from ._report import ConversionReport, OnLoss, apply_loss_policy
 from ._sentinel import UNSUPPORTED
 
@@ -69,11 +68,7 @@ def preferred_dtype(
     wanted = np.dtype(wanted)
     if _same_kind(array_dtype, wanted):
         return wanted
-    changed = (
-        metadata._changed_fields()
-        if isinstance(metadata, FileBasedMetadata)
-        else {"data_type": wanted}
-    )
+    changed = _changed_fields(metadata, {"data_type": wanted})
     if "data_type" in changed:
         report = ConversionReport(target=getattr(metadata, "format", None))
         report.approximated["data_type"] = (
@@ -167,10 +162,8 @@ def preferred_storage(
         return np.dtype(wanted), slope, intercept
     report = ConversionReport(target=getattr(metadata, "format", None))
     stored = preferred_dtype(metadata, array_dtype, on_loss=report)
-    changed = (
-        metadata._changed_fields()
-        if isinstance(metadata, FileBasedMetadata)
-        else {"scale_slope": slope, "scale_intercept": intercept}
+    changed = _changed_fields(
+        metadata, {"scale_slope": slope, "scale_intercept": intercept}
     )
     for name in ("scale_slope", "scale_intercept"):
         if name in changed and changed[name] is not None:
@@ -206,3 +199,20 @@ def _fits(
         and rounded.min() >= info.min
         and rounded.max() <= info.max
     )
+
+
+def _changed_fields(
+    metadata: tx.Any, assigned: tx.Dict[str, tx.Any]
+) -> tx.Dict[str, tx.Any]:
+    """
+    The fields of `metadata` that changed since it was read.
+
+    The metadata of a file format (`FileBasedMetadata`, in `brainhops.io`,
+    which this package does not import) knows what changed since the
+    read, with `_changed_fields`. For any other metadata, every field in
+    `assigned` counts as changed.
+    """
+    changed_fields = getattr(metadata, "_changed_fields", None)
+    if changed_fields is None:
+        return assigned
+    return changed_fields()
