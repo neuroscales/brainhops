@@ -17,6 +17,7 @@ __all__ = [
     "MicroscopyVocabulary",
     "ProvenanceVocabulary",
     "Scope",
+    "StorageVocabulary",
     "TransformVocabulary",
 ]
 
@@ -331,8 +332,7 @@ class DiffusionVocabulary(Vocabulary):
 class DisplayVocabulary(Vocabulary):
     """
     Vocabulary group: how the values are shown and what they are
-    (`volume` scope, except `data_type`, `grid`). Not meant to be
-    instantiated; see [`Metadata`][].
+    (`volume` scope). Not meant to be instantiated; see [`Metadata`][].
     """
 
     display_range: tx.Annotated[
@@ -360,17 +360,50 @@ class DisplayVocabulary(Vocabulary):
         ConvertTo(unit),
     ] = None
 
+
+class StorageVocabulary(Vocabulary):
+    """
+    Vocabulary group: how the values of the data are stored in the file
+    (`file` scope). Not meant to be instantiated; see [`Metadata`][].
+
+    The loaded array always holds the values themselves. A file that
+    stores integers with an intensity scaling (NIfTI `scl_slope` and
+    `scl_inter`) loads as floating-point values, which are
+    `stored * scale_slope + scale_intercept`. A writer stores the data as
+    `data_type`, with the scaling, when the values of the array are of
+    that kind and fit the scaling, so that a scaled integer file is
+    written back as it was read. Otherwise the writer stores the array as
+    it is, and reports a changed field it could not use.
+    """
+
     data_type: tx.Annotated[
         Maybe[np.dtype],
         tx.Doc(
-            "The element type of the data as stored (in native byte "
-            "order), which may differ from the type of the loaded array "
-            "(a scaled integer file loads as floats). Writers store the "
-            "data as this type when the array's values are of its kind, "
-            "and a `dtype=` writer option wins over it."
+            "The element type of the data as stored, in native byte "
+            "order. It may differ from the type of the loaded array: a "
+            "scaled integer file loads as floating-point values. A "
+            "`dtype=` writer option wins over it."
         ),
-        Scope(GRID),
+        Scope(FILE),
         ConvertTo(dtype),
+    ] = None
+
+    scale_slope: tx.Annotated[
+        Maybe[float],
+        tx.Doc(
+            "The slope of the intensity scaling: a value is `stored * "
+            "scale_slope + scale_intercept`. `None` means no scaling."
+        ),
+        Scope(FILE),
+    ] = None
+
+    scale_intercept: tx.Annotated[
+        Maybe[float],
+        tx.Doc(
+            "The intercept of the intensity scaling (see `scale_slope`). "
+            "`None` means no intercept."
+        ),
+        Scope(FILE),
     ] = None
 
 
@@ -449,6 +482,7 @@ GROUPS: tx.Dict[type, tx.Tuple[str, ...]] = {
         MRIVocabulary,
         DiffusionVocabulary,
         DisplayVocabulary,
+        StorageVocabulary,
         MicroscopyVocabulary,
         TransformVocabulary,
     )

@@ -53,6 +53,7 @@ from brainhops.datamodel.metadata import (
     MRIVocabulary,
     OpaqueMetadata,
     ProvenanceVocabulary,
+    StorageVocabulary,
     TransformVocabulary,
     Unsupported,
     apply_loss_policy,
@@ -987,13 +988,14 @@ def test_the_vocabulary_is_the_groups_in_order() -> None:
         MRIVocabulary,
         DiffusionVocabulary,
         DisplayVocabulary,
+        StorageVocabulary,
         MicroscopyVocabulary,
         TransformVocabulary,
     ]
     assert VOCABULARY == sum(GROUPS.values(), ())
     assert VOCABULARY[:2] == ("name", "description")
     assert GROUPS[DiffusionVocabulary] == ("bvalues", "bvectors")
-    assert "data_type" in GROUPS[DisplayVocabulary]
+    assert "data_type" in GROUPS[StorageVocabulary]
     assert "extra" not in VOCABULARY
     assert len(set(VOCABULARY)) == len(VOCABULARY)
     # A group's fields convert, as the class that inherits them does.
@@ -1089,7 +1091,8 @@ def test_data_type_is_a_native_dtype() -> None:
     assert meta.to_bids() == {"DataType": "int16"}
     assert Metadata.from_bids({"DataType": "uint8"}).data_type == np.uint8
     # A resampling changes the kind of the values: it is grid-bound.
-    assert meta.derive(grid_changed=True).data_type is None
+    # How the file stores the values: kept by `derive` (`file` scope).
+    assert meta.derive(grid_changed=True).data_type == np.int16
     assert meta.derive(volumes=[0]).data_type == np.int16
 
 

@@ -139,6 +139,8 @@ def test_plain_zarr_cannot_hold_diffusion() -> None:
     assert ZarrMetadata.unsupported_fields == {
         "bvalues",
         "bvectors",
+        "scale_slope",
+        "scale_intercept",
     }
     _, report = _to(
         Metadata(bvalues=(0.0, 1000.0)),

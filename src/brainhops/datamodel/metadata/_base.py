@@ -35,6 +35,7 @@ from ._vocabulary import (
     MRIVocabulary,
     ProvenanceVocabulary,
     Scope,
+    StorageVocabulary,
     TransformVocabulary,
 )
 
@@ -45,6 +46,7 @@ class Metadata(
     MRIVocabulary,
     DiffusionVocabulary,
     DisplayVocabulary,
+    StorageVocabulary,
     MicroscopyVocabulary,
     TransformVocabulary,
     metaclass=MetadataMeta,
@@ -68,9 +70,10 @@ class Metadata(
     `Metadata(format="nifti", ...)` builds a `NiftiMetadata`, and an
     unknown format builds a plain `Metadata`.
 
-    The vocabulary is declared by six groups, which `Metadata` inherits:
+    The vocabulary is declared by seven groups, which `Metadata` inherits:
     [`ProvenanceVocabulary`][], [`MRIVocabulary`][], [`DiffusionVocabulary`][],
-    [`DisplayVocabulary`][], [`MicroscopyVocabulary`][] and
+    [`DisplayVocabulary`][], [`StorageVocabulary`][],
+    [`MicroscopyVocabulary`][] and
     [`TransformVocabulary`][]. Each field holds a value, `None` when the
     value is unknown, or `UNSUPPORTED` when a format has no slot for the
     field. The hooks that a format implements are described in the format

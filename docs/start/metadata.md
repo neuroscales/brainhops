@@ -23,7 +23,7 @@ All metadata classes share one vocabulary of fields, named after the
 stored in BIDS units: `repetition_time` is `RepetitionTime`, in seconds.
 A field holds a value, `None` (unknown), or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] (this format has
-no place to store it). The vocabulary comes in six groups, each a class
+no place to store it). The vocabulary comes in seven groups, each a class
 that `Metadata` inherits:
 [`ProvenanceVocabulary`][brainhops.datamodel.metadata.ProvenanceVocabulary]
 (description, history, space, ...),
@@ -32,7 +32,9 @@ time, slice timing, ...),
 [`DiffusionVocabulary`][brainhops.datamodel.metadata.DiffusionVocabulary]
 (`bvalues`, `bvectors`),
 [`DisplayVocabulary`][brainhops.datamodel.metadata.DisplayVocabulary]
-(display range, channels, unit and type of the values),
+(display range, channels, unit of the values),
+[`StorageVocabulary`][brainhops.datamodel.metadata.StorageVocabulary]
+(type and intensity scaling of the stored values),
 [`MicroscopyVocabulary`][brainhops.datamodel.metadata.MicroscopyVocabulary]
 and
 [`TransformVocabulary`][brainhops.datamodel.metadata.TransformVocabulary]
@@ -82,7 +84,10 @@ The header is decoded into the common fields when the file is read:
 ```
 
 `data_type` is the type of the data in the file, which may differ from
-the type of the loaded array (a scaled integer file loads as floats).
+the type of the loaded array. A file that stores integers with an
+intensity scaling (`scl_slope` and `scl_inter`) loads as floating-point
+values, and its metadata holds the scaling as `scale_slope` and
+`scale_intercept`.
 
 The header itself is the raw record of the metadata. It is still
 available as `bold.header`, and it is the same object:
@@ -103,8 +108,9 @@ UNSUPPORTED
 (False, True)
 >>> sorted(NiftiMetadata.supported_fields)  # doctest: +NORMALIZE_WHITESPACE
 ['data_type', 'description', 'display_range', 'intent',
- 'phase_encoding_direction', 'repetition_time', 'slice_encoding_direction',
- 'slice_timing', 'sources', 'space']
+ 'phase_encoding_direction', 'repetition_time', 'scale_intercept',
+ 'scale_slope', 'slice_encoding_direction', 'slice_timing', 'sources',
+ 'space']
 
 ```
 
@@ -112,12 +118,14 @@ UNSUPPORTED
 
 Reading and saving again keeps the header: the description, the slice
 timing, the display range, the auxiliary file and the extensions are
-written back as they were read. Geometry, units and intensity scaling are
-always taken from the image itself. The data is stored as `data_type`
-when its values are of that kind (integers as an integer type, floats as
-a float type), so a label map read as `uint8` is saved as `uint8`, but a
-resampled, floating point version of it is not rounded; a `dtype=` option
-of `save` wins over it.
+written back as they were read. Geometry and units are always taken from
+the image itself. The data is stored as `data_type` when its values are
+of that kind (integers as an integer type, floats as a float type), so a
+label map read as `uint8` is saved as `uint8`, but a resampled, floating
+point version of it is not rounded. A scaled integer file is saved with
+its scaling when the values still fit it, so that it is written back as
+it was read; a resampled version is saved unscaled, as floats. A
+`dtype=` option of `save` wins over both.
 
 A field you set is written over the header; a field you set to `None` is
 cleared in it. A field you leave alone keeps the header's value, so an

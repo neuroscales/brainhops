@@ -53,6 +53,7 @@ __all__ = [
     "MRIVocabulary",
     "DiffusionVocabulary",
     "DisplayVocabulary",
+    "StorageVocabulary",
     "MicroscopyVocabulary",
     "TransformVocabulary",
     "Metadata",
@@ -68,6 +69,7 @@ __all__ = [
     "LossPolicy",
     "OnLoss",
     "preferred_dtype",
+    "preferred_storage",
     "Lazy",
     "LazyField",
 ]
@@ -75,7 +77,7 @@ __all__ = [
 from brainhops._core.fields import Lazy, LazyField
 
 from ._base import Metadata
-from ._dtype import preferred_dtype
+from ._dtype import preferred_dtype, preferred_storage
 from ._field import MetadataField
 from ._filebased import FileBasedMetadata, OpaqueMetadata
 from ._report import (
@@ -106,6 +108,7 @@ from ._vocabulary import (
     MRIVocabulary,
     ProvenanceVocabulary,
     Scope,
+    StorageVocabulary,
     TransformVocabulary,
 )
 

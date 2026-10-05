@@ -82,6 +82,8 @@ FULL = dict(
     ),
     data_unit="a.u.",
     data_type="float32",
+    scale_slope=0.5,
+    scale_intercept=10.0,
     objective_magnification=10.0,
     objective_numerical_aperture=0.3,
     illumination_type="epifluorescence",
@@ -159,7 +161,14 @@ def test_a_conversion_loses_exactly_the_unsupported_fields(cls) -> None:  # noqa
 
 # The fields each format derives from the geometry of the data model.
 _GEOMETRY = {
-    NiftiMetadata: {"repetition_time", "intent", "space"},
+    # The image writer stores the scaling with the data, not the record.
+    NiftiMetadata: {
+        "repetition_time",
+        "intent",
+        "space",
+        "scale_slope",
+        "scale_intercept",
+    },
     ZarrMetadata: {"data_type"},
 }
 

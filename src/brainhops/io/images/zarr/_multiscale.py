@@ -231,10 +231,7 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
             return
         metadata = self.metadata
         for index, level in enumerate(self._layout["images"]):
-            derived = metadata.derive(grid_changed=index > 0)
-            # The levels of a pyramid share the data type of its arrays.
-            derived.data_type = metadata.data_type
-            level.metadata = derived
+            level.metadata = metadata.derive(grid_changed=index > 0)
 
     # ---- load --------------------------------------------------------
 

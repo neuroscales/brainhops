@@ -27,7 +27,7 @@ from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.metadata import (
     MetadataField,
     apply_loss_policy,
-    preferred_dtype,
+    preferred_storage,
 )
 from brainhops.datamodel.systems import (
     CoordinateSystem,
@@ -1282,6 +1282,7 @@ def _apply_metadata(
     intent: bool = True,
     record: bool = True,
     data_type: bool = False,
+    data: tx.Any = None,
 ) -> _NiftiObject:
     """
     Write the metadata of `obj` into the header of a freshly built image.
@@ -1297,9 +1298,12 @@ def _apply_metadata(
        intent when none is set);
     3. the common fields that changed since the read (all of them for an
        object built in memory or converted from another format);
-    4. with `data_type` (the image writer), the stored data type: the
-       metadata's `data_type` when the array's values are of its kind
-       (see `preferred_dtype`). A `dtype` override still wins.
+    4. with `data_type` (the image writer, which passes the values it
+       writes as `data`), the stored data type and intensity scaling:
+       the metadata's `data_type`, `scale_slope` and `scale_intercept`
+       when the values fit them (see `preferred_storage`). A `dtype`
+       override still wins. The writer has already stored the values
+       accordingly; this step sets the header and reports.
 
     Caller overrides are applied afterwards. What cannot be written is
     reported, and the report handed to the loss policy: `on_loss`, popped
@@ -1319,16 +1323,25 @@ def _apply_metadata(
     if metadata is not None:
         metadata.update_raw(image.header, image=obj, on_loss=report)
         if data_type and (overrides or {}).get("dtype") is None:
-            array_dtype = getattr(image.dataobj, "dtype", None)
-            if array_dtype is None:
-                array_dtype = image.get_data_dtype()
-            dtype = preferred_dtype(metadata, array_dtype, on_loss=report)
+            if data is None:
+                data = image.dataobj
+            dtype, slope, intercept = preferred_storage(
+                metadata, data, on_loss=report
+            )
             try:
                 image.header.set_data_dtype(dtype)
             except Exception:
                 report.approximated["data_type"] = (
                     f"NIfTI cannot store {dtype.name}"
                 )
+            if slope is not None:
+                image.header.set_slope_inter(slope, intercept)
+        elif not data_type:
+            # A transformation is stored unscaled.
+            changed = metadata._changed_fields()
+            for name in ("scale_slope", "scale_intercept"):
+                if changed.get(name) is not None:
+                    report.lost[name] = changed[name]
         apply_loss_policy(report, on_loss, stacklevel=4)
     return image
 
@@ -1405,15 +1418,19 @@ def _image_with_geometry(
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
     overrides = dict(overrides or {})
-    # The stored type: `dtype=`, else the metadata's `data_type` when the
-    # values are of its kind (reported, if need be, by `_apply_metadata`).
-    dtype = preferred_dtype(
+    # The stored type and scaling: `dtype=`, else the metadata's when the
+    # values fit them (reported, if need be, by `_apply_metadata`).
+    dtype, slope, intercept = preferred_storage(
         getattr(owner, "metadata", None),
-        getattr(data, "dtype", np.float32),
+        data,
         overrides.get("dtype"),
         on_loss="ignore",
     )
-    image = _new_nifti(data, sform, dtype)
+    stored = data
+    if slope is not None:
+        values = np.asarray(data, dtype=np.float64)
+        stored = np.round((values - intercept) / slope).astype(dtype)
+    image = _new_nifti(stored, sform, dtype)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
@@ -1421,6 +1438,6 @@ def _image_with_geometry(
     step = time_step(transformations)
     if step is not None and len(_shape(image.header)) >= 4:
         set_time_step(image.header, step)
-    _apply_metadata(image, owner, like, overrides, data_type=True)
+    _apply_metadata(image, owner, like, overrides, data_type=True, data=data)
     _apply_overrides(image, overrides)
     return image

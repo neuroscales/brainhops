@@ -18,6 +18,7 @@ covers:
 | `intent` (from the axes) | `intent_code` |
 | `space` (from the geometry) | `sform_code` / `qform_code` |
 | `data_type` | `datatype` (the writer's, see below) |
+| `scale_slope`, `scale_intercept` | `scl_slope`, `scl_inter` (the writer's) |
 
 `repetition_time`, `intent` and `space` are views of geometry that the
 writer takes from the data model; a value that disagrees with it is
@@ -36,11 +37,14 @@ oblique direction, or one in a world space) is lost.
 The writer keeps, from the raw record of the file that was read, what is
 safe to keep: `descrip`, `aux_file`, `cal_*`, `dim_info`, the `slice_*`
 fields (when the slice axis kept its length), a non-structural intent
-(images only) and the header extensions. Geometry, `xyzt_units` and
-`scl_*` always come from the data model and the writer. The image writer
-stores the data as `data_type` when the array's values are of its kind
-(see [`preferred_dtype`][brainhops.datamodel.metadata.preferred_dtype]);
-a `dtype=` writer option wins.
+(images only) and the header extensions. Geometry and `xyzt_units`
+always come from the data model. The image writer stores the data as
+`data_type` when the values of the array are of its kind, and with the
+intensity scaling `scale_slope` and `scale_intercept` when the values
+fit it, so that a scaled integer file is written back as it was read
+(see
+[`preferred_storage`][brainhops.datamodel.metadata.preferred_storage]).
+A `dtype=` writer option wins over both.
 """
 
 __all__ = ["NiftiMetadata"]
@@ -96,6 +100,8 @@ class NiftiMetadata(
     supports=(
         "description",
         "data_type",
+        "scale_slope",
+        "scale_intercept",
         "intent",
         "space",
         "display_range",
@@ -161,6 +167,7 @@ class NiftiMetadata(
             out["data_type"] = h.get_data_dtype()
         except Exception:
             pass
+        out["scale_slope"], out["scale_intercept"] = _scaling(h, image)
 
         freq, phase, slice_ = h.get_dim_info()
         if phase is not None and phase < len(AXES):
@@ -223,6 +230,10 @@ class NiftiMetadata(
             _encode_intent(h, changed["intent"], image, report)
         if "space" in changed:
             _check_space(h, changed["space"], report)
+        # `scale_slope` and `scale_intercept` are not encoded here: the
+        # image writer stores them with the data, when the values fit them
+        # (see `preferred_storage`), and `nibabel` rewrites `scl_*` from
+        # the data on save anyway.
         if "data_type" in changed and changed["data_type"] is not None:
             # The image writer settles it against the data afterwards
             # (see `preferred_dtype`).
@@ -277,6 +288,33 @@ def _bytes_field(header: nb.Nifti1Header, name: str) -> tx.Optional[str]:
         value = value.split(b"\0", 1)[0].decode("utf-8", "replace")
     value = str(value).strip()
     return value or None
+
+
+def _scaling(
+    header: nb.Nifti1Header, image: tx.Any
+) -> tx.Tuple[tx.Optional[float], tx.Optional[float]]:
+    """
+    The intensity scaling of a file, `(slope, intercept)`, or `None` for
+    each part that is absent.
+
+    A header read on its own holds `scl_slope` and `scl_inter`. The
+    header of an image loaded by `nibabel` does not (`nibabel` moves the
+    scaling into the array proxy and resets the header's to NaN), so the
+    proxy of the image is read then. A slope of 0 or NaN means no
+    scaling, as the NIfTI standard says, and so does the identity.
+    """
+    slope, intercept = float(header["scl_slope"]), float(header["scl_inter"])
+    if not slope or not np.isfinite(slope):
+        proxy = getattr(getattr(image, "image", None), "dataobj", None)
+        slope = float(getattr(proxy, "slope", 0.0) or 0.0)
+        intercept = float(getattr(proxy, "inter", 0.0) or 0.0)
+    if not slope or not np.isfinite(slope):
+        return None, None
+    if not np.isfinite(intercept):
+        intercept = 0.0
+    if slope == 1.0 and intercept == 0.0:
+        return None, None
+    return float32_repr(slope), float32_repr(intercept) or None
 
 
 def _time_scale(header: nb.Nifti1Header) -> tx.Optional[float]:

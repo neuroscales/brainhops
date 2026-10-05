@@ -662,3 +662,44 @@ def test_the_space_and_the_intent_are_terms(scan) -> None:  # noqa: ANN001
     assert meta.intent is IntentEnum.label
     nb_header = meta.update_raw()
     assert nb_header.get_intent()[0] == "label"
+
+
+def test_a_scaled_integer_file_round_trips(tmp_path) -> None:  # noqa: ANN001
+    values = np.arange(60, dtype=np.int16).reshape(3, 4, 5)
+    nii = nb.Nifti1Image(values, np.eye(4))
+    nii.header.set_slope_inter(0.5, 10.0)
+    nb.save(nii, str(tmp_path / "scaled.nii"))
+    image = io.load(str(tmp_path / "scaled.nii"))
+    meta = image.metadata
+    assert meta.data_type == np.int16
+    assert (meta.scale_slope, meta.scale_intercept) == (0.5, 10.0)
+    assert np.allclose(np.asarray(image.data), values * 0.5 + 10.0)
+    # Saved again, the values are stored as they were read.
+    image.save(str(tmp_path / "again.nii"))
+    again = nb.load(str(tmp_path / "again.nii"))
+    assert again.get_data_dtype() == np.int16
+    assert (again.dataobj.slope, again.dataobj.inter) == (0.5, 10.0)
+    assert np.array_equal(np.asarray(again.dataobj.get_unscaled()), values)
+    # A header read on its own holds the scaling too.
+    header = nb.Nifti1Header.from_fileobj(open(tmp_path / "again.nii", "rb"))
+    assert NiftiMetadata.from_raw(header).scale_slope == 0.5
+
+
+def test_values_that_do_not_fit_the_scaling_are_stored_unscaled(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    values = np.arange(60, dtype=np.int16).reshape(3, 4, 5)
+    nii = nb.Nifti1Image(values, np.eye(4))
+    nii.header.set_slope_inter(0.5, 10.0)
+    nb.save(nii, str(tmp_path / "scaled.nii"))
+    image = io.load(str(tmp_path / "scaled.nii"))
+    image.data = np.asarray(image.data) + 0.1  # e.g. after a resampling
+    image.save(str(tmp_path / "unscaled.nii"))
+    again = nb.load(str(tmp_path / "unscaled.nii"))
+    assert again.get_data_dtype().kind == "f"
+    assert np.allclose(again.get_fdata(), values * 0.5 + 10.1)
+    # Set by hand, the scaling that could not be used is reported.
+    image.metadata.scale_slope = 0.25
+    report = ConversionReport()
+    image.save(str(tmp_path / "set.nii"), on_loss=report)
+    assert "scale_slope" in report.approximated

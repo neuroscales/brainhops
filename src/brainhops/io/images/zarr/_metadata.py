@@ -143,6 +143,7 @@ class ZarrMetadata(
         DisplayVocabulary,
         MicroscopyVocabulary,
         TransformVocabulary,
+        "data_type",
         "extra",
     ),
 ):
