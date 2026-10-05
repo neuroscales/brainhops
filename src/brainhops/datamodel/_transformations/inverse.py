@@ -36,6 +36,7 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
+    _encode,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
 from .registries import INVERSE_CACHE, register_inverse
@@ -517,7 +518,8 @@ class InverseDisplacementField(
         field = forward.field
         if field is None:
             return None
-        return self._encode(inverse_disp(field), **forward._flags())
+        flags = forward.coeff, forward.degree, forward.bound
+        return _encode(inverse_disp(field), *flags)
 
     @property
     def degree(self) -> InterpolationOrder:
@@ -597,7 +599,8 @@ class InverseCoordinatesField(
         field = forward.field
         if field is None:
             return None
-        return self._encode(_inv_coords(field), **forward._flags())
+        flags = forward.coeff, forward.degree, forward.bound
+        return _encode(_inv_coords(field), *flags)
 
     @property
     def degree(self) -> InterpolationOrder:

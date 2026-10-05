@@ -17,10 +17,11 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import InitVar, KwOnly
+from bagof.magic import Frozen, InitVar, KwOnly
 
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
+from brainhops._core.properties import lazyproperty
 from brainhops._core.typing import (
     ArrayProtocol,
     Deactivated,
@@ -84,108 +85,6 @@ class ConcreteTransformation(Transformation):
         if other is not None:
             cls._reverse_type = other
             other._reverse_type = cls
-
-    # --- encoding -----------------------------------------------------
-    #
-    # Every concrete family stores its parameter as one array, `data`,
-    # and says what that array holds with the encoding flags listed in
-    # `metadata_fields` (a field's `coeff`, `degree` and `bound`). What a
-    # consumer reads is a named, read-only *view* -- `field`, `matrix`,
-    # `scale`, ... -- which is always the map, as values, whatever the
-    # flags. Another encoding is reached by conversion, never by a view:
-    # spline coefficients are `t.to(coeff=True).data`.
-    #
-    # The view's name doubles as a constructor keyword, a convenience
-    # that means "the map, as values", while the flags say how it is
-    # stored: `Affine(matrix=m)` is `Affine(data=m)`, and
-    # `DisplacementField(field=u, coeff=True, degree=3)` stores the
-    # cubic coefficients of `u`, exactly as
-    # `DisplacementField(field=u, degree=3).to(coeff=True)` does. Each
-    # family declares the keyword as an `InitVar` under the view's name
-    # with a leading underscore (so that the constructor takes `field=`
-    # while the class keeps its `field` view), and `__post_init__` below
-    # encodes it into `data` with `_encode_view`, which `.to(field=...)`
-    # shares.
-
-    _view: tx.ClassVar[tx.Optional[str]] = None
-    """The name of the view that reads the map, and of its keyword."""
-
-    _values_flags: tx.ClassVar[tx.Mapping[str, tx.Any]] = {}
-    """The flags under which `data` holds the map as values."""
-
-    def __post_init__(self, arguments: tx.Any) -> None:
-        # The convenience keyword is the map, as values, encoded into
-        # `data` under the flags. It fills `data`, so it cannot come with
-        # `data=` as well.
-        view = type(self)._view
-        values = arguments.get(view) if view is not None else None
-        if values is None:
-            return
-        name = type(self).__name__
-        if arguments.get("data") is not None:
-            # `replace()` reaches here too: it carries `data` over, so a
-            # convenience keyword passed through it always meets one.
-            raise TypeError(
-                f"{name}() got both data= and {view}=: {view}= is the "
-                f"map, as values, and fills data, so it cannot be "
-                f"combined with data=, which replace() also passes on. "
-                f"To change the map of an existing transformation, use "
-                f"t.to({view}=...), which encodes it under the flags of "
-                f"t; to store an array as it is encoded, pass data= alone."
-            )
-        self.data = type(self)._encode_view(values, **self._flags())
-
-    def _flags(self) -> tx.Dict[str, tx.Any]:
-        # The encoding flags of `data`, by name.
-        return {name: getattr(self, name) for name in self.metadata_fields}
-
-    @classmethod
-    def _holds_values(cls, flags: tx.Mapping[str, tx.Any]) -> bool:
-        # Whether `data` holds the map as values under these flags.
-        return all(
-            flags.get(flag, value) == value
-            for flag, value in cls._values_flags.items()
-        )
-
-    @classmethod
-    def _encode_view(cls, values: tx.Any, **flags) -> tx.Any:
-        """The `data` of the map given as values to its keyword.
-
-        This is the one path from a convenience keyword (`field=`,
-        `matrix=`, ...) to `data`, shared by the constructor and by
-        `.to(...)`: the values are encoded under `flags`.
-        """
-        return None if values is None else cls._encode(values, **flags)
-
-    @classmethod
-    def _encode(cls, values: tx.Any, **flags) -> tx.Any:
-        """Encode the map, given as values, into `data` under `flags`."""
-        return values
-
-    @classmethod
-    def _decode(cls, data: tx.Any, **flags) -> tx.Any:
-        """Decode `data`, encoded under `flags`, into the map as values."""
-        return data
-
-    def _values(self) -> tx.Any:
-        # The map, as values: what every view returns. Data that already
-        # holds values is returned as is. Anything else is decoded once,
-        # and the result is cached on the instance against the array and
-        # the flags it was decoded from, so that a view stays cheap to
-        # read and never serves a decode of a `data` or of flags that
-        # have since been replaced. (Like the inverse cache, it assumes
-        # the array is not edited in place.)
-        data = self.data
-        if data is None:
-            return None
-        flags = self._flags()
-        if self._holds_values(flags):
-            return data
-        cached = self.__dict__.get("_decoded")
-        if cached is None or cached[0] is not data or cached[1] != flags:
-            cached = (data, flags, type(self)._decode(data, **flags))
-            self.__dict__["_decoded"] = cached
-        return cached[2]
 
     def compute(
         self,
@@ -271,6 +170,9 @@ class TransformationField(ConcreteTransformation):
     the cubic coefficients of `u` in `data`, the same `data` as
     `DisplacementField(field=u, degree=3).to(coeff=True)`. To store an
     array as it is already encoded, pass it as `data=`.
+
+    `data` and the flags are frozen: a field is changed by `.to(...)`,
+    which builds a new one, so its cached `field` view never goes stale.
     """
 
     # --- class attributes ---------------------------------------------
@@ -278,8 +180,6 @@ class TransformationField(ConcreteTransformation):
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
     metadata_fields: tx.ClassVar[tx.Tuple[str]] = "degree", "bound", "coeff"
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("field",)
-    _view: tx.ClassVar[str] = "field"
-    _values_flags: tx.ClassVar[tx.Mapping[str, tx.Any]] = {"coeff": False}
 
     # --- attributes ---------------------------------------------------
 
@@ -292,11 +192,12 @@ class TransformationField(ConcreteTransformation):
             Read the map through `field`, which is always the values.
             """
         ),
+        Frozen(),
     ] = None
 
-    degree: tx.Annotated[InterpolationOrder, tx.Doc("The spline degree")] = (
-        InterpolationOrder.linear
-    )
+    degree: tx.Annotated[
+        InterpolationOrder, tx.Doc("The spline degree"), Frozen()
+    ] = InterpolationOrder.linear
 
     bound: tx.Annotated[
         tx.Union[BoundaryCondition, float],
@@ -307,6 +208,7 @@ class TransformationField(ConcreteTransformation):
             a constant value.
             """
         ),
+        Frozen(),
     ] = BoundaryCondition.nearest
 
     coeff: tx.Annotated[
@@ -318,6 +220,7 @@ class TransformationField(ConcreteTransformation):
             same either way.
             """
         ),
+        Frozen(),
     ] = False
 
     _field: tx.Annotated[
@@ -333,9 +236,18 @@ class TransformationField(ConcreteTransformation):
         KwOnly(),
     ] = None
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `field=` is the map, as values: it fills `data`, encoded as the
+        # flags say.
+        field = arguments.get("field")
+        if field is not None:
+            _refuse_data_too(self, arguments, "field")
+            data = _encode(field, self.coeff, self.degree, self.bound)
+            object.__setattr__(self, "data", data)
+
     # --- views --------------------------------------------------------
 
-    @property
+    @lazyproperty
     def field(self) -> tx.Optional[ArrayProtocol]:
         """
         The field, as values: an array of shape `(*shape, ndim)`.
@@ -343,49 +255,7 @@ class TransformationField(ConcreteTransformation):
         It is `data` itself when `coeff` is false, and `data` decoded
         from spline coefficients (once, then cached) when it is true.
         """
-        return self._values()
-
-    # --- encoding -----------------------------------------------------
-
-    @classmethod
-    def _encode(
-        cls,
-        values: ArrayProtocol,
-        *,
-        coeff: bool = False,
-        degree: InterpolationOrder = InterpolationOrder.linear,
-        bound: tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest,
-    ) -> ArrayProtocol:
-        if not coeff:
-            return values
-        values = _prefilter_dtype(values)
-        return value2coeff_field(values, degree=degree, bound=bound)
-
-    @classmethod
-    def _decode(
-        cls,
-        data: ArrayProtocol,
-        *,
-        coeff: bool = False,
-        degree: InterpolationOrder = InterpolationOrder.linear,
-        bound: tx.Union[BoundaryCondition, float] = BoundaryCondition.nearest,
-    ) -> ArrayProtocol:
-        if not coeff:
-            return data
-        return coeff2value_field(data, degree=degree, bound=bound)
-
-
-def _prefilter_dtype(values: ArrayProtocol) -> ArrayProtocol:
-    """The array the spline prefilter is run on, in a floating dtype.
-
-    The coefficients of integer or boolean values (a grid, say) are not
-    integers, and fitting them in an integer array would truncate them:
-    such an array is cast to `float32`, on its own backend. A floating
-    array keeps its dtype.
-    """
-    if values.dtype.kind in "biu":
-        return values.astype("float32")
-    return values
+        return _decode(self.data, self.coeff, self.degree, self.bound)
 
 
 class DisplacementField(TransformationField):
@@ -425,7 +295,9 @@ class CartesianField(CoordinatesField):
     # --- attributes ---------------------------------------------------
 
     shape: tx.Annotated[
-        tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
+        tx.Optional[tx.Tuple[int, ...]],
+        tx.Doc("The shape of the grid."),
+        Frozen(),
     ] = None
 
     # --- derived attributes -------------------------------------------
@@ -434,9 +306,9 @@ class CartesianField(CoordinatesField):
     # taken.
 
     data: Derived[tx.Optional[ArrayProtocol]]
-    _field: Deactivated[None]
+    _field: Deactivated[tx.Optional[ArrayProtocol]]
 
-    @property
+    @lazyproperty
     def field(self) -> tx.Optional[ArrayProtocol]:
         """
         The coordinates of the grid points, of shape `(*shape, ndim)`.
@@ -447,31 +319,14 @@ class CartesianField(CoordinatesField):
         """
         if self.shape is None:
             return None
-        if getattr(self, "_grid", None) is None:
-            ab = get_array_backend()
-            self._grid = ab.stack(
-                ab.meshgrid(
-                    *[ab.arange(s, dtype=float) for s in self.shape],
-                    indexing="ij",
-                ),
-                -1,
-            )
-        return self._grid
+        ab = get_array_backend()
+        grid = [ab.arange(s, dtype=float) for s in self.shape]
+        return ab.stack(ab.meshgrid(*grid, indexing="ij"), -1)
 
-    @property
+    @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
         """The coordinates of the grid points, encoded under the flags."""
-        field = self.field
-        if field is None:
-            return None
-        flags = self._flags()
-        if self._holds_values(flags):
-            return field
-        cached = self.__dict__.get("_encoded")
-        if cached is None or cached[0] != flags:
-            cached = (flags, type(self)._encode(field, **flags))
-            self.__dict__["_encoded"] = cached
-        return cached[1]
+        return _encode(self.field, self.coeff, self.degree, self.bound)
 
     # --- methods ------------------------------------------------------
 
@@ -492,7 +347,6 @@ class Affine(ConcreteTransformation):
         "matrix",
         "homogeneous_matrix",
     )
-    _view: tx.ClassVar[str] = "matrix"
 
     # --- attributes ---------------------------------------------------
 
@@ -507,6 +361,7 @@ class Affine(ConcreteTransformation):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
+        Frozen(),
     ] = None
 
     _matrix: tx.Annotated[
@@ -514,6 +369,13 @@ class Affine(ConcreteTransformation):
         tx.Doc("The matrix: a convenience for `data`."),
         KwOnly(),
     ] = None
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it fills `data`.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            object.__setattr__(self, "data", matrix)
 
     # --- views --------------------------------------------------------
 
@@ -523,7 +385,7 @@ class Affine(ConcreteTransformation):
         The affine matrix, of shape `(No, Ni + 1)`, whose last column is
         the translation component.
         """
-        return self._values()
+        return self.data
 
     @property
     def homogeneous_matrix(self) -> ArrayProtocol:
@@ -550,7 +412,6 @@ class Linear(ConcreteTransformation):
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("matrix",)
-    _view: tx.ClassVar[str] = "matrix"
 
     # --- attributes ---------------------------------------------------
 
@@ -563,6 +424,7 @@ class Linear(ConcreteTransformation):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
+        Frozen(),
     ] = None
 
     _matrix: tx.Annotated[
@@ -571,12 +433,19 @@ class Linear(ConcreteTransformation):
         KwOnly(),
     ] = None
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `matrix=` is the map: it fills `data`.
+        matrix = arguments.get("matrix")
+        if matrix is not None:
+            _refuse_data_too(self, arguments, "matrix")
+            object.__setattr__(self, "data", matrix)
+
     # --- views --------------------------------------------------------
 
     @property
     def matrix(self) -> tx.Optional[ArrayProtocol]:
         """The matrix, of shape `(No, Ni)`."""
-        return self._values()
+        return self.data
 
 
 @kinds.SpecialOrthogonal
@@ -598,6 +467,7 @@ class Rotation(Linear):
             If `None`, the matrix is treated as an identity transformation.
             """
         ),
+        Frozen(),
     ] = None
 
 
@@ -607,7 +477,6 @@ class Permutation(ConcreteTransformation):
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("permutation",)
-    _view: tx.ClassVar[str] = "permutation"
 
     # --- attributes ---------------------------------------------------
 
@@ -622,6 +491,7 @@ class Permutation(ConcreteTransformation):
             transformation.
             """
         ),
+        Frozen(),
     ] = None
 
     _permutation: tx.Annotated[
@@ -630,12 +500,19 @@ class Permutation(ConcreteTransformation):
         KwOnly(),
     ] = None
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `permutation=` is the map: it fills `data`.
+        permutation = arguments.get("permutation")
+        if permutation is not None:
+            _refuse_data_too(self, arguments, "permutation")
+            object.__setattr__(self, "data", permutation)
+
     # --- views --------------------------------------------------------
 
     @property
     def permutation(self) -> tx.Optional[ArrayProtocol]:
         """The permutation vector, of shape `(N,)`."""
-        return self._values()
+        return self.data
 
 
 @kinds.Diagonal
@@ -644,7 +521,6 @@ class Scaling(ConcreteTransformation):
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("scale",)
-    _view: tx.ClassVar[str] = "scale"
 
     # --- attributes ---------------------------------------------------
 
@@ -657,6 +533,7 @@ class Scaling(ConcreteTransformation):
             transformation.
             """
         ),
+        Frozen(),
     ] = None
 
     _scale: tx.Annotated[
@@ -665,12 +542,19 @@ class Scaling(ConcreteTransformation):
         KwOnly(),
     ] = None
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `scale=` is the map: it fills `data`.
+        scale = arguments.get("scale")
+        if scale is not None:
+            _refuse_data_too(self, arguments, "scale")
+            object.__setattr__(self, "data", scale)
+
     # --- views --------------------------------------------------------
 
     @property
     def scale(self) -> tx.Optional[ArrayProtocol]:
         """The scaling factors, of shape `(N,)`."""
-        return self._values()
+        return self.data
 
 
 @kinds.Translation
@@ -679,7 +563,6 @@ class Translation(ConcreteTransformation):
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = ("data",)
     derived_fields: tx.ClassVar[tx.Tuple[str]] = ("translation",)
-    _view: tx.ClassVar[str] = "translation"
 
     # --- attributes ---------------------------------------------------
 
@@ -692,6 +575,7 @@ class Translation(ConcreteTransformation):
             transformation.
             """
         ),
+        Frozen(),
     ] = None
 
     _translation: tx.Annotated[
@@ -700,12 +584,19 @@ class Translation(ConcreteTransformation):
         KwOnly(),
     ] = None
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        # `translation=` is the map: it fills `data`.
+        translation = arguments.get("translation")
+        if translation is not None:
+            _refuse_data_too(self, arguments, "translation")
+            object.__setattr__(self, "data", translation)
+
     # --- views --------------------------------------------------------
 
     @property
     def translation(self) -> tx.Optional[ArrayProtocol]:
         """The translation vector, of shape `(N,)`."""
-        return self._values()
+        return self.data
 
 
 @kinds.Identity
@@ -844,3 +735,62 @@ def is_affine(xform: Transformation, /, compute: bool = False) -> bool:
     recognizes it as the identity, which is itself affine.
     """
     return is_kind(xform, kinds.Affine, compute)
+
+
+# ----------------------------------------------------------------------
+#    HELPERS
+# ----------------------------------------------------------------------
+
+
+def _refuse_data_too(
+    xform: Transformation, arguments: tx.Any, keyword: str
+) -> None:
+    # A convenience keyword (`field=`, `matrix=`, ...) is the map, as
+    # values, and fills `data`, so it cannot come with `data=` as well.
+    # `replace()` reaches here too: it carries `data` over.
+    if arguments.get("data") is None:
+        return
+    raise TypeError(
+        f"{type(xform).__name__}() got both data= and {keyword}=: "
+        f"{keyword}= is the map, as values, and fills data, so it cannot "
+        f"be combined with data=, which replace() also passes on. To "
+        f"change the map of an existing transformation, use "
+        f"t.to({keyword}=...), which encodes it under the flags of t; to "
+        f"store an array as it is encoded, pass data= alone."
+    )
+
+
+def _encode(
+    values: tx.Optional[ArrayProtocol],
+    coeff: bool,
+    degree: InterpolationOrder,
+    bound: tx.Union[BoundaryCondition, float],
+) -> tx.Optional[ArrayProtocol]:
+    # A field, given as values, as the `data` that stores it: the values
+    # themselves, or their spline coefficients when `coeff` is true.
+    if values is None or not coeff:
+        return values
+    values = _prefilter_dtype(values)
+    return value2coeff_field(values, degree=degree, bound=bound)
+
+
+def _decode(
+    data: tx.Optional[ArrayProtocol],
+    coeff: bool,
+    degree: InterpolationOrder,
+    bound: tx.Union[BoundaryCondition, float],
+) -> tx.Optional[ArrayProtocol]:
+    # The values of a field, from the `data` that stores it.
+    if data is None or not coeff:
+        return data
+    return coeff2value_field(data, degree=degree, bound=bound)
+
+
+def _prefilter_dtype(values: ArrayProtocol) -> ArrayProtocol:
+    # The coefficients of integer or boolean values are not integers, and
+    # fitting them in an integer array would truncate them: such an array
+    # is fitted in `float32`, on its own backend. A floating array keeps
+    # its dtype.
+    if values.dtype.kind in "biu":
+        return values.astype("float32")
+    return values

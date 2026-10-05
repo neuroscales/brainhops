@@ -13,7 +13,6 @@ from .check import is_kind
 from .concrete import (
     Affine,
     CartesianField,
-    ConcreteTransformation,
     CoordinatesField,
     DisplacementField,
     Identity,
@@ -22,6 +21,7 @@ from .concrete import (
     Rotation,
     Scaling,
     Translation,
+    _encode,
 )
 from .convert import convert, converter
 from .errors import CompositionError, ConversionError, LossyConversionError
@@ -31,61 +31,7 @@ from .utils import get_ndim
 
 
 def smart_replace(t: Transformation, **kwargs) -> Transformation:
-    """Rebuild `t` with the changes in `kwargs`, or return it as is.
-
-    On a concrete transformation, the changes are first rewritten onto
-    the array it stores (see `encode_changes`), so that a convenience
-    keyword (`field=`, `matrix=`, ...) and a change of encoding flag
-    (`coeff=`, `degree=`, `bound=`) both keep `data` consistent with the
-    flags of the result.
-    """
-    if not kwargs:
-        return t
-    if isinstance(t, ConcreteTransformation):
-        flags = t._flags()
-        if all(k in flags and v == flags[k] for k, v in kwargs.items()):
-            # The encoding asked for is the one `t` has: nothing changes,
-            # so `t` itself comes back, with the same `data`.
-            return t
-        kwargs = encode_changes(t, kwargs)
-    return replace(t, **kwargs)
-
-
-def encode_changes(
-    t: ConcreteTransformation, changes: tx.Mapping[str, tx.Any]
-) -> tx.Dict[str, tx.Any]:
-    """Rewrite the changes made to `t` within its type onto its `data`.
-
-    * A convenience keyword (`field=`, `matrix=`, `scale=`, ...) is the
-      map, as values. It is encoded under the flags the result will
-      have, and stored in `data`: `t.to(field=u)` on a field of
-      coefficients stores the coefficients of `u`.
-    * A change of encoding flag without new data re-encodes the stored
-      array: the map is kept, and only the way it is stored changes. So
-      `t.to(coeff=True)` fits coefficients to the values, and
-      `t.to(degree=3)` on a field of coefficients refits them. A stored
-      array is never reinterpreted under new flags; to do that, pass the
-      array again as `data=`.
-    * `data=` is taken as given, under the flags the result will have.
-    """
-    changes = dict(changes)
-    cls = type(t)
-    view = cls._view
-    old = t._flags()
-    new = {name: changes.get(name, value) for name, value in old.items()}
-    if view is not None and view in changes:
-        if "data" in changes:
-            raise TypeError(
-                f"{cls.__name__}.to() got both data= and {view}=: {view}= "
-                f"is the map, as values, encoded under the flags of the "
-                f"result, while data= is stored as given. Pass one of them."
-            )
-        changes["data"] = cls._encode_view(changes.pop(view), **new)
-    elif "data" not in changes and new != old:
-        data = t.data
-        if data is not None:
-            changes["data"] = cls._encode(cls._decode(data, **old), **new)
-    return changes
+    return replace(t, **kwargs) if kwargs else t
 
 
 # ----------------------------------------------------------------------
@@ -94,20 +40,94 @@ def encode_changes(
 
 
 @converter(Identity, Identity)
-@converter(Translation, Translation)
-@converter(Scaling, Scaling)
-@converter(Permutation, Permutation)
-@converter(Rotation, Rotation)
-@converter(Affine, Affine)
-@converter(Linear, Linear)
-@converter(DisplacementField, DisplacementField)
-@converter(CoordinatesField, CoordinatesField)
 @converter
 def _(t: Transformation, **kwargs) -> Transformation:
     # A same-type conversion with no overrides is a pass-through; with
     # overrides it rebuilds the transform of the same type, applying the
-    # named fields on top of the existing ones, and re-encoding the
-    # stored array when a convenience keyword or a flag asks for it.
+    # named fields on top of the existing ones.
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Affine, **kwargs) -> Affine:
+    # A new `matrix=` replaces the matrix stored in `data`.
+    if "matrix" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter(Rotation, Rotation)
+@converter
+def _(t: Linear, **kwargs) -> Linear:
+    # A new `matrix=` replaces the matrix stored in `data`.
+    if "matrix" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Permutation, **kwargs) -> Permutation:
+    # A new `permutation=` replaces the vector stored in `data`.
+    if "permutation" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Scaling, **kwargs) -> Scaling:
+    # A new `scale=` replaces the vector stored in `data`.
+    if "scale" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: Translation, **kwargs) -> Translation:
+    # A new `translation=` replaces the vector stored in `data`.
+    if "translation" in kwargs:
+        kwargs.setdefault("data", None)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: DisplacementField, **kwargs) -> DisplacementField:
+    # The flags of the result: those given, or else those of `t`.
+    coeff = kwargs.get("coeff", t.coeff)
+    degree = kwargs.get("degree", t.degree)
+    bound = kwargs.get("bound", t.bound)
+    if "field" in kwargs:
+        # A new map, as values, stored under the flags of the result.
+        if "data" in kwargs:
+            raise _data_and_field(t)
+        kwargs["data"] = _encode(kwargs.pop("field"), coeff, degree, bound)
+    elif "data" not in kwargs and (coeff, degree, bound) != (
+        t.coeff,
+        t.degree,
+        t.bound,
+    ):
+        # New flags, and no new data: the map is kept, and re-encoded.
+        kwargs["data"] = _encode(t.field, coeff, degree, bound)
+    return smart_replace(t, **kwargs)
+
+
+@converter
+def _(t: CoordinatesField, **kwargs) -> CoordinatesField:
+    # The flags of the result: those given, or else those of `t`.
+    coeff = kwargs.get("coeff", t.coeff)
+    degree = kwargs.get("degree", t.degree)
+    bound = kwargs.get("bound", t.bound)
+    if "field" in kwargs:
+        # A new map, as values, stored under the flags of the result.
+        if "data" in kwargs:
+            raise _data_and_field(t)
+        kwargs["data"] = _encode(kwargs.pop("field"), coeff, degree, bound)
+    elif "data" not in kwargs and (coeff, degree, bound) != (
+        t.coeff,
+        t.degree,
+        t.bound,
+    ):
+        # New flags, and no new data: the map is kept, and re-encoded.
+        kwargs["data"] = _encode(t.field, coeff, degree, bound)
     return smart_replace(t, **kwargs)
 
 
@@ -120,7 +140,15 @@ def _(t: CartesianField, **kwargs) -> CartesianField:
     # `data` override is dropped.
     kwargs.pop("field", None)
     kwargs.pop("data", None)
-    return replace(t, **kwargs) if kwargs else t
+    return smart_replace(t, **kwargs)
+
+
+def _data_and_field(t: Transformation) -> TypeError:
+    return TypeError(
+        f"{type(t).__name__}.to() got both data= and field=: field= is "
+        f"the map, as values, encoded under the flags of the result, while "
+        f"data= is stored as given. Pass one of them."
+    )
 
 
 # ----------------------------------------------------------------------
@@ -403,14 +431,13 @@ def _(t: DisplacementField) -> CoordinatesField:
     # arrays add up the same way the values do: the coordinates' `data`
     # is the displacements' `data` plus the grid, encoded under the same
     # flags. Nothing is decoded, and a field of coefficients stays one.
-    flags = t._flags()
+    flags = dict(coeff=t.coeff, degree=t.degree, bound=t.bound)
     data = t.data
     if data is None:
         return CoordinatesField(input=t.input, output=t.output, **flags)
     ba = get_array_backend(data)
     grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
-    grid = ba.stack(grid, axis=-1).astype(data.dtype)
-    grid = CoordinatesField._encode(grid, **flags)
+    grid = _encode(ba.stack(grid, axis=-1).astype(data.dtype), **flags)
     return CoordinatesField(
         data=data + grid, input=t.input, output=t.output, **flags
     )

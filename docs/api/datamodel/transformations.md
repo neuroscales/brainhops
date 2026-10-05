@@ -45,7 +45,9 @@ So `DisplacementField(field=u, degree=3, coeff=True)` holds the same
 constructor encodes `u` the way `.to(...)` does. A convenience keyword
 cannot be combined with `data=`, which already is the stored array.
 
-To change the map of an existing transformation, use `.to(...)`. Within
+A transformation is not edited in place: `data` and the flags are
+frozen, which is what lets a view be computed once and cached. To
+change the map of an existing transformation, use `.to(...)`. Within
 a type, it re-encodes rather than reinterprets: `t.to(field=u)` stores
 `u` in the encoding of `t`, `t.to(coeff=True)` fits coefficients to the
 values, and `t.to(degree=3)` on a field of coefficients refits them.

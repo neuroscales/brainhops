@@ -16,6 +16,7 @@ from bagof.magic import replace
 
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
 from brainhops._ext.invfield import inverse as inverse_disp
+from brainhops.datamodel._transformations import concrete as xconcrete
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import (
     Affine,
@@ -453,9 +454,19 @@ def test_the_grid_is_float64(coeff: bool) -> None:
     assert np.asarray(t.data).dtype == np.float64
 
 
-def test_an_unchanged_encoding_is_a_pass_through() -> None:
+def test_an_unchanged_encoding_is_a_pass_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Asking for the encoding a field already has neither fits nor
+    # decodes anything: the same stored array comes back.
     t = DisplacementField(data=_values(), degree=DEGREE, coeff=True)
-    assert t.to(coeff=True, degree=DEGREE, bound=BOUND) is t
+
+    def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the stored coefficients were refitted")
+
+    monkeypatch.setattr(xconcrete, "value2coeff_field", refuse)
+    monkeypatch.setattr(xconcrete, "coeff2value_field", refuse)
+    assert t.to(coeff=True, degree=DEGREE, bound=BOUND).data is t.data
 
 
 # ----------------------------------------------------------------------
