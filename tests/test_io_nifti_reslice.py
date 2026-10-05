@@ -310,3 +310,99 @@ def test_a_4d_identity_reslice_returns_a_view(
         assert np.array_equal(np.asarray(resliced), data)
     gathers = {(d,): "gather" for d in range(4)}
     assert plans == [gathers, gathers]
+
+
+def _save_untimed(
+    path: object, data: np.ndarray, tr: float, forms: bool = True
+) -> str:
+    """Write a 4D NIfTI whose repetition time is missing (`tr`: 0 or NaN)."""
+    nii = nb.Nifti1Image(data, _rotation(0.3))
+    nii.header.set_xyzt_units("mm", "sec")
+    nii.header["pixdim"][4] = tr
+    if not forms:
+        nii.header.set_sform(None, code=0)
+        nii.header.set_qform(None, code=0)
+    nb.save(nii, str(path))
+    return str(path)
+
+
+@pytest.mark.parametrize("tr", [0.0, np.nan, np.inf])
+def test_a_4d_geometry_without_a_repetition_time_is_spatial_only(
+    tmp_path,  # noqa: ANN001
+    tr: float,
+) -> None:
+    """
+    A time spacing of zero means that the repetition time is missing.
+
+    Only the spatial subspace transform is defined: the time axis passes
+    through, and still counts frames in every space -- none claims a time
+    unit it has no mapping into.
+    """
+    data = np.zeros(SHAPE, dtype="float32")
+    img = io.load(_save_untimed(tmp_path / "bold.nii", data, tr))
+
+    xform = img.transformation
+    assert isinstance(xform, Sequence)
+    (spatial,) = xform.transformations
+    assert isinstance(spatial, SubspaceTransformation)
+    assert list(spatial.input_axes) == list(spatial.output_axes) == [0, 1, 2]
+    assert np.allclose(spatial.transformation.matrix, _rotation(0.3)[:3])
+    assert spatial.output is xform.output
+    for transformation in img.transformations:
+        assert str(transformation.output.axes[3].unit) == "index"
+        assert transformation.output.axes[3].type == "time"
+    physical = img.transformations[0]
+    assert np.allclose(physical.scale, [1.0, 1.0, 1.0, 1.0])
+
+    matrix = np.asarray(xform.to(Affine).matrix)
+    expected = np.zeros((4, 5))
+    expected[:3, [0, 1, 2, 4]] = _rotation(0.3)[:3]
+    expected[3, 3] = 1.0
+    assert np.allclose(matrix, expected)
+
+
+def test_a_4d_identity_reslice_without_a_repetition_time_is_a_view(
+    tmp_path,  # noqa: ANN001
+) -> None:
+    """A geometry with no time mapping still cancels itself, by identity."""
+    data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
+    img = io.load(_save_untimed(tmp_path / "bold.nii.gz", data, 0.0))
+
+    assert np.array_equal(np.asarray(img.reslice()), data)
+    numpy = SingleScaleImage(
+        data=np.asarray(img.data), transformations=img.transformations
+    )
+    for resliced in (numpy.reslice(), numpy.reslice(img.geometry)):
+        assert np.shares_memory(np.asarray(resliced.data), numpy.data)
+        assert np.array_equal(np.asarray(resliced), data)
+
+
+@pytest.mark.parametrize("forms", [True, False])
+def test_a_4d_image_without_a_repetition_time_round_trips(
+    tmp_path,  # noqa: ANN001
+    forms: bool,
+) -> None:
+    """
+    Saving keeps the repetition time missing (`pixdim[4] = 0`), and leaves
+    `toffset` alone, rather than writing a spacing of one or failing.
+    """
+    data = np.arange(np.prod(SHAPE), dtype="float32").reshape(SHAPE)
+    # With neither form, the preferred transformation is the scaling into
+    # the physical space, where time is not mapped either.
+    path = _save_untimed(tmp_path / "bold.nii", data, 0.0, forms=forms)
+
+    img = io.load(path)
+    img.save(tmp_path / "copy.nii")
+
+    header = nb.load(str(tmp_path / "copy.nii")).header
+    assert header["pixdim"][4] == 0
+    assert header["toffset"] == 0
+    assert np.allclose(
+        header.get_zooms()[:3], nb.load(path).header.get_zooms()[:3]
+    )
+    if forms:
+        assert np.allclose(header.get_best_affine(), _rotation(0.3))
+    copy = io.load(str(tmp_path / "copy.nii"))
+    (spatial,) = copy.transformation.transformations
+    assert list(spatial.input_axes) == [0, 1, 2]
+    assert np.array_equal(np.asarray(copy), data)

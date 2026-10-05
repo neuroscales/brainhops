@@ -30,6 +30,7 @@ from brainhops.datamodel.systems import (
 )
 from brainhops.datamodel.transformations import Transformation
 from brainhops.datamodel.units import (
+    is_indexunit,
     is_physicalunit,
     is_spaceunit,
     is_timeunit,
@@ -970,7 +971,7 @@ def _voxel_to_ras(xform: Transformation) -> np.ndarray:
 
 def _voxel_to_ras_and_others(
     xform: Transformation,
-) -> tx.Tuple[np.ndarray, tx.List[tx.Tuple[float, float]]]:
+) -> tx.Tuple[np.ndarray, tx.List[tx.Optional[tx.Tuple[float, float]]]]:
     """
     Compute the `(4, 4)` voxel-to-RAS matrix of a transformation, and the
     scale and offset of each axis that follows the spatial ones.
@@ -986,6 +987,11 @@ def _voxel_to_ras_and_others(
     two-dimensional affine is embedded in a `(4, 4)` matrix, which is the
     shape NIfTI stores. The world space is turned into RAS from the
     anatomical orientation of its axes.
+
+    A time axis that the transformation leaves as it is -- scale `1`,
+    offset `0` -- and that still counts frames (unit `index`) in the world
+    space is not mapped to time: it is returned as `None`, and its
+    repetition time is written as missing (see [`_set_other_axes`][]).
 
     A transformation that has no affine representation, such as a
     displacement field, cannot be written as NIfTI geometry, and raises
@@ -1003,11 +1009,27 @@ def _voxel_to_ras_and_others(
 
     world = _closed_world(getattr(affine, "output", None), world_ndim)
     conversion = ras_conversion(world)
+    if others and others[0] == (1.0, 0.0) and _is_frame_index(world, 3):
+        # The time axis is not mapped to time: it still counts frames in
+        # the world space, so the repetition time is missing.
+        others = [None, *others[1:]]
     return conversion @ matrix, others
 
 
+def _is_frame_index(system: tx.Optional[CoordinateSystem], k: int) -> bool:
+    """Whether axis `k` of a system is a time axis that counts frames."""
+    axes = list(getattr(system, "axes", None) or [])
+    if k >= len(axes) or axes[k] is Ellipsis:
+        return False
+    axis = axes[k]
+    return getattr(axis, "type", None) == "time" and is_indexunit(
+        getattr(axis, "unit", None)
+    )
+
+
 def _set_other_axes(
-    image: _NiftiObject, others: tx.Sequence[tx.Tuple[float, float]]
+    image: _NiftiObject,
+    others: tx.Sequence[tx.Optional[tx.Tuple[float, float]]],
 ) -> None:
     """
     Store the scale and offset of the axes that follow the spatial ones.
@@ -1017,6 +1039,11 @@ def _set_other_axes(
     for any other axis, so a nonzero offset there, or a negative spacing,
     raises `UnrepresentableTransformationError`. A transformation over
     more axes than the data has raises `WriterError`.
+
+    A time axis that is not mapped to time (`None` in `others`, see
+    [`_voxel_to_ras_and_others`][]) has no repetition time: its spacing is
+    written as `0`, which NIfTI reads as missing, and `toffset` is left
+    alone.
     """
     if not others:
         return
@@ -1027,7 +1054,11 @@ def _set_other_axes(
             f"The voxel-to-world transformation maps {3 + len(others)} "
             f"axes, but the data has {len(zooms)}."
         )
-    for k, (scale, offset) in enumerate(others):
+    for k, other in enumerate(others):
+        if other is None:
+            zooms[3 + k] = 0.0
+            continue
+        scale, offset = other
         if scale < 0:
             raise UnrepresentableTransformationError(
                 f"NIfTI stores the spacing of axis {3 + k} as a positive "
@@ -1041,7 +1072,8 @@ def _set_other_axes(
             )
         zooms[3 + k] = scale
     header.set_zooms(zooms)
-    header["toffset"] = others[0][1]
+    if others[0] is not None:
+        header["toffset"] = others[0][1]
 
 
 def _closed_world(

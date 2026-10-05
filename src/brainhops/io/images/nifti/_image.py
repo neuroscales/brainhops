@@ -181,6 +181,11 @@ def _nifti_to_transformations(
     axis by its spacing and offset (`pixdim[4]`, `toffset`), as a `Scaling`
     then a `Translation`. Every other axis passes through. In an image with
     spatial axes only, it is a plain `Affine`.
+
+    A time spacing of zero (or not finite) means that the repetition time
+    is missing. The time axis is then not mapped: the sequence holds the
+    spatial subspace transform only, and the time axis stays a frame index
+    (unit `index`) in every space, including the physical one.
     """
 
     # Allocate output
@@ -213,6 +218,20 @@ def _nifti_to_transformations(
 
     named_axes = [axis for axis in axes if axis.name is not None]
 
+    # The spacing of each named axis. A time axis whose spacing is zero
+    # (or not finite) has no repetition time: NIfTI writes `pixdim[4] = 0`
+    # when the time step is missing. Such an axis is not mapped to time at
+    # all: it stays a frame index in every space, and only the spatial
+    # axes are mapped to the world.
+    zooms = header.get_zooms()
+    zooms = [zooms[i] for i, axis in enumerate(axes) if axis.name is not None]
+    untimed = {
+        j
+        for j, axis in enumerate(named_axes)
+        if axis.type == "time" and not (np.isfinite(zooms[j]) and zooms[j])
+    }
+    zooms = [1.0 if j in untimed else z for j, z in enumerate(zooms)]
+
     # >> Voxel space
     # `_nifti_to_axes` gives the axes of the voxel space: they count samples.
     # A NIfTI array is stored, and read by nibabel, in F order: the first
@@ -224,7 +243,8 @@ def _nifti_to_transformations(
     # type (a channel, a vector component) has no physical unit: its unit
     # is left unspecified rather than inherit "index" from the voxel space.
     phys_axes = [
-        replace(axis, unit=units.get(axis.type)) for axis in named_axes
+        axis if j in untimed else replace(axis, unit=units.get(axis.type))
+        for j, axis in enumerate(named_axes)
     ]
     phys_space = CoordinateSystem(name="physical", axes=phys_axes)
 
@@ -243,8 +263,6 @@ def _nifti_to_transformations(
     ras_space = CoordinateSystem(name="RAS", axes=ras_axes)
 
     # --- voxel-to-physical --------------------------------------------
-    zooms = header.get_zooms()
-    zooms = [zooms[i] for i, axis in enumerate(axes) if axis.name is not None]
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=zooms)
     xforms.append(vox2phys)
 
@@ -253,7 +271,11 @@ def _nifti_to_transformations(
     # in it is not always a position in the header.
     named = [i for i, axis in enumerate(axes) if axis.name is not None]
     space_pos = [named.index(i) for i in keep_dims]
-    time_pos = [j for j, axis in enumerate(named_axes) if axis.type == "time"]
+    time_pos = [
+        j
+        for j, axis in enumerate(named_axes)
+        if axis.type == "time" and j not in untimed
+    ]
     product = bool(space_pos) and len(space_pos) < len(named_axes)
 
     def _coded_affine(matrix: np.ndarray, label: str) -> Transformation:
