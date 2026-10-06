@@ -16,11 +16,12 @@ from brainhops.io.base.nifti import (
     _voxel_to_ras,
 )
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.transformations.base import (
-    AffineTransformationFormat,
-    ConvertedFormat,
-)
+from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
+from brainhops.io.transformations.base.conversions import (
+    convert_instance,
+    converts_to,
+)
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
@@ -82,7 +83,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return image
 
 
-class NiftiRASToVoxel(ConvertedFormat, RASToVoxel, _NiftiAffine):
+class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
     """
     Affine transformation from RAS space to voxel space, derived from a
     NIfTI header.
@@ -126,6 +127,22 @@ class NiftiRASToVoxel(ConvertedFormat, RASToVoxel, _NiftiAffine):
             self._data = None
             self._explicit_matrix = data
 
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_other(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
+
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """The inverse transformation, from RAS space to voxel space."""
         if getattr(self, "_explicit_matrix", None) is None:
@@ -139,7 +156,7 @@ class NiftiRASToVoxel(ConvertedFormat, RASToVoxel, _NiftiAffine):
 
 
 @register_format
-class NiftiVoxelToRAS(ConvertedFormat, VoxelToRAS, _NiftiAffine):
+class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
     """
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.
@@ -176,6 +193,22 @@ class NiftiVoxelToRAS(ConvertedFormat, VoxelToRAS, _NiftiAffine):
         if data is not None:
             self._data = None
             self._explicit_matrix = data
+
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_other(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """The inverse transformation, from RAS space to voxel space."""

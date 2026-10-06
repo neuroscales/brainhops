@@ -225,7 +225,6 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     },
     "brainhops.io.transformations.nifti.base": {
         "NiftiBasedTransformation": ("image", "header"),
-        "ReadOnlyNiftiBasedTransformation": ("image", "header"),
     },
     "brainhops.io.transformations.nifti.fields": {
         "NiftiRASCoordinatesField": (

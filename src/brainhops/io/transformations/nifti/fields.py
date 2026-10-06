@@ -43,7 +43,10 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.transformations.base import ConvertedFormat
+from brainhops.io.transformations.base.conversions import (
+    convert_instance,
+    converts_to,
+)
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     ras_displacement_chain,
@@ -56,9 +59,7 @@ _NDIM = 3
 
 
 @register_format
-class NiftiRASCoordinatesField(
-    ConvertedFormat, RASCoordinatesField, NiftiBasedTransformation
-):
+class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
     """
     Field of RAS coordinates, stored in a NIfTI file.
     """
@@ -106,6 +107,22 @@ class NiftiRASCoordinatesField(
         if shape and len(shape) >= 4 and shape[-1] == 3:
             return Confidence.MAYBE
         return Confidence.NO
+
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_other(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -168,7 +185,7 @@ class NiftiRASCoordinatesField(
 
 @register_format
 class NiftiRASDisplacementField(
-    ConvertedFormat, _xforms.ImmutableSequence, NiftiBasedTransformation
+    _xforms.ImmutableSequence, NiftiBasedTransformation
 ):
     """
     Field of RAS displacements, stored in a NIfTI file.
@@ -275,6 +292,22 @@ transformations.StationaryVelocityField].
         if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
         return Confidence.NO
+
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_other(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_other(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
 
     # --- endpoints ----------------------------------------------------
     #

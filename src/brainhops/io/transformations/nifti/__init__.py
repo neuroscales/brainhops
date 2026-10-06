@@ -42,13 +42,14 @@ __all__ = [
     "NiftiRASDisplacementField",
     "NiftiRASToVoxel",
     "NiftiVoxelToRAS",
-    "ReadOnlyNiftiBasedTransformation",
     "converters",
 ]
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from .base import NiftiBasedTransformation, ReadOnlyNiftiBasedTransformation
+from .base import NiftiBasedTransformation
 from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
 
-# The converters into these formats register themselves on import.
+# The converters into these formats register themselves when this module
+# is imported, here, so that importing the formats makes `t.to(Format)`
+# work. The SPM converters import theirs from it too, and rely on it.
 from . import converters  # noqa: E402, F401  isort: skip

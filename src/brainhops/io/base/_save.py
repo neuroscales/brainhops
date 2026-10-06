@@ -71,6 +71,16 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         interpolated values, say -- is refused with each candidate's
         reason, rather than resampled.
 
+    !!! note "Two passes, one conversion"
+        Steps 3 and 4 are two passes only until every writable
+        transformation format has converters. Until then, step 3 is what
+        writes a transformation to a format without them, by copying it
+        into a file-backed version of its data model. For the formats
+        that have converters (`NiftiVoxelToRAS`, `NiftiRASToVoxel`,
+        `NiftiRASDisplacementField`, `NiftiRASCoordinatesField`,
+        `SpmCoordinatesField`), `from_instance` is `obj.to(Format)`, so
+        both passes run the same conversion.
+
     Parameters
     ----------
     obj : Any
@@ -128,6 +138,9 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
     writer = _first_writer(name, obj, holders, _copy, reasons)
+    # The second pass converts a transformation (see "Two passes, one
+    # conversion" above): the first stays for the formats without
+    # converters, and for those with them it runs the same conversion.
     if writer is None and isinstance(obj, Transformation):
         others = [
             candidate for candidate in claimed if candidate not in holders

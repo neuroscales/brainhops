@@ -6,9 +6,9 @@ NIfTI's voxels and RAS, say. A general transformation is held by it only
 when it is the same map. Its endpoints are read from the transformation
 itself, not from its class, and the exact bridge between them and the
 format's is put on either side of it, as composition does (with the
-adaptor's `bridge`): LPS
-becomes RAS by flipping two axes, and two voxel systems are paired axis
-by axis. A system that is not known is taken to be the format's.
+adaptor's `bridge`): LPS becomes RAS by flipping two axes, and two voxel
+systems are paired axis by axis. A system that is not known is taken to
+be the format's.
 
 What remains is then read as the format reads its own content: one
 affine, or one field between two affines. When it is not that, or a
@@ -17,12 +17,19 @@ bridge does not exist, nothing is approximated: the converter raises a
 built by [`unrepresentable`][], that says what cannot be held.
 
 These helpers only take apart and check. Each converter decides, in one
-place, whether what they return is held exactly by its format.
+place, whether what they return is held exactly by its format. A format
+that has converters builds itself from another transformation through
+them ([`converts_to`][] and [`convert_instance`][]), so that
+`Format.from_other(t)`, `Format.from_instance(t)` and `t.to(Format)` are
+one conversion.
 """
 
 __all__ = [
     "affine_between",
     "apply_affine",
+    "convert_instance",
+    "converts_to",
+    "format_options",
     "split_field_chain",
     "undoes",
     "unrepresentable",
@@ -39,6 +46,7 @@ from brainhops.backends import get_array_backend
 # datamodel
 from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel._transformations.adaptors import bridge
+from brainhops.datamodel._transformations.convert import convert
 from brainhops.datamodel.systems import CoordinateSystem
 
 _Field = tx.Union[_xforms.DisplacementField, _xforms.CoordinatesField]
@@ -63,6 +71,69 @@ def unrepresentable(
         f"This {type(t).__name__} cannot be held exactly by a "
         f"{cls.__name__}: {reason}"
     )
+
+
+def converts_to(cls: type, other: tx.Any) -> bool:
+    """
+    Whether the format `cls` builds itself from `other` by converting it.
+
+    It does for any transformation that is not already of that format: an
+    instance of the format is copied, and anything else (a file, a
+    mapping) is read as the format's bases read it.
+    """
+    return isinstance(other, _xforms.Transformation) and not isinstance(
+        other, cls
+    )
+
+
+def convert_instance(cls: type, other: tx.Any, *args, **kwargs) -> tx.Any:
+    """
+    `other` converted to the format `cls`, exactly as `other.to(cls)`.
+
+    This is what `from_other` and `from_instance` of a format with
+    converters return for another transformation (see [`converts_to`][]),
+    so the three give the same result and raise the same errors.
+    """
+    if args:
+        raise TypeError(
+            f"{cls.__name__} converts a transformation with keyword options "
+            f"only, but was given {len(args)} positional argument(s)."
+        )
+    return convert(other, cls, **kwargs)
+
+
+def format_options(
+    t: _xforms.Transformation,
+    cls: type,
+    options: tx.Dict[str, tx.Any],
+    allowed: tx.Iterable[str] = (),
+) -> tx.Dict[str, tx.Any]:
+    """
+    The options of a conversion that the format `cls` takes as they are.
+
+    A converter decides what map the format holds, so nothing it is given
+    may change that map afterwards: neither the endpoints (`input=`,
+    `output=`), nor the map itself (`matrix=`, `field=`, `data=`,
+    `transformations=`), nor anything else that is not one of the
+    format's own options, which are `allowed`.
+
+    Raises
+    ------
+    ConversionError
+        If an option is not one of `allowed`.
+    """
+    refused = sorted(set(options) - set(allowed))
+    if refused:
+        names = ", ".join(f"{name}=" for name in refused)
+        takes = ", ".join(f"{name}=" for name in allowed) or "no option"
+        raise unrepresentable(
+            t,
+            cls,
+            f"{names} cannot be overridden by a conversion, which gives the "
+            f"format the very map it converts, between the format's own "
+            f"coordinate systems. It takes {takes}.",
+        )
+    return options
 
 
 def affine_between(

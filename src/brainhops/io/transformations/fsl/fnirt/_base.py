@@ -14,15 +14,14 @@ from brainhops.datamodel.images import Image
 # io
 from brainhops.io.base._base import register_format
 from brainhops.io.base.nifti import (
+    NiftiParser,
     _nifti_intent,
     _nifti_vector_field,
     _NiftiObject,
 )
 from brainhops.io.base.parsers import Confidence, WriterNotImplementedError
+from brainhops.io.transformations.base import FileBasedTransformation
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
-from brainhops.io.transformations.nifti.base import (
-    ReadOnlyNiftiBasedTransformation,
-)
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -67,10 +66,23 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
+class _ReadOnlyNifti(FileBasedTransformation, NiftiParser):
+    """
+    A transformation read from a NIfTI file, and not written.
+
+    The read-only counterpart of `NiftiBasedTransformation`. It is a class
+    of its own rather than two bases of `FnirtWarpField`, because no order
+    of those bases keeps the constructor's positional parameters (`moving`,
+    `reference`, `deformation_type`, `image`, `header`, `transformations`).
+    """
+
+    EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".nii", ".nii.gz")
+
+
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
-    ReadOnlyNiftiBasedTransformation,
+    _ReadOnlyNifti,
     _xforms.ImmutableSequence,
 ):
     """A FNIRT non-linear transformation stored in a NIfTI file.

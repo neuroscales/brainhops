@@ -510,3 +510,110 @@ def test_a_fnirt_warp_is_not_written(tmp_path) -> None:  # noqa: ANN001
     np.testing.assert_allclose(
         _apply(back, points), _apply(warp, points), atol=1e-6
     )
+
+
+# ----------------------------------------------------------------------
+#   OPTIONS, AND FIELDS WITHOUT DATA
+# ----------------------------------------------------------------------
+
+
+def test_a_conversion_does_not_relabel_the_endpoints() -> None:
+    # `input=LPSmm()` would label the unflipped matrix as LPS.
+    affine = xforms.Affine(VOX2WORLD[:-1])
+    with pytest.raises(ConversionError, match="input= cannot be overridden"):
+        NiftiVoxelToRAS.from_other(affine, input=LPSmm())
+    with pytest.raises(ConversionError, match="input= cannot be overridden"):
+        affine.to(NiftiVoxelToRAS, input=LPSmm())
+
+
+def test_a_conversion_does_not_replace_the_map() -> None:
+    affine = xforms.Affine(VOX2WORLD[:-1])
+    with pytest.raises(ConversionError, match="matrix= cannot be overridden"):
+        NiftiVoxelToRAS.from_other(affine, matrix=np.eye(4)[:-1])
+    chain = _ras_displacement_chain()
+    with pytest.raises(ConversionError, match="transformations= cannot"):
+        chain.to(NiftiRASDisplacementField, transformations=())
+
+
+def test_the_format_options_are_passed_on() -> None:
+    header = nb.Nifti1Header()
+    header.set_sform(np.eye(4), code=4)
+    affine = xforms.Affine(VOX2WORLD[:-1])
+    nifti = NiftiVoxelToRAS.from_other(affine, header=header)
+    np.testing.assert_array_equal(nifti.matrix, VOX2WORLD[:-1])
+    assert nifti.to_nibabel().header.get_sform(coded=True)[1] == 4
+
+
+def test_log_is_refused_for_a_field_that_holds_a_displacement() -> None:
+    field = xforms.DisplacementField(field=_displacements())
+    with pytest.raises(ConversionError, match="log=True writes the velocity"):
+        NiftiRASDisplacementField.from_other(field, log=True)
+    with pytest.raises(ConversionError, match="steps= is the number"):
+        NiftiRASDisplacementField.from_other(field, steps=4)
+
+
+def test_log_writes_a_velocity_as_it_is(tmp_path) -> None:  # noqa: ANN001
+    velocity = xforms.DisplacementField(data=0.1 * _displacements(), log=True)
+    nifti = NiftiRASDisplacementField.from_other(velocity, log=True)
+    assert nifti.log
+    nifti.save(tmp_path / "velocity.nii.gz")
+    written = nb.load(tmp_path / "velocity.nii.gz").get_fdata()[:, :, :, 0]
+    np.testing.assert_allclose(written, 0.1 * _displacements(), atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    "cls", [NiftiRASCoordinatesField, SpmCoordinatesField]
+)
+def test_a_field_of_coordinates_without_data_is_held_without_data(
+    cls: type,
+) -> None:
+    # As a displacement field without data is: both are the identity.
+    converted = xforms.CoordinatesField().to(cls)
+    assert type(converted) is cls
+    empty = xforms.DisplacementField().to(NiftiRASDisplacementField)
+    assert empty.displacement.data is None
+
+
+def test_no_coordinates_cannot_carry_an_affine() -> None:
+    scale = xforms.Affine(
+        np.diag([2.0, 2.0, 2.0, 1.0])[:-1], input=RASmm(), output=RASmm()
+    )
+    chain = xforms.Sequence(
+        transformations=[
+            xforms.CoordinatesField(input=VOXEL, output=RASmm()),
+            scale,
+        ]
+    )
+    with pytest.raises(ConversionError, match="holds no coordinates"):
+        chain.to(NiftiRASCoordinatesField)
+
+
+def test_a_nearly_singular_grid_is_refused_by_spm() -> None:
+    chain = xforms.Sequence(
+        transformations=[
+            RASToVoxel(matrix=np.diag([1.0, 1.0, 1e-14, 1.0])[:-1]),
+            xforms.CoordinatesField(
+                field=_coordinates(), input=VOXEL, output=RASmm()
+            ),
+        ]
+    )
+    with pytest.raises(ConversionError, match="nearly so"):
+        chain.to(SpmCoordinatesField)
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        NiftiVoxelToRAS,
+        NiftiRASToVoxel,
+        NiftiRASDisplacementField,
+        NiftiRASCoordinatesField,
+        SpmCoordinatesField,
+    ],
+)
+def test_the_converted_formats_still_read_files(tmp_path, cls: type) -> None:  # noqa: ANN001
+    path = tmp_path / "y_field.nii"
+    image = nb.Nifti1Image(_coordinates()[:, :, :, None, :], VOX2WORLD)
+    image.header.set_intent(1007, name="Mapping")
+    nb.save(image, str(path))
+    assert type(cls.from_other(path)) is cls
