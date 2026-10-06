@@ -13,8 +13,10 @@ from brainhops.io.base._base import (
     register_format,
 )
 from brainhops.io.base.parsers import (
+    BinaryFileParser,
     Confidence,
     ParserExistsError,
+    ParserNotImplementedError,
     SnifferContentError,
     TextFileParser,
     TextFileParserWriter,
@@ -245,3 +247,99 @@ def test_the_writer_entry_point_does_not_shadow_the_converter() -> None:
     mro = WritableFileBasedTransformation.__mro__
     assert next(c for c in mro if "to" in c.__dict__) is Transformation
     assert next(c for c in mro if "save" in c.__dict__) is FileParserWriter
+
+
+# ----------------------------------------------------------------------
+#   FROM_BYTES / FROM_FILEOBJ FALLBACKS
+# ----------------------------------------------------------------------
+
+
+class HeaderOnly(BinaryFileParser):
+    """A binary format that only reads a 4-byte header from a stream."""
+
+    def __init__(self, magic: bytes) -> None:
+        self.magic = magic
+
+    @classmethod
+    def from_fileobj(cls, file, **kwargs) -> tx.Self:  # noqa: ANN001
+        return cls(file.read(4), **kwargs)
+
+
+class BytesOnly(BinaryFileParser):
+    """A binary format that only implements `from_bytes`."""
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    @classmethod
+    def from_bytes(cls, content, **kwargs) -> tx.Self:  # noqa: ANN001
+        return cls(bytes(content), **kwargs)
+
+
+class Neither(BinaryFileParser):
+    """A binary format that implements neither entry point."""
+
+
+class Forwarder(Neither):
+    """An unmarked `from_fileobj` that only forwards to the default."""
+
+    @classmethod
+    def from_fileobj(cls, file, **kwargs) -> tx.Self:  # noqa: ANN001
+        return super().from_fileobj(file, **kwargs)
+
+
+def test_a_fileobj_only_parser_loads_from_bytes() -> None:
+    assert HeaderOnly.from_bytes(b"MAGICrest").magic == b"MAGI"
+    assert HeaderOnly.from_content(b"MAGICrest").magic == b"MAGI"
+
+
+def test_a_subclass_of_a_fileobj_only_parser_loads_from_bytes() -> None:
+    class Sub(HeaderOnly):
+        pass
+
+    assert Sub.from_bytes(b"ABCDEF").magic == b"ABCD"
+
+
+def test_a_parser_with_neither_entry_point_raises_without_recursing() -> None:
+    with pytest.raises(ParserNotImplementedError):
+        Neither.from_bytes(b"data")
+    with pytest.raises(ParserNotImplementedError):
+        Neither.from_fileobj(_io.BytesIO(b"data"))
+
+
+def test_an_unmarked_forwarding_fileobj_raises_without_recursing() -> None:
+    with pytest.raises(ParserNotImplementedError):
+        Forwarder.from_bytes(b"data")
+    with pytest.raises(ParserNotImplementedError):
+        Forwarder.from_fileobj(_io.BytesIO(b"data"))
+
+
+def test_a_bytes_only_parser_still_loads_from_a_fileobj() -> None:
+    assert BytesOnly.from_fileobj(_io.BytesIO(b"payload")).content == (
+        b"payload"
+    )
+
+
+def test_a_dispatcher_mixin_does_not_count_as_a_fileobj_override() -> None:
+    from brainhops.io.base._base import FormatDispatcher
+
+    class Concrete(FormatDispatcher, Neither):
+        pass
+
+    with pytest.raises(ParserNotImplementedError):
+        Concrete.from_bytes(b"data")
+
+    class ConcreteHeader(FormatDispatcher, HeaderOnly):
+        pass
+
+    assert ConcreteHeader.from_bytes(b"WXYZ!").magic == b"WXYZ"
+
+
+def test_text_parsers_still_decode_bytes_to_text() -> None:
+    assert Greeting.from_bytes(b"HELLO world\n") == "HELLO world"
+    assert Greeting.from_bytes(
+        "HELLO \u00e9".encode("latin-1"), encoding="latin-1"
+    ) == ("HELLO \u00e9")
+    assert Greeting.from_fileobj(_io.BytesIO(b"HELLO there")) == (
+        "HELLO there"
+    )
