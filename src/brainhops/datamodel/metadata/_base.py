@@ -4,11 +4,12 @@ __all__ = ["Metadata"]
 
 # stdlib
 import copy
+import operator
 
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, NoEq, NoRepr, fields
+from bagof.magic import Factory, HideIf, NoEq, NoRepr, fields
 
 # internals
 from brainhops._core.typing import ArrayLike
@@ -22,7 +23,7 @@ from ._report import (
     apply_loss_policy,
 )
 from ._sentinel import UNSUPPORTED, Maybe
-from ._terms import EncodingDirection, GeneratedBy
+from ._terms import EncodingDirection, GeneratedBy, _is_absent
 from ._vocabulary import (
     ALONG,
     FIELDS,
@@ -44,19 +45,27 @@ from ._vocabulary import (
 _History = tx.Union[str, tx.Sequence[str], None]
 
 
+# The groups are listed in the reverse of their order because the fields
+# are (`reverse=True`: the fields of a class before those it inherits),
+# so that `repr` shows `format`, `extra`, then the vocabulary in its
+# declared order. A format class declares the vocabulary again
+# (`supports=`), so its `repr` shows its own fields, then `format`.
 class Metadata(
     DataModelBase,
-    ProvenanceVocabulary,
-    MRIVocabulary,
-    DiffusionVocabulary,
-    DisplayVocabulary,
-    StorageVocabulary,
-    MicroscopyVocabulary,
     TransformVocabulary,
+    MicroscopyVocabulary,
+    StorageVocabulary,
+    DisplayVocabulary,
+    DiffusionVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
     metaclass=MetadataMeta,
     polymorphic=True,
     kw_only=True,
-    repr=False,
+    reverse=True,
+    # `UNSUPPORTED` and `None` are hidden from `repr`, or a format that
+    # stores three fields would print forty (see also `extra`).
+    repr=HideIf(_is_absent),
 ):
     """
     Metadata that does not depend on a file format: the common
@@ -125,6 +134,8 @@ class Metadata(
         # Not `Factory()`: inferred from `Maybe[...]`, a union with
         # `None`, the default would be `None`.
         Factory(dict),
+        # Hidden from `repr` when empty, as well as when absent.
+        HideIf(operator.not_),
     ]
 
     # --- the raw record -----------------------------------------------
@@ -184,29 +195,6 @@ class Metadata(
                     f"UNSUPPORTED by this format), so {value!r} is "
                     f"refused."
                 )
-
-    def __repr__(self) -> str:
-        # `UNSUPPORTED`, `None` and an empty `extra` are hidden, or a
-        # format that stores three fields would print forty. `format` and
-        # a format's own fields come first, then `extra`, then the
-        # vocabulary in its declared order (not `bagof`'s reverse MRO).
-        own = [
-            field.name
-            for field in fields(type(self))
-            if field.name not in VOCABULARY
-            and field.name != "extra"
-            and field.repr
-            and not field.var
-        ]
-        parts = []
-        for name in own + list(FIELDS):
-            value = getattr(self, name, None)
-            if value is None or value is UNSUPPORTED:
-                continue
-            if name == "extra" and not value:
-                continue
-            parts.append(f"{name.lstrip('_')}={value!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
 
     def copy(self) -> tx.Self:
         """

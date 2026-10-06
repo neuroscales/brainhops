@@ -1917,6 +1917,23 @@ holds.
   `ConversionReport.passed_through`, which only that hook filled, was
   dropped with it.
 
+### Addendum: the seventh review
+
+Where this addendum and the sections above disagree, this addendum
+holds.
+
+- **`repr` (M5).** `Metadata` has no `__repr__` of its own: `bagof`
+  builds it, with policies on the fields. `Metadata` and the groups
+  (`Vocabulary`) hide a field that holds `None` or `UNSUPPORTED`
+  (`repr=HideIf(...)`), and `extra` is hidden when empty too. The
+  fields are listed in reverse (`reverse=True`), with the groups listed
+  in the reverse of their order, so that `repr(Metadata(...))` shows
+  `format`, `extra`, then the vocabulary in its declared order. A
+  format class declares the vocabulary again (`supports=`), and
+  `bagof` has no way to place a field (`format`) before the fields a
+  class declares, so the `repr` of a format shows `format` last:
+  `NiftiMetadata(description='T1w', format='nifti')`.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

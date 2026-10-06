@@ -213,7 +213,15 @@ def test_an_unsupported_field_is_refused_at_construction() -> None:
 
 def test_repr_hides_none_and_unsupported() -> None:
     assert repr(LiteMetadata(description="x")) == (
-        "LiteMetadata(format='test-lite', description='x')"
+        "LiteMetadata(description='x', format='test-lite')"
+    )
+    # `format` first, then `extra` (only when not empty), then the
+    # vocabulary in its declared order.
+    assert repr(Metadata(echo_time=0.03, description="x", extra={})) == (
+        "Metadata(format='generic', description='x', echo_time=0.03)"
+    )
+    assert repr(Metadata(name="n", extra={"k": 1})) == (
+        "Metadata(format='generic', extra={'k': 1}, name='n')"
     )
     assert repr(OpaqueMetadata()) == "OpaqueMetadata(format='opaque')"
 

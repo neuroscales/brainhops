@@ -28,7 +28,7 @@ import itertools
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import ConvertTo, Field, Magic, fields
+from bagof.magic import ConvertTo, Field, HideIf, Magic, fields
 
 # internals
 from brainhops._core.enum import StrEnum
@@ -48,6 +48,7 @@ from ._terms import (
     EncodingDirection,
     GeneratedBy,
     MaybeEnumConverter,
+    _is_absent,
     direction,
     dtype,
     unit,
@@ -200,7 +201,14 @@ class Along(Field):
 # ----------------------------------------------------------------------
 
 
-class Vocabulary(Magic, kw_only=True, convert=True):
+class Vocabulary(
+    Magic,
+    kw_only=True,
+    convert=True,
+    # A field is shown in `repr` only when it holds a value: not `None`
+    # (unknown), not `UNSUPPORTED` (no slot).
+    repr=HideIf(_is_absent),
+):
     """
     The base class of the vocabulary groups.
 
@@ -208,7 +216,8 @@ class Vocabulary(Magic, kw_only=True, convert=True):
     the common vocabulary, and nothing else. [`Metadata`][] inherits every
     group, and a format names the groups it can store in its `supports=`
     declaration. A group is not meant to be instantiated. The groups
-    convert their fields (`convert=True`), because the fields of a mixin
+    convert their fields (`convert=True`), and hide from `repr` a field
+    that holds `None` or `UNSUPPORTED`, because the fields of a mixin
     keep the options of the class that declares them.
     """
 
