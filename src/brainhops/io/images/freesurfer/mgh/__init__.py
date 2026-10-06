@@ -36,8 +36,10 @@ written file always records its geometry, with the flag set.
 
 **Metadata.** The MRI parameters of the footer (TR, flip angle, TE, TI,
 FoV) and the raw trailing tags are kept on the object and written back,
-so an MGH file round-trips. They are not part of the datamodel, so they
-do not survive a conversion to another format.
+so an MGH file round-trips. `image.metadata` is an
+[`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata]: TR, TE and
+TI in seconds, the flip angle in degrees, and the command-line history of
+the tags, which convert to other formats like any metadata.
 """
 
 __all__ = ["MghImage", "MghMetadata"]

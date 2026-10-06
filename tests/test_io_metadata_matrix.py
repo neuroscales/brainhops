@@ -9,6 +9,7 @@ into it and read back too.
 
 import datetime
 
+import numpy as np
 import pytest
 
 
@@ -21,6 +22,8 @@ def _to(source, target, **kwargs):  # noqa: ANN001, ANN003, ANN202
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402, F401
+from brainhops.datamodel.axes import ChannelAxis, SpaceAxis  # noqa: E402
+from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import (  # noqa: E402
     UNSUPPORTED,
     Channel,
@@ -199,6 +202,26 @@ def test_a_fresh_record_holds_what_the_format_supports(cls) -> None:  # noqa: AN
         assert getattr(back, name) == getattr(HUB, name), name
     if cls.supports("extra"):
         assert back.extra == FULL["extra"]
+
+
+def test_ome_zarr_holds_what_it_supports(tmp_path) -> None:  # noqa: ANN001
+    converted, _ = _to(Metadata(**FULL), OmeZarrMetadata)
+    image = OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((4, 4, 4, 3), "float32"))],
+        axes=[
+            SpaceAxis("x"),
+            SpaceAxis("y"),
+            SpaceAxis("z"),
+            ChannelAxis("c"),
+        ],
+        metadata=converted,
+    )
+    image.save(str(tmp_path / "full.ome.zarr"), on_loss="raise")
+    back = io.load(str(tmp_path / "full.ome.zarr")).metadata
+    for name in sorted(VOCABULARY):
+        if OmeZarrMetadata.supports(name):
+            assert getattr(back, name) == getattr(HUB, name), name
+    assert back.extra == FULL["extra"]
 
 
 def _format_classes() -> list:

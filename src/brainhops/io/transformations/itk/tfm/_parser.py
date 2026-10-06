@@ -7,10 +7,12 @@ import numpy as np
 import typing_extensions as tx
 
 # externals
-from bagof.magic import HIDE_IF_NONE, Magic
+from bagof.magic import HIDE_IF_NONE, Factory, Magic
+
+from brainhops._core.peek import peekable_lines
 
 # core
-from brainhops._core.peek import peekable_lines
+from brainhops.datamodel.metadata._field import MetadataField
 
 # io
 from brainhops.io.base.parsers import (
@@ -20,6 +22,7 @@ from brainhops.io.base.parsers import (
 )
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
+from .._metadata import ItkMetadata
 
 # constants
 _HEADER = "#Insight Transform File V1.0"
@@ -51,6 +54,18 @@ class TfmTransformParser(
     are stored straight into the `transformations` of the sequence that
     this parser is mixed into.
     """
+
+    metadata: MetadataField[
+        ItkMetadata,
+        Factory(),
+        tx.Doc(
+            """
+            None: an ITK `.tfm` file stores no metadata, so every field is
+            unsupported. See
+            [`ItkMetadata`][brainhops.io.transformations.itk.ItkMetadata].
+            """
+        ),
+    ]
 
     # --- sniff --------------------------------------------------------
 

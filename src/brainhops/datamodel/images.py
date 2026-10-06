@@ -18,6 +18,8 @@ from ._transformations.multiscale import (
 )
 from .base import DataModelBase, IdentityComparison
 from .geometry import Geometry
+from .metadata import Indexed, Metadata, Resampled
+from .metadata._field import MetadataField
 from .transformations import (
     CartesianField,
     Identity,
@@ -36,6 +38,23 @@ class Image(IdentityComparison, DataModelBase, eq=False):
         explicitly (e.g., `numpy.array_equal(a, b)`) to test whether two
         images hold the same values.
     """
+
+    # Keyword-only, so that it never takes the place of a positional
+    # argument of a subclass (`SingleScaleImage(data)`), and out of `repr`.
+    metadata: MetadataField[
+        tx.Optional[Metadata],
+        tx.Doc(
+            """
+            Non-spatial metadata (description, acquisition parameters,
+            provenance, ...), format-agnostic. A file format narrows it
+            to its own `FileBasedMetadata` subclass, which converts (and
+            reports what is lost) when an image changes format. An image
+            holds its own copy: metadata given to it (`metadata=`,
+            `replace()`, `from_other`) is copied, never shared. See
+            [`brainhops.datamodel.metadata`][].
+            """
+        ),
+    ] = None
 
     # --- array API ----------------------------------------------------
 
@@ -218,7 +237,10 @@ class SingleScaleImage(Image):
         Returns
         -------
         Image
-            The resliced image.
+            The resliced image. Its metadata is derived from this image's:
+            the fields tied to the spatial sampling are cleared, an
+            encoding direction given in voxel axes is mapped through the
+            map of the voxels, and `"reslice"` is appended to `history`.
         """
         opt = dict(degree=degree, bound=bound, coeff=coeff, copy=copy)
 
@@ -246,12 +268,20 @@ class SingleScaleImage(Image):
         # The executor is imported lazily to avoid an import cycle.
         from ._transformations.separable import pull_separable
 
-        transformation = (
-            preferred.inverse() @ geometry.transformation @ geometry.grid
-        )
+        new2old = preferred.inverse() @ geometry.transformation
+        transformation = new2old @ geometry.grid
         new_data = pull_separable(self.data, transformation, **opt)
+        metadata = self.metadata
+        if metadata is not None:
+            # The grid is left out of the voxel map: it is the identity on
+            # the voxel coordinates, but a field, which has no affine form.
+            metadata = metadata.derive(
+                Resampled(new2old, geometry), history="reslice"
+            )
         return SingleScaleImage(
-            data=new_data, transformations=[geometry.transformation]
+            data=new_data,
+            transformations=[geometry.transformation],
+            metadata=metadata,
         )
 
     def __call__(self, transform: Transformation) -> "SingleScaleImage":
@@ -281,7 +311,9 @@ class SingleScaleImage(Image):
         else:
             transformations = [transform]
         return SingleScaleImage(
-            data=self.data, transformations=transformations
+            data=self.data,
+            transformations=transformations,
+            metadata=self.metadata,
         )
 
     def __getitem__(
@@ -289,6 +321,24 @@ class SingleScaleImage(Image):
     ) -> "SingleScaleImage":
         """
         Index into the image data while preserving the geometry of the image.
+
+        The metadata is derived for the indexed image: an index along a
+        time, channel, ... axis keeps the entries of the fields that run
+        along it at the positions it keeps (and clears them when it drops
+        the axis), and an index of a spatial axis, or of an axis of
+        unknown type, clears the fields tied to the spatial sampling, and
+        maps an encoding direction given in voxel axes. `"getitem"` is
+        appended to its `history`.
+
+        Parameters
+        ----------
+        index : int, slice, None, Ellipsis or tuple of them
+            The index, as for the data array.
+
+        Returns
+        -------
+        SingleScaleImage
+            The indexed image.
         """
         if not isinstance(index, tuple):
             index = (index,)
@@ -298,7 +348,14 @@ class SingleScaleImage(Image):
             Geometry((grid, xform))[index].transformation
             for xform in self.transformations
         ]
-        return SingleScaleImage(data=data, transformations=transformations)
+        metadata = self.metadata
+        if metadata is not None:
+            metadata = metadata.derive(
+                Indexed(index, self.shape, grid.input), history="getitem"
+            )
+        return SingleScaleImage(
+            data=data, transformations=transformations, metadata=metadata
+        )
 
 
 class MultiScaleImage(Image):
@@ -498,7 +555,8 @@ class MultiScaleImage(Image):
         Returns
         -------
         MultiScaleImage
-            The transformed image.
+            The transformed image. No voxel moves, so it keeps (a copy
+            of) this image's metadata.
         """
         transform = transform.inverse() @ self.transformation
         if self.transformations:
@@ -507,7 +565,9 @@ class MultiScaleImage(Image):
         else:
             transformations = [transform]
         return MultiScaleImage(
-            images=self.images, transformations=transformations
+            images=self.images,
+            transformations=transformations,
+            metadata=self.metadata,
         )
 
 

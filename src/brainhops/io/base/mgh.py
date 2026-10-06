@@ -32,7 +32,13 @@ here from the raw bytes, so that a file round-trips:
     readers here follow FreeSurfer.
 """
 
-__all__ = ["MghParser", "MGH_HEADER_SIZE", "MGH_FOOTER_SIZE"]
+__all__ = [
+    "MghMetadata",
+    "MghParser",
+    "MghRaw",
+    "MGH_HEADER_SIZE",
+    "MGH_FOOTER_SIZE",
+]
 
 # stdlib
 import functools
@@ -43,6 +49,7 @@ from io import BytesIO
 # dependencies
 import numpy as np
 import typing_extensions as tx
+from bagof.magic import Factory
 from nibabel.freesurfer import mghformat as _mgh
 
 # internals
@@ -52,8 +59,9 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.io.base._mgh_metadata import MghRaw
+from brainhops.io.base._mgh_metadata import MghMetadata, MghRaw
 from brainhops.io.base.freesurfer import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
@@ -76,6 +84,7 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
 MGH_HEADER_SIZE = 284
 """Size in bytes of the fixed MGH header; the voxels start right after."""
@@ -102,6 +111,22 @@ _MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
 """The footer fields, as `nibabel` names them."""
 
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
+
+# The `metadata` field of every MGH-based class.
+MghMetadataField = MetadataField[
+    MghMetadata,
+    Factory(),
+    tx.Doc(
+        """
+        The metadata of the file: the MRI parameters of the footer (in
+        seconds and degrees) and the command-line history of the trailing
+        tags, with the header and the tags as its raw record
+        (`metadata.raw`). A field set here is written over the raw record
+        on save; see
+        [`MghMetadata`][brainhops.io.images.freesurfer.mgh.MghMetadata].
+        """
+    ),
+]
 
 
 def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
@@ -184,6 +209,51 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         ),
     ] = None
 
+    metadata: MghMetadataField
+
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
+        self._sync_metadata()
+
+    def _sync_metadata(self, force: bool = False) -> None:
+        """
+        Read the metadata from the header and the tags, when the header
+        is not its record yet (or, with `force`, again).
+
+        The tags are not read here: the record reads them on first use
+        (see `MghRaw`), and so does `history`. A `metadata` given
+        along with the header (explicitly, or carried over by
+        `replace(image, header=...)`) keeps the fields that changed in
+        it, over the decoded ones (see `FileBasedMetadata.update_from_raw`).
+        """
+        header = self.header
+        if header is None:
+            return
+
+        def read() -> MghRaw:
+            tags = getattr(self, "_tags", None)
+            return MghRaw(header, tags, loader=self._tags_loader())
+
+        sync_metadata(
+            self,
+            MghMetadata,
+            read,
+            same=lambda held: getattr(held, "header", None) is header,
+            force=force,
+            image=self,
+        )
+
+    def _tags_loader(self) -> tx.Optional[tx.Callable[[], bytes]]:
+        """What reads the tags from the file the image was loaded from,
+        or `None` when it was not loaded from a file."""
+        if self.image is None or self.header is None:
+            return None
+        holder = self.image.file_map.get("image")
+        filename = getattr(holder, "filename", None)
+        if not filename:
+            return None
+        return functools.partial(_read_tags_file, filename, self.header)
+
     @property
     def header(self) -> tx.Optional[_mgh.MGHHeader]:
         """The `nibabel` MGH header: the one set explicitly, or else the
@@ -197,6 +267,9 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     @header.setter
     def header(self, value: tx.Optional[_mgh.MGHHeader]) -> None:
         self._header = value
+        # A new record: the metadata is read from it again.
+        if value is not None:
+            self._sync_metadata(force=True)
 
     @property
     def tags(self) -> bytes:
@@ -209,21 +282,22 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         """
         if getattr(self, "_tags", None) is not None:
             return self._tags
-        tags = b""
-        filename = None
-        if self.image is not None and self.header is not None:
-            holder = self.image.file_map.get("image")
-            filename = getattr(holder, "filename", None)
-        if filename:
-            with open(filename, "rb") as f:
-                stream = open_compressed(f)
-                tags = _read_tags(stream, self.header)
+        record = getattr(self.metadata, "raw", None)
+        if isinstance(record, MghRaw) and record.header is self.header:
+            # Read once, by the record of the metadata.
+            tags = record.tags
+        else:
+            loader = self._tags_loader()
+            tags = loader() if loader is not None else b""
         self._tags = tags
         return tags
 
     @tags.setter
     def tags(self, value: tx.Optional[bytes]) -> None:
         self._tags = None if value is None else bytes(value)
+        # New tags: the metadata is read from them again.
+        if self.header is not None:
+            self._sync_metadata(force=True)
 
     @property
     def mri_params(self) -> tx.Dict[str, float]:
@@ -438,11 +512,17 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     def to_nibabel(self, **kwargs) -> _mgh.MGHImage:
         """Build the `nibabel` image that encodes this object.
 
-        Each concrete MGH format overrides this method; the other writer
-        methods are defined in terms of it."""
+        Each concrete MGH format overrides this method (or
+        `_to_nibabel_and_tags`); the other writer methods are defined in
+        terms of them."""
         raise WriterNotImplementedError(
             f"{type(self).__name__} does not know how to write itself to MGH."
         )
+
+    def _to_nibabel_and_tags(self, **kwargs) -> tx.Tuple[_mgh.MGHImage, bytes]:
+        """The `nibabel` image that encodes this object, and the trailing
+        tags to write after it."""
+        return self.to_nibabel(**kwargs), self.tags or b""
 
     def to_bytes(self, compress: bool = False, **kwargs) -> bytes:
         """
@@ -451,9 +531,9 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         encoding instead.
         """
         stream = BytesIO()
-        image = self.to_nibabel(**kwargs)
+        image, tags = self._to_nibabel_and_tags(**kwargs)
         _image_to_stream(image, stream)
-        stream.write(self.tags or b"")
+        stream.write(tags)
         content = stream.getvalue()
         if compress:
             content = gzip.compress(content)

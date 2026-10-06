@@ -3,7 +3,7 @@
 This page is for whoever adds a file format to brainhops, or the
 metadata of one that has none yet. What the metadata *is*, and how a user
 reads, edits and converts it, is in the user guide
-(`docs/start/metadata.md`); why it is built this way is in the
+([Metadata](../start/metadata.md)); why it is built this way is in the
 design memo (`docs/design/format-metadata.md`).
 
 A format's metadata is one class, `<Fmt>Metadata`, a subclass of

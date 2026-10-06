@@ -1,3 +1,6 @@
+# stdlib
+import math
+
 # dependencies
 import numpy as np
 import typing_extensions as tx
@@ -7,6 +10,9 @@ from nibabel.freesurfer import mghformat as _mgh
 # internals
 from brainhops._core import path
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata import ConversionReport
+from brainhops.datamodel.metadata._dtype import preferred_dtype
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.orientation import Orientation
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine, Scaling, Transformation
@@ -17,7 +23,8 @@ from brainhops.io.base._geometry import (
     arrange_voxel_to_ras,
     declared_axes,
 )
-from brainhops.io.base.mgh import _MRI_PARAMS, MghParser
+from brainhops.io.base._mgh_metadata import MghRaw
+from brainhops.io.base.mgh import _MRI_PARAMS, MghMetadata, MghParser
 from brainhops.io.base.nifti import _scale_spatial, _unit_scale
 from brainhops.io.base.parsers import (
     UnrepresentableTransformationError,
@@ -147,17 +154,37 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
         kind that are scaled or shifted.
 
         The MRI parameters of the footer (`tr`, `flip_angle`, `te`, `ti`,
-        `fov`) are copied from this image's header, then from `like` when
-        it is given (a path to an MGH/MGZ file, a `nibabel` MGH image or
-        header, or another object read from MGH); the repetition time the
-        transformation states replaces theirs; then the keyword arguments
-        apply. `dtype` sets the stored voxel type. Without it, the
-        array's type is kept when MGH can store it (uint8, int16, int32,
-        float32), and otherwise converted to the nearest one MGH can:
-        booleans to uint8, other floats to float32, other integers to
-        int16 or int32. Integers that int32 cannot hold raise
-        `WriterError`.
+        `fov`) are copied from the raw record of the file this image was read
+        from (`metadata.raw`), then from `like` when it is given (a path
+        to an MGH/MGZ file, a `nibabel` MGH image or header, or another
+        object read from MGH). The fields of `metadata` changed since the
+        read are written over them (all of them for metadata built in
+        memory or converted from another format). The repetition time the
+        transformation states is geometry, and replaces theirs: a
+        `metadata.repetition_time` that disagrees with it is reported.
+        What MGH cannot hold is reported according to `on_loss`
+        (`"ignore"`, `"warn"` or `"raise"`; the policy in effect by
+        default).
+
+        The keyword arguments `tr`, `te`, `ti` (ms) and `flip_angle`
+        (radians) set the matching metadata fields
+        (`repetition_time`, ... in seconds and degrees) and win over
+        everything else, the transformation's repetition time included;
+        any other keyword, such as `fov`, sets that header field last.
+        `dtype` sets the stored voxel type. Without it,
+        `metadata.data_type` (the type of the file that was read) does,
+        when the array's values are of its kind (an integer type for
+        integer values); else the array's type is kept when MGH can store
+        it (uint8, int16, int32, float32), and otherwise converted to the
+        nearest one MGH can: booleans to uint8, other floats to float32,
+        other integers to int16 or int32. Integers that int32 cannot hold
+        raise `WriterError`.
         """
+        return self._to_nibabel_and_tags(like, **overrides)[0]
+
+    def _to_nibabel_and_tags(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Tuple[_mgh.MGHImage, bytes]:
         data = self.data
         if data is None:
             raise WriterError(
@@ -174,22 +201,74 @@ class MghImage(MghParser, WritableFileBasedImage, SingleScaleImage):
             )
 
         overrides = dict(overrides)
+        on_loss = overrides.pop("on_loss", None)
         dtype = overrides.pop("dtype", None)
-        dtype = _mgh_dtype(data, dtype)
+        metadata, report, force = _writable_metadata(self.metadata, overrides)
+        dtype = _stored_dtype(data, dtype, metadata, report)
 
+        record = metadata.raw
+        base = record.header if record is not None else self.header
         header = _mgh.MGHHeader()
-        for source in (self.header, _like_header(like)):
+        for source in (base, _like_header(like)):
             if source is None:
                 continue
             for name in _MRI_PARAMS:
                 header[name] = source[name]
-        if tr is not None:
+        tags = record.tags if record is not None else (self.tags or b"")
+        target = metadata.update_raw(
+            MghRaw(header, tags), image=self, on_loss=report, force=force
+        )
+        header = target.header
+        if tr is not None and "repetition_time" not in force:
+            # The repetition time is geometry: the transformation's.
             header["tr"] = tr
         for name, value in overrides.items():
             header[name] = value
         header.set_data_dtype(dtype)
+        metadata.check_raw(target, image=self, on_loss=report)
+        apply_loss_policy(report, on_loss, stacklevel=4)
 
-        return _mgh.MGHImage(data, vox2ras, header=header)
+        return _mgh.MGHImage(data, vox2ras, header=header), target.tags
+
+
+# The footer keywords of the writer, routed through the metadata: keyword
+# -> (vocabulary field, factor from the keyword's unit to the field's).
+_LEGACY_KEYWORDS = {
+    "tr": ("repetition_time", 1e-3),
+    "te": ("echo_time", 1e-3),
+    "ti": ("inversion_time", 1e-3),
+    "flip_angle": ("flip_angle", None),  # radians -> degrees
+}
+
+
+def _writable_metadata(
+    metadata: tx.Any, overrides: tx.Dict[str, tx.Any]
+) -> tx.Tuple[MghMetadata, ConversionReport, tx.Tuple[str, ...]]:
+    """
+    The `MghMetadata` to write, the report the write starts from, and
+    the fields to write whatever the snapshot says: the image's own
+    metadata (converted from another format if need be, see
+    `FileBasedMetadata.writable`), with the footer keywords popped from
+    `overrides` set over it. A keyword always wins: it is written even when it
+    equals the value that was read, and a zero clears the slot.
+    """
+    if metadata is None:
+        metadata = MghMetadata()
+    metadata, report = MghMetadata.writable(metadata)
+    values = {}
+    for keyword, (name, factor) in _LEGACY_KEYWORDS.items():
+        if keyword not in overrides:
+            continue
+        value = overrides.pop(keyword)
+        if value is None or not float(value):
+            values[name] = None
+        elif factor is None:
+            values[name] = math.degrees(float(value))
+        else:
+            values[name] = float(value) * factor
+    if not values:
+        return metadata, report, ()
+    return replace(metadata, **values), report, tuple(values)
 
 
 # ----------------------------------------------------------------------
@@ -394,6 +473,33 @@ def _mgh_dtype(data: tx.Any, dtype: tx.Any = None) -> np.dtype:
         f"MGH cannot store voxels of type {dtype}; it stores uint8, int16, "
         f"int32 and float32."
     )
+
+
+def _stored_dtype(
+    data: tx.Any,
+    dtype: tx.Any,
+    metadata: MghMetadata,
+    report: ConversionReport,
+) -> np.dtype:
+    """
+    The voxel type to store: `dtype` when given, else the metadata's
+    `data_type` when the values are of its kind (see `preferred_dtype`),
+    as the nearest type MGH stores (approximated when it is not the
+    same), else the array's own (see `_mgh_dtype`).
+    """
+    if dtype is not None:
+        return _mgh_dtype(data, dtype)
+    array_dtype = np.dtype(getattr(data, "dtype", np.float32))
+    wanted = preferred_dtype(metadata, array_dtype, on_loss=report)
+    if wanted == array_dtype:
+        return _mgh_dtype(data)
+    nearest = _mgh_dtype(np.empty(0, dtype=wanted))
+    if nearest != wanted:
+        report.approximated["data_type"] = (
+            f"stored as {nearest.name} (MGH stores uint8, int16, int32 "
+            f"and float32)"
+        )
+    return _mgh_dtype(data, nearest)
 
 
 def _like_header(like: tx.Any) -> tx.Optional[_mgh.MGHHeader]:

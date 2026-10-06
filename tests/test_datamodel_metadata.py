@@ -12,6 +12,7 @@ design memo); `to()`, conversion loss reports and the loss policies;
 """
 
 import copy
+import inspect
 import json
 import pickle
 import subprocess
@@ -35,6 +36,7 @@ from brainhops.datamodel.enums import (
     SpaceEnum,
 )
 from brainhops.datamodel.geometry import Geometry
+from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     Channel,
@@ -73,7 +75,11 @@ from brainhops.datamodel.metadata._vocabulary import (
     Scoped,
 )
 from brainhops.datamodel.systems import CoordinateSystem
-from brainhops.datamodel.transformations import Affine, CartesianField
+from brainhops.datamodel.transformations import (
+    Affine,
+    CartesianField,
+    Translation,
+)
 from brainhops.io.metadata import (
     FileBasedMetadata,
     OpaqueMetadata,
@@ -960,6 +966,68 @@ def test_times_are_iso_strings() -> None:
 # ----------------------------------------------------------------------
 
 
+def test_the_roots_carry_an_optional_keyword_only_field() -> None:
+    image = SingleScaleImage(np.zeros((2, 3)))
+    assert image.metadata is None
+    signature = inspect.signature(SingleScaleImage)
+    assert list(signature.parameters)[:2] == ["data", "transformations"]
+    assert (
+        signature.parameters["metadata"].kind is inspect.Parameter.KEYWORD_ONLY
+    )
+    affine = Affine(np.eye(4)[:3])
+    assert affine.metadata is None
+    assert list(inspect.signature(Translation).parameters)[-1] == "metadata"
+
+
+def test_the_field_converts_to_generic_metadata() -> None:
+    image = SingleScaleImage(
+        np.zeros((2, 3)), metadata={"description": "from a dict"}
+    )
+    assert type(image.metadata) is Metadata
+    assert image.metadata.description == "from a dict"
+    lite = LiteMetadata(description="d")
+    affine = Affine(np.eye(4)[:3], metadata=lite)
+    assert type(affine.metadata) is Metadata
+    assert affine.metadata.description == "d"
+
+
+def test_the_field_is_out_of_eq_and_repr() -> None:
+    a = SingleScaleImage(np.zeros(2), metadata=Metadata(description="a"))
+    b = SingleScaleImage(np.zeros(2), metadata=Metadata(description="b"))
+    assert "metadata" not in repr(a)
+    x = Affine(np.eye(3)[:2], metadata=Metadata(description="a"))
+    assert "metadata" not in repr(x)
+    for cls in (SingleScaleImage, Affine):
+        field = next(f for f in fields(cls) if f.name == "metadata")
+        assert not field.eq and not field.repr
+    assert a.metadata != b.metadata
+
+
+def test_replace_carries_the_metadata() -> None:
+    affine = Affine(np.eye(3)[:2], metadata=Metadata(description="a"))
+    assert replace(affine, data=2 * np.eye(3)[:2]).metadata.description == (
+        "a"
+    )
+
+
+def test_replace_and_from_other_copy_the_metadata() -> None:
+    image = SingleScaleImage(
+        np.zeros((2, 3)), metadata=Metadata(description="a", extra={"k": 1})
+    )
+    copied = replace(image, data=np.ones((2, 3)))
+    assert copied.metadata is not image.metadata
+    copied.metadata.description = "edited copy"
+    copied.metadata.extra["k"] = 2
+    assert image.metadata.description == "a"
+    assert image.metadata.extra == {"k": 1}
+    other = SingleScaleImage.from_other(image)
+    assert other.metadata is not image.metadata
+    assert other.metadata == image.metadata
+    given = Metadata(description="given")
+    affine = Affine(np.eye(3)[:2], metadata=given)
+    assert affine.metadata is not given
+
+
 def test_a_copy_shares_the_record_and_copies_the_snapshot() -> None:
     meta = DictMetadata.from_raw({"desc": "read", "Lab": "x"})
     other = meta.copy()
@@ -1091,6 +1159,19 @@ def test_collected_reports_merge_into_one() -> None:
     with pytest.raises(MetadataLossError):
         with collect_loss_reports():
             apply_loss_policy(ConversionReport(lost={"x": 1}), "raise")
+
+
+def test_from_other_carries_the_metadata_of_another_family() -> None:
+    affine = Affine(np.eye(4)[:3], metadata=Metadata(description="mine"))
+
+    class Holder(DataModelBase):
+        inner: tx.Any = None
+        metadata: tx.Optional[Metadata] = None
+
+    held = Holder.from_other(affine)
+    assert held.inner is affine
+    assert held.metadata.description == "mine"
+    assert Holder.from_other(affine, metadata=None).metadata is None
 
 
 # ----------------------------------------------------------------------
@@ -1437,6 +1518,13 @@ def test_to_none_keeps_the_class() -> None:
     assert same._changed_fields() == {"description": "other"}
     generic = Metadata(description="d").to()
     assert type(generic) is Metadata and generic.description == "d"
+
+
+def test_a_format_class_given_to_the_generic_field_is_converted() -> None:
+    meta = _read()
+    image = SingleScaleImage(np.zeros((2, 3)), metadata=meta)
+    assert type(image.metadata) is Metadata
+    assert image.metadata.description == "short"
 
 
 def test_metadata_field_is_an_annotation() -> None:

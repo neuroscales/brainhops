@@ -278,6 +278,126 @@ def test_multiscale_reslice_with_copy_is_fresh() -> None:
     assert np.array_equal(level0, before)
 
 
+# ----------------------------------------------------------------------
+#   METADATA
+# ----------------------------------------------------------------------
+
+
+def _dwi() -> SingleScaleImage:
+    """A 4-D diffusion series: three spatial axes and a time axis."""
+    from brainhops.datamodel.metadata import Metadata
+    from brainhops.datamodel.systems import CoordinateSystem
+
+    system = CoordinateSystem(
+        axes=[
+            Axis("i", "space"),
+            Axis("j", "space"),
+            Axis("k", "space"),
+            Axis("t", "time"),
+        ]
+    )
+    placement = Affine(
+        matrix=np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[:-1],
+        input=system,
+        output=RASCoordinateSystem(),
+    )
+    return SingleScaleImage(
+        data=np.zeros((4, 5, 6, 3)),
+        transformations=[placement],
+        metadata=Metadata(
+            bvalues=(0.0, 1000.0, 2000.0),
+            phase_encoding_direction="j-",
+            slice_timing=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5),
+            history=("acquired",),
+        ),
+    )
+
+
+def test_getitem_selects_the_entries_of_the_indexed_axis() -> None:
+    dwi = _dwi()
+    first = dwi[..., :2]
+    assert first.shape == (4, 5, 6, 2)
+    assert first.metadata.bvalues == (0.0, 1000.0)
+    # The spatial axes are untouched: the spatial fields are kept.
+    assert first.metadata.slice_timing == dwi.metadata.slice_timing
+    assert first.metadata.phase_encoding_direction == (
+        dwi.metadata.phase_encoding_direction
+    )
+    # An integer drops the time axis, and with it the b-values.
+    assert dwi[..., 1].metadata.bvalues is None
+
+
+def test_getitem_maps_a_direction_through_a_flip() -> None:
+    from brainhops.datamodel.metadata import EncodingDirection
+
+    flipped = _dwi()[:, ::-1]
+    assert flipped.metadata.phase_encoding_direction == EncodingDirection("j")
+    assert flipped.metadata.slice_timing is None
+    assert flipped.metadata.bvalues == (0.0, 1000.0, 2000.0)
+    # A single component is an index of the first axis.
+    assert _dwi()[::-1].metadata.phase_encoding_direction == (
+        EncodingDirection("j-")
+    )
+
+
+def test_getitem_appends_to_the_history() -> None:
+    from brainhops.datamodel.metadata import EncodingDirection
+
+    dwi = _dwi()
+    # One step, however many axes it changes, along with the fields.
+    both = dwi[:, ::-1, :, :2].metadata
+    assert both.history == ("acquired", "getitem")
+    assert both.bvalues == (0.0, 1000.0)
+    assert both.slice_timing is None
+    assert both.phase_encoding_direction == EncodingDirection("j")
+    assert dwi[...].metadata.history == ("acquired", "getitem")
+    assert dwi.metadata.history == ("acquired",)
+    assert _image()[0].metadata is None
+
+
+def test_reslice_derives_the_metadata() -> None:
+    from brainhops.datamodel.metadata import EncodingDirection
+
+    dwi = _dwi()
+    swap = np.diag([2.0, 2.0, 2.0, 1.0, 1.0])[[1, 0, 2, 3]]
+    target = Affine(
+        matrix=swap,
+        input=dwi.transformation.input,
+        output=RASCoordinateSystem(),
+    )
+    resliced = dwi.reslice(target, degree=0)
+    assert resliced.metadata.phase_encoding_direction == (
+        EncodingDirection("i-")
+    )
+    assert resliced.metadata.slice_timing is None
+    assert resliced.metadata.bvalues == (0.0, 1000.0, 2000.0)
+    assert resliced.metadata.history == ("acquired", "reslice")
+    # A call keeps the metadata as it is.
+    moved = dwi(Affine(matrix=np.eye(5)[:-1]))
+    assert moved.metadata == dwi.metadata
+    assert moved.metadata is not dwi.metadata
+
+
+def test_multiscale_call_keeps_the_pyramid_metadata() -> None:
+    from brainhops.datamodel.metadata import Metadata
+
+    pyramid = _pyramid()
+    pyramid.metadata = Metadata(description="pyramid")
+    identity = Affine(
+        matrix=np.eye(4)[:-1],
+        input=RASCoordinateSystem(),
+        output=RASCoordinateSystem(),
+    )
+
+    moved = pyramid(identity)
+
+    # Applying a world transformation moves no voxel: the metadata is kept,
+    # as a copy.
+    assert moved.metadata.description == "pyramid"
+    assert moved.metadata is not pyramid.metadata
+    assert len(moved.transformations) == len(pyramid.transformations) + 1
+
+
 def test_images_compare_by_identity() -> None:
     # `==` is `is`: an image equals itself only, never a distinct image
     # holding the same data and transformations, and `==` never raises

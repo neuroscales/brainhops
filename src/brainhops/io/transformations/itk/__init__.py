@@ -33,6 +33,16 @@ The blocks of a `CompositeTransform` (in any ITK file) are read in the
 order they apply to points, which is the reverse of their order in the
 file: ITK applies the last block of a composite first.
 
+## Metadata
+
+`.tfm` and `.mat` files store no metadata: their `metadata` is an
+[`ItkMetadata`][], for which every field is unsupported, and a `.mat`
+write reports any field that was set as lost. An `.h5` file records the
+version of ITK that wrote it, read as `generated_by`
+([`ItkH5Metadata`][]). The blocks of a chain have no metadata of their
+own: composition does not merge. NIfTI warps carry the metadata of their
+NIfTI header.
+
 Not every ANTs output can be read yet:
 
 - time-varying velocity fields, `<prefix><n>VelocityField.nii.gz`, are

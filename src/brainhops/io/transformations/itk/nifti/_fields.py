@@ -29,7 +29,8 @@ from brainhops.io.base.nifti import (
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
-    _apply_like,
+    NiftiMetadataField,
+    _apply_metadata,
     _apply_overrides,
     _embed_affine,
     _new_nifti,
@@ -160,6 +161,10 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     """
 
     HINTS = ("itk", "ants")
+
+    # Narrowed here because the first base carries `Transformation`'s
+    # generic `metadata` (see `NiftiBasedTransformation`).
+    metadata: NiftiMetadataField
 
     # --- reading ------------------------------------------------------
 
@@ -328,7 +333,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         scode, qcode = self._xform_codes()
         image.header.set_sform(vox2ras, code=scode)
         image.header.set_qform(vox2ras, code=qcode)
-        _apply_like(image, like)
+        _apply_metadata(image, self, like, overrides, intent=False)
         _apply_overrides(image, overrides)
         return image
 

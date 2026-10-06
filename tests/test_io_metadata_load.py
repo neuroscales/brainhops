@@ -16,6 +16,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
+from brainhops.datamodel.images import SingleScaleImage  # noqa: E402
 from brainhops.datamodel.metadata import Metadata  # noqa: E402
 from brainhops.io.base._metadata_parser import MetadataParser  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
@@ -23,6 +24,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     ParserNotImplementedError,
 )
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
+    MghImage,
     MghMetadata,
 )
 from brainhops.io.images.nifti import NiftiMetadata  # noqa: E402
@@ -143,6 +145,81 @@ def test_load_is_resolved_by_the_bases() -> None:
 # ----------------------------------------------------------------------
 #   FORMATS
 # ----------------------------------------------------------------------
+
+
+def test_mgh_metadata_reads_the_footer_and_the_tags(tmp_path) -> None:  # noqa: ANN001
+    image = MghImage(
+        np.zeros((3, 4, 5), "float32"),
+        metadata=Metadata(repetition_time=2.3, history=("recon-all -s bert",)),
+    )
+    path = tmp_path / "scan.mgz"
+    image.save(str(path), on_loss="ignore")
+    meta = FileBasedMetadata.load(path)
+    assert type(meta) is MghMetadata
+    assert meta.repetition_time == 2.3
+    # The tags, after the voxels, are read for `history`.
+    assert meta.history == ("recon-all -s bert",)
+    with open(path, "rb") as f:
+        assert MghMetadata.load(f).history == ("recon-all -s bert",)
+
+
+def test_zarr_metadata_reads_and_writes_the_attributes(tmp_path) -> None:  # noqa: ANN001
+    zarr = pytest.importorskip("brainhops.io.images.zarr")
+    path = str(tmp_path / "plain.zarr")
+    zarr.ZarrImage(
+        np.zeros((3, 4, 5), "int16"),
+        metadata=Metadata(description="plain", extra={"Lab": "x"}),
+    ).save(path)
+    meta = FileBasedMetadata.load(path)
+    assert type(meta) is zarr.ZarrMetadata
+    assert (meta.description, meta.extra) == ("plain", {"Lab": "x"})
+    assert meta.data_type == np.int16  # from the array, not its data
+    # The record is an object of its own on disk, so it is written back.
+    meta.description = "edited"
+    meta.extra = {}
+    meta.to_file(path)
+    again = FileBasedMetadata.load(path)
+    assert (again.description, again.extra) == ("edited", {})
+    assert np.asarray(io.load(path).data).shape == (3, 4, 5)
+
+
+def test_ome_zarr_metadata_reads_the_pyramid(tmp_path) -> None:  # noqa: ANN001
+    zarr = pytest.importorskip("brainhops.io.images.zarr")
+    from brainhops.datamodel.axes import SpaceAxis
+
+    path = str(tmp_path / "brain.ome.zarr")
+    zarr.OmeZarrImage(
+        images=[SingleScaleImage(np.zeros((4, 4, 4), "float32"))],
+        axes=[SpaceAxis("x"), SpaceAxis("y"), SpaceAxis("z")],
+        metadata=Metadata(name="brain"),
+    ).save(path)
+    meta = FileBasedMetadata.load(path)
+    assert type(meta) is zarr.OmeZarrMetadata
+    assert meta.name == "brain"
+    assert meta.data_type == np.float32
+    # Its record is written with the pyramid: no `to_file`.
+    assert not hasattr(meta, "to_file")
+
+
+def test_x5_metadata_reads_the_node(tmp_path) -> None:  # noqa: ANN001
+    h5py = pytest.importorskip("h5py")
+    from brainhops.io.transformations.x5 import X5Metadata
+
+    path = tmp_path / "affine.x5"
+    with h5py.File(path, "w") as f:
+        f.attrs["Format"], f.attrs["Version"] = "X5", np.uint16(1)
+        node = f.create_group("TransformGroup/0")
+        node.attrs["Type"], node.attrs["SubType"] = "linear", "affine"
+        node.attrs["Representation"] = "matrix"
+        node.attrs["ArrayLength"] = 1
+        node.attrs["Metadata"] = json.dumps(
+            {"Description": "to MNI", "Lab": "x"}
+        )
+        node.create_dataset("Transform", data=np.eye(4)[None])
+    meta = FileBasedMetadata.load(path)
+    assert type(meta) is X5Metadata
+    assert (meta.description, meta.extra) == ("to MNI", {"Lab": "x"})
+    assert meta == io.load(path).metadata
 
 
 def test_itk_h5_metadata_reads_the_root_header(tmp_path) -> None:  # noqa: ANN001

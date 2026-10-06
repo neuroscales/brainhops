@@ -1,7 +1,7 @@
 """The shared NIfTI-reading and NIfTI-writing machinery behind every
 NIfTI-based image and transformation format."""
 
-__all__ = ["NiftiParser"]
+__all__ = ["NiftiMetadata", "NiftiParser"]
 
 # stdlib
 import gzip
@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import nibabel as nb
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import replace
+from bagof.magic import Factory, replace
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
@@ -24,6 +24,12 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.metadata._dtype import (
+    preferred_storage,
+    stored_values,
+)
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.systems import (
     CoordinateSystem,
     _axes_or_unknown,
@@ -41,7 +47,11 @@ from brainhops.io.base._geometry import (
     declared_axes,
     embed_affine,
 )
-from brainhops.io.base._nifti_metadata import _TIME_UNITS
+from brainhops.io.base._nifti_metadata import (
+    _TIME_UNITS,
+    NiftiMetadata,
+    copy_record,
+)
 from brainhops.io.base._nifti_units import nifti_unit_meters, unit_to_nifti
 from brainhops.io.base.parsers import (
     BinaryFileParserWriter,
@@ -53,6 +63,7 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
 # typing
 _NiftiObject = tx.Union[nb.Nifti1Header, nb.Nifti1Image]
@@ -270,6 +281,24 @@ def _nifti_shape(header: "_NiftiObject") -> tx.Optional[tx.Tuple[int, ...]]:
         return None
 
 
+# The `metadata` field of every NIfTI-based class. It is declared again
+# on `NiftiBasedTransformation`: there, `Transformation` comes before
+# `NiftiParser` in the MRO, and its generic declaration would win.
+NiftiMetadataField = MetadataField[
+    NiftiMetadata,
+    Factory(),
+    tx.Doc(
+        """
+        The metadata of the file: the common vocabulary decoded from the
+        header (description, display range, slice timing, ...), with the
+        header itself as its raw record (`metadata.raw`). A field set
+        here is written over the header on save; see
+        [`NiftiMetadata`][brainhops.io.images.nifti.NiftiMetadata].
+        """
+    ),
+]
+
+
 class NiftiParser(DataModelBase, BinaryFileParserWriter):
     """
     Base class for objects that are encoded by a NIfTI file.
@@ -310,6 +339,8 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
         ),
     ] = None
 
+    metadata: NiftiMetadataField
+
     @property
     def header(self) -> tx.Optional[nb.Nifti1Header]:
         """
@@ -346,6 +377,27 @@ class NiftiParser(DataModelBase, BinaryFileParserWriter):
     @header.setter
     def header(self, value: tx.Optional[nb.Nifti1Header]) -> None:
         self._header = value
+        # A new record: the metadata is read from it again.
+        if value is not None:
+            self.metadata = NiftiMetadata.from_raw(value, image=self)
+
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
+        self._sync_metadata()
+
+    def _sync_metadata(self) -> None:
+        """
+        Read the metadata from the header, when it is not its record yet.
+
+        An object built from a header (or a `nibabel` image) holds the
+        metadata decoded from it, with the header as its record. A
+        `metadata` given along with it (explicitly, or carried over by
+        `replace(image, header=...)`) keeps the fields that changed in
+        it, over the decoded ones, and they count as changes on write
+        (see `FileBasedMetadata.update_from_raw`).
+        """
+        if self.header is not None:
+            sync_metadata(self, NiftiMetadata, self.header, image=self)
 
     @property
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -968,7 +1020,9 @@ def _nifti_to_axes(header: nb.Nifti1Header) -> tx.List[Axis]:
 
 
 def _new_nifti(
-    data: ArrayProtocol, affine: tx.Optional[np.ndarray]
+    data: ArrayProtocol,
+    affine: tx.Optional[np.ndarray],
+    dtype: tx.Any = None,
 ) -> _NiftiObject:
     """
     Build a `nibabel` image, reporting an unwritable dtype as a writer error.
@@ -984,13 +1038,18 @@ def _new_nifti(
 
     NIfTI-1 cannot store some array types, such as 64-bit integers.
     `nibabel` raises a bare `ValueError` for one, which is re-raised as a
-    `WriterError` that names the dtype.
+    `WriterError` that names the dtype. `dtype`, when given, is the type
+    to store the array as instead (`nibabel` casts, or scales, on write).
     """
     shape = tuple(int(d) for d in getattr(data, "shape", ()) or ())
     image_cls = nb.Nifti1Image
     if any(d > _NIFTI1_MAX_DIM for d in shape):
         image_cls = nb.Nifti2Image
     try:
+        if dtype is not None and np.dtype(dtype) != getattr(
+            data, "dtype", None
+        ):
+            return image_cls(data, affine, dtype=np.dtype(dtype))
         return image_cls(data, affine)
     except ValueError as error:
         dtype = getattr(data, "dtype", "unknown")
@@ -1473,6 +1532,80 @@ def _apply_like(image: _NiftiObject, like: tx.Any) -> _NiftiObject:
     return image
 
 
+def _apply_metadata(
+    image: _NiftiObject,
+    obj: tx.Any,
+    like: tx.Any = None,
+    overrides: tx.Optional[tx.Dict[str, tx.Any]] = None,
+    *,
+    intent: bool = True,
+    record: bool = True,
+    data_type: bool = False,
+    data: tx.Any = None,
+) -> _NiftiObject:
+    """
+    Write the metadata of `obj` into the header of a freshly built image.
+
+    In order, lowest precedence first:
+
+    1. what is safe to keep from the record of the file that was read
+       (`obj.metadata.raw`; see `copy_record`). `intent` says whether a
+       record's intent may be kept: the transformation writers set their
+       own. A writer whose header is already a copy of the record passes
+       `record=False`;
+    2. the `like` template, exactly as before (description, and the
+       intent when none is set);
+    3. the common fields that changed since the read (all of them for an
+       object built in memory or converted from another format);
+    4. with `data_type` (the image writer, which passes the values it
+       writes as `data`), the stored data type and intensity scaling:
+       the metadata's `data_type`, `scale_slope` and `scale_intercept`
+       when the values fit them (see `preferred_storage`). A `dtype`
+       override still wins. The writer has already stored the values
+       accordingly; this step sets the header and reports.
+
+    Caller overrides are applied afterwards. What cannot be written is
+    reported, and the report handed to the loss policy: `on_loss`, popped
+    from `overrides` when given there, or the policy in effect.
+    """
+    on_loss = None
+    if overrides is not None:
+        on_loss = overrides.pop("on_loss", None)
+    metadata = getattr(obj, "metadata", None)
+    if metadata is not None:
+        # Another format's metadata (on a class that did not narrow its
+        # field) is converted; what NIfTI cannot hold is in `report`.
+        metadata, report = NiftiMetadata.writable(metadata)
+        if record:
+            copy_record(image.header, metadata.raw, intent=intent)
+    _apply_like(image, like)
+    if metadata is not None:
+        metadata.update_raw(image.header, image=obj, on_loss=report)
+        if data_type and (overrides or {}).get("dtype") is None:
+            if data is None:
+                data = image.dataobj
+            dtype, slope, intercept = preferred_storage(
+                metadata, data, on_loss=report
+            )
+            try:
+                image.header.set_data_dtype(dtype)
+            except Exception:
+                report.approximated["data_type"] = (
+                    f"NIfTI cannot store {dtype.name}"
+                )
+            if slope is not None:
+                image.header.set_slope_inter(slope, intercept)
+        elif not data_type:
+            # A transformation is stored unscaled.
+            changed = metadata._changed_fields()
+            for name in ("scale_slope", "scale_intercept"):
+                if changed.get(name) is not None:
+                    report.lost[name] = changed[name]
+        metadata.check_raw(image.header, image=obj, on_loss=report)
+        apply_loss_policy(report, on_loss, stacklevel=4)
+    return image
+
+
 def _apply_overrides(
     image: _NiftiObject, overrides: tx.Mapping
 ) -> _NiftiObject:
@@ -1511,6 +1644,7 @@ def _image_with_geometry(
     transformations: tx.Sequence[Transformation],
     like: tx.Any = None,
     overrides: tx.Optional[tx.Mapping] = None,
+    owner: tx.Any = None,
 ) -> _NiftiObject:
     """
     Build a NIfTI image from data and its voxel-to-world geometry.
@@ -1542,8 +1676,10 @@ def _image_with_geometry(
     from its own world space's unit, so the stored geometry keeps its
     physical size.
 
-    Non-encoding header fields are taken from `like` when it is given, and
-    caller `overrides` are applied last so an explicit value wins.
+    Non-encoding header fields are taken from the metadata of `owner`
+    (the object being written) and from `like` when it is given (see
+    `_apply_metadata`), and caller `overrides` are applied last so an
+    explicit value wins.
     """
     preferred_output = getattr(transformation, "output", None)
     space, time = _xyzt_labels(preferred_output)
@@ -1562,11 +1698,25 @@ def _image_with_geometry(
     sform = _scale_spatial(sform_raw, _unit_scale(preferred_output, space))
     qform = _scale_spatial(qform_raw, _unit_scale(qform_output, space))
 
-    image = _new_nifti(data, sform)
+    overrides = dict(overrides or {})
+    # The stored type and scaling: `dtype=`, else the metadata's when the
+    # values fit them (reported, if need be, by `_apply_metadata`).
+    dtype, slope, intercept = preferred_storage(
+        getattr(owner, "metadata", None),
+        data,
+        overrides.get("dtype"),
+        on_loss="ignore",
+    )
+    stored = data
+    if slope is not None:
+        # Rounded only into an integer type (the only one a scaling is
+        # chosen for).
+        stored = stored_values(data, dtype, slope, intercept)
+    image = _new_nifti(stored, sform, dtype)
     _set_other_axes(image, others, timed)
-    _apply_like(image, like)
     image.header.set_sform(sform, code=scode)
     image.header.set_qform(qform, code=qcode)
     image.header.set_xyzt_units(space, time)
+    _apply_metadata(image, owner, like, overrides, data_type=True, data=data)
     _apply_overrides(image, overrides)
     return image

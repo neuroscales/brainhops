@@ -1,6 +1,9 @@
+# stdlib
+
 # dependencies
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrNode, create
+from bagof.magic import Factory
 
 # internals
 from brainhops._core.dependencies import da
@@ -10,6 +13,8 @@ from brainhops._core.typing import ArrayProtocol
 # backends
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.images import SingleScaleImage
+from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
@@ -23,6 +28,14 @@ from brainhops.io.base.zarr import (
     _as_node,
 )
 from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
+
+from ._metadata import (
+    ZarrMetadata,
+    ZarrRaw,
+    node_attributes,
+    write_attributes,
+)
 
 
 @register_format
@@ -41,6 +54,46 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr",)
+
+    metadata: MetadataField[
+        ZarrMetadata,
+        Factory(),
+        tx.Doc(
+            """
+            The metadata of the array: the vocabulary, stored as a sidecar
+            under its attribute `"brainhops"`, and its other attributes as
+            `extra`; the attributes are the raw record (`metadata.raw`).
+            See [`ZarrMetadata`][brainhops.io.images.zarr.ZarrMetadata].
+            """
+        ),
+    ]
+
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
+        self._sync_metadata()
+
+    def _sync_metadata(self) -> None:
+        """Read the metadata from the attributes of the array, when it
+        was not read from this array yet."""
+        node = self.node
+        if node is not None:
+            sync_metadata(
+                self,
+                ZarrMetadata,
+                lambda: ZarrRaw(node_attributes(node), node),
+                same=lambda held: held.node is node,
+                image=self,
+            )
+
+    def _write_metadata(self, node: tx.Any, on_loss: tx.Any) -> None:
+        metadata = self.metadata
+        if metadata is None:
+            return
+        metadata, report = ZarrMetadata.writable(metadata)
+        record = metadata.update_raw(image=self, on_loss=report)
+        metadata.check_raw(record, image=self, on_loss=report)
+        apply_loss_policy(report, on_loss, stacklevel=4)
+        write_attributes(node, record.attrs, metadata.attributes)
 
     @smartproperty(cache=True)
     def data(self) -> tx.Optional[ArrayProtocol]:
@@ -94,6 +147,13 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     # --- save ---------------------------------------------------------
 
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
+        """
+        Write the image into an opened Zarr array, and return it.
+
+        The metadata is written into the attributes of the array; what it
+        cannot hold is reported according to `on_loss`.
+        """
+        on_loss = kwargs.pop("on_loss", None)
         wrapped = _as_node(node)
         data = self.data
         if not isinstance(wrapped, ZarrArray):
@@ -103,6 +163,7 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             )
         if data is not None:
             wrapped[...] = data
+        self._write_metadata(wrapped, on_loss)
         return wrapped
 
     def to_store(self, location: StoreLike, **kwargs) -> None:
@@ -115,6 +176,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         if node is not None:
             self.to_node(node, **kwargs)
             return
+        on_loss = kwargs.pop("on_loss", None)
         data = self.data
         if data is not None:
-            create(location, data=data, overwrite=True, **kwargs)
+            node = create(location, data=data, overwrite=True, **kwargs)
+            self._write_metadata(node, on_loss)
