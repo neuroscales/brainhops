@@ -27,7 +27,7 @@ from bagof.magic import InitVar, KwOnly
 
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
-from brainhops._core.properties import lazyproperty
+from brainhops._core.properties import lazyproperty, smartsetter
 from brainhops._core.typing import (
     ArrayProtocol,
     Deactivated,
@@ -273,38 +273,22 @@ class TransformationField(ConcreteTransformation):
         for name in ("_cache_field", "_cache_data", INVERSE_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    @property
-    def degree(self) -> InterpolationOrder:
-        return self._degree
-
-    @degree.setter
+    @smartsetter
     def degree(self, value: InterpolationOrder) -> None:
         self._degree = value
         self._forget_views()
 
-    @property
-    def bound(self) -> tx.Union[BoundaryCondition, float]:
-        return self._bound
-
-    @bound.setter
+    @smartsetter
     def bound(self, value: tx.Union[BoundaryCondition, float]) -> None:
         self._bound = value
         self._forget_views()
 
-    @property
-    def coeff(self) -> bool:
-        return self._coeff
-
-    @coeff.setter
+    @smartsetter
     def coeff(self, value: bool) -> None:
         self._coeff = value
         self._forget_views()
@@ -366,11 +350,7 @@ class DisplacementField(TransformationField, polymorphic=True):
 
     # --- stored attributes, which key the views -----------------------
 
-    @property
-    def log(self) -> bool:
-        return self._log
-
-    @log.setter
+    @smartsetter
     def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "StationaryVelocityField")
         self._log = value
@@ -496,11 +476,7 @@ class StationaryVelocityField(DisplacementField, on={"_log": True}):
 
     # --- stored attributes, which key the views -----------------------
 
-    @property
-    def steps(self) -> tx.Optional[int]:
-        return self._steps
-
-    @steps.setter
+    @smartsetter
     def steps(self, value: tx.Optional[int]) -> None:
         self._steps = value
         self._forget_views()
@@ -626,11 +602,7 @@ class CartesianField(CoordinatesField):
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
-    @property
-    def shape(self) -> tx.Optional[tx.Tuple[int, ...]]:
-        return self._shape
-
-    @shape.setter
+    @smartsetter
     def shape(self, value: tx.Optional[tx.Tuple[int, ...]]) -> None:
         self._shape = value
         self._forget_views()
@@ -755,20 +727,12 @@ class Affine(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    @property
-    def log(self) -> bool:
-        return self._log
-
-    @log.setter
+    @smartsetter
     def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "AffineExponential")
         self._log = value
@@ -952,20 +916,12 @@ class Linear(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    @property
-    def log(self) -> bool:
-        return self._log
-
-    @log.setter
+    @smartsetter
     def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "LinearExponential")
         self._log = value
@@ -1102,11 +1058,7 @@ class Rotation(Linear):
 
     # --- stored attributes, which key the views -----------------------
 
-    @property
-    def log(self) -> bool:
-        return self._log
-
-    @log.setter
+    @smartsetter
     def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "RotationExponential")
         self._log = value
@@ -1214,11 +1166,7 @@ class Permutation(ConcreteTransformation):
         for name in (INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
@@ -1310,20 +1258,12 @@ class Scaling(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_scale", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    @property
-    def log(self) -> bool:
-        return self._log
-
-    @log.setter
+    @smartsetter
     def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "ScalingExponential")
         self._log = value
@@ -1455,11 +1395,7 @@ class Translation(ConcreteTransformation):
         for name in (INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    @property
-    def data(self) -> tx.Optional[ArrayProtocol]:
-        return self._data
-
-    @data.setter
+    @smartsetter
     def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
