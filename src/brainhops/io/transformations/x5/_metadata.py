@@ -43,7 +43,8 @@ from brainhops.io.metadata._json import (
 from ._struct import X5Header, X5Node, is_x5, read_x5
 
 # The default of `X5Raw(node=...)`: a new, empty node. `None` means a
-# chain of several nodes, so it cannot be the default.
+# chain of several nodes, so it cannot be the default. Above `X5Raw`,
+# whose signature evaluates it.
 _NEW = object()
 
 
@@ -105,41 +106,6 @@ class X5Raw:
 
     def __repr__(self) -> str:
         return f"X5Raw(header=..., node={self.node is not None})"
-
-
-def metadata_index(
-    header: X5Header,
-    chain: tx.Optional[int] = None,
-    position: tx.Optional[int] = None,
-) -> tx.Optional[int]:
-    """
-    The node whose metadata is the metadata of a transformation.
-
-    Parameters
-    ----------
-    header : X5Header
-        The root of the file.
-    chain : int, optional
-        The chain of `/TransformChain` the transformation is.
-    position : int, optional
-        The single transform of `/TransformGroup` the transformation is.
-
-    Returns
-    -------
-    int or None
-        The index of the node: the single node read, or `None` for a
-        chain of several nodes, which has no metadata of its own
-        (composition does not merge).
-    """
-    if position is not None:
-        return int(position)
-    if chain is not None:
-        nodes = header.chains[chain]
-    elif header.chains:
-        nodes = header.chains[0]
-    else:
-        return 0
-    return nodes[0] if len(nodes) == 1 else None
 
 
 @register_format
@@ -296,3 +262,38 @@ class X5Metadata(
         if not json and node.metadata is None:
             return raw
         return X5Raw(header, replace(node, metadata=json))
+
+
+def metadata_index(
+    header: X5Header,
+    chain: tx.Optional[int] = None,
+    position: tx.Optional[int] = None,
+) -> tx.Optional[int]:
+    """
+    The node whose metadata is the metadata of a transformation.
+
+    Parameters
+    ----------
+    header : X5Header
+        The root of the file.
+    chain : int, optional
+        The chain of `/TransformChain` the transformation is.
+    position : int, optional
+        The single transform of `/TransformGroup` the transformation is.
+
+    Returns
+    -------
+    int or None
+        The index of the node: the single node read, or `None` for a
+        chain of several nodes, which has no metadata of its own
+        (composition does not merge).
+    """
+    if position is not None:
+        return int(position)
+    if chain is not None:
+        nodes = header.chains[chain]
+    elif header.chains:
+        nodes = header.chains[0]
+    else:
+        return 0
+    return nodes[0] if len(nodes) == 1 else None

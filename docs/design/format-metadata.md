@@ -1989,6 +1989,13 @@ holds.
   (`node_attributes`, `write_attributes`) moved from `_image` to
   `_metadata`, which the image imports.
 
+- **Layout of the modules.** Each module of the metadata lists its
+  public classes and main functions first, then its public helpers,
+  then its private helpers. A private definition that must exist
+  before a public one at import time (a converter that a field
+  annotation evaluates, a base class, a default or a `TypeVar`) stays
+  above it, with a comment that says why.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

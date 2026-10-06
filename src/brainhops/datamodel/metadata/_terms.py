@@ -75,32 +75,12 @@ class Channel(DataModelBase):
     ] = None
 
 
-# ----------------------------------------------------------------------
-#   THE CONVERTER THAT THE DECLARATION OF `EncodingDirection` USES
-# ----------------------------------------------------------------------
-
-
+# The converters of `EncodingDirection.vector` and `.space`; above the
+# class, which evaluates them.
 def _vector(value: tx.Union[str, ArrayLike]) -> tx.Tuple[float, ...]:
     if isinstance(value, str):
         return _bids_vector(value)
     return tuple(float(v) for v in np.ravel(np.asarray(value, dtype=float)))
-
-
-# A component this close to 0 or to +-1, once normalised, is snapped to
-# it: a direction through a permutation or a flip of the axes, or a
-# rotation by a multiple of 90 degrees, is then exactly an axis, and
-# compares equal to it with the default (field by field) equality.
-_SNAP = 1e-9
-
-
-def _snapped(value: float) -> float:
-    for exact in (0.0, 1.0, -1.0):
-        if abs(value - exact) <= _SNAP:
-            return exact
-    return value
-
-
-_SPACE_TERM = EnumConverter(SpaceEnum)
 
 
 def _space(value: tx.Any) -> tx.Any:
@@ -237,13 +217,6 @@ class EncodingDirection(DataModelBase):
 # ----------------------------------------------------------------------
 
 
-def _is_absent(value: tx.Any) -> bool:
-    """Whether a value is absent, so that there is nothing to convert:
-    `None` (unknown) or `UNSUPPORTED` (no slot). Every vocabulary
-    converter lets an absent value through unchanged."""
-    return value is None or value is UNSUPPORTED
-
-
 class MaybeEnumConverter(EnumConverter):
     """
     The converter of a vocabulary field that has a list of known terms.
@@ -364,6 +337,36 @@ def direction(value: tx.Any) -> tx.Any:
         space = value.get("space", value.get("Space"))
         return EncodingDirection(vector, space=space)
     return EncodingDirection(value)
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _is_absent(value: tx.Any) -> bool:
+    """Whether a value is absent, so that there is nothing to convert:
+    `None` (unknown) or `UNSUPPORTED` (no slot). Every vocabulary
+    converter lets an absent value through unchanged."""
+    return value is None or value is UNSUPPORTED
+
+
+# A component this close to 0 or to +-1, once normalised, is snapped to
+# it: a direction through a permutation or a flip of the axes, or a
+# rotation by a multiple of 90 degrees, is then exactly an axis, and
+# compares equal to it with the default (field by field) equality.
+_SNAP = 1e-9
+
+
+def _snapped(value: float) -> float:
+    for exact in (0.0, 1.0, -1.0):
+        if abs(value - exact) <= _SNAP:
+            return exact
+    return value
+
+
+# The converter of a label of a space (see `_space`).
+_SPACE_TERM = EnumConverter(SpaceEnum)
 
 
 def _bids_vector(value: str) -> tx.Tuple[float, ...]:

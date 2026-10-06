@@ -38,6 +38,7 @@ class Unsupported:
 UNSUPPORTED = Unsupported()
 """The format cannot store this field. Singleton, falsy, not `None`."""
 
+# Above `Maybe`, which is built from it at import time.
 _T = tx.TypeVar("_T")
 
 Maybe = tx.Union[_T, None, Unsupported]

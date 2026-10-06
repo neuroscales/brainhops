@@ -41,7 +41,7 @@ from ._vocabulary import (
 )
 
 # The `history=` argument of `derive`, `_select` and `_reslice`: one
-# entry, several, or none.
+# entry, several, or none. Above `Metadata`, whose signatures evaluate it.
 _History = tx.Union[str, tx.Sequence[str], None]
 
 

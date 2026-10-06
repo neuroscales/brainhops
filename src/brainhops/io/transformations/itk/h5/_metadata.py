@@ -20,8 +20,6 @@ from brainhops.io.metadata import FileBasedMetadata
 # locals
 from .._metadata import H5Header
 
-_ITK = "ITK"
-
 
 @register_format
 class ItkH5Metadata(
@@ -143,3 +141,11 @@ def read_h5_header(h5file: h5py.File) -> H5Header:
         if f"/{name}" in h5file:
             setattr(header, name, read_string(h5file[f"/{name}"]))
     return header
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+_ITK = "ITK"

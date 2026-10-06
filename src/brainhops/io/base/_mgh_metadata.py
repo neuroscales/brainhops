@@ -66,21 +66,6 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.metadata import FileBasedMetadata
 
-# The voxel types MGH stores.
-_MGH_DTYPES = tuple(
-    np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
-)
-
-
-# Vocabulary field -> (footer slot, factor from the footer unit to the
-# vocabulary unit).
-_FOOTER = {
-    "repetition_time": ("tr", 1e-3),
-    "echo_time": ("te", 1e-3),
-    "inversion_time": ("ti", 1e-3),
-    "flip_angle": ("flip_angle", None),  # radians -> degrees
-}
-
 
 class MghRaw:
     """
@@ -395,6 +380,22 @@ class MghMetadata(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+
+# The voxel types MGH stores.
+_MGH_DTYPES = tuple(
+    np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
+)
+
+
+# Vocabulary field -> (footer slot, factor from the footer unit to the
+# vocabulary unit).
+_FOOTER = {
+    "repetition_time": ("tr", 1e-3),
+    "echo_time": ("te", 1e-3),
+    "inversion_time": ("ti", 1e-3),
+    "flip_angle": ("flip_angle", None),  # radians -> degrees
+}
 
 
 def _divide(factor: float, value: float) -> float:

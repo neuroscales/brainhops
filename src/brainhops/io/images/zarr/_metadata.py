@@ -163,6 +163,7 @@ class ZarrRaw:
         return f"ZarrRaw(attrs={sorted(self.attrs)})"
 
 
+# Above the two formats, which derive from it.
 class _ZarrMetadataParser(MetadataParser):
     """
     The metadata parser of a Zarr store: a store is a directory, read

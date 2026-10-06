@@ -15,9 +15,6 @@ from ..base import DataModelBase
 from ._sentinel import ALL, UNSUPPORTED
 from ._vocabulary import FIELDS, GROUPS
 
-# The class keywords `bagof` reads (it ignores any other one silently).
-_BAGOF_KEYWORDS = frozenset(Options._DEFAULTS) | {"on", "priority"}
-
 
 class MetadataMeta(type(DataModelBase)):
     """
@@ -136,6 +133,10 @@ class MetadataMeta(type(DataModelBase)):
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+
+# The class keywords `bagof` reads (it ignores any other one silently).
+_BAGOF_KEYWORDS = frozenset(Options._DEFAULTS) | {"on", "priority"}
 
 
 def _supported_names(

@@ -73,13 +73,6 @@ def sync_metadata(
     return True
 
 
-_POSITIONAL = (
-    Parameter.POSITIONAL_ONLY,
-    Parameter.POSITIONAL_OR_KEYWORD,
-    Parameter.VAR_POSITIONAL,
-)
-
-
 def parent_post_init(parent: tx.Any, arguments: tx.Any = None) -> None:
     """
     Run the `__post_init__` that a parser's own one overrides.
@@ -108,3 +101,15 @@ def parent_post_init(parent: tx.Any, arguments: tx.Any = None) -> None:
         hook(arguments)
     else:
         hook()
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+_POSITIONAL = (
+    Parameter.POSITIONAL_ONLY,
+    Parameter.POSITIONAL_OR_KEYWORD,
+    Parameter.VAR_POSITIONAL,
+)

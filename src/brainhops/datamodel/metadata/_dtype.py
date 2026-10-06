@@ -79,17 +79,6 @@ def preferred_dtype(
     return array_dtype
 
 
-def _same_kind(source: np.dtype, target: np.dtype) -> bool:
-    """Whether values of `source` may be stored as `target` without
-    changing their kind: integers (booleans included) as integers,
-    floats as floats, complex numbers as complex numbers."""
-
-    def kind(dtype: np.dtype) -> str:
-        return "i" if dtype.kind in "biu" else dtype.kind
-
-    return kind(source) == kind(target) and target.kind != "b"
-
-
 def preferred_storage(
     metadata: tx.Any,
     data: tx.Any,
@@ -215,6 +204,22 @@ def stored_values(
     if dtype.kind in "iu":
         stored = np.round(stored)
     return stored.astype(dtype)
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _same_kind(source: np.dtype, target: np.dtype) -> bool:
+    """Whether values of `source` may be stored as `target` without
+    changing their kind: integers (booleans included) as integers,
+    floats as floats, complex numbers as complex numbers."""
+
+    def kind(dtype: np.dtype) -> str:
+        return "i" if dtype.kind in "biu" else dtype.kind
+
+    return kind(source) == kind(target) and target.kind != "b"
 
 
 def _present(value: tx.Any) -> tx.Any:

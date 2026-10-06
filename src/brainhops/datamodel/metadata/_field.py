@@ -51,6 +51,11 @@ class MetadataField:
         ]
 
 
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
 class _EnsureCopy:
     """
     The converter of a `metadata` field: converts what it is given into
