@@ -238,13 +238,12 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
                 continue
             # A coarser level samples space differently: its metadata is
             # resampled through the map from its voxels to those of the
-            # first level.
+            # first level. Its geometry is left out: it needs its shape,
+            # so its data, which opening a pyramid does not read.
             new2old = levels[0].transformation.inverse() @ (
                 level.transformation
             )
-            level.metadata = metadata.derive(
-                Resampled(new2old, level.geometry)
-            )
+            level.metadata = metadata.derive(Resampled(new2old))
 
     # ---- load --------------------------------------------------------
 
