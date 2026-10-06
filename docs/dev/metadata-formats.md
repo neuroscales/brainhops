@@ -30,15 +30,19 @@ image classes import.
 
 The package `brainhops.datamodel.metadata` exports what a user needs
 (`Metadata`, `UNSUPPORTED`, `Scope`, the value classes, the report and
-the loss policy). The base of a format's metadata lives in `brainhops.io`,
-as `FileBasedImage` does, since it derives from the dispatcher of the
-formats: `from brainhops.io.metadata import FileBasedMetadata,
-OpaqueMetadata`. The data model never imports it. A format author imports
+the loss policy), and the vocabulary groups that `supports=` names
+(`ProvenanceVocabulary`, `MRIVocabulary`, `DiffusionVocabulary`,
+`DisplayVocabulary`, `StorageVocabulary`, `MicroscopyVocabulary`,
+`TransformVocabulary`, and their base `Vocabulary`). The base of a
+format's metadata lives in `brainhops.io`, as `FileBasedImage` does,
+since it derives from the dispatcher of the formats: `from
+brainhops.io.metadata import FileBasedMetadata, OpaqueMetadata`. The
+data model never imports it. A format author imports
 the rest from the private modules that define it:
 
 | Module | Names |
 |---|---|
-| `brainhops.datamodel.metadata._vocabulary` | the groups (`ProvenanceVocabulary`, ..., `StorageVocabulary`, the base `Vocabulary`), the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
+| `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
 | `brainhops.datamodel.metadata._field` | `MetadataField` |
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
 | `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |

@@ -1,7 +1,8 @@
 # Metadata for format authors
 
 The public names of [`brainhops.datamodel.metadata`](metadata.md) are
-those a user of the library needs. The names below are for whoever adds
+those a user of the library needs, and the vocabulary groups that a
+format names in `supports=`. The names below are for whoever adds
 the metadata of a file format; the
 [format author's guide](../../dev/metadata-formats.md) explains how they
 fit together. They are imported from the private modules that define

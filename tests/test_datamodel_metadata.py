@@ -21,6 +21,7 @@ import pytest
 import typing_extensions as tx
 from bagof.magic import Factory, Magic, fields, replace
 
+import brainhops.datamodel.metadata
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     AxisType,
@@ -34,12 +35,20 @@ from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     Channel,
     ConversionReport,
+    DiffusionVocabulary,
+    DisplayVocabulary,
     EncodingDirection,
     GeneratedBy,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
+    MicroscopyVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
     Scope,
+    StorageVocabulary,
+    TransformVocabulary,
+    Vocabulary,
     metadata_loss_policy,
 )
 from brainhops.datamodel.metadata._dtype import preferred_dtype
@@ -53,14 +62,7 @@ from brainhops.datamodel.metadata._vocabulary import (
     GROUPS,
     VOCABULARY,
     Along,
-    DiffusionVocabulary,
-    DisplayVocabulary,
-    MicroscopyVocabulary,
-    MRIVocabulary,
-    ProvenanceVocabulary,
     Scoped,
-    StorageVocabulary,
-    TransformVocabulary,
 )
 from brainhops.io.metadata import (
     FileBasedMetadata,
@@ -901,6 +903,9 @@ def test_the_hierarchy_mirrors_the_images() -> None:
     assert issubclass(LiteMetadata, FileBasedMetadata)
     for group in GROUPS:
         assert issubclass(Metadata, group)
+        assert issubclass(group, Vocabulary)
+        # The groups are public: `supports=` names them.
+        assert group.__name__ in brainhops.datamodel.metadata.__all__
     # Every class has a raw record and a snapshot; reading and writing
     # them is what a file-based class adds.
     names = {f.name for f in fields(Metadata)}
