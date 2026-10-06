@@ -21,6 +21,7 @@ import typing_extensions as tx
 if tx.TYPE_CHECKING:
     from .base import Transformation
     from .inverse import Inverse
+    from .operators import Sqrt
     from .sequence import Sequence
 
 
@@ -44,6 +45,26 @@ INVERSE: tx.Optional[tx.Type["Inverse"]] = None
 def register_inverse(cls: tx.Type["Inverse"]) -> None:
     global INVERSE
     INVERSE = cls
+    return cls
+
+
+# --- operators --------------------------------------------------------
+
+SQRT: tx.Optional[tx.Type["Sqrt"]] = None
+"""Registered `Sqrt` class, to avoid cyclic imports."""
+
+OPERATION_CACHE = "_operation_param_cache"
+"""
+The parameters a lazy operator (a square root) materializes are cached on
+its *forward* transform, under this attribute name, for the reason
+`INVERSE_CACHE` gives: a wrapper rebuilt by `replace` or `.to(...)` keeps
+its forward, so the expensive part is not computed twice.
+"""
+
+
+def register_sqrt(cls: tx.Type["Sqrt"]) -> tx.Type["Sqrt"]:
+    global SQRT
+    SQRT = cls
     return cls
 
 

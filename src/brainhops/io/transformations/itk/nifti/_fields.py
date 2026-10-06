@@ -476,8 +476,8 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 "three transformations: LPS to voxel, a displacement "
                 "field, and voxel to LPS."
             )
-        # ITK stores sampled displacements.
-        displacement = chain[1].to(coeff=False)
+        # ITK stores sampled displacements: a velocity is integrated.
+        displacement = chain[1].to(log=False, coeff=False)
         if displacement.data is None:
             raise WriterError(
                 "This field has no displacements, so there is nothing to "

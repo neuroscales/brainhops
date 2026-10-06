@@ -4,7 +4,7 @@ the value (`unset`), what the setter stores, and the cache."""
 import pytest
 import typing_extensions as tx
 
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import lazyproperty, smartproperty, smartsetter
 
 
 def _box(unset: tx.Any = None, cache: bool = False) -> type:
@@ -146,3 +146,71 @@ def test_the_former_options_are_gone() -> None:
     for option in ("empty_as_unset", "informative", "missing"):
         with pytest.raises(TypeError):
             smartproperty(**{option: True})
+
+
+# --- smartsetter ------------------------------------------------------
+
+
+def _setter_box() -> type:
+    # Two properties: `value`, which reads `_value`, the name of its
+    # setter, and `other`, which reads the `_stored` it is given. Each
+    # setter stores the value; `value`'s counts its calls.
+    class Box:
+        calls = 0
+
+        @smartsetter
+        def value(self, value: tx.Any) -> None:
+            type(self).calls += 1
+            self._value = value
+
+        @smartsetter("stored")
+        def other(self, value: tx.Any) -> None:
+            self._stored = value * 2
+
+    return Box
+
+
+def test_smartsetter_takes_its_name_from_the_function() -> None:
+    box = _setter_box()()
+    assert isinstance(type(box).value, property)
+    assert box.value is None
+    box.value = 3
+    assert box.value == 3 and box._value == 3
+    assert type(box).calls == 1
+
+
+def test_smartsetter_takes_a_name() -> None:
+    box = _setter_box()()
+    assert isinstance(type(box).other, property)
+    assert box.other is None
+    box.other = 3
+    assert box.other == 6 and box._stored == 6
+
+
+def test_smartsetter_reads_the_private_attribute() -> None:
+    box = _setter_box()()
+    box._value = "stored"
+    assert box.value == "stored"
+    assert type(box).calls == 0
+
+
+def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
+    # As the transformations use it: the field is stored privately, the
+    # constructor takes its public name, and an assignment runs the setter.
+    from bagof.magic import Magic
+
+    class Model(Magic):
+        _data: tx.Optional[int] = None
+        assigned: tx.ClassVar[int] = 0
+
+        @smartsetter
+        def data(self, value: tx.Optional[int]) -> None:
+            self._data = value
+            type(self).assigned += 1
+
+    model = Model(data=4)
+    assert model.data == 4 and model._data == 4
+    before = Model.assigned
+    model.data = 5
+    assert model.data == 5 and Model.assigned == before + 1
+    assert Model().data is None

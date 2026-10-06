@@ -27,17 +27,23 @@ from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from .base import Transformation
 from .concrete import (
     Affine,
+    AffineExponential,
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
     Linear,
+    LinearExponential,
     Permutation,
     Rotation,
+    RotationExponential,
     Scaling,
+    ScalingExponential,
+    StationaryVelocityField,
     Translation,
     _decode,
     _encode,
+    _integrate,
 )
 from .modes import ModeLike, mode_admits, normalize_modes
 from .registries import INVERSE_CACHE, register_inverse
@@ -203,13 +209,21 @@ class Inverse(Transformation, tx.Generic[TRANSFORMATION], polymorphic=True):
             # keeps the inverse unresolved, reusing the forward transform
             # and its cached materialization. Any other change -- a new
             # encoding (`coeff=True`), say -- is made to the transform it
-            # inverts, and the inverse stays unresolved too: it is
-            # `replace(self, forward=self.forward.to(**others))`.
+            # inverts, and the inverse stays unresolved too: it is the
+            # inverse of `self.forward.to(**others)`. A new encoding can
+            # change the class of the forward (`log=True` builds a tangent
+            # subclass), so the wrapper is chosen again for it, with the
+            # endpoints this one declares.
             own = {f.public_name for f in fields(type(self)) if f.init}
             own.add("error")
             others = {k: kwargs.pop(k) for k in list(kwargs) if k not in own}
             if others:
-                kwargs["forward"] = self.forward.to(**others)
+                obj = Inverse(
+                    forward=self.forward.to(**others),
+                    input=self._input,
+                    output=self._output,
+                )
+                return obj.to(**kwargs) if kwargs else obj
             return super().to(cls, **kwargs)
         # A conversion to another type, including the forward type,
         # materializes the concrete inverse first, then converts onward.
@@ -291,7 +305,7 @@ class InverseTranslation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npvector[Real]]]
+    _data: Derived[tx.Optional[npvector[Real]]]
     _translation: Deactivated[None]
 
     @_invcache
@@ -326,7 +340,8 @@ class InverseScaling(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npvector[Real]]]
+    _data: Derived[tx.Optional[npvector[Real]]]
+    _log: Derived[bool]
     _scale: Deactivated[None]
 
     @_invcache
@@ -335,6 +350,10 @@ class InverseScaling(
         if scale is None:
             return None
         return 1.0 / scale
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
 
 
 class InversePermutation(
@@ -361,7 +380,7 @@ class InversePermutation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npvector[Integral]]]
+    _data: Derived[tx.Optional[npvector[Integral]]]
     _permutation: Deactivated[None]
 
     @_invcache
@@ -404,7 +423,8 @@ class InverseRotation(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
     _matrix: Deactivated[None]
 
     @_invcache
@@ -414,6 +434,10 @@ class InverseRotation(
             return None
         # A rotation is orthogonal, so its inverse is its transpose.
         return matrix.T
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
 
 
 class InverseLinear(
@@ -440,7 +464,8 @@ class InverseLinear(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
     _matrix: Deactivated[None]
 
     @_invcache
@@ -450,6 +475,10 @@ class InverseLinear(
             return None
         ab = get_array_backend(matrix)
         return ab.linalg.inv(matrix)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
 
 
 class InverseAffine(
@@ -479,7 +508,8 @@ class InverseAffine(
     # --- derived attributes -------------------------------------------
     # Declare derived fields as classvar to exclude them from `__init__`
 
-    data: Derived[tx.Optional[npmatrix[Real]]]
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
     _matrix: Deactivated[None]
 
     @_invcache
@@ -488,6 +518,10 @@ class InverseAffine(
         if matrix is None:
             return None
         return inverse_affine(matrix)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
 
 
 class InverseDisplacementField(
@@ -540,6 +574,7 @@ class InverseDisplacementField(
     _degree: Derived[InterpolationOrder]
     _bound: Derived[tx.Union[BoundaryCondition, float]]
     _coeff: Derived[bool]
+    _log: Derived[bool]
     _field: Deactivated[None]
 
     @_invcache
@@ -562,6 +597,10 @@ class InverseDisplacementField(
     @property
     def coeff(self) -> bool:
         return self.forward.coeff
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
 
     @_invcache
     def field(self) -> tx.Optional[ArrayProtocol]:
@@ -658,6 +697,254 @@ class InverseCoordinatesField(
         # Cached with `data`, on the forward, which clears both when its
         # own `data` or flags are assigned.
         return _decode(self.data, self.coeff, self.degree, self.bound)
+
+
+# ----------------------------------------------------------------------
+#   TANGENTS
+# ----------------------------------------------------------------------
+# The inverse of a map stored as its tangent about the identity
+# (`log=True`) is the exponential of the negated tangent, which is exact,
+# and is still a tangent. Each of these is picked over the inverse of its
+# base family, because it is the deeper subclass, and its `data` is the
+# negated `data` of its forward, in the forward's encoding (negating
+# commutes with fitting spline coefficients). Its views read that `data`
+# as the forward's class does. It is still an `Inverse` whose `forward` is
+# the tangent, so the two cancel next to each other without computing
+# anything.
+
+
+def _negated(forward: Transformation) -> tx.Optional[ArrayProtocol]:
+    # The negated tangent of a forward stored as one.
+    data = forward.data
+    if data is None:
+        return None
+    return -data
+
+
+class InverseAffineExponential(
+    Inverse[AffineExponential],
+    AffineExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, AffineExponential)},
+):
+    """The inverse of an [`AffineExponential`][]: the tangent negated."""
+
+    # --- class attributes ---------------------------------------------
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = AffineExponential
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = (
+        "data",
+        "matrix",
+        "homogeneous_matrix",
+    )
+
+    # --- attributes ---------------------------------------------------
+
+    forward: tx.Annotated[
+        tx.Optional[AffineExponential],
+        tx.Doc("The affine tangent whose inverse this represents."),
+    ] = None
+
+    # --- derived attributes -------------------------------------------
+
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
+    _matrix: Deactivated[None]
+
+    @_invcache
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return _negated(self.forward)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
+
+
+class InverseLinearExponential(
+    Inverse[LinearExponential],
+    LinearExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, LinearExponential)},
+):
+    """The inverse of a [`LinearExponential`][]: the tangent negated."""
+
+    # --- class attributes ---------------------------------------------
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = LinearExponential
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
+
+    # --- attributes ---------------------------------------------------
+
+    forward: tx.Annotated[
+        tx.Optional[LinearExponential],
+        tx.Doc("The linear tangent whose inverse this represents."),
+    ] = None
+
+    # --- derived attributes -------------------------------------------
+
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
+    _matrix: Deactivated[None]
+
+    @_invcache
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return _negated(self.forward)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
+
+
+class InverseRotationExponential(
+    Inverse[RotationExponential],
+    RotationExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, RotationExponential)},
+    # `InverseRotation` matches a `RotationExponential` too, with its own
+    # priority; the deeper subclass wins the tie.
+    priority=1,
+):
+    """The inverse of a [`RotationExponential`][]: the tangent negated."""
+
+    # --- class attributes ---------------------------------------------
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = RotationExponential
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "matrix")
+
+    # --- attributes ---------------------------------------------------
+
+    forward: tx.Annotated[
+        tx.Optional[RotationExponential],
+        tx.Doc("The rotation tangent whose inverse this represents."),
+    ] = None
+
+    # --- derived attributes -------------------------------------------
+
+    _data: Derived[tx.Optional[npmatrix[Real]]]
+    _log: Derived[bool]
+    _matrix: Deactivated[None]
+
+    @_invcache
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return _negated(self.forward)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
+
+
+class InverseScalingExponential(
+    Inverse[ScalingExponential],
+    ScalingExponential,
+    on={"forward": partial(isinstance, PLACEHOLDER, ScalingExponential)},
+):
+    """The inverse of a [`ScalingExponential`][]: the tangent negated."""
+
+    # --- class attributes ---------------------------------------------
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = ScalingExponential
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # Derived from the forward, so not settable (see `Inverse.to`).
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "scale")
+
+    # --- attributes ---------------------------------------------------
+
+    forward: tx.Annotated[
+        tx.Optional[ScalingExponential],
+        tx.Doc("The scaling tangent whose inverse this represents."),
+    ] = None
+
+    # --- derived attributes -------------------------------------------
+
+    _data: Derived[tx.Optional[npvector[Real]]]
+    _log: Derived[bool]
+    _scale: Deactivated[None]
+
+    @_invcache
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return _negated(self.forward)
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
+
+
+class InverseStationaryVelocityField(
+    Inverse[StationaryVelocityField],
+    StationaryVelocityField,
+    on={"forward": partial(isinstance, PLACEHOLDER, StationaryVelocityField)},
+):
+    """The inverse of a [`StationaryVelocityField`][]: `exp(-v)`.
+
+    Its `data` is the negated velocity, in the encoding of the forward
+    field, whose flags (`steps` included) it reports. Its `field` view
+    integrates that velocity -- exactly as the forward integrates its own,
+    rather than by inverting the forward's displacement. The accuracy
+    note of [`InverseDisplacementField`][] does not apply: no mesh is
+    inverted, the inverse is exact in the tangent, and `exp(-v)` is
+    integrated as accurately as `exp(v)` is.
+    """
+
+    # --- class attributes ---------------------------------------------
+
+    _inverseof: tx.ClassVar[tx.Type[Transformation]] = StationaryVelocityField
+    data_fields: tx.ClassVar[tx.Tuple[str]] = ("forward",)
+    # The map is derived from the forward, and cannot be set. The flags
+    # are the forward's too, read on demand, and a change of flag is made
+    # to the forward (see `Inverse.to`), so they stay in
+    # `metadata_fields`.
+    derived_fields: tx.ClassVar[tx.Tuple[str]] = ("data", "field")
+
+    # --- attributes ---------------------------------------------------
+
+    forward: tx.Annotated[
+        tx.Optional[StationaryVelocityField],
+        tx.Doc("The velocity field whose inverse this represents."),
+    ] = None
+
+    # --- derived attributes -------------------------------------------
+
+    _data: Derived[tx.Optional[ArrayProtocol]]
+    _degree: Derived[InterpolationOrder]
+    _bound: Derived[tx.Union[BoundaryCondition, float]]
+    _coeff: Derived[bool]
+    _log: Derived[bool]
+    _steps: Derived[tx.Optional[int]]
+    _field: Deactivated[None]
+
+    @_invcache
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return _negated(self.forward)
+
+    @property
+    def degree(self) -> InterpolationOrder:
+        return self.forward.degree
+
+    @property
+    def bound(self) -> tx.Union[BoundaryCondition, float]:
+        return self.forward.bound
+
+    @property
+    def coeff(self) -> bool:
+        return self.forward.coeff
+
+    @property
+    def log(self) -> bool:
+        return self.forward.log
+
+    @property
+    def steps(self) -> tx.Optional[int]:
+        return self.forward.steps
+
+    @_invcache
+    def field(self) -> tx.Optional[ArrayProtocol]:
+        # Cached with `data`, on the forward, which clears both when its
+        # own `data` or flags are assigned.
+        flags = self.coeff, self.degree, self.bound
+        return _integrate(self.data, *flags, self.steps)
 
 
 # ----------------------------------------------------------------------

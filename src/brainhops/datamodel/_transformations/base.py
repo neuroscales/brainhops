@@ -15,6 +15,7 @@ from .convert import convert
 from .errors import ConversionError, LossyConversionError
 from .modes import ModeLike
 from .simplify import SimplifyLike
+from .utils import require_endomorphism
 
 # typing
 if tx.TYPE_CHECKING:
@@ -219,6 +220,74 @@ class Transformation(
         `T.inverse()` is equivalent to `~T`.
         """
         raise NotImplementedError("Transformation.inverse()")
+
+    def square(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the square of this transformation, `self @ self`.
+
+        The square is the sequence `[self, self]`, which composes when it
+        is computed. It is defined for a transformation that maps a space
+        to itself.
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself.
+        """
+        require_endomorphism(self, "square")
+        obj = registries.SEQUENCE([self, self])
+        return obj.compute(**kwargs) if compute else obj
+
+    def sqrt(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the principal square root of this transformation.
+
+        The square root `S` of `T` is the transformation with
+        `S @ S == T`, the half-transformation. The principal one, whose
+        linear part has its eigenvalues in the open right half-plane, is
+        unique, and it is of the same kind as `T`: the square root of a
+        rotation is a rotation, of a translation a translation, of a
+        scaling a scaling, of an affine an affine. The square root of a
+        permutation is a [`Linear`][] transformation.
+
+        The square root is lazy: an [`Sqrt`][] wrapper is returned, and
+        computed when it is applied, computed or converted. A transformation
+        that needs no wrapper (an identity) is returned as is. A
+        [`Sequence`][] is reduced first (see [`Sequence.sqrt`][]).
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself, or, when
+            the result is computed, if its linear part has an eigenvalue on
+            the closed negative real axis (a reflection, a rotation by a
+            half turn, a singular matrix), so that it has no real principal
+            square root.
+        NotImplementedError
+            If brainhops does not compute the square root of this kind of
+            transformation. A displacement field has one only when it is a
+            stationary velocity field (`log=True`), whose square root
+            halves its velocity.
+        """
+        raise NotImplementedError(
+            f"The square root of a {type(self).__name__} is not implemented."
+        )
 
     def to(
         self,

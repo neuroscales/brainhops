@@ -26,6 +26,24 @@ class ConversionError(TypeError):
     """Raised when a transformation cannot be converted to another type."""
 
 
+class DomainError(ValueError):
+    """Raised when a transformation lies outside the domain of an operator.
+
+    The square and the square root of a transformation (see
+    [`Transformation.square`][] and [`Transformation.sqrt`][]) are defined
+    only for a transformation that maps a space to itself. The principal
+    square root, and the principal logarithm that `.to(log=True)` takes of
+    a matrix, also need the linear part to have no eigenvalue on the
+    closed negative real axis: a singular matrix, a reflection and a
+    rotation by a half turn have neither. Rather than return a complex, a
+    non-principal or an approximate result, the operation raises this
+    error, whose message names it and the reason.
+
+    A transformation the operator is defined for, but that brainhops does
+    not know how to compute it for, raises `NotImplementedError` instead.
+    """
+
+
 class RestrictionError(TypeError):
     """Raised when a transformation cannot be restricted to a block of axes.
 

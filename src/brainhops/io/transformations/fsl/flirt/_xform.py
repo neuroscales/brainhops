@@ -46,8 +46,8 @@ class FlirtTransform(
     HINTS = ("flirt",)
     # The stored parameter is the raw FLIRT matrix: `matrix` is derived from
     # it and the two image geometries, so reading it is not free and may
-    # raise. Naming the raw field here keeps `_is_unparameterized()` (and so
-    # `inverse()`) off that path.
+    # raise. Naming the raw field here keeps the identity check of
+    # `inverse()` off that path.
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ("flirt_matrix",)
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
@@ -60,7 +60,7 @@ class FlirtTransform(
     # `__init__` and `fields()`, while the property below serves reads
     # (and, through it, the `matrix` view). The `matrix=` convenience is
     # deactivated with it.
-    data: tx.ClassVar[tx.Optional[tx.Any]]
+    _data: tx.ClassVar[tx.Optional[tx.Any]]
     _matrix: Deactivated[None]
 
     @property

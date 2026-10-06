@@ -198,6 +198,42 @@ specification, with additional flexibility:
   representations of some affine subgroups (quaternions, lie algebra, ...)
   are implemented in `brainhops`.
 
+### Operators
+
+A transformation that maps a space to itself has an inverse, a square and a
+principal square root. Each is a method, and each is lazy, like the
+inverse: the result is computed when it is applied, computed or converted,
+and a typed result stays an instance of the family it belongs to (the
+square root of a `Rotation` is a `Rotation`).
+
+```python
+half = xform.sqrt()  # the half-transformation: half @ half == xform
+twice = xform.square()  # xform @ xform
+expr = a.inverse() @ b.sqrt()
+result = expr.compute()
+```
+
+A transformation outside an operator's domain, such as a reflection under
+`sqrt`, raises a `DomainError` rather than returning a complex or
+non-principal result.
+
+The exponential and the logarithm are not operators but an encoding: the
+`log` flag says that `data` holds the tangent of the map about the
+identity, and `.to(log=...)` converts between the two.
+
+```python
+velocity = DisplacementField(data=v, log=True)  # a StationaryVelocityField
+warp = velocity.field  # the displacement of its flow, by scaling and squaring
+plain = velocity.to(log=False)  # the same map, as a DisplacementField
+tangent = Affine(matrix=m).to(log=True)  # an AffineExponential: logm(m)
+half = velocity.sqrt()  # exact: the velocity, halved
+```
+
+The inverse, square root and square of a tangent are exact. A velocity
+stored in a file is read with the `svf` hint (`warp.nii.gz|svf`) or with
+`io.transformations.load(path, log=True)`. See [Tangents: the `log`
+flag](../api/datamodel/transformations.md#tangents-the-log-flag).
+
 ## Comparing transformations and images
 
 Transformations and images compare, and hash, **by identity**, not by

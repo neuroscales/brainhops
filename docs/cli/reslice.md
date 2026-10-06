@@ -49,5 +49,9 @@ operator inverts such a file before it is composed.
 | `inv`    | Inverts the transform.                 | Implemented                 |
 | `sqrt`   | Matrix square root of the transform.   | Not implemented (issue #47) |
 | `square` | Matrix square of the transform.        | Not implemented (issue #47) |
-| `exp`    | Matrix exponential of the transform.   | Not implemented (issue #47) |
-| `log`    | Matrix logarithm of the transform.     | Not implemented (issue #47) |
+
+A warp stored as a stationary velocity field, whose flow at time one is
+the map, is read with the `svf` hint, an alias of
+`displacements|log:true`; the number of squaring steps that integrate it
+is an option too: `--transform "velocity.nii.gz|svf|steps:6"`. A NiftyReg
+velocity field or grid (`reg_f3d -vel`) says it is one itself.

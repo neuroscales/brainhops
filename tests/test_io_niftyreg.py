@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import scipy.linalg
 
 nb = pytest.importorskip("nibabel")
 
@@ -704,8 +705,75 @@ def test_stored_coefficients_are_written_without_refitting(
 # ----------------------------------------------------------------------
 
 
+# A world-space linear velocity about the centre of the reference grid,
+# `v(x) = L (x - c)`, whose flow at time one is `x -> c + expm(L) (x - c)`.
+GENERATOR = np.array(
+    [[0.02, -0.15, 0.03], [0.12, -0.01, 0.05], [-0.04, 0.06, 0.03]]
+)
+CENTER = _world((np.asarray(REF_SHAPE) - 1) / 2, REF_VOX2RAS)
+
+
+def _flow(points: np.ndarray, sign: int = 1) -> np.ndarray:
+    return CENTER + (points - CENTER) @ scipy.linalg.expm(sign * GENERATOR).T
+
+
+def _velocity(world: np.ndarray) -> np.ndarray:
+    return (world - CENTER) @ GENERATOR.T
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+@pytest.mark.parametrize("kind", [3, 4])
+def test_dense_velocity_integrates_to_its_flow(
+    tmp_path: Path, rng: np.random.RandomState, kind: int, sign: int
+) -> None:
+    """A dense velocity, as positions (3) or displacements (4), is read
+    as a stationary velocity field with `|intent_p2|` squaring steps; a
+    negative `intent_p2` (a backward field) integrates its negation."""
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    vectors = _velocity(world) + (world if kind == 3 else 0)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(vectors, REF_VOX2RAS, kind, p2=sign * 8), path)
+    xform = load(path)
+    assert isinstance(xform, NiftyRegVelocityField)
+    assert xform.steps == 8 and xform.squaring_steps == sign * 8
+    velocity = xform.displacement
+    assert isinstance(velocity, xforms.StationaryVelocityField)
+    assert velocity.steps == 8
+    points = _points(rng, 20, 0.3, 0.7)
+    np.testing.assert_allclose(
+        _apply(xform, points), _flow(points, sign), atol=2e-3
+    )
+
+
+def test_velocity_grid_integrates_to_its_flow(
+    tmp_path: Path, rng: np.random.RandomState
+) -> None:
+    """A velocity grid holds control-point positions: it is read as the
+    cubic coefficients of the velocity, refitted at each squaring."""
+    vox2world = _cpp_vox2world(REF_VOX2RAS)
+    world = _grid(_cpp_shape(), vox2world)
+    positions = world + _velocity(world)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(positions, vox2world, 5, p2=8), path)
+    xform = load(path)
+    assert isinstance(xform, NiftyRegVelocityGrid)
+    velocity = xform.displacement
+    assert isinstance(velocity, xforms.StationaryVelocityField)
+    assert (velocity.coeff, velocity.degree, velocity.steps) == (True, 3, 8)
+    points = _points(rng, 20, 0.3, 0.7)
+    np.testing.assert_allclose(_apply(xform, points), _flow(points), atol=2e-3)
+
+
+def test_unset_velocity_steps_use_the_default_rule(tmp_path: Path) -> None:
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=0), path)
+    xform = load(path)
+    assert xform.steps is None and xform.displacement.steps is None
+
+
 @pytest.mark.parametrize("kind", [3, 4, 5])
-def test_velocities_are_read_but_not_used(
+def test_velocity_with_an_affine_is_read_but_not_decoded(
     tmp_path: Path, rng: np.random.RandomState, kind: int
 ) -> None:
     vectors = rng.standard_normal((*_cpp_shape(), 3))
@@ -719,14 +787,10 @@ def test_velocities_are_read_but_not_used(
     np.testing.assert_allclose(
         np.asarray(xform.data)[:, :, :, 0, :], vectors, atol=1e-6
     )
-    for call in (
-        lambda: xform.compute(),
-        lambda: xform.inverse(),
-        lambda: xform.to(xforms.Sequence),
-    ):
-        with pytest.raises(NotImplementedError, match="reg_transform"):
-            call()
+    with pytest.raises(NotImplementedError, match="extensions"):
+        xform.compute()
 
+    # It is written back as it was read.
     out = tmp_path / "out.nii.gz"
     xform.save(out)
     back = nb.load(out)
@@ -734,3 +798,127 @@ def test_velocities_are_read_but_not_used(
     assert float(back.header["intent_p2"]) == -6
     assert len(back.header.extensions) == 2
     np.testing.assert_allclose(back.get_fdata(), image.get_fdata(), atol=0)
+
+
+@pytest.mark.parametrize(
+    "cls, kind", [(NiftyRegVelocityField, 3), (NiftyRegVelocityGrid, 5)]
+)
+def test_velocity_is_written_from_a_chain(
+    tmp_path: Path, cls: type, kind: int
+) -> None:
+    """A velocity built from a chain is written as NiftyReg integrates
+    it: positions, with its squaring steps in `intent_p2`."""
+    vox2world = REF_VOX2RAS if kind == 3 else _cpp_vox2world(REF_VOX2RAS)
+    shape = REF_SHAPE if kind == 3 else _cpp_shape()
+    world = _grid(shape, vox2world)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(_velocity(world), vox2world, 4, p2=7), path)
+    chain = tuple(load(path).transformations)
+    if kind == 5:
+        chain = (chain[0], chain[1].to(coeff=True, degree=3), chain[2])
+    image = cls(transformations=chain).to_nibabel()
+    assert float(image.header["intent_p1"]) == kind
+    assert float(image.header["intent_p2"]) == 7
+    written = np.asarray(image.dataobj)[:, :, :, 0, :]
+    if kind == 3:
+        np.testing.assert_allclose(
+            written, world + _velocity(world), atol=1e-4
+        )
+    else:
+        coefficients = chain[1].data @ vox2world[:3, :3].T
+        np.testing.assert_allclose(written, world + coefficients, atol=1e-4)
+
+
+def test_a_displacement_is_not_written_as_a_velocity() -> None:
+    from brainhops.io.transformations.base.fields import (
+        ras_displacement_chain,
+    )
+
+    disp = np.zeros((*REF_SHAPE, 3)) + 0.5
+    field = NiftyRegVelocityField(
+        transformations=ras_displacement_chain(disp, REF_VOX2RAS)
+    )
+    with pytest.raises(NotImplementedError, match="logarithm"):
+        field.to_nibabel()
+
+
+def test_a_velocity_written_as_a_displacement_is_integrated(
+    tmp_path: Path,
+) -> None:
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=8), path)
+    chain = tuple(load(path).transformations)
+    image = NiftyRegDisplacementField(transformations=chain).to_nibabel()
+    assert float(image.header["intent_p1"]) == 1
+    written = np.asarray(image.dataobj)[:, :, :, 0, :]
+    interior = (slice(3, 6), slice(3, 5), slice(2, 5))
+    np.testing.assert_allclose(
+        written[interior], (_flow(world) - world)[interior], atol=2e-3
+    )
+
+
+def _dispvect(tmp_path: Path, vectors: np.ndarray) -> Path:
+    image = nb.Nifti1Image(
+        np.asarray(vectors, "f4")[:, :, :, None], REF_VOX2RAS
+    )
+    image.header.set_intent(1006)
+    path = tmp_path / "warp.nii.gz"
+    nb.save(image, path)
+    return path
+
+
+def test_a_displacement_copied_to_a_velocity_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A NIfTI displacement is not written back as a NiftyReg velocity:
+    its header is another format's, and a displacement has no logarithm."""
+    path = _dispvect(tmp_path, np.zeros((*REF_SHAPE, 3)) + 0.5)
+    copied = NiftyRegVelocityField.from_instance(load(path))
+    with pytest.raises(NotImplementedError, match="logarithm"):
+        copied.to_nibabel()
+
+
+def test_a_velocity_copied_to_niftyreg_keeps_its_steps(tmp_path: Path) -> None:
+    from brainhops.io.base import TransformationSpec
+
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = _dispvect(tmp_path, _velocity(world))
+    velocity = load(TransformationSpec.from_arg(f"{path}|svf|steps:5"))
+    image = NiftyRegVelocityField.from_instance(velocity).to_nibabel()
+    assert image.header.get_intent() == ("vector", (), "NREG_TRANS")
+    assert float(image.header["intent_p1"]) == 3
+    assert float(image.header["intent_p2"]) == 5
+    np.testing.assert_allclose(
+        np.asarray(image.dataobj)[:, :, :, 0, :],
+        world + _velocity(world),
+        atol=1e-4,
+    )
+
+
+def test_a_niftyreg_velocity_copied_to_nifti_is_integrated(
+    tmp_path: Path,
+) -> None:
+    """A velocity copied to a NIfTI displacement file is written as its
+    displacement, unless `log=True` is asked for when it is saved."""
+    from brainhops.io.transformations.nifti import NiftiRASDisplacementField
+
+    world = _grid(REF_SHAPE, REF_VOX2RAS)
+    path = tmp_path / "vel.nii.gz"
+    nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=8), path)
+    copied = NiftiRASDisplacementField.from_instance(load(path))
+    assert not copied.log and copied.steps is None
+    out = tmp_path / "out.nii.gz"
+    bio.save(copied, out)
+    written = nb.load(out)
+    assert written.header.get_intent()[0] == "displacement vector"
+    interior = (slice(3, 6), slice(3, 5), slice(2, 5))
+    np.testing.assert_allclose(
+        written.get_fdata()[:, :, :, 0, :][interior],
+        (_flow(world) - world)[interior],
+        atol=2e-3,
+    )
+    bio.save(copied, out, log=True)
+    np.testing.assert_allclose(
+        nb.load(out).get_fdata()[:, :, :, 0, :], _velocity(world), atol=1e-4
+    )

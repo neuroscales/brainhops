@@ -38,7 +38,6 @@ from brainhops.io.base.nifti import (
 from brainhops.io.base.parsers import (
     Confidence,
     ParserContentError,
-    WriterError,
 )
 from brainhops.io.transformations.base.affines import RASToRAS
 from brainhops.io.transformations.base.fields import (
@@ -246,6 +245,15 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
     coeff: tx.ClassVar[bool] = False
     """Whether the field holds spline coefficients rather than values."""
 
+    log: tx.ClassVar[bool] = False
+    """Whether the field holds a stationary velocity rather than the
+    displacement of the map."""
+
+    @property
+    def steps(self) -> tx.Optional[int]:
+        """The number of squaring steps of a velocity: none here."""
+        return None
+
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -273,6 +281,22 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
                 f"Two-dimensional NiftyReg fields are not supported."
             )
         return super().from_nibabel(nifti, **kwargs)
+
+    # --- copies -------------------------------------------------------
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        """
+        Create an instance from an instance of a similar class.
+
+        The chain of another transformation is carried over, rather than
+        re-read from a NIfTI header that comes with it: that header is
+        another format's, and this one would read its vectors as its own
+        (a displacement as a velocity, say).
+        """
+        if isinstance(other, _xforms.Sequence) and not isinstance(other, cls):
+            kwargs.setdefault("transformations", tuple(other))
+        return super().from_instance(other, *args, **kwargs)
 
     # --- endpoints ----------------------------------------------------
     #
@@ -320,6 +344,8 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             degree=self.degree,
             bound=self.bound,
             coeff=self.coeff,
+            log=self.log,
+            steps=self.steps,
         )
 
     @smartproperty(cache=True)
@@ -371,6 +397,7 @@ class NiftyRegSequence(NiftyRegField, _xforms.ImmutableSequence):
             coeff=self.coeff,
             degree=self.degree,
             bound=self.bound,
+            log=self.log,
         )
 
     def _write(
@@ -639,68 +666,95 @@ class NiftyRegControlPointGrid(NiftyRegSequence):
 # ----------------------------------------------------------------------
 
 
-class NiftyRegVelocity(NiftyRegField):
+class NiftyRegVelocity(NiftyRegSequence):
     """
-    A NiftyReg stationary velocity field or grid, read but not decoded.
+    A NiftyReg stationary velocity field or grid.
 
-    `reg_f3d -vel` parametrises the deformation by a stationary
-    velocity field, and its output is the deformation's *exponential*:
-    the velocity is scaled down by `2 ** n` (`n = |intent_p2|`, negative
-    for a backward field) and composed with itself `n` times
-    (`reg_defField_getDeformationFieldFromFlowField`). The data model has
-    no transformation that exponentiates a field, so the file is read --
-    its header, its data, its squaring steps and its affines are all
-    available -- but it cannot be used as a transformation: computing,
-    converting or inverting it raises `NotImplementedError`.
+    `reg_f3d -vel` parametrises the deformation by a stationary velocity
+    field, and its output is the deformation's *exponential*: the velocity
+    is scaled down by `2 ** n` (`n = |intent_p2|`) and composed with itself
+    `n` times (`reg_defField_getDeformationFieldFromFlowField`); a negative
+    `intent_p2` marks a backward field, whose velocity is negated first.
 
-    To use one, have NiftyReg integrate it into a deformation field
-    (`reg_transform -ref <ref> -def <velocity> <out>`) and read that.
+    The file is read as the chain of [`NiftyRegSequence`][], whose
+    `displacement` slot is a
+    [`StationaryVelocityField`][brainhops.datamodel.transformations.\
+StationaryVelocityField]: the velocity, in voxel units, negated for a
+    backward field, integrated with `steps = |intent_p2|` squaring steps
+    (the default rule when it is zero). Its flow commutes with the change
+    of coordinates the chain makes, so the chain maps reference RAS to
+    floating RAS as NiftyReg's deformation does.
 
-    It is written back as it was read.
+    A velocity grid is read as the coefficients of the velocity, and is
+    squared on its own grid, of control points. NiftyReg evaluates the
+    grid onto the dense reference grid first, and squares there, so the
+    flow matches `reg_transform -def` closely but not exactly.
+
+    NiftyReg removes the affine it keeps in the extensions of a symmetric
+    registration's velocity before the squaring, and composes it back
+    after; that is not decoded here, so a velocity whose header carries
+    an affine raises `NotImplementedError` when its chain is built.
+
+    A velocity read from a file is written back as it was read, header
+    and extensions included. One built from a chain is written as a
+    velocity, with its squaring steps in `intent_p2`: a displacement
+    field is refused, since it has no logarithm that brainhops computes.
 
     Abstract: it is not decorated with `@register_format`.
     """
 
+    log: tx.ClassVar[bool] = True
+
     @property
     def squaring_steps(self) -> tx.Optional[int]:
-        """The number of squaring steps of the exponentiation
+        """The number of squaring steps of the exponentiation, as stored
         (`intent_p2`; negative for a backward field)."""
         if self.header is None:
             return None
         return int(round(float(self.header["intent_p2"])))
 
-    def _unsupported(self, *args: tx.Any, **kwargs: tx.Any) -> tx.NoReturn:
-        raise NotImplementedError(
-            f"{type(self).__name__}: a NiftyReg stationary velocity "
-            f"{'grid' if self.niftyreg_type == SPLINE_VEL_GRID else 'field'} "
-            f"must be exponentiated (scaling and squaring) to give a "
-            f"transformation, which the brainhops data model cannot "
-            f"represent yet. Integrate it with NiftyReg "
-            f"(`reg_transform -ref <ref> -def <velocity> <out>.nii.gz`) and "
-            f"read the deformation field it writes."
-        )
+    @property
+    def steps(self) -> tx.Optional[int]:
+        """The number of squaring steps that integrate the velocity:
+        `|intent_p2|`, or `None` (the default rule) when it is zero."""
+        steps = self.squaring_steps
+        if not steps:
+            return None
+        return abs(steps)
 
-    compute = _unsupported
-    simplify = _unsupported
-    inverse = _unsupported
-    to = _unsupported
-    __call__ = _unsupported
+    def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
+        """The stored vectors, as the RAS velocity they encode."""
+        raise NotImplementedError
 
-    def to_nibabel(
-        self, like: tx.Any = None, **overrides
-    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
-        """
-        Build the NIfTI image of the velocity, as it was read.
-
-        The data and the header, extensions included, are written back
-        unchanged. When `like` is given, non-encoding header fields are
-        copied from it. Keyword arguments override header fields last.
-        """
-        if self.header is None or self.data is None:
-            raise WriterError(
-                "This velocity has no header and data, so there is nothing "
-                "to write."
+    def _displacements(self, vox2world: np.ndarray) -> ArrayProtocol:
+        if self.extension_affines:
+            raise NotImplementedError(
+                f"{type(self).__name__}: this NiftyReg velocity carries an "
+                f"affine in its header extensions, which NiftyReg removes "
+                f"before integrating it and composes back after; that is not "
+                f"decoded. Integrate it with NiftyReg (`reg_transform -ref "
+                f"<ref> -def <velocity> <out>.nii.gz`) and read the "
+                f"deformation field it writes."
             )
+        velocity = self._velocity_vectors(vox2world)
+        if (self.squaring_steps or 0) < 0:
+            # A backward field integrates the negated velocity.
+            velocity = -velocity
+        return velocity
+
+    def _read_back(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Optional[tx.Union[nb.Nifti1Image, nb.Nifti2Image]]:
+        """The NIfTI image as it was read, or `None` if this velocity was
+        not read from a NiftyReg velocity file of its type, or its chain
+        was assigned. A header copied from another format is never written
+        back: it says something else."""
+        if self.niftyreg_type not in type(self).TYPES:
+            return None
+        if getattr(self, "_transformations", None) is not None:
+            return None
+        if self.header is None or self.data is None:
+            return None
         header = self.header.copy()
         image_cls = (
             nb.Nifti2Image
@@ -713,16 +767,66 @@ class NiftyRegVelocity(NiftyRegField):
         return image
 
 
+def _written_steps(chain: tx.Sequence[_xforms.Transformation]) -> int:
+    """The squaring steps NiftyReg is told to integrate a velocity with:
+    those of the velocity, or else the number its default rule picks."""
+    return int(chain[1].squarings)
+
+
 @register_format
 class NiftyRegVelocityGrid(NiftyRegVelocity):
     """
     A cubic B-spline grid of a stationary velocity (`SPLINE_VEL_GRID`,
-    `intent_p1 = 5`), as written by `reg_f3d -vel -cpp`. See
-    [`NiftyRegVelocity`][]: it is read, but not decoded.
+    `intent_p1 = 5`), as written by `reg_f3d -vel -cpp`.
+
+    Like a [`NiftyRegControlPointGrid`][], it holds the floating world
+    position of each control point, and is read as the spline
+    coefficients of their displacement -- here, of the velocity -- by
+    subtracting the world position of each control point. See
+    [`NiftyRegVelocity`][] for how it is integrated.
     """
 
     HINTS = ("velocity", "vel", "cpp")
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset({SPLINE_VEL_GRID})
+    _WHAT: tx.ClassVar[str] = "A NiftyReg velocity grid"
+
+    degree: tx.ClassVar[int] = 3
+    coeff: tx.ClassVar[bool] = True
+
+    def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
+        positions = self._stored_vectors()
+        backend = get_array_backend(positions)
+        grid = voxel_grid_coordinates(
+            tuple(int(s) for s in positions.shape[:_NDIM]), vox2world, backend
+        )
+        return positions - backend.asarray(grid, dtype=positions.dtype)
+
+    def to_nibabel(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+        """
+        Build the NIfTI image NiftyReg would write for this velocity grid:
+        the velocity's cubic coefficients, turned back into control-point
+        positions, with its squaring steps in `intent_p2`.
+
+        A grid read from a file is written back as it was read. When
+        `like` is given, non-encoding header fields are copied from it.
+        Keyword arguments override header fields last.
+        """
+        image = self._read_back(like, **overrides)
+        if image is not None:
+            return image
+        chain = tuple(self.transformations or ())
+        vox2world, vectors = self._split(chain)
+        backend = get_array_backend(vectors)
+        grid = voxel_grid_coordinates(
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+        )
+        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        overrides.setdefault("intent_p2", _written_steps(chain))
+        return self._write(
+            positions, vox2world, SPLINE_VEL_GRID, like, **overrides
+        )
 
 
 @register_format
@@ -730,11 +834,52 @@ class NiftyRegVelocityField(NiftyRegVelocity):
     """
     A dense stationary velocity field, stored as positions
     (`DEF_VEL_FIELD`, `intent_p1 = 3`) or as displacements
-    (`DISP_VEL_FIELD`, `intent_p1 = 4`). See [`NiftyRegVelocity`][]: it
-    is read, but not decoded.
+    (`DISP_VEL_FIELD`, `intent_p1 = 4`).
+
+    The positions are read as the velocity by subtracting the world
+    position of their voxel, as NiftyReg does before integrating them.
+    See [`NiftyRegVelocity`][] for how it is integrated.
     """
 
     HINTS = ("velocity", "vel")
     TYPES: tx.ClassVar[tx.FrozenSet[int]] = frozenset(
         {DEF_VEL_FIELD, DISP_VEL_FIELD}
     )
+    _WHAT: tx.ClassVar[str] = "A NiftyReg velocity field"
+
+    def _velocity_vectors(self, vox2world: np.ndarray) -> ArrayProtocol:
+        vectors = self._stored_vectors()
+        if self.niftyreg_type == DISP_VEL_FIELD:
+            return vectors
+        backend = get_array_backend(vectors)
+        grid = voxel_grid_coordinates(
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+        )
+        return vectors - backend.asarray(grid, dtype=vectors.dtype)
+
+    def to_nibabel(
+        self, like: tx.Any = None, **overrides
+    ) -> tx.Union[nb.Nifti1Image, nb.Nifti2Image]:
+        """
+        Build the NIfTI image NiftyReg would write for this velocity: the
+        positions of a `DEF_VEL_FIELD` (the type NiftyReg integrates),
+        with its squaring steps in `intent_p2`.
+
+        A velocity read from a file is written back as it was read. When
+        `like` is given, non-encoding header fields are copied from it.
+        Keyword arguments override header fields last.
+        """
+        image = self._read_back(like, **overrides)
+        if image is not None:
+            return image
+        chain = tuple(self.transformations or ())
+        vox2world, vectors = self._split(chain)
+        backend = get_array_backend(vectors)
+        grid = voxel_grid_coordinates(
+            tuple(int(s) for s in vectors.shape[:_NDIM]), vox2world, backend
+        )
+        positions = vectors + backend.asarray(grid, dtype=vectors.dtype)
+        overrides.setdefault("intent_p2", _written_steps(chain))
+        return self._write(
+            positions, vox2world, DEF_VEL_FIELD, like, **overrides
+        )
