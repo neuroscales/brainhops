@@ -23,6 +23,7 @@ from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.metadata._base import (
     FIELDS,
     Metadata,
+    _convert_from,
     _format_name,
     _History,
 )
@@ -88,6 +89,12 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         NoRepr(),
         NoEq(),
     ] = None
+
+    # No record, until a format declares the type of its own, as the
+    # type argument of this class (which the metaclass reads): a format
+    # never keeps the record of another format (see `_accepts_raw` in
+    # `brainhops.datamodel.metadata._base`).
+    _raw_class: tx.ClassVar[tx.Optional[type]] = type(None)
 
     # --- reading ------------------------------------------------------
 
@@ -466,7 +473,7 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
             return metadata, ConversionReport(
                 source=metadata.format, target=target
             )
-        return cls._convert_from(metadata)
+        return _convert_from(cls, metadata)
 
     def check_writable(
         self, *, image: tx.Any = None, raw: tx.Any = None
@@ -500,43 +507,6 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         raw = self.update_raw(raw, image=image, on_loss=report)
         self.check_raw(raw, image=image, on_loss=report)
         return report
-
-    # --- the record of a conversion -----------------------------------
-
-    @classmethod
-    def _raw_type(cls) -> tx.Optional[type]:
-        """
-        The type of raw record that this class declares, as the type
-        argument of its base (`FileBasedMetadata[T]`).
-
-        Returns
-        -------
-        type or None
-            The declared type, `type(None)` for a format without a record,
-            or `None` when the class does not declare a type.
-        """
-        return cls._raw_class
-
-    @classmethod
-    def _accepts_raw(cls, raw: tx.Any) -> bool:
-        """
-        Whether a conversion into this class keeps a raw record: only
-        when the record is of the type this class declares. Formats
-        declare distinct types, so a record only ever goes back to its
-        own format; a class that declares no type keeps none.
-
-        Parameters
-        ----------
-        raw : object
-            The raw record of the source metadata.
-
-        Returns
-        -------
-        bool
-            Whether the record is kept.
-        """
-        declared = cls._raw_type()
-        return declared is not None and isinstance(raw, declared)
 
     # --- per-format hooks ---------------------------------------------
 

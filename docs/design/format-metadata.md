@@ -1943,6 +1943,18 @@ holds.
   whose `BidsSidecar` is the reader `FileBasedMetadata.load` picks for
   a `.json` file.
 
+- **Conversion helpers are functions.** No class overrides the
+  conversion, so `Metadata._convert_from` is the module function
+  `_convert_from(cls, other, args, kwargs)`, which `to`,
+  `from_instance` and `FileBasedMetadata.writable` call. The methods
+  `_accepts_raw` (on `Metadata` and `FileBasedMetadata`) and
+  `FileBasedMetadata._raw_type` are gone too: the class variable
+  `_raw_class` says it all, read by the function `_accepts_raw(cls,
+  raw)` (`_raw_class is None or isinstance(raw, _raw_class)`).
+  `Metadata` declares `None` (any record), and `FileBasedMetadata`
+  `type(None)` (none) until a format declares the type of its own
+  record, which keeps the behaviour of the two former methods.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

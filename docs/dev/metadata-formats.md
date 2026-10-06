@@ -92,20 +92,21 @@ value of its parent, so it declares its own.
 
 The type argument of `FileBasedMetadata` declares the type of the raw
 record, `raw`, which stays out of `repr` and `==`; the class does not
-declare `raw` again (what the record holds goes in its docstring). A new,
-empty record is that type called without arguments (`MyRaw()`), for an
-object built in memory or converted from another format. Do not derive a
-shared base of several formats from `FileBasedMetadata`: its field would
-win by the MRO over the type argument of each format (the Zarr formats
-share `_ZarrMetadataParser`, a `MetadataParser` only). The type matters
-beyond documentation. `raw` and the read-time
-snapshot are fields of `Metadata`, so generic metadata carries the record
-of the metadata it was converted from, and a conversion gives the record
-back to a format only when the record is an instance of the type that the
-format declares (`FileBasedMetadata._accepts_raw`). Every format must
+declare `raw` again (what the record holds goes in its docstring). A
+new, empty record is that type called without arguments (`MyRaw()`), for
+an object built in memory or converted from another format. Do not
+derive a shared base of several formats from `FileBasedMetadata`: its
+field would win by the MRO over the type argument of each format (the
+Zarr formats share `_ZarrMetadataParser`, a `MetadataParser` only). The
+type matters beyond documentation. `raw` and the read-time snapshot are
+fields of `Metadata`, so generic metadata carries the record of the
+metadata it was converted from, and a conversion gives the record back
+to a format only when the record is an instance of the type that the
+format declares (`_raw_class`, which `FileBasedMetadata` sets to
+`type(None)` until a format declares its own). Every format must
 therefore declare a type of its own: wrap a plain `dict` or `tuple` in a
-small class (`ZarrRaw`, `X5Raw`), never share a type with another format,
-and do not declare a subclass of the type of another format.
+small class (`ZarrRaw`, `X5Raw`), never share a type with another
+format, and do not declare a subclass of the type of another format.
 `tests/test_io_metadata_matrix.py` checks it. A format with no record
 declares `FileBasedMetadata[None]`. A read alias under the familiar name
 of the record (`header`, `tags`, `node`) is a plain property over `raw`.

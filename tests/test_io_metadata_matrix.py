@@ -228,7 +228,7 @@ def test_every_format_declares_a_record_type_of_its_own() -> None:
     for cls in _format_classes():
         if cls is FileBasedMetadata:
             continue
-        raw_type = cls._raw_type()
+        raw_type = cls._raw_class
         assert raw_type is not None, f"{cls.__name__} declares no raw type"
         if raw_type is not type(None):
             declared[cls] = raw_type

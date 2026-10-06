@@ -925,6 +925,20 @@ def test_the_hierarchy_mirrors_the_images() -> None:
         assert not hasattr(Metadata, name)
 
 
+def test_the_record_a_class_keeps() -> None:
+    from brainhops.datamodel.metadata._base import _accepts_raw
+
+    # Generic metadata declares no type, and keeps any record.
+    assert Metadata._raw_class is None
+    assert _accepts_raw(Metadata, object())
+    # The base of the formats declares none until a format does, and a
+    # format keeps only a record of the type it declares.
+    assert FileBasedMetadata._raw_class is type(None)
+    assert not _accepts_raw(FileBasedMetadata, object())
+    assert not _accepts_raw(OpaqueMetadata, {})
+    assert OpaqueMetadata()._raw_or_default() is None
+
+
 def test_the_vocabulary_is_the_groups_in_order() -> None:
     assert list(GROUPS) == [
         ProvenanceVocabulary,
