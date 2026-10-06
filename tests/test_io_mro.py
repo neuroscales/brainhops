@@ -15,6 +15,7 @@ import pytest
 
 from brainhops.io.base._base import (
     FileBasedObject,
+    FormatDispatcher,
     format_registry,
 )
 from brainhops.io.base.parsers import (
@@ -83,20 +84,20 @@ def test_concrete_formats_are_not_dispatchers(cls: type) -> None:
 
 def test_dispatcher_overrides_are_pass_throughs_for_concrete_formats() -> None:
     """
-    Every reading method `FileBasedObject` overrides must hand straight
+    Every reading method `FormatDispatcher` overrides must hand straight
     back to `super()` when the class is not a dispatcher. That is what
     makes resolution independent of base order: whichever of the two
     directions wins, the other is still reached.
     """
     overridden = [
         name
-        for name, value in vars(FileBasedObject).items()
+        for name, value in vars(FormatDispatcher).items()
         if (name.startswith(("from_", "sniff")) or name == "load")
         and isinstance(value, classmethod)
     ]
     assert overridden, "no reading methods found to check"
     for name in overridden:
-        source = inspect.getsource(getattr(FileBasedObject, name).__func__)
+        source = inspect.getsource(getattr(FormatDispatcher, name).__func__)
         assert "_is_dispatcher()" in source, name
         assert "super()." + name in source, name
 
@@ -124,7 +125,7 @@ def test_resolution_does_not_depend_on_base_order() -> None:
         pass
 
     assert _owner(SpecialFirst, "from_file") is Special
-    assert _owner(RootFirst, "from_file") is FileBasedObject
+    assert _owner(RootFirst, "from_file") is FormatDispatcher
     # ...and yet both reach the specialized reader
     assert SpecialFirst.from_file("x") == "special-reader"
     assert RootFirst.from_file("x") == "special-reader"

@@ -373,7 +373,7 @@ class Unit:
     #   CONSTRUCTION
     # ------------------------------------------------------------------
 
-    def __new__(cls, *args: tx.Any, **kwargs: tx.Any) -> "Unit":
+    def __new__(cls, *args: tx.Any, **kwargs: tx.Any) -> tx.Self:
         if len(args) + len(kwargs) > 1 or (kwargs and "name" not in kwargs):
             raise TypeError(f"{cls.__name__}() takes a single unit name.")
         value = kwargs["name"] if kwargs else args[0] if args else None
@@ -441,7 +441,9 @@ class Unit:
         return None
 
     @classmethod
-    def _lookup(cls, canonical: str, unit: tx.Optional["pint.Unit"]) -> "Unit":
+    def _lookup(
+        cls, canonical: str, unit: tx.Optional["pint.Unit"]
+    ) -> tx.Self:
         """The interned unit of this class with a canonical name."""
         found = _INTERNED.get((cls, canonical))
         if found is None:
@@ -457,7 +459,7 @@ class Unit:
         canonical: tx.Optional[str],
         unit: tx.Optional["pint.Unit"],
         source: tx.Any,
-    ) -> "Unit":
+    ) -> tx.Self:
         """The interned unit of `unit`, as an instance of the class of its
         dimension, which must be one this class allows."""
         if unit is None:
@@ -477,7 +479,7 @@ class Unit:
         return cls._lookup(canonical, unit)
 
     @classmethod
-    def from_pint(cls, unit: tx.Any) -> "Unit":
+    def from_pint(cls, unit: tx.Any) -> tx.Self:
         """The unit of a pint unit, from any registry that names it the
         way brainhops' registry does."""
         if not hasattr(unit, "_units") or not hasattr(unit, "dimensionality"):
@@ -507,10 +509,10 @@ class Unit:
             return (_restore, (kls.dimension, self._name))
         return (_restore, (kls, self._name))
 
-    def __copy__(self) -> "Unit":
+    def __copy__(self) -> tx.Self:
         return self
 
-    def __deepcopy__(self, memo: tx.Any) -> "Unit":
+    def __deepcopy__(self, memo: tx.Any) -> tx.Self:
         return self
 
     def __setattr__(self, name: str, value: tx.Any) -> None:
