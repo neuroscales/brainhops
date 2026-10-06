@@ -1,7 +1,7 @@
 """The element type, and the intensity scaling, a writer stores an
 array with."""
 
-__all__ = ["preferred_dtype", "preferred_storage"]
+__all__ = ["preferred_dtype", "preferred_storage", "stored_values"]
 
 # externals
 import numpy as np
@@ -135,8 +135,10 @@ def preferred_storage(
         The element type to store the array as.
     slope, intercept : float or None
         The scaling to store the array with, or `None` for none. When a
-        scaling is returned, the writer stores
-        `round((value - intercept) / slope)` as `dtype`.
+        scaling is returned, the writer stores `(value - intercept) /
+        slope` as `dtype`, rounded only when `dtype` is an integer type
+        (see [`stored_values`][]). A scaling is only returned with an
+        integer type, the one case where it makes sense.
 
     Raises
     ------
@@ -173,6 +175,46 @@ def preferred_storage(
             )
     apply_loss_policy(report, on_loss, stacklevel=2)
     return stored, None, None
+
+
+def stored_values(
+    data: tx.Any,
+    dtype: tx.Any,
+    slope: tx.Optional[float] = None,
+    intercept: tx.Optional[float] = None,
+) -> np.ndarray:
+    """
+    The values a writer stores, with the type and the scaling that
+    [`preferred_storage`][] chose.
+
+    Each value is stored as `(value - intercept) / slope`, rounded to the
+    nearest integer only when `dtype` is an integer type, then cast to
+    `dtype`.
+
+    Parameters
+    ----------
+    data : array-like
+        The values to write.
+    dtype : dtype-like
+        The element type to store them as.
+    slope, intercept : float, optional
+        The scaling, or `None` for none (a slope of 1 and an intercept of
+        0).
+
+    Returns
+    -------
+    numpy.ndarray
+        The stored values, of type `dtype`.
+    """
+    dtype = np.dtype(dtype)
+    if slope is None and intercept is None:
+        return np.asarray(data).astype(dtype, copy=False)
+    slope = 1.0 if slope is None else float(slope)
+    intercept = 0.0 if intercept is None else float(intercept)
+    stored = (np.asarray(data, dtype=np.float64) - intercept) / slope
+    if dtype.kind in "iu":
+        stored = np.round(stored)
+    return stored.astype(dtype)
 
 
 def _present(value: tx.Any) -> tx.Any:

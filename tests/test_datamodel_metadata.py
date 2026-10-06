@@ -51,7 +51,7 @@ from brainhops.datamodel.metadata import (
     Vocabulary,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._dtype import preferred_dtype
+from brainhops.datamodel.metadata._dtype import preferred_dtype, stored_values
 from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
@@ -1051,6 +1051,19 @@ def test_data_type_is_a_native_dtype() -> None:
     # How the file stores the values: kept by `derive` (`file` scope).
     assert meta._reslice(None).data_type == np.int16
     assert meta._select("time", [0]).data_type == np.int16
+
+
+def test_stored_values_round_only_into_integers() -> None:
+    values = np.array([1.0, 2.2, 3.6])
+    # Into an integer type, the unscaled values are rounded...
+    stored = stored_values(values, np.int16, 2.0, 1.0)
+    assert stored.dtype == np.int16
+    assert stored.tolist() == [0, 1, 1]
+    # ... into a floating-point type, they are kept as they are.
+    stored = stored_values(values, np.float32, 2.0, 1.0)
+    assert stored.dtype == np.float32
+    assert stored.tolist() == pytest.approx([0.0, 0.6, 1.3])
+    assert stored_values(values, np.float64).tolist() == values.tolist()
 
 
 def test_preferred_dtype() -> None:

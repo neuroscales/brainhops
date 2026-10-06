@@ -45,7 +45,7 @@ the rest from the private modules that define it:
 | `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
 | `brainhops.datamodel.metadata._field` | `MetadataField` |
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
-| `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |
+| `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage`, `stored_values` |
 | `brainhops.datamodel.metadata._sentinel` | `ALL`, `Maybe`, `Unsupported` |
 | `brainhops.io.base._metadata_parser` | `MetadataParser`, `Hdf5MetadataParser` |
 | `brainhops.io.metadata._json` | the JSON codec of key/value stores |
