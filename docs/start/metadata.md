@@ -505,9 +505,12 @@ True
 
 ```
 
-[`derive`][brainhops.datamodel.metadata.Metadata.derive] records a
-derivation that keeps the axes, such as a smoothing, and keeps every
-other field:
+Both operations describe what they did as an operation object, an
+[`Indexed`][brainhops.datamodel.metadata.Indexed] or a
+[`Resampled`][brainhops.datamodel.metadata.Resampled], and hand it to
+[`derive`][brainhops.datamodel.metadata.Metadata.derive]. Without an
+operation, `derive` records a derivation that keeps the axes, such as a
+smoothing, and keeps every other field:
 
 ```python
 >>> dwi.metadata.derive(history="smooth").history
@@ -515,8 +518,8 @@ other field:
 
 ```
 
-The metadata of a file format also keeps its raw record, from which the
-format removes what the changed axes invalidate, so that a cleared field
+The metadata of a file format also keeps a copy of its raw record, from
+which the format removes what the operation invalidates, so that a cleared field
 is cleared in the file as well.
 
 When an arbitrary image is written, a format maps the axes of the image
