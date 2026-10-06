@@ -45,6 +45,7 @@ __all__ = [
     "ItkAffineBase",
     "ItkBlockBase",
     "ItkDisplacementBase",
+    "ItkMetadata",
     "ItkPrecision",
     "ItkStruct",
     "ItkTransform",
@@ -62,6 +63,7 @@ from ._common import (
     ItkStruct,
     ItkTransformClass,
 )
+from ._metadata import ItkMetadata
 from ._xform import ItkTransform
 
 # The h5 reader needs h5py, which is optional. It is imported only when
@@ -69,8 +71,9 @@ from ._xform import ItkTransform
 # its own optional-dependency submodules.
 try:
     from . import h5
+    from .h5 import ItkH5Metadata
 
-    __all__ += ["h5"]
+    __all__ += ["h5", "ItkH5Metadata"]
 except ImportError:  # h5py is optional
     pass
 

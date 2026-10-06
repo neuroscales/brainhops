@@ -1,6 +1,6 @@
 """Readers and writers for FreeSurfer image formats."""
 
-__all__ = ["mgh", "MghImage"]
+__all__ = ["mgh", "MghImage", "MghMetadata"]
 
 from . import mgh
-from .mgh import MghImage
+from .mgh import MghImage, MghMetadata

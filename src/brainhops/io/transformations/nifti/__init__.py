@@ -38,11 +38,14 @@ lay out its axes as one, so a grid written with it would be misread.
 
 __all__ = [
     "NiftiBasedTransformation",
+    "NiftiMetadata",
     "NiftiRASCoordinatesField",
     "NiftiRASDisplacementField",
     "NiftiRASToVoxel",
     "NiftiVoxelToRAS",
 ]
+
+from brainhops.io.base._nifti_metadata import NiftiMetadata
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
 from .base import NiftiBasedTransformation

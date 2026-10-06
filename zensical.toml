@@ -26,6 +26,8 @@ nav = [
       "api/datamodel/transformations.md",
       "api/datamodel/images.md",
       "api/datamodel/kinds.md",
+      "api/datamodel/metadata.md",
+      {"metadata (format authors)" = "api/datamodel/metadata-formats.md"},
     ]},
     {"io" = [
       "api/io/index.md",
@@ -77,6 +79,11 @@ nav = [
         {"niftyreg" = "api/io/transformations/niftyreg.md"},
         "api/io/transformations/zarr.md",
       ]},
+      {"metadata" = [
+        "api/io/metadata/index.md",
+        "api/io/metadata/base.md",
+        "api/io/metadata/bids.md",
+      ]},
       {"vectors" = "api/io/vectors/index.md"},
     ]},
     {"For developers" = [
@@ -88,7 +95,10 @@ nav = [
         {"enum" = "api/_core/enum.md"},
         {"invfield" = "api/_ext/invfield/index.md"},
     ]}
-  ]}
+  ]},
+  {"Developer guide" = [
+    {"Metadata of a format" = "dev/metadata-formats.md"},
+  ]},
 ]
 
 # The site_name is shown in the page header and the browser window title

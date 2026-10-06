@@ -15,6 +15,8 @@ and lazily read datasets.
   `from_h5`.
 - [`Hdf5ParserWriter`][] does the same for writing, through the
   format's `to_h5`.
+- [`Hdf5MetadataParser`][] is the [`Hdf5Parser`][] of the metadata of
+  a format: it reads the metadata of a file without its data.
 - [`DelayedH5Array`][] is a dataset that can still be read after its
   file was closed, by reopening it on demand.
 
@@ -25,6 +27,7 @@ the formats that need it, and only when it is installed.
 __all__ = [
     "DelayedH5Array",
     "H5Like",
+    "Hdf5MetadataParser",
     "Hdf5Parser",
     "Hdf5ParserWriter",
     "delayed_dataset",
@@ -47,6 +50,7 @@ from brainhops._core.streams import preserve_position
 from brainhops._core.typing import ArrayProtocol
 
 # io
+from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import (
     BinaryFileParser,
     BinaryFileParserWriter,
@@ -299,6 +303,21 @@ class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
         with h5py.File(buffer, "w") as f:
             writer(f)
         return buffer.getvalue()
+
+
+class Hdf5MetadataParser(Hdf5Parser, MetadataParser):
+    """
+    Reads the metadata of a format stored in an HDF5 file, without its
+    data.
+
+    The metadata class of the format lists it first among its bases, and
+    implements `sniff_h5(h5file, error=False)` and `from_h5(h5file,
+    **kwargs)`, as the formats of [`Hdf5Parser`][] do, which routes
+    paths, streams and bytes to them. `from_h5` reads the raw record
+    alone, and builds the metadata with `from_raw`; it is also given the
+    `keep_open` and `load` options of `Hdf5Parser`, which a raw record
+    read at once does not need.
+    """
 
 
 # ----------------------------------------------------------------------
