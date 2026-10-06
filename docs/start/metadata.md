@@ -482,20 +482,19 @@ True
 
 `reslice()` derives the metadata of the image it returns in the same
 way, through the map from the old voxels to the new ones: here, a grid
-whose first two voxel axes are those of the image, swapped:
+whose first two voxel axes are those of the image, swapped. The time
+axis is left as it is, so the b-values are kept:
 
 ```python
 >>> from brainhops.datamodel.transformations import Affine
->>> epi = SingleScaleImage(
-...     np.zeros((4, 5, 6), "float32"),
-...     metadata=Metadata(
-...         phase_encoding_direction="j-", slice_timing=(0.0, 0.5, 1.0)
-...     ),
+>>> swap = Affine(
+...     [[0, 1, 0, 0, 0], [1, 0, 0, 0, 0], [0, 0, 1, 0, 0], [0, 0, 0, 1, 0]]
 ... )
->>> swap = Affine([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0]])
->>> swapped = epi.reslice(swap, degree=0)
+>>> swapped = dwi.reslice(swap, degree=0)
 >>> swapped.metadata.phase_encoding_direction, swapped.metadata.slice_timing
-(EncodingDirection('i-'), None)
+(EncodingDirection('i'), None)
+>>> swapped.metadata.bvalues == dwi.metadata.bvalues
+True
 >>> swapped.metadata.history
 ('reslice',)
 

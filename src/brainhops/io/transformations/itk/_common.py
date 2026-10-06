@@ -77,7 +77,7 @@ class ItkPrecision(StrEnum):
     Double = "double"
 
 
-class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True):
+class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True, eq=False):
     """This object represents a single ITK transform block.
 
     It holds what an ITK file stores about one block -- its transform
@@ -97,6 +97,11 @@ class ItkStruct(Magic, kw_only=True, convert=True, polymorphic=True):
     -- `ItkStruct` and the intermediate family bases alike -- so the whole
     table is reachable from the one door the parsers knock on, and each
     family base reaches its own blocks.
+
+    It compares by identity (`eq=False`): its parameters are arrays, which
+    have no single truth value to compare by. A concrete block is a
+    transformation, which compares by identity too, as every
+    transformation does.
     """
 
     type: ItkTransformClass
@@ -336,7 +341,10 @@ class ItkDisplacementBase(ItkBlockBase):
 
     @smartproperty(cache=True)
     def field(self) -> ArrayProtocol:
-        """The warp values on their own grid, in voxel units.
+        """The warp array on its own grid, in voxel units.
+
+        It holds the warp's values, or their spline coefficients when
+        `coeff` is set, and becomes the `data` of the `displacement`.
 
         ITK stores them as a flat, C-ordered block of world-space
         displacements, laid out either interleaved or planar -- see
@@ -390,7 +398,7 @@ class ItkDisplacementBase(ItkBlockBase):
         """The displacement field, defined on the warp grid."""
         VOX = _systems.VoxelCoordinateSystem()
         return _xforms.DisplacementField(
-            field=self.field,
+            data=self.field,
             input=VOX,
             output=VOX,
             degree=self.degree,

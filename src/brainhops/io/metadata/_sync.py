@@ -1,6 +1,9 @@
 """Keeping the metadata of a parser in step with its raw record."""
 
-__all__ = ["sync_metadata"]
+__all__ = ["parent_post_init", "sync_metadata"]
+
+# stdlib
+from inspect import Parameter, signature
 
 # dependencies
 import typing_extensions as tx
@@ -68,3 +71,40 @@ def sync_metadata(
     else:
         obj.metadata = metadata.update_from_raw(raw, image=image)
     return True
+
+
+_POSITIONAL = (
+    Parameter.POSITIONAL_ONLY,
+    Parameter.POSITIONAL_OR_KEYWORD,
+    Parameter.VAR_POSITIONAL,
+)
+
+
+def parent_post_init(parent: tx.Any, arguments: tx.Any = None) -> None:
+    """
+    Run the `__post_init__` that a parser's own one overrides.
+
+    A parser's hook takes the constructor's arguments (`bagof` hands them
+    to a hook that declares a parameter), and passes them on to the hook
+    it overrides when that one declares a parameter too -- as the hook of
+    a concrete transformation does -- and nothing otherwise.
+
+    Parameters
+    ----------
+    parent : super
+        `super()`, from the parser's hook.
+    arguments : object, optional
+        The arguments the parser's hook was given.
+    """
+    hook = getattr(parent, "__post_init__", None)
+    if hook is None:
+        return
+    try:
+        parameters = signature(hook).parameters.values()
+    except (TypeError, ValueError):
+        hook(arguments)
+        return
+    if any(parameter.kind in _POSITIONAL for parameter in parameters):
+        hook(arguments)
+    else:
+        hook()

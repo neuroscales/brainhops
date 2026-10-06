@@ -509,7 +509,7 @@ def _warp_chain(
     return (
         RASToWarpField(matrix=ras_to_grid[:-1]),
         _xforms.DisplacementField(
-            field=prescaled, degree=degree, bound=bound, coeff=coeff
+            data=prescaled, degree=degree, bound=bound, coeff=coeff
         ),
         WarpFieldToRAS(matrix=grid_to_ras[:-1]),
     )

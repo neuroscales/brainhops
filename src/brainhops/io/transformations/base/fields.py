@@ -74,6 +74,8 @@ def ras_displacement_chain(
     degree: tx.Any = 1,
     bound: tx.Any = BoundaryCondition.nearest,
     coeff: bool = False,
+    log: bool = False,
+    steps: tx.Optional[int] = None,
 ) -> tx.Tuple[RASToVoxel, _xforms.DisplacementField, VoxelToRAS]:
     """
     The chain that maps RAS to RAS through a field of RAS displacements.
@@ -83,13 +85,24 @@ def ras_displacement_chain(
     vectors : array, shape `(*shape, ndim)`
         Displacements in RAS millimetres, one vector per voxel -- or,
         when `coeff` is set, the spline coefficients of those
-        displacements, one vector per knot.
+        displacements, one vector per knot. When `log` is set, they are
+        the stationary velocity whose flow is the map, rather than its
+        displacement.
     vox2ras : array, shape `(ndim + 1, ndim + 1)`
         The voxel-to-RAS affine of the grid the vectors are sampled on.
     degree, bound
         Spline degree and boundary condition of the field.
     coeff : bool
         Whether `vectors` are spline coefficients rather than values.
+    log : bool
+        Whether `vectors` are a stationary velocity, which makes the field
+        a [`StationaryVelocityField`][brainhops.datamodel.\
+transformations.StationaryVelocityField]. A velocity rotates into voxel
+        units as a displacement does, and its flow commutes with the change
+        of coordinates, so the chain is the same.
+    steps : int, optional
+        The number of squaring steps of a velocity. Only a velocity takes
+        it.
 
     Returns
     -------
@@ -106,15 +119,20 @@ def ras_displacement_chain(
     rotate = backend.asarray(ras2vox, dtype=vectors.dtype)
     field = backend.matmul(rotate, vectors[..., None])[..., 0]
     voxel = _systems.VoxelCoordinateSystem()
+    # `steps` is a field of a velocity only: it is passed when it is set, so
+    # that it is refused without `log`.
+    velocity = {} if steps is None else {"steps": steps}
     return (
         RASToVoxel(matrix=_affines.inv(compact)),
         _xforms.DisplacementField(
-            field=field,
+            data=field,
             input=voxel,
             output=voxel,
             degree=degree,
             bound=bound,
             coeff=coeff,
+            log=log,
+            **velocity,
         ),
         VoxelToRAS(matrix=compact),
     )
@@ -125,9 +143,16 @@ def split_ras_displacement_chain(
     what: str = "A displacement field",
     ndim: tx.Optional[int] = None,
     coeff: bool = False,
+    degree: tx.Any = None,
+    bound: tx.Any = None,
+    log: bool = False,
 ) -> tx.Tuple[np.ndarray, ArrayProtocol]:
     """
     Undo [`ras_displacement_chain`][]: the grid and the RAS vectors.
+
+    The field is first converted to the encoding the format stores, and
+    its `data` is what is written. A field already in that encoding is
+    passed through as it is: its stored array is written, unrefitted.
 
     Parameters
     ----------
@@ -139,7 +164,17 @@ def split_ras_displacement_chain(
         The number of spatial dimensions the format supports.
     coeff : bool
         Whether the format stores spline coefficients rather than
-        sampled values.
+        sampled values. A field of values written to a format of
+        coefficients is encoded, and the reverse is decoded.
+    degree, bound : optional
+        The spline degree and boundary condition of the coefficients a
+        format stores. A field of coefficients under other ones is
+        refitted. `None` keeps the field's own.
+    log : bool
+        Whether the format stores a stationary velocity rather than a
+        displacement. A velocity written to a format of displacements is
+        integrated; a displacement written to a format of velocities is
+        refused, since a field has no logarithm that brainhops computes.
 
     Returns
     -------
@@ -152,9 +187,8 @@ def split_ras_displacement_chain(
     Raises
     ------
     WriterError
-        If the chain does not have that shape, holds coefficients when
-        the format stores values (or the reverse), or its grid is not an
-        affine.
+        If the chain does not have that shape, holds no field, or its
+        grid is not an affine.
     """
     chain = tuple(chain or ())
     if len(chain) != 3 or not isinstance(chain[1], _xforms.DisplacementField):
@@ -162,24 +196,19 @@ def split_ras_displacement_chain(
             f"{what} is written from a chain of three transformations: "
             f"RAS to voxel, a displacement field, and voxel to RAS."
         )
-    displacement = chain[1]
-    if displacement.field is None:
+    encoding: tx.Dict[str, tx.Any] = {"coeff": coeff, "log": log}
+    if coeff and degree is not None:
+        encoding["degree"] = degree
+    if coeff and bound is not None:
+        encoding["bound"] = bound
+    displacement = chain[1].to(**encoding)
+    if displacement.data is None:
         raise WriterError(
             "This field has no displacements, so there is nothing to write."
         )
-    if displacement.coeff and not coeff:
-        raise WriterError(
-            f"{what} stores sampled displacements, and this field holds "
-            f"spline coefficients. Convert it to values first."
-        )
-    if coeff and not displacement.coeff:
-        raise WriterError(
-            f"{what} stores spline coefficients, and this field holds "
-            f"sampled displacements. Convert it to coefficients first."
-        )
     vox2ras = homogeneous_matrix(chain[2], what, ndim)
     ndim = vox2ras.shape[0] - 1
-    field = displacement.field
+    field = displacement.data
     backend = get_array_backend(field)
     field = backend.asarray(field)
     if field.ndim != ndim + 1 or field.shape[-1] != ndim:

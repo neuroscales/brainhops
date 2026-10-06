@@ -28,7 +28,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
-from brainhops.io.metadata._sync import sync_metadata
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 
 # locals
@@ -86,10 +86,8 @@ class X5TransformParser(
         ),
     ]
 
-    def __post_init__(self) -> None:
-        parent = getattr(super(), "__post_init__", None)
-        if parent is not None:
-            parent()
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
         index = self._metadata_index() if self.nodes else None
         node = None if index is None else self.nodes[index]
         header = self.header

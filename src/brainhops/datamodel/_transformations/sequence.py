@@ -8,19 +8,22 @@ from bagof.magic import replace
 
 # api
 from brainhops._core.properties import smartproperty
+from brainhops.datamodel import kinds
 from brainhops.datamodel.systems import CoordinateSystem
 
 # internals
 from . import registries
 from .base import Transformation
+from .check import is_kind
 from .compose import compose
 from .concrete import (
     CartesianField,
     CoordinatesField,
     DisplacementField,
     Identity,
+    is_identity,
 )
-from .errors import CompositionError
+from .errors import CompositionError, ConversionError
 from .factor import PatternCache, factor_sequence
 from .inverse import Inverse
 from .meta import SubspaceTransformation
@@ -34,6 +37,7 @@ from .modes import (
 from .registries import register_sequence
 from .simplify import SimplifyLike, SimplifyTable
 from .simplify import simplify as _simplify
+from .utils import require_endomorphism
 
 
 class SequenceMixin(AbcSequence):
@@ -177,6 +181,54 @@ class Sequence(SequenceMixin, Transformation):
             input=self._output,
             output=self._input,
         )
+
+    def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
+        """Return the principal square root of this chain.
+
+        The chain is first simplified, which costs nothing. A chain
+        `[P, *X, P^-1]`, where `P^-1` is the lazy inverse of `P`, or both
+        are affines whose product is exactly the identity, is a change of
+        coordinates around `X`, and its square root is
+        `[P, sqrt(X), P^-1]`: a field stored in voxels between a
+        world-to-voxel affine and its lazy inverse keeps that form. Any
+        other chain is composed now, and the square root of the
+        transformation it composes to is returned.
+
+        Raises
+        ------
+        DomainError
+            If the chain does not map a space to itself, or if the square
+            root of what it reduces to is not defined.
+        NotImplementedError
+            If the chain does not compose to a single transformation.
+        """
+        return _chain_sqrt(self, compute, kwargs)
+
+    def to(
+        self, cls: tx.Optional[tx.Type[Transformation]] = None, **kwargs
+    ) -> Transformation:
+        """Convert this chain to a different type or encoding.
+
+        See [`Transformation.to`][brainhops.datamodel.transformations.\
+Transformation.to]. A chain has no tangent of its own -- the tangent of a
+        composition is not the sum of the tangents -- so `log=` re-encodes
+        the transformation it reduces to, and anything else is refused
+        before it is computed:
+
+        * a chain that simplifies to one transformation is that one;
+        * a change of coordinates `[P, *X, P^-1]` (see [`sqrt`][brainhops.\
+datamodel.transformations.Sequence.sqrt]) keeps its ends, and re-encodes
+          `X`: the flow of a velocity commutes with the conjugation, so this
+          is exact. A velocity read between a world-to-voxel affine and its
+          inverse (`|svf`) is turned into its displacement that way;
+        * a chain of affines is composed, which is cheap and exact.
+
+        Any other chain -- one with a field, between ends that do not undo
+        each other -- raises `ConversionError`.
+        """
+        if "log" in kwargs:
+            return _chain_to(self, cls, kwargs)
+        return super().to(cls, **kwargs)
 
     def compute(
         self,
@@ -579,6 +631,104 @@ def _factor_cap(flat: tx.List[Transformation]) -> int:
             if axes is not None and len(axes):
                 n = max(n, max(int(x) for x in axes) + 1)
     return max(2 * (n + len(flat)) + 4, 16)
+
+
+# ----------------------------------------------------------------------
+#    OPERATORS
+# ----------------------------------------------------------------------
+
+
+def _chain_sqrt(
+    seq: Sequence, compute: bool, kwargs: tx.Dict[str, tx.Any]
+) -> Transformation:
+    # The square root of a chain (see `Sequence.sqrt`). It does not
+    # distribute over a composition, except over a change of coordinates,
+    # which it commutes with: `sqrt(P^-1 X P) = P^-1 sqrt(X) P`.
+    require_endomorphism(seq, "square root")
+    chain = seq.simplify()
+    if not isinstance(chain, Sequence):
+        return chain.sqrt(compute, **kwargs)
+    leaves = list(chain.transformations or [])
+    if len(leaves) >= 3 and _undoes(leaves[0], leaves[-1]):
+        middle = leaves[1:-1]
+        if len(middle) == 1:
+            inner = middle[0]
+        else:
+            inner = Sequence(transformations=middle)
+        obj = Sequence(
+            transformations=[leaves[0], inner.sqrt(), leaves[-1]],
+            input=chain._input,
+            output=chain._output,
+        )
+        return obj.compute(**kwargs) if compute else obj
+    reduced = chain.compute()
+    if isinstance(reduced, Sequence):
+        names = ", ".join(type(t).__name__ for t in reduced.transformations)
+        raise NotImplementedError(
+            f"The square root of a chain is implemented only when it "
+            f"composes to a single transformation, or when it is a change "
+            f"of coordinates [P, ..., P^-1], but this one composes to "
+            f"[{names}]."
+        )
+    return reduced.sqrt(compute, **kwargs)
+
+
+def _chain_to(
+    seq: Sequence,
+    cls: tx.Optional[tx.Type[Transformation]],
+    kwargs: tx.Dict[str, tx.Any],
+) -> Transformation:
+    # A chain stored as its tangent, or not (see `Sequence.to`). The
+    # endpoints are those of the chain; every other keyword re-encodes the
+    # transformation it reduces to.
+    ends = {k: kwargs.pop(k) for k in ("input", "output") if k in kwargs}
+    chain = seq.simplify()
+    if not isinstance(chain, Sequence):
+        return chain.to(cls, **kwargs, **ends)
+    leaves = list(chain.transformations or [])
+    if len(leaves) >= 3 and _undoes(leaves[0], leaves[-1]):
+        middle = leaves[1:-1]
+        if len(middle) == 1:
+            inner = middle[0]
+        else:
+            inner = Sequence(transformations=middle)
+        obj = Sequence(
+            transformations=[leaves[0], inner.to(**kwargs), leaves[-1]],
+            input=chain._input,
+            output=chain._output,
+        )
+        return obj.to(**ends) if ends else obj
+    if all(is_kind(t, kinds.Affine) for t in leaves):
+        reduced = chain.compute()
+        if not isinstance(reduced, Sequence):
+            return reduced.to(cls, **kwargs, **ends)
+    names = ", ".join(type(t).__name__ for t in leaves)
+    raise ConversionError(
+        f"A chain is stored as its tangent (log=) only when it reduces to "
+        f"a single transformation, is a change of coordinates "
+        f"[P, ..., P^-1], or is a chain of affines, but this one is "
+        f"[{names}]. It is not composed to find out."
+    )
+
+
+def _undoes(first: Transformation, last: Transformation) -> bool:
+    # Whether `last` undoes `first`, i.e. `last @ first` is the identity.
+    # It is decided exactly, like any numeric test of the library: a lazy
+    # inverse undoes its forward, which the pair simplifier decides from
+    # object identity, and two affine ends undo each other when their
+    # product is the identity, as `is_identity` reads it. Two matrices that
+    # are inverses only up to rounding are not taken for a change of
+    # coordinates, since the operator would then be applied to a chain that
+    # is not quite the one given. A field end is never composed to decide.
+    if isinstance(_simplify(first, last), Identity):
+        return True
+    if not (is_kind(first, kinds.Affine) and is_kind(last, kinds.Affine)):
+        return False
+    try:
+        product = compose(last, first)
+    except (CompositionError, ValueError):
+        return False
+    return is_identity(product, compute=True)
 
 
 # ----------------------------------------------------------------------

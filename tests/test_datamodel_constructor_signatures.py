@@ -36,28 +36,38 @@ from brainhops.datamodel.transformations import (
 # parameter, `input` and `output` included, is keyword-only.
 POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.concrete": {
-        "Affine": ("matrix",),
+        "Affine": ("data",),
+        "AffineExponential": ("data",),
         "CartesianField": ("shape", "degree", "bound", "coeff"),
         "ConcreteTransformation": (),
-        "CoordinatesField": ("field", "degree", "bound", "coeff"),
-        "DisplacementField": ("field", "degree", "bound", "coeff"),
+        "CoordinatesField": ("data", "degree", "bound", "coeff"),
+        "DisplacementField": ("data", "degree", "bound", "coeff"),
         "Identity": (),
-        "Linear": ("matrix",),
-        "Permutation": ("permutation",),
-        "Rotation": ("matrix",),
-        "Scaling": ("scale",),
-        "TransformationField": ("field", "degree", "bound", "coeff"),
-        "Translation": ("translation",),
+        "Linear": ("data",),
+        "LinearExponential": ("data",),
+        "Permutation": ("data",),
+        "Rotation": ("data",),
+        "RotationExponential": ("data",),
+        "Scaling": ("data",),
+        "ScalingExponential": ("data",),
+        "StationaryVelocityField": ("data", "degree", "bound", "coeff"),
+        "TransformationField": ("data", "degree", "bound", "coeff"),
+        "Translation": ("data",),
     },
     "brainhops.datamodel._transformations.inverse": {
         "Inverse": ("forward",),
         "InverseAffine": ("forward",),
+        "InverseAffineExponential": ("forward",),
         "InverseCoordinatesField": ("forward",),
         "InverseDisplacementField": ("forward",),
         "InverseLinear": ("forward",),
+        "InverseLinearExponential": ("forward",),
         "InversePermutation": ("forward",),
         "InverseRotation": ("forward",),
+        "InverseRotationExponential": ("forward",),
         "InverseScaling": ("forward",),
+        "InverseScalingExponential": ("forward",),
+        "InverseStationaryVelocityField": ("forward",),
         "InverseTranslation": ("forward",),
     },
     "brainhops.datamodel._transformations.meta": {
@@ -73,6 +83,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.multiscale": {
         "MultiscaleField": ("scales",),
     },
+    "brainhops.datamodel._transformations.operators": {
+        "Operation": ("forward",),
+        "Sqrt": ("forward",),
+        "SqrtAffine": ("forward",),
+        "SqrtLinear": ("forward",),
+        "SqrtRotation": ("forward",),
+        "SqrtScaling": ("forward",),
+        "SqrtTranslation": ("forward",),
+    },
     "brainhops.datamodel._transformations.sequence": {
         "ImmutableSequence": ("transformations",),
         "MutableSequence": ("transformations",),
@@ -86,15 +105,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "WritableFileBasedTransformation": (),
     },
     "brainhops.io.transformations.base.affines": {
-        "LPSToVoxel": ("matrix",),
-        "RASToRAS": ("matrix",),
-        "RASToVoxel": ("matrix",),
-        "VoxelToLPS": ("matrix",),
-        "VoxelToRAS": ("matrix",),
+        "LPSToVoxel": ("data",),
+        "RASToRAS": ("data",),
+        "RASToVoxel": ("data",),
+        "VoxelToLPS": ("data",),
+        "VoxelToRAS": ("data",),
     },
     "brainhops.io.transformations.base.fields": {
-        "LPSCoordinatesField": ("field", "degree", "bound", "coeff"),
-        "RASCoordinatesField": ("field", "degree", "bound", "coeff"),
+        "LPSCoordinatesField": ("data", "degree", "bound", "coeff"),
+        "RASCoordinatesField": ("data", "degree", "bound", "coeff"),
     },
     "brainhops.io.transformations.elastix._xform": {
         "ElastixParameterTransform": (
@@ -110,22 +129,22 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "ElastixTransform": ("transformations", "parameter_map", "initial"),
     },
     "brainhops.io.transformations.freesurfer.lta._xforms": {
-        "LtaTransformation": ("matrix", "struct"),
-        "LtaTransformationPhysToPhys": ("matrix", "struct"),
-        "LtaTransformationRASToRAS": ("matrix", "struct"),
-        "LtaTransformationVoxToVox": ("matrix", "struct"),
+        "LtaTransformation": ("data", "struct"),
+        "LtaTransformationPhysToPhys": ("data", "struct"),
+        "LtaTransformationRASToRAS": ("data", "struct"),
+        "LtaTransformationVoxToVox": ("data", "struct"),
     },
     "brainhops.io.transformations.freesurfer.m3z._xform": {
         "M3zMorph": ("transformations", "struct"),
     },
     "brainhops.io.transformations.fsl._affines": {
-        "ScaledMmToScaledMm": ("matrix",),
-        "ScaledMmToVoxel": ("matrix",),
-        "VoxelToScaledMm": ("matrix",),
+        "ScaledMmToScaledMm": ("data",),
+        "ScaledMmToVoxel": ("data",),
+        "VoxelToScaledMm": ("data",),
     },
     "brainhops.io.transformations.fsl._fields": {
-        "RASToWarpField": ("matrix",),
-        "WarpFieldToRAS": ("matrix",),
+        "RASToWarpField": ("data",),
+        "WarpFieldToRAS": ("data",),
     },
     "brainhops.io.transformations.fsl.flirt._xform": {
         "FlirtTransform": ("flirt_matrix", "moving", "reference"),
@@ -186,7 +205,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
             "vector",
             "direction",
             "index_base",
-            "matrix",
+            "data",
         )
         for name in (
             "CsvMatrixAffine",
@@ -201,15 +220,15 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         )
     },
     "brainhops.io.transformations.nifti.affines": {
-        "NiftiRASToVoxel": ("matrix", "image", "header"),
-        "NiftiVoxelToRAS": ("matrix", "image", "header"),
+        "NiftiRASToVoxel": ("data", "image", "header"),
+        "NiftiVoxelToRAS": ("data", "image", "header"),
     },
     "brainhops.io.transformations.nifti.base": {
         "NiftiBasedTransformation": ("image", "header"),
     },
     "brainhops.io.transformations.nifti.fields": {
         "NiftiRASCoordinatesField": (
-            "field",
+            "data",
             "degree",
             "bound",
             "coeff",
@@ -219,7 +238,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftiRASDisplacementField": ("transformations", "image", "header"),
     },
     "brainhops.io.transformations.niftyreg._affine": {
-        "NiftyRegAffine": ("matrix",),
+        "NiftyRegAffine": ("data",),
     },
     "brainhops.io.transformations.niftyreg._fields": {
         # The format's own fields come before `transformations` here.
@@ -228,9 +247,9 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftyRegDisplacementField": ("image", "header", "transformations"),
         "NiftyRegField": ("image", "header"),
         "NiftyRegSequence": ("image", "header", "transformations"),
-        "NiftyRegVelocity": ("image", "header"),
-        "NiftyRegVelocityField": ("image", "header"),
-        "NiftyRegVelocityGrid": ("image", "header"),
+        "NiftyRegVelocity": ("image", "header", "transformations"),
+        "NiftyRegVelocityField": ("image", "header", "transformations"),
+        "NiftyRegVelocityGrid": ("image", "header", "transformations"),
     },
     "brainhops.io.transformations.spm.y": {
         "SpmCoordinatesField": ("transformations", "image", "header"),

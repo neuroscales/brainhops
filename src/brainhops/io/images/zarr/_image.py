@@ -28,7 +28,7 @@ from brainhops.io.base.zarr import (
     _as_node,
 )
 from brainhops.io.images.base import WritableFileBasedImage
-from brainhops.io.metadata._sync import sync_metadata
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
 from ._metadata import ZarrMetadata, ZarrRaw
 
@@ -88,10 +88,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         ),
     ]
 
-    def __post_init__(self) -> None:
-        parent = getattr(super(), "__post_init__", None)
-        if parent is not None:
-            parent()
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
         self._sync_metadata()
 
     def _sync_metadata(self) -> None:

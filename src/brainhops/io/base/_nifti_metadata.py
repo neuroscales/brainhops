@@ -66,7 +66,6 @@ from brainhops.datamodel.metadata import (
     EncodingDirection,
 )
 from brainhops.datamodel.metadata._terms import AXES
-from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import Confidence, SnifferContentError
@@ -170,7 +169,7 @@ class NiftiMetadata(
                     raw.set_data_shape(shape)
                 except Exception:
                     pass
-            step = time_step(image.transformations)
+            step = time_step(image)
             if step is not None and len(_shape(raw)) >= 4:
                 set_time_step(raw, step)
         return super().check_writable(image=image, raw=raw)
@@ -343,8 +342,7 @@ class NiftiMetadata(
         if "slice_timing" in changed:
             _encode_slice_timing(h, changed["slice_timing"], report)
         if "repetition_time" in changed and (
-            not isinstance(image, Image)
-            or time_step(image.transformations) is None
+            not isinstance(image, Image) or time_step(image) is None
         ):
             # The time step of an image is the data model's: the writer
             # stores it, and `check_raw` reports a value that disagrees.
@@ -612,48 +610,42 @@ def _data_shape(image: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
 # ----------------------------------------------------------------------
 
 
-def time_step(
-    transformations: tx.Optional[tx.Iterable[tx.Any]],
-) -> tx.Optional[float]:
+def time_step(image: tx.Any) -> tx.Optional[float]:
     """
     The time step of an image, in seconds, as its data model gives it.
 
-    The time step is the scale of the time axis of the first scaling
-    whose output has a time axis with a physical time unit. The NIfTI and
-    MGH readers build such a scaling, from the voxel space to the
-    physical space.
+    It is the spacing that the NIfTI writer stores as `pixdim[4]`: the
+    scale of the time axis of the image's preferred transformation, from
+    the voxel space to the world space. A time axis that the
+    transformation does not map to time -- one that still counts frames,
+    as the reader leaves a time axis whose spacing is zero, the NIfTI
+    spelling of a missing repetition time -- gives no time step (see
+    [`_nifti_geometry`][brainhops.io.base.nifti._nifti_geometry]). The
+    step is converted from the unit of the time axis of the world space,
+    and taken to be in seconds when that axis has no time unit.
 
     Parameters
     ----------
-    transformations : iterable of Transformation or None
-        The transformations of the image.
+    image : Image
+        The image.
 
     Returns
     -------
     float or None
-        The time step in seconds, or `None` when no scaling gives one.
+        The time step in seconds, or `None` when the data model gives
+        none.
     """
-    for xform in transformations or ():
-        scale = getattr(xform, "scale", None)
-        output = getattr(xform, "output", None)
-        if scale is None or output is None:
-            continue
-        axes = [
-            axis
-            for axis in (getattr(output, "axes", None) or ())
-            if axis is not Ellipsis
-        ]
-        for index, axis in enumerate(axes):
-            if getattr(axis, "type", None) != "time":
-                continue
-            unit = getattr(axis, "unit", None)
-            if not (is_physicalunit(unit) and is_timeunit(unit)):
-                break
-            scale = np.ravel(np.asarray(scale, dtype=float))
-            if index < scale.size and scale[index] > 0:
-                return float(scale[index]) * float(unit.scale)
-            break
-    return None
+    # Imported here: the NIfTI parser imports this module.
+    from brainhops.io.base.nifti import _geometry_time_step
+
+    try:
+        transformation = image.transformation
+    except Exception:
+        return None
+    shape = _data_shape(image)
+    if transformation is None or shape is None:
+        return None
+    return _geometry_time_step(transformation, len(shape))
 
 
 def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:

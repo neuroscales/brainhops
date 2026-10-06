@@ -281,9 +281,9 @@ def test_no_system_equals_a_missing_system(unknown_axes: tx.Sequence) -> None:
     assert None != system  # noqa: E711
     assert not (system == None)  # noqa: E711
     # So two transformations that spell a missing endpoint differently are
-    # told apart, field by field, as any other two are.
-    assert Identity(input=system) != Identity()
-    assert Identity(input=system) == Identity(input=CS())
+    # told apart by their endpoints.
+    assert Identity(input=system).input != Identity().input
+    assert Identity(input=system).input == Identity(input=CS()).input
 
 
 def test_a_system_that_says_something_differs_from_a_missing_system(
@@ -302,7 +302,7 @@ def test_an_explicit_endpoint_is_kept_and_a_missing_one_defers() -> None:
     for system in (CS(), CS(axes=[...]), CS(name="s"), RASCoordinateSystem()):
         assert Identity(input=system).input is system
     assert Identity().input is None
-    assert Identity(input=CS()) != Identity()
+    assert Identity(input=CS()).input != Identity().input
 
 
 def test_systems_stay_unhashable() -> None:

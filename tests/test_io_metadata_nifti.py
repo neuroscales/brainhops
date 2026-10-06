@@ -589,6 +589,42 @@ def test_the_data_model_time_step_wins(scan, tmp_path) -> None:  # noqa: ANN001
     assert io.load(tmp_path / "out.nii").metadata.repetition_time == 2.0
 
 
+def test_the_preferred_transformation_gives_the_time_step(
+    scan,  # noqa: ANN001
+    tmp_path,  # noqa: ANN001
+) -> None:
+    # A resliced image keeps only its preferred transformation, a sequence
+    # of a spatial and a temporal subspace transform: its time step (2 s)
+    # is still the data model's, and a repetition time that disagrees
+    # with it is reported, not written.
+    image = io.load(scan)
+    resliced = image.reslice(image.transformation, degree=0)
+    assert len(resliced.transformations) == 1
+    resliced.metadata.repetition_time = 3.0
+    out = NiftiImage.from_instance(resliced)
+    assert set(out.metadata.check_writable(image=out).approximated) == {
+        "repetition_time"
+    }
+    with pytest.warns(MetadataLossWarning):
+        out.save(tmp_path / "out.nii")
+    assert float(_header(tmp_path / "out.nii")["pixdim"][4]) == 2.0
+
+
+def test_a_missing_time_step_takes_the_repetition_time(tmp_path) -> None:  # noqa: ANN001
+    # A time spacing of zero is a missing repetition time: the time axis
+    # still counts frames, so the field's value is the time step written.
+    path = _write_scan(
+        tmp_path / "scan.nii", pixdim=[1, 2, 2, 2.5, 0, 1, 1, 1]
+    )
+    image = io.load(path)
+    assert image.metadata.repetition_time is None
+    image.metadata.repetition_time = 1.5
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MetadataLossWarning)
+        image.save(tmp_path / "out.nii")
+    assert io.load(tmp_path / "out.nii").metadata.repetition_time == 1.5
+
+
 def test_check_writable_agrees_with_a_save(tmp_path) -> None:  # noqa: ANN001
     # An image with no physical time axis: the field is the time step.
     image = NiftiImage(data=np.zeros((2, 3, 4, 5), "float32"))

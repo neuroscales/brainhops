@@ -799,7 +799,7 @@ def test_the_field_is_out_of_eq_and_repr() -> None:
 
 def test_replace_carries_the_metadata() -> None:
     affine = Affine(np.eye(3)[:2], metadata=Metadata(description="a"))
-    assert replace(affine, matrix=2 * np.eye(3)[:2]).metadata.description == (
+    assert replace(affine, data=2 * np.eye(3)[:2]).metadata.description == (
         "a"
     )
 

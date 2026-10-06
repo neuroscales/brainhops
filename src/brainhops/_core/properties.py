@@ -344,6 +344,66 @@ def _make_fset_settable_cacheable(name: str) -> _Setter:
     return fset
 
 
+# --- smartsetter ------------------------------------------------------
+
+
+@tx.overload
+def smartsetter(fset: _Setter) -> property:
+    """Bare decorator: the name is the function's."""
+
+
+@tx.overload
+def smartsetter(name: str) -> tx.Callable[[_Setter], property]:
+    """Decorator factory: the name is given."""
+
+
+def smartsetter(fset):
+    """
+    A property whose setter is the decorated function.
+
+    The getter reads the value from the "private" attribute of the
+    property's name (`_<name>`), as [`smartproperty`][] does, and returns
+    `None` when nothing is stored. The decorated function is the whole
+    setter: it stores the value itself, so that it may check it first and
+    clear what depends on it after.
+
+    ```python
+    @smartsetter
+    def data(self, value):
+        self._data = value
+        self._forget_views()
+    ```
+
+    Parameters
+    ----------
+    fset : callable | str
+        The setter, whose name names the private attribute the getter
+        reads; or that name, given explicitly, in which case the setter is
+        the function the result decorates (`@smartsetter("data")` reads
+        `_data`, whatever the setter is called). The class binds the
+        property under the setter's name either way.
+
+    Returns
+    -------
+    property
+        The property object (or, given a name, the decorator that makes
+        it).
+    """
+    if isinstance(fset, str):
+        name = fset
+
+        def decorate(func: _Setter) -> property:
+            return _smartsetter(name, func)
+
+        return decorate
+    return _smartsetter(fset.__name__, fset)
+
+
+def _smartsetter(name: str, fset: _Setter) -> property:
+    fget = _make_fget_settable(name, None, _is_none)
+    return property(fget, fset, None, fset.__doc__)
+
+
 # --- unset ------------------------------------------------------------
 
 

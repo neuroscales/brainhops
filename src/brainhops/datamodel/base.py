@@ -1,6 +1,6 @@
 """The base class shared by every data model, and its converter."""
 
-__all__ = ["DataModelBase", "DataModelConverter"]
+__all__ = ["DataModelBase", "DataModelConverter", "IdentityComparison"]
 
 # externals
 import re
@@ -9,6 +9,29 @@ from collections.abc import Mapping
 import typing_extensions as tx
 from bagof.converters import ConversionError, Converter, register_converter
 from bagof.magic import HIDE_IF_NONE, Field, Magic, fields
+
+
+class IdentityComparison:
+    """Mixin that makes a class, and every subclass, compare by identity.
+
+    `==` and `!=` are those of `object` (`a == b` is `a is b`) and never
+    raise, and `__hash__` is that of `object`, so instances are hashable
+    and can be put in a set or used as dictionary keys.
+
+    A subclass that also derives from another struct takes its options
+    from whichever base comes first, and may be given a generated
+    `__eq__` (and `__hash__`) that compares its fields. Identity is put
+    back on every subclass, so none compares by value.
+    """
+
+    __eq__ = object.__eq__
+    __ne__ = object.__ne__
+    __hash__ = object.__hash__
+
+    def __init_subclass__(cls, **kwargs: tx.Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name in ("__eq__", "__ne__", "__hash__"):
+            setattr(cls, name, getattr(object, name))
 
 
 class DataModelBase(
@@ -40,7 +63,9 @@ class DataModelBase(
         Create an instance of the class from a dictionary-like object.
 
         Only keys in the dictionary that match keyword-like fields of
-        this class will be used. Other keys are ignored, but see
+        this class, or the keywords its constructor takes without
+        storing them (its `InitVar`s, such as the `matrix=` of an
+        `Affine`), will be used. Other keys are ignored, but see
         [`from_other`][brainhops.datamodel.base.DataModelBase.from_other],
         which refuses them.
 
@@ -56,7 +81,7 @@ class DataModelBase(
         def read(field: tx.Any) -> tx.Any:
             return other.get(field.public_name, _ABSENT)
 
-        return _build(cls, read, args, kwargs)
+        return _build(cls, read, args, kwargs, init_vars=True)
 
     @classmethod
     def from_instance(cls, other: tx.Self, *args, **kwargs) -> tx.Self:
@@ -171,6 +196,7 @@ def _build(
     read: tx.Callable[[tx.Any], tx.Any],
     args: tx.Tuple[tx.Any, ...],
     kwargs: tx.Dict[str, tx.Any],
+    init_vars: bool = False,
 ) -> tx.Any:
     """The body shared by `from_dict` and `from_instance`.
 
@@ -179,9 +205,13 @@ def _build(
     sets that field. A field that the class fixes checks it instead:
     before the instance is built when the fixed value can be read off
     the field, and after otherwise.
+
+    With `init_vars`, the keywords the constructor takes without storing
+    them (its `InitVar`s) are read too. A dictionary can name them; an
+    instance has nothing stored under them to read.
     """
     later = {}
-    for field in fields(cls):
+    for field in _fields(cls, init_vars):
         value = read(field)
         if value is _ABSENT:
             continue
@@ -197,6 +227,19 @@ def _build(
     for field, value in later.items():
         _check_fixed(cls, field, value, getattr(obj, field.name))
     return obj
+
+
+def _fields(cls: type, init_vars: bool = False) -> tx.Tuple[tx.Any, ...]:
+    """The fields of `cls`, and with `init_vars` its `InitVar`s as well.
+
+    `fields(cls)` leaves out both kinds of pseudo-field, `ClassVar` and
+    `InitVar`. An `InitVar` is the one a constructor takes (`init`), so it
+    is told apart from a `ClassVar` by that.
+    """
+    if not init_vars:
+        return fields(cls)
+    table = getattr(cls, "__magic_fields__", {})
+    return tuple(f for f in table.values() if not f.var or f.init)
 
 
 def _fixed_value(field: tx.Any) -> tx.Any:
@@ -318,7 +361,7 @@ def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
     """Refuse a mapping with keys that match no field of `cls`."""
     known = {
         field.public_name
-        for field in fields(cls)
+        for field in _fields(cls, init_vars=True)
         if not field.init or field.kw
     }
     unknown = [key for key in other if key not in known]

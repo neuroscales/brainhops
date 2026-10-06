@@ -231,3 +231,57 @@ def test_builtin_formats_expose_semantic_hint_namespaces() -> None:
     )
     assert {"tfm", "itk.tfm", "xform.itk.tfm"} <= format_hints(TfmTransform)
     assert {"nifti", "affine.nifti"} <= format_hints(NiftiVoxelToRAS)
+
+
+# ----------------------------------------------------------------------
+#   VELOCITIES: the `svf` alias and boolean options
+# ----------------------------------------------------------------------
+
+
+def test_svf_is_an_alias_of_displacements_with_log() -> None:
+    spec = TransformationSpec.from_arg("warp.nii.gz|svf")
+    assert spec.hints == ("displacements",)
+    assert spec.options == {"log": "true"}
+    assert spec == TransformationSpec.from_arg(
+        "warp.nii.gz|displacements|log:true"
+    )
+    spec = TransformationSpec.from_arg("warp.nii.gz|svf|steps:6")
+    assert spec.hints == ("displacements",)
+    assert spec.options == {"steps": "6", "log": "true"}
+
+
+def test_svf_refuses_a_log_option() -> None:
+    with pytest.raises(ValueError, match="svf already means log:true"):
+        TransformationSpec.from_arg("warp.nii.gz|svf|log:false")
+
+
+@pytest.mark.parametrize(
+    "text, value",
+    [
+        ("true", True),
+        ("True", True),
+        ("yes", True),
+        ("on", True),
+        ("1", True),
+        ("false", False),
+        ("FALSE", False),
+        ("no", False),
+        ("off", False),
+        ("0", False),
+    ],
+)
+def test_a_boolean_option_is_parsed(text: str, value: bool) -> None:
+    from brainhops.io.base.specs import parse_bool
+
+    assert parser_for(bool) is parse_bool
+    assert parser_for(tx.Annotated[bool, "doc"]) is parse_bool
+    assert parse_bool(SourceSpec(path=text)) is value
+
+
+def test_a_boolean_option_refuses_other_text() -> None:
+    from brainhops.io.base.specs import parse_bool
+
+    with pytest.raises(ValueError, match="boolean"):
+        parse_bool(SourceSpec(path="maybe"))
+    with pytest.raises(ValueError, match="boolean"):
+        parse_bool(SourceSpec.from_arg("true|nifti"))

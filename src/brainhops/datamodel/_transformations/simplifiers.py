@@ -56,13 +56,20 @@ from .concrete import (
     Translation,
     is_identity,
 )
-from .errors import ConversionError
+from .errors import ConversionError, DomainError
 from .inverse import Inverse
-from .meta import Bijection, Projection, SubspaceTransformation
+from .meta import (
+    Bijection,
+    Projection,
+    SubspaceTransformation,
+    _same_axes,
+)
 from .multiscale import MultiscaleField
+from .operators import Sqrt
 from .sequence import Sequence, _unnest
 from .simplify import SimplifyPolicy, SimplifyTable, simplifier
 from .simplify import simplify as _simplify
+from .utils import with_endpoints as _with_endpoints
 
 NONE = SimplifyPolicy.none
 NUMERIC = SimplifyPolicy.numeric
@@ -155,6 +162,33 @@ def _(t: Inverse, policy: SimplifyTable) -> Transformation:
     if isinstance(simplified, Identity):
         return Identity(input=t.input, output=t.output)
     return _with_endpoints(simplified.inverse(), t)
+
+
+@simplifier
+def _(t: Sqrt, policy: SimplifyTable) -> Transformation:
+    """Simplify what a square root wraps, without ever resolving it.
+
+    As for an inverse, resolving a square root is computation, which is
+    [`Operation.compute`][]'s job. Simplifying the forward can still
+    collapse the whole wrapper, because the square root of the identity is
+    the identity, or make it cheaper: the wrapper is rebuilt through the
+    simplified forward's own `sqrt()`, so it becomes the typed wrapper of
+    whatever family the forward turned into. A forward whose square root
+    is refused is left wrapped as it was, since a simplifier never raises.
+    """
+    if policy.resolve(t) is NONE:
+        return t
+    forward = t.forward
+    simplified = _simplify(forward, policy=policy)
+    if simplified is forward:
+        return t
+    if isinstance(simplified, Identity):
+        return Identity(input=t.input, output=t.output)
+    try:
+        rebuilt = simplified.sqrt()
+    except (DomainError, NotImplementedError):
+        return t
+    return _with_endpoints(rebuilt, t)
 
 
 @simplifier
@@ -339,7 +373,10 @@ def _(
     because one inner is the lazy inverse of the other, or because both
     are already the identity. This is what lets a subspace-wrapped field
     meet its own subspace-wrapped inverse and cancel, rather than the field
-    being resampled through a neighbour first.
+    being resampled through a neighbour first. An inner sequence is undone
+    by a sequence of lazy inverses, not by one, so a pair whose inner is a
+    sequence cancels when the two inners, chained, simplify to the
+    identity -- each element meeting its own lazy inverse.
     """
     if (
         first.output_axes is None
@@ -362,7 +399,9 @@ def _(
         return None
     inner_first = first.transformation
     inner_second = second.transformation
-    if _cancels(inner_first, inner_second):
+    if _cancels(inner_first, inner_second) or _chain_cancels(
+        inner_first, inner_second, policy
+    ):
         return Identity(input=first.input, output=second.output)
     # Structure only, never values: this rule is asked about every adjacent
     # subspace pair on every fixpoint iteration, and a numeric check would
@@ -402,27 +441,29 @@ def _cancels(first: Transformation, second: Transformation) -> bool:
     return False
 
 
-def _same_axes(t: SubspaceTransformation) -> bool:
-    # Whether a subspace reads and writes the same axes, in the same
-    # order -- i.e. whether it embeds its inner transform without also
-    # reindexing the coordinates.
-    if t.input_axes is None and t.output_axes is None:
-        return True
-    if t.input_axes is None or t.output_axes is None:
+def _chain_cancels(
+    first: tx.Optional[Transformation],
+    second: tx.Optional[Transformation],
+    policy: SimplifyTable,
+) -> bool:
+    """Whether ``[first, second]`` cancels to the identity, either a sequence.
+
+    The inverse of a sequence is the sequence of the inverses of its
+    elements, in reverse order, rather than one lazy inverse, so
+    [`_cancels`][] cannot see that it undoes the sequence. Chained, the two
+    simplify to the identity when each element meets its own lazy inverse,
+    which is still decided from object identity alone. Only a pair in
+    which a sequence takes part is chained: any other pair is decided by
+    `_cancels`.
+    """
+    if first is None or second is None:
         return False
-    return list(t.input_axes) == list(t.output_axes)
-
-
-def _with_endpoints(t: Transformation, like: Transformation) -> Transformation:
-    # Carry the endpoints a wrapper declared onto the transform that
-    # replaces it. Only the declared ones are read, so a derived endpoint
-    # stays derived.
-    edits = {}
-    if like._input is not None:
-        edits["input"] = like._input
-    if like._output is not None:
-        edits["output"] = like._output
-    return t.to(**edits) if edits else t
+    if not (isinstance(first, Sequence) or isinstance(second, Sequence)):
+        return False
+    chained = _simplify(
+        Sequence(transformations=[first, second]), policy=policy
+    )
+    return isinstance(chained, Identity)
 
 
 def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:

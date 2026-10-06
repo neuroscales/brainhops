@@ -131,5 +131,4 @@ def test_simplify_identity_pair_collapses() -> None:
     # operand. Exercises the chain end to end.
     aff = Affine(matrix=[[2.0, 0, 0, 1], [0, 2, 0, 2], [0, 0, 2, 3]])
     out = _S.simplify(_identity(), aff, policy="analytic")
-    assert out is not None
-    assert out == aff
+    assert out is aff

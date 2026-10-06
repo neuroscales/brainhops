@@ -22,7 +22,7 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
-from brainhops.io.metadata._sync import sync_metadata
+from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
 # locals
 from ._metadata import FlirtMetadata
@@ -74,10 +74,8 @@ class FlirtMatrixParser(Magic, TextFileParser, repr=HIDE_IF_NONE):
         ),
     ]
 
-    def __post_init__(self) -> None:
-        parent = getattr(super(), "__post_init__", None)
-        if parent is not None:
-            parent()
+    def __post_init__(self, arguments: tx.Any = None) -> None:
+        parent_post_init(super(), arguments)
         sync_metadata(self, FlirtMetadata, None, image=self)
 
     # --- sniff --------------------------------------------------------

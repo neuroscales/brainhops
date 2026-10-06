@@ -481,20 +481,16 @@ class ItkNiftiDisplacementField(ItkNiftiField):
                 "three transformations: LPS to voxel, a displacement "
                 "field, and voxel to LPS."
             )
-        displacement = chain[1]
-        if displacement.field is None:
+        # ITK stores sampled displacements: a velocity is integrated.
+        displacement = chain[1].to(log=False, coeff=False)
+        if displacement.data is None:
             raise WriterError(
                 "This field has no displacements, so there is nothing to "
                 "write."
             )
-        if displacement.coeff:
-            raise WriterError(
-                "ITK stores sampled displacements, and this field holds "
-                "spline coefficients. Convert it to values first."
-            )
         vox2lps = _homogeneous(chain[2])
         ndim = vox2lps.shape[0] - 1
-        field = displacement.field
+        field = displacement.data
         backend = get_array_backend(field)
         field = backend.asarray(field)
         rotate = backend.asarray(vox2lps[:ndim, :ndim], dtype=field.dtype)
@@ -595,17 +591,13 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
                 "An ITK coordinates field is written from a chain of two "
                 "transformations: LPS to voxel, and a coordinates field."
             )
-        coordinates = chain[1]
-        if coordinates.field is None:
+        # ITK stores sampled vectors.
+        coordinates = chain[1].to(coeff=False)
+        if coordinates.data is None:
             raise WriterError(
                 "This field has no coordinates, so there is nothing to write."
             )
-        if coordinates.coeff:
-            raise WriterError(
-                "ITK stores sampled vectors, and this field holds spline "
-                "coefficients. Convert it to values first."
-            )
         vox2lps = np.linalg.inv(_homogeneous(chain[0]))
         return self._write_vectors(
-            coordinates.field, vox2lps, like, **overrides
+            coordinates.data, vox2lps, like, **overrides
         )

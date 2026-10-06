@@ -802,8 +802,10 @@ writers call.
 > the writer set. `intent` is
 > written from the field only when the writer set no intent and the
 > intent does not retype the axes. `NiftiMetadata._geometry` gives only
-> `repetition_time` (the first scaling whose output has a time axis with
-> a physical unit, as the NIfTI and MGH readers build it); `intent` and
+> `repetition_time` (the scale of the time axis of the preferred
+> transformation, which the writer stores as `pixdim[4]`; none when that
+> axis still counts frames, a time spacing of zero being NIfTI's missing
+> repetition time); `intent` and
 > `space` are still compared with the header the writer built from the
 > data model, which is the same thing for them. A first prototype
 > compared `repetition_time` with the fresh header (whose `pixdim[4]` is

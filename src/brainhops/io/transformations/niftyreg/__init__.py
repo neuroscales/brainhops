@@ -56,12 +56,22 @@ Checked against the NiftyReg sources (KCL-BMEIS/niftyreg, commit
   grid point (`get_SlidedValues`): every field is read as displacements
   with the `nearest` boundary condition, which reproduces that.
 
+- **Velocities** (`reg_f3d -vel`) are read as the same chain, whose
+  field is a `StationaryVelocityField` (`log=True`): the velocity, in
+  voxel units -- the grid's cubic coefficients for a velocity grid --
+  integrated by scaling and squaring with `|intent_p2|` steps (the
+  default rule when it is zero). A negative `intent_p2` marks a backward
+  field, whose velocity is negated
+  (`reg_defField_getDeformationFieldFromFlowField`). A velocity read
+  from a file is written back as it was read; one built from a chain is
+  written as positions, with its steps in `intent_p2`.
+
 ## Not supported
 
-- **Stationary velocity fields and grids** (`reg_f3d -vel`) are read --
-  header, data, squaring steps, extension affines -- and written back,
-  but they cannot be used as transformations: their exponential
-  (scaling and squaring) is not something the data model can represent.
+- **Velocities with an affine in their extensions** (a symmetric
+  registration): NiftyReg removes that affine before integrating the
+  velocity and composes it back after, which is not decoded. They are
+  read and written back, but using one raises `NotImplementedError`.
   Integrate them with `reg_transform -def` and read the deformation
   field instead.
 - **2-D fields and grids** (two components) are not decoded.

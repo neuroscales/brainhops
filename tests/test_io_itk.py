@@ -216,7 +216,9 @@ def test_displacement_blocks_are_lps_to_lps_chains() -> None:
         ]
         assert block.degree == degree
         assert block.coeff == coeff
-        assert block.displacement.field is block.field
+        # The block's array is what its displacement field stores: the
+        # values, or the spline coefficients of a B-spline.
+        assert block.displacement.data is block.field
         assert block.field.shape[-1] == 3
 
 
@@ -968,3 +970,15 @@ def test_composite_order_matches_nitransforms(tmp_path) -> None:  # noqa: ANN001
     transform = io.transformations.load(path)
     np.testing.assert_allclose(_apply(transform, POINTS), expected)
     np.testing.assert_allclose(expected, _itk_order(POINTS))
+
+
+def test_a_block_compares_by_identity() -> None:
+    # A block is a transformation, which compares by identity, even though
+    # the struct it also derives from comes first. The struct alone
+    # compares by identity too, never by its array parameters.
+    block = _versor_rigid_3d((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (0, 0, 0))
+    assert isinstance(block, xforms.Transformation)
+    assert block == block
+    assert block != _versor_rigid_3d((0, 0, 0), (1, 2, 3), (0, 0, 0))
+    assert len({block, block}) == 1
+    assert itk.ItkStruct.__eq__ is object.__eq__

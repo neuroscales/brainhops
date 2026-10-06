@@ -22,7 +22,6 @@ from brainhops.datamodel import systems  # noqa: E402
 from brainhops.datamodel import transformations as xforms  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     AmbiguousFormatError,
-    WriterError,
 )
 from brainhops.io.base.specs import format_hints  # noqa: E402
 from brainhops.io.transformations.base import (  # noqa: E402
@@ -736,13 +735,18 @@ def test_a_field_built_in_memory_is_written_in_itks_encoding(ndim) -> None:  # n
     )
 
 
-def test_spline_coefficients_are_not_written() -> None:
+def test_spline_coefficients_are_written_as_values(tmp_path: Path) -> None:
+    # ITK stores sampled displacements, so a field of coefficients is
+    # decoded on the way out, and reads back as its values.
+    from brainhops._core.bsplines import value2coeff_field
+
+    values = np.random.default_rng(0).normal(size=(*SHAPES[3], 3))
     voxel = systems.VoxelCoordinateSystem()
     field = ItkNiftiDisplacementField(
         transformations=[
             LPSToVoxel(matrix=np.eye(4)[:3]),
             xforms.DisplacementField(
-                field=np.zeros((*SHAPES[3], 3)),
+                data=value2coeff_field(values, degree=3, bound="nearest"),
                 input=voxel,
                 output=voxel,
                 degree=3,
@@ -751,8 +755,14 @@ def test_spline_coefficients_are_not_written() -> None:
             VoxelToLPS(matrix=np.eye(4)[:3]),
         ]
     )
-    with pytest.raises(WriterError):
-        field.to_nibabel()
+    path = tmp_path / "spline.nii.gz"
+    nb.save(field.to_nibabel(), str(path))
+    reloaded = io.transformations.load(path, hint="itk")
+    assert isinstance(reloaded, ItkNiftiDisplacementField)
+    assert reloaded.displacement.coeff is False
+    np.testing.assert_allclose(
+        np.asarray(reloaded.displacement.field), values, atol=1e-10
+    )
 
 
 # ----------------------------------------------------------------------

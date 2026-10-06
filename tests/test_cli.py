@@ -303,3 +303,29 @@ def test_convert_reports_not_implemented(capsys) -> None:  # noqa: ANN001
     code = main(["convert", "a.tfm", "-o", "out.nii.gz"])
     assert code == 1
     assert "not implemented" in capsys.readouterr().err.lower()
+
+
+def test_split_transform_spec_expands_svf() -> None:
+    spec = _split_transform_spec("warp.nii.gz|svf|steps:6")
+    assert spec.hints == ("displacements",)
+    assert spec.options == {"steps": "6", "log": "true"}
+
+
+@pytest.mark.parametrize(
+    "suffix, log", [("|svf", True), ("|displacements|log:false", False)]
+)
+def test_a_velocity_loads_through_the_cli(tmp_path, suffix, log) -> None:  # noqa: ANN001
+    nb = pytest.importorskip("nibabel")
+    from brainhops.datamodel import transformations as xforms
+
+    vectors = np.zeros((4, 5, 6, 1, 3), dtype="float32") + 0.5
+    image = nb.Nifti1Image(vectors, np.eye(4))
+    image.header.set_intent(1006)
+    path = tmp_path / "warp.nii.gz"
+    nb.save(image, str(path))
+    field = load_transform(_split_transform_spec(f"{path}{suffix}"))
+    assert field.log is log
+    expected = (
+        xforms.StationaryVelocityField if log else xforms.DisplacementField
+    )
+    assert type(field.displacement) is expected

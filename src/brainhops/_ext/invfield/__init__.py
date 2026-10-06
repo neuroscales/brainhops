@@ -32,6 +32,16 @@ def inverse(field: np.ndarray) -> np.ndarray:
     np.ndarray
         The inverse displacement field, of the same shape as the input.
 
+    Notes
+    -----
+    Only the displacements at the grid nodes are used. They define a
+    piecewise-affine map (one affine transform per simplex of the mesh),
+    and it is that map which is inverted, exactly. A field meant to be
+    interpolated with splines of a higher degree is therefore inverted
+    as its piecewise-linear interpolant: the result is approximate
+    between nodes, and more so near the border, where the mesh is
+    clipped by the field of view.
+
     """
     if field.shape[-1] == 2:
         return inverse2d(field)

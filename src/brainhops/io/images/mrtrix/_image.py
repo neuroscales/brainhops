@@ -16,7 +16,9 @@ from brainhops.datamodel.transformations import (
     Scaling,
     Transformation,
 )
+from brainhops.datamodel.units import is_physicalunit, is_timeunit
 from brainhops.io.base._base import register_format
+from brainhops.io.base._geometry import Arrangement, declared_axes
 from brainhops.io.base.mrtrix import (
     MrtrixHeader,
     MrtrixParser,
@@ -26,7 +28,11 @@ from brainhops.io.base.mrtrix import (
     split_voxel_to_scanner,
     voxel_to_ras,
 )
-from brainhops.io.base.parsers import Confidence, WriterError
+from brainhops.io.base.parsers import (
+    Confidence,
+    UnrepresentableTransformationError,
+    WriterError,
+)
 from brainhops.io.images.base import WritableFileBasedImage
 
 _INDEX = "index"
@@ -160,12 +166,26 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
     # --- writing ------------------------------------------------------
 
-    def _mrtrix_data(self) -> tx.Any:
+    def _mrtrix_geometry(self) -> tx.Tuple[tx.Any, Arrangement]:
+        """
+        The data, and its geometry with the axes placed where MRtrix
+        stores them (see [`voxel_to_ras`][brainhops.io.base.mrtrix.
+        voxel_to_ras]).
+        """
         data = self.data
         if data is None:
             raise WriterError(
                 "This image has no data, so there is nothing to write."
             )
+        xform = self.transformation
+        ndim = len(np.shape(data))
+        voxel_axes = declared_axes(getattr(xform, "input", None), ndim)
+        return data, voxel_to_ras(xform, voxel_axes)
+
+    def _mrtrix_data(self) -> tx.Any:
+        data, arranged = self._mrtrix_geometry()
+        if arranged.layout is not None:
+            data = arranged.layout.apply(data)
         return data
 
     def _mrtrix_header(
@@ -181,10 +201,26 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
         The geometry always comes from the preferred transformation,
         converted to voxel-to-scanner RAS+ and split into unit direction
-        cosines (`transform`) and voxel sizes (`vox`). The voxel sizes of
-        the non-spatial axes come from the header the image was read
-        from, else from a `Scaling` among the transformations (such as
-        the `physical` one a NIfTI reader builds), else are 1.
+        cosines (`transform`) and voxel sizes (`vox`).
+
+        The axes are placed by the types and names the voxel space of the
+        preferred transformation declares: the spatial axes first (`x, y,
+        z` in that order when they are so named), then time, then the
+        channels, then the others, and the data is transposed to match
+        (lazily, for a lazy array). A slice with other axes is given a
+        `z` axis of size one, as MRtrix reads its first three axes as
+        spatial. A voxel space that declares nothing is written in the
+        order it has.
+
+        The voxel sizes of the non-spatial axes are their spacings in the
+        preferred transformation, when it maps them -- a time axis in
+        seconds, when its unit is a time unit, as MRtrix and BIDS state
+        times. MRtrix stores no origin for them, so a map that shifts one
+        raises `UnrepresentableTransformationError`. When the
+        transformation does not map them, they come from the header the
+        image was read from, else from a `Scaling` among the
+        transformations (such as the `physical` one a NIfTI reader
+        builds), else are 1.
 
         Parameters
         ----------
@@ -208,7 +244,9 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             raise TypeError(
                 f"Unknown MRtrix writer option(s): {', '.join(kwargs)}"
             )
-        data = self._mrtrix_data()
+        data, arranged = self._mrtrix_geometry()
+        if arranged.layout is not None:
+            data = arranged.layout.apply(data)
         shape = tuple(int(d) for d in np.shape(data))
         ndim = len(shape)
         if ndim == 0:
@@ -216,10 +254,11 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
         source = self.header
 
         # --- geometry -------------------------------------------------
-        matrix = voxel_to_ras(self.transformation)
-        transform, spatial_vox = split_voxel_to_scanner(matrix)
+        transform, spatial_vox = split_voxel_to_scanner(arranged.matrix)
         vox = list(spatial_vox[: min(3, ndim)])
-        extra = _extra_vox(self.transformations, source, ndim)
+        extra = _mapped_vox(arranged, ndim)
+        if extra is None:
+            extra = _extra_vox(self.transformations, source, ndim)
         vox += extra[len(vox) :]
 
         # --- storage --------------------------------------------------
@@ -259,6 +298,44 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             scaling=scaling,
             keyval=merged,
         )
+
+
+def _mapped_vox(
+    arranged: Arrangement, ndim: int
+) -> tx.Optional[tx.List[float]]:
+    """
+    The voxel sizes of the axes after the spatial ones, from their
+    spacings in the voxel-to-world map, or `None` when it does not map
+    them all.
+
+    A time axis whose world unit is a time unit is given in seconds. A
+    map that shifts one of these axes, or reverses it, has no MRtrix form.
+    """
+    others = list(arranged.others)
+    if ndim <= 3 or len(others) != ndim - 3:
+        return None
+    world = list(getattr(arranged.world, "axes", None) or [])
+    vox = [math.nan] * 3
+    for k, (scale, offset) in enumerate(others):
+        if offset != 0:
+            raise UnrepresentableTransformationError(
+                f"MRtrix stores no origin for the axes after the spatial "
+                f"ones, so a map that shifts axis {3 + k} ({offset}) cannot "
+                f"be written."
+            )
+        if scale < 0:
+            raise UnrepresentableTransformationError(
+                f"MRtrix stores the voxel size of axis {3 + k} as a "
+                f"positive number, so a map that reverses it ({scale}) "
+                f"cannot be written."
+            )
+        unit = None
+        if len(world) > 3 + k:
+            unit = getattr(world[3 + k], "unit", None)
+        if is_physicalunit(unit) and is_timeunit(unit):
+            scale = scale * float(unit.scale)
+        vox.append(float(scale))
+    return vox
 
 
 def _extra_vox(

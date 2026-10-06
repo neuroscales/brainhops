@@ -425,6 +425,20 @@ def test_write_edited_field(tmp_path: Path) -> None:
     )
 
 
+def test_write_coefficients_as_positions(tmp_path: Path) -> None:
+    # A morph stores sampled positions, so a field of coefficients is
+    # written as its values.
+    morph = io.load(_write(tmp_path, _encode(_positions())))
+    ras2node, field, vox2ras = morph
+    moved = np.asarray(field.field) + 1.0
+    coefficients = xforms.CoordinatesField(field=moved, degree=3)
+    coefficients = coefficients.to(coeff=True)
+    morph.transformations = [ras2node, coefficients, vox2ras]
+    morph.save(tmp_path / "out.m3z")
+    back = io.load(tmp_path / "out.m3z")
+    np.testing.assert_allclose(back.struct.positions, moved, atol=1e-4)
+
+
 def test_write_from_scratch(tmp_path: Path) -> None:
     positions = _positions()
     node2ras = _vox2ras(ATLAS) @ np.diag([SPACING] * 3 + [1])
@@ -476,3 +490,19 @@ def test_write_refuses_other_chains(tmp_path: Path) -> None:
     morph = M3zMorph(transformations=[RASToVoxel(), field, VoxelToRAS()])
     with pytest.raises(UnrepresentableTransformationError):
         morph.save(tmp_path / "out.m3z")
+
+
+def test_a_morph_compares_by_identity() -> None:
+    # A morph is a transformation, which compares by identity, even though
+    # the parser it also derives from comes first. The parser alone
+    # compares by identity too, never by the arrays of its struct.
+    from brainhops.io.transformations.freesurfer.m3z._xform import M3zParser
+
+    def make() -> M3zMorph:
+        return M3zMorph(transformations=[xforms.Affine(matrix=np.eye(4)[:3])])
+
+    morph = make()
+    assert morph == morph
+    assert morph != make()
+    assert {morph: 1}[morph] == 1
+    assert M3zParser.__eq__ is object.__eq__

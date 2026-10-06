@@ -6,7 +6,7 @@ from bagof.magic import KwOnly
 from brainhops._core.properties import smartproperty
 from brainhops._core.typing import is_instance_or_subclass
 from brainhops.datamodel import kinds
-from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.base import DataModelBase, IdentityComparison
 from brainhops.datamodel.metadata import Metadata
 from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.systems import CoordinateSystem
@@ -17,6 +17,7 @@ from .convert import convert
 from .errors import ConversionError, LossyConversionError
 from .modes import ModeLike
 from .simplify import SimplifyLike
+from .utils import require_endomorphism
 
 # typing
 if tx.TYPE_CHECKING:
@@ -26,7 +27,9 @@ if tx.TYPE_CHECKING:
 
 @kinds.Transformation.register  # virtual registration in hierarchy
 @registries.register_transformation  # register in registry for cyclic imports
-class Transformation(DataModelBase, reverse=True):
+class Transformation(
+    IdentityComparison, DataModelBase, reverse=True, eq=False
+):
     """
     A transformation between coordinate systems.
 
@@ -52,6 +55,18 @@ class Transformation(DataModelBase, reverse=True):
         that deforms an image from space A to space B, will actually
         map coordinates from space B to space A. In our model, this
         transformation would be represented as `Transform(input=B, output=A)`.
+
+    !!! note "Transformations compare by identity"
+        `t1 == t2` is `t1 is t2`: two distinct transformations are never
+        equal, even when they hold the same parameters in the same
+        systems, and `==` never raises. A transformation hashes by
+        identity too, so it can be put in a set or used as a dictionary
+        key. Whether two transformations represent the same map has no
+        single answer, so none is picked. To test whether two map
+        coordinates the same way, check that one composed with the
+        inverse of the other is the identity --
+        `is_identity((t1.inverse() @ t2).compute(), compute=True)` -- and
+        compare their `input`/`output` systems explicitly.
     """
 
     # --- class attributes ---------------------------------------------
@@ -118,8 +133,7 @@ class Transformation(DataModelBase, reverse=True):
     output = smartproperty("output")
 
     # Keyword-only, so that it never shifts the positional arguments of a
-    # subclass, and out of `repr` and `==`: two transformations are equal
-    # when they map the same coordinates the same way.
+    # subclass, and out of `repr`.
     metadata: MetadataField[
         tx.Optional[Metadata],
         tx.Doc(
@@ -224,6 +238,74 @@ class Transformation(DataModelBase, reverse=True):
         """
         raise NotImplementedError("Transformation.inverse()")
 
+    def square(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the square of this transformation, `self @ self`.
+
+        The square is the sequence `[self, self]`, which composes when it
+        is computed. It is defined for a transformation that maps a space
+        to itself.
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself.
+        """
+        require_endomorphism(self, "square")
+        obj = registries.SEQUENCE([self, self])
+        return obj.compute(**kwargs) if compute else obj
+
+    def sqrt(self, compute: bool = False, **kwargs) -> "Transformation":
+        """
+        Return the principal square root of this transformation.
+
+        The square root `S` of `T` is the transformation with
+        `S @ S == T`, the half-transformation. The principal one, whose
+        linear part has its eigenvalues in the open right half-plane, is
+        unique, and it is of the same kind as `T`: the square root of a
+        rotation is a rotation, of a translation a translation, of a
+        scaling a scaling, of an affine an affine. The square root of a
+        permutation is a [`Linear`][] transformation.
+
+        The square root is lazy: an [`Sqrt`][] wrapper is returned, and
+        computed when it is applied, computed or converted. A transformation
+        that needs no wrapper (an identity) is returned as is. A
+        [`Sequence`][] is reduced first (see [`Sequence.sqrt`][]).
+
+        Parameters
+        ----------
+        compute : bool, default=False
+            Whether to compute the result now rather than return it lazily.
+        **kwargs
+            Passed to [`compute`][brainhops.datamodel.transformations.\
+Transformation.compute] when `compute` is true.
+
+        Raises
+        ------
+        DomainError
+            If the transformation does not map a space to itself, or, when
+            the result is computed, if its linear part has an eigenvalue on
+            the closed negative real axis (a reflection, a rotation by a
+            half turn, a singular matrix), so that it has no real principal
+            square root.
+        NotImplementedError
+            If brainhops does not compute the square root of this kind of
+            transformation. A displacement field has one only when it is a
+            stationary velocity field (`log=True`), whose square root
+            halves its velocity.
+        """
+        raise NotImplementedError(
+            f"The square root of a {type(self).__name__} is not implemented."
+        )
+
     def to(
         self,
         cls: tx.Optional[tx.Type[tx.Self]] = None,
@@ -258,7 +340,11 @@ class Transformation(DataModelBase, reverse=True):
             This allows transformations to be modified within their type.
             For example, a [`DisplacementField`][] can be converted from
             a field of values to a field of spline coefficients by
-            setting `coeff=True` in `kwargs`.
+            setting `coeff=True` in `kwargs`: a change of encoding flag
+            re-encodes the stored `data`, and keeps the map. A view's
+            name (`field=`, `matrix=`, ...) sets the map, as values, and
+            it is stored in the encoding of the result; `data=` is
+            stored as given.
 
         Returns
         -------

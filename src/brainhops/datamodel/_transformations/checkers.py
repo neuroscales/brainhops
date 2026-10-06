@@ -54,6 +54,7 @@ from .meta import (
     Projection,
     SubspaceTransformation,
 )
+from .operators import Sqrt
 
 
 def identity_from(field: str) -> tx.Callable:
@@ -151,7 +152,7 @@ def _(query: Affine, kind: IdentityType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
     if compute:
         return bool((query.field == 0).all())
@@ -159,7 +160,7 @@ def _(query: DisplacementField, kind: IdentityType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
     return False
 
@@ -203,7 +204,7 @@ def _(query: Affine, kind: TranslationType, compute: bool) -> bool:
 
 
 @checker
-@identity_from("field")
+@identity_from("data")
 def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
     if compute:
         field = query.field
@@ -997,6 +998,36 @@ def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
     )
 
 
+@lru_cache(maxsize=None)  # noqa: UP033
+def _sqrt_targets(node: type) -> tx.Tuple[type, ...]:
+    # The principal square root of `T` is in `node` if `T in M` for some M
+    # in these targets: `node` itself when it is closed under the principal
+    # square root, else its maximal closed subnodes. Every set of the
+    # lattice is closed under it -- a root of a rotation is a rotation, of a
+    # positive scaling a positive scaling, and a set whose members have no
+    # principal root, such as the reflections, is closed vacuously -- except
+    # the permutations that are not diagonal: the root of a permutation is
+    # not a permutation.
+    def is_closed(n: type) -> bool:
+        return not issubclass(n, kinds.GeneralizedPermutation) or issubclass(
+            n, kinds.Diagonal
+        )
+
+    if is_closed(node):
+        return (node,)
+    return tuple(
+        _maximal(
+            n for n in kinds.all_sets() if issubclass(n, node) and is_closed(n)
+        )
+    )
+
+
+def _sqrt_member(op: Sqrt, node: type, compute: bool) -> bool:
+    # An operator never reads its own parameter, at any level: computing it
+    # is what `compute()` is for, and it may not even be defined.
+    return any(is_kind(op.forward, m, compute) for m in _sqrt_targets(node))
+
+
 def _register_wrapper(source: type, member: tx.Callable) -> None:
     # A wrapper reasons about whichever node it is asked about, so the same
     # function serves them all -- but it must be registered against every
@@ -1011,6 +1042,7 @@ _register_wrapper(SubspaceTransformation, _subspace_member)
 _register_wrapper(Projection, _projection_member)
 _register_wrapper(Bijection, _bijection_member)
 _register_wrapper(Inverse, _inverse_member)
+_register_wrapper(Sqrt, _sqrt_member)
 
 
 # ======================================================================

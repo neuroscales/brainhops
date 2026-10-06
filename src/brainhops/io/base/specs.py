@@ -7,6 +7,7 @@ __all__ = [
     "SourceSpec",
     "TransformationSpec",
     "format_hints",
+    "parse_bool",
     "parser_for",
     "register_parser",
 ]
@@ -15,7 +16,7 @@ import re
 
 import typing_extensions as tx
 from bagof.core.magic import get_from_registry
-from bagof.magic import ConvertTo, Factory, Magic
+from bagof.magic import ConvertTo, Factory, Magic, replace
 
 from brainhops._core.path import Path
 
@@ -117,10 +118,21 @@ class OperationSpec(Magic, frozen=True):
 
 
 class TransformationSpec(SourceSpec, frozen=True):
-    """A transformation source with validated transformation operations."""
+    """A transformation source with validated transformation operations.
+
+    The hint `svf` is an alias of `displacements|log:true`: a field of
+    displacements that holds the stationary velocity of the map. It
+    combines with other options, as in `warp.nii.gz|svf|steps:6`.
+    """
 
     operations: tx.Tuple[OperationSpec, ...] = ()
     _OPERATIONS: tx.ClassVar[tx.Dict[str, tx.Type[OperationSpec]]] = {}
+
+    @classmethod
+    def from_arg(cls, text: str) -> tx.Self:
+        """Parse ``path|hint|key:value`` CLI syntax (see
+        [`SourceSpec.from_arg`][]), expanding the `svf` alias."""
+        return _expand_svf(super().from_arg(text))
 
     @classmethod
     def register_operation(
@@ -155,6 +167,24 @@ class InvertOperation(OperationSpec, frozen=True):
 
     def apply(self, value: tx.Any) -> tx.Any:
         return value.inverse()
+
+
+def _expand_svf(spec: TransformationSpec) -> TransformationSpec:
+    # `svf` is `displacements|log:true`, which says the field holds a
+    # velocity. An explicit `log:` would contradict or repeat it.
+    if "svf" not in spec.hints:
+        return spec
+    if "log" in spec.options:
+        raise ValueError(
+            "The hint svf already means log:true, so it cannot be combined "
+            "with a log: option."
+        )
+    hints = ("displacements" if hint == "svf" else hint for hint in spec.hints)
+    return replace(
+        spec,
+        hints=tuple(dict.fromkeys(hints)),
+        options={**spec.options, "log": "true"},
+    )
 
 
 def _parse_hints(value: str) -> tx.List[str]:
@@ -249,6 +279,27 @@ def register_parser(
         return parser
 
     return decorator
+
+
+_TRUE = frozenset({"true", "yes", "on", "1"})
+_FALSE = frozenset({"false", "no", "off", "0"})
+
+
+@register_parser(bool)
+def parse_bool(spec: SourceSpec) -> bool:
+    """Parse a boolean option, such as the `log:true` of a transformation.
+
+    An option reaches a field as text, and every non-empty string is
+    truthy, so `log:false` would read as true without this parser. It
+    takes `true`/`false`, `yes`/`no`, `on`/`off` and `1`/`0`, in any case,
+    and refuses anything else.
+    """
+    text = str(spec.path).strip().lower()
+    if spec.hints or spec.options or (text not in _TRUE | _FALSE):
+        raise ValueError(
+            f"Expected a boolean option (true or false), not {str(spec)!r}."
+        )
+    return text in _TRUE
 
 
 def parser_for(annotation: tx.Any) -> tx.Optional[tx.Any]:

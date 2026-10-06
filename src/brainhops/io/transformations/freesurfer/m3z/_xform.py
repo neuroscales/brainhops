@@ -63,8 +63,14 @@ class M3zParser(
     Magic,
     BinaryFileParserWriter,
     repr=HIDE_IF_NONE,
+    eq=False,
 ):
-    """Reads and writes the raw content of a FreeSurfer morph file."""
+    """Reads and writes the raw content of a FreeSurfer morph file.
+
+    It compares by identity (`eq=False`), as its struct holds arrays. The
+    morph built on it is a transformation, which compares by identity
+    too, as every transformation does.
+    """
 
     struct: tx.Optional[M3zStruct] = field(default=None, repr=False)
     """The raw content of the file, every node and every tag (see
@@ -301,12 +307,8 @@ class M3zMorph(
                 "coordinates, source voxels to RAS) or two (atlas RAS to "
                 "node voxels, a field of source RAS coordinates)."
             )
-        if field.coeff:
-            raise UnrepresentableTransformationError(
-                "A morph stores sampled positions, and this field holds "
-                "spline coefficients. Convert it to values first."
-            )
-        positions = np.asarray(field.field, dtype=np.float32)
+        # A morph stores sampled positions.
+        positions = np.asarray(field.to(coeff=False).data, dtype=np.float32)
         if positions.ndim != 4 or positions.shape[-1] != 3:
             raise UnrepresentableTransformationError(
                 f"A morph holds one 3-vector per node of a 3-D grid, not "
