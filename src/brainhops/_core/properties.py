@@ -1,3 +1,10 @@
+"""
+Properties that compute their value: [`smartproperty`][] and
+[`lazyproperty`][] (computed on first access, then cached).
+"""
+
+__all__ = ["lazyproperty", "smartproperty", "UnsetLike"]
+
 # dependencies
 import typing_extensions as tx
 
