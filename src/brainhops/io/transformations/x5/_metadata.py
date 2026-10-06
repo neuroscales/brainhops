@@ -26,8 +26,12 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._sentinel import ALL
 from brainhops.datamodel.metadata._vocabulary import VOCABULARY
 from brainhops.io.base._base import register_format
-from brainhops.io.base._metadata_parser import Hdf5MetadataParser
-from brainhops.io.base.parsers import Confidence, ParserContentError
+from brainhops.io.base.hdf5 import Hdf5MetadataParser
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 from brainhops.io.metadata import FileBasedMetadata
 from brainhops.io.metadata._json import (
     decode_object,
@@ -163,7 +167,11 @@ class X5Metadata(
     # --- reading the node of a file -----------------------------------
 
     @classmethod
-    def sniff_h5(cls, h5file: tx.Any) -> float:
+    def sniff_h5(
+        cls,
+        h5file: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+    ) -> float:
         """
         Score how confident the class is that an open HDF5 file is an X5
         file.
@@ -172,13 +180,22 @@ class X5Metadata(
         ----------
         h5file : h5py.File
             The open file.
+        error : bool or type, optional
+            Raise an error (this one, or `SnifferContentError` for `True`)
+            instead of returning 0.
 
         Returns
         -------
         float
             The confidence, in `[0, 1]`.
         """
-        return Confidence.CERTAIN if is_x5(h5file) else Confidence.NO
+        if is_x5(h5file):
+            return Confidence.CERTAIN
+        if error:
+            raise (SnifferContentError if error is True else error)(
+                "HDF5 file is not an X5 file: no Format='X5'."
+            )
+        return Confidence.NO
 
     @classmethod
     def from_h5(

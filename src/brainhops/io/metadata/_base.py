@@ -279,7 +279,7 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         This is the counterpart of `from_raw`: the record is a copy of
         `raw` (or a default record, for metadata built in memory), with
         the fields that changed since the read encoded over it. It is what
-        a metadata writer writes (see `MetadataParser.to_file`). A writer
+        a metadata writer writes (see `ZarrMetadata.to_file`). A writer
         that builds its own fresh record calls `update_raw` instead.
 
         Parameters

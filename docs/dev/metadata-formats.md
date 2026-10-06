@@ -47,7 +47,8 @@ the rest from the private modules that define it:
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
 | `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage`, `stored_values` |
 | `brainhops.datamodel.metadata._sentinel` | `ALL`, `Maybe`, `Unsupported` |
-| `brainhops.io.base._metadata_parser` | `MetadataParser`, `Hdf5MetadataParser` |
+| `brainhops.io.base._metadata_parser` | `MetadataParser` |
+| `brainhops.io.base.hdf5` | `Hdf5MetadataParser` (needs `h5py`) |
 | `brainhops.io.metadata._json` | the JSON codec of key/value stores |
 | `brainhops.io.metadata._sync` | `sync_metadata` |
 
@@ -124,18 +125,20 @@ voxels), then builds the metadata with `from_raw`; `from_filename` opens
 a path in binary mode and hands it over, and `from_bytes` wraps the
 bytes in a stream. A format that reads a path otherwise overrides
 `from_filename` too (MGH, whose tags are read lazily from a path). A
-format stored in HDF5 derives from `Hdf5MetadataParser` instead, and
-implements `sniff_h5(h5file)` and `from_h5(h5file, **kwargs)`, as an
+format stored in HDF5 derives from `Hdf5MetadataParser` instead (next to
+`Hdf5Parser`, in `brainhops.io.base.hdf5`), and implements
+`sniff_h5(h5file, error=False)` and `from_h5(h5file, **kwargs)`, as an
 `Hdf5Parser` format does; a Zarr format implements `sniff_node(node)`
 and `from_node(node)`, as `ZarrImage` does. A format whose record is an
-object of its own on disk (the attributes of a Zarr array) overrides
-`to_file(file)` to write `to_raw()` there; every other format refuses,
-since its record is written along with the data. The reader of the image
-or transformation shares the code that reads the record with the parser
-(`_load_nifti_header`, `read_mgh_raw`, `read_h5_header`). A format whose
-files hold no metadata (FLIRT, ITK `.tfm`) is not a `MetadataParser`,
-and overrides `load` to refuse (`OpaqueMetadata.load`, from which
-`ItkMetadata` inherits, and `FlirtMetadata.load`).
+object of its own on disk (the attributes of a Zarr array) defines
+`to_file(file)` to write `to_raw()` there; no other format has a
+`to_file`, since its record is written along with the data. The reader
+of the image or transformation shares the code that reads the record
+with the parser (`_load_nifti_header`, `read_mgh_raw`,
+`read_h5_header`). A format whose files hold no metadata (FLIRT, ITK
+`.tfm`) is not a `MetadataParser`, and overrides `load` to refuse
+(`OpaqueMetadata.load`, from which `ItkMetadata` inherits, and
+`FlirtMetadata.load`).
 
 ## Class keyword
 

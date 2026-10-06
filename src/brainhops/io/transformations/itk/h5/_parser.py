@@ -18,29 +18,9 @@ from brainhops.io.base.parsers import Confidence, SnifferContentError
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
 from .._metadata import H5Header
+from ._metadata import read_h5_header
 
 __all__ = ["DelayedH5Array", "H5Header", "H5TransformParser", "read_h5_header"]
-
-
-def read_h5_header(h5file: h5py.File) -> H5Header:
-    """
-    Read the root header of an open ITK `.h5` file.
-
-    Parameters
-    ----------
-    h5file : h5py.File
-        The open file.
-
-    Returns
-    -------
-    H5Header
-        The versions recorded at the root of the file.
-    """
-    header = H5Header()
-    for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion"):
-        if f"/{name}" in h5file:
-            setattr(header, name, _readstr(h5file[f"/{name}"]))
-    return header
 
 
 class H5TransformParser(

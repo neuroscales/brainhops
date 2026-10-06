@@ -21,7 +21,6 @@ from brainhops.io.base._metadata_parser import MetadataParser  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserNotImplementedError,
-    WriterNotImplementedError,
 )
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghMetadata,
@@ -185,7 +184,8 @@ def test_to_raw_encodes_into_a_copy(tmp_path) -> None:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("cls", [NiftiMetadata, MghMetadata])
-def test_formats_written_with_their_data_refuse_to_file(tmp_path, cls) -> None:  # noqa: ANN001
+def test_formats_written_with_their_data_have_no_to_file(cls) -> None:  # noqa: ANN001
+    # Their record is written with the data; only a format whose record
+    # is an object of its own on disk (plain Zarr) defines `to_file`.
     assert issubclass(cls, FileBasedMetadata)
-    with pytest.raises(WriterNotImplementedError):
-        cls(description=None).to_file(tmp_path / "out")
+    assert not hasattr(cls, "to_file")
