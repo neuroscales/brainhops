@@ -84,15 +84,34 @@ io.save(img, "copy.zarr")  # -> Zarr
 ```
 
 An image computed in memory is written the same way, since NIfTI and Zarr
-both hold a plain image. `save` does not change what an object means to
-fit a format: a general `Affine` is not written as the voxel-to-RAS
-affine a NIfTI file holds. Build that format explicitly when it is what
-you mean:
+both hold a plain image. A transformation is converted to the format the
+name asks for, with the same converters as `t.to(Format)`, but only when
+the format holds the very same map. Its `input` and `output` are read,
+and bridged to the format's: an affine from voxels to LPS is written as
+the voxel-to-RAS affine of a NIfTI file, with its first two axes
+flipped, and an affine whose systems are not known is taken to map the
+format's. A field of displacements is written as a NIfTI displacement
+field, between its grid's world-to-voxel affine and its inverse, and a
+field of coordinates as a NIfTI (or, with a `y_` prefix, an SPM) field of
+coordinates:
+
+```python
+io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
+io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
+io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
+```
+
+Nothing is approximated to fit a format. An affine between two world
+spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
+splines is not the linearly interpolated values a NIfTI file holds, so
+both are refused, with the reason each format gives. The same conversion
+can be asked for explicitly:
 
 ```python
 from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
 NiftiVoxelToRAS.from_other(affine).save("affine.nii")
+affine.to(NiftiVoxelToRAS)  # the same conversion
 ```
 
 An LTA file says which coordinate systems its affine maps between, so a

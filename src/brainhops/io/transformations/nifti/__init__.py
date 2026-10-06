@@ -42,8 +42,13 @@ __all__ = [
     "NiftiRASDisplacementField",
     "NiftiRASToVoxel",
     "NiftiVoxelToRAS",
+    "ReadOnlyNiftiBasedTransformation",
+    "converters",
 ]
 
 from .affines import NiftiRASToVoxel, NiftiVoxelToRAS
-from .base import NiftiBasedTransformation
+from .base import NiftiBasedTransformation, ReadOnlyNiftiBasedTransformation
 from .fields import NiftiRASCoordinatesField, NiftiRASDisplacementField
+
+# The converters into these formats register themselves on import.
+from . import converters  # noqa: E402, F401  isort: skip

@@ -4,9 +4,11 @@ file name calls for.
 
 The file name gives the candidates: the formats declaring the longest
 extension it ends with, and the prefix they require. The object gives
-the one that is used: a format it already is, or a file-backed version
-of its very data model that takes all of its fields. Every writable
-format is round-tripped through it.
+the one that is used: a format it already is, a file-backed version of
+its very data model that takes all of its fields, or, for a
+transformation, a format it converts to exactly. Every writable format is
+round-tripped through it; the conversions are tested in
+`test_io_convert_formats`.
 """
 
 import io as _io
@@ -20,6 +22,7 @@ import brainhops.io as io
 from brainhops._core.dependencies import HAS_NIBABEL, has_abczarr_driver
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.systems import RASmm
 from brainhops.datamodel.transformations import (
     Affine,
     CoordinatesField,
@@ -424,20 +427,22 @@ def test_a_single_image_is_not_written_as_ome_zarr(tmp_path) -> None:  # noqa: A
 @pytest.mark.parametrize(
     "obj",
     [
-        Affine(MATRIX),
+        Affine(MATRIX, input=RASmm(), output=RASmm()),
         Scaling([1.0, 2.0, 3.0]),
-        CoordinatesField(field=np.zeros((2, 3, 4, 3))),
-        DisplacementField(field=np.zeros((2, 3, 4, 3))),
+        CoordinatesField(field=np.zeros((2, 3, 4, 3)), degree=3),
+        DisplacementField(field=np.zeros((2, 3, 4, 3)), degree=3),
     ],
-    ids=["affine", "scaling", "coordinates", "displacement"],
+    ids=["world-affine", "scaling", "cubic-coordinates", "cubic-displacement"],
 )
-def test_a_general_transformation_is_not_given_a_nifti_meaning(
+def test_a_transformation_no_nifti_format_holds_is_refused(
     tmp_path,  # noqa: ANN001
     obj: tx.Any,
 ) -> None:
-    # A NIfTI transformation means voxel-to-RAS. A general one would come
-    # back meaning something it did not say, so it is refused, and the
-    # caller builds the NIfTI format explicitly if that is what is meant.
+    # A NIfTI transformation maps voxels to RAS, or RAS to RAS through a
+    # linearly interpolated field. One that does not -- a world-to-world
+    # affine, a field interpolated with cubic splines -- would come back
+    # meaning something it did not say, so it is refused, with each
+    # format's reason. A `Scaling` has no converter to a NIfTI format.
     with pytest.raises(WriterError, match="from_other"):
         io.save(obj, tmp_path / "transform.nii")
     assert not (tmp_path / "transform.nii").exists()

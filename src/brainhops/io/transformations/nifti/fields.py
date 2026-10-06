@@ -43,6 +43,7 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
+from brainhops.io.transformations.base import ConvertedFormat
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
     ras_displacement_chain,
@@ -55,7 +56,9 @@ _NDIM = 3
 
 
 @register_format
-class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
+class NiftiRASCoordinatesField(
+    ConvertedFormat, RASCoordinatesField, NiftiBasedTransformation
+):
     """
     Field of RAS coordinates, stored in a NIfTI file.
     """
@@ -153,26 +156,11 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
         """
         # NIfTI stores sampled coordinates.
         field = self.to(coeff=False).data
-        if field is None:
-            raise WriterError(
-                "This field has no coordinates, so there is nothing to write."
-            )
-        backend = get_array_backend(field)
-        field = backend.asarray(field)
-        if field.ndim == 4:
-            # NIfTI stores a vector field as a five-dimensional array,
-            # with the components in the fifth axis and a singleton axis
-            # before them. A four-dimensional array would put the
-            # components in the time axis, which the reader misreads.
-            field = backend.expand_dims(field, axis=3)
         if self.header is not None:
             affine = self.header.get_best_affine()
         else:
             affine = np.eye(4)
-        image = _new_nifti(field, affine)
-        image.header.set_intent(
-            _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
-        )
+        image = ras_coordinates_nifti(field, affine)
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
@@ -180,7 +168,7 @@ class NiftiRASCoordinatesField(RASCoordinatesField, NiftiBasedTransformation):
 
 @register_format
 class NiftiRASDisplacementField(
-    _xforms.ImmutableSequence, NiftiBasedTransformation
+    ConvertedFormat, _xforms.ImmutableSequence, NiftiBasedTransformation
 ):
     """
     Field of RAS displacements, stored in a NIfTI file.
@@ -215,6 +203,15 @@ StationaryVelocityField], integrated with `steps` squaring steps
     (`|svf|steps:6`). The field is written in the encoding the options
     say: a velocity when `log` is set, and otherwise the displacement,
     which a velocity is integrated into.
+
+    Another transformation is converted to this format by its converters
+    ([`brainhops.io.transformations.nifti.converters`][]), exactly or not
+    at all. Its chain is carried over, rather than re-read from a NIfTI
+    header that comes with it and says something else (a NiftyReg file
+    holds positions, say). Its encoding is not: `log` and `steps` are this
+    format's options, so a velocity converted here is written as its
+    displacement unless `log=True` is given -- to the conversion, or to
+    `save`.
     """
 
     HINTS = ("displacements",)
@@ -278,27 +275,6 @@ transformations.StationaryVelocityField].
         if _nifti_intent(header) == _NIFTI_INTENT_DISPVECT:
             return Confidence.CERTAIN
         return Confidence.NO
-
-    # --- copies -------------------------------------------------------
-
-    @classmethod
-    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
-        """
-        Create an instance from an instance of a similar class.
-
-        The chain of another transformation is carried over, rather than
-        re-read from a NIfTI header that comes with it and says something
-        else (a NiftyReg file holds positions, say). Its encoding is not:
-        `log` and `steps` are this format's options, so a velocity copied
-        here is written as its displacement unless `log=True` is given --
-        to this copy, or to `save`.
-        """
-        if not isinstance(other, NiftiRASDisplacementField):
-            kwargs.setdefault("log", False)
-            kwargs.setdefault("steps", None)
-            if isinstance(other, _xforms.Sequence):
-                kwargs.setdefault("transformations", tuple(other))
-        return super().from_instance(other, *args, **kwargs)
 
     # --- endpoints ----------------------------------------------------
     #
@@ -426,6 +402,43 @@ transformations.StationaryVelocityField].
         _apply_like(image, like)
         _apply_overrides(image, overrides)
         return image
+
+
+def ras_coordinates_nifti(
+    field: tx.Optional[ArrayProtocol], vox2ras: np.ndarray
+) -> nb.Nifti1Image:
+    """
+    The `nibabel` image of a field of RAS coordinates.
+
+    The field array becomes the NIfTI data array, and the header carries
+    the `VECTOR` (1007) intent code, with SPM's intent name `"Mapping"`.
+    Both [`NiftiRASCoordinatesField`][] and SPM's `y_` fields are written
+    this way.
+
+    Parameters
+    ----------
+    field : array, shape `(X, Y, Z, 3)` or `(X, Y, Z, 1, 3)`
+        The coordinates, as values. The array keeps its backend.
+    vox2ras : array, shape `(4, 4)`
+        The voxel-to-RAS affine of the grid.
+    """
+    if field is None:
+        raise WriterError(
+            "This field has no coordinates, so there is nothing to write."
+        )
+    backend = get_array_backend(field)
+    field = backend.asarray(field)
+    if field.ndim == 4:
+        # NIfTI stores a vector field as a five-dimensional array, with the
+        # components in the fifth axis and a singleton axis before them. A
+        # four-dimensional array would put the components in the time
+        # axis, which the reader misreads.
+        field = backend.expand_dims(field, axis=3)
+    image = _new_nifti(field, vox2ras)
+    image.header.set_intent(
+        _NIFTI_INTENT_VECTOR, name=_NIFTI_INTENT_NAME_MAPPING
+    )
+    return image
 
 
 def _pop_encoding(kwargs: tx.Dict[str, tx.Any]) -> tx.Dict[str, tx.Any]:

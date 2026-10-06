@@ -16,7 +16,10 @@ from brainhops.io.base.nifti import (
     _voxel_to_ras,
 )
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.transformations.base import AffineTransformationFormat
+from brainhops.io.transformations.base import (
+    AffineTransformationFormat,
+    ConvertedFormat,
+)
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
@@ -79,7 +82,7 @@ class _NiftiAffine(AffineTransformationFormat, NiftiBasedTransformation):
         return image
 
 
-class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
+class NiftiRASToVoxel(ConvertedFormat, RASToVoxel, _NiftiAffine):
     """
     Affine transformation from RAS space to voxel space, derived from a
     NIfTI header.
@@ -136,7 +139,7 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
 
 
 @register_format
-class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
+class NiftiVoxelToRAS(ConvertedFormat, VoxelToRAS, _NiftiAffine):
     """
     Affine transformation from voxel space to RAS space, derived from a
     NIfTI header.

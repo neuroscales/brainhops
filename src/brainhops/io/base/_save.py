@@ -20,6 +20,7 @@ from bagof.magic import fields
 # internals
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base._base import WritableFileBasedObject
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
@@ -33,7 +34,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     """
     Write an object to a file, in the format the file name calls for.
 
-    The format is chosen from the registered writable formats, in three
+    The format is chosen from the registered writable formats, in four
     steps.
 
     1. **The file name.** The formats that declare the longest of the
@@ -43,23 +44,32 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
        its prefixes.
     2. **The object's own format.** If `obj` already is of one of the
        candidates, it is written as it is.
-    3. **A format that can hold the object.** Otherwise, a candidate can
-       hold `obj` if it is a file-backed version of the very data model
-       `obj` is an instance of, and takes every field that data model
-       has (`NiftiImage` and `ZarrImage` are file-backed
+    3. **A format that can hold the object as it is.** Otherwise, a
+       candidate can hold `obj` if it is a file-backed version of the
+       very data model `obj` is an instance of, and takes every field
+       that data model has (`NiftiImage` and `ZarrImage` are file-backed
        `SingleScaleImage`s). `obj` is converted to it, which neither
-       loses nor changes anything. When several can, the most specific
-       is used, by the rules reading uses: the longest prefix, then the
-       narrowest declaration, then `PRIORITY`. Two that are equally
-       specific are an ambiguity, and nothing is written.
+       loses nor changes anything.
+    4. **A format a transformation converts to.** Otherwise, a
+       transformation is converted to the candidates, with the same
+       converters as `obj.to(Format)`, and written in the one it
+       converts to. A converter returns the very map `obj` is, with
+       its endpoints bridged to the format's (an affine to LPS is
+       flipped into RAS), or refuses: a general `Affine` is written as
+       the voxel-to-RAS affine of a NIfTI file only when that is what it
+       maps, or when its coordinate systems are not known.
 
-    !!! note "No conversion beyond the file format"
-        `obj` is never converted to another data model on the way. A
-        `Scaling` is not turned into an `Affine`, and a general `Affine`
-        is not turned into the voxel-to-RAS affine a NIfTI file holds,
-        since it would come back meaning something it did not say. Build
-        the format you want when that is what the file should hold:
-        `NiftiVoxelToRAS.from_other(affine).save(file)`.
+    In steps 3 and 4, when several candidates can hold `obj`, the most
+    specific is used, by the rules reading uses: the longest prefix,
+    then the narrowest declaration, then `PRIORITY`. Two that are
+    equally specific are an ambiguity, and nothing is written.
+
+    !!! note "Nothing is approximated"
+        A transformation is written only in a format that holds it
+        exactly. One that no candidate holds -- a field interpolated
+        with cubic splines, to be written as NIfTI's linearly
+        interpolated values, say -- is refused with each candidate's
+        reason, rather than resampled.
 
     Parameters
     ----------
@@ -117,20 +127,15 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     holders = [
         (fmt, match) for fmt, match in claimed if _holds(fmt, obj, reasons)
     ]
-    for tier in _tiers(holders):
-        writers = []
-        for fmt in tier:
-            try:
-                writers.append((fmt, fmt.from_instance(obj)))
-            except Exception as e:  # noqa: BLE001
-                reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
-        if len(writers) > 1:
-            raise AmbiguousFormatError(
-                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
-            )
-        if writers:
-            writers[0][1].save(file, **kwargs)
-            return
+    writer = _first_writer(name, obj, holders, _copy, reasons)
+    if writer is None and isinstance(obj, Transformation):
+        others = [
+            candidate for candidate in claimed if candidate not in holders
+        ]
+        writer = _first_writer(name, obj, others, _convert, reasons)
+    if writer is not None:
+        writer.save(file, **kwargs)
+        return
 
     formats = ", ".join(sorted(fmt.__name__ for fmt, _ in claimed))
     detail = "".join(f"\n  - {reason}" for reason in reasons)
@@ -140,6 +145,48 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
         f"Build the format you want with its `from_other` and save "
         f"that.{detail}"
     )
+
+
+def _copy(obj: tx.Any, fmt: type) -> tx.Any:
+    """`obj` copied into `fmt`, a file-backed version of its data model."""
+    return fmt.from_instance(obj)
+
+
+def _convert(obj: Transformation, fmt: type) -> tx.Any:
+    """`obj` converted to `fmt`, as `obj.to(fmt)` converts it."""
+    return obj.to(fmt)
+
+
+def _first_writer(
+    name: str,
+    obj: tx.Any,
+    candidates: tx.List[tx.Tuple[type, tx.Any]],
+    build: tx.Callable[[tx.Any, type], tx.Any],
+    reasons: tx.List[str],
+) -> tx.Any:
+    """
+    `obj` built into the most specific candidate format that takes it.
+
+    The candidates are tried tier by tier, most specific first, and
+    `build(obj, fmt)` makes the object to write. The first tier where it
+    succeeds for one format gives the writer; a tier where it succeeds
+    for several is an ambiguity. Why it fails for the others is added to
+    `reasons`. `None` when it fails for every candidate.
+    """
+    for tier in _tiers(candidates):
+        writers = []
+        for fmt in tier:
+            try:
+                writers.append((fmt, build(obj, fmt)))
+            except Exception as e:  # noqa: BLE001
+                reasons.append(f"{fmt.__name__}: {type(e).__name__}: {e}")
+        if len(writers) > 1:
+            raise AmbiguousFormatError(
+                _ambiguity_message(name, obj, [fmt for fmt, _ in writers])
+            )
+        if writers:
+            return writers[0][1]
+    return None
 
 
 def _model(cls: type) -> tx.Optional[type]:

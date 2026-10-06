@@ -18,9 +18,11 @@ from brainhops.io.base.nifti import (
     _nifti_vector_field,
     _NiftiObject,
 )
-from brainhops.io.base.parsers import Confidence
+from brainhops.io.base.parsers import Confidence, WriterNotImplementedError
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
-from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
+from brainhops.io.transformations.nifti.base import (
+    ReadOnlyNiftiBasedTransformation,
+)
 
 from .._affines import _ImageGeometry
 from .._fields import RASToWarpField, WarpFieldToRAS
@@ -68,7 +70,7 @@ _ImageLike = tx.Union[_NiftiObject, Image]
 @register_format
 class FnirtWarpField(
     FslTransformationFormat,
-    NiftiBasedTransformation,
+    ReadOnlyNiftiBasedTransformation,
     _xforms.ImmutableSequence,
 ):
     """A FNIRT non-linear transformation stored in a NIfTI file.
@@ -102,6 +104,19 @@ class FnirtWarpField(
     geometry, so both the reference and the moving image are required. A
     discrete-cosine-transform coefficient field (intent 2008) is
     recognized but not supported.
+
+    !!! note "Read, not written"
+        The format is read only, and `save` does not offer it. A FNIRT
+        file does not hold everything its map depends on: the moving
+        image, whose geometry places the warped points in the world, is
+        given separately, and so is whether a deformation field holds
+        absolute or relative positions, which is otherwise guessed from
+        the values. A file written from a general transformation would
+        only be read back as the same map if both were given again, and
+        a coefficient field also needs a knot grid, a spline anchoring
+        and an initial affine that a general field does not have. Save
+        a FNIRT warp as a NIfTI displacement field instead:
+        `NiftiRASDisplacementField.from_other(warp).save(path)`.
     """
 
     HINTS = ("fnirt",)
@@ -174,6 +189,15 @@ class FnirtWarpField(
         moving, reference = cls._pop_images(kwargs)
         obj = super().from_bytes(data, **kwargs)
         return cls._with_images(obj, moving, reference)
+
+    def to_nibabel(self, **kwargs) -> tx.NoReturn:
+        """FNIRT warps are read, not written (see the class notes)."""
+        raise WriterNotImplementedError(
+            "A FNIRT warp is read, not written: its file does not hold the "
+            "moving image its map depends on. Save it as a NIfTI "
+            "displacement field instead: "
+            "NiftiRASDisplacementField.from_other(warp).save(path)."
+        )
 
     # --- exposed parameters -------------------------------------------
 
