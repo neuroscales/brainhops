@@ -25,6 +25,7 @@ from brainhops.io.base.parsers import (
     FileParserWriter,
     TextFileParser,
     TextFileParserWriter,
+    _passthrough_from_fileobj,
 )
 from brainhops.io.base.specs import SourceSpec
 
@@ -370,6 +371,7 @@ class FormatDispatcher(FileParser):
         )
 
     @classmethod
+    @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """On a dispatcher, pick the best-matching registered format and
         build an instance of it from the open file object. On a concrete

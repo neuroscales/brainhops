@@ -3,6 +3,8 @@ write itself, and the errors they raise."""
 
 # stdlib
 from collections.abc import Iterable
+from contextvars import ContextVar
+from io import BytesIO
 
 # dependencies
 import typing_extensions as tx
@@ -534,6 +536,66 @@ class FileSniffer:
 # ---- from ------------------------------------------------------------
 
 
+def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
+    """
+    Mark a `from_fileobj` implementation as one that does not read the
+    stream itself, but ends up reading it whole and delegating to
+    `from_bytes` (e.g., `FileParser.from_fileobj`, or a mixin that
+    forwards to `super().from_fileobj`).
+
+    Parameters
+    ----------
+    func : callable
+        The function underlying a `from_fileobj` classmethod.
+
+    Returns
+    -------
+    callable
+        The same function, marked.
+    """
+    func._passthrough_from_fileobj = True
+    return func
+
+
+# Parser classes whose `from_bytes` is currently falling back to
+# `from_fileobj`; a re-entry for the same class means that the
+# `from_fileobj` chain fell back to `from_bytes` in turn.
+_FROM_BYTES_FALLBACK: ContextVar[frozenset] = ContextVar(
+    "_FROM_BYTES_FALLBACK", default=frozenset()
+)
+
+
+def _overrides_from_fileobj(cls: type) -> bool:
+    """
+    Check whether a parser class implements `from_fileobj` itself, rather
+    than inheriting the default that delegates to `from_bytes`.
+
+    The MRO is walked, skipping implementations marked with
+    `_passthrough_from_fileobj` (the `FileParser` default and the
+    `FormatDispatcher` forwarder), so that mixing in a forwarder does
+    not count as an override.
+
+    Parameters
+    ----------
+    cls : type
+        A subclass of `FileParser`.
+
+    Returns
+    -------
+    bool
+        True if some class in the MRO of `cls` provides a `from_fileobj`
+        that does not fall back to `from_bytes`.
+    """
+    for klass in cls.__mro__:
+        func = klass.__dict__.get("from_fileobj")
+        if func is None:
+            continue
+        func = getattr(func, "__func__", func)
+        if not getattr(func, "_passthrough_from_fileobj", False):
+            return True
+    return False
+
+
 class FileParser(FileSniffer):
     """A class that can read files of a certain type."""
 
@@ -646,9 +708,16 @@ class FileParser(FileSniffer):
             return cls.from_fileobj(f, **kwargs)
 
     @classmethod
+    @_passthrough_from_fileobj
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
         """
         Build an object from a file-like object.
+
+        The default implementation reads the whole stream and hands its
+        content to `from_content` (hence to `from_bytes` for binary
+        streams). Parsers that only need part of the stream (e.g., a
+        header) should override this method; `from_bytes` then falls back
+        to it.
 
         Parameters
         ----------
@@ -699,10 +768,20 @@ class FileParser(FileSniffer):
         """
         Build an object from a binary representation of a file.
 
+        If the class implements `from_fileobj` itself, the bytes are
+        wrapped in an `io.BytesIO` stream and handed to `from_fileobj`.
+        Otherwise, this raises `ParserNotImplementedError`: the default
+        `from_fileobj` delegates to `from_bytes`, so falling back to it
+        would recurse. A `from_fileobj` override that only forwards to
+        `super().from_fileobj` should be decorated with
+        `_passthrough_from_fileobj`; if it is not, the loop is still
+        detected when `from_bytes` is re-entered for the same class, and
+        `ParserNotImplementedError` is raised.
+
         Parameters
         ----------
         content : BinaryContentLike
-            The content to sniff.
+            The content to parse.
         **kwargs
             Parser-specific options.
 
@@ -710,7 +789,19 @@ class FileParser(FileSniffer):
         -------
         obj
             The parsed object.
+
+        Raises
+        ------
+        ParserNotImplementedError
+            If neither `from_bytes` nor `from_fileobj` is implemented.
         """
+        active = _FROM_BYTES_FALLBACK.get()
+        if cls not in active and _overrides_from_fileobj(cls):
+            token = _FROM_BYTES_FALLBACK.set(active | {cls})
+            try:
+                return cls.from_fileobj(BytesIO(content), **kwargs)
+            finally:
+                _FROM_BYTES_FALLBACK.reset(token)
         raise ParserNotImplementedError(
             f"from_bytes() is not available in parser of type {cls.__name__}"
         )
