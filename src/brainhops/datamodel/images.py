@@ -290,6 +290,8 @@ class SingleScaleImage(Image):
         """
         Index into the image data while preserving the geometry of the image.
         """
+        if not isinstance(index, tuple):
+            index = (index,)
         data = self.data[index]
         grid = self.grid
         transformations = [

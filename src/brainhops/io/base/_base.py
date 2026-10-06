@@ -1,5 +1,6 @@
 __all__ = [
     "format_registry",
+    "FormatDispatcher",
     "register_format",
     "FileBasedObject",
     "WritableFileBasedObject",
@@ -124,15 +125,20 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
 # ----------------------------------------------------------------------
 
 
-@format_registry
-class FileBasedObject(FileParser):
+class FormatDispatcher(FileParser):
     """
-    An object that is stored in a file.
+    The dispatching behaviour of a class that owns a registry of formats.
 
-    Subclasses decorated with `@format_registry` become dispatchers for
-    their own kind of object (images, transformations, ...). Concrete
-    parsers decorated with `@register_format` land in *every* ancestor
-    registry, so both the scoped and the generic entry points see them.
+    A class decorated with `@format_registry` dispatches: its `sniff*`
+    methods identify the registered format that would read a file, and
+    its `load` and `from_*` methods pick that format and delegate to it.
+    On a class that owns no registry, a concrete format, every method
+    behaves as the parser method it overrides.
+
+    This mixin owns no registry itself, so that a kind of object that
+    the generic `load` must not return, such as the metadata of a file
+    (`FileBasedMetadata`), can dispatch among its own formats without being
+    registered into the registry of [`FileBasedObject`][].
 
     !!! note "`sniff*` means something different on a dispatcher"
         A concrete format's `sniff*` answers "how confident am I that
@@ -453,6 +459,19 @@ class FileBasedObject(FileParser):
             "sniff_line",
             **kwargs,
         )
+
+
+@format_registry
+class FileBasedObject(FormatDispatcher):
+    """
+    An object that is stored in a file.
+
+    Subclasses decorated with `@format_registry` become dispatchers for
+    their own kind of object (images, transformations, ...). Concrete
+    parsers decorated with `@register_format` land in *every* ancestor
+    registry, so both the scoped and the generic entry points see them.
+    The dispatching itself is described in `FormatDispatcher`.
+    """
 
 
 @format_registry
