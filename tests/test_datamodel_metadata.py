@@ -808,7 +808,8 @@ def test_derive_resampled() -> None:
     assert derived.bvalues == (0.0, 1000.0)
     # Without an affine form, a direction in voxel axes is cleared, and
     # one in a world space is kept.
-    warped = Resampled(CartesianField(), Geometry())
+    warped = Resampled(CartesianField())
+    assert warped.geometry is None
     assert warped.voxel_map is None
     derived = meta.derive(warped)
     assert derived.phase_encoding_direction is None

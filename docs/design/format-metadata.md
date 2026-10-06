@@ -1013,7 +1013,7 @@ class Indexed(Operation):  # image[index]
 
 class Resampled(Operation):  # image.reslice(geometry)
     transformation: Transformation  # new voxels -> old voxels
-    geometry: Geometry
+    geometry: tx.Optional[Geometry]  # None when not known
 ```
 
 `Indexed.positions(axis)` is `np.arange(size)[component]` for the first
@@ -2044,6 +2044,10 @@ holds.
   `_operations` imports neither the transformations nor the geometry at
   the top: `Resampled` annotates them as strings, without conversion,
   and `voxel_map` imports what it needs when it runs.
+- **`Resampled.geometry` is optional.** A level of an OME-Zarr pyramid
+  is derived through `Resampled` when the pyramid is opened, before any
+  level is read, and its geometry needs its shape, which needs its
+  data; the level passes no geometry, and no handler reads it.
 - **Not done.** `image(transform)` records no provenance; it is a plain
   copy. A warp's local Jacobian is an extension point of `Operation`,
   which no operation implements.

@@ -253,10 +253,14 @@ class Resampled(Operation):
         Field(convert=False),
     ]
     geometry: tx.Annotated[
-        "Geometry",
-        tx.Doc("The geometry the image is resampled onto."),
+        tx.Optional["Geometry"],
+        tx.Doc(
+            "The geometry the image is resampled onto, or `None` when it "
+            "is not known (a level of a pyramid, whose shape is not known "
+            "until its data is read)."
+        ),
         Field(convert=False),
-    ]
+    ] = None
 
     @property
     def moves_space(self) -> bool:
