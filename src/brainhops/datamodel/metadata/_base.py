@@ -630,6 +630,8 @@ def _with_brainhops(
     if any(getattr(g, "name", None) == "brainhops" for g in entries):
         return entries
     try:
+        # Not at the top: `brainhops` imports the data model before it
+        # defines `__version__`.
         from brainhops import __version__ as version
     except ImportError:  # pragma: no cover
         version = None

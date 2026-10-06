@@ -201,6 +201,7 @@ class NiftiMetadata(
         float
             The confidence, in `[0, 1]`.
         """
+        # Not at the top: `brainhops.io.base.nifti` imports this module.
         from brainhops.io.base.nifti import is_nifti_stream
 
         if is_nifti_stream(file):
@@ -254,6 +255,7 @@ class NiftiMetadata(
         NiftiMetadata
             The metadata of the header, with the header as `raw`.
         """
+        # Not at the top: `brainhops.io.base.nifti` imports this module.
         from brainhops.io.base.nifti import _load_nifti_header
 
         return cls.from_raw(_load_nifti_header(file))
@@ -635,7 +637,7 @@ def time_step(image: tx.Any) -> tx.Optional[float]:
         The time step in seconds, or `None` when the data model gives
         none.
     """
-    # Imported here: the NIfTI parser imports this module.
+    # Not at the top: `brainhops.io.base.nifti` imports this module.
     from brainhops.io.base.nifti import _geometry_time_step
 
     try:

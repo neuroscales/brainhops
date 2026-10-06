@@ -1979,6 +1979,16 @@ holds.
   `brainhops.io.transformations.itk.h5`, since it needs `h5py`; the
   package `itk` exports it when `h5py` is installed.
 
+- **Imports at the top.** The modules of the metadata import at the
+  top, except where a cycle forbids it, which a comment says at each
+  import: `_nifti_metadata` and `_mgh_metadata` import from `nifti` and
+  `mgh`, which import them; `EncodingDirection.transform` imports the
+  transformations, whose `metadata` field imports the metadata;
+  and `_with_brainhops` reads `brainhops.__version__`, defined after
+  the package imports the data model. The Zarr attribute helpers
+  (`node_attributes`, `write_attributes`) moved from `_image` to
+  `_metadata`, which the image imports.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

@@ -228,6 +228,7 @@ class MghMetadata(
         float
             The confidence, in `[0, 1]`.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import is_mgh_stream
 
         if is_mgh_stream(file):
@@ -290,6 +291,7 @@ class MghMetadata(
         ParserExistsError
             If the path does not exist.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import read_mgh_raw
 
         if isinstance(filename, str):
@@ -316,6 +318,7 @@ class MghMetadata(
         MghMetadata
             The metadata of the file, with its `MghRaw` as `raw`.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import read_mgh_raw
 
         return cls.from_raw(read_mgh_raw(file))
