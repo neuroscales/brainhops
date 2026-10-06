@@ -14,6 +14,8 @@ design memo); `to()`, conversion loss reports and the loss policies;
 import copy
 import json
 import pickle
+import subprocess
+import sys
 import warnings
 
 import numpy as np
@@ -22,6 +24,7 @@ import typing_extensions as tx
 from bagof.magic import Factory, Magic, fields, replace
 
 import brainhops.datamodel.metadata
+from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     AxisType,
@@ -31,6 +34,7 @@ from brainhops.datamodel.enums import (
     Manufacturer,
     SpaceEnum,
 )
+from brainhops.datamodel.geometry import Geometry
 from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     Channel,
@@ -39,12 +43,15 @@ from brainhops.datamodel.metadata import (
     DisplayVocabulary,
     EncodingDirection,
     GeneratedBy,
+    Indexed,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
     MicroscopyVocabulary,
     MRIVocabulary,
+    Operation,
     ProvenanceVocabulary,
+    Resampled,
     Scope,
     StorageVocabulary,
     TransformVocabulary,
@@ -53,6 +60,7 @@ from brainhops.datamodel.metadata import (
 )
 from brainhops.datamodel.metadata._dtype import preferred_dtype, stored_values
 from brainhops.datamodel.metadata._field import MetadataField
+from brainhops.datamodel.metadata._operations import propagate, propagates
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
     collect_loss_reports,
@@ -64,6 +72,8 @@ from brainhops.datamodel.metadata._vocabulary import (
     Along,
     Scoped,
 )
+from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.datamodel.transformations import Affine, CartesianField
 from brainhops.io.metadata import (
     FileBasedMetadata,
     OpaqueMetadata,
@@ -144,11 +154,15 @@ class DictMetadata(
                 raw["desc"] = changed["description"][:8]
         return raw
 
-    def _reslice(self, linear, *, history=None) -> "DictMetadata":  # noqa: ANN001
-        obj = super()._reslice(linear, history=history)
-        if obj.raw is not None:
-            obj.raw.pop("slice_hint", None)
-        return obj
+
+@propagates(DictRecord, Operation)
+def _derive_dict_record(raw, operation, *, name, source) -> DictRecord:  # noqa: ANN001
+    """The record of derived `DictMetadata`: a copy, without its
+    `slice_hint` when the spatial axes move."""
+    raw = copy.deepcopy(raw)
+    if operation.moves_space:
+        raw.pop("slice_hint", None)
+    return raw
 
 
 class DialectMetadata(
@@ -613,36 +627,117 @@ def test_derive_records_provenance() -> None:
     assert meta.derive(history=["a", "b"]).history == ("acquired", "a", "b")
 
 
-def test_select_indexes_a_field_along_its_axis() -> None:
-    # The hook of `image[index]`: the image resolves the kept positions.
+def _dwi_system() -> CoordinateSystem:
+    """The voxel axes of a 4-D diffusion series: three spatial axes and a
+    time axis."""
+    return CoordinateSystem(
+        axes=[
+            Axis("i", "space"),
+            Axis("j", "space"),
+            Axis("k", "space"),
+            Axis("t", "time"),
+        ]
+    )
+
+
+def _indexed(*index) -> Indexed:  # noqa: ANN002
+    """`image[index]`, for a diffusion series of shape (4, 5, 6, 3)."""
+    return Indexed(index, (4, 5, 6, 3), _dwi_system())
+
+
+class _Mapped(Operation):
+    """An operation the handlers do not know, which moves the spatial axes
+    through a given voxel map."""
+
+    matrix: tx.Any = None
+
+    @property
+    def voxel_map(self) -> tx.Optional[np.ndarray]:
+        if self.matrix is None:
+            return None
+        return np.asarray(self.matrix, dtype=float)
+
+
+def test_indexed_expands_its_index() -> None:
+    op = _indexed(Ellipsis, 1)
+    assert op.expanded == (slice(None),) * 3 + (1,)
+    assert op.axes == (AxisType.space,) * 3 + (AxisType.time,)
+    assert Indexed(0, (4, 5)).index == (0,)
+    assert Indexed((0,), (4, 5)).axes == (None, None)
+
+
+def test_indexed_positions_along_an_axis() -> None:
+    assert list(_indexed(Ellipsis, [2, 0]).positions("time")) == [2, 0]
+    assert list(_indexed(Ellipsis, slice(1, 3)).positions(AxisType.time)) == [
+        1,
+        2,
+    ]
+    # Untouched: the full range.
+    assert list(_indexed(slice(None)).positions("time")) == [0, 1, 2]
+    # A boolean mask keeps the positions it selects.
+    mask = np.array([True, False, True])
+    assert list(_indexed(Ellipsis, mask).positions("time")) == [0, 2]
+    # A dropped axis, a selection out of range or not 1-D, or an axis the
+    # image does not have: no positions.
+    assert _indexed(Ellipsis, 1).positions("time") is None
+    assert _indexed(Ellipsis, [5]).positions("time") is None
+    assert _indexed(Ellipsis, np.array([[0, 1]])).positions("time") is None
+    assert _indexed(Ellipsis).positions("channel") is None
+
+
+def test_indexed_moves_space() -> None:
+    assert not _indexed(Ellipsis, slice(0, 2)).moves_space
+    assert not _indexed(Ellipsis, 1).moves_space
+    assert not _indexed(slice(None), slice(0, 5)).moves_space
+    assert _indexed(slice(None), slice(None, None, -1)).moves_space
+    assert _indexed(None).moves_space
+    assert _indexed(2).moves_space
+    # An axis of unknown type is taken to be spatial.
+    assert Indexed((Ellipsis, 1), (4, 5, 6, 3)).moves_space
+
+
+def test_indexed_voxel_map() -> None:
+    flip = _indexed(slice(None), slice(None, None, -1)).voxel_map
+    assert np.allclose(flip, np.diag([1.0, -1.0, 1.0, 1.0]))
+    # A dropped axis has a zero column.
+    dropped = _indexed(slice(None), 2).voxel_map
+    assert dropped.shape == (3, 4)
+    assert np.allclose(dropped[:, 1], 0)
+    # An index other than integers, slices and `None` has no map.
+    assert _indexed(Ellipsis, [0, 2]).voxel_map is None
+
+
+def test_derive_indexed_selects_the_entries_along_the_axis() -> None:
     meta = _scoped()
-    assert meta._select("time", [2, 0]).bvalues == (2000.0, 0.0)
-    assert meta._select(AxisType.time, np.arange(1, 3)).bvalues == (
+    selected = meta.derive(_indexed(Ellipsis, [2, 0]), history="getitem")
+    assert selected.bvalues == (2000.0, 0.0)
+    assert meta.derive(_indexed(Ellipsis, slice(1, 3))).bvalues == (
         1000.0,
         2000.0,
     )
-    assert meta._select("time", np.array([], int)).bvalues == ()
+    assert meta.derive(_indexed(Ellipsis, slice(0, 0))).bvalues == ()
     # A dropped axis, or a position beyond the field, clears it.
-    assert meta._select("time", None).bvalues is None
-    assert meta._select("time", [5]).bvalues is None
-    assert meta._select("time", [-1]).bvalues is None
+    assert meta.derive(_indexed(Ellipsis, 1)).bvalues is None
+    short = Indexed((Ellipsis, [5]), (4, 5, 6, 8), _dwi_system())
+    assert meta.derive(short).bvalues is None
     # The other axes, and the other fields, are untouched.
-    selected = meta._select("time", [2, 0], history="select")
     assert [c.name for c in selected.channels] == ["a", "b", "c"]
     assert selected.slice_timing == (0.0, 0.5)
+    assert selected.phase_encoding_direction == EncodingDirection("j-")
     assert selected.display_range == (0.0, 1.0)
-    assert selected.history == ("acquired", "select")
+    assert selected.history == ("acquired", "getitem")
     assert selected.creation_time is None
-    channel = meta._select(AxisType.channel, [2, 0])
+    channels = CoordinateSystem(
+        axes=[Axis("i", "space"), Axis("c", "channel")]
+    )
+    channel = meta.derive(Indexed((Ellipsis, [2, 0]), (4, 3), channels))
     assert [c.name for c in channel.channels] == ["c", "a"]
     assert channel.bvalues == (0.0, 1000.0, 2000.0)
-    with pytest.raises(ValueError, match="_reslice"):
-        meta._select("space", [0])
+    # An image without an axis of that type keeps the field.
+    assert meta.derive(Indexed((0,), (4, 3))).bvalues == meta.bvalues
 
 
-def test_reslice_maps_directions_through_a_linear_map() -> None:
-    # The hook of `image.reslice()`: the image computes the linear map
-    # from the old voxel axes to the new ones.
+def test_derive_maps_directions_through_the_voxel_map() -> None:
     meta = Metadata(
         phase_encoding_direction="j-",
         slice_encoding_direction=EncodingDirection((0, 0, 1), space="mni"),
@@ -651,44 +746,85 @@ def test_reslice_maps_directions_through_a_linear_map() -> None:
         bvalues=(0, 1000),
     )
     swap = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
-    derived = meta._reslice(swap, history="reslice")
+    derived = meta.derive(_Mapped(swap), history="reslice")
     assert derived.phase_encoding_direction == EncodingDirection("i-")
     # A direction in a world space does not move with the voxels.
     assert derived.slice_encoding_direction == EncodingDirection(
         (0, 0, 1), space="mni"
     )
-    # The slice timing is cleared; the rest is kept.
+    # An operation the handlers do not know falls back on the scope
+    # defaults: the slice timing is cleared, the rest is kept.
     assert derived.slice_timing is None
     assert derived.echo_time == 0.03
     assert derived.bvalues == (0.0, 1000.0)
     assert derived.history == ("reslice",)
     flip = np.diag([1.0, -1.0, 1.0])
-    assert meta._reslice(flip).phase_encoding_direction == EncodingDirection(
-        "j"
+    assert meta.derive(_Mapped(flip)).phase_encoding_direction == (
+        EncodingDirection("j")
     )
     # The map of a 4-D image: the direction lies in its first three axes.
     flip4 = np.diag([1.0, -1.0, 1.0, 1.0])
-    assert meta._reslice(flip4).phase_encoding_direction == (
+    assert meta.derive(_Mapped(flip4)).phase_encoding_direction == (
         EncodingDirection("j")
     )
     onto_time = np.eye(4)[[0, 3, 2, 1]]
-    assert meta._reslice(onto_time).phase_encoding_direction is None
-    rotated = meta._reslice(
-        [[1, 0, 0], [0, 2**-0.5, -(2**-0.5)], [0, 2**-0.5, 2**-0.5]]
+    assert meta.derive(_Mapped(onto_time)).phase_encoding_direction is None
+    rotated = meta.derive(
+        _Mapped([[1, 0, 0], [0, 2**-0.5, -(2**-0.5)], [0, 2**-0.5, 2**-0.5]])
     )
     assert rotated.phase_encoding_direction.to_bids() is None
     # Without a map, a change of the spatial axes clears it.
-    cleared = meta._reslice(None)
+    cleared = meta.derive(_Mapped())
     assert cleared.phase_encoding_direction is None
     assert cleared.slice_encoding_direction.space == "mni"
     assert cleared.slice_timing is None
+    # Through an index of the voxels.
+    indexed = meta.derive(_indexed(slice(None), slice(None, None, -1)))
+    assert indexed.phase_encoding_direction == EncodingDirection("j")
+    assert meta.derive(_indexed(slice(None), 2)).phase_encoding_direction is (
+        None
+    )
 
 
-def test_reslice_keeps_the_record_and_clears_through_it() -> None:
+def test_derive_resampled() -> None:
+    meta = Metadata(
+        phase_encoding_direction="j-",
+        slice_encoding_direction=EncodingDirection((0, 0, 1), space="mni"),
+        slice_timing=(0.0, 0.5),
+        bvalues=(0, 1000),
+    )
+    # The transformation goes from the new voxels to the old ones.
+    swap = Affine(np.eye(4)[[1, 0, 2, 3]][:-1])
+    resampled = Resampled(swap, Geometry())
+    assert resampled.moves_space
+    assert np.allclose(resampled.voxel_map, np.eye(3)[[1, 0, 2]])
+    derived = meta.derive(resampled)
+    assert derived.phase_encoding_direction == EncodingDirection("i-")
+    assert derived.slice_timing is None
+    assert derived.bvalues == (0.0, 1000.0)
+    # Without an affine form, a direction in voxel axes is cleared, and
+    # one in a world space is kept.
+    warped = Resampled(CartesianField(), Geometry())
+    assert warped.voxel_map is None
+    derived = meta.derive(warped)
+    assert derived.phase_encoding_direction is None
+    assert derived.slice_encoding_direction.space == "mni"
+
+
+def test_derive_without_an_operation_keeps_every_field() -> None:
+    meta = _scoped()
+    assert meta.derive() == meta.derive(None)
+    assert meta.derive().slice_timing == meta.slice_timing
+    assert meta.derive().phase_encoding_direction == (
+        meta.phase_encoding_direction
+    )
+
+
+def test_the_handler_of_the_record_scrubs_it() -> None:
     meta = DictMetadata.from_raw(
         {"desc": "d", "slices": [0, 1], "slice_hint": "x"}
     )
-    derived = meta._reslice(None)
+    derived = meta.derive(_Mapped())
     assert type(derived) is DictMetadata
     assert derived._snapshot == meta._snapshot
     assert "slice_hint" not in derived.raw and "slice_hint" in meta.raw
@@ -697,6 +833,58 @@ def test_reslice_keeps_the_record_and_clears_through_it() -> None:
     assert "slices" not in derived.update_raw()
     # Unsupported fields stay unsupported.
     assert derived.echo_time is UNSUPPORTED
+    # An index along time keeps the spatial content of the record.
+    kept = meta.derive(_indexed(Ellipsis, 0))
+    assert kept.raw["slice_hint"] == "x" and kept.raw is not meta.raw
+
+
+class _Marked(str):
+    """A value type with handlers of its own, for the lookup order."""
+
+
+@propagates(_Marked, Operation)
+def _marked_by_operation(value, operation, *, name, source):  # noqa: ANN001, ANN202
+    return _Marked("operation")
+
+
+@propagates(_Marked, Indexed)
+def _marked_by_index(value, operation, *, name, source):  # noqa: ANN001, ANN202
+    return _Marked("indexed")
+
+
+def test_the_lookup_order() -> None:
+    meta = _scoped()
+
+    def through(value, operation, scope=Scope.SPATIAL):  # noqa: ANN001, ANN202
+        return propagate(
+            value, operation, name="slice_timing", scope=scope, source=meta
+        )
+
+    # The type of the value beats the scope, which would clear it.
+    assert through(_Marked("x"), _Mapped()) == "operation"
+    assert through("x", _Mapped()) is None
+    # The most specific operation first.
+    assert through(_Marked("x"), _indexed(Ellipsis)) == "indexed"
+    # No handler: the value is kept; `UNSUPPORTED` always is.
+    assert through("x", _Mapped(), scope="no scope") == "x"
+    assert through(UNSUPPORTED, _Mapped()) is UNSUPPORTED
+    with pytest.raises(TypeError):
+        propagates(object, Operation)
+    with pytest.raises(TypeError):
+        propagates(_Marked, int)
+
+
+def test_the_metadata_imports_before_the_transformations() -> None:
+    # The operations import the transformations lazily: the
+    # transformations import the metadata.
+    code = (
+        "import brainhops.datamodel.metadata as m, numpy as np\n"
+        "from brainhops.datamodel.transformations import Affine\n"
+        "from brainhops.datamodel.geometry import Geometry\n"
+        "r = m.Resampled(Affine(np.eye(3)[:2]), Geometry())\n"
+        "assert r.voxel_map.shape == (2, 2)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_derive_copies_the_record_by_default() -> None:
@@ -1049,8 +1237,8 @@ def test_data_type_is_a_native_dtype() -> None:
     assert from_bids({"DataType": "uint8"}).data_type == np.uint8
     # A resampling changes the kind of the values: it is grid-bound.
     # How the file stores the values: kept by `derive` (`file` scope).
-    assert meta._reslice(None).data_type == np.int16
-    assert meta._select("time", [0]).data_type == np.int16
+    assert meta.derive(_Mapped()).data_type == np.int16
+    assert meta.derive(_indexed(Ellipsis, 0)).data_type == np.int16
 
 
 def test_stored_values_round_only_into_integers() -> None:

@@ -18,6 +18,7 @@ from ..base import DataModelBase
 from ..enums import SpaceEnum
 from ..systems import CoordinateSystem
 from ..units import Unit
+from ._operations import Operation, propagates
 from ._sentinel import UNSUPPORTED
 
 AXES = "ijk"
@@ -210,6 +211,48 @@ class EncodingDirection(DataModelBase):
         if isinstance(self.space, CoordinateSystem):
             return f"EncodingDirection({vector!r}, space={self.space!r})"
         return f"EncodingDirection({vector!r}, space={str(self.space)!r})"
+
+
+@propagates(EncodingDirection, Operation)
+def _propagate_direction(
+    value: EncodingDirection,
+    operation: Operation,
+    *,
+    name: str,
+    source: tx.Any,
+) -> tx.Optional[EncodingDirection]:
+    """
+    An encoding direction after an operation: it follows the voxel axes.
+
+    A direction is kept when the spatial axes did not move, or when it
+    is expressed in a world space. One in voxel axes goes through the
+    map of the voxels (`operation.voxel_map`), which may have more axes
+    than the direction, which lies in the first ones (`ijk`), as for a
+    4-D image: the direction is then mapped as a vector of the old axes
+    that is zero beyond its own, and is kept only when it still lies in
+    the first axes. It is cleared when the map is unknown, when it moves
+    the direction off those axes, or when it maps the direction to zero
+    (its axis was dropped).
+    """
+    if not operation.moves_space or value.space is not None:
+        return value
+    linear = operation.voxel_map
+    if linear is None:
+        return None
+    linear = np.asarray(linear, dtype=float)
+    vector = np.asarray(value.vector, dtype=float)
+    size = len(vector)
+    if linear.ndim != 2 or min(linear.shape) < size:
+        return None
+    beyond = linear[size:, :size] @ vector
+    if np.any(np.abs(beyond) > 1e-9 * np.abs(linear).max()):
+        # The direction moved onto an axis it cannot be expressed on.
+        return None
+    try:
+        return value.transform(linear[:size, :size])
+    except ValueError:
+        # Mapped to zero: its axis was dropped.
+        return None
 
 
 # ----------------------------------------------------------------------

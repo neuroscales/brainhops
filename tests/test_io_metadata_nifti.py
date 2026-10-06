@@ -8,6 +8,7 @@ them, and a common field set by the user is written over the header,
 with what NIfTI cannot hold reported.
 """
 
+import numpy as np
 import pytest
 
 
@@ -53,3 +54,44 @@ def test_what_nifti_cannot_hold_is_reported() -> None:
         "history": ("a",),
         "extra": {"K": 1},
     }
+
+
+# ----------------------------------------------------------------------
+#   DERIVATION
+# ----------------------------------------------------------------------
+
+
+def _header() -> "nb.Nifti1Header":
+    """A 4-D header with encoding axes and a slice timing."""
+    h = nb.Nifti1Header()
+    h.set_data_shape((4, 5, 6, 3))
+    h.set_dim_info(freq=0, phase=1, slice=2)
+    h["slice_code"] = 1
+    h["slice_start"], h["slice_end"] = 0, 5
+    h["slice_duration"] = 0.5
+    return h
+
+
+def test_a_header_follows_the_spatial_axes() -> None:
+    from brainhops.datamodel.axes import Axis
+    from brainhops.datamodel.geometry import Geometry
+    from brainhops.datamodel.metadata import Indexed, Resampled
+    from brainhops.datamodel.systems import CoordinateSystem
+    from brainhops.datamodel.transformations import Affine
+
+    meta = NiftiMetadata.from_raw(_header())
+    # A resampling clears the slice slots and `dim_info` of the copy.
+    resampled = meta.derive(Resampled(Affine(np.eye(4)[:3]), Geometry()))
+    assert resampled.raw is not meta.raw
+    assert resampled.raw.get_dim_info() == (None, None, None)
+    assert resampled.raw["slice_code"] == 0
+    assert meta.raw.get_dim_info() == (0, 1, 2)
+    # An index along time keeps them.
+    system = CoordinateSystem(
+        axes=[Axis(n, "space") for n in "ijk"] + [Axis("t", "time")]
+    )
+    indexed = meta.derive(Indexed((Ellipsis, [0, 2]), (4, 5, 6, 3), system))
+    assert indexed.raw is not meta.raw
+    assert indexed.raw.get_dim_info() == (0, 1, 2)
+    assert indexed.raw["slice_code"] == 1
+    assert indexed.raw["slice_duration"] == 0.5

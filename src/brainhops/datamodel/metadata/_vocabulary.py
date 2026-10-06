@@ -42,6 +42,7 @@ from ..enums import (
     SpaceEnum,
 )
 from ..units import Unit
+from ._operations import Indexed, Operation, propagates
 from ._sentinel import Maybe
 from ._terms import (
     Channel,
@@ -88,6 +89,50 @@ class Scope(StrEnum):
     ACQUISITION = "acquisition"
     SPATIAL = "spatial"
     AXIS = "axis"
+
+
+# The scope defaults: how the value of a field propagates through an
+# operation when no handler of its type takes it (see `_operations`).
+
+
+@propagates(Scope.FILE, Operation)
+@propagates(Scope.ACQUISITION, Operation)
+@propagates(Scope.AXIS, Operation)
+def _keep(
+    value: tx.Any, operation: Operation, *, name: str, source: tx.Any
+) -> tx.Any:
+    """A field that the operation does not change: it is kept."""
+    return value
+
+
+@propagates(Scope.SPATIAL, Operation)
+def _clear_if_space_moves(
+    value: tx.Any, operation: Operation, *, name: str, source: tx.Any
+) -> tx.Any:
+    """A field tied to the spatial sampling: it is cleared when the
+    spatial axes move."""
+    return None if operation.moves_space else value
+
+
+@propagates(Scope.AXIS, Indexed)
+def _index_along(
+    value: tx.Any, operation: Indexed, *, name: str, source: tx.Any
+) -> tx.Any:
+    """
+    A field with one entry per index along an axis, after an index: the
+    entries at the positions the index keeps along the first axis of
+    the type the field runs along (`ALONG`). The field is kept when the
+    image has no such axis, or when the index leaves it untouched, and
+    cleared when the index drops it.
+    """
+    axis = ALONG[name]
+    if axis not in operation.axes:
+        return value
+    positions = operation.positions(axis)
+    size = operation.shape[operation.axes.index(axis)]
+    if positions is not None and np.array_equal(positions, np.arange(size)):
+        return value
+    return _select_entries(value, positions)
 
 
 class Bids(Field):
@@ -646,3 +691,28 @@ ALONG: tx.Dict[str, AxisType] = {
 }
 """Vocabulary field in the `AXIS` scope -> the type of the axis its
 entries run along (`Along`)."""
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+def _select_entries(value: tx.Any, positions: tx.Any) -> tx.Any:
+    """
+    The entries of a field at `positions`. No positions (the axis was
+    dropped, or the selection is unknown), or a position beyond the
+    field, clears it.
+    """
+    if value is None or positions is None:
+        return None
+    positions = np.asarray(positions)
+    if positions.ndim != 1 or positions.dtype.kind not in "iu":
+        return None
+    try:
+        size = len(value)
+    except TypeError:
+        return None
+    if positions.size and not (0 <= positions.min() <= positions.max() < size):
+        return None
+    return tuple(value[int(i)] for i in positions)

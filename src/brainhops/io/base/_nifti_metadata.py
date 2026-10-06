@@ -51,6 +51,7 @@ A `dtype=` writer option wins over both.
 __all__ = ["NiftiMetadata"]
 
 # stdlib
+import copy
 from io import BytesIO
 
 # dependencies
@@ -65,6 +66,7 @@ from brainhops.datamodel.metadata import (
     ConversionReport,
     EncodingDirection,
 )
+from brainhops.datamodel.metadata._operations import Operation, propagates
 from brainhops.datamodel.metadata._terms import AXES
 from brainhops.io.base._base import register_format
 from brainhops.io.base._metadata_parser import MetadataParser
@@ -339,19 +341,23 @@ class NiftiMetadata(
                 report.lost["data_type"] = changed["data_type"]
         return h
 
-    def _reslice(
-        self,
-        linear: tx.Any,
-        *,
-        history: tx.Any = None,
-    ) -> tx.Self:
-        obj = super()._reslice(linear, history=history)
-        if obj.raw is not None:
-            # The slice timing and the encoding axes follow the spatial
-            # axes.
-            _clear_slices(obj.raw)
-            obj.raw.set_dim_info(None, None, None)
-        return obj
+
+@propagates(nb.Nifti1Header, Operation)
+def _derive_header(
+    raw: nb.Nifti1Header,
+    operation: Operation,
+    *,
+    name: str,
+    source: tx.Any,
+) -> nb.Nifti1Header:
+    """The header of derived NIfTI metadata: a copy, whose slice timing
+    and encoding axes are cleared when the spatial axes move, since they
+    follow them."""
+    raw = copy.deepcopy(raw)
+    if operation.moves_space:
+        _clear_slices(raw)
+        raw.set_dim_info(None, None, None)
+    return raw
 
 
 # ----------------------------------------------------------------------
