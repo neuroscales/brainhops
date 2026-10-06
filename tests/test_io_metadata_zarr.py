@@ -206,7 +206,7 @@ def test_a_coarser_level_is_resliced_through_its_voxel_map(
     tmp_path,  # noqa: ANN001
     monkeypatch,  # noqa: ANN001
 ) -> None:
-    from brainhops.datamodel.metadata import EncodingDirection
+    from brainhops.datamodel.metadata import EncodingDirection, Resampled
     from brainhops.datamodel.transformations import Affine
 
     path = str(tmp_path / "scaled.ome.zarr")
@@ -223,27 +223,30 @@ def test_a_coarser_level_is_resliced_through_its_voxel_map(
     OmeZarrImage(
         images=images, axes=AXES, metadata=OmeZarrMetadata(name="b")
     ).save(path)
-    # OME-Zarr stores no spatial field: the map a level is resliced
+    # OME-Zarr stores no spatial field: the operation a level is derived
     # through is caught, and applied to metadata that holds some.
-    maps = []
-    reslice = OmeZarrMetadata._reslice
+    operations = []
+    derive = OmeZarrMetadata.derive
 
-    def spy(self, linear, **kwargs):  # noqa: ANN001, ANN003, ANN202
-        maps.append(linear)
-        return reslice(self, linear, **kwargs)
+    def spy(self, operation=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        operations.append(operation)
+        return derive(self, operation, **kwargs)
 
-    monkeypatch.setattr(OmeZarrMetadata, "_reslice", spy)
+    monkeypatch.setattr(OmeZarrMetadata, "derive", spy)
     image = io.load(path)
     coarse = image.images[1]
     assert coarse.metadata is not image.metadata
     assert coarse.metadata is not image.images[0].metadata
     assert coarse.metadata.name == "b"
-    # One map, for the coarser level: from the voxels of the first level
-    # to its own, half as many.
-    assert len(maps) == 1
-    assert np.allclose(maps[0], np.diag([0.5, 0.5, 0.5, 1.0]))
+    # The first level is derived without an operation; the coarser one is
+    # resampled, from the voxels of the first level to its own, half as
+    # many.
+    assert operations[0] is None
+    (resampled,) = [op for op in operations if op is not None]
+    assert isinstance(resampled, Resampled)
+    assert np.allclose(resampled.voxel_map, np.diag([0.5, 0.5, 0.5, 1.0]))
     meta = Metadata(phase_encoding_direction="j-", slice_timing=(0.0, 0.5))
-    derived = meta._reslice(maps[0])
+    derived = meta.derive(resampled)
     assert derived.phase_encoding_direction == EncodingDirection("j-")
     assert derived.slice_timing is None
 

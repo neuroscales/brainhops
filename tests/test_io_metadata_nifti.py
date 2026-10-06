@@ -216,13 +216,34 @@ def test_case4_none_clears_the_header_slot(scan, tmp_path) -> None:  # noqa: ANN
 
 
 def test_reslice_clears_the_grid_fields_on_write(scan, tmp_path) -> None:  # noqa: ANN001
+    from brainhops.datamodel.metadata import Resampled
+    from brainhops.datamodel.transformations import CartesianField
+
     image = io.load(scan)
-    image.metadata = image.metadata._reslice(None)
+    # A resampling through a map that is not affine.
+    image.metadata = image.metadata.derive(
+        Resampled(CartesianField(), image.geometry)
+    )
     image.save(tmp_path / "out.nii")
     h = _header(tmp_path / "out.nii")
     assert int(h["slice_code"]) == 0
     assert h.get_dim_info() == (None, None, None)
     assert h["descrip"].item() == b"a bold run"
+
+
+def test_an_index_along_time_keeps_the_slices_on_write(scan, tmp_path) -> None:  # noqa: ANN001
+    image = io.load(scan)
+    first = image[..., :3]
+    assert first.metadata.slice_timing == image.metadata.slice_timing
+    io.save(first, tmp_path / "out.nii")
+    h = _header(tmp_path / "out.nii")
+    assert h.get_dim_info() == _header(scan).get_dim_info()
+    assert int(h["slice_code"]) == int(_header(scan)["slice_code"])
+    assert float(h["slice_duration"]) == float(_header(scan)["slice_duration"])
+    # An index of a spatial axis clears the slice timing.
+    with pytest.warns(MetadataLossWarning, match="polarity"):
+        io.save(image[:, ::-1], tmp_path / "flipped.nii")
+    assert int(_header(tmp_path / "flipped.nii")["slice_code"]) == 0
 
 
 def test_slices_are_dropped_when_the_slice_axis_changes(

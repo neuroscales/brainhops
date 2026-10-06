@@ -341,8 +341,15 @@ def test_getitem_maps_a_direction_through_a_flip() -> None:
 
 
 def test_getitem_appends_to_the_history() -> None:
+    from brainhops.datamodel.metadata import EncodingDirection
+
     dwi = _dwi()
-    assert dwi[:, ::-1, :, :2].metadata.history == ("acquired", "getitem")
+    # One step, however many axes it changes, along with the fields.
+    both = dwi[:, ::-1, :, :2].metadata
+    assert both.history == ("acquired", "getitem")
+    assert both.bvalues == (0.0, 1000.0)
+    assert both.slice_timing is None
+    assert both.phase_encoding_direction == EncodingDirection("j")
     assert dwi[...].metadata.history == ("acquired", "getitem")
     assert dwi.metadata.history == ("acquired",)
     assert _image()[0].metadata is None

@@ -12,17 +12,14 @@ from brainhops._core.typing import ArrayProtocol
 
 # internals
 from ._transformations.multiscale import (
-    _as_affine,
     _as_affine_ignoring_fields,
     _at_resolution,
     _nearest_resolution_index,
 )
 from .base import DataModelBase, IdentityComparison
-from .enums import AxisType
-from .geometry import Geometry, _index2transform
-from .metadata import Metadata
+from .geometry import Geometry
+from .metadata import Indexed, Metadata, Resampled
 from .metadata._field import MetadataField
-from .systems import CoordinateSystem, _axes_or_unknown
 from .transformations import (
     CartesianField,
     Identity,
@@ -278,8 +275,8 @@ class SingleScaleImage(Image):
         if metadata is not None:
             # The grid is left out of the voxel map: it is the identity on
             # the voxel coordinates, but a field, which has no affine form.
-            metadata = metadata._reslice(
-                _linear_part(new2old.inverse()), history="reslice"
+            metadata = metadata.derive(
+                Resampled(new2old, geometry), history="reslice"
             )
         return SingleScaleImage(
             data=new_data,
@@ -353,8 +350,8 @@ class SingleScaleImage(Image):
         ]
         metadata = self.metadata
         if metadata is not None:
-            metadata = _derived_metadata(
-                metadata, index, self.shape, grid.input
+            metadata = metadata.derive(
+                Indexed(index, self.shape, grid.input), history="getitem"
             )
         return SingleScaleImage(
             data=data, transformations=transformations, metadata=metadata
@@ -572,115 +569,6 @@ class MultiScaleImage(Image):
             transformations=transformations,
             metadata=self.metadata,
         )
-
-
-def _derived_metadata(
-    metadata: Metadata,
-    index: tx.Tuple[tx.Any, ...],
-    shape: tx.Tuple[int, ...],
-    system: tx.Optional[CoordinateSystem],
-) -> Metadata:
-    """The metadata of `image[index]`, for an image of shape `shape` whose
-    voxel axes are those of `system`.
-
-    The index is expanded to one component per axis of the data. A
-    component that changes an axis typed `time`, `channel`, ... selects
-    along that type the positions it keeps (`_select`), or nothing when
-    it drops the axis. A component that changes a spatial axis, or an
-    axis of unknown type, or an index that moves such an axis to another
-    position (an integer or a `None` before it), changes the spatial
-    axes: the metadata is resliced last, through the linear map from the
-    old voxel coordinates to the new ones (`_reslice`), which is unknown
-    for an index other than integers, slices and `None`. The step is
-    recorded in `history` once, as `"getitem"`.
-    """
-    expanded = _expand_index(index, len(shape))
-    kinds = _axis_types(system, len(shape))
-    selections = []  # type: tx.List[tx.Tuple[AxisType, tx.Any]]
-    spatial = False
-    old = new = 0
-    for component in expanded:
-        if component is None:
-            new += 1
-            continue
-        kind, size = kinds[old], shape[old]
-        changes = not (
-            isinstance(component, slice)
-            and range(*component.indices(size)) == range(size)
-        )
-        if kind in (None, AxisType.space):
-            spatial = spatial or changes or old != new
-        elif changes:
-            kept = np.arange(size)[component]
-            selections.append((kind, kept if np.ndim(kept) == 1 else None))
-        old += 1
-        if not isinstance(component, (int, np.integer)):
-            new += 1
-    history = "getitem"
-    pending = len(selections) + spatial
-    if not pending:
-        return metadata.derive(history=history)
-    for kind, positions in selections:
-        pending -= 1
-        metadata = metadata._select(
-            kind, positions, history=None if pending else history
-        )
-    if spatial:
-        linear = None
-        if all(c is None or isinstance(c, (int, slice)) for c in expanded):
-            # The map of the index goes from the new voxels to the old
-            # ones; its pseudo-inverse goes back, with a zero column for
-            # each axis an integer dropped.
-            sub2full, _ = _index2transform(index, shape, system)
-            linear = np.linalg.pinv(np.asarray(sub2full.matrix)[:, :-1])
-        metadata = metadata._reslice(linear, history=history)
-    return metadata
-
-
-def _expand_index(
-    index: tx.Tuple[tx.Any, ...], ndim: int
-) -> tx.Tuple[tx.Any, ...]:
-    """An index with its `...` replaced by as many full slices as the axes
-    it stands for, and the axes it leaves out filled at the end, as
-    `_index2transform` expands it."""
-    # Compared by identity, so that an array in the index is not compared
-    # with `...` element by element.
-    at = next((i for i, c in enumerate(index) if c is ...), None)
-    if at is None:
-        index, at = (*index, ...), len(index)
-    used = sum(1 for c in index if c is not None and c is not ...)
-    fill = (slice(None),) * (ndim - used)
-    return index[:at] + fill + index[at + 1 :]
-
-
-def _axis_types(
-    system: tx.Optional[CoordinateSystem], ndim: int
-) -> tx.List[tx.Optional[AxisType]]:
-    """The type of each voxel axis of an image, `None` where it is not
-    known."""
-    axes = _axes_or_unknown(system)
-    if axes == [...]:
-        return [None] * ndim
-    if axes.is_open:
-        axes = axes.expand(ndim)
-    kinds = []  # type: tx.List[tx.Optional[AxisType]]
-    for axis in list(axes)[:ndim]:
-        try:
-            kinds.append(AxisType(getattr(axis, "type", None)))
-        except ValueError:
-            kinds.append(None)
-    return kinds + [None] * (ndim - len(kinds))
-
-
-def _linear_part(
-    transformation: Transformation,
-) -> tx.Optional[np.ndarray]:
-    """The linear part of a transformation, or `None` when it is not
-    affine."""
-    affine = _as_affine(transformation)
-    if affine is None:
-        return None
-    return np.asarray(affine.matrix, dtype=float)[:, :-1]
 
 
 def _reslice_voxel2world(

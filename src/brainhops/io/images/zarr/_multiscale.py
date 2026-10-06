@@ -19,11 +19,8 @@ from brainhops.datamodel.axes import (
     SpaceAxis,
     TimeAxis,
 )
-from brainhops.datamodel.images import (
-    MultiScaleImage,
-    SingleScaleImage,
-    _linear_part,
-)
+from brainhops.datamodel.images import MultiScaleImage, SingleScaleImage
+from brainhops.datamodel.metadata import Resampled
 from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.systems import AxisList, CoordinateSystem
@@ -89,8 +86,8 @@ class OmeZarrLevel(ZarrImage):
 
     Its `metadata` is a copy of the metadata of the pyramid, derived for
     the level: the first level with `derive()`, and every other level
-    resliced (`_reslice`) through the map from the voxels of the first
-    level to its own, since it samples space differently.
+    with `derive(Resampled(...))`, through the map from its voxels to
+    those of the first level, since it samples space differently.
     Editing the metadata of a level does not edit the metadata of the
     pyramid, which is the metadata that is written.
     """
@@ -240,12 +237,14 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
                 level.metadata = metadata.derive()
                 continue
             # A coarser level samples space differently: its metadata is
-            # resliced through the map from the voxels of the first level
-            # to its own.
-            voxel_map = level.transformation.inverse() @ (
-                levels[0].transformation
+            # resampled through the map from its voxels to those of the
+            # first level.
+            new2old = levels[0].transformation.inverse() @ (
+                level.transformation
             )
-            level.metadata = metadata._reslice(_linear_part(voxel_map))
+            level.metadata = metadata.derive(
+                Resampled(new2old, level.geometry)
+            )
 
     # ---- load --------------------------------------------------------
 
