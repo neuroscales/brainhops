@@ -1985,10 +1985,10 @@ holds.
 
 - **The parsers (M8).** `MetadataParser` only reads, as a `FileParser`
   does: its `to_file`, which refused, is gone, and plain Zarr defines
-  its own. It keeps `from_bytes`, which hands the bytes to
-  `from_fileobj` in a stream, since a format implements `from_fileobj`
-  and `FileParser` routes the other way (whether that should be the
-  default of the binary parsers is issue #297). `Hdf5MetadataParser`
+  its own. Its `from_bytes` override is gone too: since #311 (issue
+  #297), `FileParser.from_bytes` hands the bytes to `from_fileobj` in a
+  stream when a class implements `from_fileobj`, as every format
+  does. `Hdf5MetadataParser`
   lives next to `Hdf5Parser`, in `brainhops.io.base.hdf5`, and is an
   `Hdf5Parser`, whose routing of paths, streams and bytes to `sniff_h5`
   and `from_h5` it uses rather than its own. `ItkH5Metadata` (and

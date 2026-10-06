@@ -122,8 +122,8 @@ comes first among its bases, and owns no registry. It is a `FileParser`:
 the format implements `from_fileobj(file)`, which reads the raw record
 of an open binary file, and nothing else (a NIfTI header, never the
 voxels), then builds the metadata with `from_raw`; `from_filename` opens
-a path in binary mode and hands it over, and `from_bytes` wraps the
-bytes in a stream. A format that reads a path otherwise overrides
+a path in binary mode and hands it over, and `FileParser.from_bytes`
+wraps the bytes in a stream, since the class implements `from_fileobj`. A format that reads a path otherwise overrides
 `from_filename` too (MGH, whose tags are read lazily from a path). A
 format stored in HDF5 derives from `Hdf5MetadataParser` instead (next to
 `Hdf5Parser`, in `brainhops.io.base.hdf5`), and implements

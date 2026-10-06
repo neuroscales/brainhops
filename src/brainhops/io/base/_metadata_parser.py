@@ -17,12 +17,6 @@ whose `load` reads the metadata of a file in any of these formats.
 
 __all__ = ["MetadataParser"]
 
-# stdlib
-from io import BytesIO
-
-# dependencies
-import typing_extensions as tx
-
 # internals
 from .parsers import FileParser
 
@@ -35,8 +29,10 @@ class MetadataParser(FileParser):
     open file and builds the metadata with `from_raw`, and the sniffers
     that recognise its files; a path is opened by `from_filename`, in
     binary mode, and handed to `from_fileobj`, and bytes are wrapped in a
-    stream by `from_bytes`. A format that reads paths otherwise (MGH
-    reads its tags lazily from a path) overrides `from_filename` too.
+    stream and handed to it too (`FileParser.from_bytes` does so for a
+    class that implements `from_fileobj`). A format that reads paths
+    otherwise (MGH reads its tags lazily from a path) overrides
+    `from_filename` too.
     The parser only reads, as a `FileParser` does: a format whose record
     is an object of its own on disk (the attributes of a Zarr array)
     defines its own `to_file`, and the record of any other format is
@@ -52,30 +48,3 @@ class MetadataParser(FileParser):
     """
 
     _READ_MODE = "rb"
-
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs: tx.Any) -> tx.Any:
-        """
-        Read the metadata of a file held in memory, by handing the bytes,
-        wrapped in a stream, to `from_fileobj`.
-
-        `FileParser` routes the other way (`from_fileobj` reads the whole
-        content and hands it to `from_bytes`), which suits a parser that
-        decodes a whole file, but not one that reads a raw record alone,
-        from the start of a stream: a format implements `from_fileobj`,
-        and `FileBasedMetadata.load(content)` reaches it through this
-        method.
-
-        Parameters
-        ----------
-        content : bytes
-            The content of the file.
-        **kwargs
-            Options of the format's reader.
-
-        Returns
-        -------
-        Metadata
-            The metadata of the file, with its raw record.
-        """
-        return cls.from_fileobj(BytesIO(content), **kwargs)
