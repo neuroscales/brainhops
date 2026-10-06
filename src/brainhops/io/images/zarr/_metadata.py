@@ -4,7 +4,7 @@ The metadata of Zarr images: `ZarrMetadata` for a plain array, and
 
 **Plain Zarr.** A plain array has no metadata convention, only free-form
 attributes. The vocabulary is stored as a BIDS-style sidecar (the keys of
-[`Metadata.to_bids`][brainhops.datamodel.metadata.Metadata.to_bids]) under
+[`to_bids`][brainhops.io.metadata.bids.to_bids]) under
 the array attribute `"brainhops"`, and `extra` maps to the other
 attributes of the array. Everything but the diffusion fields (which are
 not sidecar keys) is supported. The raw record (`raw`) is a `ZarrRaw`:
@@ -43,7 +43,14 @@ There is one metadata object per pyramid; each level holds a derived copy
 (see `OmeZarrImage`).
 """
 
-__all__ = ["OmeZarrMetadata", "OmeZarrRaw", "ZarrMetadata", "ZarrRaw"]
+__all__ = [
+    "OmeZarrMetadata",
+    "OmeZarrRaw",
+    "ZarrMetadata",
+    "ZarrRaw",
+    "node_attributes",
+    "write_attributes",
+]
 
 # stdlib
 import copy
@@ -52,6 +59,7 @@ import copy
 import numpy as np
 import typing_extensions as tx
 from abczarr import ZarrArray, ZarrGroup
+from abczarr import open as open_node
 
 # internals
 from brainhops.datamodel.metadata import (
@@ -80,6 +88,9 @@ from brainhops.io.metadata._json import (
     encode_changes,
     encode_extra,
 )
+
+# locals
+from ._ome import looks_like_multiscale, read_multiscale
 
 # The array attribute that holds the vocabulary of a plain Zarr image.
 BRAINHOPS_KEY = "brainhops"
@@ -152,6 +163,7 @@ class ZarrRaw:
         return f"ZarrRaw(attrs={sorted(self.attrs)})"
 
 
+# Above the two formats, which derive from it.
 class _ZarrMetadataParser(MetadataParser):
     """
     The metadata parser of a Zarr store: a store is a directory, read
@@ -404,8 +416,6 @@ class ZarrMetadata(
         ZarrMetadata
             The metadata of the array, with its `ZarrRaw` as `raw`.
         """
-        from ._image import node_attributes
-
         return cls.from_raw(ZarrRaw(node_attributes(node), node))
 
     def to_file(self, file: tx.Any, **kwargs: tx.Any) -> None:
@@ -430,8 +440,6 @@ class ZarrMetadata(
         MetadataLossError
             If something is lost under the `"raise"` policy.
         """
-        from ._image import write_attributes
-
         raw = self.to_raw(**kwargs)
         node = _open(file, "r+")
         write_attributes(node, raw.attrs, self.attributes)
@@ -474,7 +482,7 @@ class ZarrMetadata(
             for name, value in changed.items()
             if name not in ("extra", "data_type")
         }
-        encode_changes(block, fields)
+        encode_changes(block, fields, report=report)
         if "extra" in changed:
             encode_extra(
                 attrs,
@@ -651,8 +659,6 @@ class OmeZarrMetadata(
         float
             The confidence, in `[0, 1]`.
         """
-        from ._ome import looks_like_multiscale
-
         if isinstance(node, ZarrGroup) and looks_like_multiscale(node):
             return Confidence.CERTAIN
         return 0.0
@@ -674,9 +680,6 @@ class OmeZarrMetadata(
         OmeZarrMetadata
             The metadata of the pyramid, with its `OmeZarrRaw` as `raw`.
         """
-        from ._image import node_attributes
-        from ._ome import read_multiscale
-
         multiscale, _ = read_multiscale(node)
         return cls.from_raw(
             OmeZarrRaw.from_attributes(multiscale, node_attributes(node), node)
@@ -790,14 +793,68 @@ class OmeZarrMetadata(
 
 
 # ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+
+def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
+    """
+    Read the attributes of a Zarr node, as plain JSON.
+
+    Parameters
+    ----------
+    node : ZarrArray or ZarrGroup
+        The node.
+
+    Returns
+    -------
+    dict
+        Its attributes, or an empty dict when they cannot be read.
+    """
+    try:
+        attrs = node.attrs
+        return {key: attrs[key] for key in attrs}
+    except Exception:
+        return {}
+
+
+def write_attributes(
+    node: tx.Any,
+    attrs: tx.Mapping[str, tx.Any],
+    before: tx.Optional[tx.Mapping[str, tx.Any]] = None,
+) -> None:
+    """
+    Write attributes onto a Zarr node.
+
+    Only the keys whose value changed are written, and the keys of
+    `before` (the raw record that was read) that are no longer in `attrs`
+    are removed.
+
+    Parameters
+    ----------
+    node : ZarrArray or ZarrGroup
+        The node, open for writing.
+    attrs : mapping
+        The attributes to write.
+    before : mapping, optional
+        The attributes the record was read with.
+    """
+    current = node_attributes(node)
+    for key in before or {}:
+        if key not in attrs and key in current:
+            del node.attrs[key]
+    for key, value in attrs.items():
+        if current.get(key) != value:
+            node.attrs[key] = value
+
+
+# ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
 
 
 def _open(location: tx.Any, mode: str) -> tx.Any:
     """Open the node of a store, or raise if there is none."""
-    from abczarr import open as open_node
-
     node = open_node(location, mode)
     if node is None:
         raise ParserExistsError(f"No Zarr store at {location}")

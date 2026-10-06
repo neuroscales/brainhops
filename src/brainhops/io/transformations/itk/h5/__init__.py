@@ -129,7 +129,14 @@ following specific objects:
       properly spelled version cannot be indexed.
 """
 
-__all__ = ["H5Transform", "H5Header", "H5TransformParser", "DelayedH5Array"]
+__all__ = [
+    "H5Transform",
+    "H5Header",
+    "H5TransformParser",
+    "DelayedH5Array",
+    "ItkH5Metadata",
+]
 
+from ._metadata import ItkH5Metadata
 from ._parser import DelayedH5Array, H5Header, H5TransformParser
 from ._xform import H5Transform

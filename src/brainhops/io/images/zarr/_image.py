@@ -33,31 +33,6 @@ from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 from ._metadata import ZarrMetadata, ZarrRaw
 
 
-def node_attributes(node: tx.Any) -> tx.Dict[str, tx.Any]:
-    """The attributes of a node, as plain JSON."""
-    try:
-        attrs = node.attrs
-        return {key: attrs[key] for key in attrs}
-    except Exception:
-        return {}
-
-
-def write_attributes(
-    node: tx.Any,
-    attrs: tx.Mapping[str, tx.Any],
-    before: tx.Optional[tx.Mapping[str, tx.Any]] = None,
-) -> None:
-    """Write `attrs` onto a node, and remove the keys of `before` (the
-    raw record that was read) that are no longer in it."""
-    current = node_attributes(node)
-    for key in before or {}:
-        if key not in attrs and key in current:
-            del node.attrs[key]
-    for key, value in attrs.items():
-        if current.get(key) != value:
-            node.attrs[key] = value
-
-
 @register_format
 class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
     """

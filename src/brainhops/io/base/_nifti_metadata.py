@@ -71,33 +71,6 @@ from brainhops.io.base._metadata_parser import MetadataParser
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 from brainhops.io.metadata import FileBasedMetadata
 
-# NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
-_XCODES = {
-    1: "scanner",
-    2: "aligned",
-    3: "talairach",
-    4: "mni",
-    5: "template",
-}
-
-
-# Intent codes that retype the axes of the data (see `nifti.py`); a
-# writer never takes them from a record, only from the data model.
-_STRUCTURAL_INTENTS = frozenset(
-    {1004, 1006, 1008, 1009, 2001, 2002, 2003, 2004, 2005}
-    | {2006, 2007, 2008, 2009}
-)
-
-
-# Seconds per NIfTI time unit.
-_TIME_UNITS = {"sec": 1.0, "msec": 1e-3, "usec": 1e-6}
-
-
-_DESCRIP_BYTES = 80
-
-
-_AUX_FILE_BYTES = 24
-
 
 @register_format
 class NiftiMetadata(
@@ -201,6 +174,7 @@ class NiftiMetadata(
         float
             The confidence, in `[0, 1]`.
         """
+        # Not at the top: `brainhops.io.base.nifti` imports this module.
         from brainhops.io.base.nifti import is_nifti_stream
 
         if is_nifti_stream(file):
@@ -254,6 +228,7 @@ class NiftiMetadata(
         NiftiMetadata
             The metadata of the header, with the header as `raw`.
         """
+        # Not at the top: `brainhops.io.base.nifti` imports this module.
         from brainhops.io.base.nifti import _load_nifti_header
 
         return cls.from_raw(_load_nifti_header(file))
@@ -380,7 +355,181 @@ class NiftiMetadata(
 
 
 # ----------------------------------------------------------------------
-#   DECODING
+#   SHARED WITH THE IMAGE CLASS
+# ----------------------------------------------------------------------
+
+
+def time_step(image: tx.Any) -> tx.Optional[float]:
+    """
+    The time step of an image, in seconds, as its data model gives it.
+
+    It is the spacing that the NIfTI writer stores as `pixdim[4]`: the
+    scale of the time axis of the image's preferred transformation, from
+    the voxel space to the world space. A time axis that the
+    transformation does not map to time -- one that still counts frames,
+    as the reader leaves a time axis whose spacing is zero, the NIfTI
+    spelling of a missing repetition time -- gives no time step (see
+    [`_nifti_geometry`][brainhops.io.base.nifti._nifti_geometry]). The
+    step is converted from the unit of the time axis of the world space,
+    and taken to be in seconds when that axis has no time unit.
+
+    Parameters
+    ----------
+    image : Image
+        The image.
+
+    Returns
+    -------
+    float or None
+        The time step in seconds, or `None` when the data model gives
+        none.
+    """
+    # Not at the top: `brainhops.io.base.nifti` imports this module.
+    from brainhops.io.base.nifti import _geometry_time_step
+
+    try:
+        transformation = image.transformation
+    except Exception:
+        return None
+    shape = _data_shape(image)
+    if transformation is None or shape is None:
+        return None
+    return _geometry_time_step(transformation, len(shape))
+
+
+def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
+    """
+    Store a time step as `pixdim[4]`, in the time unit of the header.
+
+    A header without a time unit is given seconds.
+
+    Parameters
+    ----------
+    h : nibabel.Nifti1Header
+        The header to edit, in place.
+    seconds : float
+        The time step, in seconds.
+    """
+    space, time = h.get_xyzt_units()
+    if time not in _TIME_UNITS:
+        h.set_xyzt_units(space, "sec")
+        time = "sec"
+    h["pixdim"][4] = float(seconds) / _TIME_UNITS[time]
+
+
+def copy_record(
+    target: nb.Nifti1Header,
+    record: tx.Optional[nb.Nifti1Header],
+    *,
+    intent: bool = True,
+) -> None:
+    """
+    Copy what is safe to keep from the record of the file that was read
+    onto a header that the writer has just built.
+
+    `descrip`, `aux_file`, `cal_min` and `cal_max` are always kept, and
+    so are the header extensions, unless the writer added its own.
+    `dim_info` is kept when its axes still exist, and the `slice_*` slots
+    are kept when the slice axis kept its length. An intent that does not
+    retype the axes is kept when the writer set none. The geometry,
+    `xyzt_units`, the data type and the intensity scaling are never
+    touched.
+
+    Parameters
+    ----------
+    target : nibabel.Nifti1Header
+        The header that the writer built, edited in place.
+    record : nibabel.Nifti1Header or None
+        The header of the file that was read. Nothing is copied when it
+        is `None`.
+    intent : bool, optional
+        Whether to keep the intent of the record.
+    """
+    if record is None:
+        return
+    for slot in ("descrip", "aux_file", "cal_min", "cal_max"):
+        try:
+            target[slot] = record[slot]
+        except (KeyError, ValueError):
+            pass
+
+    shape, old_shape = _shape(target), _shape(record)
+    dims = record.get_dim_info()
+    if all(d is None or d < len(shape) for d in dims):
+        target.set_dim_info(*dims)
+        slice_dim = dims[2]
+        if (
+            slice_dim is not None
+            and slice_dim < len(old_shape)
+            and shape[slice_dim] == old_shape[slice_dim]
+        ):
+            for slot in (
+                "slice_code",
+                "slice_start",
+                "slice_end",
+                "slice_duration",
+            ):
+                target[slot] = record[slot]
+
+    code = int(record["intent_code"])
+    if (
+        intent
+        and code
+        and code not in _STRUCTURAL_INTENTS
+        and not int(target["intent_code"])
+    ):
+        for slot in (
+            "intent_code",
+            "intent_name",
+            "intent_p1",
+            "intent_p2",
+            "intent_p3",
+        ):
+            target[slot] = record[slot]
+
+    # The extensions are kept unless the writer added its own (NiftyReg
+    # writes structural ones, which the record holds too).
+    extensions = getattr(record, "extensions", None)
+    if extensions and not getattr(target, "extensions", True):
+        for extension in extensions:
+            target.extensions.append(extension)
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE
+# ----------------------------------------------------------------------
+
+
+# NIfTI xform codes and their names; see `brainhops.io.base.nifti`.
+_XCODES = {
+    1: "scanner",
+    2: "aligned",
+    3: "talairach",
+    4: "mni",
+    5: "template",
+}
+
+
+# Intent codes that retype the axes of the data (see `nifti.py`); a
+# writer never takes them from a record, only from the data model.
+_STRUCTURAL_INTENTS = frozenset(
+    {1004, 1006, 1008, 1009, 2001, 2002, 2003, 2004, 2005}
+    | {2006, 2007, 2008, 2009}
+)
+
+
+# Seconds per NIfTI time unit.
+_TIME_UNITS = {"sec": 1.0, "msec": 1e-3, "usec": 1e-6}
+
+
+_DESCRIP_BYTES = 80
+
+
+_AUX_FILE_BYTES = 24
+
+
+# ----------------------------------------------------------------------
+#   PRIVATE: DECODING
 # ----------------------------------------------------------------------
 
 
@@ -460,7 +609,7 @@ def _decode_slice_timing(
 
 
 # ----------------------------------------------------------------------
-#   ENCODING
+#   PRIVATE: ENCODING
 # ----------------------------------------------------------------------
 
 
@@ -603,144 +752,3 @@ def _data_shape(image: tx.Any) -> tx.Optional[tx.Tuple[int, ...]]:
             return None
     shape = getattr(data, "shape", None)
     return None if shape is None else tuple(int(d) for d in shape)
-
-
-# ----------------------------------------------------------------------
-#   SHARED WITH THE IMAGE CLASS
-# ----------------------------------------------------------------------
-
-
-def time_step(image: tx.Any) -> tx.Optional[float]:
-    """
-    The time step of an image, in seconds, as its data model gives it.
-
-    It is the spacing that the NIfTI writer stores as `pixdim[4]`: the
-    scale of the time axis of the image's preferred transformation, from
-    the voxel space to the world space. A time axis that the
-    transformation does not map to time -- one that still counts frames,
-    as the reader leaves a time axis whose spacing is zero, the NIfTI
-    spelling of a missing repetition time -- gives no time step (see
-    [`_nifti_geometry`][brainhops.io.base.nifti._nifti_geometry]). The
-    step is converted from the unit of the time axis of the world space,
-    and taken to be in seconds when that axis has no time unit.
-
-    Parameters
-    ----------
-    image : Image
-        The image.
-
-    Returns
-    -------
-    float or None
-        The time step in seconds, or `None` when the data model gives
-        none.
-    """
-    # Imported here: the NIfTI parser imports this module.
-    from brainhops.io.base.nifti import _geometry_time_step
-
-    try:
-        transformation = image.transformation
-    except Exception:
-        return None
-    shape = _data_shape(image)
-    if transformation is None or shape is None:
-        return None
-    return _geometry_time_step(transformation, len(shape))
-
-
-def set_time_step(h: nb.Nifti1Header, seconds: float) -> None:
-    """
-    Store a time step as `pixdim[4]`, in the time unit of the header.
-
-    A header without a time unit is given seconds.
-
-    Parameters
-    ----------
-    h : nibabel.Nifti1Header
-        The header to edit, in place.
-    seconds : float
-        The time step, in seconds.
-    """
-    space, time = h.get_xyzt_units()
-    if time not in _TIME_UNITS:
-        h.set_xyzt_units(space, "sec")
-        time = "sec"
-    h["pixdim"][4] = float(seconds) / _TIME_UNITS[time]
-
-
-def copy_record(
-    target: nb.Nifti1Header,
-    record: tx.Optional[nb.Nifti1Header],
-    *,
-    intent: bool = True,
-) -> None:
-    """
-    Copy what is safe to keep from the record of the file that was read
-    onto a header that the writer has just built.
-
-    `descrip`, `aux_file`, `cal_min` and `cal_max` are always kept, and
-    so are the header extensions, unless the writer added its own.
-    `dim_info` is kept when its axes still exist, and the `slice_*` slots
-    are kept when the slice axis kept its length. An intent that does not
-    retype the axes is kept when the writer set none. The geometry,
-    `xyzt_units`, the data type and the intensity scaling are never
-    touched.
-
-    Parameters
-    ----------
-    target : nibabel.Nifti1Header
-        The header that the writer built, edited in place.
-    record : nibabel.Nifti1Header or None
-        The header of the file that was read. Nothing is copied when it
-        is `None`.
-    intent : bool, optional
-        Whether to keep the intent of the record.
-    """
-    if record is None:
-        return
-    for slot in ("descrip", "aux_file", "cal_min", "cal_max"):
-        try:
-            target[slot] = record[slot]
-        except (KeyError, ValueError):
-            pass
-
-    shape, old_shape = _shape(target), _shape(record)
-    dims = record.get_dim_info()
-    if all(d is None or d < len(shape) for d in dims):
-        target.set_dim_info(*dims)
-        slice_dim = dims[2]
-        if (
-            slice_dim is not None
-            and slice_dim < len(old_shape)
-            and shape[slice_dim] == old_shape[slice_dim]
-        ):
-            for slot in (
-                "slice_code",
-                "slice_start",
-                "slice_end",
-                "slice_duration",
-            ):
-                target[slot] = record[slot]
-
-    code = int(record["intent_code"])
-    if (
-        intent
-        and code
-        and code not in _STRUCTURAL_INTENTS
-        and not int(target["intent_code"])
-    ):
-        for slot in (
-            "intent_code",
-            "intent_name",
-            "intent_p1",
-            "intent_p2",
-            "intent_p3",
-        ):
-            target[slot] = record[slot]
-
-    # The extensions are kept unless the writer added its own (NiftyReg
-    # writes structural ones, which the record holds too).
-    extensions = getattr(record, "extensions", None)
-    if extensions and not getattr(target, "extensions", True):
-        for extension in extensions:
-            target.extensions.append(extension)

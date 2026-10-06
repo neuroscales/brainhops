@@ -30,20 +30,25 @@ image classes import.
 
 The package `brainhops.datamodel.metadata` exports what a user needs
 (`Metadata`, `UNSUPPORTED`, `Scope`, the value classes, the report and
-the loss policy). The base of a format's metadata lives in `brainhops.io`,
-as `FileBasedImage` does, since it derives from the dispatcher of the
-formats: `from brainhops.io.metadata import FileBasedMetadata,
-OpaqueMetadata`. The data model never imports it. A format author imports
+the loss policy), and the vocabulary groups that `supports=` names
+(`ProvenanceVocabulary`, `MRIVocabulary`, `DiffusionVocabulary`,
+`DisplayVocabulary`, `StorageVocabulary`, `MicroscopyVocabulary`,
+`TransformVocabulary`, and their base `Vocabulary`). The base of a
+format's metadata lives in `brainhops.io`, as `FileBasedImage` does,
+since it derives from the dispatcher of the formats: `from
+brainhops.io.metadata import FileBasedMetadata, OpaqueMetadata`. The
+data model never imports it. A format author imports
 the rest from the private modules that define it:
 
 | Module | Names |
 |---|---|
-| `brainhops.datamodel.metadata._vocabulary` | the groups (`ProvenanceVocabulary`, ..., `StorageVocabulary`, the base `Vocabulary`), the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
+| `brainhops.datamodel.metadata._vocabulary` | the annotations `Bids`, `Scoped` and `Along`, and the tables `VOCABULARY`, `GROUPS`, `BIDS_KEYS`, `SCOPES`, `ALONG` |
 | `brainhops.datamodel.metadata._field` | `MetadataField` |
 | `brainhops.datamodel.metadata._report` | `apply_loss_policy`, `collect_loss_reports`, `OnLoss`, `LossPolicy` |
-| `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage` |
+| `brainhops.datamodel.metadata._dtype` | `preferred_dtype`, `preferred_storage`, `stored_values` |
 | `brainhops.datamodel.metadata._sentinel` | `ALL`, `Maybe`, `Unsupported` |
-| `brainhops.io.base._metadata_parser` | `MetadataParser`, `Hdf5MetadataParser` |
+| `brainhops.io.base._metadata_parser` | `MetadataParser` |
+| `brainhops.io.base.hdf5` | `Hdf5MetadataParser` (needs `h5py`) |
 | `brainhops.io.metadata._json` | the JSON codec of key/value stores |
 | `brainhops.io.metadata._sync` | `sync_metadata` |
 
@@ -88,50 +93,52 @@ value of its parent, so it declares its own.
 
 The type argument of `FileBasedMetadata` declares the type of the raw
 record, `raw`, which stays out of `repr` and `==`; the class does not
-declare `raw` again (what the record holds goes in its docstring). A new,
-empty record is that type called without arguments (`MyRaw()`), for an
-object built in memory or converted from another format. Do not derive a
-shared base of several formats from `FileBasedMetadata`: its field would
-win by the MRO over the type argument of each format (the Zarr formats
-share `_ZarrMetadataParser`, a `MetadataParser` only). The type matters
-beyond documentation. `raw` and the read-time
-snapshot are fields of `Metadata`, so generic metadata carries the record
-of the metadata it was converted from, and a conversion gives the record
-back to a format only when the record is an instance of the type that the
-format declares (`FileBasedMetadata._accepts_raw`). Every format must
+declare `raw` again (what the record holds goes in its docstring). A
+new, empty record is that type called without arguments (`MyRaw()`), for
+an object built in memory or converted from another format. Do not
+derive a shared base of several formats from `FileBasedMetadata`: its
+field would win by the MRO over the type argument of each format (the
+Zarr formats share `_ZarrMetadataParser`, a `MetadataParser` only). The
+type matters beyond documentation. `raw` and the read-time snapshot are
+fields of `Metadata`, so generic metadata carries the record of the
+metadata it was converted from, and a conversion gives the record back
+to a format only when the record is an instance of the type that the
+format declares (`_raw_class`, which `FileBasedMetadata` sets to
+`type(None)` until a format declares its own). Every format must
 therefore declare a type of its own: wrap a plain `dict` or `tuple` in a
-small class (`ZarrRaw`, `X5Raw`), never share a type with another format,
-and do not declare a subclass of the type of another format.
+small class (`ZarrRaw`, `X5Raw`), never share a type with another
+format, and do not declare a subclass of the type of another format.
 `tests/test_io_metadata_matrix.py` checks it. A format with no record
 declares `FileBasedMetadata[None]`. A read alias under the familiar name
 of the record (`header`, `tags`, `node`) is a plain property over `raw`.
 
 `FileBasedMetadata` is the dispatcher of the formats whose files hold
-metadata: `FileBasedMetadata.load(path, hint=...)`, which is what
-`Metadata.load(path)` calls, picks among the classes registered into it
-with `@register_format`, by their `EXTENSIONS`, `HINTS` and sniffers, as
-`brainhops.io.load` picks an image parser. It is not a
-`FileBasedObject`, so `brainhops.io.load` never returns metadata. The
-parser of a format, a `MetadataParser`, comes first among its bases, and
-owns no registry. It is a `FileParser`: the format implements
-`from_fileobj(file)`, which reads the raw record of an open binary file,
-and nothing else (a NIfTI header, never the voxels), then builds the
-metadata with `from_raw`; `from_filename` opens a path in binary mode
-and hands it over, and `from_bytes` wraps the bytes in a stream. A format
-that reads a path otherwise overrides `from_filename` too (MGH, whose
-tags are read lazily from a path). A format stored in HDF5 derives from
-`Hdf5MetadataParser` instead, and implements `sniff_h5(h5file)` and
-`from_h5(h5file, **kwargs)`, as an `Hdf5Parser` format does; a Zarr
-format implements `sniff_node(node)` and `from_node(node)`, as
-`ZarrImage` does. A format whose record is an object of its own on disk
-(the attributes of a Zarr array) overrides `to_file(file)` to write
-`to_raw()` there; every other format refuses, since its record is
-written along with the data. The reader of the image or transformation
-shares the code that reads the record with the parser
-(`_load_nifti_header`, `read_mgh_raw`, `read_h5_header`). A format whose
-files hold no metadata (FLIRT, ITK `.tfm`) is not a `MetadataParser`,
-and overrides `load` to refuse (`OpaqueMetadata.load`, from which
-`ItkMetadata` inherits, and `FlirtMetadata.load`).
+metadata: `FileBasedMetadata.load(path, hint=...)` picks among the
+classes registered into it with `@register_format`, by their
+`EXTENSIONS`, `HINTS` and sniffers, as `brainhops.io.load` picks an
+image parser. It is not a `FileBasedObject`, so `brainhops.io.load`
+never returns metadata. The parser of a format, a `MetadataParser`,
+comes first among its bases, and owns no registry. It is a `FileParser`:
+the format implements `from_fileobj(file)`, which reads the raw record
+of an open binary file, and nothing else (a NIfTI header, never the
+voxels), then builds the metadata with `from_raw`; `from_filename` opens
+a path in binary mode and hands it over, and `from_bytes` wraps the
+bytes in a stream. A format that reads a path otherwise overrides
+`from_filename` too (MGH, whose tags are read lazily from a path). A
+format stored in HDF5 derives from `Hdf5MetadataParser` instead (next to
+`Hdf5Parser`, in `brainhops.io.base.hdf5`), and implements
+`sniff_h5(h5file, error=False)` and `from_h5(h5file, **kwargs)`, as an
+`Hdf5Parser` format does; a Zarr format implements `sniff_node(node)`
+and `from_node(node)`, as `ZarrImage` does. A format whose record is an
+object of its own on disk (the attributes of a Zarr array) defines
+`to_file(file)` to write `to_raw()` there; no other format has a
+`to_file`, since its record is written along with the data. The reader
+of the image or transformation shares the code that reads the record
+with the parser (`_load_nifti_header`, `read_mgh_raw`,
+`read_h5_header`). A format whose files hold no metadata (FLIRT, ITK
+`.tfm`) is not a `MetadataParser`, and overrides `load` to refuse
+(`OpaqueMetadata.load`, from which `ItkMetadata` inherits, and
+`FlirtMetadata.load`).
 
 ## Class keyword
 
@@ -258,14 +265,19 @@ and warns once, with
 **JSON and key/value stores.** A format whose store is a JSON object or
 a set of key/value pairs (x5 node `Metadata`, Zarr attributes, and the
 MRtrix and NRRD headers to come) does not write its own codec:
-`brainhops/io/metadata/_json.py` holds the one BIDS sidecars use.
-`decode_object(obj, names)` splits an object into the values of the
-vocabulary fields `names` (read from their sidecar keys, BIDS keys or
-`CamelCase` names) and the other keys, which are `extra`;
-`encode_changes(obj, changed)` writes the changed fields back under
-their keys (`None` removes one), and `encode_extra(obj, diff, report=,
-reserved=)` applies the `extra` diff, reporting the keys the format
-keeps for itself as lost. `X5Metadata` is the shortest example.
+`brainhops/io/metadata/_json.py` holds the one BIDS sidecars use (the
+sidecars themselves are read and written by
+`brainhops.io.metadata.bids`: `from_bids`, `to_bids`, and the
+`BidsSidecar` reader that `FileBasedMetadata.load` picks for a `.json`
+file; the data model does no input or output). `decode_object(obj,
+names)` splits an object into the values of the vocabulary fields
+`names` (read from their sidecar keys, BIDS keys or `CamelCase` names)
+and the other keys, which are `extra`; `encode_changes(obj, changed,
+report=)` writes the changed fields back under their keys (`None`
+removes one, and a value JSON cannot hold is reported as lost), and
+`encode_extra(obj, diff, report=, reserved=)` applies the `extra` diff,
+reporting the keys the format keeps for itself as lost. `X5Metadata` is
+the shortest example.
 
 ## The `metadata` field of a format class
 
@@ -302,8 +314,8 @@ converts it and reports the loss.
    `_encode_raw`.
 2. When the file holds metadata, put a `MetadataParser` first among its
    bases (`@register_format`, `EXTENSIONS`, `HINTS`, a sniffer and
-   `from_fileobj`), so that `Metadata.load` reads it; otherwise, override
-   `load` to refuse.
+   `from_fileobj`), so that `FileBasedMetadata.load` reads it;
+   otherwise, override `load` to refuse.
 3. In the parser's `__post_init__`, read the metadata from the raw
    record (`sync_metadata`); in the writer, encode it (`update_raw`),
    check the finished record (`check_raw`) and apply the loss policy.

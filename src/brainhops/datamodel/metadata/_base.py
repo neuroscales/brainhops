@@ -4,11 +4,12 @@ __all__ = ["Metadata"]
 
 # stdlib
 import copy
+import operator
 
 # externals
 import numpy as np
 import typing_extensions as tx
-from bagof.magic import Factory, NoEq, NoRepr, fields
+from bagof.magic import Factory, HideIf, NoEq, NoRepr, fields
 
 # internals
 from brainhops._core.typing import ArrayLike
@@ -22,7 +23,7 @@ from ._report import (
     apply_loss_policy,
 )
 from ._sentinel import UNSUPPORTED, Maybe
-from ._terms import EncodingDirection, GeneratedBy
+from ._terms import EncodingDirection, GeneratedBy, _is_absent
 from ._vocabulary import (
     ALONG,
     FIELDS,
@@ -40,23 +41,31 @@ from ._vocabulary import (
 )
 
 # The `history=` argument of `derive`, `_select` and `_reslice`: one
-# entry, several, or none.
+# entry, several, or none. Above `Metadata`, whose signatures evaluate it.
 _History = tx.Union[str, tx.Sequence[str], None]
 
 
+# The groups are listed in the reverse of their order because the fields
+# are (`reverse=True`: the fields of a class before those it inherits),
+# so that `repr` shows `format`, `extra`, then the vocabulary in its
+# declared order. A format class declares the vocabulary again
+# (`supports=`), so its `repr` shows its own fields, then `format`.
 class Metadata(
     DataModelBase,
-    ProvenanceVocabulary,
-    MRIVocabulary,
-    DiffusionVocabulary,
-    DisplayVocabulary,
-    StorageVocabulary,
-    MicroscopyVocabulary,
     TransformVocabulary,
+    MicroscopyVocabulary,
+    StorageVocabulary,
+    DisplayVocabulary,
+    DiffusionVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
     metaclass=MetadataMeta,
     polymorphic=True,
     kw_only=True,
-    repr=False,
+    reverse=True,
+    # `UNSUPPORTED` and `None` are hidden from `repr`, or a format that
+    # stores three fields would print forty (see also `extra`).
+    repr=HideIf(_is_absent),
 ):
     """
     Metadata that does not depend on a file format: the common
@@ -66,8 +75,10 @@ class Metadata(
     and every conversion between two formats goes through it, so that a
     conversion from NIfTI to MGH loses exactly what the two conversions
     from NIfTI to `Metadata` and from `Metadata` to MGH lose. The BIDS
-    sidecar codec reads and writes it too. `Metadata` supports every
-    field of the vocabulary.
+    sidecar codec (`brainhops.io.metadata.bids`) reads and writes it
+    too. `Metadata` supports every field of the vocabulary, and does no
+    input or output: the metadata of a file is read by
+    [`FileBasedMetadata.load`][brainhops.io.metadata.FileBasedMetadata.load].
 
     `Metadata` is also the root of the metadata classes, and selects the
     subclass from the `format` field: once `brainhops.io` is imported,
@@ -105,7 +116,7 @@ class Metadata(
     # The type of raw record that the class declares, as the type argument
     # of a generic base (`FileBasedMetadata[nb.Nifti1Header]`), set by the
     # metaclass: `type(None)` for `[None]`. `None` on `Metadata`, which
-    # keeps any record (see `raw` and `_accepts_raw`).
+    # keeps any record (see `raw`, and `_accepts_raw` below).
     _raw_class: tx.ClassVar[tx.Optional[type]] = None
 
     # --- format and extras --------------------------------------------
@@ -125,6 +136,8 @@ class Metadata(
         # Not `Factory()`: inferred from `Maybe[...]`, a union with
         # `None`, the default would be `None`.
         Factory(dict),
+        # Hidden from `repr` when empty, as well as when absent.
+        HideIf(operator.not_),
     ]
 
     # --- the raw record -----------------------------------------------
@@ -184,29 +197,6 @@ class Metadata(
                     f"UNSUPPORTED by this format), so {value!r} is "
                     f"refused."
                 )
-
-    def __repr__(self) -> str:
-        # `UNSUPPORTED`, `None` and an empty `extra` are hidden, or a
-        # format that stores three fields would print forty. `format` and
-        # a format's own fields come first, then `extra`, then the
-        # vocabulary in its declared order (not `bagof`'s reverse MRO).
-        own = [
-            field.name
-            for field in fields(type(self))
-            if field.name not in VOCABULARY
-            and field.name != "extra"
-            and field.repr
-            and not field.var
-        ]
-        parts = []
-        for name in own + list(FIELDS):
-            value = getattr(self, name, None)
-            if value is None or value is UNSUPPORTED:
-                continue
-            if name == "extra" and not value:
-                continue
-            parts.append(f"{name.lstrip('_')}={value!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
 
     def copy(self) -> tx.Self:
         """
@@ -314,7 +304,7 @@ class Metadata(
         ```
         """
         target = type(self) if cls is None else _metadata_class(cls)
-        obj, found = target._convert_from(self, (), values)
+        obj, found = _convert_from(target, self, (), values)
         apply_loss_policy(found, on_loss, stacklevel=2)
         return obj
 
@@ -348,7 +338,7 @@ class Metadata(
         """
         if not isinstance(other, Metadata):
             return super().from_instance(other, *args, **kwargs)
-        obj, report = cls._convert_from(other, args, kwargs)
+        obj, report = _convert_from(cls, other, args, kwargs)
         apply_loss_policy(report, stacklevel=3)
         return obj
 
@@ -397,157 +387,7 @@ class Metadata(
         """
         return type(self)(**self._derive_values(changed={}, history=history))
 
-    # --- files ------------------------------------------------------
-
-    @classmethod
-    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
-        """
-        Read the metadata of a file, without reading its data.
-
-        The format of the file is found as `brainhops.io` finds it, from
-        the name of the file and from its content, among the formats whose
-        metadata can be read on its own: NIfTI, MGH, plain Zarr and
-        OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars. `hint=` restricts
-        the candidates, as for `brainhops.io.load`. Only the raw record is
-        read: a NIfTI header, the footer and the tags of an MGH file, the
-        attributes of a Zarr node, the JSON of an x5 node.
-
-        This is the `load` of the dispatcher of the formats,
-        [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata].
-        The metadata class of a format whose files hold metadata reads the
-        file as a file of that format; one whose files hold none (FLIRT,
-        ITK `.tfm` and `.mat`) refuses.
-
-        Parameters
-        ----------
-        file : str, path-like or file object
-            The file, or the Zarr store.
-        **kwargs
-            Options of the reader of the format, and `hint=` (a format
-            name such as `"nifti"`, or several).
-
-        Returns
-        -------
-        Metadata
-            The metadata of the format, with its raw record. Convert it
-            with `to(Metadata)` for generic metadata (which keeps the
-            record).
-
-        Raises
-        ------
-        ParserContentError
-            If no format reads the metadata of the file.
-        ParserNotImplementedError
-            If called on the class of a format whose files hold no
-            metadata (FLIRT, ITK `.tfm` and `.mat`, ...).
-        ParserExistsError
-            If the file does not exist.
-
-        Examples
-        --------
-        ```python
-        meta = Metadata.load("sub-01_bold.nii.gz")
-        meta.repetition_time        # read from the header alone
-        Metadata.load("sub-01_bold.json").extra["TaskName"]  # a sidecar
-        Metadata.load("scan.mgz", hint="mgh")
-        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
-        ```
-        """
-        # The dispatcher lives in `brainhops.io`, which imports this module.
-        import brainhops.io  # noqa: F401  (registers the formats)
-        from brainhops.io.metadata import FileBasedMetadata
-
-        return FileBasedMetadata.load(file, **kwargs)
-
-    # --- BIDS ---------------------------------------------------------
-
-    @classmethod
-    def from_bids(cls, sidecar: tx.Any) -> "Metadata":
-        """
-        Read a BIDS JSON sidecar.
-
-        A key that names a vocabulary field, through its BIDS key, fills
-        that field, and every other key lands in `extra`.
-
-        Parameters
-        ----------
-        sidecar : mapping, str, path-like or file
-            The sidecar, as a decoded JSON object, a JSON string, a path
-            or an open file.
-
-        Returns
-        -------
-        Metadata
-            Generic metadata.
-        """
-        from brainhops.io.metadata.bids import from_bids
-
-        return from_bids(sidecar)
-
-    def to_bids(
-        self, *, on_loss: tx.Optional[OnLoss] = None
-    ) -> tx.Dict[str, tx.Any]:
-        """
-        Write this metadata as a BIDS JSON sidecar.
-
-        The diffusion fields are not sidecar keys, and an encoding
-        direction that is not along a voxel axis has no BIDS string, so
-        both are reported as lost.
-
-        Parameters
-        ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do when something is lost. By default, the policy in
-            effect.
-
-        Returns
-        -------
-        dict
-            The sidecar, which can be serialised to JSON.
-        """
-        from brainhops.io.metadata.bids import to_bids
-
-        return to_bids(self, on_loss=on_loss)
-
     # --- internals ----------------------------------------------------
-
-    @classmethod
-    def _convert_from(
-        cls,
-        other: "Metadata",
-        args: tx.Tuple[tx.Any, ...] = (),
-        kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
-    ) -> tx.Tuple["Metadata", ConversionReport]:
-        """`from_instance`, returning the report instead of acting on it."""
-        kwargs = dict(kwargs or {})
-        same = _is_already(other, cls)
-        # A copy keeps the most specific class.
-        target = type(other) if same else cls
-        report = ConversionReport(
-            source=_format_name(other), target=_format_name(target)
-        )
-        values: tx.Dict[str, tx.Any] = {}
-        if same or (other.raw is not None and target._accepts_raw(other.raw)):
-            # The record and its snapshot go along, shared and copied as
-            # `copy()` does: to a copy, to the generic hub, or back to the
-            # format whose class declares the type of the record.
-            values["raw"] = other.raw
-            values["snapshot"] = copy.copy(other._snapshot)
-        unsupported = target.unsupported_fields
-        for name in FIELDS:
-            value = getattr(other, name, None)
-            if value is None or value is UNSUPPORTED:
-                continue
-            if name == "extra":
-                if not value:
-                    continue
-                value = dict(value)
-            if name in unsupported:
-                report.lost[name] = value
-                continue
-            values[name] = value
-        values.update(kwargs)
-        return target(*args, **values), report
 
     def _select(
         self,
@@ -661,17 +501,102 @@ class Metadata(
         _derive_provenance(values, history)
         return values
 
-    @classmethod
-    def _accepts_raw(cls, raw: tx.Any) -> bool:
-        """Whether a conversion into this class keeps a raw record:
-        generic metadata keeps any record (see `raw`); a file format,
-        only its own (see `FileBasedMetadata._accepts_raw`)."""
-        return True
-
 
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+
+def _convert_from(
+    cls: tx.Type[Metadata],
+    other: Metadata,
+    args: tx.Tuple[tx.Any, ...] = (),
+    kwargs: tx.Optional[tx.Dict[str, tx.Any]] = None,
+) -> tx.Tuple[Metadata, ConversionReport]:
+    """
+    Convert metadata into a class, as `Metadata.from_instance` does, and
+    return the report instead of acting on it.
+
+    It works across the metadata classes, which do not override it: each
+    value of the vocabulary is copied, except where `cls` cannot store
+    the field, and is then reported as lost. The raw record and its
+    snapshot go along when `cls` keeps the record (see `_accepts_raw`).
+
+    Parameters
+    ----------
+    cls : type
+        The metadata class to convert into.
+    other : Metadata
+        The metadata to convert.
+    args : tuple, optional
+        Positional arguments of the constructor.
+    kwargs : dict, optional
+        Fields to set on the result.
+
+    Returns
+    -------
+    metadata : Metadata
+        The converted metadata: of `cls`, or of the class of `other` when
+        `other` already stands for `cls` (a copy).
+    report : ConversionReport
+        What was lost.
+    """
+    kwargs = dict(kwargs or {})
+    same = _is_already(other, cls)
+    # A copy keeps the most specific class.
+    target = type(other) if same else cls
+    report = ConversionReport(
+        source=_format_name(other), target=_format_name(target)
+    )
+    values: tx.Dict[str, tx.Any] = {}
+    if same or (other.raw is not None and _accepts_raw(target, other.raw)):
+        # The record and its snapshot go along, shared and copied as
+        # `copy()` does: to a copy, to the generic hub, or back to the
+        # format whose class declares the type of the record.
+        values["raw"] = other.raw
+        values["snapshot"] = copy.copy(other._snapshot)
+    unsupported = target.unsupported_fields
+    for name in FIELDS:
+        value = getattr(other, name, None)
+        if value is None or value is UNSUPPORTED:
+            continue
+        if name == "extra":
+            if not value:
+                continue
+            value = dict(value)
+        if name in unsupported:
+            report.lost[name] = value
+            continue
+        values[name] = value
+    values.update(kwargs)
+    return target(*args, **values), report
+
+
+def _accepts_raw(cls: type, raw: tx.Any) -> bool:
+    """
+    Whether a conversion into a metadata class keeps a raw record.
+
+    A class keeps a record of the type it declares (`_raw_class`), and a
+    class that declares none (`None`: generic `Metadata`) keeps any
+    record. Formats declare distinct types, so that a record only ever
+    goes back to its own format; `FileBasedMetadata` declares
+    `type(None)` until a format declares its own type, so that a format
+    keeps no record of another one.
+
+    Parameters
+    ----------
+    cls : type
+        The metadata class converted into.
+    raw : object
+        The raw record of the source metadata, not `None`.
+
+    Returns
+    -------
+    bool
+        Whether the record is kept.
+    """
+    declared = cls._raw_class
+    return declared is None or isinstance(raw, declared)
 
 
 def _derive_provenance(
@@ -705,6 +630,8 @@ def _with_brainhops(
     if any(getattr(g, "name", None) == "brainhops" for g in entries):
         return entries
     try:
+        # Not at the top: `brainhops` imports the data model before it
+        # defines `__version__`.
         from brainhops import __version__ as version
     except ImportError:  # pragma: no cover
         version = None

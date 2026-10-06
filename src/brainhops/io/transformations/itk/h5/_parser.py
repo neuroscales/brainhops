@@ -19,30 +19,10 @@ from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
-from .._metadata import H5Header, ItkH5Metadata
+from .._metadata import H5Header
+from ._metadata import ItkH5Metadata, read_h5_header
 
 __all__ = ["DelayedH5Array", "H5Header", "H5TransformParser", "read_h5_header"]
-
-
-def read_h5_header(h5file: h5py.File) -> H5Header:
-    """
-    Read the root header of an open ITK `.h5` file.
-
-    Parameters
-    ----------
-    h5file : h5py.File
-        The open file.
-
-    Returns
-    -------
-    H5Header
-        The versions recorded at the root of the file.
-    """
-    header = H5Header()
-    for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion"):
-        if f"/{name}" in h5file:
-            setattr(header, name, _readstr(h5file[f"/{name}"]))
-    return header
 
 
 class H5TransformParser(

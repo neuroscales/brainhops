@@ -23,6 +23,7 @@ from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.metadata._base import (
     FIELDS,
     Metadata,
+    _convert_from,
     _format_name,
     _History,
 )
@@ -62,10 +63,9 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     type of a record must build one that way.
 
     The class is also the dispatcher of the formats whose files hold
-    metadata: `FileBasedMetadata.load(path)`, which is what
-    [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls,
-    picks the registered format that best matches the file. The class of
-    such a format lists its parser (a
+    metadata: `FileBasedMetadata.load(path)` picks the registered format
+    that best matches the file. The class of such a format lists its
+    parser (a
     [`MetadataParser`][brainhops.io.base._metadata_parser.MetadataParser])
     first among its bases, and registers with
     [`register_format`][brainhops.io.base.register_format]. The registry
@@ -90,6 +90,12 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         NoEq(),
     ] = None
 
+    # No record, until a format declares the type of its own, as the
+    # type argument of this class (which the metaclass reads): a format
+    # never keeps the record of another format (see `_accepts_raw` in
+    # `brainhops.datamodel.metadata._base`).
+    _raw_class: tx.ClassVar[tx.Optional[type]] = type(None)
+
     # --- reading ------------------------------------------------------
 
     @classmethod
@@ -98,11 +104,17 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         Read the metadata of a file, without reading its data.
 
         On `FileBasedMetadata` itself, the dispatcher, the format is found
-        among the registered formats whose files hold metadata, by the
-        name of the file and by its content, as `brainhops.io.load` finds
-        the format of an image; `hint=` restricts the candidates. On the
-        class of a format, the file is read as a file of that format, by
-        its parser (`MetadataParser`), which comes first among its bases.
+        among the registered formats whose files hold metadata (NIfTI,
+        MGH, plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON
+        sidecars), by the name of the file and by its content, as
+        `brainhops.io.load` finds the format of an image; `hint=`
+        restricts the candidates. On the class of a format, the file is
+        read as a file of that format, by its parser (`MetadataParser`),
+        which comes first among its bases; the class of a format whose
+        files hold no metadata (FLIRT, ITK `.tfm` and `.mat`) refuses.
+        Only the raw record is read: a NIfTI header, the footer and the
+        tags of an MGH file, the attributes of a Zarr node, the JSON of
+        an x5 node.
 
         Parameters
         ----------
@@ -115,14 +127,29 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         Returns
         -------
         Metadata
-            The metadata of the file, with its raw record.
+            The metadata of the file, with its raw record: the metadata
+            of its format, or generic metadata for a BIDS sidecar.
+            Convert it with `to(Metadata)` for generic metadata (which
+            keeps the record).
 
         Raises
         ------
         ParserContentError
             On the dispatcher, if no registered format reads the file.
+        ParserNotImplementedError
+            On the class of a format whose files hold no metadata.
         ParserExistsError
             If the file does not exist.
+
+        Examples
+        --------
+        ```python
+        meta = FileBasedMetadata.load("sub-01_bold.nii.gz")
+        meta.repetition_time  # read from the header alone
+        FileBasedMetadata.load("sub-01_bold.json").extra["TaskName"]
+        FileBasedMetadata.load("scan.mgz", hint="mgh")
+        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
+        ```
         """
         return super().load(file, **kwargs)
 
@@ -252,7 +279,7 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         This is the counterpart of `from_raw`: the record is a copy of
         `raw` (or a default record, for metadata built in memory), with
         the fields that changed since the read encoded over it. It is what
-        a metadata writer writes (see `MetadataParser.to_file`). A writer
+        a metadata writer writes (see `ZarrMetadata.to_file`). A writer
         that builds its own fresh record calls `update_raw` instead.
 
         Parameters
@@ -446,7 +473,7 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
             return metadata, ConversionReport(
                 source=metadata.format, target=target
             )
-        return cls._convert_from(metadata)
+        return _convert_from(cls, metadata)
 
     def check_writable(
         self, *, image: tx.Any = None, raw: tx.Any = None
@@ -480,43 +507,6 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         raw = self.update_raw(raw, image=image, on_loss=report)
         self.check_raw(raw, image=image, on_loss=report)
         return report
-
-    # --- the record of a conversion -----------------------------------
-
-    @classmethod
-    def _raw_type(cls) -> tx.Optional[type]:
-        """
-        The type of raw record that this class declares, as the type
-        argument of its base (`FileBasedMetadata[T]`).
-
-        Returns
-        -------
-        type or None
-            The declared type, `type(None)` for a format without a record,
-            or `None` when the class does not declare a type.
-        """
-        return cls._raw_class
-
-    @classmethod
-    def _accepts_raw(cls, raw: tx.Any) -> bool:
-        """
-        Whether a conversion into this class keeps a raw record: only
-        when the record is of the type this class declares. Formats
-        declare distinct types, so a record only ever goes back to its
-        own format; a class that declares no type keeps none.
-
-        Parameters
-        ----------
-        raw : object
-            The raw record of the source metadata.
-
-        Returns
-        -------
-        bool
-            Whether the record is kept.
-        """
-        declared = cls._raw_type()
-        return declared is not None and isinstance(raw, declared)
 
     # --- per-format hooks ---------------------------------------------
 

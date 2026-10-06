@@ -109,7 +109,7 @@ def to_bids(
 class BidsSidecar(MetadataParser):
     """
     The reader of BIDS JSON sidecars, for
-    [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load].
+    [`FileBasedMetadata.load`][brainhops.io.metadata.FileBasedMetadata.load].
 
     A sidecar is a file of metadata only, with no format class of its
     own: it reads as generic `Metadata` (see [`from_bids`][]). Any JSON

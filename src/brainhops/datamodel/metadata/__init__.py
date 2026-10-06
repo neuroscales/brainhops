@@ -18,8 +18,10 @@ class hierarchy that mirrors the hierarchy of the images (`Image`,
   which reads its fields from the raw record of the format (a `nibabel`
   header, the attributes of a Zarr array, ...) and writes them back.
 - Each format has its own `<Fmt>Metadata` class, next to its parser
-  under `brainhops.io`. `Metadata.load(path)` reads the metadata of a
-  file without its data.
+  under `brainhops.io`. `FileBasedMetadata.load(path)` reads the
+  metadata of a file without its data, and `brainhops.io.metadata.bids`
+  reads and writes BIDS sidecars. The data model does no input or
+  output.
 
 A vocabulary field holds a value, `None` when the value is unknown, or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] when the format
@@ -32,9 +34,11 @@ decides what happens to the report. A
 [`Scope`][brainhops.datamodel.metadata.Scope] says how each field
 propagates to a derived image.
 
-The names exported here are those a user of the library needs. What a
-format author needs (the vocabulary groups, the field annotations, the
-`metadata` field of images, the loss helpers) is imported from the
+The names exported here are those a user of the library needs, and the
+vocabulary groups (`ProvenanceVocabulary`, `MRIVocabulary`, ..., and
+their base `Vocabulary`), which a format names in its `supports=`
+declaration. What else a format author needs (the field annotations,
+the `metadata` field of images, the loss helpers) is imported from the
 private modules of this package, which the format author's guide lists
 (`docs/dev/metadata-formats.md`). The user guide is
 `docs/start/metadata.md`.
@@ -51,6 +55,14 @@ __all__ = [
     "MetadataLossWarning",
     "MetadataLossError",
     "metadata_loss_policy",
+    "Vocabulary",
+    "ProvenanceVocabulary",
+    "MRIVocabulary",
+    "DiffusionVocabulary",
+    "DisplayVocabulary",
+    "StorageVocabulary",
+    "MicroscopyVocabulary",
+    "TransformVocabulary",
 ]
 
 from ._base import Metadata
@@ -62,7 +74,17 @@ from ._report import (
 )
 from ._sentinel import UNSUPPORTED
 from ._terms import Channel, EncodingDirection, GeneratedBy
-from ._vocabulary import Scope
+from ._vocabulary import (
+    DiffusionVocabulary,
+    DisplayVocabulary,
+    MicroscopyVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
+    Scope,
+    StorageVocabulary,
+    TransformVocabulary,
+    Vocabulary,
+)
 
 # The public names keep the `__module__` of the private module that
 # defines them: rewriting it to this package's name would break

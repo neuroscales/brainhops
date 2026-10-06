@@ -1917,6 +1917,85 @@ holds.
   `ConversionReport.passed_through`, which only that hook filled, was
   dropped with it.
 
+### Addendum: the seventh review
+
+Where this addendum and the sections above disagree, this addendum
+holds.
+
+- **`repr` (M5).** `Metadata` has no `__repr__` of its own: `bagof`
+  builds it, with policies on the fields. `Metadata` and the groups
+  (`Vocabulary`) hide a field that holds `None` or `UNSUPPORTED`
+  (`repr=HideIf(...)`), and `extra` is hidden when empty too. The
+  fields are listed in reverse (`reverse=True`), with the groups listed
+  in the reverse of their order, so that `repr(Metadata(...))` shows
+  `format`, `extra`, then the vocabulary in its declared order. A
+  format class declares the vocabulary again (`supports=`), and
+  `bagof` has no way to place a field (`format`) before the fields a
+  class declares, so the `repr` of a format shows `format` last:
+  `NiftiMetadata(description='T1w', format='nifti')`.
+
+- **No input or output on `Metadata` (M8).** `Metadata.load`,
+  `Metadata.from_bids` and `Metadata.to_bids` are gone: the data model
+  reads and writes no file. The metadata of a file is read by the
+  dispatcher, `FileBasedMetadata.load(path, hint=...)` (or by the class
+  of a format, `NiftiMetadata.load(path)`), and a BIDS sidecar by the
+  functions `from_bids` and `to_bids` of `brainhops.io.metadata.bids`,
+  whose `BidsSidecar` is the reader `FileBasedMetadata.load` picks for
+  a `.json` file.
+
+- **Conversion helpers are functions.** No class overrides the
+  conversion, so `Metadata._convert_from` is the module function
+  `_convert_from(cls, other, args, kwargs)`, which `to`,
+  `from_instance` and `FileBasedMetadata.writable` call. The methods
+  `_accepts_raw` (on `Metadata` and `FileBasedMetadata`) and
+  `FileBasedMetadata._raw_type` are gone too: the class variable
+  `_raw_class` says it all, read by the function `_accepts_raw(cls,
+  raw)` (`_raw_class is None or isinstance(raw, _raw_class)`).
+  `Metadata` declares `None` (any record), and `FileBasedMetadata`
+  `type(None)` (none) until a format declares the type of its own
+  record, which keeps the behaviour of the two former methods.
+
+- **Encoding directions (M3).** The `space` of an `EncodingDirection`
+  may also be a brainhops `CoordinateSystem`, kept as it is; it equals
+  an equal system, never a label (not even its own name). A file names
+  the space with a string, so the JSON codec writes a system by its
+  name, which reads back as a label, and reports as lost a direction in
+  a system without a name (`encode_changes(obj, changed, *, report)`);
+  a sidecar already reports any direction in a space as lost.
+  `EncodingDirection.transform` also takes a `Transformation`: the
+  linear part of the affine it reduces to, and a `TypeError` for one
+  that does not (a field).
+
+- **The parsers (M8).** `MetadataParser` only reads, as a `FileParser`
+  does: its `to_file`, which refused, is gone, and plain Zarr defines
+  its own. It keeps `from_bytes`, which hands the bytes to
+  `from_fileobj` in a stream, since a format implements `from_fileobj`
+  and `FileParser` routes the other way (whether that should be the
+  default of the binary parsers is issue #297). `Hdf5MetadataParser`
+  lives next to `Hdf5Parser`, in `brainhops.io.base.hdf5`, and is an
+  `Hdf5Parser`, whose routing of paths, streams and bytes to `sniff_h5`
+  and `from_h5` it uses rather than its own. `ItkH5Metadata` (and
+  `read_h5_header`) moved next to the `.h5` parser,
+  `brainhops.io.transformations.itk.h5`, since it needs `h5py`; the
+  package `itk` exports it when `h5py` is installed.
+
+- **Imports at the top.** The modules of the metadata import at the
+  top, except where a cycle forbids it, which a comment says at each
+  import: `_nifti_metadata` and `_mgh_metadata` import from `nifti` and
+  `mgh`, which import them; `EncodingDirection.transform` imports the
+  transformations, whose `metadata` field imports the metadata;
+  and `_with_brainhops` reads `brainhops.__version__`, defined after
+  the package imports the data model. The Zarr attribute helpers
+  (`node_attributes`, `write_attributes`) moved from `_image` to
+  `_metadata`, which the image imports.
+
+- **Layout of the modules.** Each module of the metadata lists its
+  public classes and main functions first, then its public helpers,
+  then its private helpers. A private definition that must exist
+  before a public one at import time (a converter that a field
+  annotation evaluates, a base class, a default or a `TypeVar`) stays
+  above it, with a comment that says why.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

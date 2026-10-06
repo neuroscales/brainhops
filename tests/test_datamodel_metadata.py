@@ -22,6 +22,7 @@ import pytest
 import typing_extensions as tx
 from bagof.magic import Factory, Magic, fields, replace
 
+import brainhops.datamodel.metadata
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.enums import (
     AxisType,
@@ -36,15 +37,23 @@ from brainhops.datamodel.metadata import (
     UNSUPPORTED,
     Channel,
     ConversionReport,
+    DiffusionVocabulary,
+    DisplayVocabulary,
     EncodingDirection,
     GeneratedBy,
     Metadata,
     MetadataLossError,
     MetadataLossWarning,
+    MicroscopyVocabulary,
+    MRIVocabulary,
+    ProvenanceVocabulary,
     Scope,
+    StorageVocabulary,
+    TransformVocabulary,
+    Vocabulary,
     metadata_loss_policy,
 )
-from brainhops.datamodel.metadata._dtype import preferred_dtype
+from brainhops.datamodel.metadata._dtype import preferred_dtype, stored_values
 from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.metadata._report import (
     apply_loss_policy,
@@ -55,19 +64,14 @@ from brainhops.datamodel.metadata._vocabulary import (
     GROUPS,
     VOCABULARY,
     Along,
-    DiffusionVocabulary,
-    DisplayVocabulary,
-    MicroscopyVocabulary,
-    MRIVocabulary,
-    ProvenanceVocabulary,
     Scoped,
-    StorageVocabulary,
-    TransformVocabulary,
 )
 from brainhops.datamodel.transformations import Affine, Translation
 from brainhops.io.metadata import (
     FileBasedMetadata,
     OpaqueMetadata,
+    from_bids,
+    to_bids,
 )
 
 
@@ -214,7 +218,15 @@ def test_an_unsupported_field_is_refused_at_construction() -> None:
 
 def test_repr_hides_none_and_unsupported() -> None:
     assert repr(LiteMetadata(description="x")) == (
-        "LiteMetadata(format='test-lite', description='x')"
+        "LiteMetadata(description='x', format='test-lite')"
+    )
+    # `format` first, then `extra` (only when not empty), then the
+    # vocabulary in its declared order.
+    assert repr(Metadata(echo_time=0.03, description="x", extra={})) == (
+        "Metadata(format='generic', description='x', echo_time=0.03)"
+    )
+    assert repr(Metadata(name="n", extra={"k": 1})) == (
+        "Metadata(format='generic', extra={'k': 1}, name='n')"
     )
     assert repr(OpaqueMetadata()) == "OpaqueMetadata(format='opaque')"
 
@@ -715,14 +727,14 @@ _SIDECAR = {
 
 
 def test_a_sidecar_round_trips() -> None:
-    meta = Metadata.from_bids(_SIDECAR)
+    meta = from_bids(_SIDECAR)
     assert meta.repetition_time == 2.0
     assert meta.slice_timing == (0.0, 0.5, 1.0, 1.5)
     assert meta.generated_by == (GeneratedBy(name="fMRIPrep", version="23.0"),)
     assert meta.display_range == (0.0, 255.0)
     # A key that names no vocabulary field lands in `extra`.
     assert meta.extra == {"TaskName": "rest"}
-    sidecar = meta.to_bids()
+    sidecar = to_bids(meta)
     assert sidecar == {
         **_SIDECAR,
         "DisplayRange": [0.0, 255.0],
@@ -733,26 +745,24 @@ def test_a_sidecar_round_trips() -> None:
 def test_a_sidecar_is_read_from_a_path_or_a_string(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "sub-01_bold.json"
     path.write_text(json.dumps(_SIDECAR))
-    assert Metadata.from_bids(path) == Metadata.from_bids(_SIDECAR)
-    assert Metadata.from_bids(str(path)) == Metadata.from_bids(_SIDECAR)
-    assert Metadata.from_bids(json.dumps(_SIDECAR)) == Metadata.from_bids(
-        _SIDECAR
-    )
+    assert from_bids(path) == from_bids(_SIDECAR)
+    assert from_bids(str(path)) == from_bids(_SIDECAR)
+    assert from_bids(json.dumps(_SIDECAR)) == from_bids(_SIDECAR)
 
 
 def test_diffusion_is_not_a_sidecar_key() -> None:
     meta = Metadata(bvalues=(0, 1000), description="dwi")
     with pytest.warns(MetadataLossWarning):
-        sidecar = meta.to_bids()
+        sidecar = to_bids(meta)
     assert sidecar == {"Description": "dwi"}
     with pytest.raises(MetadataLossError):
-        meta.to_bids(on_loss="raise")
+        to_bids(meta, on_loss="raise")
 
 
 def test_times_are_iso_strings() -> None:
-    meta = Metadata.from_bids({"AcquisitionTime": "2020-01-02T03:04:05"})
+    meta = from_bids({"AcquisitionTime": "2020-01-02T03:04:05"})
     assert meta.acquisition_time.year == 2020
-    assert meta.to_bids() == {"AcquisitionTime": "2020-01-02T03:04:05"}
+    assert to_bids(meta) == {"AcquisitionTime": "2020-01-02T03:04:05"}
 
 
 # ----------------------------------------------------------------------
@@ -979,11 +989,32 @@ def test_the_hierarchy_mirrors_the_images() -> None:
     assert issubclass(LiteMetadata, FileBasedMetadata)
     for group in GROUPS:
         assert issubclass(Metadata, group)
+        assert issubclass(group, Vocabulary)
+        # The groups are public: `supports=` names them.
+        assert group.__name__ in brainhops.datamodel.metadata.__all__
     # Every class has a raw record and a snapshot; reading and writing
     # them is what a file-based class adds.
     names = {f.name for f in fields(Metadata)}
     assert {"raw", "_snapshot"} <= names
     assert not hasattr(Metadata, "from_raw")
+    # No input or output on the data model: `FileBasedMetadata.load`
+    # reads a file, and `brainhops.io.metadata.bids` the sidecars.
+    for name in ("load", "from_bids", "to_bids"):
+        assert not hasattr(Metadata, name)
+
+
+def test_the_record_a_class_keeps() -> None:
+    from brainhops.datamodel.metadata._base import _accepts_raw
+
+    # Generic metadata declares no type, and keeps any record.
+    assert Metadata._raw_class is None
+    assert _accepts_raw(Metadata, object())
+    # The base of the formats declares none until a format does, and a
+    # format keeps only a record of the type it declares.
+    assert FileBasedMetadata._raw_class is type(None)
+    assert not _accepts_raw(FileBasedMetadata, object())
+    assert not _accepts_raw(OpaqueMetadata, {})
+    assert OpaqueMetadata()._raw_or_default() is None
 
 
 def test_the_vocabulary_is_the_groups_in_order() -> None:
@@ -1062,7 +1093,7 @@ def test_known_terms_become_enum_members() -> None:
     assert Metadata(intent=UNSUPPORTED).intent is UNSUPPORTED
     with pytest.raises((TypeError, ValueError)):
         Metadata(space=3)
-    assert json.dumps(Metadata(space="mni").to_bids()) == (
+    assert json.dumps(to_bids(Metadata(space="mni"))) == (
         '{"SpatialReference": "mni"}'
     )
 
@@ -1081,23 +1112,36 @@ def test_data_unit_is_a_unit_when_known() -> None:
     with pytest.raises(TypeError):
         Metadata(data_unit=3)
     # Written as its symbol, which parses back to the same unit.
-    assert meta.to_bids() == {"DataUnit": "ms"}
+    assert to_bids(meta) == {"DataUnit": "ms"}
     for name in ("a.u.", "mm/s", "degC", "uV", "HU"):
-        bids = Metadata(data_unit=name).to_bids()
-        assert Metadata.from_bids(bids).data_unit == Unit(name)
-    assert Metadata(data_unit="mm2/s").to_bids() == {"DataUnit": "mm2/s"}
+        bids = to_bids(Metadata(data_unit=name))
+        assert from_bids(bids).data_unit == Unit(name)
+    assert to_bids(Metadata(data_unit="mm2/s")) == {"DataUnit": "mm2/s"}
 
 
 def test_data_type_is_a_native_dtype() -> None:
     meta = Metadata(data_type=">i2")
     assert meta.data_type == np.dtype("int16")
     assert meta.data_type.isnative
-    assert meta.to_bids() == {"DataType": "int16"}
-    assert Metadata.from_bids({"DataType": "uint8"}).data_type == np.uint8
+    assert to_bids(meta) == {"DataType": "int16"}
+    assert from_bids({"DataType": "uint8"}).data_type == np.uint8
     # A resampling changes the kind of the values: it is grid-bound.
     # How the file stores the values: kept by `derive` (`file` scope).
     assert meta._reslice(None).data_type == np.int16
     assert meta._select("time", [0]).data_type == np.int16
+
+
+def test_stored_values_round_only_into_integers() -> None:
+    values = np.array([1.0, 2.2, 3.6])
+    # Into an integer type, the unscaled values are rounded...
+    stored = stored_values(values, np.int16, 2.0, 1.0)
+    assert stored.dtype == np.int16
+    assert stored.tolist() == [0, 1, 1]
+    # ... into a floating-point type, they are kept as they are.
+    stored = stored_values(values, np.float32, 2.0, 1.0)
+    assert stored.dtype == np.float32
+    assert stored.tolist() == pytest.approx([0.0, 0.6, 1.3])
+    assert stored_values(values, np.float64).tolist() == values.tolist()
 
 
 def test_preferred_dtype() -> None:
@@ -1159,23 +1203,65 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
     assert world.space is SpaceEnum.scanner and world.to_bids() is None
 
 
+def test_a_direction_may_be_in_a_coordinate_system() -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+    from brainhops.io.metadata._json import encode_changes, to_json
+
+    named = CoordinateSystem(name="RAS")
+    direction = EncodingDirection((1, 0, 0), space=named)
+    assert direction.space is named
+    assert direction.to_bids() is None
+    # A system equals an equal system, never a label, not even its name.
+    assert direction == EncodingDirection(
+        "i", space=CoordinateSystem(name="RAS")
+    )
+    assert direction != EncodingDirection((1, 0, 0), space="RAS")
+    assert "space=CoordinateSystem(" in repr(direction)
+    # JSON writes the name of the system, which reads back as a label.
+    assert to_json("phase_encoding_direction", direction) == {
+        "Vector": [1.0, 0.0, 0.0],
+        "Space": "RAS",
+    }
+    # Without a name, the direction cannot be written, and is lost.
+    unnamed = EncodingDirection((1, 0, 0), space=CoordinateSystem())
+    obj = {"PhaseEncodingDirection": "j"}
+    report = ConversionReport()
+    encode_changes(obj, {"phase_encoding_direction": unnamed}, report=report)
+    assert obj == {}
+    assert report.lost == {"phase_encoding_direction": unnamed}
+
+
+def test_a_direction_is_mapped_by_a_transformation() -> None:
+    from brainhops.datamodel.transformations import Affine, DisplacementField
+
+    swap = np.array(
+        [[0, 1, 0, 5], [1, 0, 0, -2], [0, 0, 1, 3], [0, 0, 0, 1]], dtype=float
+    )
+    direction = EncodingDirection("j-")
+    # The linear part of an affine maps it; its translation does not.
+    assert direction.transform(Affine(swap)) == EncodingDirection("i-")
+    assert direction.transform(swap[:3, :3]) == EncodingDirection("i-")
+    with pytest.raises(TypeError, match="affine"):
+        direction.transform(DisplacementField(np.zeros((2, 2, 2, 3))))
+
+
 def test_the_direction_fields_take_bids_strings() -> None:
     meta = Metadata(phase_encoding_direction="j-")
     assert isinstance(meta.phase_encoding_direction, EncodingDirection)
     assert meta.phase_encoding_direction.to_bids() == "j-"
     meta.slice_encoding_direction = {"Vector": [0, 0, 1]}
     assert meta.slice_encoding_direction == EncodingDirection("k")
-    assert meta.to_bids() == {
+    assert to_bids(meta) == {
         "PhaseEncodingDirection": "j-",
         "SliceEncodingDirection": "k",
     }
-    assert Metadata.from_bids(meta.to_bids()) == meta
+    assert from_bids(to_bids(meta)) == meta
 
 
 def test_an_oblique_direction_is_lost_in_a_sidecar() -> None:
     meta = Metadata(phase_encoding_direction=(1, 1, 0))
     with pytest.raises(MetadataLossError) as info:
-        meta.to_bids(on_loss="raise")
+        to_bids(meta, on_loss="raise")
     assert set(info.value.report.lost) == {"phase_encoding_direction"}
 
 

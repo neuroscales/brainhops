@@ -66,21 +66,6 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.metadata import FileBasedMetadata
 
-# The voxel types MGH stores.
-_MGH_DTYPES = tuple(
-    np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
-)
-
-
-# Vocabulary field -> (footer slot, factor from the footer unit to the
-# vocabulary unit).
-_FOOTER = {
-    "repetition_time": ("tr", 1e-3),
-    "echo_time": ("te", 1e-3),
-    "inversion_time": ("ti", 1e-3),
-    "flip_angle": ("flip_angle", None),  # radians -> degrees
-}
-
 
 class MghRaw:
     """
@@ -228,6 +213,7 @@ class MghMetadata(
         float
             The confidence, in `[0, 1]`.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import is_mgh_stream
 
         if is_mgh_stream(file):
@@ -290,6 +276,7 @@ class MghMetadata(
         ParserExistsError
             If the path does not exist.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import read_mgh_raw
 
         if isinstance(filename, str):
@@ -316,6 +303,7 @@ class MghMetadata(
         MghMetadata
             The metadata of the file, with its `MghRaw` as `raw`.
         """
+        # Not at the top: `brainhops.io.base.mgh` imports this module.
         from brainhops.io.base.mgh import read_mgh_raw
 
         return cls.from_raw(read_mgh_raw(file))
@@ -392,6 +380,22 @@ class MghMetadata(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+
+# The voxel types MGH stores.
+_MGH_DTYPES = tuple(
+    np.dtype(t) for t in (np.uint8, np.int16, np.int32, np.float32)
+)
+
+
+# Vocabulary field -> (footer slot, factor from the footer unit to the
+# vocabulary unit).
+_FOOTER = {
+    "repetition_time": ("tr", 1e-3),
+    "echo_time": ("te", 1e-3),
+    "inversion_time": ("ti", 1e-3),
+    "flip_angle": ("flip_angle", None),  # radians -> degrees
+}
 
 
 def _divide(factor: float, value: float) -> float:

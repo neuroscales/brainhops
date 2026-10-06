@@ -23,9 +23,6 @@ TAG_CMDLINE = 3
 TAG_OLD_SURF_GEOM = 20
 TAG_OLD_MGH_XFORM = 30
 
-# Legacy tags with no length field.
-_NO_LENGTH = (TAG_OLD_COLORTABLE, TAG_OLD_USEREALRAS, TAG_OLD_SURF_GEOM)
-
 
 def parse_tags(
     tags: bytes,
@@ -146,6 +143,9 @@ def encode_history(
 # ----------------------------------------------------------------------
 #   PRIVATE
 # ----------------------------------------------------------------------
+
+# Legacy tags with no length field.
+_NO_LENGTH = (TAG_OLD_COLORTABLE, TAG_OLD_USEREALRAS, TAG_OLD_SURF_GEOM)
 
 
 def _cmdline_payload(chunk: bytes) -> str:

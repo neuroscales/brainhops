@@ -42,6 +42,7 @@ from brainhops.datamodel.metadata import (
 
 # internals
 from brainhops.datamodel.metadata._vocabulary import BIDS_KEYS
+from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.units import Unit
 
 
@@ -97,10 +98,18 @@ def decode_object(
 
 
 def encode_changes(
-    obj: tx.Dict[str, tx.Any], changed: tx.Mapping[str, tx.Any]
+    obj: tx.Dict[str, tx.Any],
+    changed: tx.Mapping[str, tx.Any],
+    *,
+    report: ConversionReport,
 ) -> None:
     """
     Write changed vocabulary values into a JSON object, in place.
+
+    A value that JSON cannot hold (an encoding direction in a coordinate
+    system without a name) is not written: its key is removed, so that
+    the object does not keep a stale value, and the value is reported as
+    lost.
 
     Parameters
     ----------
@@ -109,13 +118,19 @@ def encode_changes(
     changed : mapping
         Field name to new value. Each value is written under the key of
         its field (see `sidecar_key`), and a `None` value removes the key.
+    report : ConversionReport
+        The report to fill with the values that were not written.
     """
     for name, value in changed.items():
         key = sidecar_key(name)
         if value is None:
             obj.pop(key, None)
-        else:
+            continue
+        try:
             obj[key] = to_json(name, value)
+        except ValueError:
+            obj.pop(key, None)
+            report.lost[name] = value
 
 
 def encode_extra(
@@ -214,7 +229,8 @@ def to_json(name: str, value: tx.Any) -> tx.Any:
 
     `GeneratedBy` and `Channel` entries become objects with keys in the
     BIDS style. An encoding direction becomes its BIDS string, or, when
-    BIDS cannot write it, an object with the keys `Vector` and `Space`.
+    BIDS cannot write it, an object with the keys `Vector` and `Space`;
+    a space that is a `CoordinateSystem` is written as its name.
 
     Parameters
     ----------
@@ -227,6 +243,12 @@ def to_json(name: str, value: tx.Any) -> tx.Any:
     -------
     object
         A value that can be serialised to JSON.
+
+    Raises
+    ------
+    ValueError
+        If `value` is an encoding direction in a coordinate system
+        without a name, which JSON cannot hold.
     """
     if name == "generated_by":
         return [
@@ -252,7 +274,7 @@ def to_json(name: str, value: tx.Any) -> tx.Any:
             return bids
         out = {"Vector": list(value.vector)}
         if value.space is not None:
-            out["Space"] = str(value.space)
+            out["Space"] = _space_label(value.space)
         return out
     return jsonable(value)
 
@@ -318,3 +340,16 @@ _TIMES = ("creation_time", "acquisition_time")
 
 def _camel(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
+
+
+def _space_label(space: tx.Any) -> str:
+    """The string a JSON object holds for the space of a direction: a
+    label as it is, a coordinate system by its name."""
+    if not isinstance(space, CoordinateSystem):
+        return str(space)
+    if not space.name:
+        raise ValueError(
+            "A direction in a coordinate system without a name cannot be "
+            "written: JSON names the space of a direction."
+        )
+    return space.name

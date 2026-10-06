@@ -1,7 +1,8 @@
 """
-`Metadata.load`: reading the metadata of a file without its data, through
-the `FileBasedMetadata` registry (NIfTI, MGH, plain Zarr and OME-Zarr, x5,
-ITK `.h5`, BIDS sidecars), and the `to_raw` / `to_file` side.
+`FileBasedMetadata.load`: reading the metadata of a file without its
+data, through the `FileBasedMetadata` registry (NIfTI, MGH, plain Zarr
+and OME-Zarr, x5, ITK `.h5`, BIDS sidecars), and the `to_raw` /
+`to_file` side.
 """
 
 import gzip
@@ -21,7 +22,6 @@ from brainhops.io.base._metadata_parser import MetadataParser  # noqa: E402
 from brainhops.io.base.parsers import (  # noqa: E402
     ParserContentError,
     ParserNotImplementedError,
-    WriterNotImplementedError,
 )
 from brainhops.io.images.freesurfer.mgh import (  # noqa: E402
     MghImage,
@@ -48,7 +48,7 @@ def _nifti(path: Path) -> Path:
 
 @pytest.mark.parametrize("name", ["scan.nii", "scan.nii.gz"])
 def test_nifti_metadata_is_read_from_the_header(tmp_path, name) -> None:  # noqa: ANN001
-    meta = Metadata.load(_nifti(tmp_path / name))
+    meta = FileBasedMetadata.load(_nifti(tmp_path / name))
     assert type(meta) is NiftiMetadata
     assert meta.description == "a header"
     assert meta.data_type == np.int16
@@ -60,24 +60,24 @@ def test_nifti_metadata_is_read_from_the_header(tmp_path, name) -> None:  # noqa
 
 def test_every_entry_point_reads_the_same(tmp_path) -> None:  # noqa: ANN001
     path = _nifti(tmp_path / "scan.nii.gz")
-    by_path = Metadata.load(str(path))
+    by_path = FileBasedMetadata.load(str(path))
     with open(path, "rb") as f:
-        by_stream = Metadata.load(f)
+        by_stream = FileBasedMetadata.load(f)
         assert f.tell() == 0
-    by_bytes = Metadata.load(path.read_bytes())
+    by_bytes = FileBasedMetadata.load(path.read_bytes())
     by_class = NiftiMetadata.load(path)
     assert by_path == by_stream == by_bytes == by_class
     # A name says nothing: the content is sniffed.
     renamed = tmp_path / "scan.bin"
     renamed.write_bytes(gzip.decompress(path.read_bytes()))
-    assert Metadata.load(renamed) == by_path
+    assert FileBasedMetadata.load(renamed) == by_path
 
 
 def test_a_hint_selects_the_format(tmp_path) -> None:  # noqa: ANN001
     path = _nifti(tmp_path / "scan.nii")
-    assert type(Metadata.load(path, hint="nifti")) is NiftiMetadata
+    assert type(FileBasedMetadata.load(path, hint="nifti")) is NiftiMetadata
     with pytest.raises(ParserContentError):
-        Metadata.load(path, hint="mgh")
+        FileBasedMetadata.load(path, hint="mgh")
 
 
 def test_metadata_files_stay_out_of_the_generic_load(tmp_path) -> None:  # noqa: ANN001
@@ -97,7 +97,7 @@ def test_an_unknown_file_is_refused(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "notes.txt"
     path.write_text("not metadata")
     with pytest.raises(ParserContentError):
-        Metadata.load(path)
+        FileBasedMetadata.load(path)
 
 
 def test_a_format_without_metadata_in_its_files_refuses(tmp_path) -> None:  # noqa: ANN001
@@ -138,7 +138,8 @@ def test_load_is_resolved_by_the_bases() -> None:
     # A format whose files hold none refuses, explicitly.
     assert owner(FlirtMetadata) is FlirtMetadata
     assert owner(OpaqueMetadata) is OpaqueMetadata
-    assert owner(Metadata) is Metadata
+    # The data model does no input or output.
+    assert not hasattr(Metadata, "load")
 
 
 # ----------------------------------------------------------------------
@@ -228,7 +229,7 @@ def test_itk_h5_metadata_reads_the_root_header(tmp_path) -> None:  # noqa: ANN00
     path = tmp_path / "affine.h5"
     with h5py.File(path, "w") as f:
         f.create_dataset("ITKVersion", data="5.4.0")
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is ItkH5Metadata
     assert [(g.name, g.version) for g in meta.generated_by] == [
         ("ITK", "5.4.0")
@@ -238,11 +239,11 @@ def test_itk_h5_metadata_reads_the_root_header(tmp_path) -> None:  # noqa: ANN00
 def test_a_bids_sidecar_reads_as_generic_metadata(tmp_path) -> None:  # noqa: ANN001
     path = tmp_path / "sub-01_bold.json"
     path.write_text(json.dumps({"RepetitionTime": 2.0, "TaskName": "rest"}))
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is Metadata
     assert meta.repetition_time == 2.0
     assert meta.extra == {"TaskName": "rest"}
-    assert Metadata.load(BytesIO(path.read_bytes())) == meta
+    assert FileBasedMetadata.load(BytesIO(path.read_bytes())) == meta
 
 
 # ----------------------------------------------------------------------
@@ -251,7 +252,7 @@ def test_a_bids_sidecar_reads_as_generic_metadata(tmp_path) -> None:  # noqa: AN
 
 
 def test_to_raw_encodes_into_a_copy(tmp_path) -> None:  # noqa: ANN001
-    meta = Metadata.load(_nifti(tmp_path / "scan.nii"))
+    meta = FileBasedMetadata.load(_nifti(tmp_path / "scan.nii"))
     meta.description = "edited"
     record = meta.to_raw()
     assert record is not meta.raw
@@ -260,7 +261,8 @@ def test_to_raw_encodes_into_a_copy(tmp_path) -> None:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("cls", [NiftiMetadata, MghMetadata])
-def test_formats_written_with_their_data_refuse_to_file(tmp_path, cls) -> None:  # noqa: ANN001
+def test_formats_written_with_their_data_have_no_to_file(cls) -> None:  # noqa: ANN001
+    # Their record is written with the data; only a format whose record
+    # is an object of its own on disk (plain Zarr) defines `to_file`.
     assert issubclass(cls, FileBasedMetadata)
-    with pytest.raises(WriterNotImplementedError):
-        cls(description=None).to_file(tmp_path / "out")
+    assert not hasattr(cls, "to_file")

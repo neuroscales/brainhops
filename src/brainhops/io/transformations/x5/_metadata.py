@@ -26,8 +26,12 @@ from brainhops.datamodel.metadata import ConversionReport
 from brainhops.datamodel.metadata._sentinel import ALL
 from brainhops.datamodel.metadata._vocabulary import VOCABULARY
 from brainhops.io.base._base import register_format
-from brainhops.io.base._metadata_parser import Hdf5MetadataParser
-from brainhops.io.base.parsers import Confidence, ParserContentError
+from brainhops.io.base.hdf5 import Hdf5MetadataParser
+from brainhops.io.base.parsers import (
+    Confidence,
+    ParserContentError,
+    SnifferContentError,
+)
 from brainhops.io.metadata import FileBasedMetadata
 from brainhops.io.metadata._json import (
     decode_object,
@@ -39,7 +43,8 @@ from brainhops.io.metadata._json import (
 from ._struct import X5Header, X5Node, is_x5, read_x5
 
 # The default of `X5Raw(node=...)`: a new, empty node. `None` means a
-# chain of several nodes, so it cannot be the default.
+# chain of several nodes, so it cannot be the default. Above `X5Raw`,
+# whose signature evaluates it.
 _NEW = object()
 
 
@@ -103,41 +108,6 @@ class X5Raw:
         return f"X5Raw(header=..., node={self.node is not None})"
 
 
-def metadata_index(
-    header: X5Header,
-    chain: tx.Optional[int] = None,
-    position: tx.Optional[int] = None,
-) -> tx.Optional[int]:
-    """
-    The node whose metadata is the metadata of a transformation.
-
-    Parameters
-    ----------
-    header : X5Header
-        The root of the file.
-    chain : int, optional
-        The chain of `/TransformChain` the transformation is.
-    position : int, optional
-        The single transform of `/TransformGroup` the transformation is.
-
-    Returns
-    -------
-    int or None
-        The index of the node: the single node read, or `None` for a
-        chain of several nodes, which has no metadata of its own
-        (composition does not merge).
-    """
-    if position is not None:
-        return int(position)
-    if chain is not None:
-        nodes = header.chains[chain]
-    elif header.chains:
-        nodes = header.chains[0]
-    else:
-        return 0
-    return nodes[0] if len(nodes) == 1 else None
-
-
 @register_format
 class X5Metadata(
     Hdf5MetadataParser,
@@ -163,7 +133,11 @@ class X5Metadata(
     # --- reading the node of a file -----------------------------------
 
     @classmethod
-    def sniff_h5(cls, h5file: tx.Any) -> float:
+    def sniff_h5(
+        cls,
+        h5file: tx.Any,
+        error: tx.Union[bool, tx.Type[Exception]] = False,
+    ) -> float:
         """
         Score how confident the class is that an open HDF5 file is an X5
         file.
@@ -172,13 +146,22 @@ class X5Metadata(
         ----------
         h5file : h5py.File
             The open file.
+        error : bool or type, optional
+            Raise an error (this one, or `SnifferContentError` for `True`)
+            instead of returning 0.
 
         Returns
         -------
         float
             The confidence, in `[0, 1]`.
         """
-        return Confidence.CERTAIN if is_x5(h5file) else Confidence.NO
+        if is_x5(h5file):
+            return Confidence.CERTAIN
+        if error:
+            raise (SnifferContentError if error is True else error)(
+                "HDF5 file is not an X5 file: no Format='X5'."
+            )
+        return Confidence.NO
 
     @classmethod
     def from_h5(
@@ -270,10 +253,47 @@ class X5Metadata(
             )
         json = dict(json) if isinstance(json, dict) else {}
         encode_changes(
-            json, {k: v for k, v in changed.items() if k != "extra"}
+            json,
+            {k: v for k, v in changed.items() if k != "extra"},
+            report=report,
         )
         if "extra" in changed:
             encode_extra(json, changed["extra"], report=report)
         if not json and node.metadata is None:
             return raw
         return X5Raw(header, replace(node, metadata=json))
+
+
+def metadata_index(
+    header: X5Header,
+    chain: tx.Optional[int] = None,
+    position: tx.Optional[int] = None,
+) -> tx.Optional[int]:
+    """
+    The node whose metadata is the metadata of a transformation.
+
+    Parameters
+    ----------
+    header : X5Header
+        The root of the file.
+    chain : int, optional
+        The chain of `/TransformChain` the transformation is.
+    position : int, optional
+        The single transform of `/TransformGroup` the transformation is.
+
+    Returns
+    -------
+    int or None
+        The index of the node: the single node read, or `None` for a
+        chain of several nodes, which has no metadata of its own
+        (composition does not merge).
+    """
+    if position is not None:
+        return int(position)
+    if chain is not None:
+        nodes = header.chains[chain]
+    elif header.chains:
+        nodes = header.chains[0]
+    else:
+        return 0
+    return nodes[0] if len(nodes) == 1 else None
