@@ -1,4 +1,4 @@
-__all__ = ["cache", "partial", "PLACEHOLDER", "StrEnum"]
+__all__ = ["cache", "own_annotations", "partial", "PLACEHOLDER", "StrEnum"]
 import sys
 from functools import lru_cache
 from functools import partial as _partial
@@ -57,3 +57,39 @@ else:
     class StrEnum(str, Enum):
         def __str__(self) -> str:
             return str(self.value)
+
+
+def own_annotations(
+    owner: tx.Union[type, tx.Mapping[str, tx.Any]],
+) -> tx.Dict[str, tx.Any]:
+    """
+    The annotations a class declares itself (not those it inherits), read
+    from the class or from the namespace its metaclass receives.
+
+    Up to Python 3.13 they are in `__annotations__`. From 3.14 (PEP
+    649/749) they are lazy: a class (or its namespace) carries an
+    annotate function instead, which is evaluated here in the
+    `FORWARDREF` format, so a name that is not defined yet becomes a
+    `ForwardRef` instead of raising.
+    """
+    namespace = owner if not isinstance(owner, type) else owner.__dict__
+    if "__annotations__" in namespace:
+        return dict(namespace["__annotations__"])
+    if sys.version_info < (3, 14):
+        return {}
+    import annotationlib
+
+    if isinstance(owner, type):
+        return dict(
+            annotationlib.get_annotations(
+                owner, format=annotationlib.Format.FORWARDREF
+            )
+        )
+    annotate = annotationlib.get_annotate_from_class_namespace(namespace)
+    if annotate is None:
+        return {}
+    return dict(
+        annotationlib.call_annotate_function(
+            annotate, annotationlib.Format.FORWARDREF
+        )
+    )
