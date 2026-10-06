@@ -256,11 +256,6 @@ class Hdf5Parser(BinaryFileParser):
                 if not keep_open:
                     f.close()
 
-    @classmethod
-    def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
-        """Build an object from the bytes of an HDF5 file."""
-        return cls.from_fileobj(BytesIO(content), **kwargs)
-
 
 class Hdf5ParserWriter(Hdf5Parser, BinaryFileParserWriter):
     """

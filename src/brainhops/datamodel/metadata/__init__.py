@@ -32,7 +32,10 @@ the loss policy (`"ignore"`, `"warn"` or `"raise"`, see
 [`metadata_loss_policy`][brainhops.datamodel.metadata.metadata_loss_policy])
 decides what happens to the report. A
 [`Scope`][brainhops.datamodel.metadata.Scope] says how each field
-propagates to a derived image.
+propagates to a derived image, through the
+[`Operation`][brainhops.datamodel.metadata.Operation] an image operation
+describes (an [`Indexed`][brainhops.datamodel.metadata.Indexed] image or
+a [`Resampled`][brainhops.datamodel.metadata.Resampled] one).
 
 The names exported here are those a user of the library needs, and the
 vocabulary groups (`ProvenanceVocabulary`, `MRIVocabulary`, ..., and
@@ -48,6 +51,9 @@ __all__ = [
     "Metadata",
     "UNSUPPORTED",
     "Scope",
+    "Operation",
+    "Indexed",
+    "Resampled",
     "GeneratedBy",
     "Channel",
     "EncodingDirection",
@@ -66,6 +72,7 @@ __all__ = [
 ]
 
 from ._base import Metadata
+from ._operations import Indexed, Operation, Resampled
 from ._report import (
     ConversionReport,
     MetadataLossError,

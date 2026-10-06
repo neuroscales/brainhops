@@ -15,17 +15,20 @@ import math
 
 # externals
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr
+from bagof.magic import HideIfDefault, NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
-from brainhops.datamodel.enums import AxisType
 from brainhops.datamodel.metadata._base import (
     FIELDS,
     Metadata,
     _convert_from,
     _format_name,
     _History,
+)
+from brainhops.datamodel.metadata._operations import (
+    Operation,
+    propagate_raw,
 )
 from brainhops.datamodel.metadata._report import (
     ConversionReport,
@@ -74,6 +77,19 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     class is not, so that `brainhops.io.load` never returns metadata
     where an image or a transformation was asked for.
     """
+
+    # Declared again to hide it from `repr` on the class of a format,
+    # whose name says the format: `HideIfDefault` is bound again on each
+    # class, against the value the class pins (`on={"format": ...}`), so
+    # it hides that value. Generic `Metadata` keeps showing its format.
+    format: tx.Annotated[
+        str,
+        tx.Doc(
+            "The format this metadata belongs to; selects the subclass. "
+            "Hidden from `repr` when it is the format of the class."
+        ),
+        HideIfDefault(),
+    ] = "generic"
 
     raw: tx.Annotated[
         tx.Optional[RawT],
@@ -595,16 +611,16 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     def _derive_values(
         self,
         *,
-        changed: tx.Mapping[AxisType, tx.Any],
+        operation: tx.Optional[Operation],
         history: _History,
     ) -> tx.Dict[str, tx.Any]:
-        # A copy of the raw record and the snapshot are kept, so that a
-        # field `_reslice` or `_select` cleared is cleared in the record on
-        # write. A format scrubs what else the change invalidates in its
-        # own `_reslice` or `_select`, on the copy.
-        values = super()._derive_values(changed=changed, history=history)
+        # A copy of the snapshot is kept, so that a field the operation
+        # cleared is cleared in the record on write. The record is
+        # propagated by the handler of its type, which scrubs what else
+        # the operation invalidates, on a copy (see `propagate_raw`).
+        values = super()._derive_values(operation=operation, history=history)
         values["snapshot"] = copy.copy(self._snapshot)
-        values["raw"] = copy.deepcopy(self.raw)
+        values["raw"] = propagate_raw(self.raw, operation, source=self)
         return values
 
 

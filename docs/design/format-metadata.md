@@ -990,30 +990,42 @@ to match on (`format`), and nothing is dispatched on a parsed name.
 Answer to issue question 4. Propagation is driven by the field `Scope`
 tags. The image class owns the operation: the metadata does not know the
 coordinate system, the shape or the transformation of the image, so the
-image resolves what changed from its geometry, and hands the result to
-the metadata. One method is public; two private hooks serve the image
-operations. Each returns a new object of the same class.
+image describes what it did as an operation object, and hands it to the
+metadata, which returns a new object of the same class.
 
 ```python
-def derive(self, *, history=None) -> tx.Self:
-    """Provenance only: same axes, same fields."""
+def derive(self, operation=None, *, history=None) -> tx.Self:
+    """Same axes without an operation; otherwise each value follows it."""
 
 
-def _select(self, axis_type, positions, *, history=None) -> tx.Self:
-    """The axes of one non-spatial type kept `positions` (or None)."""
+class Operation:  # what an image did to its axes
+    moves_space: bool  # did the spatial axes change?
+    voxel_map: tx.Optional[np.ndarray]  # old voxels -> new, linear part
 
 
-def _reslice(self, linear, *, history=None) -> tx.Self:
-    """The spatial axes changed; `linear` maps old voxels to new."""
+class Indexed(Operation):  # image[index]
+    index: tuple
+    shape: tuple
+    system: tx.Optional[CoordinateSystem]
+
+    def positions(self, axis: AxisType) -> tx.Optional[np.ndarray]: ...
+
+
+class Resampled(Operation):  # image.reslice(geometry)
+    transformation: Transformation  # new voxels -> old voxels
+    geometry: Geometry
 ```
 
-`positions` is a resolved integer array (`None` when the axis was
-dropped), and `linear` the linear part of the old-to-new voxel map, as an
-ndarray (`None` when it is unknown or not affine): the metadata never
-interprets a raw index or a `Transformation`. `history` is one entry (a
-string) or several. The three share one pipeline,
-`_derive_values(changed={AxisType: positions or linear}, history=)`,
-which applies the rules below field by field:
+`Indexed.positions(axis)` is `np.arange(size)[component]` for the first
+axis of that type (`None` when the axis was dropped or the selection is
+not 1-D), and `voxel_map` the linear part of the old-to-new voxel map
+(`None` when it is unknown or not affine). `history` is one entry (a
+string) or several. Each value goes through `propagate(value,
+operation, name=, scope=, source=)`, which looks up a handler
+registered with `@propagates(key, operation_type)`: first by the type
+of the value (its MRO, and for each class the MRO of the operation),
+then by the scope of its field; a value no handler takes is kept. The
+scope defaults apply the rules below field by field:
 
 - `FILE`-scoped fields are kept, except `creation_time` (cleared) and
   `history`, to which the `history` entries (a short string such as
@@ -1021,20 +1033,21 @@ which applies the rules below field by field:
   brainhops entry once.
 - `ACQUISITION`-scoped fields are kept.
 - `SPATIAL`-scoped fields (`slice_timing`, `slice_encoding_direction`,
-  `phase_encoding_direction`) are cleared by `_reslice`, with one
+  `phase_encoding_direction`) are cleared when `moves_space`, with one
   exception: an encoding direction in voxel axes is pushed through
-  `linear` (`v' = normalize(L @ v)`, section 4.2), so a
+  `voxel_map` (`v' = normalize(L @ v)`, section 4.2) by the handler of
+  `EncodingDirection`, so a
   permutation or flip remaps `"j-"` and an oblique resampling keeps an
   oblique direction. The map of a 4-D image has more axes than the
   direction, which lies in its first three; the direction is kept only
   when it still lies there. Without a map, or with a map that is not
   affine, the direction is cleared; a direction in a named world space
   does not move with the voxels. The slice timing is always cleared.
-- `AXIS`-scoped fields (`channels`, `bvalues`, `bvectors`) keep, by
-  `_select`, their entries at the positions the image kept along the
-  axis type their `Along` names (the image resolves them with
-  `np.arange(size)[component]`, so a slice, integers or a boolean mask
-  all work). A dropped axis (an integer index) or a position beyond the
+- `AXIS`-scoped fields (`channels`, `bvalues`, `bvectors`) keep, under
+  an `Indexed`, their entries at `positions` along the axis type their
+  `Along` names (`np.arange(size)[component]`, so a slice, integers or
+  a boolean mask all work); they are kept when the image has no such
+  axis, or when the index leaves it untouched. A dropped axis (an integer index) or a position beyond the
   field clears it. This is today's AFNI
   `_PER_BRICK` and NRRD `_PER_AXIS` rule, made generic.
 - `extra` is kept verbatim; nothing in it is understood.
@@ -1046,13 +1059,13 @@ which applies the rules below field by field:
   resampling, the keyval `SliceTiming` is removed. Record content that
   is tied to some axes but outside the vocabulary (NIfTI
   `slice_start/end`, AFNI `TAXIS_OFFSETS` and the `_PER_GRID`/
-  `_PER_BRICK` attributes, NRRD `_PER_AXIS` fields) is scrubbed by a
-  per-format hook, `_derive_raw(raw, *, changed)`, which receives the
-  same mapping and only tests which axis types are in it. Without both,
-  case 1 would write stale slice timing from an untouched record. The
-  hook's default is a deep copy of the record (a derived object never
-  shares it, as M10 copies rather than aliases), so a format overrides
-  it only to scrub.
+  `_PER_BRICK` attributes, NRRD `_PER_AXIS` fields) is scrubbed by the
+  handler of the class of the record (`propagate_raw`), which the
+  format registers next to its metadata class, and which only reads
+  the operation. Without both, case 1 would write stale slice timing
+  from an untouched record. Without a handler, the record is deep
+  copied (a derived object never shares it, as M10 copies rather than
+  aliases), so a format registers one only to scrub.
 
 Where it is called:
 
@@ -1063,10 +1076,10 @@ Where it is called:
   per file). Each level is a `SingleScaleImage` and so has a `metadata`
   field too; it holds a *derived copy*, built when the level is
   materialised, never the parent object by identity: the first level
-  gets `derive()`, and level `i` gets `_reslice` with the linear part of
-  `level_i.transformation.inverse() @ level_0.transformation`, the map
-  from the voxels of the first level to its own, so a direction in voxel
-  axes survives the coarser sampling. Sharing by identity would let `levels[2].metadata.description
+  gets `derive()`, and level `i` gets `derive(Resampled(...))` with
+  `level_0.transformation.inverse() @ level_i.transformation`, the map
+  from the voxels of level `i` to those of the first level, so a
+  direction in voxel axes survives the coarser sampling. Sharing by identity would let `levels[2].metadata.description
   = ...` silently edit the pyramid, and would make a level's
   `slice_timing` wrong. The price is that editing a level's metadata
   does not reach the pyramid, which is the right direction: the pyramid
@@ -1087,19 +1100,19 @@ Where it is called:
   A call on the sequence itself is covered by `DataModelBase.from_other`,
   which passes the `metadata` of a data model it hands to a constructor
   (section 10).
-- **Data-model operations.** `SingleScaleImage.__getitem__` expands
-  its index to one component per data axis: a component that changes an
-  axis typed `time`, `channel`, ... calls `_select(type,
-  np.arange(size)[component])` (`None` for an integer), and one that
-  changes a spatial axis (or an untyped one, or moves one to another
-  position) calls `_reslice` last, with the pseudo-inverse of the linear
-  part of the map of the index (`_index2transform`); the step is
-  recorded once, as `"getitem"`. `reslice` calls `_reslice` with the
-  linear part of `new2old.inverse()`, where `new2old` is the
-  voxel-to-voxel map without the grid (a field, which has no affine
-  form), and `history="reslice"`. `__call__` keeps the metadata as it
-  is. A `MultiScaleImage` reslices through one of its levels, so it
-  inherits the rule.
+- **Data-model operations.** `SingleScaleImage.__getitem__` derives
+  with `Indexed(index, self.shape, grid.input)`, which expands its index
+  to one component per data axis and reads the type of each axis: an
+  axis typed `time`, `channel`, ... selects the entries of the fields
+  along it, and a change of a spatial axis (or of an untyped one, or a
+  move to another position) moves space, through the pseudo-inverse of
+  the linear part of the map of the index (`_index2transform`); the step
+  is recorded once, as `"getitem"`. `reslice` derives with
+  `Resampled(new2old, geometry)`, where `new2old` is the voxel-to-voxel
+  map without the grid (a field, which has no affine form), and
+  `history="reslice"`. `__call__` keeps the metadata as it is (a copy,
+  with no provenance). A `MultiScaleImage` reslices through one of its
+  levels, so it inherits the rule.
 
 ## 10. Datamodel field (M10) and the `metadata_fields` clash (M11)
 
@@ -1510,8 +1523,8 @@ for a JSON-capable node.
 > `omero` key was not worth it); a `Channel.unit` and a non-opaque alpha
 > are reported as approximated. The writer keeps the multiscale `name`,
 > `type` and downsampling `metadata` of the record. Levels get
-> `derive()` (the first) or `_reslice()` (the others, section 9) when
-> the pyramid is read; a pyramid built in memory keeps the levels it was
+> `derive()` (the first) or `derive(Resampled(...))` (the others,
+> section 9) when the pyramid is read; a pyramid built in memory keeps the levels it was
 > given. For plain Zarr the
 > generic option was taken: `ZarrMetadata` (format `"zarr"`) stores the
 > vocabulary as a BIDS sidecar (the codec of `to_bids`) under the array
@@ -1931,8 +1944,12 @@ holds.
   `format`, `extra`, then the vocabulary in its declared order. A
   format class declares the vocabulary again (`supports=`), and
   `bagof` has no way to place a field (`format`) before the fields a
-  class declares, so the `repr` of a format shows `format` last:
-  `NiftiMetadata(description='T1w', format='nifti')`.
+  class declares, so the `repr` of a format would show `format` last.
+  It hides it instead, since the name of the class says the format:
+  `FileBasedMetadata` declares `format` again with `HideIfDefault`,
+  which `bagof` binds again on each class against the value the class
+  pins, so `repr` gives `NiftiMetadata(description='T1w')`. Generic
+  `Metadata` keeps `HideIf(...)` on it, and shows its format.
 
 - **No input or output on `Metadata` (M8).** `Metadata.load`,
   `Metadata.from_bids` and `Metadata.to_bids` are gone: the data model
@@ -1968,10 +1985,10 @@ holds.
 
 - **The parsers (M8).** `MetadataParser` only reads, as a `FileParser`
   does: its `to_file`, which refused, is gone, and plain Zarr defines
-  its own. It keeps `from_bytes`, which hands the bytes to
-  `from_fileobj` in a stream, since a format implements `from_fileobj`
-  and `FileParser` routes the other way (whether that should be the
-  default of the binary parsers is issue #297). `Hdf5MetadataParser`
+  its own. Its `from_bytes` override is gone too: since #311 (issue
+  #297), `FileParser.from_bytes` hands the bytes to `from_fileobj` in a
+  stream when a class implements `from_fileobj`, as every format
+  does. `Hdf5MetadataParser`
   lives next to `Hdf5Parser`, in `brainhops.io.base.hdf5`, and is an
   `Hdf5Parser`, whose routing of paths, streams and bytes to `sniff_h5`
   and `from_h5` it uses rather than its own. `ItkH5Metadata` (and
@@ -1995,6 +2012,41 @@ holds.
   before a public one at import time (a converter that a field
   annotation evaluates, a base class, a default or a `TypeVar`) stays
   above it, with a comment that says why.
+
+### Addendum: operation objects
+
+Where this addendum and the sections above disagree, this addendum
+holds.
+
+- **One entry point (M9).** The private hooks `_select(axis_type,
+  positions)` and `_reslice(linear)`, and the `changed=` mapping of
+  `_derive_values`, are gone. An image operation describes what it did
+  as an `Operation` (`Indexed`, `Resampled`, exported by
+  `brainhops.datamodel.metadata`), and derives with
+  `derive(operation, history=...)`. `derive()` without an operation is
+  unchanged, and so is the automatic provenance.
+- **Dispatch.** One registry, in `_operations`:
+  `@propagates(key, operation_type)` registers a handler
+  `handler(value, operation, *, name, source)`, where `key` is a value
+  class or a `Scope` member, never `object`. `propagate` looks up the
+  type of the value (its MRO, the most specific operation first), then
+  the scope; a value no handler takes is kept, and `UNSUPPORTED`
+  always is. Plain tuples (`bvalues`, `display_range`) register
+  nothing, and go to the scope default, which reads `ALONG`. Each
+  handler lives next to its type: the encoding direction in `_terms`,
+  the scope defaults in `_vocabulary`, under `Scope`.
+- **The raw record.** `FileBasedMetadata._derive_values` propagates the
+  record with `propagate_raw`, the same lookup by the type of the
+  record, and a deep copy without a handler. A format registers a
+  handler for the class of its own record, never for a widely used
+  type: NIfTI's `_derive_header` replaces the `_reslice` override.
+- **Imports.** The transformations import the metadata, so
+  `_operations` imports neither the transformations nor the geometry at
+  the top: `Resampled` annotates them as strings, without conversion,
+  and `voxel_map` imports what it needs when it runs.
+- **Not done.** `image(transform)` records no provenance; it is a plain
+  copy. A warp's local Jacobian is an extension point of `Operation`,
+  which no operation implements.
 
 ## Open questions for the maintainer
 

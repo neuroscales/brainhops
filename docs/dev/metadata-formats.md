@@ -122,8 +122,8 @@ comes first among its bases, and owns no registry. It is a `FileParser`:
 the format implements `from_fileobj(file)`, which reads the raw record
 of an open binary file, and nothing else (a NIfTI header, never the
 voxels), then builds the metadata with `from_raw`; `from_filename` opens
-a path in binary mode and hands it over, and `from_bytes` wraps the
-bytes in a stream. A format that reads a path otherwise overrides
+a path in binary mode and hands it over, and `FileParser.from_bytes`
+wraps the bytes in a stream, since the class implements `from_fileobj`. A format that reads a path otherwise overrides
 `from_filename` too (MGH, whose tags are read lazily from a path). A
 format stored in HDF5 derives from `Hdf5MetadataParser` instead (next to
 `Hdf5Parser`, in `brainhops.io.base.hdf5`), and implements
@@ -198,15 +198,37 @@ public method and calling `super()`:
   and passes it on (NIfTI: the record, with the shape and the time step
   of `image`), so that a value-dependent check reads the same state as a
   real write.
-- `_select(axis, positions, *, history=None)` and
-  `_reslice(linear, *, history=None)`, the hooks of the image operations
-  on [`Metadata`][brainhops.datamodel.metadata.Metadata] (`image[index]`
-  along a time or channel axis, a change of the spatial axes), give the
-  metadata of the derived image, with a deep copy of `raw`. A format
-  whose record holds content tied to some axes, but outside the
-  vocabulary, overrides them, calls `super()`, and removes that content
-  from the copy: NIfTI's `_reslice` clears its slice slots and
-  `dim_info`.
+
+**Image operations.** An image operation that changes axes describes
+what it did as an
+[`Operation`][brainhops.datamodel.metadata.Operation] (`image[index]`
+gives an [`Indexed`][brainhops.datamodel.metadata.Indexed],
+`image.reslice(...)` a
+[`Resampled`][brainhops.datamodel.metadata.Resampled]), and derives the
+metadata of its result with
+[`derive(operation)`][brainhops.datamodel.metadata.Metadata.derive].
+Each field propagates by the handler of its value, or else by that of
+its scope, and the raw record of a format by the handler of the class
+of the record, or else as a deep copy. A format whose record holds
+content tied to some axes, outside the vocabulary, registers a handler
+for the class of its record, which is its own (never a widely used type
+such as `dict`), with `propagates` from
+`brainhops.datamodel.metadata._operations`. The handler returns the
+record of the derived metadata, a copy it may edit; NIfTI's clears its
+slice slots and `dim_info` when the spatial axes move:
+
+```python
+@propagates(nb.Nifti1Header, Operation)
+def _derive_header(raw, operation, *, name, source):
+    raw = copy.deepcopy(raw)
+    if operation.moves_space:
+        _clear_slices(raw)
+        raw.set_dim_info(None, None, None)
+    return raw
+```
+
+The lookup order (the type of the value before its scope, the most
+specific class of the operation first) is documented in that module.
 
 ## Scopes and axes
 
