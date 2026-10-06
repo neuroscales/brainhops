@@ -9,6 +9,7 @@ fit together. They are imported from the private modules that define
 them.
 
 # ::: brainhops.datamodel.metadata._vocabulary
+# ::: brainhops.datamodel.metadata._operations
 # ::: brainhops.datamodel.metadata._field
 # ::: brainhops.datamodel.metadata._report
 # ::: brainhops.datamodel.metadata._dtype
