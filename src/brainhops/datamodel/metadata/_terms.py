@@ -16,6 +16,7 @@ from brainhops._core.typing import ArrayLike
 
 from ..base import DataModelBase
 from ..enums import SpaceEnum
+from ..systems import CoordinateSystem
 from ..units import Unit
 from ._sentinel import UNSUPPORTED
 
@@ -99,10 +100,21 @@ def _snapped(value: float) -> float:
     return value
 
 
+_SPACE_TERM = EnumConverter(SpaceEnum)
+
+
+def _space(value: tx.Any) -> tx.Any:
+    """The converter of `EncodingDirection.space`: a coordinate system is
+    kept as it is, and a label becomes a known space when it is one."""
+    if isinstance(value, CoordinateSystem):
+        return value
+    return _SPACE_TERM(value)
+
+
 class EncodingDirection(DataModelBase):
     """
     The direction of an encoding axis, such as the phase-encoding or the
-    slice-encoding axis, as a unit vector in a named coordinate system.
+    slice-encoding axis, as a unit vector in a coordinate system.
 
     When `space` is `None`, the vector is expressed in the voxel axes of
     the image, which is the frame BIDS uses for `PhaseEncodingDirection`.
@@ -113,11 +125,20 @@ class EncodingDirection(DataModelBase):
     resampling, is kept exactly, and a format that can only store an axis
     reports it as lost.
 
+    The space is the label of a world space (a `SpaceEnum` term, or any
+    string), or a brainhops
+    [`CoordinateSystem`][brainhops.datamodel.systems.CoordinateSystem].
+    A file stores the space as a string, so a coordinate system is
+    written as its `name`, which reads back as a label; a direction in a
+    coordinate system without a name cannot be written to JSON, and is
+    reported as lost.
+
     Two directions are equal when their vectors and their spaces are
-    equal. The vector is normalised on construction, and a component
-    within `1e-9` of 0, 1 or -1 is snapped to that value, so that
-    `(0, 0, 2)`, `"k"`, and `"k"` mapped through a permutation of the
-    axes are the same vector.
+    equal: a coordinate system is equal to an equal coordinate system,
+    never to a label, not even its own name. The vector is normalised on
+    construction, and a component within `1e-9` of 0, 1 or -1 is snapped
+    to that value, so that `(0, 0, 2)`, `"k"`, and `"k"` mapped through a
+    permutation of the axes are the same vector.
     """
 
     vector: tx.Annotated[
@@ -130,12 +151,13 @@ class EncodingDirection(DataModelBase):
         ConvertTo(_vector),
     ]
     space: tx.Annotated[
-        tx.Optional[tx.Union[SpaceEnum, str]],
+        tx.Optional[tx.Union[SpaceEnum, CoordinateSystem, str]],
         tx.Doc(
             "The coordinate system of `vector`: `None` for the image's "
-            "voxel axes, or the label of a world space."
+            "voxel axes, the label of a world space, or a "
+            "`CoordinateSystem`."
         ),
-        ConvertTo(EnumConverter(SpaceEnum)),
+        ConvertTo(_space),
     ] = None
 
     def __post_init__(self) -> None:
@@ -171,21 +193,31 @@ class EncodingDirection(DataModelBase):
             return None
         return AXES[index] + ("-" if vector[index] < 0 else "")
 
-    def transform(self, linear: ArrayLike) -> tx.Self:
+    def transform(self, linear: tx.Any) -> tx.Self:
         """
         The direction after a linear map of its coordinate system.
 
         Parameters
         ----------
-        linear : array-like
-            The matrix that maps the old axes to the new ones.
+        linear : array-like or Transformation
+            The matrix that maps the old axes to the new ones, or a
+            brainhops `Transformation` that reduces to an affine, whose
+            linear part is used (the translation does not move a
+            direction).
 
         Returns
         -------
         EncodingDirection
             The mapped direction, normalised, in the same `space`.
+
+        Raises
+        ------
+        TypeError
+            If `linear` is a transformation that does not reduce to an
+            affine (a field, for instance), which maps no direction to a
+            single direction.
         """
-        matrix = np.asarray(linear, dtype=float)
+        matrix = _linear_part(linear)
         return replace(self, vector=tuple(matrix @ np.asarray(self.vector)))
 
     def __repr__(self) -> str:
@@ -195,6 +227,8 @@ class EncodingDirection(DataModelBase):
         vector = tuple(round(v, 6) for v in self.vector)
         if self.space is None:
             return f"EncodingDirection({vector!r})"
+        if isinstance(self.space, CoordinateSystem):
+            return f"EncodingDirection({vector!r}, space={self.space!r})"
         return f"EncodingDirection({vector!r}, space={str(self.space)!r})"
 
 
@@ -343,3 +377,23 @@ def _bids_vector(value: str) -> tx.Tuple[float, ...]:
     vector = [0.0] * len(AXES)
     vector[AXES.index(axis)] = -1.0 if value.endswith("-") else 1.0
     return tuple(vector)
+
+
+def _linear_part(linear: tx.Any) -> np.ndarray:
+    """The matrix of `EncodingDirection.transform`: an array as it is, or
+    the linear part of a transformation that reduces to an affine."""
+    # Not at the top: the transformations import the metadata (their
+    # `metadata` field), which imports this module.
+    from .._transformations.base import Transformation
+    from .._transformations.multiscale import _as_affine
+
+    if not isinstance(linear, Transformation):
+        return np.asarray(linear, dtype=float)
+    affine = _as_affine(linear)
+    if affine is None:
+        raise TypeError(
+            f"A direction is mapped by a linear map; {type(linear).__name__} "
+            f"does not reduce to an affine."
+        )
+    matrix = np.asarray(affine.matrix, dtype=float)
+    return matrix[:-1, :-1]

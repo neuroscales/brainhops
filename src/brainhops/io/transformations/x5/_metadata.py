@@ -270,7 +270,9 @@ class X5Metadata(
             )
         json = dict(json) if isinstance(json, dict) else {}
         encode_changes(
-            json, {k: v for k, v in changed.items() if k != "extra"}
+            json,
+            {k: v for k, v in changed.items() if k != "extra"},
+            report=report,
         )
         if "extra" in changed:
             encode_extra(json, changed["extra"], report=report)

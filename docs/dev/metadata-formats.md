@@ -269,11 +269,12 @@ sidecars themselves are read and written by
 file; the data model does no input or output). `decode_object(obj,
 names)` splits an object into the values of the vocabulary fields
 `names` (read from their sidecar keys, BIDS keys or `CamelCase` names)
-and the other keys, which are `extra`; `encode_changes(obj, changed)`
-writes the changed fields back under their keys (`None` removes one),
-and `encode_extra(obj, diff, report=, reserved=)` applies the `extra`
-diff, reporting the keys the format keeps for itself as lost.
-`X5Metadata` is the shortest example.
+and the other keys, which are `extra`; `encode_changes(obj, changed,
+report=)` writes the changed fields back under their keys (`None`
+removes one, and a value JSON cannot hold is reported as lost), and
+`encode_extra(obj, diff, report=, reserved=)` applies the `extra` diff,
+reporting the keys the format keeps for itself as lost. `X5Metadata` is
+the shortest example.
 
 ## The `metadata` field of a format class
 

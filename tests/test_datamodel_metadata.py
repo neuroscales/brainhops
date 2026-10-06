@@ -1112,6 +1112,48 @@ def test_an_encoding_direction_is_a_vector_in_voxel_axes() -> None:
     assert world.space is SpaceEnum.scanner and world.to_bids() is None
 
 
+def test_a_direction_may_be_in_a_coordinate_system() -> None:
+    from brainhops.datamodel.systems import CoordinateSystem
+    from brainhops.io.metadata._json import encode_changes, to_json
+
+    named = CoordinateSystem(name="RAS")
+    direction = EncodingDirection((1, 0, 0), space=named)
+    assert direction.space is named
+    assert direction.to_bids() is None
+    # A system equals an equal system, never a label, not even its name.
+    assert direction == EncodingDirection(
+        "i", space=CoordinateSystem(name="RAS")
+    )
+    assert direction != EncodingDirection((1, 0, 0), space="RAS")
+    assert "space=CoordinateSystem(" in repr(direction)
+    # JSON writes the name of the system, which reads back as a label.
+    assert to_json("phase_encoding_direction", direction) == {
+        "Vector": [1.0, 0.0, 0.0],
+        "Space": "RAS",
+    }
+    # Without a name, the direction cannot be written, and is lost.
+    unnamed = EncodingDirection((1, 0, 0), space=CoordinateSystem())
+    obj = {"PhaseEncodingDirection": "j"}
+    report = ConversionReport()
+    encode_changes(obj, {"phase_encoding_direction": unnamed}, report=report)
+    assert obj == {}
+    assert report.lost == {"phase_encoding_direction": unnamed}
+
+
+def test_a_direction_is_mapped_by_a_transformation() -> None:
+    from brainhops.datamodel.transformations import Affine, DisplacementField
+
+    swap = np.array(
+        [[0, 1, 0, 5], [1, 0, 0, -2], [0, 0, 1, 3], [0, 0, 0, 1]], dtype=float
+    )
+    direction = EncodingDirection("j-")
+    # The linear part of an affine maps it; its translation does not.
+    assert direction.transform(Affine(swap)) == EncodingDirection("i-")
+    assert direction.transform(swap[:3, :3]) == EncodingDirection("i-")
+    with pytest.raises(TypeError, match="affine"):
+        direction.transform(DisplacementField(np.zeros((2, 2, 2, 3))))
+
+
 def test_the_direction_fields_take_bids_strings() -> None:
     meta = Metadata(phase_encoding_direction="j-")
     assert isinstance(meta.phase_encoding_direction, EncodingDirection)

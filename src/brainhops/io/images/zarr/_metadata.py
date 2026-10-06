@@ -474,7 +474,7 @@ class ZarrMetadata(
             for name, value in changed.items()
             if name not in ("extra", "data_type")
         }
-        encode_changes(block, fields)
+        encode_changes(block, fields, report=report)
         if "extra" in changed:
             encode_extra(
                 attrs,

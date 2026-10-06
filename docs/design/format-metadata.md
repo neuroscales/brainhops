@@ -1955,6 +1955,17 @@ holds.
   `type(None)` (none) until a format declares the type of its own
   record, which keeps the behaviour of the two former methods.
 
+- **Encoding directions (M3).** The `space` of an `EncodingDirection`
+  may also be a brainhops `CoordinateSystem`, kept as it is; it equals
+  an equal system, never a label (not even its own name). A file names
+  the space with a string, so the JSON codec writes a system by its
+  name, which reads back as a label, and reports as lost a direction in
+  a system without a name (`encode_changes(obj, changed, *, report)`);
+  a sidecar already reports any direction in a space as lost.
+  `EncodingDirection.transform` also takes a `Transformation`: the
+  linear part of the affine it reduces to, and a `TypeError` for one
+  that does not (a field).
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,
