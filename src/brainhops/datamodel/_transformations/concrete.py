@@ -23,11 +23,11 @@ from numbers import Integral, Real
 
 # dependencies
 import typing_extensions as tx
-from bagof.magic import InitVar, KwOnly, NoPolymorphError
+from bagof.magic import InitVar, KwOnly
 
 # core
 from brainhops._core.bsplines import coeff2value_field, value2coeff_field
-from brainhops._core.properties import lazyproperty, smartproperty
+from brainhops._core.properties import lazyproperty
 from brainhops._core.typing import (
     ArrayProtocol,
     Deactivated,
@@ -145,10 +145,10 @@ class ConcreteTransformation(Transformation):
         # holds this transform as its `forward` and materializes the
         # inverse only when its parameter is read or it is computed, so a
         # transform placed next to its own inverse cancels for free.
-        if self._is_unparameterized():
-            # Nothing to invert: an unset parameter reads as the identity,
-            # whose inverse is itself with the endpoints swapped. Wrapping
-            # it would only defer a computation that does not exist.
+        if is_identity(self):
+            # Nothing to invert: the identity is its own inverse, with the
+            # endpoints swapped. Wrapping it would only defer a computation
+            # that does not exist.
             reverse = type(self)._reverse_type
             if reverse is not None:
                 # ... except for a paired type, whose swapped direction is
@@ -162,29 +162,16 @@ class ConcreteTransformation(Transformation):
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         # The shared `sqrt()` of every forward type whose square root is a
-        # typed lazy wrapper. The front door builds the wrapper of this
-        # transform's family, and refuses a family that has none; the
-        # wrapper computes its parameter only when it is read.
+        # typed lazy wrapper, which computes its parameter only when it is
+        # read. Every concrete family has one, or a `sqrt()` of its own.
         require_endomorphism(self, "square root")
-        if self._is_unparameterized():
-            # An unset parameter reads as the identity, which is its own
-            # square root. There is nothing to defer.
+        if is_identity(self):
+            # The identity is its own square root: there is nothing to
+            # defer.
             obj = self
         else:
-            try:
-                obj = registries.SQRT(self)
-            except NoPolymorphError:
-                raise NotImplementedError(
-                    f"The square root of a {type(self).__name__} is not "
-                    "implemented."
-                ) from None
+            obj = registries.SQRT(self)
         return obj.compute(**kwargs) if compute else obj
-
-    def _is_unparameterized(self) -> bool:
-        # Whether every parameter this transform is defined by is unset.
-        return all(
-            getattr(self, name, None) is None for name in self.data_fields
-        )
 
 
 class TransformationField(ConcreteTransformation):
@@ -286,26 +273,41 @@ class TransformationField(ConcreteTransformation):
         for name in ("_cache_field", "_cache_data", INVERSE_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    def _set_degree(self, value: InterpolationOrder) -> None:
+    @property
+    def degree(self) -> InterpolationOrder:
+        return self._degree
+
+    @degree.setter
+    def degree(self, value: InterpolationOrder) -> None:
         self._degree = value
         self._forget_views()
 
-    def _set_bound(self, value: tx.Union[BoundaryCondition, float]) -> None:
+    @property
+    def bound(self) -> tx.Union[BoundaryCondition, float]:
+        return self._bound
+
+    @bound.setter
+    def bound(self, value: tx.Union[BoundaryCondition, float]) -> None:
         self._bound = value
         self._forget_views()
 
-    def _set_coeff(self, value: bool) -> None:
+    @property
+    def coeff(self) -> bool:
+        return self._coeff
+
+    @coeff.setter
+    def coeff(self, value: bool) -> None:
         self._coeff = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
-    degree = smartproperty("degree", _set_degree)
-    bound = smartproperty("bound", _set_bound)
-    coeff = smartproperty("coeff", _set_coeff)
 
     # --- views --------------------------------------------------------
 
@@ -364,12 +366,15 @@ class DisplacementField(TransformationField, polymorphic=True):
 
     # --- stored attributes, which key the views -----------------------
 
-    def _set_log(self, value: bool) -> None:
+    @property
+    def log(self) -> bool:
+        return self._log
+
+    @log.setter
+    def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "StationaryVelocityField")
         self._log = value
         self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
     # --- copies -------------------------------------------------------
 
@@ -404,7 +409,7 @@ DataModelBase.from_instance]. A lazy wrapper derives its `data` and its
     # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        if not self._is_unparameterized():
+        if not is_identity(self):
             raise NotImplementedError(
                 "The square root of a displacement field is implemented only "
                 "for a stationary velocity field (log=True), whose square "
@@ -491,11 +496,14 @@ class StationaryVelocityField(DisplacementField, on={"_log": True}):
 
     # --- stored attributes, which key the views -----------------------
 
-    def _set_steps(self, value: tx.Optional[int]) -> None:
+    @property
+    def steps(self) -> tx.Optional[int]:
+        return self._steps
+
+    @steps.setter
+    def steps(self, value: tx.Optional[int]) -> None:
         self._steps = value
         self._forget_views()
-
-    steps = smartproperty("steps", _set_steps)
 
     # --- views --------------------------------------------------------
 
@@ -618,11 +626,14 @@ class CartesianField(CoordinatesField):
         tx.Optional[tx.Tuple[int, ...]], tx.Doc("The shape of the grid.")
     ] = None
 
-    def _set_shape(self, value: tx.Optional[tx.Tuple[int, ...]]) -> None:
+    @property
+    def shape(self) -> tx.Optional[tx.Tuple[int, ...]]:
+        return self._shape
+
+    @shape.setter
+    def shape(self, value: tx.Optional[tx.Tuple[int, ...]]) -> None:
         self._shape = value
         self._forget_views()
-
-    shape = smartproperty("shape", _set_shape)
 
     # --- derived attributes -------------------------------------------
     # Mark them as `ClassVar` to keep them out of `__init__`. The grid is
@@ -744,17 +755,24 @@ class Affine(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    def _set_log(self, value: bool) -> None:
+    @property
+    def log(self) -> bool:
+        return self._log
+
+    @log.setter
+    def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "AffineExponential")
         self._log = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -934,17 +952,24 @@ class Linear(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_matrix", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    def _set_log(self, value: bool) -> None:
+    @property
+    def log(self) -> bool:
+        return self._log
+
+    @log.setter
+    def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "LinearExponential")
         self._log = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -1077,12 +1102,15 @@ class Rotation(Linear):
 
     # --- stored attributes, which key the views -----------------------
 
-    def _set_log(self, value: bool) -> None:
+    @property
+    def log(self) -> bool:
+        return self._log
+
+    @log.setter
+    def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "RotationExponential")
         self._log = value
         self._forget_views()
-
-    log = smartproperty("log", _set_log)
 
 
 class RotationExponential(Rotation, on={"_log": True}):
@@ -1186,11 +1214,14 @@ class Permutation(ConcreteTransformation):
         for name in (INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
 
     # --- views --------------------------------------------------------
 
@@ -1279,17 +1310,24 @@ class Scaling(ConcreteTransformation, polymorphic=True):
         for name in ("_cache_scale", INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
 
-    def _set_log(self, value: bool) -> None:
+    @property
+    def log(self) -> bool:
+        return self._log
+
+    @log.setter
+    def log(self, value: bool) -> None:
         _refuse_log_change(self, value, "ScalingExponential")
         self._log = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
-    log = smartproperty("log", _set_log)
 
     # --- views --------------------------------------------------------
 
@@ -1417,11 +1455,14 @@ class Translation(ConcreteTransformation):
         for name in (INVERSE_CACHE, OPERATION_CACHE):
             self.__dict__.pop(name, None)
 
-    def _set_data(self, value: tx.Optional[ArrayProtocol]) -> None:
+    @property
+    def data(self) -> tx.Optional[ArrayProtocol]:
+        return self._data
+
+    @data.setter
+    def data(self, value: tx.Optional[ArrayProtocol]) -> None:
         self._data = value
         self._forget_views()
-
-    data = smartproperty("data", _set_data)
 
     # --- views --------------------------------------------------------
 
