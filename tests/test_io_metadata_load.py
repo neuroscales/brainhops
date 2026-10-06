@@ -154,7 +154,7 @@ def test_mgh_metadata_reads_the_footer_and_the_tags(tmp_path) -> None:  # noqa: 
     )
     path = tmp_path / "scan.mgz"
     image.save(str(path), on_loss="ignore")
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is MghMetadata
     assert meta.repetition_time == 2.3
     # The tags, after the voxels, are read for `history`.
@@ -170,7 +170,7 @@ def test_zarr_metadata_reads_and_writes_the_attributes(tmp_path) -> None:  # noq
         np.zeros((3, 4, 5), "int16"),
         metadata=Metadata(description="plain", extra={"Lab": "x"}),
     ).save(path)
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is zarr.ZarrMetadata
     assert (meta.description, meta.extra) == ("plain", {"Lab": "x"})
     assert meta.data_type == np.int16  # from the array, not its data
@@ -178,7 +178,7 @@ def test_zarr_metadata_reads_and_writes_the_attributes(tmp_path) -> None:  # noq
     meta.description = "edited"
     meta.extra = {}
     meta.to_file(path)
-    again = Metadata.load(path)
+    again = FileBasedMetadata.load(path)
     assert (again.description, again.extra) == ("edited", {})
     assert np.asarray(io.load(path).data).shape == (3, 4, 5)
 
@@ -193,12 +193,12 @@ def test_ome_zarr_metadata_reads_the_pyramid(tmp_path) -> None:  # noqa: ANN001
         axes=[SpaceAxis("x"), SpaceAxis("y"), SpaceAxis("z")],
         metadata=Metadata(name="brain"),
     ).save(path)
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is zarr.OmeZarrMetadata
     assert meta.name == "brain"
     assert meta.data_type == np.float32
-    with pytest.raises(WriterNotImplementedError):
-        meta.to_file(path)
+    # Its record is written with the pyramid: no `to_file`.
+    assert not hasattr(meta, "to_file")
 
 
 def test_x5_metadata_reads_the_node(tmp_path) -> None:  # noqa: ANN001
@@ -216,7 +216,7 @@ def test_x5_metadata_reads_the_node(tmp_path) -> None:  # noqa: ANN001
             {"Description": "to MNI", "Lab": "x"}
         )
         node.create_dataset("Transform", data=np.eye(4)[None])
-    meta = Metadata.load(path)
+    meta = FileBasedMetadata.load(path)
     assert type(meta) is X5Metadata
     assert (meta.description, meta.extra) == ("to MNI", {"Lab": "x"})
     assert meta == io.load(path).metadata

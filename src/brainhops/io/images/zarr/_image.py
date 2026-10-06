@@ -30,7 +30,12 @@ from brainhops.io.base.zarr import (
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 
-from ._metadata import ZarrMetadata, ZarrRaw
+from ._metadata import (
+    ZarrMetadata,
+    ZarrRaw,
+    node_attributes,
+    write_attributes,
+)
 
 
 @register_format

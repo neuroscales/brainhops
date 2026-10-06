@@ -46,6 +46,7 @@ from brainhops.io.base._mgh_tags import (  # noqa: E402
 from brainhops.io.base.mgh import MghParser  # noqa: E402
 from brainhops.io.images.freesurfer import MghImage, MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage, NiftiMetadata  # noqa: E402
+from brainhops.io.metadata.bids import from_bids, to_bids  # noqa: E402
 
 
 def _cmdline(command: bytes) -> bytes:
@@ -352,12 +353,12 @@ def test_nifti_to_mgh(tmp_path) -> None:  # noqa: ANN001
 def test_mgh_through_generic_to_bids(scan) -> None:  # noqa: ANN001
     generic, report = _to(io.load(scan).metadata, Metadata)
     assert not report.lossy
-    sidecar = generic.to_bids()
+    sidecar = to_bids(generic)
     assert sidecar["RepetitionTime"] == 2.3
     assert sidecar["EchoTime"] == 0.00298
     assert sidecar["InversionTime"] == 0.9
     assert sidecar["FlipAngle"] == 9.0
-    back, report = _to(Metadata.from_bids(sidecar), MghMetadata)
+    back, report = _to(from_bids(sidecar), MghMetadata)
     assert not report.lossy
     assert back == io.load(scan).metadata
 

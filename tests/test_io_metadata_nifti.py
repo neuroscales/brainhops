@@ -38,6 +38,7 @@ from brainhops.io.base._base import FileBasedObject  # noqa: E402
 from brainhops.io.base.nifti import NiftiParser  # noqa: E402
 from brainhops.io.images.freesurfer.mgh import MghMetadata  # noqa: E402
 from brainhops.io.images.nifti import NiftiImage, NiftiMetadata  # noqa: E402
+from brainhops.io.metadata.bids import from_bids, to_bids  # noqa: E402
 from brainhops.io.transformations.nifti import (  # noqa: E402
     NiftiRASCoordinatesField,
     NiftiVoxelToRAS,
@@ -381,10 +382,10 @@ def test_what_nifti_cannot_hold_is_reported() -> None:
 
 
 def test_a_sidecar_round_trips_through_nifti(scan) -> None:  # noqa: ANN001
-    sidecar = _to(io.load(scan).metadata, Metadata)[0].to_bids()
+    sidecar = to_bids(_to(io.load(scan).metadata, Metadata)[0])
     assert sidecar["SliceTiming"] == [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]
     assert sidecar["RepetitionTime"] == 2.0
-    nifti, report = _to(Metadata.from_bids(sidecar), NiftiMetadata)
+    nifti, report = _to(from_bids(sidecar), NiftiMetadata)
     assert not report.lossy
     assert nifti == io.load(scan).metadata
 

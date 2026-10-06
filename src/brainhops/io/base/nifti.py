@@ -24,7 +24,10 @@ from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
-from brainhops.datamodel.metadata._dtype import preferred_storage
+from brainhops.datamodel.metadata._dtype import (
+    preferred_storage,
+    stored_values,
+)
 from brainhops.datamodel.metadata._field import MetadataField
 from brainhops.datamodel.metadata._report import apply_loss_policy
 from brainhops.datamodel.systems import (
@@ -1706,8 +1709,9 @@ def _image_with_geometry(
     )
     stored = data
     if slope is not None:
-        values = np.asarray(data, dtype=np.float64)
-        stored = np.round((values - intercept) / slope).astype(dtype)
+        # Rounded only into an integer type (the only one a scaling is
+        # chosen for).
+        stored = stored_values(data, dtype, slope, intercept)
     image = _new_nifti(stored, sform, dtype)
     _set_other_axes(image, others, timed)
     image.header.set_sform(sform, code=scode)

@@ -55,12 +55,13 @@ from brainhops.io.images.zarr._ome import (
 from brainhops.io.metadata._sync import parent_post_init, sync_metadata
 from brainhops.io.transformations.zarr import _map
 
-from ._image import (
-    ZarrImage,
+from ._image import ZarrImage
+from ._metadata import (
+    OmeZarrMetadata,
+    OmeZarrRaw,
     node_attributes,
     write_attributes,
 )
-from ._metadata import OmeZarrMetadata, OmeZarrRaw
 
 _OME_METADATA_FIELD = MetadataField[
     OmeZarrMetadata,

@@ -119,14 +119,15 @@ True
 
 ### Reading the metadata alone
 
-[`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] reads the
-metadata of a file without its data: only the raw record is read, here
-the NIfTI header. The format is found as `io.load` finds it, from the
-name and the content of the file, and the result is the metadata of that
-format, with its record:
+[`FileBasedMetadata.load`][brainhops.io.metadata.FileBasedMetadata.load]
+reads the metadata of a file without its data: only the raw record is
+read, here the NIfTI header. The format is found as `io.load` finds it,
+from the name and the content of the file, and the result is the
+metadata of that format, with its record (`Metadata` itself, which does
+not depend on a format, reads no file):
 
 ```python
->>> meta = Metadata.load(os.path.join(tmp, "bold.nii.gz"))
+>>> meta = FileBasedMetadata.load(os.path.join(tmp, "bold.nii.gz"))
 >>> type(meta).__name__, meta.description
 ('NiftiMetadata', 'resting state, run 1')
 >>> meta.slice_timing == bold.metadata.slice_timing
@@ -337,27 +338,31 @@ be edited on its own:
 
 ## BIDS sidecars
 
-A BIDS JSON sidecar reads into `Metadata`, and `Metadata` writes one.
-Keys that name a field fill it; other keys are kept in `extra`:
+The functions `from_bids` and `to_bids` of
+[`brainhops.io.metadata.bids`][brainhops.io.metadata.bids] read a BIDS
+JSON sidecar into `Metadata`, and write `Metadata` as one. Keys that name
+a field fill it; other keys are kept in `extra`:
 
 ```python
+>>> from brainhops.io.metadata.bids import from_bids, to_bids
 >>> sidecar = {
 ...     "RepetitionTime": 2.0,
 ...     "EchoTime": 0.03,
 ...     "SliceTiming": [0.0, 1.0, 0.5, 1.5],
 ...     "TaskName": "rest",
 ... }
->>> meta = Metadata.from_bids(sidecar)
+>>> meta = from_bids(sidecar)
 >>> meta.repetition_time, meta.extra
 (2.0, {'TaskName': 'rest'})
->>> meta.to_bids() == sidecar
+>>> to_bids(meta) == sidecar
 True
 
 ```
 
-`from_bids` also reads a path to a `.json` file, or a JSON string. A
-sidecar converts into a format like any other metadata. Here, NIfTI has
-no place for the echo time, nor for free-form keys such as the task name:
+`from_bids` also reads a path to a `.json` file, or a JSON string, and
+`FileBasedMetadata.load` reads a `.json` file as a sidecar. A sidecar
+converts into a format like any other metadata. Here, NIfTI has no place
+for the echo time, nor for free-form keys such as the task name:
 
 ```python
 >>> report = ConversionReport()
@@ -371,7 +376,7 @@ And NIfTI metadata becomes a sidecar (a field BIDS has no key for, such
 as the data type, is written under its name in `CamelCase`):
 
 ```python
->>> sidecar = bold.metadata.to(Metadata).to_bids()
+>>> sidecar = to_bids(bold.metadata.to(Metadata))
 >>> sidecar["SliceTiming"], sidecar["DataType"]
 ([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], 'float32')
 
@@ -408,7 +413,7 @@ writes one as its symbol, which reads back as the same unit:
 >>> unit = Metadata(data_unit="a.u.").data_unit
 >>> unit, unit == Unit("au"), unit.symbol
 ('arbitrary_unit', True, 'a.u.')
->>> Metadata(data_unit="mm/s").to_bids()
+>>> to_bids(Metadata(data_unit="mm/s"))
 {'DataUnit': 'mm / s'}
 >>> Metadata(data_unit="mm2/s").data_unit
 'mm2/s'
@@ -652,7 +657,7 @@ holds them in BIDS units, ready to sit next to the NIfTI file:
 >>> generic = edited.metadata.to(Metadata, on_loss=report)
 >>> report.lossy
 False
->>> sidecar = generic.to_bids()
+>>> sidecar = to_bids(generic)
 >>> sidecar["RepetitionTime"], sidecar["EchoTime"], sidecar["FlipAngle"]
 (2.3, 0.0035, 9.0)
 >>> sidecar["InversionTime"], sidecar["History"]
@@ -784,7 +789,7 @@ own, and each node keeps its JSON (composition does not merge).
 x5 metadata becomes a BIDS sidecar through `Metadata`, losing nothing:
 
 ```python
->>> x5.metadata.to(Metadata).to_bids()["OutputSpace"]
+>>> to_bids(x5.metadata.to(Metadata))["OutputSpace"]
 'MNI152NLin2009cAsym'
 
 ```

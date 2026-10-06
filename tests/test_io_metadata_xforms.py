@@ -34,6 +34,7 @@ from brainhops.datamodel.metadata import (  # noqa: E402
 )
 from brainhops.io.base._base import FileBasedObject  # noqa: E402
 from brainhops.io.metadata import OpaqueMetadata  # noqa: E402
+from brainhops.io.metadata.bids import from_bids, to_bids  # noqa: E402
 from brainhops.io.transformations.fsl.flirt import (  # noqa: E402
     FlirtMatrixParser,
     FlirtMetadata,
@@ -251,9 +252,9 @@ def test_x5_to_generic_to_bids_and_back(warp_x5: Path) -> None:
     generic, report = _to(meta, Metadata)
     assert not report.lossy
     assert generic.raw is meta.raw  # carried by the hub
-    sidecar = generic.to_bids()
+    sidecar = to_bids(generic)
     assert sidecar == JSON
-    back, report = _to(Metadata.from_bids(sidecar), X5Metadata)
+    back, report = _to(from_bids(sidecar), X5Metadata)
     assert not report.lossy
     assert back == meta
 
@@ -373,7 +374,7 @@ def test_itk_h5_generated_by(tmp_path: Path) -> None:
     # Composition does not merge: the blocks have none of their own.
     assert xform.transformations[0].metadata is None
     generic, report = _to(meta, Metadata)
-    assert generic.to_bids() == {
+    assert to_bids(generic) == {
         "GeneratedBy": [{"Name": "ITK", "Version": "5.4.0"}]
     }
     assert not report.lossy
