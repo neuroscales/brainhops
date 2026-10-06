@@ -62,10 +62,9 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     type of a record must build one that way.
 
     The class is also the dispatcher of the formats whose files hold
-    metadata: `FileBasedMetadata.load(path)`, which is what
-    [`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls,
-    picks the registered format that best matches the file. The class of
-    such a format lists its parser (a
+    metadata: `FileBasedMetadata.load(path)` picks the registered format
+    that best matches the file. The class of such a format lists its
+    parser (a
     [`MetadataParser`][brainhops.io.base._metadata_parser.MetadataParser])
     first among its bases, and registers with
     [`register_format`][brainhops.io.base.register_format]. The registry
@@ -98,11 +97,17 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         Read the metadata of a file, without reading its data.
 
         On `FileBasedMetadata` itself, the dispatcher, the format is found
-        among the registered formats whose files hold metadata, by the
-        name of the file and by its content, as `brainhops.io.load` finds
-        the format of an image; `hint=` restricts the candidates. On the
-        class of a format, the file is read as a file of that format, by
-        its parser (`MetadataParser`), which comes first among its bases.
+        among the registered formats whose files hold metadata (NIfTI,
+        MGH, plain Zarr and OME-Zarr, x5, ITK `.h5`, and BIDS JSON
+        sidecars), by the name of the file and by its content, as
+        `brainhops.io.load` finds the format of an image; `hint=`
+        restricts the candidates. On the class of a format, the file is
+        read as a file of that format, by its parser (`MetadataParser`),
+        which comes first among its bases; the class of a format whose
+        files hold no metadata (FLIRT, ITK `.tfm` and `.mat`) refuses.
+        Only the raw record is read: a NIfTI header, the footer and the
+        tags of an MGH file, the attributes of a Zarr node, the JSON of
+        an x5 node.
 
         Parameters
         ----------
@@ -115,14 +120,29 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
         Returns
         -------
         Metadata
-            The metadata of the file, with its raw record.
+            The metadata of the file, with its raw record: the metadata
+            of its format, or generic metadata for a BIDS sidecar.
+            Convert it with `to(Metadata)` for generic metadata (which
+            keeps the record).
 
         Raises
         ------
         ParserContentError
             On the dispatcher, if no registered format reads the file.
+        ParserNotImplementedError
+            On the class of a format whose files hold no metadata.
         ParserExistsError
             If the file does not exist.
+
+        Examples
+        --------
+        ```python
+        meta = FileBasedMetadata.load("sub-01_bold.nii.gz")
+        meta.repetition_time  # read from the header alone
+        FileBasedMetadata.load("sub-01_bold.json").extra["TaskName"]
+        FileBasedMetadata.load("scan.mgz", hint="mgh")
+        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
+        ```
         """
         return super().load(file, **kwargs)
 

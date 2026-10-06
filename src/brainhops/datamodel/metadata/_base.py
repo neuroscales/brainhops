@@ -75,8 +75,10 @@ class Metadata(
     and every conversion between two formats goes through it, so that a
     conversion from NIfTI to MGH loses exactly what the two conversions
     from NIfTI to `Metadata` and from `Metadata` to MGH lose. The BIDS
-    sidecar codec reads and writes it too. `Metadata` supports every
-    field of the vocabulary.
+    sidecar codec (`brainhops.io.metadata.bids`) reads and writes it
+    too. `Metadata` supports every field of the vocabulary, and does no
+    input or output: the metadata of a file is read by
+    [`FileBasedMetadata.load`][brainhops.io.metadata.FileBasedMetadata.load].
 
     `Metadata` is also the root of the metadata classes, and selects the
     subclass from the `format` field: once `brainhops.io` is imported,
@@ -384,118 +386,6 @@ class Metadata(
         ```
         """
         return type(self)(**self._derive_values(changed={}, history=history))
-
-    # --- files ------------------------------------------------------
-
-    @classmethod
-    def load(cls, file: tx.Any, **kwargs: tx.Any) -> "Metadata":
-        """
-        Read the metadata of a file, without reading its data.
-
-        The format of the file is found as `brainhops.io` finds it, from
-        the name of the file and from its content, among the formats whose
-        metadata can be read on its own: NIfTI, MGH, plain Zarr and
-        OME-Zarr, x5, ITK `.h5`, and BIDS JSON sidecars. `hint=` restricts
-        the candidates, as for `brainhops.io.load`. Only the raw record is
-        read: a NIfTI header, the footer and the tags of an MGH file, the
-        attributes of a Zarr node, the JSON of an x5 node.
-
-        This is the `load` of the dispatcher of the formats,
-        [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata].
-        The metadata class of a format whose files hold metadata reads the
-        file as a file of that format; one whose files hold none (FLIRT,
-        ITK `.tfm` and `.mat`) refuses.
-
-        Parameters
-        ----------
-        file : str, path-like or file object
-            The file, or the Zarr store.
-        **kwargs
-            Options of the reader of the format, and `hint=` (a format
-            name such as `"nifti"`, or several).
-
-        Returns
-        -------
-        Metadata
-            The metadata of the format, with its raw record. Convert it
-            with `to(Metadata)` for generic metadata (which keeps the
-            record).
-
-        Raises
-        ------
-        ParserContentError
-            If no format reads the metadata of the file.
-        ParserNotImplementedError
-            If called on the class of a format whose files hold no
-            metadata (FLIRT, ITK `.tfm` and `.mat`, ...).
-        ParserExistsError
-            If the file does not exist.
-
-        Examples
-        --------
-        ```python
-        meta = Metadata.load("sub-01_bold.nii.gz")
-        meta.repetition_time        # read from the header alone
-        Metadata.load("sub-01_bold.json").extra["TaskName"]  # a sidecar
-        Metadata.load("scan.mgz", hint="mgh")
-        NiftiMetadata.load("sub-01_bold.nii.gz")  # as a NIfTI file
-        ```
-        """
-        # The dispatcher lives in `brainhops.io`, which imports this module.
-        import brainhops.io  # noqa: F401  (registers the formats)
-        from brainhops.io.metadata import FileBasedMetadata
-
-        return FileBasedMetadata.load(file, **kwargs)
-
-    # --- BIDS ---------------------------------------------------------
-
-    @classmethod
-    def from_bids(cls, sidecar: tx.Any) -> "Metadata":
-        """
-        Read a BIDS JSON sidecar.
-
-        A key that names a vocabulary field, through its BIDS key, fills
-        that field, and every other key lands in `extra`.
-
-        Parameters
-        ----------
-        sidecar : mapping, str, path-like or file
-            The sidecar, as a decoded JSON object, a JSON string, a path
-            or an open file.
-
-        Returns
-        -------
-        Metadata
-            Generic metadata.
-        """
-        from brainhops.io.metadata.bids import from_bids
-
-        return from_bids(sidecar)
-
-    def to_bids(
-        self, *, on_loss: tx.Optional[OnLoss] = None
-    ) -> tx.Dict[str, tx.Any]:
-        """
-        Write this metadata as a BIDS JSON sidecar.
-
-        The diffusion fields are not sidecar keys, and an encoding
-        direction that is not along a voxel axis has no BIDS string, so
-        both are reported as lost.
-
-        Parameters
-        ----------
-        on_loss : {"ignore", "warn", "raise"} or ConversionReport, optional
-            What to do when something is lost. By default, the policy in
-            effect.
-
-        Returns
-        -------
-        dict
-            The sidecar, which can be serialised to JSON.
-        """
-        from brainhops.io.metadata.bids import to_bids
-
-        return to_bids(self, on_loss=on_loss)
 
     # --- internals ----------------------------------------------------
 

@@ -4,7 +4,7 @@ The metadata of Zarr images: `ZarrMetadata` for a plain array, and
 
 **Plain Zarr.** A plain array has no metadata convention, only free-form
 attributes. The vocabulary is stored as a BIDS-style sidecar (the keys of
-[`Metadata.to_bids`][brainhops.datamodel.metadata.Metadata.to_bids]) under
+[`to_bids`][brainhops.io.metadata.bids.to_bids]) under
 the array attribute `"brainhops"`, and `extra` maps to the other
 attributes of the array. Everything but the diffusion fields (which are
 not sidecar keys) is supported. The raw record (`raw`) is a `ZarrRaw`:

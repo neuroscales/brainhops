@@ -12,8 +12,7 @@ parser.
 
 The parsers own no registry: the dispatcher among the formats is
 [`FileBasedMetadata`][brainhops.io.metadata.FileBasedMetadata],
-whose `load` is what
-[`Metadata.load`][brainhops.datamodel.metadata.Metadata.load] calls.
+whose `load` reads the metadata of a file in any of these formats.
 """
 
 __all__ = ["Hdf5MetadataParser", "MetadataParser"]

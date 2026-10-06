@@ -1934,6 +1934,15 @@ holds.
   class declares, so the `repr` of a format shows `format` last:
   `NiftiMetadata(description='T1w', format='nifti')`.
 
+- **No input or output on `Metadata` (M8).** `Metadata.load`,
+  `Metadata.from_bids` and `Metadata.to_bids` are gone: the data model
+  reads and writes no file. The metadata of a file is read by the
+  dispatcher, `FileBasedMetadata.load(path, hint=...)` (or by the class
+  of a format, `NiftiMetadata.load(path)`), and a BIDS sidecar by the
+  functions `from_bids` and `to_bids` of `brainhops.io.metadata.bids`,
+  whose `BidsSidecar` is the reader `FileBasedMetadata.load` picks for
+  a `.json` file.
+
 ## Open questions for the maintainer
 
 1. **Where the field lives (M10).** On the datamodel roots (`Image`,

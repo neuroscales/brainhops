@@ -18,8 +18,10 @@ class hierarchy that mirrors the hierarchy of the images (`Image`,
   which reads its fields from the raw record of the format (a `nibabel`
   header, the attributes of a Zarr array, ...) and writes them back.
 - Each format has its own `<Fmt>Metadata` class, next to its parser
-  under `brainhops.io`. `Metadata.load(path)` reads the metadata of a
-  file without its data.
+  under `brainhops.io`. `FileBasedMetadata.load(path)` reads the
+  metadata of a file without its data, and `brainhops.io.metadata.bids`
+  reads and writes BIDS sidecars. The data model does no input or
+  output.
 
 A vocabulary field holds a value, `None` when the value is unknown, or
 [`UNSUPPORTED`][brainhops.datamodel.metadata.UNSUPPORTED] when the format
