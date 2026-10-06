@@ -17,40 +17,30 @@ from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # locals
 from .._common import ItkStruct, ItkTransformClass, _application_order
+from .._metadata import H5Header
 
-__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
+__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser", "read_h5_header"]
 
 
-class H5Header(
-    Magic,
-    convert=True,
-    repr=HIDE_IF_NONE,
-):
-    """Header of a ITK H5 file."""
+def read_h5_header(h5file: h5py.File) -> H5Header:
+    """
+    Read the root header of an open ITK `.h5` file.
 
-    HDFVersion: tx.Optional[str] = None
-    """
-    A string describing the version of the HDF5 library used.
-    Ex: "HDF5 library version: 1.10.4"
-    """
+    Parameters
+    ----------
+    h5file : h5py.File
+        The open file.
 
-    ITKVersion: tx.Optional[str] = None
+    Returns
+    -------
+    H5Header
+        The versions recorded at the root of the file.
     """
-    A string describing the version of the ITK library used.
-    Ex: "5.1.0"
-    """
-
-    OSName: tx.Optional[str] = None
-    """
-    A string describing the operating system name.
-    Ex: "Linux"
-    """
-
-    OSVersion: tx.Optional[str] = None
-    """
-    A string describing the operating system version.
-    Ex: "6.1.0-1007-oem"
-    """
+    header = H5Header()
+    for name in ("HDFVersion", "ITKVersion", "OSName", "OSVersion"):
+        if f"/{name}" in h5file:
+            setattr(header, name, _readstr(h5file[f"/{name}"]))
+    return header
 
 
 class H5TransformParser(
@@ -129,15 +119,7 @@ class H5TransformParser(
         obj
             The parsed object.
         """
-        header = H5Header()
-        if "/HDFVersion" in h5file:
-            header.HDFVersion = _readstr(h5file["/HDFVersion"])
-        if "/ITKVersion" in h5file:
-            header.ITKVersion = _readstr(h5file["/ITKVersion"])
-        if "/OSName" in h5file:
-            header.OSName = _readstr(h5file["/OSName"])
-        if "/OSVersion" in h5file:
-            header.OSVersion = _readstr(h5file["/OSVersion"])
+        header = read_h5_header(h5file)
 
         obj = cls(header=header, file=h5file if keep_open else None)
         nodes = h5file.get("/TransformGroup", {})

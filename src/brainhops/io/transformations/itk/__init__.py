@@ -45,6 +45,8 @@ __all__ = [
     "ItkAffineBase",
     "ItkBlockBase",
     "ItkDisplacementBase",
+    "ItkH5Metadata",
+    "ItkMetadata",
     "ItkPrecision",
     "ItkStruct",
     "ItkTransform",
@@ -62,6 +64,7 @@ from ._common import (
     ItkStruct,
     ItkTransformClass,
 )
+from ._metadata import ItkH5Metadata, ItkMetadata
 from ._xform import ItkTransform
 
 # The h5 reader needs h5py, which is optional. It is imported only when

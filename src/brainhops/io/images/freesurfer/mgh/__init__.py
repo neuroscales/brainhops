@@ -40,6 +40,8 @@ so an MGH file round-trips. They are not part of the datamodel, so they
 do not survive a conversion to another format.
 """
 
-__all__ = ["MghImage"]
+__all__ = ["MghImage", "MghMetadata"]
+
+from brainhops.io.base._mgh_metadata import MghMetadata
 
 from ._image import MghImage

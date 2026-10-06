@@ -35,6 +35,7 @@ here from the raw bytes, so that a file round-trips:
 __all__ = ["MghParser", "MGH_HEADER_SIZE", "MGH_FOOTER_SIZE"]
 
 # stdlib
+import functools
 import gzip
 import struct
 from io import BytesIO
@@ -52,6 +53,7 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
+from brainhops.io.base._mgh_metadata import MghRaw
 from brainhops.io.base.freesurfer import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
@@ -516,6 +518,68 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
 
 
+def read_mgh_raw(file: tx.Union[path.FilenameLike, tx.BinaryIO]) -> MghRaw:
+    """
+    Read the raw record of an MGH or MGZ file, without its voxels.
+
+    The header (footer included) is read right away. The trailing tags
+    follow the voxels, so reading them decompresses an MGZ file to its
+    end: from a local path, they are read lazily, the first time they are
+    used (see `MghRaw`); from a stream or a remote path, they are read now.
+
+    Parameters
+    ----------
+    file : path-like or file object
+        A path, or a binary stream, gzipped or not. The position of a
+        stream is restored.
+
+    Returns
+    -------
+    MghRaw
+        The raw record.
+    """
+    if isinstance(file, (str, path.PathLike)):
+        if _is_local(file):
+            name = str(path.Path(file))
+            with open(name, "rb") as f:
+                header = _mgh.MGHHeader.from_fileobj(open_compressed(f))
+            return MghRaw(
+                header,
+                None,
+                loader=functools.partial(_read_tags_file, name, header),
+            )
+        with path.Path(file).open("rb") as f:
+            return read_mgh_raw(BytesIO(f.read()))
+    with preserve_position(file):
+        stream = open_compressed(file)
+        start = stream.tell()
+        header = _mgh.MGHHeader.from_fileobj(stream)
+        stream.seek(start)
+        return MghRaw(header, _read_tags(stream, header))
+
+
+def is_mgh_stream(fileobj: tx.BinaryIO) -> bool:
+    """
+    Whether an open stream, gzipped or not, starts with an MGH header,
+    judged from its leading fields.
+
+    Parameters
+    ----------
+    fileobj : file object
+        A binary stream. Its position is restored.
+
+    Returns
+    -------
+    bool
+        Whether the stream starts with an MGH header.
+    """
+    try:
+        with preserve_position(fileobj):
+            return _valid_prefix(_read_prefix(open_compressed(fileobj)))
+    except Exception:
+        return False
+
+
 def _good_ras(prefix: tx.Optional[tuple]) -> tx.Optional[bool]:
     """Whether the `goodRASFlag` of the leading header fields is
     positive, or `None` when they could not be read."""
@@ -560,6 +624,12 @@ def _seekable(fileobj: tx.IO) -> bool:
         return bool(fileobj.seekable())
     except Exception:
         return False
+
+
+def _read_tags_file(filename: str, header: _mgh.MGHHeader) -> bytes:
+    """Read the raw bytes after the footer of an MGH or MGZ file."""
+    with open(filename, "rb") as f:
+        return _read_tags(open_compressed(f), header)
 
 
 def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:
