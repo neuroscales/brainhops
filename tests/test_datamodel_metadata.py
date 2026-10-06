@@ -228,8 +228,9 @@ def test_an_unsupported_field_is_refused_at_construction() -> None:
 
 
 def test_repr_hides_none_and_unsupported() -> None:
+    # The class of a format hides `format`: its name says it.
     assert repr(LiteMetadata(description="x")) == (
-        "LiteMetadata(description='x', format='test-lite')"
+        "LiteMetadata(description='x')"
     )
     # `format` first, then `extra` (only when not empty), then the
     # vocabulary in its declared order.
@@ -239,7 +240,10 @@ def test_repr_hides_none_and_unsupported() -> None:
     assert repr(Metadata(name="n", extra={"k": 1})) == (
         "Metadata(format='generic', extra={'k': 1}, name='n')"
     )
-    assert repr(OpaqueMetadata()) == "OpaqueMetadata(format='opaque')"
+    assert repr(OpaqueMetadata()) == "OpaqueMetadata()"
+    # Generic metadata shows any format, including an unknown one.
+    assert repr(Metadata(format="unknown")) == "Metadata(format='unknown')"
+    assert "format=" not in repr(Metadata(format="test-lite"))
 
 
 # ----------------------------------------------------------------------

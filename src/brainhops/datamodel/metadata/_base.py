@@ -44,8 +44,8 @@ _History = tx.Union[str, tx.Sequence[str], None]
 # The groups are listed in the reverse of their order because the fields
 # are (`reverse=True`: the fields of a class before those it inherits),
 # so that `repr` shows `format`, `extra`, then the vocabulary in its
-# declared order. A format class declares the vocabulary again
-# (`supports=`), so its `repr` shows its own fields, then `format`.
+# declared order. The class of a format hides `format`, which its name
+# says (see `FileBasedMetadata.format`).
 class Metadata(
     DataModelBase,
     TransformVocabulary,

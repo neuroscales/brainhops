@@ -15,7 +15,7 @@ import math
 
 # externals
 import typing_extensions as tx
-from bagof.magic import NoEq, NoRepr
+from bagof.magic import HideIfDefault, NoEq, NoRepr
 
 # internals
 from brainhops._core.compare import differs
@@ -77,6 +77,19 @@ class FileBasedMetadata(FormatDispatcher, Metadata, tx.Generic[RawT]):
     class is not, so that `brainhops.io.load` never returns metadata
     where an image or a transformation was asked for.
     """
+
+    # Declared again to hide it from `repr` on the class of a format,
+    # whose name says the format: `HideIfDefault` is bound again on each
+    # class, against the value the class pins (`on={"format": ...}`), so
+    # it hides that value. Generic `Metadata` keeps showing its format.
+    format: tx.Annotated[
+        str,
+        tx.Doc(
+            "The format this metadata belongs to; selects the subclass. "
+            "Hidden from `repr` when it is the format of the class."
+        ),
+        HideIfDefault(),
+    ] = "generic"
 
     raw: tx.Annotated[
         tx.Optional[RawT],

@@ -1944,8 +1944,12 @@ holds.
   `format`, `extra`, then the vocabulary in its declared order. A
   format class declares the vocabulary again (`supports=`), and
   `bagof` has no way to place a field (`format`) before the fields a
-  class declares, so the `repr` of a format shows `format` last:
-  `NiftiMetadata(description='T1w', format='nifti')`.
+  class declares, so the `repr` of a format would show `format` last.
+  It hides it instead, since the name of the class says the format:
+  `FileBasedMetadata` declares `format` again with `HideIfDefault`,
+  which `bagof` binds again on each class against the value the class
+  pins, so `repr` gives `NiftiMetadata(description='T1w')`. Generic
+  `Metadata` keeps `HideIf(...)` on it, and shows its format.
 
 - **No input or output on `Metadata` (M8).** `Metadata.load`,
   `Metadata.from_bids` and `Metadata.to_bids` are gone: the data model
