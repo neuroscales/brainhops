@@ -1157,7 +1157,7 @@ def test_reader_maps_a_multi_field_sequence_without_banning(
     )
 
 
-# -- base Zarr writer (#376, #377) ------------------------------------------
+# ---- base Zarr writer ------------------------------------------------
 
 
 class _RecordingStorePath:
