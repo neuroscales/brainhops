@@ -23,6 +23,7 @@ import argparse
 import typing_extensions as tx
 
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import ImageSpec, OperationSpec, TransformationSpec
 
 from ._errors import CliError
@@ -36,7 +37,7 @@ from ._io import (
 class _UnimplementedOperation(OperationSpec, frozen=True):
     """Operation that is recognised but not implemented yet (issue #47)."""
 
-    def apply(self, value: tx.Any) -> tx.NoReturn:  # noqa: ARG002
+    def apply(self, value: Transformation) -> tx.NoReturn:  # noqa: ARG002
         raise CliError(
             f"Transform operator '{self.name}' is not implemented yet; "
             "tracked in issue #47."
@@ -109,9 +110,10 @@ def add_parser(
             "operator inverts the "
             "transform, which is what a pull-convention warp needs. The "
             "'|' usually needs shell quoting; encode a literal pipe in a "
-            "path as '%%7C'. The operators 'sqrt', "
-            "'square', 'exp' and 'log' are recognised but not implemented "
-            "yet (tracked in issue #47)."
+            "path as '%%7C'. The operators 'sqrt' "
+            "and 'square' are recognised but not implemented yet "
+            "(tracked in issue #47). A velocity field is declared with "
+            "an option such as '|svf' rather than with an operator."
         ),
     )
     parser.add_argument(
@@ -155,7 +157,7 @@ def _split_image_spec(spec: str) -> ImageSpec:
         raise CliError(f"Invalid image source {spec!r}: {exc}") from exc
 
 
-def _load_push_transform(spec: str) -> Image:
+def _load_push_transform(spec: str) -> Transformation:
     """Load a transformation and apply its chain of operators.
 
     The operators are applied in the order written, so that `warp|a|b`
@@ -170,7 +172,7 @@ def _load_push_transform(spec: str) -> Image:
 def reslice_image(
     input_path: tx.Union[str, ImageSpec],
     reference_path: tx.Union[str, ImageSpec],
-    transform_paths: list,
+    transform_paths: tx.Iterable[str],
     degree: int = 1,
     bound: str = "reflect",
 ) -> Image:
