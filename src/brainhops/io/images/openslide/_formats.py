@@ -1,8 +1,8 @@
 """Whole-slide image formats, one per OpenSlide vendor.
 
-Each format class has a single-scale and a multiscale image. The formats differ
-only in their vendor name (as `OpenSlide.detect_format` reports it), their
-extensions and their hints.
+Each vendor has a format class, from which a single-scale image class and a
+multiscale image class derive. The formats differ only in their vendor name
+(as `OpenSlide.detect_format` reports it), their extensions and their hints.
 """
 
 __all__ = [
@@ -415,8 +415,8 @@ class GenericTiffMultiScaleImage(GenericTiffFormat, OpenSlideMultiScaleImage):
     """
 
 
-# Vendor name -> single-scale class, with which each multiscale class builds
-# its levels.
+# Register the single-scale class of each vendor, which the multiscale class
+# of the same vendor uses to build its levels.
 _LEVEL_CLASSES.update(
     {
         cls.VENDOR: cls

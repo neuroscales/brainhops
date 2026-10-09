@@ -30,10 +30,10 @@ column `x` and row `y`.
 | `F` (floating point)            | `float32`, `(x, y)`                   |
 | `P`, `PA` (palette)             | `uint8`, `(x, y, 3)` or `(x, y, 4)`   |
 
-Channels come after the spatial axes. Colours stay in their stored colour
-space, which `mode` names, except that palette colours are looked up
-(`palette=False` keeps the indices). Pillow reduces 16-bit colour PNG files to
-8 bits.
+Channels come after the spatial axes. Colours stay in the colour space in
+which they are stored, which `mode` names. Palette images are the exception:
+their colours are looked up in the palette, unless `palette=False` keeps the
+indices. Pillow reduces 16-bit colour PNG files to 8 bits.
 
 ## Geometry
 
@@ -42,10 +42,11 @@ with integers at pixel centres, and the first row of the file is the top of the
 image. This convention is not encoded as an orientation, and the EXIF
 orientation is not applied (see `PIL.ImageOps.exif_transpose`).
 
-The only transformation scales pixels to `"physical"`. Its pixel size is
-unknown by default, which makes it the identity, with no unit. The resolution
-that a file records (`info["dpi"]`) usually describes a screen or a printer, so
-it is used only on request:
+The image has a single transformation, which scales pixels to the `"physical"`
+system. The pixel size is unknown by default, which makes the transformation
+the identity, with no unit. The resolution that a file records
+(`info["dpi"]`) usually describes a screen or a printer, so it is used only on
+request:
 
 * `load(file, dpi=True)` makes pixels `25.4 / dpi` millimetres wide, unless the
   resolution is missing or a placeholder (72 or 96 dpi).
@@ -55,22 +56,23 @@ it is used only on request:
   resolution.
 
 ITK writes its spacing (conventionally in millimetres) to the PNG `sCAL` chunk
-without converting it to the unit of the chunk, so that unit is unreliable. The
-chunk is therefore kept as `info["sCAL"] = (unit, x, y)` (unit 1 is metres, 2
-radians) but not applied; it can be passed on as
-`load(file, pixel_size=info["sCAL"][1:], unit="mm")`.
+without converting it to the unit of the chunk, so the unit of the chunk is
+unreliable. The chunk is therefore kept as `info["sCAL"] = (unit, x, y)`, where
+unit 1 means metres and unit 2 means radians, but it is not applied. Its sizes
+can be passed on as `load(file, pixel_size=info["sCAL"][1:], unit="mm")`.
 
-On writing, formats that store a resolution (PNG, JPEG, BMP and TIFF) record
-the one of the preferred transformation if it scales onto axes with a unit of
-length, dropping any translation; otherwise, a resolution read with the image
-is written back. `dpi=` overrides both, and `dpi=False` records none.
+When an image is written in a format that stores a resolution (PNG, JPEG, BMP
+and TIFF), the resolution is computed from the preferred transformation if
+that transformation scales onto axes with a unit of length, and any
+translation is ignored. Otherwise, the resolution read with the image is
+written back. `dpi=` overrides both, and `dpi=False` records no resolution.
 
 ## Frames
 
 Multi-frame files (animated GIF, PNG and WebP, multi-picture JPEG) are read one
-frame at a time, the first by default or `load(file, frame=i)`, and
-`image.n_frames` counts them. Animated GIF frames are composited, so frame `i`
-is the picture displayed at step `i`.
+frame at a time. The first frame is read by default, `load(file, frame=i)`
+reads frame `i`, and `image.n_frames` gives the number of frames. Animated GIF
+frames are composited, so frame `i` is the picture displayed at step `i`.
 
 ## Metadata
 
@@ -80,8 +82,8 @@ and EXIF block are written back on save.
 
 ## Writing
 
-The data is `(x, y)` or `(x, y, c)` with 1 to 4 channels, plus singleton axes
-only, and its type is stored as is:
+The data to write is `(x, y)`, or `(x, y, c)` with 1 to 4 channels, and any
+other axis must be a singleton. The data type is stored as is:
 
 | `data`                          | Pillow mode | Formats that store it       |
 | ------------------------------- | ----------- | --------------------------- |
@@ -96,9 +98,10 @@ only, and its type is stored as is:
 Any other data (`float64`, `int16`, several 16-bit channels, more than four
 channels, a volume) raises a
 [`WriterError`][brainhops.io.base.parsers.WriterError], as does a mode the
-format cannot store, such as 16-bit JPEG. The format follows from the extension
-or `format=` (PNG for an unnamed stream), and other keywords go to
-`Image.save`, such as `quality` for JPEG. JPEG and lossy WebP are not exact.
+format cannot store, such as 16-bit JPEG. The format is given by `format=` or,
+failing that, by the extension of the file, and a stream without a name is
+written as PNG. Other keywords are passed to `Image.save`, such as `quality`
+for JPEG. JPEG and lossy WebP do not preserve the pixel values exactly.
 
 ## Limits
 
@@ -106,10 +109,10 @@ or `format=` (PNG for an unnamed stream), and other keywords go to
   179 million pixels) with a `PIL.Image.DecompressionBombError`, and warns
   above the limit itself. Raising `MAX_IMAGE_PIXELS`, or setting it to `None`,
   allows a trusted larger image.
-* The whole frame is decoded on load; there is no lazy access.
-* `.tif` and `.tiff` files are left to the dedicated TIFF reader. This reader
-  claims TIFF only as a fallback, when tifffile (the `tiff` extra) is not
-  installed.
+* The whole frame is decoded on load, so there is no lazy access.
+* `.tif` and `.tiff` files are left to the dedicated TIFF reader. The Pillow
+  reader claims TIFF only as a fallback, when tifffile (the `tiff` extra) is
+  not installed.
 """
 
 __all__ = ["PillowImage"]

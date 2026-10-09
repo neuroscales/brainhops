@@ -18,7 +18,8 @@ def load(
     filelike : file, content or ImageSpec
         File to read, its content, or a structured image source.
     brute : bool, default=False
-        If no format recognizes the input, try every registered reader.
+        Whether to try every registered reader when no format recognizes
+        the input.
     **kwargs : Any
         Format-specific options.
 

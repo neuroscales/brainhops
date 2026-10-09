@@ -28,11 +28,11 @@ from brainhops.io.images.pillow._utils import (
 
 _DpiLike = tx.Union[None, bool, float, tx.Sequence[float]]
 
-# Keys of `info` that Pillow writers take back as save options, carried over so
-# that they survive a round trip.
+# Pillow writers accept these keys of `info` back as save options. They are
+# passed on when the image is saved, so that they survive a round trip.
 _ROUND_TRIP_INFO = ("icc_profile", "exif")
 
-# The output format when nothing names one.
+# The output format when neither `format=` nor a file name names one.
 _DEFAULT_FORMAT = "PNG"
 
 
@@ -59,9 +59,9 @@ class PillowImage(
     """A two-dimensional raster image, read and written with Pillow.
 
     The data is F-ordered, `(x, y)` for single-component images and `(x, y, c)`
-    otherwise. The only transformation scales pixels to `"physical"`, and is
-    the identity, with no unit, unless the pixel size is known (see
-    [`brainhops.io.images.pillow`][]). The file metadata is kept in
+    otherwise. The image has a single transformation, which scales pixels to
+    `"physical"` and is the identity, with no unit, unless the pixel size is
+    known (see [`brainhops.io.images.pillow`][]). The file metadata is kept in
     `image_format`, `mode`, `info`, `frame` and `n_frames`, and the ICC profile
     and EXIF block are written back on save.
     """
@@ -84,7 +84,10 @@ class PillowImage(
 
     info: tx.Annotated[
         tx.Optional[tx.Dict[str, tx.Any]],
-        tx.Doc("Pillow's `info` dictionary: the format-specific metadata."),
+        tx.Doc(
+            "Pillow's `info` dictionary, which holds the format-specific "
+            "metadata."
+        ),
     ] = None
 
     frame: tx.Annotated[
@@ -104,9 +107,10 @@ class PillowImage(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Return the confidence that a file holds an image that Pillow reads:
-        `LIKELY` for a format with a magic number, but only `WEAK` for TIFF,
-        which the dedicated TIFF reader reads better.
+        """Return the confidence that a file holds an image that Pillow reads.
+
+        A format that is recognised by its magic number scores `LIKELY`. TIFF
+        scores only `WEAK`, because the dedicated TIFF reader reads it better.
         """
         fmt = sniff_pillow(file)
         if fmt == "TIFF":
@@ -153,10 +157,11 @@ class PillowImage(
             Whether palette colours are looked up (the default) or kept as
             indices.
         dpi : bool or float or tuple of float, optional
-            The resolution giving pixels of `25.4 / dpi` millimetres. By
-            default, the resolution of the file is ignored, since it usually
-            describes a screen or a printer. `True` uses it unless it is absent
-            or a placeholder (72 or 96 dpi), and a number or an `(x, y)` pair
+            The resolution in dots per inch, which makes pixels `25.4 / dpi`
+            millimetres wide. By default, the resolution of the file is
+            ignored, since it usually describes a screen or a printer. `True`
+            uses the resolution of the file unless it is absent or a
+            placeholder (72 or 96 dpi), and a number or an `(x, y)` pair
             replaces it.
         pixel_size : float or Sequence[float] or Mapping[str, float], optional
             The pixel size, which overrides any resolution.
@@ -256,8 +261,9 @@ class PillowImage(
             i for i, a in enumerate(axes) if raster.axis_group(a) == "channel"
         ]
         if len(space) > 2:
-            # A slice of a volume: keep the spatial axes that are not
-            # singletons, or else the first ones, in order.
+            # The image is a slice of a volume. Keep the spatial axes that are
+            # not singletons and, if fewer than two remain, add the first
+            # singleton axes, keeping the original axis order.
             wide = [i for i in space if shape[i] != 1]
             narrow = [i for i in space if shape[i] == 1]
             if len(wide) <= 2:
@@ -286,8 +292,8 @@ class PillowImage(
         index = tuple(slice(None) if i in keep else 0 for i in range(ndim))
         data = data[index]
         # The kept spatial axes are the columns (x) and rows (y) of the raster,
-        # in order, whatever their names: a sagittal (y, z) slice has y along
-        # the columns.
+        # in order, whatever their names. For example, a sagittal (y, z) slice
+        # has y along the columns.
         position = {axis: k for k, axis in enumerate(sorted(keep))}
         order = [position[space[1]], position[space[0]]]
         order += [position[i] for i in channel]
@@ -310,8 +316,8 @@ class PillowImage(
         ----------
         format : str, optional
             The Pillow name of the format, such as `"PNG"`. By default, the
-            format the image was read from (JPEG for MPO) if Pillow can write
-            it, and PNG otherwise.
+            image is written in the format that it was read from (JPEG for
+            MPO) if Pillow can write that format, and in PNG otherwise.
         dpi : bool or float or tuple of float, optional
             The resolution recorded by PNG, JPEG, BMP and TIFF. By default, it
             is computed from the pixel size when the preferred transformation
@@ -319,8 +325,9 @@ class PillowImage(
             resolution read with the image. `False` records none, and a number
             or an `(x, y)` pair is recorded as is.
         **options : Any
-            Passed to `Image.save`, such as `quality=95` for JPEG. The ICC
-            profile and EXIF block of `info` are added unless given.
+            Options passed to `Image.save`, such as `quality=95` for JPEG. The
+            ICC profile and EXIF block of `info` are added unless they are
+            given.
 
         Raises
         ------

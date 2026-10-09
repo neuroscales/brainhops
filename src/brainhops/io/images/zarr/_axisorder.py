@@ -15,12 +15,12 @@ axes, which sort as x, y, z in brainhops and as z, y, x in the store. Other
 ties keep the original order, so that writing and then reading restores the
 brainhops order.
 
-The component axis of a field (the vector components of a displacement or
-coordinate field) is not a separate trailing axis: it takes the position of the
-channel axis, in brainhops as in the store, as in nibabel and OME-Zarr.
-Permuting the axes does not reorder the component values, because the
-components of a field live in its output coordinate system, which this module
-leaves untouched.
+The component axis of a field, which holds the vector components of a
+displacement or coordinate field, is not a separate trailing axis. It takes the
+position of the channel axis, both in brainhops and in the store, as in nibabel
+and OME-Zarr. Permuting the axes does not reorder the component values,
+because the components of a field are expressed in its output coordinate
+system, which this module leaves untouched.
 """
 
 import typing_extensions as tx
@@ -29,26 +29,27 @@ from brainhops.datamodel.axes import Axis
 
 _T = tx.TypeVar("_T")
 
-# Most significant group first.
+# The groups of axes in the brainhops order, from the first to the last.
 CANONICAL_ORDER = ("space", "time", "channel", "other")
 
-# Non-spatial axes lead and spatial axes trail, giving (t, c, z, y, x) for a
-# plain image.
+# In the stored order, the non-spatial axes come first and the spatial axes
+# last, which gives (t, c, z, y, x) for a plain image.
 STORAGE_ORDER = ("time", "channel", "other", "space")
 
-# Axis types of vector components, which a field stores where a channel axis
-# would sit.
+# These axis types hold the vector components of a field, which the field
+# stores where a channel axis would sit.
 _VECTOR_TYPES = ("displacement", "coordinate")
 
-# Tie-breaks between named spatial axes, so that they sort x, y, z.
+# These ranks break ties between named spatial axes to sort them as x, y, z.
 _CANONICAL_SPACE = {"x": 0, "y": 1, "z": 2}
 
-# Tie-breaks between named spatial axes, so that they sort z, y, x.
+# These ranks break ties between named spatial axes to sort them as z, y, x.
 _STORAGE_SPACE = {"z": 0, "y": 1, "x": 2}
 
 
 def _group(axis: Axis) -> str:
-    """Return the group of an axis, as named in the order tuples.
+    """Return the group of an axis, as named in `CANONICAL_ORDER` and
+    `STORAGE_ORDER`.
 
     Component axes of displacement and coordinate fields are grouped with
     channels, since a field stores its components where a channel would sit.

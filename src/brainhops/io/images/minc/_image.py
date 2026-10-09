@@ -36,11 +36,12 @@ _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 class MincImage(MincParser, FileBasedImage, SingleScaleImage):
     """An image stored in a MINC file, of version 1 or 2.
 
-    This class answers to the hint `"minc"` and reads both versions,
-    handing the file to [`Minc1Image`][] or [`Minc2Image`][], which are the
-    classes registered for dispatch. The voxels are read with nibabel and
-    scaled to real values. They are in Fortran order, so a file with
-    dimensions `zspace, yspace, xspace` gives data indexed `(x, y, z)`.
+    This class answers to the format hint `"minc"` and reads both
+    versions. It hands the file to [`Minc1Image`][] or [`Minc2Image`][],
+    which are the classes registered as formats. The voxels are read with
+    nibabel and scaled to real values. They are in Fortran order, so a
+    file with dimensions `zspace, yspace, xspace` gives data indexed
+    `(x, y, z)`.
 
     The transformations are, in order, a [`Scaling`][] to `"physical"` by
     the absolute step of each dimension, in its unit (millimeters by
@@ -59,7 +60,10 @@ class MincImage(MincParser, FileBasedImage, SingleScaleImage):
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """Transformations decoded from the dimensions, unless set."""
+        """Voxel-to-world transformations, decoded from the dimensions.
+
+        Transformations that were set explicitly are returned as they are.
+        """
         if getattr(self, "_transformations", None):
             return self._transformations
         if not self.dimensions:
@@ -97,8 +101,8 @@ class Minc2Image(MincImage):
 
 MincImage.VARIANTS = (Minc1Image, Minc2Image)
 
-# Without h5py, MINC2 is not registered, and a request by hint says what
-# to install instead (see the package `__init__`).
+# Without h5py, MINC2 is not registered, and a request for it by hint
+# reports which package to install instead (see the package `__init__`).
 if HAS_H5PY:
     register_format(Minc2Image)
 
@@ -162,8 +166,8 @@ def _minc_to_transformations(image: MincParser) -> tx.List[Transformation]:
         for name, value in _RAS_ORIENTATION.items()
     ]
     world_space = CoordinateSystem(name=_WORLD, axes=world_axes)
-    # Non-spatial voxel axes, such as time, have zero columns and do not
-    # move a world point.
+    # Non-spatial voxel axes, such as time, have zero columns in the
+    # matrix, so they do not move a world point.
     matrix = np.zeros((3, len(axes) + 1))
     matrix[:, keep] = vox2world[:3, :3]
     matrix[:, -1] = vox2world[:3, 3]
