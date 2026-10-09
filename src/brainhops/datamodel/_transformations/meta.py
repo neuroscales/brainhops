@@ -35,16 +35,16 @@ class MetaTransformation(Transformation):
         factor: bool = False,
     ) -> tx.Self:
         if factor:
-            # The sequence engine runs the factor pass and never passes
-            # `factor` back to the `compute` of a leaf, so there is no
-            # recursion.
+            # The sequence performs the factoring and never passes `factor`
+            # back to the `compute()` of its elements, so this call does not
+            # recurse.
             return nocycles.SEQUENCE([self]).compute(
                 mode, simplify=simplify, factor=True
             )
-        # A meta transformation has no parameter of its own to fuse, so
-        # computing it is simplifying it: the registered simplifier recurses
-        # into what it wraps. `mode` gates composition, and there is nothing
-        # here to compose.
+        # A meta transformation has no parameter of its own to combine, so
+        # computing it amounts to simplifying it, and the registered
+        # simplifier recurses into the transformations that it wraps. `mode`
+        # only controls composition, and there is nothing here to compose.
         return _simplify(self, policy=simplify)
 
 
@@ -55,8 +55,9 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
     other axes pass through unchanged, so the dimensionality is preserved. A
     spatial transformation of `(x, y, z)`, for example, can be embedded into
     `(x, y, z, t)` and leave time untouched. The class is generic:
-    `SubspaceTransformation[T]` embeds a `T`. Its kind is decided by a checker
-    that recurses into the wrapped transformation.
+    `SubspaceTransformation[T]` embeds a `T`. Whether a subspace
+    transformation is of a given kind, such as a rotation, is decided by
+    examining the wrapped transformation and the axes it acts on.
     """
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = (
@@ -120,8 +121,10 @@ class SubspaceTransformation(MetaTransformation, tx.Generic[TRANSFORMATION]):
 class Projection(MetaTransformation):
     """Projection that removes axes, or the embedding that adds them.
 
-    Removing axes maps a space to one of lower dimension; the inverse, an
-    embedding, adds them back.
+    A projection removes the axes listed in `dropped` and therefore maps a
+    space to one of lower dimension. An embedding adds the axes listed in
+    `created`. Each is the inverse of the other, and the inverse is obtained
+    by swapping the two lists.
     """
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = "dropped", "created"
@@ -145,8 +148,9 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
     """Transformation whose inverse is defined explicitly.
 
     The class is generic: `Bijection[T]` holds two transformations of type `T`.
-    It is declared bijective, and a checker refines its kind from the forward
-    map.
+    The class is registered as a bijection. Its more specific kind, such as
+    affine, is decided from the forward transformation, or from the inverse of
+    the backward transformation when no forward one is given.
     """
 
     data_fields: tx.ClassVar[tx.Tuple[str]] = "forward", "backward"
@@ -219,8 +223,9 @@ class Bijection(MetaTransformation, tx.Generic[TRANSFORMATION]):
 
 
 def _same_axes(t: SubspaceTransformation) -> bool:
-    # Whether the subspace reads and writes the same axes in the same order,
-    # that is, embeds the inner transformation without reindexing.
+    # Return whether the subspace reads and writes the same axes in the same
+    # order, that is, whether it embeds the inner transformation without
+    # reindexing its axes.
     if t.input_axes is None and t.output_axes is None:
         return True
     if t.input_axes is None or t.output_axes is None:
@@ -233,17 +238,18 @@ def _subsystem(
     index: tx.Optional[tx.Sequence[Integral]] = None,
     full: tx.Optional[CoordinateSystem] = None,
 ) -> tx.Optional[CoordinateSystem]:
-    """Build the full-space system that a subspace transformation presents.
+    """Build the system of the full space on one side of a subspace.
 
     `system` is the system of the inner transformation, with one axis per
     dimension it acts on, and `index` holds the positions of those axes in the
-    full space. A declared endpoint `full` is returned when there is one.
+    full space. A declared system `full` is returned when there is one.
     Otherwise, the system is derived with
-    [`CoordinateSystem.embed`][brainhops.datamodel.systems.CoordinateSystem.embed]:
-    inner axis `j` sits at `index[j]`, the other positions hold unknown axes,
-    and the system ends with `...`, because the positions are known but the
-    total count is not. The result is named `subspace(<name>)`. An inner system
-    that states no axis is returned as it is.
+    [`CoordinateSystem.embed`][brainhops.datamodel.systems.CoordinateSystem.embed].
+    Axis `j` of the inner system is placed at position `index[j]`, the other
+    positions hold unknown axes, and the system ends with `...`, because the
+    positions are known but the total number of axes is not. The result is
+    named `subspace(<name>)`. An inner system that states no axis is returned
+    as it is.
     """
     if full is not None:
         return full
@@ -261,23 +267,24 @@ def _close_subspace(
     n_in: tx.Optional[int] = None,
     n_out: tx.Optional[int] = None,
 ) -> SubspaceTransformation:
-    """Give a subspace transformation closed full-space systems, when possible.
+    """Fix the number of axes in the systems of a subspace, when it is known.
 
-    An unset or open system does not know how many axes the full space has, but
-    a neighbour in a composition may know, since the space between two
-    transformations is one space. `n_in` and `n_out` are the counts for the
-    input and output sides of `t`, and one side gives the other, because the
-    pass-through axes are the same on both sides. A count that `t` states
-    itself is never overridden. The open systems are closed with
+    A system that is unset, or open because it ends with `...`, does not say
+    how many axes the full space has. A neighbour in a composition may say so,
+    since the space between two transformations is a single space. `n_in` and
+    `n_out` are the numbers of axes on the input and output sides of `t`. The
+    number on one side gives the number on the other, because the axes that
+    pass through unchanged are the same on both sides. A number that `t`
+    states itself is never overridden. The open systems are closed with
     [`CoordinateSystem.expand`][brainhops.datamodel.systems.CoordinateSystem.expand]
-    and declared on the returned transformation; `t` is returned unchanged if
-    no count is known.
+    and declared on the returned transformation. If no number is known, `t`
+    is returned unchanged.
 
     Raises
     ------
     CompositionError
-        If a count cannot hold the axes that `t` acts on, or the axes that its
-        systems state.
+        If a number of axes is too small to hold the axes that `t` acts on,
+        or the axes that its systems state.
     """
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
@@ -299,8 +306,8 @@ def _close_subspace(
                 f"A subspace transform that acts on the axes {axes} cannot "
                 f"act in the space of {count} axes its neighbour states."
             )
-    # A missing system expands from a `CoordinateSystem()`, which states
-    # nothing.
+    # A missing system is expanded from an empty `CoordinateSystem()`, which
+    # states no axis.
     changes = {}
     try:
         if own_in is None:

@@ -97,27 +97,34 @@ def _alias(name: str, source: str, fset: bool = True) -> property:
 
 
 class ConcreteTransformation(Transformation):
-    """Base class of the concrete transformations, which hold their parameters.
+    """Base class of the transformations that hold their own parameters.
 
-    Computing a concrete transformation downcasts it to the cheapest compatible
-    type. Its inverse and square root are lazy wrappers, which compute their
-    parameter when it is read.
+    A concrete transformation, such as an affine matrix or a displacement
+    field, stores the numbers that define its map, whereas a sequence is built
+    from other transformations. Computing a concrete transformation converts it
+    to the cheapest type that still represents it. Its inverse and its square
+    root are lazy wrappers, which compute their parameters only when these
+    parameters are read.
     """
 
     _reverseof: _TypeReference = None
     """Concrete type of the resolved inverse, if it differs from this type.
 
-    A type whose name states a direction, such as `VoxelToLPS`, inverts to the
-    other half of its pair, `LPSToVoxel`. Only the half defined second sets
-    this attribute, and `__init_subclass__` points the other half back.
+    A type whose name states a direction, such as `VoxelToLPS`, has the other
+    type of its pair, `LPSToVoxel`, as the type of its inverse. Only the type
+    defined second sets this attribute, and `__init_subclass__` then sets it on
+    the first type so that the pair points both ways.
     """
 
     map_field: tx.ClassVar[tx.Optional[str]] = None
-    """Name of the view that holds the map of the family.
+    """Name of the view that gives the map itself, such as `matrix`.
 
-    The class that roots the family declares it, and `from_instance` copies the
-    map through it. It is `None` for the identity and for a grid, whose map is
-    generated from its shape.
+    A family is a class that declares this attribute, together with its
+    subclasses, such as `Affine` and its tangent class `AffineExponential`.
+    The view gives the map whatever the form in which `data` stores it, and
+    `from_instance` copies the map from one class of the family to another
+    through the view. The attribute is `None` for the identity and for a grid,
+    whose map is generated from its shape.
     """
 
     def __init_subclass__(cls, **kwargs) -> None:
@@ -125,8 +132,8 @@ class ConcreteTransformation(Transformation):
         # Read from `cls.__dict__`, not with `getattr`, so that only a class
         # declaring `_reverseof` in its own body claims a pair. An inherited
         # value would let a refinement such as `MyLPSToVoxel(LPSToVoxel)`, or a
-        # stand-in class that Magic builds while reading the MRO, steal the
-        # half of `VoxelToLPS`.
+        # stand-in class that Magic builds while reading the MRO, take over
+        # the pairing with `VoxelToLPS`.
         if (other := cls.__dict__.get("_reverseof")) is not None:
             other._reverseof = cls
 
@@ -137,32 +144,35 @@ class ConcreteTransformation(Transformation):
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> tx.Self:
-        """Downcast the transformation to the cheapest compatible type.
+        """Convert the transformation to the cheapest type that represents it.
 
         Parameters
         ----------
         mode : ModeLike, default=True
-            Ignored unless `factor` is true. The mode decides which kinds are
-            composed, and a leaf has nothing to compose, so the downcast is
-            gated by `simplify` alone.
+            Kinds of transformation that may be composed, used only when
+            `factor` is true. A concrete transformation has nothing to compose
+            on its own, so otherwise only `simplify` decides whether it is
+            converted.
         simplify : SimplifyLike, default="analytic"
-            Simplify policy, which decides whether the kind checks reason from
-            the structure of the types (`"analytic"`), also read values
-            (`"numeric"`), or are skipped (`"none"`).
+            How much effort to spend on simplification. `"analytic"` decides
+            from the type alone, `"numeric"` also reads the parameter values,
+            and `"none"` skips simplification.
         factor : bool, default=False
-            Whether to factor the leaf into its normal form over groups of
-            axes, by computing it as a one-element sequence. A diagonal affine
-            transformation, for example, splits into one block per axis.
+            Whether to split the transformation into independent factors, one
+            for each group of axes that transform together. To do so, the
+            transformation is computed as a sequence of one element. A
+            diagonal affine transformation, for example, splits into one
+            factor per axis.
 
         Returns
         -------
         Transformation
-            The downcast transformation.
+            The simplified transformation.
         """
         if factor:
-            # The sequence engine runs the factor pass and never passes
-            # `factor` back to the `compute` of a leaf, so there is no
-            # recursion.
+            # The sequence performs the factoring and never passes `factor`
+            # back to the `compute()` of its elements, so this call does not
+            # recurse.
             return nocycles.SEQUENCE([self]).compute(
                 mode, simplify=simplify, factor=True
             )
@@ -172,12 +182,13 @@ class ConcreteTransformation(Transformation):
     def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Create an instance from an instance of a similar class.
 
-        Within a family, the map is copied through the [`map_field`][] view
-        rather than the stored array: a tangent (`log=True`) copied into the
-        class that holds the map is exponentiated, and an affine copied into a
-        tangent class takes its logarithm. The metadata that both classes
-        share, such as the flags of a field, is copied too, except `log`, which
-        the map may have to cross. Everything else is as in
+        When both classes belong to the same family, the map is copied through
+        the [`map_field`][] view rather than as the stored array. A tangent
+        (`log=True`) copied into the plain class of its family is therefore
+        exponentiated, and an affine transformation copied into a tangent class
+        is stored as its logarithm. The metadata that both classes share, such
+        as the flags of a field, is copied too, except `log`, because the two
+        classes may store the map in different forms. Everything else is as in
         [`DataModelBase.from_instance`][brainhops.datamodel.base.DataModelBase.from_instance].
         """
         view = cls.map_field
@@ -189,10 +200,11 @@ class ConcreteTransformation(Transformation):
         return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
-        # The inverse is a type-transparent `Inverse` wrapper, which holds this
-        # transformation as its `forward` and materializes only when a
-        # parameter is read or computed, so a transformation next to its
-        # inverse cancels for free.
+        # The inverse is an `Inverse` wrapper that is also an instance of the
+        # family of this transformation. The wrapper holds this transformation
+        # as its `forward` and is evaluated only when a parameter is read or
+        # computed, so a transformation composed with its inverse can cancel
+        # out without any arithmetic.
         if is_identity(self):
             # An identity gains nothing from being lazy.
             if (reverse := type(self)._reverseof) is not None:
@@ -200,15 +212,16 @@ class ConcreteTransformation(Transformation):
                 # states the swapped direction.
                 return reverse(input=self.output, output=self.input)
             return self.to(input=self.output, output=self.input)
-        # The `Inverse` front door picks the lazy wrapper of this family.
+        # The `Inverse` operator selects the lazy wrapper class of this family.
         obj = nocycles.OPERATORS["inverse"](self)
         if compute:
             obj = obj.compute(**kwargs)
         return obj
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        # The square root is a typed lazy wrapper, which computes its parameter
-        # when read. A family without such a wrapper overrides `sqrt()`.
+        # The square root is a lazy wrapper that is also an instance of the
+        # family, and it computes its parameter when the parameter is read. A
+        # family without such a wrapper overrides `sqrt()`.
         require_endomorphism(self, "square root")
         if is_identity(self):
             obj = self
@@ -222,8 +235,8 @@ class TransformationField(ConcreteTransformation):
 
     The field is stored in `data`, either as its values or, when `store` is
     `"coefficients"`, as the coefficients of a spline of degree `degree`. The
-    `field` view, and the `field=` keyword, always hold the values, and the
-    flags say how they are stored.
+    `field` view and the `field=` keyword always give the values, and the flags
+    only say how the values are stored in `data`.
     `DisplacementField(field=u, degree=3, store="coefficients")` therefore
     holds the cubic coefficients of `u`, the same data as
     `DisplacementField(field=u, degree=3).to(store="coefficients")`. An array
@@ -231,7 +244,8 @@ class TransformationField(ConcreteTransformation):
 
     The `field` view is decoded once and cached until `data` or a flag is
     assigned. Whereas `.to(store="coefficients")` re-encodes the field,
-    assigning a flag (`t.store = "coefficients"`) reinterprets the array.
+    assigning a flag (`t.store = "coefficients"`) reinterprets the stored array
+    without changing it.
     """
 
     map_field: tx.ClassVar[str] = "field"
@@ -266,7 +280,7 @@ class TransformationField(ConcreteTransformation):
     _field: InitVar[tx.Optional[ArrayProtocol]] = None
     """Field as values, accepted in place of `data`.
 
-    It is encoded under `store` before it is stored.
+    It is encoded according to `store` before it is stored.
     """
 
     _values: InitVar[tx.Optional[ArrayProtocol]] = None
@@ -285,11 +299,12 @@ class TransformationField(ConcreteTransformation):
 
     @_invalidating_property
     def store(self) -> StoreEnum:
-        """What `data` holds: values or spline coefficients.
+        """Whether `data` holds the values or the spline coefficients.
 
-        An unset flag reads as `"values"`, because every spelling except
-        `coefficients=` gives the map as values; `coefficients=` sets the flag
-        when the constructor was given none.
+        An unset flag reads as `"values"`, because every constructor argument
+        except `coefficients=` gives the map as values. When the constructor
+        receives `coefficients=` without a flag, it sets the flag to
+        `"coefficients"`.
         """
         return StoreEnum.values
 
@@ -364,8 +379,8 @@ class TransformationField(ConcreteTransformation):
 
     @values.setter
     def values(self, value: tx.Optional[ArrayProtocol]) -> None:
-        # Fit coefficients if the field stores them. Writing through `data`
-        # clears every view keyed on it,
+        # Fit coefficients if the field stores them. Assigning `data` clears
+        # every view derived from it,
         self.data = _values2data(value, self.store, self.degree, self.bound)
         # so the input can be cached only afterwards.
         self._cache_values = value
@@ -383,8 +398,8 @@ class TransformationField(ConcreteTransformation):
 
     @coefficients.setter
     def coefficients(self, coeffs: tx.Optional[ArrayProtocol]) -> None:
-        # Evaluate the spline if the field stores values. Writing through
-        # `data` clears every view keyed on it,
+        # Evaluate the spline if the field stores values. Assigning `data`
+        # clears every view derived from it,
         self.data = _coeffs2data(coeffs, self.store, self.degree, self.bound)
         # so the input can be cached only afterwards.
         self._cache_coefficients = coeffs
@@ -402,8 +417,9 @@ class TransformationField(ConcreteTransformation):
 class DisplacementField(TransformationField, polymorphic=True):
     """Displacement field on a regular grid, which maps the grid to itself.
 
-    The `log` flag says what `data` describes: a displacement or, when
-    `log=True`, a stationary velocity whose flow at time one is the map.
+    The `log` flag says what `data` describes. By default, `data` holds a
+    displacement; when `log=True`, it holds a stationary velocity whose flow
+    at time one is the map.
     `DisplacementField(..., log=True)` builds a
     [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField],
     whose `field` view integrates the velocity, so a plain displacement field
@@ -488,8 +504,9 @@ class DisplacementField(TransformationField, polymorphic=True):
     def _inverse(self) -> tx.Optional[ArrayProtocol]:
         """Parameter of the inverse field, cached.
 
-        The values are inverted with the mesh inverter and re-encoded under the
-        `store`, `degree` and `bound` flags of this field.
+        The values are inverted by treating the grid as a mesh of small affine
+        cells, and the result is re-encoded according to the `store`, `degree`
+        and `bound` flags of this field.
         """
         if self.data is None:
             return None
@@ -542,8 +559,9 @@ class CartesianField(CoordinatesField):
     _shape: NotKwOnly[tx.Optional[tx.Tuple[int, ...]]] = None
     """Shape of the grid."""
 
-    # These marks keep the derived fields out of `__init__`: a grid is fully
-    # defined by its shape, so it takes neither `data=` nor `field=`.
+    # These annotations remove the inherited fields from `__init__`, because
+    # a grid is fully defined by its shape and takes neither `data=` nor
+    # `field=`.
 
     _data: Deactivated[tx.Optional[ArrayProtocol]]
     _field: Deactivated[tx.Optional[ArrayProtocol]]
@@ -583,7 +601,7 @@ class CartesianField(CoordinatesField):
 
     @lazyproperty
     def data(self) -> tx.Optional[ArrayProtocol]:
-        """Coordinates of the grid points, encoded under the flags."""
+        """Coordinates of the grid points, encoded according to the flags."""
         return _values2data(self.field, self.store, self.degree, self.bound)
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
@@ -626,8 +644,8 @@ class Affine(ConcreteTransformation, polymorphic=True):
         "_inverse",
     )
 
-    # `data` and `log` are stored privately, behind properties whose assignment
-    # clears the views keyed on them, as for a field.
+    # `data` and `log` are stored under private names, behind properties whose
+    # assignment clears the views derived from them, as for a field.
 
     _data: NotKwOnly[tx.Optional[npmatrix[Real]]] = None
     """Matrix of shape `(No, Ni+1)`, whose last column is the translation.
@@ -647,7 +665,7 @@ class Affine(ConcreteTransformation, polymorphic=True):
     """Matrix of shape `(No, Ni+1)`, accepted in place of `data`."""
 
     _homogeneous_matrix: InitVar[tx.Optional[npmatrix[Real]]] = None
-    """Homogeneous matrix `(No+1, Ni+1)`, accepted in place of `data`."""
+    """Homogeneous matrix of shape `(No+1, Ni+1)`, accepted for `data`."""
 
     if tx.TYPE_CHECKING:
 
@@ -793,7 +811,7 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
 @kinds.SpecialOrthogonal
 class Rotation(Linear):
-    """Rotation: an orthogonal linear transformation with determinant one.
+    """Rotation, that is, an orthogonal linear map with determinant one.
 
     `data` is a matrix of shape `(N, N)`. `Rotation(..., log=True)` builds a
     [`RotationExponential`][brainhops.datamodel.transformations.RotationExponential],
@@ -1019,8 +1037,8 @@ class Identity(ConcreteTransformation):
     """Identity transformation.
 
     When the input and output systems differ, the identity maps the input axes
-    to the output axes in order. It has no parameter: its `data` is always
-    `None` and is not a constructor argument.
+    to the output axes in order. The identity has no parameter, so its `data`
+    is always `None` and is not a constructor argument.
     """
 
     @property
@@ -1072,11 +1090,12 @@ is_affine = Transformation.is_affine
 
 
 def _same_family(cls: tx.Type[Transformation], other: tx.Any) -> bool:
-    """Return whether `other` belongs to the family whose map `cls` copies.
+    """Return whether `other` belongs to the same family as `cls`.
 
-    The family is rooted at the class that declares `map_field`, so `Affine`
-    and `Linear` are different families although both name `matrix`: their
-    matrices have different shapes.
+    The family of `cls` is the closest base class that declares `map_field`,
+    together with its subclasses. `Affine` and `Linear` are therefore
+    different families, although both name `matrix` as their view, because
+    their matrices have different shapes.
     """
     root = next(b for b in cls.__mro__ if "map_field" in b.__dict__)
     return isinstance(other, root)
@@ -1088,21 +1107,24 @@ def _copy_map(
     view: str,
     kwargs: tx.Dict[str, tx.Any],
 ) -> None:
-    """Fill `kwargs` with the map of `other`, encoded as `cls` holds it.
+    """Add the map of `other` to `kwargs`, in the form that `cls` stores.
 
-    `view` names the map of the family, such as `matrix`. When both classes
-    hold the map, or both hold the tangent, the stored array is carried over
-    untouched, so that a tangent is not exponentiated and logged again.
+    `view` is the name of the view that gives the map, such as `matrix`. When
+    both classes hold the map, or both hold the tangent, the stored array is
+    carried over untouched, so that a tangent is not exponentiated and then
+    turned back into a tangent with a logarithm.
     """
     out_tangent = bool(kwargs.get("log", _is_tangent(cls)))
     if out_tangent == bool(getattr(other, "log", False)):
         kwargs.setdefault("data", other.data)
     elif out_tangent:
-        # The output holds the tangent and the input the map: pass the map
-        # through the view, and the class stores its logarithm.
+        # The output class holds the tangent and `other` holds the map. The
+        # map is passed through the view, and the output class stores its
+        # logarithm.
         kwargs.setdefault(view, getattr(other, view))
     else:
-        # The output holds the map, which the view of a tangent already is.
+        # The output class holds the map, which the view of a tangent
+        # already gives.
         kwargs.setdefault("data", getattr(other, view))
     if "log" in cls.metadata_fields:
         kwargs.setdefault("log", out_tangent)
@@ -1159,7 +1181,7 @@ def _data2coeffs(
     """Convert stored data to spline coefficients.
 
     * If `store == "coefficients"`, return `data` as is.
-    * If `store == "values"`, fit the spline to them.
+    * If `store == "values"`, fit a spline to the values.
     """
     if data is None or store == StoreEnum.COEFFICIENTS:
         return data

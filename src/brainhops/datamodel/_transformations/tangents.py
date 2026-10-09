@@ -130,8 +130,10 @@ class StationaryVelocityField(
     def _compute_steps(self) -> tx.Optional[int]:
         """Number of squarings that the integration actually uses.
 
-        This is the declared `steps`, or else the smallest number that bounds
-        the first step, or `None` for an unset velocity.
+        The count is the declared `steps` when one is set. Otherwise, it is the
+        smallest number of squarings for which the first step moves no point
+        by more than an eighth of a voxel, or `None` when the velocity is
+        unset.
         """
         if self.steps is not None:
             return self.steps
@@ -150,8 +152,9 @@ class StationaryVelocityField(
         return _integrate_field(self.data, *flags, self._compute_steps)
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
-        # Half the velocity needs one squaring fewer; undeclared steps stay
-        # undeclared, since the rule finds that count itself.
+        # Half the velocity needs one squaring fewer. A number of steps that
+        # was not declared stays undeclared, because the automatic rule finds
+        # the right count by itself.
         require_endomorphism(self, "square root")
         obj = self
         if self.data is not None:
@@ -181,7 +184,8 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
     `matrix` holds the top `N` rows of `expm([[L, l], [0, ..., 0]])`. `L` may
     be singular: a translation has the tangent `[0, t]`. Zero data is the
     identity, whereas `AffineExponential(data=I)` is a scaling by `e`. The
-    exponential of a real tangent has a positive determinant, hence the kind
+    exponential of a real tangent has a positive determinant, so the class
+    belongs to the kind
     [`PositiveAffine`][brainhops.datamodel.kinds.PositiveAffine].
     `Affine.to(log=True)` takes the principal logarithm and raises a
     [`DomainError`][] if the linear part has an eigenvalue on the closed
@@ -239,9 +243,10 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
 class MatrixTangentMixin(TangentMixin):
     """Mixin for linear tangents whose matrix is the exponential of `data`.
 
-    The rotation tangent deliberately does not subclass the linear tangent.
-    Both are selected by `log=True` alone, so a subclass would be what
-    `LinearExponential(data=L)` builds for any `L`.
+    `RotationExponential` deliberately does not subclass `LinearExponential`.
+    Both classes are selected by `log=True` alone, so if `RotationExponential`
+    were a subclass, `LinearExponential(data=L)` would build a
+    `RotationExponential` for any `L`.
     """
 
     @lazyproperty
@@ -276,8 +281,9 @@ class LinearExponential(
     """A linear transformation stored as its tangent (`log=True`).
 
     The `data` is the `(N, N)` tangent `L` and `matrix` is `expm(L)`, so that
-    `LinearExponential(data=I)` is a scaling by `e` and the determinant is
-    positive ([`PositiveLinear`][brainhops.datamodel.kinds.PositiveLinear]).
+    `LinearExponential(data=I)` is a scaling by `e`. The exponential of a real
+    matrix has a positive determinant, so the class belongs to the kind
+    [`PositiveLinear`][brainhops.datamodel.kinds.PositiveLinear].
     `Linear.to(log=True)` takes the principal logarithm and raises a
     [`DomainError`][] when the matrix has an eigenvalue on the closed negative
     real axis.
@@ -322,8 +328,8 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
     """A scaling stored as the logarithm of its factors (`log=True`).
 
     The `data` is the tangent `s` and `scale` is `exp(s)`, so the factors are
-    positive
-    ([`PositiveDiagonal`][brainhops.datamodel.kinds.PositiveDiagonal]).
+    always positive and the class belongs to the kind
+    [`PositiveDiagonal`][brainhops.datamodel.kinds.PositiveDiagonal].
     `Scaling.to(log=True)` raises a [`DomainError`][] unless all factors are
     positive.
     """
@@ -371,7 +377,7 @@ more squarings.
 """
 
 _MAX_STEPS = 64
-"""Largest number of squarings; a velocity that needs more is refused."""
+"""Largest number of squarings. A velocity that needs more is refused."""
 
 
 def _integrate_field(
@@ -409,8 +415,8 @@ def _integrate_field(
 
 
 def _squaring_steps(velocity: ArrayProtocol) -> int:
-    # Smallest number of squarings for which the first step moves no point by
-    # more than `_FIRST_STEP` voxels.
+    # Return the smallest number of squarings for which the first step moves
+    # no point by more than `_FIRST_STEP` voxels.
     backend = get_array_backend(velocity)
     norm = float(backend.max(backend.sqrt((velocity**2).sum(axis=-1))))
     if not math.isfinite(norm):

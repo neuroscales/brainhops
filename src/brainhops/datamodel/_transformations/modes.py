@@ -2,13 +2,14 @@
 
 A compose mode is a list of [`Family`][] entries, each pairing a kind of
 transformation with an optional number of dimensions. When a sequence is
-computed, a run of adjacent transformations is fused only if every
-transformation in the run is admitted by some entry of the mode.
+computed, a run of adjacent transformations is combined into one only if
+every transformation in the run is admitted by some entry of the mode.
 
 The mode is independent of the simplify policy, which decides how closely each
-leaf is inspected. For example, `compute(mode=False, simplify="numeric")` reads
-parameter values to downcast the leaves but composes nothing, whereas
-`compute(mode=True, simplify=False)` composes everything and downcasts nothing.
+concrete transformation is inspected. For example,
+`compute(mode=False, simplify="numeric")` reads parameter values to convert
+each concrete transformation to a cheaper type but composes nothing, whereas
+`compute(mode=True, simplify=False)` composes everything and converts nothing.
 """
 
 __all__ = [
@@ -31,9 +32,10 @@ import typing_extensions as tx
 from brainhops.datamodel.kinds import Transformation as TransformationSet
 from brainhops.datamodel.kinds import TransformationFamily
 
-# The membership predicates and the routine that normalizes keys live in
-# `check`, beside the checker registry they dispatch on. They are re-exported
-# here because mode resolution is their main user.
+# The functions that test whether a transformation belongs to a kind or a
+# family, and the function that normalizes the keys of a mode, are defined in
+# `check`, next to the registry of checkers that they use. They are
+# re-exported here because resolving modes is their main use.
 from .compute.check import (
     FamilyLike,
     Kind,
@@ -70,8 +72,9 @@ def normalize_modes(mode: ModeLike) -> tx.List[Family]:
     | `[]`                 | compose nothing (simplify-only)           |
     | a key, or a list of keys | compose only those kinds  |
 
-    `None` is the spelling of an absent argument, so it means no restriction,
-    like `True`. A single family-like value is wrapped in a list first.
+    `None` stands for an absent argument, so, like `True`, it places no
+    restriction on composition. A single family-like value is wrapped in a
+    list first.
 
     Parameters
     ----------

@@ -5,8 +5,8 @@ if tx.TYPE_CHECKING:
 
 
 class _Pipe:
-    # TODO: experimental `a |p> b` pipe syntax. It is unpythonic and possibly
-    # dead code.
+    # TODO: This class implements an experimental `a |p> b` pipe syntax,
+    # which is unpythonic and possibly dead code.
 
     def __init__(
         self,
