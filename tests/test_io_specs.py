@@ -8,6 +8,7 @@ from brainhops._core.path import Path
 from brainhops.datamodel.images import Image
 from brainhops.io.base import (
     ImageSpec,
+    OperationSpec,
     Parser,
     SourceSpec,
     TransformationSpec,
@@ -159,6 +160,34 @@ def test_transformation_operations_are_structured_and_applied() -> None:
 def test_parameterless_operation_rejects_a_value() -> None:
     with pytest.raises(ValueError, match="takes no value"):
         TransformationSpec.from_arg("warp|inv:other.nii")
+
+
+def test_operation_registered_on_a_subclass_stays_in_that_subclass() -> None:
+    # Each subclass keeps its own registry of operations. All classes
+    # used to share a single registry.
+    class WarpSpec(TransformationSpec, frozen=True):
+        pass
+
+    class SiblingSpec(TransformationSpec, frozen=True):
+        pass
+
+    class LeafSpec(WarpSpec, frozen=True):
+        pass
+
+    @WarpSpec.register_operation("halve")
+    class HalveOperation(OperationSpec, frozen=True):
+        def apply(self, value: tx.Any) -> tx.Any:
+            return value / 2
+
+    for spec_class in (WarpSpec, LeafSpec):
+        spec = spec_class.from_arg("warp|halve|inv")
+        assert [type(op) for op in spec.operations][0] is HalveOperation
+        assert [op.name for op in spec.operations] == ["halve", "inv"]
+    for spec_class in (TransformationSpec, SiblingSpec):
+        spec = spec_class.from_arg("warp|halve")
+        assert spec.operations == ()
+        assert spec.hints == ("halve",)
+    assert "halve" not in vars(TransformationSpec)["_OPERATIONS"]
 
 
 def test_registered_parser_is_inherited_by_subclasses() -> None:
