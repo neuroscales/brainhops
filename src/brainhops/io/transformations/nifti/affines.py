@@ -6,12 +6,12 @@ import typing_extensions as tx
 
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti._geometry import _voxel_to_ras
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
     _new_nifti,
     _NiftiObject,
-    _voxel_to_ras,
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS

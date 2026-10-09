@@ -24,7 +24,9 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Magic, field
 
 from brainhops.io.base.parsers import ParserContentError
-from brainhops.io.common.freesurfer import (
+
+# io
+from brainhops.io.common.freesurfer._geometry import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
     FS_DEFAULT_ZRAS,

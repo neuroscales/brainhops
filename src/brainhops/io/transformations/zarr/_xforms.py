@@ -34,11 +34,8 @@ from brainhops.io.base.parsers import (
     ParserTypeError,
     WriterError,
 )
-from brainhops.io.common.zarr import (
-    StoreLike,
-    ZarrParserWriter,
-    _as_node,
-)
+from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.zarr import _map, _node
 

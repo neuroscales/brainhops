@@ -6,7 +6,7 @@ from brainhops._core.typing import ArrayLike
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, ParserContentError
-from brainhops.io.common.arrays import (
+from brainhops.io.common._arrays import (
     ArrayParser,
     CsvArrayParser,
     Mat73ArrayParser,

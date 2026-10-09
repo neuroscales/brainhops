@@ -18,17 +18,15 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.afni import (
-    AFNI_VIEWS,
-    AfniHeader,
-    AfniParser,
+from brainhops.io.common.afni import AfniHeader, AfniParser
+from brainhops.io.common.afni._constants import AFNI_VIEWS
+from brainhops.io.common.afni._data import brick_code, brick_dtype
+from brainhops.io.common.afni._geometry import (
     afni_cardinal_matrix,
     afni_geometry_from_matrix,
     afni_view,
     afni_voxel_to_dicom,
     afni_world,
-    brick_code,
-    brick_dtype,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 

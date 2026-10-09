@@ -23,14 +23,16 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti._constants import (
     _NIFTI_INTENT_DISPVECT,
     _NIFTI_INTENT_NAME_MAPPING,
     _NIFTI_INTENT_NAME_NIFTYREG,
     _NIFTI_INTENT_VECTOR,
+)
+from brainhops.io.common.nifti._geometry import _embed_affine
+from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
-    _embed_affine,
     _new_nifti,
     _nifti_intent,
     _nifti_intent_name,

@@ -1,48 +1,29 @@
-"""Concrete file formats shared by images and transformations.
+"""
+Format-specific machinery shared by the image and transformation readers.
 
-NIfTI requires nibabel, and Zarr requires `abczarr` with a backend driver.
+Each subpackage holds what the image readers (`brainhops.io.images`) and
+the transformation readers (`brainhops.io.transformations`) of one file
+format have in common -- its parser, header, and geometry conventions:
+
+- [`afni`][brainhops.io.common.afni]: AFNI `.HEAD`/`.BRIK` datasets;
+- [`freesurfer`][brainhops.io.common.freesurfer]: the volume geometry
+  shared by every FreeSurfer format;
+- [`hdf5`][brainhops.io.common.hdf5]: formats stored in HDF5 files
+  (needs `h5py`);
+- [`mgh`][brainhops.io.common.mgh]: FreeSurfer MGH/MGZ volumes (needs
+  `nibabel`);
+- [`minc`][brainhops.io.common.minc]: MINC1 and MINC2 volumes (needs
+  `nibabel`, and `h5py` for MINC2);
+- [`mrtrix`][brainhops.io.common.mrtrix]: MRtrix `.mif`/`.mih` images;
+- [`nifti`][brainhops.io.common.nifti]: NIfTI-1 and NIfTI-2 files (needs
+  `nibabel`);
+- [`nrrd`][brainhops.io.common.nrrd]: NRRD `.nrrd`/`.nhdr` files;
+- [`zarr`][brainhops.io.common.zarr]: Zarr stores (needs `abczarr` and
+  one of its drivers).
+
+None of them is imported here: a format whose optional dependencies are
+missing must not break `brainhops.io`, so each one is imported by the
+readers that need it, and only when those dependencies are installed.
 """
 
-__all__ = [
-    "FileBasedObject",
-    "WritableFileBasedObject",
-    "TextFileBasedObject",
-    "BinaryFileBasedObject",
-    "WritableTextFileBasedObject",
-    "WritableBinaryFileBasedObject",
-    "format_registry",
-    "load",
-    "save",
-    "sniff",
-    "afni",
-    "mrtrix",
-    "parsers",
-    "freesurfer",
-    "register_format",
-    "ImageSpec",
-    "Parser",
-    "OperationSpec",
-    "SourceSpec",
-    "TransformationSpec",
-    "format_hints",
-    "parser_for",
-    "register_parser",
-]
-
-from brainhops._core.dependencies import (
-    HAS_NIBABEL,
-    has_abczarr_driver,
-)
-
-from . import afni, freesurfer, mgh, minc, mrtrix
-
-if HAS_NIBABEL:
-    from ..common import nifti
-
-    __all__ += ["mgh", "minc", "nifti"]
-
-# abczarr cannot open a store without a backend driver.
-if has_abczarr_driver():
-    from . import zarr
-
-    __all__ += ["zarr"]
+__all__ = []

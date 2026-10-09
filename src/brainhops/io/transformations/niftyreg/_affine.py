@@ -10,7 +10,7 @@ from brainhops.io.base.parsers import (
     TextFileParserWriter,
     WriterError,
 )
-from brainhops.io.common.arrays import TxtArrayParser, is_numeric_array
+from brainhops.io.common._arrays import TxtArrayParser, is_numeric_array
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.base.affines import RASToRAS
 

@@ -4,12 +4,11 @@ import typing_extensions as tx
 from bagof.magic import HIDE_IF_NONE, Factory, Magic
 
 from brainhops.io.base.parsers import Confidence, SnifferContentError
-from brainhops.io.common.hdf5 import (
-    DelayedH5Array,
-    Hdf5Parser,
-    delayed_dataset,
-    read_string,
-)
+
+# io
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Parser
+from brainhops.io.common.hdf5._delayed import delayed_dataset
+from brainhops.io.common.hdf5._parsers import read_string
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
 

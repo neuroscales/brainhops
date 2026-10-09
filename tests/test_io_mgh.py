@@ -31,7 +31,7 @@ from brainhops.io.base.parsers import (  # noqa: E402
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.common.freesurfer import (  # noqa: E402
+from brainhops.io.common.freesurfer._geometry import (  # noqa: E402
     fs_geometry_from_vox2ras,
     fs_vox2ras,
     fs_vox2tkr,

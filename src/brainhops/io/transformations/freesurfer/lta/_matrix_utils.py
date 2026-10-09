@@ -1,6 +1,7 @@
 import numpy as np
 
-from brainhops.io.common.freesurfer import (
+# internals
+from brainhops.io.common.freesurfer._geometry import (
     code2orient,
     fs_phys2ras,
     fs_vox2phys,

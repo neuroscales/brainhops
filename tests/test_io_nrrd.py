@@ -20,7 +20,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     ParserError,
 )
-from brainhops.io.common.nrrd import NrrdHeader, dtype_to_nrrd, nrrd_dtype
+from brainhops.io.common.nrrd import NrrdHeader
+from brainhops.io.common.nrrd._codecs import dtype_to_nrrd, nrrd_dtype
 from brainhops.io.images import FileBasedImage
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,

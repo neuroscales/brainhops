@@ -21,16 +21,17 @@ from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
     reduce_to_affine,
 )
-from brainhops.io.common.nrrd import (
-    _ENCODINGS,
-    _SPACE_NAMES,
-    SPACES,
-    NrrdHeader,
-    NrrdParser,
+from brainhops.io.common.nrrd import NrrdHeader, NrrdParser
+from brainhops.io.common.nrrd._codecs import (
     _format_float,
     _format_strings,
     _format_vectors,
     dtype_to_nrrd,
+)
+from brainhops.io.common.nrrd._constants import (
+    _ENCODINGS,
+    _SPACE_NAMES,
+    SPACES,
 )
 from brainhops.io.images.base import WritableFileBasedImage
 

@@ -19,8 +19,9 @@ from brainhops.io.common._geometry import (
     arrange_voxel_to_ras,
     declared_axes,
 )
-from brainhops.io.common.mgh import _MRI_PARAMS, MghParser
-from brainhops.io.common.nifti import _scale_spatial, _unit_scale
+from brainhops.io.common.mgh import MghParser
+from brainhops.io.common.mgh._constants import _MRI_PARAMS
+from brainhops.io.common.nifti._geometry import _scale_spatial, _unit_scale
 from brainhops.io.images.base import WritableFileBasedImage
 
 _SCANNER = "scanner"

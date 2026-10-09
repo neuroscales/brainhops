@@ -8,7 +8,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti._header import (
     _nifti_intent,
     _nifti_vector_field,
     _NiftiObject,

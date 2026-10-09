@@ -1,18 +1,14 @@
-"""Parser and writer support for Zarr stores.
+"""The Zarr store adapters of the parser base."""
 
-A Zarr store is a directory opened through `abczarr`, not a file that can be
-read as a stream. The classes in this module route the file-based parser
-interface to store locations, so that image and transformation formats stored
-as Zarr are loaded and saved like any other format.
-"""
-
-__all__ = ["ZarrParser", "StoreLike"]
-
+# dependencies
 import typing_extensions as tx
 from abczarr import ZarrNode
 from abczarr import open as open_node
 
+# core
 from brainhops._core import path
+
+# internals
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import (
     Confidence,

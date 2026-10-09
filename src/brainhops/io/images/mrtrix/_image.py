@@ -21,12 +21,13 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._geometry import Arrangement, declared_axes
-from brainhops.io.common.mrtrix import (
-    MrtrixHeader,
-    MrtrixParser,
+from brainhops.io.common.mrtrix import MrtrixHeader, MrtrixParser
+from brainhops.io.common.mrtrix._codecs import (
     default_layout,
     dtype_to_mrtrix,
     parse_layout,
+)
+from brainhops.io.common.mrtrix._geometry import (
     split_voxel_to_scanner,
     voxel_to_ras,
 )

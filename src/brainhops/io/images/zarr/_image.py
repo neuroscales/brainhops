@@ -13,11 +13,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.zarr import (
-    StoreLike,
-    ZarrParserWriter,
-    _as_node,
-)
+from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.images.base import WritableFileBasedImage
 
 

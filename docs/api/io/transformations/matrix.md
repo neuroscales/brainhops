@@ -1,7 +1,7 @@
 A plain matrix file stores an affine transformation and nothing else: no
 coordinate systems, no index base and no direction. brainhops has one
 reader for each kind of container. Each reader is built on the generic
-array parser of its container, from `brainhops.io.common.arrays`, and all
+array parser of its container, from `brainhops.io.common._arrays`, and all
 of them derive from the abstract [`MatrixAffine`][brainhops.io.transformations.matrix.MatrixAffine], which is never
 registered itself.
 

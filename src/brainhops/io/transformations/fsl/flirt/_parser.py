@@ -10,8 +10,10 @@ from brainhops.io.base.parsers import (
     SnifferContentError,
     TextFileParser,
 )
-from brainhops.io.common.arrays import ArrayContainerError, read_text_rows
-from brainhops.io.common.nifti import _NiftiObject
+
+# io
+from brainhops.io.common._arrays import ArrayContainerError, read_text_rows
+from brainhops.io.common.nifti._header import _NiftiObject
 
 # A nibabel image or header, or a brainhops image.
 _ImageLike = tx.Union[_NiftiObject, Image]

@@ -1,40 +1,19 @@
-"""
-Reading and writing of MGH and MGZ files.
+"""The MGH/MGZ parser."""
 
-MGH is the big-endian volume format of FreeSurfer, and MGZ is the same
-format gzipped. A file holds a fixed header (version, dimensions, voxel
-type, `goodRASFlag`, and the geometry described in
-[`brainhops.io.common.freesurfer`][]), the voxels in Fortran order, an
-optional footer of acquisition parameters, and optional trailing tags
-such as the command history.
-
-The header and voxels are read and written with nibabel. The trailing
-tags and the `goodRASFlag`, which nibabel drops or resets to 1, are
-read from the raw bytes so that a file round-trips.
-
-!!! warning "goodRASFlag"
-    When the flag is not positive, FreeSurfer ignores the stored
-    geometry and uses 1 mm voxels, coronal LIA cosines and a zero
-    centre. nibabel's default cosines are LSP instead, which disagrees
-    with FreeSurfer and with nibabel's own tkr matrix. This module
-    follows FreeSurfer.
-"""
-
-__all__ = ["MghParser", "MGH_HEADER_SIZE", "MGH_FOOTER_SIZE"]
-
+# stdlib
 import gzip
-import struct
 from io import BytesIO
 
+# dependencies
 import numpy as np
 import typing_extensions as tx
 from nibabel.freesurfer import mghformat as _mgh
 
+# internals
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
 from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
-from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
@@ -45,65 +24,36 @@ from brainhops.io.base.parsers import (
     WriterNotImplementedError,
     preserve_position,
 )
-from brainhops.io.common.freesurfer import (
+from brainhops.io.common.freesurfer import FreesurferFormat
+from brainhops.io.common.freesurfer._geometry import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
     FS_DEFAULT_ZRAS,
-    FreesurferFormat,
     fs_vox2ras,
     fs_vox2tkr,
 )
-from brainhops.io.common.nifti import (
+from brainhops.io.common.nifti._files import (
     _accepted,
     _image_from_stream,
     _image_to_stream,
     _is_local,
 )
 
-MGH_HEADER_SIZE = 284
-"""The size in bytes of the fixed MGH header, after which the voxels start."""
-
-MGH_FOOTER_SIZE = 20
-"""The size in bytes of the footer, five big-endian floats."""
-
-# The leading header fields, enough to recognise a file: the version, the
-# four dimensions, the type and dof (int32), and goodRASFlag (int16).
-_PREFIX = struct.Struct(">7ih")
-
-# MGH voxel type codes: UCHAR, INT, FLOAT, SHORT.
-_MGH_TYPES = {0: 1, 1: 4, 3: 4, 4: 2}
-
-# The four MGH axes, in storage (Fortran) order.
-_MGH_AXES = [
-    Axis("x", "space"),
-    Axis("y", "space"),
-    Axis("z", "space"),
-    Axis("t", "time"),
-]
-
-_MRI_PARAMS = ("tr", "flip_angle", "te", "ti", "fov")
-"""The footer fields, as nibabel names them."""
+# this format
+from ._constants import (
+    _MGH_AXES,
+    _MRI_PARAMS,
+)
+from ._utils import (
+    _good_ras,
+    _mgh_from_filename,
+    _read_prefix,
+    _read_tags,
+    _seekable,
+    _valid_prefix,
+)
 
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
-
-
-def _read_prefix(fileobj: tx.BinaryIO) -> tx.Optional[tuple]:
-    """
-    Read the leading header fields of a decompressed stream, or `None` if
-    the stream is too short.
-    """
-    raw = fileobj.read(_PREFIX.size)
-    if len(raw) < _PREFIX.size:
-        return None
-    return _PREFIX.unpack(raw)
-
-
-def _valid_prefix(prefix: tx.Optional[tuple]) -> bool:
-    """Tell whether the leading fields describe an MGH volume."""
-    if prefix is None:
-        return False
-    version, *dims, dtype, _dof, _flag = prefix
-    return version == 1 and all(d > 0 for d in dims) and dtype in _MGH_TYPES
 
 
 class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
@@ -480,62 +430,3 @@ class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
     ) -> float:
         """Return the confidence that bytes hold an MGH header."""
         return cls.sniff_fileobj(BytesIO(data), error=error, **kwargs)
-
-
-def _good_ras(prefix: tx.Optional[tuple]) -> tx.Optional[bool]:
-    """
-    Tell whether the `goodRASFlag` of the leading fields is positive, or
-    `None` if they could not be read.
-    """
-    return None if prefix is None else prefix[-1] > 0
-
-
-def _mgh_from_filename(
-    filename: str,
-    *,
-    mmap: tx.Union[bool, str] = True,
-    keep_file_open: tx.Optional[bool] = None,
-) -> _mgh.MGHImage:
-    """
-    Load an image like nibabel's `MGHImage.from_filename`, but close the
-    file the header is read from, which nibabel leaks.
-
-    The voxels stay lazy, because the array proxy opens the file itself.
-    """
-    klass = _mgh.MGHImage
-    if mmap not in (True, False, "c", "r"):
-        raise ValueError("mmap should be one of {True, False, 'c', 'r'}")
-    file_map = klass.filespec_to_file_map(filename)
-    holder = file_map["image"]
-    with holder.get_prepare_fileobj("rb") as f:
-        header = klass.header_class.from_fileobj(f)
-    data = klass.ImageArrayProxy(
-        holder.file_like,
-        header.copy(),
-        mmap=mmap,
-        keep_file_open=keep_file_open,
-    )
-    return klass(data, header.get_affine(), header, file_map=file_map)
-
-
-def _seekable(fileobj: tx.IO) -> bool:
-    """Tell whether a stream can seek (no answer means no)."""
-    try:
-        return bool(fileobj.seekable())
-    except Exception:
-        return False
-
-
-def _read_tags(stream: tx.BinaryIO, header: _mgh.MGHHeader) -> bytes:
-    """
-    Read the raw bytes after the footer of a decompressed stream.
-
-    Offsets are counted from the start of the stream, as nibabel counts
-    them.
-    """
-    offset = int(header.get_footer_offset()) + MGH_FOOTER_SIZE
-    try:
-        stream.seek(offset)
-    except Exception:
-        return b""
-    return stream.read() or b""

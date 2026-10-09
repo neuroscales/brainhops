@@ -17,11 +17,8 @@ from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.zarr import (
-    StoreLike,
-    ZarrParserWriter,
-    _as_node,
-)
+from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr._parsers import _as_node
 from brainhops.io.images.base import WritableFileBasedImage
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
