@@ -93,14 +93,14 @@ def pull(
 
     Parameters
     ----------
-    input
+    input : ArrayProtocol
         Array with shape `(*batch, *spatial_in)`.
-    coords
+    coords : ArrayProtocol
         Coordinates with shape `(*spatial_out, ndim)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5: 0 is nearest neighbour, 1 is
         linear, 2 is quadratic, and so on.
-    bound
+    bound : str or float
         Boundary condition, given by name or as a constant fill value. A
         number, or the name `"constant"` for zero, is the value beyond the
         edge. The names are:
@@ -111,7 +111,7 @@ def pull(
           - 'grid-wrap': wrap around        (a b c d | a b c d | a b c d)
           - 'wrap': wrap around with shift  (d b c d | a b c d | b c a b)
 
-    coeff
+    coeff : bool
         Whether `input` already holds spline coefficients. When false, the
         input is prefiltered before it is interpolated.
 
@@ -160,17 +160,17 @@ def pull_axes(
 
     Parameters
     ----------
-    input
+    input : ArrayProtocol
         Array to interpolate.
-    coords
+    coords : ArrayProtocol
         Coordinates with shape `(*spatial_out, len(axes))`.
-    axes
+    axes : sequence of int
         Axes of `input` that the coordinates address.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : str or float
         Boundary condition, as in [`pull`][].
-    coeff
+    coeff : bool
         Whether `input` already holds spline coefficients.
 
     Returns
@@ -205,15 +205,15 @@ def spline_matrix(
 
     Parameters
     ----------
-    n_in
+    n_in : int
         Length of the input axis.
-    coords_1d
+    coords_1d : ArrayProtocol
         Coordinates with shape `(n_out,)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : str or float
         Boundary condition, as in [`pull`][].
-    coeff
+    coeff : bool
         Whether `W` maps coefficients rather than values.
 
     Returns
@@ -239,15 +239,15 @@ def pull_field(
 
     Parameters
     ----------
-    field
+    field : ArrayLike
         Field with shape `(*batch, *spatial_in, ndim)`.
-    coords
+    coords : ArrayLike
         Coordinates with shape `(*spatial_out, ndim)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
         Boundary condition, as in [`pull`][].
-    coeff
+    coeff : bool
         Whether `field` has already been prefiltered with the appropriate
         spline filter.
 
@@ -277,15 +277,15 @@ def coeff2value(
 
     Parameters
     ----------
-    input
+    input : ArrayLike
         Coefficients with shape `(*batch, *spatial)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
         Boundary condition, as in [`pull`][].
-    inplace
+    inplace : bool, default=False
         Whether to write the result into `input`.
-    ndim
+    ndim : int, optional
         Number of spatial axes. By default, all axes are spatial.
 
     Returns
@@ -334,13 +334,13 @@ def coeff2value_field(
 
     Parameters
     ----------
-    field
+    field : ArrayLike
         Coefficients with shape `(*batch, *spatial, ndim)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
         Boundary condition, as in [`pull`][].
-    inplace
+    inplace : bool, default=False
         Whether to write the result into `field`.
 
     Returns
@@ -367,15 +367,15 @@ def value2coeff(
 
     Parameters
     ----------
-    input
+    input : ArrayLike
         Values with shape `(*batch, *spatial)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
         Boundary condition, as in [`pull`][].
-    inplace
+    inplace : bool, default=False
         Whether to write the result into `input`.
-    ndim
+    ndim : int, optional
         Number of spatial axes. By default, all axes are spatial.
 
     Returns
@@ -732,13 +732,13 @@ def value2coeff_field(
 
     Parameters
     ----------
-    field
+    field : ArrayLike
         Values with shape `(*batch, *spatial, ndim)`.
-    degree
+    degree : int
         Degree of the spline, from 0 to 5.
-    bound
+    bound : {"nearest", "reflect", "mirror", "grid-wrap", "wrap"}
         Boundary condition, as in [`pull`][].
-    inplace
+    inplace : bool, default=False
         Whether to write the result into `field`.
 
     Returns

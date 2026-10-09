@@ -15,7 +15,7 @@ def inverse2d(disp: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    disp
+    disp : np.ndarray
         Displacements in voxels, with shape `(Nx, Ny, 2)` and the last axis
         ordered `[x, y]`.
 

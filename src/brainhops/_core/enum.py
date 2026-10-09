@@ -44,7 +44,7 @@ class EnumConverter:
 
         Parameters
         ----------
-        enum
+        enum : type of Enum
             Enum whose members are the known terms.
         """
         self.enum = enum
@@ -54,7 +54,7 @@ class EnumConverter:
 
         Parameters
         ----------
-        value
+        value : Any
             A member of the enum, a string, or `None`.
 
         Returns

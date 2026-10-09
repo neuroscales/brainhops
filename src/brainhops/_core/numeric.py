@@ -36,9 +36,9 @@ def shortest_decimal(
 
     Parameters
     ----------
-    value
+    value : float
         Double decoded from the file.
-    encode
+    encode : callable, optional
         Conversion from the unit of `value` to the unit of the file. The
         default is the identity.
 
