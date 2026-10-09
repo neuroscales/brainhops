@@ -369,8 +369,8 @@ def test_class_kinds() -> None:
 
 
 def test_kind_alias_refuses_a_tuple() -> None:
-    # Issue #384: a tuple used to be accepted, and only its last kind was
-    # kept under the name.
+    # A tuple used to be accepted, and only its last kind was kept
+    # under the name.
     with pytest.raises(TypeError):
         register_kind_alias("demo-384", (DisplacementField, CoordinatesField))
     assert "demo-384" not in KIND_ALIASES
