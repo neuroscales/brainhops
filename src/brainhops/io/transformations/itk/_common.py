@@ -20,7 +20,31 @@ from ._systems import _make_system
 
 
 class ItkTransformClass(StrEnum):
-    """Names of the ITK transform classes."""
+    """Names of the ITK transform classes.
+
+    The transform class names the kind of transform that an ITK file block
+    stores. Each value is the class name itself, as it appears in the file:
+
+    | Name                         | Value                          |
+    |------------------------------|--------------------------------|
+    | `IdentityTransform`          | `"IdentityTransform"`          |
+    | `TranslationTransform`       | `"TranslationTransform"`       |
+    | `ScaleTransform`             | `"ScaleTransform"`             |
+    | `ScaleLogarithmicTransform`  | `"ScaleLogarithmicTransform"`  |
+    | `Similarity2DTransform`      | `"Similarity2DTransform"`      |
+    | `Similarity3DTransform`      | `"Similarity3DTransform"`      |
+    | `Euler2DTransform`           | `"Euler2DTransform"`           |
+    | `Euler3DTransform`           | `"Euler3DTransform"`           |
+    | `VersorTransform`            | `"VersorTransform"`            |
+    | `VersorRigid3DTransform`     | `"VersorRigid3DTransform"`     |
+    | `ScaleVersor3DTransform`     | `"ScaleVersor3DTransform"`     |
+    | `ScaleSkewVersor3DTransform` | `"ScaleSkewVersor3DTransform"` |
+    | `AffineTransform`            | `"AffineTransform"`            |
+    | `MatrixOffsetTransformBase`  | `"MatrixOffsetTransformBase"`  |
+    | `DisplacementFieldTransform` | `"DisplacementFieldTransform"` |
+    | `BSplineTransform`           | `"BSplineTransform"`           |
+    | `CompositeTransform`         | `"CompositeTransform"`         |
+    """
 
     IdentityTransform = "IdentityTransform"
 
@@ -53,7 +77,15 @@ _ITKT = ItkTransformClass
 
 
 class ItkPrecision(StrEnum):
-    """Precisions of ITK transforms."""
+    """Precisions of ITK transforms.
+
+    Each block of an ITK file declares one of two precisions, which are:
+
+    | Name     | Value      |
+    |----------|------------|
+    | `Float`  | `"float"`  |
+    | `Double` | `"double"` |
+    """
 
     Float = "float"
     Double = "double"
