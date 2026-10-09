@@ -1,61 +1,31 @@
-"""Bridge coordinate systems that meet at a composition boundary.
+"""Bridges between coordinate systems at a composition boundary.
 
 Two consecutive transformations compose only when the output system of
 the first describes the same frame as the input system of the second.
+When the two systems disagree, this module builds an exact, invertible
+transformation that reorders, rescales and flips axes to carry
+coordinates from one frame to the other, without resampling. The bridge
+is derived from the axis descriptions alone. Axes are matched by type
+and orientation, then by name, then by kind of unit, and finally by
+position when positional pairing is permitted. Axes of different types
+never match.
 
-When the two systems disagree, this module builds the exact, invertible
-transformation that carries coordinates from the first frame to the
-second. The bridge reorders, rescales, and flips axes. It never resamples
-and never loses information.
-
-The bridge is built from the axis descriptions alone, by matching the
-axes of the two systems and reading off the reordering, the unit ratios,
-and the orientation signs implied by the match. Axes are matched, in
-priority order, by:
-
-1. their type and orientation,
-2. their name,
-3. their unit, and finally
-4. their position (only when a positional pairing is permitted).
-
-Furthermore:
-
-* Two axes that have different types are never matched, even if they
-  share the same name or unit.
-
-* When pairing axes by position, matching is restricted to axes of the
-  same type (so a spatial axis pairs with a spatial axis and never with
-  a time axis) and order *within each type group* is preserved.
-
-* Once two axes are matched, the ratio between their units is read off
-  and applied as part of the scaling.
-
-There are two entry points:
-
-1. [`bridge`][] returns the bridge from one system to another.
-   The bridge is a single primitive, a sequence of primitives, or the
-   identity, and not always a sequence. It assumes that the two systems
-   have the same dimensionality.
-
-2. [`adapt`][] ingests two consecutive transformations and returns a
-   sequence that contains both of them, with the reconciling bridge
-   placed where the two systems meet.
-   When the two systems have different numbers of axes, and one transform
-   acts on a subset of the other's axes, `adapt` embeds the smaller
-   transform in the fuller space instead, so it acts on those axes and
-   leaves the extra axes unchanged.
+[`bridge`][] maps one coordinate system onto another with the same
+number of axes. [`adapt`][] takes two consecutive transformations and
+returns a sequence that contains both, with a bridge at the junction.
+When one transformation acts on a subset of the other's axes,
+[`adapt`][] instead embeds it in the fuller space, where it leaves the
+extra axes unchanged.
 """
 
 __all__ = ["bridge", "adapt"]
 
-# externals
 import warnings
 from functools import partial
 
 import numpy as np
 import typing_extensions as tx
 
-# api
 from brainhops.datamodel._sugar import get_axes
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.orientations import Orientation
@@ -66,7 +36,6 @@ from brainhops.datamodel.systems import (
 from brainhops.datamodel.units import Unit, is_indexunit, is_physicalunit
 from brainhops.errors import AdaptationError
 
-# internals
 from ..base import Transformation
 from ..concrete import (
     CartesianField,
@@ -81,15 +50,11 @@ from ..sequence import Sequence, _interpolates
 from .utils import systems_disagree
 
 Extents = tx.Union[tx.Sequence[tx.Optional[int]], tx.Mapping[tx.Any, int]]
-"""
-An extent table maps an axis, by its position in the target system or by
-its name, to the number of samples along that axis. It is needed only to
-reverse an array-index axis, where a flip shifts the origin by one less
-than the extent.
-"""
+"""Sample counts, by target axis position or by axis name.
 
-
-# --- Bridge -----------------------------------------------------------
+Extents are needed only to reverse an array-index axis, because the
+flip shifts the origin by the extent minus one.
+"""
 
 
 def bridge(
@@ -102,69 +67,57 @@ def bridge(
 ) -> Transformation:
     """Return the transformation that carries `source` coordinates to `target`.
 
-    The bridge maps coordinates expressed in `source` to the coordinates
-    of the same points expressed in `target`. It is built from the axis
-    descriptions of the two systems, and reorders, rescales, and flips
-    axes so that a value written in one frame is read correctly in the
-    other. The bridge never resamples and never loses information, and its
-    inverse is the bridge from `target` back to `source`.
+    The bridge maps every point expressed in `source` to the same point
+    expressed in `target`; its inverse is `bridge(target, source)`. Axes are
+    matched by type and orientation, then by name, then by kind of unit,
+    and finally by position when permitted. The match yields a
+    [`Permutation`][], a [`Scaling`][] by the unit ratio and the
+    orientation sign, and, when a reversed axis indexes an array, a
+    [`Translation`][] by the extent minus one.
 
-    The axes of the two systems are matched by type and orientation, then
-    by name, then by unit, and finally, only when a positional pairing is
-    permitted, by position. Two axes that name different types are never
-    matched, whatever else they share. From the match the bridge derives a
-    [`Permutation`][] that reorders the axes, a [`Scaling`][] that applies
-    the per-axis unit ratio and an orientation sign of `-1` for each
-    reversed axis, and, when a reversed axis indexes an array, a
-    [`Translation`][] that shifts the origin by one less than the axis
-    extent.
-
-    A bridge is built between two closed systems. When either system is
-    missing or open (its axes hold `...`), it states only some of its
-    axes. The identity is returned when the two are
-    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
-    so that what is not known is never a reason to refuse. Otherwise the
-    bridge would have to reorder, rescale, or flip axes that the open
-    system does not describe, so an [`AdaptationError`][] is raised rather
-    than a guess. When an axis that must be matched has no correspondence,
-    an [`AdaptationError`][] names the two systems and the unmatched axes.
+    A missing system, or an open system whose axes hold `...`, describes
+    only some of its axes. The bridge is then an [`Identity`][] when the two
+    systems are
+    [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]
+    each other, and an [`AdaptationError`][] is raised otherwise.
 
     Parameters
     ----------
-    source : CoordinateSystem, optional
-        The system the coordinates are expressed in.
-    target : CoordinateSystem, optional
-        The system the coordinates are carried to.
-    extents : sequence or mapping, optional
-        The number of samples along each target axis, needed only to
-        reverse an array-index axis. A sequence is read by target axis
-        position, and a mapping by position or by axis name.
-    allow_positional : bool, default False
-        Whether to pair axes by position when no stronger correspondence
-        is found. A positional pairing warns.
-    allow_type_grouped_positional : bool, default False
-        Whether to pair the still-unmatched axes by order within each type
-        group, so spatial axes pair with spatial axes and time with time.
-        An axis of no type is a wildcard, so a group of typeless axes pairs
-        with the one remaining typed group of equal count. A group is paired
-        only when the same number of its axes remain on each side. A pairing
-        made this way warns. Two axes that both name a type are never paired
-        across it. A type group whose counts disagree, or a typeless group
-        that two or more typed groups could receive, is left unmatched and
-        reported.
+    source, target
+        Coordinate systems on either side of the bridge.
+    extents
+        Number of samples along each target axis, needed only to reverse
+        an array-index axis.
+    allow_positional
+        Pair the remaining axes by position, when both systems have the
+        same number of axes. This option takes precedence over
+        `allow_type_grouped_positional`.
+    allow_type_grouped_positional
+        Pair the remaining axes by their order within each type group. The
+        typeless group acts as a wildcard for the single remaining typed
+        group of the same size, and groups whose sizes differ on the two
+        sides stay unmatched.
 
     Returns
     -------
     Transformation
-        The bridge, as a single primitive, a
-        [`Sequence`][brainhops.datamodel.transformations.Sequence] of
-        primitives, or an
-        [`Identity`][brainhops.datamodel.transformations.Identity] when no
-        adaptation is needed.
+        A single primitive, a [`Sequence`][] of primitives, or an
+        [`Identity`][].
+
+    Raises
+    ------
+    AdaptationError
+        If the systems have different numbers of axes, if an axis remains
+        unmatched, or if a matched pair cannot be aligned by a flip and a
+        rescaling.
+
+    Warns
+    -----
+    UserWarning
+        If any pair of axes was formed by position.
     """
-    # --- special cases ------------------------------------------------
-    # Only two closed systems can be bridged. A missing system is open too:
-    # it reads as `[...]`.
+    # Only two closed systems can be bridged. A missing system is open as well,
+    # since its axes read `[...]`.
     source_axes = get_axes(source)
     target_axes = get_axes(target)
     if source_axes.is_open or target_axes.is_open:
@@ -174,7 +127,6 @@ def bridge(
     if source == target:
         return Identity(input=source, output=target)
 
-    # --- dimensionality check -----------------------------------------
     if source.ndim != target.ndim:
         source_name = source.name or "the source system"
         target_name = target.name or "the target system"
@@ -191,7 +143,6 @@ def bridge(
             f"names, units, or orientations so they can be identified."
         )
 
-    # --- matching -----------------------------------------------------
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -201,7 +152,6 @@ def bridge(
     if any(i is None for i in match):
         _unmatched_report(source, target, match)
 
-    # --- compute parameters -------------------------------------------
     permutation = [int(i) for i in match]
     scales = []
     translations = []
@@ -218,21 +168,15 @@ def bridge(
             offset = float(_extent(extents, j, target_axis) - 1)
         translations.append(offset)
 
-    # --- positional warning -------------------------------------------
-    # The positional pairing, if one was made, is now committed to. Every
-    # matched pair has a defined sign, ratio, and offset, and nothing below
-    # raises. The warning is emitted here, rather than at match time, so a
-    # pairing that a later step rejects does not warn. The stack level names
-    # the caller of `bridge`, not `bridge` itself.
+    # Warn only once every pair has a sign, a ratio and an offset, so that a
+    # bridge that fails above does not also warn. The stack level points at the
+    # caller of `bridge`.
     if positional_warning is not None:
         warnings.warn(positional_warning, stacklevel=2)
 
-    # --- build transformations and systems ----------------------------
-    # Build the intermediate systems so each primitive names its own
-    # endpoints and the whole bridge runs from `source` to `target`. Only
-    # the last primitive lands on `target`. A permutation lands on the
-    # source axes reordered into the target order, and a scaling that a
-    # shift follows lands on the target axes before the origin shift.
+    # Each primitive names its own endpoints, and only the last one lands on
+    # `target`. The permutation lands on the source axes in target order, and a
+    # scaling followed by a shift lands on the target axes before the shift.
     permuted_axes = [source_axes[i] for i in permutation]
     permuted_system = CoordinateSystem(axes=permuted_axes)
     needs_scale = any(scale != 1 for scale in scales)
@@ -241,7 +185,6 @@ def bridge(
 
     elements: tx.List[Transformation] = []
     current = source
-    # --- permutation --------------------------------------------------
     if needs_perm:
         elements.append(
             Permutation(
@@ -251,7 +194,6 @@ def bridge(
             )
         )
         current = permuted_system
-    # --- scale --------------------------------------------------------
     if needs_scale:
         scaled_system = (
             CoordinateSystem(axes=target_axes) if needs_offset else target
@@ -264,7 +206,6 @@ def bridge(
             )
         )
         current = scaled_system
-    # --- offset -------------------------------------------------------
     if needs_offset:
         elements.append(
             Translation(
@@ -275,15 +216,11 @@ def bridge(
         )
         current = target
 
-    # --- returns ------------------------------------------------------
     if not elements:
-        # length-zero sequence -> return identity
         return Identity(input=source, output=target)
     if len(elements) == 1:
-        # length-one sequence -> return its single element
         only = elements[0]
         return only.to(input=source, output=target)
-    # length-n sequence -> return a sequence of its elements
     return Sequence(transformations=elements, input=source, output=target)
 
 
@@ -293,27 +230,16 @@ def _match_axes(
     allow_positional: bool,
     allow_type_grouped_positional: bool = False,
 ) -> tx.Tuple[tx.List[tx.Optional[int]], tx.Optional[str]]:
-    """
-    Match each target axis to its corresponding source axis.
+    """Match each target axis to the source axis that feeds it.
 
-    This function returns:
-
-    1. a list `match`, where `match[j]` is the index of the source axis
-       that feeds target axis `j`;
-    2. a warning message, or `None`.
-
-    An axis for which no unique correspondence is found is left unmatched,
-    and the caller reports the failure.
-
-    The warning message names a positional pairing that was made, so the
-    caller can emit it once the pairing is committed to, rather than
-    before code that might still raise.
+    Returns `(match, warning)`, where `match[j]` is the index of the source
+    axis matched to target axis `j`, or None, and `warning` describes a
+    positional pairing, or is None. The warning is returned so that the
+    caller can issue it once the pairing can no longer fail.
     """
 
-    # Two axes that both name a type, and name different types, are never
-    # matched. A shared name, a shared unit, or a shared position is a
-    # coincidence that a definite type conflict overrides, so a spatial
-    # axis and a time axis that happen to share a name stay unmatched.
+    # Axes with different types never match: a shared name, unit or position is
+    # a coincidence when the types definitely conflict.
     n_source, n_target = len(source_axes), len(target_axes)
     match: tx.List[tx.Optional[int]] = [None] * n_target
     used = [False] * n_source
@@ -323,9 +249,8 @@ def _match_axes(
         match[j] = i
         used[i] = True
 
-    # First tier: axes of the same type that lie along the same oriented
-    # line. This is the strongest signal, and it pairs a right-to-left axis
-    # with a left-to-right one regardless of their names.
+    # Tier 1: same type on the same orientation line, the strongest signal. It
+    # pairs right-to-left with left-to-right whatever the names.
     for j, target in enumerate(target_axes):
         line = _orientation_line(target)
         if line is None:
@@ -344,12 +269,10 @@ def _match_axes(
                 i for i in candidates if source_axes[i].name == target.name
             ]
             if len(named) == 1:
-                # Only take a candidate if it is unique (no ambiguity).
                 take(j, named[0])
 
-    # Second tier: axes that share a name. A shared name does not match two
-    # axes of different types, and two axes oriented along different lines
-    # are never paired, because a shared name cannot align a rotation.
+    # Tier 2: same name, but never across different types or orientation lines,
+    # because a name cannot turn a rotation into a flip.
     for j, target in enumerate(target_axes):
         if match[j] is not None or target.name is None:
             continue
@@ -362,13 +285,10 @@ def _match_axes(
             and not _orientation_conflict(source, target)
         ]
         if len(candidates) == 1:
-            # Only take candidate if it is unique (no ambiguity).
             take(j, candidates[0])
 
-    # Third tier: axes measured in the same kind of unit, when only one
-    # such axis remains on each side, so the pairing is unambiguous. A
-    # shared unit does not match two axes of different types, and two axes
-    # oriented along different lines are again not paired.
+    # Tier 3: same kind of unit, when exactly one unused source axis qualifies.
+    # Pairs across types or orientation lines are excluded.
     for j, target in enumerate(target_axes):
         if match[j] is not None:
             continue
@@ -381,17 +301,11 @@ def _match_axes(
             and not _orientation_conflict(source, target)
         ]
         if len(candidates) == 1:
-            # Only take candidate if it is unique (no ambiguity).
             take(j, candidates[0])
 
-    # Last tier: position. A positional pairing can mask a genuine
-    # mismatch, so it warns and is used only when the caller permits it. The
-    # warning is not emitted here, but returned, so the caller can raise on
-    # the pairing before deciding to warn about it.
+    # Last tier: position. Positional pairing may hide a genuine mismatch, so
+    # it is opt-in and produces a warning.
     if allow_positional and n_source == n_target:
-        # The caller permitted a positional pairing outright. Any axis
-        # still unmatched is paired with the source axis in its position,
-        # unless the two axes at that position name conflicting types.
         paired = False
         for j in range(n_target):
             if match[j] is None and not used[j]:
@@ -407,17 +321,9 @@ def _match_axes(
             )
 
     elif allow_type_grouped_positional:
-        # An implicit bridge pairs the still-unmatched axes by order within
-        # each type group: spatial axes with spatial axes, time with time,
-        # and so on. An axis of no type is a wildcard, so a typeless group
-        # pairs with the one remaining typed group of equal count. A group
-        # is paired only when the same number of its axes remain on each
-        # side. Two axes that both name a type are never paired across it,
-        # so a spatial axis with no spatial counterpart is left unmatched
-        # and reported. A group whose counts disagree, or a typeless group
-        # that two or more typed groups could receive, is likewise left
-        # unmatched, rather than pairing some of its axes and inventing the
-        # rest.
+        # Implicit bridge: pair the remaining axes in order within each type
+        # group, leaving ambiguous groups unmatched rather than partially
+        # paired.
         unmatched_source = [i for i in range(n_source) if not used[i]]
         unmatched_target = [j for j in range(n_target) if match[j] is None]
         source_groups = _group_by_type(source_axes, unmatched_source)
@@ -485,9 +391,6 @@ def _cannot_bridge_report(
     )
 
 
-# --- Adapt ------------------------------------------------------------
-
-
 @register_adapt
 def adapt(
     first: Transformation,
@@ -497,75 +400,39 @@ def adapt(
     allow_positional: bool = False,
     allow_type_grouped_positional: bool = False,
 ) -> Sequence:
-    """Reconcile two consecutive transformations and return them together.
+    """Reconcile two consecutive transformations at their boundary.
 
-    The transformation `first` is applied before `second`. The output
-    system of `first` and the input system of `second` meet at the
-    boundary where the two are composed.
-
-    The result always contains both `first` and `second`, as a
-    [`Sequence`][]. The sequence usually runs from the input of `first`
-    to the output of `second`. An embedding is the exception:
-
-    * A forward embedding wraps `second` so that it acts in the fuller
-      space, and the sequence then ends in that fuller output system
-      rather than the output of `second`.
-
-    * A backward embedding wraps `first`, and the sequence then begins in
-      that fuller input system rather than the input of `first`.
-
-    In general:
-
-    * When the two systems already agree, the sequence holds `first` and
-      `second` with nothing between them
-
-    * When the two systems have the same number of axes but merely reorder,
-      rescale, or flip them, the bridge that reconciles them is placed
-      between the two, so applying the result is applying `first`,
-      adapting the coordinates, and applying `second`.
-
-    * When the two systems have different numbers of axes, one transform
-      acts on a subset of the other's axes. The transform on the fewer
-      axes is embedded in the fuller space by a [`SubspaceTransformation`][]
-      that acts on those axes and leaves the extra axes unchanged.
-
-      - A 3D spatial transform meeting a 4D spatial-and-time boundary
-        is embedded this way, whether the fuller space is on the input
-        side or the output side of the boundary.
-
-      - A genuine dimensionality mismatch, where the extra axes are not
-        a clean pass-through, is refused with an [`AdaptationError`][].
+    `first` is applied before `second`, so the boundary lies between
+    `first.output` and `second.input`. When the two systems agree, the
+    transformations follow each other directly. When they have the same
+    number of axes, a [`bridge`][] is placed between them. When they have
+    different numbers of axes, the transformation with fewer axes is
+    wrapped in a [`SubspaceTransformation`][] that acts on the matching
+    axes of the fuller space, for example a spatial transformation meeting
+    a boundary with space and time. The sequence then begins or ends in
+    the fuller system of the wrapper. If neither transformation acts on a
+    clean subset of the other's axes, an [`AdaptationError`][] is raised.
 
     Parameters
     ----------
-    first : Transformation
-        The transformation applied first. Its output system is the source
-        of the boundary.
-    second : Transformation
-        The transformation applied second. Its input system is the target
-        of the boundary.
-    extents : sequence or mapping, optional
-        The extents needed to reverse an array-index axis, passed through
-        to [`bridge`][]. When not given, they are read from a grid on
-        either side of the boundary.
-    allow_positional : bool, default False
-        Whether to pair axes by position, passed through to [`bridge`][].
-    allow_type_grouped_positional : bool, default False
-        Whether to pair the still-unmatched axes by order within each
-        type group, passed through to [`bridge`][].
+    first, second
+        Transformations applied in this order.
+    extents
+        Sample counts passed to [`bridge`][]. When omitted, they are read
+        from a grid on either side of the boundary.
+    allow_positional, allow_type_grouped_positional
+        Passed to [`bridge`][] when the boundary systems have the same
+        number of axes.
 
     Returns
     -------
     Sequence
-        A sequence that contains both `first` and `second`, with any
-        reconciling bridge or subspace embedding placed where their systems
-        meet. `first` and `second` are never rebuilt, so each is the same
-        object it was passed as, unless it was embedded in a fuller space.
+        A sequence that contains `first` and `second`, which are reused
+        unchanged unless one of them is embedded.
     """
     source = first.output
     target = second.input
 
-    # --- systems match: short circuit ---------------------------------
     if not systems_disagree(source, target):
         return Sequence(
             transformations=[first, second],
@@ -573,36 +440,28 @@ def adapt(
             output=second.output,
         )
 
-    # --- compute extents for grid coordinate systems ------------------
     if extents is None:
         extents = _grid_extents(first, at_output=True)
         extents.update(_grid_extents(second, at_output=False))
     extents = extents or None
 
-    # The sequence normally runs from the input of `first` to the output of
-    # `second`. An embedding replaces one of them with a wrapper that acts
-    # in the fuller space, so the endpoint on the embedded side comes from
-    # the wrapper rather than the original transform.
+    # An embedding replaces one transformation with a wrapper in the fuller
+    # space, so the endpoint on that side comes from the wrapper.
     seq_input = first.input
     seq_output = second.output
 
-    # --- dimensionality mismatch: build the embedding -----------------
-    # Only two closed systems can be told to differ in their number of
-    # axes. An open one that disagrees with its neighbour is refused by the
-    # bridge below.
+    # Only two closed systems can differ in their number of axes. An open
+    # system that disagrees is refused by `bridge` below.
     n_source, n_target = (
         get_axes(source).ndim,
         get_axes(target).ndim,
     )
     if n_source is not None and n_target is not None and n_source != n_target:
-        # One transform acts on a subset of the other's axes. Embed the
-        # smaller one in the fuller space, trying the fuller input side of
-        # `second` first and then the fuller output side of `first`.
+        # Try the fuller input side of `second` first, then the fuller output
+        # side of `first`.
         embedded = embed(second, full=source, side="input", extents=extents)
         if embedded is not None:
             pieces: tx.List[Transformation] = [first, embedded]
-            # The embedded `second` acts in the fuller space, so the sequence
-            # leaves its coordinates in that fuller output system.
             seq_output = embedded.output
         else:
             embedded = embed(
@@ -610,15 +469,11 @@ def adapt(
             )
             if embedded is not None:
                 pieces = [embedded, second]
-                # The embedded `first` reads the fuller space, so the sequence
-                # takes its coordinates from that fuller input system.
                 seq_input = embedded.input
             else:
-                # Not a same-dimensionality subset on either side, so this
-                # is a genuine dimensionality mismatch. `bridge` cannot add
-                # or drop an axis, so it raises the descriptive count-mismatch
-                # error rather than the adaptor inventing one. The raise that
-                # follows carries a message in case `bridge` ever returns.
+                # Neither side is a clean subset, so the mismatch is genuine.
+                # `bridge` raises its descriptive error about the axis counts;
+                # the error below is only a fallback.
                 bridge(source, target, extents=extents)
                 raise AdaptationError(
                     "Cannot compose two transforms whose boundary systems "
@@ -626,7 +481,6 @@ def adapt(
                     "clean subset of the other's axes."
                 )
 
-    # --- same dimensionality: build the bridge ------------------------
     else:
         reconciler = bridge(
             source,
@@ -642,7 +496,6 @@ def adapt(
         else:
             pieces = [first, reconciler, second]
 
-    # --- return -------------------------------------------------------
     return Sequence(transformations=pieces, input=seq_input, output=seq_output)
 
 
@@ -653,60 +506,51 @@ def embed(
     side: str,
     extents: tx.Optional[Extents] = None,
 ) -> tx.Optional[SubspaceTransformation]:
-    """Embed a transform in the axes it acts on inside a fuller space.
+    """Embed a transformation in the axes it acts on within a fuller space.
 
-    The transformation `transform` acts on a subset of the axes of the
-    fuller system `full`. This routine wraps `transform` in a
-    [`SubspaceTransformation`][] that acts on those axes within `full`
-    and leaves the extra axes unchanged. The dimensionality is preserved,
-    so a spatial transform meeting a spatial-and-time boundary acts on
-    the spatial axes and leaves time untouched.
-
-    The fuller space may lie on either side of the boundary. When `side` is
-    `"input"`, `full` is the system a preceding transform hands in, and the
-    subset is the input axes of `transform`. When `side` is `"output"`,
-    `full` is the system a following transform expects, and the subset is
-    the output axes of `transform`.
-
-    The matched axes may still need a reordering, a rescaling, or a flip,
-    such as the sign flip between RAS and LPS. That intra-subset bridge is
-    built by [`bridge`][] over the subset and placed on the fuller side
-    of `transform` inside the wrapper.
-
-    The return value is `None` when the subset is not a clean
-    same-dimensionality subset of `full`, so the caller can fall back to
-    refusing a genuine dimensionality mismatch. A [`CartesianField`][]
-    is never embedded, because it defines a sampling domain rather than a
-    transform to place inside a subspace.
+    The transformation is wrapped in a [`SubspaceTransformation`][] that
+    acts on the matching axes of `full` and leaves the other axes
+    unchanged. With `side="input"`, `full` is the system handed in by a
+    preceding transformation and is matched against the input axes of
+    `transform`; with `side="output"`, `full` is the system expected by a
+    following transformation and is matched against the output axes. A
+    [`bridge`][] over the subset, for example a flip between RAS and LPS,
+    is placed inside the wrapper on the fuller side of `transform`.
 
     Parameters
     ----------
-    transform : Transformation
-        The transform to embed in the axis space of `full`.
-    full : CoordinateSystem, optional
-        The fuller system that the wrapped transform reads and writes.
+    transform
+        Transformation to embed.
+    full
+        Fuller system that the wrapper reads from or writes to.
     side : {"input", "output"}
-        Which side of `transform` meets the fuller space.
-    extents : sequence or mapping, optional
-        The extents needed to reverse an array-index axis within the
-        subset, passed through to
-        [`bridge`][].
+        Side of `transform` on which the fuller space lies.
+    extents
+        Sample counts passed to [`bridge`][].
 
     Returns
     -------
     SubspaceTransformation or None
-        The wrapped transform, or `None` when no same-dimensionality
-        subset match exists.
+        The wrapper, or None when `transform` is a [`CartesianField`][]
+        (which defines a sampling domain), when a system is open, when the
+        numbers of input and output axes differ, or when the axes do not
+        form a clean subset of `full`.
+
+    Raises
+    ------
+    ValueError
+        If `side` is neither `"input"` nor `"output"`.
+    AdaptationError
+        If an interpolating transformation would act on a discrete axis.
     """
     make_bridge = partial(
         bridge, extents=extents, allow_type_grouped_positional=True
     )
 
-    # --- special cases ------------------------------------------------
     if isinstance(transform, CartesianField):
         return None
-    # Each system must be closed: the embedding is read off the axes that
-    # the fuller system has and the subset does not.
+    # The embedding is read from the axes that the fuller system has and the
+    # subset lacks, so every system must be closed.
     sub_input = transform.input
     sub_output = transform.output
     full_axes = get_axes(full)
@@ -721,14 +565,12 @@ def embed(
 
     # ------------------------------------------------------------------
     if side == "input":
-        # The fuller space is on the input side. The wrapper reads the
-        # acted-on axes from `full` and a bridge carries them into the
-        # frame `transform` expects, sitting before `transform` inside.
+        # The wrapper reads the acted-on axes from `full`, and a bridge before
+        # `transform` carries them into the frame that `transform` expects.
         sub_axes = in_axes
     elif side == "output":
-        # The fuller space is on the output side. The wrapper writes the
-        # acted-on axes into `full`, and a bridge carries the transform's
-        # output into the frame `full` uses, sitting after `transform`.
+        # The wrapper writes the acted-on axes into `full`, and a bridge after
+        # `transform` carries its output into the frame of `full`.
         sub_axes = out_axes
     else:
         raise ValueError("side must be 'input' or 'output'")
@@ -736,10 +578,8 @@ def embed(
     if positions is None:
         return None
 
-    # --- discrete check -----------------------------------------------
-    # An interpolating transform reads a value off its field at the acted-on
-    # coordinates, so it cannot act along a discrete axis, where no value
-    # lies between the samples.
+    # An interpolating transformation reads values between samples, which a
+    # discrete axis does not have.
     if _interpolates(transform):
         for position in positions:
             axis = full_axes[position]
@@ -753,7 +593,6 @@ def embed(
 
     sub_full = CoordinateSystem(axes=[full_axes[i] for i in positions])
 
-    # --- embed input --------------------------------------------------
     if side == "input":
         sub_bridge = make_bridge(sub_full, sub_input)
         if sub_bridge.is_identity():
@@ -764,15 +603,12 @@ def embed(
                 input=sub_full,
                 output=sub_output,
             )
-        # The output system is the fuller system with the acted-on axes
-        # replaced by the transform's output axes, kept in place.
         out_full_axes = list(full_axes)
         for k, position in enumerate(positions):
             out_full_axes[position] = out_axes[k]
         wrapper_input = full
         wrapper_output = CoordinateSystem(axes=out_full_axes)
 
-    # --- embed output -------------------------------------------------
     else:
         sub_bridge = make_bridge(sub_output, sub_full)
         if sub_bridge.is_identity():
@@ -783,15 +619,12 @@ def embed(
                 input=sub_input,
                 output=sub_full,
             )
-        # The input system is the fuller system with the acted-on axes
-        # replaced by the transform's input axes, kept in place.
         in_full_axes = list(full_axes)
         for k, position in enumerate(positions):
             in_full_axes[position] = in_axes[k]
         wrapper_input = CoordinateSystem(axes=in_full_axes)
         wrapper_output = full
 
-    # --- return -------------------------------------------------------
     return SubspaceTransformation(
         transformation=inner,
         input_axes=positions,
@@ -804,25 +637,20 @@ def embed(
 def _subset_positions(
     full_axes: tx.List[Axis], sub_axes: tx.List[Axis]
 ) -> tx.Optional[tx.List[int]]:
-    """
-    The position, in `full_axes`, of each axis in `sub_axes`, when
-    `sub_axes` is a clean subset of `full_axes`.
+    """Return the position in `full_axes` of each axis of `sub_axes`.
 
-    Each subset axis is matched to a fuller axis by the same kernel
-    that builds a bridge, so a spatial axis pairs with a spatial axis
-    and an oriented axis with its collinear counterpart.
-
-    The result is `None` when a subset axis has no match, or when an
-    unmatched fuller axis is of the same kind as an axis the subset
-    acts on. The second case is a genuine dimensionality mismatch,
-    such as a spatial axis with no spatial counterpart, and is left
-    for the caller to refuse rather than absorbed as a pass-through.
+    The axes are matched as in [`bridge`][], so spatial axes match spatial
+    axes and oriented axes match collinear ones. The result is None when an
+    axis of the subset has no match, or when an unmatched axis of the
+    fuller system has the same type as an axis of the subset. The second
+    case is a genuine mismatch, such as a spatial axis without a spatial
+    counterpart, and is left for the caller to refuse instead of being
+    absorbed as a pass-through axis.
     """
 
-    # The grouped-positional fallback is enabled, so a subset of unnamed
-    # and unoriented axes of one type still embeds, the same way an
-    # implicit bridge pairs such axes. The warning belongs to the bridge
-    # built overthe subset below, so the message returned here is discarded.
+    # Grouped positional pairing lets a subset of unnamed, unoriented axes of
+    # one type embed, as an implicit bridge would. The warning belongs to the
+    # bridge built over the subset, so it is discarded here.
     match, _ = _match_axes(
         full_axes,
         sub_axes,
@@ -842,15 +670,11 @@ def _subset_positions(
     return positions
 
 
-# --- Orientation ------------------------------------------------------
-
 _OrientationLike = tx.Union[Axis, Orientation, str, None]
 
 
 def _orientation(orientation: _OrientationLike) -> tx.Optional[str]:
-    """
-    Unwrap an [`Axis`][] or [`Orientation`][] into its orientation value.
-    """
+    """Return the orientation value of an axis or orientation."""
     if isinstance(orientation, Axis):
         orientation = orientation.orientation
     if isinstance(orientation, Orientation):
@@ -861,9 +685,11 @@ def _orientation(orientation: _OrientationLike) -> tx.Optional[str]:
 def _orientation_line(
     orientation: _OrientationLike,
 ) -> tx.Optional[tx.FrozenSet[str]]:
-    """
-    The undirected orientation of an oriented axis, represented as the
-    unordered pair of its two poles.
+    """Return the orientation line of an axis, ignoring its direction.
+
+    The line is the unordered pair of the two poles of the orientation. An
+    orientation that cannot be split into two poles gives a singleton, and
+    an unset orientation gives None.
 
     !!! example
         ```pycon
@@ -889,12 +715,10 @@ def _orientation_line(
 def _orientation_conflict(
     source: _OrientationLike, target: _OrientationLike
 ) -> bool:
-    """
-    Whether two axes conflict because of their orientation.
+    """Return whether two axes conflict by orientation.
 
-    This is the case when they have set orientations that are not
-    collinear. If one of the orientations is unset (`None`), there is
-    no conflict.
+    Two axes conflict when both orientations are set and lie on different
+    lines. An unset orientation never conflicts.
     """
     source_line = _orientation_line(source)
     target_line = _orientation_line(target)
@@ -906,11 +730,17 @@ def _orientation_conflict(
 def _orientation_sign(
     source: _OrientationLike, target: _OrientationLike
 ) -> int:
-    """
-    The sign that aligns two collinear axes.
+    """Return the sign that aligns two collinear axes.
 
-    It is `+1` when they point the same way and `-1` when they point
-    opposite ways.
+    The sign is +1 when the axes point in the same direction, or when
+    either orientation is unset, and -1 when they point in opposite
+    directions.
+
+    Raises
+    ------
+    AdaptationError
+        If the axes lie on different orientation lines, since aligning
+        them would require a rotation.
     """
     source_line = _orientation_line(source)
     target_line = _orientation_line(target)
@@ -928,21 +758,16 @@ def _orientation_sign(
     return 1 if source_value == target_value else -1
 
 
-# --- Units ------------------------------------------------------------
-
 _UnitLike = tx.Union[Axis, Unit, None]
 
 
 def _unit(unit: _UnitLike) -> tx.Optional[Unit]:
-    """
-    Unwrap an [`Axis`][] into its *physical* unit.
+    """Return the physical unit of an axis or unit.
 
-    An axis with no unit, or a unit that is not a [`Unit`][] instance, is
-    reported as `None`. So is an axis measured in samples: a sample is not
-    a physical quantity, so it has no scale to convert and no kind to
-    match. Whether an axis *is* sampled is a different question, asked by
-    [`_is_array_side`][]; [`_unit_ratio`][] asks it too, to refuse a
-    sample matched to a physical unit.
+    The result is None when there is no unit, when the value is not a
+    [`Unit`][], or when the axis is measured in samples, since a sample has
+    neither a scale nor a kind. Sampled axes are detected separately by
+    [`_is_sampled`][].
     """
     if isinstance(unit, Axis):
         unit = unit.unit
@@ -952,27 +777,26 @@ def _unit(unit: _UnitLike) -> tx.Optional[Unit]:
 
 
 def _is_sampled(unit: _UnitLike) -> bool:
-    """Whether an axis (or a unit) counts samples."""
+    """Return whether an axis or unit counts samples."""
     if isinstance(unit, Axis):
         unit = unit.unit
     return is_indexunit(unit)
 
 
 def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
-    """
-    The factor that converts a value measured in the source axis's unit
-    to the target axis's unit.
+    """Return the factor that converts the source unit into the target unit.
 
-    An unspecified unit (`None`) is compatible with any unit, at a ratio
-    of one: what is not known is never a reason to refuse. Two axes in the
-    same unit, or two axes that both count samples, have a ratio of one
-    too.
+    An unspecified unit is compatible with any unit and gives a ratio of
+    one, since an unknown unit is never grounds for refusal. The same unit,
+    or two units that both count samples, also give a ratio of one.
 
-    An axis that counts samples matched to an axis in a physical unit has
-    no ratio: the factor between them is the size of a sample, which is
-    what a scaling transformation says, not what the axes say. Two
-    physical units of different kinds (a length and a duration) have no
-    ratio either. Both are reported as a failure.
+    Raises
+    ------
+    AdaptationError
+        If a sampled axis is matched to a physical unit, since the size of
+        a sample is stated by a scaling rather than by the axes, or if the
+        two physical units are of different kinds, such as a length and a
+        duration.
     """
     source_sampled, target_sampled = _is_sampled(source), _is_sampled(target)
     source_unit, target_unit = _unit(source), _unit(target)
@@ -999,13 +823,10 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
             f"({source_unit.name} and {target_unit.name}), so no conversion "
             f"factor exists between them."
         )
-    # The ratio between two SI-prefixed units is a power of ten, so it is
-    # computed from the difference of the two base-ten scale exponents. A
-    # millimetre to a micrometre is then exactly 1000, and a ratio and its
-    # reciprocal multiply back to exactly one, which a division of the two
-    # scales does not guarantee.
-    # A non-SI unit, such as the inch, has a fractional exponent, so the
-    # ratio is then the division of the two scales.
+    # For SI-prefixed units, the ratio is a power of ten computed from the
+    # exponents, so that mm to um is exactly 1000 and the product of a ratio
+    # and its reciprocal is exactly one; dividing the scales does not guarantee
+    # that. Other units, such as the inch, fall back to division.
     source_log10 = getattr(source_unit, "log10_scale", None)
     target_log10 = getattr(target_unit, "log10_scale", None)
     if isinstance(source_log10, int) and isinstance(target_log10, int):
@@ -1014,15 +835,10 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
 
 
 def _same_unit_kind(source: _UnitLike, target: _UnitLike) -> bool:
-    """
-    Whether two axes are measured in units of the same kind, such as two
-    lengths or two durations.
+    """Return whether two axes have physical units of the same kind.
 
-    Two axes matched this way have a defined conversion factor between
-    their units.
-
-    Axes with no unit are not matched by unit at all, so this function
-    returns `False` if this is the case for any of the two axes.
+    Units of the same kind, such as two lengths, have a defined conversion
+    factor. An axis without a unit never matches by unit.
     """
     source_unit = _unit(source)
     target_unit = _unit(target)
@@ -1031,24 +847,15 @@ def _same_unit_kind(source: _UnitLike, target: _UnitLike) -> bool:
     return source_unit.type == target_unit.type
 
 
-# --- Shape ------------------------------------------------------------
-
-
 def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
-    """
-    Whether an axis indexes an array rather than measures a world
-    coordinate.
+    """Return whether an axis indexes an array rather than a world coordinate.
 
-    Reversing an array-index axis shifts the origin by one less than its
-    extent, while reversing a world axis is a pure sign flip.
-
-    Three signals mark an array-index axis. Its system is an array
-    coordinate system, such as a voxel grid, even one whose axes are
-    named and oriented and carry a length unit. Or the axis is discrete.
-    Or the axis is measured in an index unit, which is what [`IndexUnit`][]
-    states -- and only what it states: an axis whose unit is `None` has an
-    *unspecified* unit, which says nothing about whether it indexes an
-    array, so it is not read as one.
+    Reversing an array-index axis shifts the origin by the extent minus
+    one, whereas reversing a world axis only flips its sign. An axis
+    indexes an array when its system is an array coordinate system, when
+    it is discrete, or when its unit is an
+    [`IndexUnit`][brainhops.datamodel.units.IndexUnit]. An unspecified unit
+    is not read as an array index.
     """
     if isinstance(system, ArrayCoordinateSystem):
         return True
@@ -1058,10 +865,13 @@ def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
 
 
 def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
-    """
-    The number of samples along an axis, read from the extent table by
-    position or by name. A reversed array-index axis needs it, and its
-    absence is a failure rather than a guess.
+    """Return the number of samples along an axis, by position or by name.
+
+    Raises
+    ------
+    AdaptationError
+        If the extent is not available, since a reversed array-index axis
+        cannot be bridged without it.
     """
     value = None
     if isinstance(extents, tx.Mapping):
@@ -1086,23 +896,17 @@ def _extent(extents: tx.Optional[Extents], position: int, axis: Axis) -> int:
 
 
 def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
-    """
-    The number of samples along each named axis of a grid that sits at
-    the boundary of a transform, or an empty mapping when the boundary is
-    not a grid.
+    """Return the sample counts of a grid at the boundary of a transformation.
 
-    A reversed array-index axis needs its extent, and a `CartesianField`
-    next to the boundary carries it as its shape. The mapping is keyed
-    by axis name, so it aligns whichever side of the boundary the grid
-    describes.
-
-    `at_output` reads the grid on the output side of the transform,
-    and its clearing reads the input side.
+    A [`CartesianField`][] next to the boundary carries the extents as its
+    shape. The counts are keyed by axis name and read on the output side
+    when `at_output` is true, or on the input side otherwise. A
+    [`Sequence`][] is searched through its element on that side, and the
+    mapping is empty when no grid is found.
     """
     if isinstance(t, CartesianField) and t.shape is not None:
         axes = get_axes(t.output if at_output else t.input)
         if axes.is_open:
-            # The grid's shape gives the number of axes of an open system.
             axes = axes.expand(len(t.shape))
         extents: tx.Dict[tx.Any, int] = {}
         for axis, size in zip(axes, t.shape):
@@ -1115,8 +919,6 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
         return _grid_extents(edge, at_output)
     return {}
 
-
-# --- Type -------------------------------------------------------------
 
 _TypeLike = tx.Union[Axis, str, None]
 _TypeGroup = tx.Dict[tx.Optional[str], tx.List[int]]
@@ -1131,14 +933,10 @@ def _type(axis: _TypeLike) -> tx.Optional[str]:
 
 
 def _type_conflict(source: _TypeLike, target: _TypeLike) -> bool:
-    """
-    Whether two axes carry definite, different types.
+    """Return whether two axes carry definite and different types.
 
-    A shared name, unit, or position never matches two axes across
-    such a conflict.
-
-    An axis whose type is unset places no constraint, so a conflict is
-    present only when both axes name a type and the two types differ.
+    An unset type places no constraint, so a conflict requires both types
+    to be set.
     """
     source_type = _type(source)
     target_type = _type(target)
@@ -1150,11 +948,9 @@ def _type_conflict(source: _TypeLike, target: _TypeLike) -> bool:
 def _group_by_type(
     axes: tx.List[_TypeLike], indices: tx.List[int]
 ) -> _TypeGroup:
-    """
-    The given axis indices grouped by the `type` of the axis,
-    keeping the indices of each group in ascending order.
+    """Group axis indices by axis type, keeping the given order.
 
-    An axis with no type forms a group of its own, keyed by `None`.
+    Typeless axes form the group keyed by None.
     """
     groups: _TypeGroup = {}
     for i in indices:
@@ -1167,23 +963,17 @@ def _pair_type_groups(
     source_groups: _TypeGroup,
     target_groups: _TypeGroup,
 ) -> tx.List[tx.Tuple[int, int]]:
-    """
-    Pair the still-unmatched axes by order within each type group, as a
-    list of `(target_index, source_index)` pairs.
+    """Pair unmatched axes by their order within type groups.
 
-    A group of a definite type pairs with the group of the same type on
-    the other side, and a typeless group is a wildcard that pairs with
-    the one remaining typed group of equal count on the other side.
-
-    A group is paired only when the same number of its axes remain on
-    each side.
+    A group with a definite type pairs with the group of the same type on
+    the other side. The typeless group acts as a wildcard and pairs with the
+    single remaining typed group of the same size on the other side. A
+    group is paired only when the same number of axes remains on each side.
+    The pairs are returned as `(target_index, source_index)`.
     """
 
-    # The mappings passed in are consumed as pairs are made, so a group that
-    # is left in either mapping afterwards had no counterpart and is
-    # reported by the caller. A typeless group that could map to two or more
-    # remaining typed groups, or whose count matches none of them, is
-    # genuinely ambiguous and is left unpaired rather than guessed.
+    # Both mappings are consumed as pairs are made; whatever remains has no
+    # counterpart and is reported by the caller.
     pairs: tx.List[tx.Tuple[int, int]] = []
     for key in list(target_groups):
         sources = source_groups.get(key)
@@ -1193,10 +983,9 @@ def _pair_type_groups(
             for j, i in zip(targets, sources):
                 pairs.append((j, i))
 
-    # A leftover typeless group is a wildcard. It pairs, by order, with the
-    # single remaining typed group of equal count on the other side. The two
-    # directions cover a typeless source meeting a typed target and the
-    # reverse.
+    # A leftover typeless group is a wildcard, on either side, for the single
+    # typed group of the same size on the other side. When several typed groups
+    # or none qualify, the typeless group stays unpaired.
     for wildcard, other, wildcard_is_source in (
         (source_groups, target_groups, True),
         (target_groups, source_groups, False),

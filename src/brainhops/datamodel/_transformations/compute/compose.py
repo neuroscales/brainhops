@@ -1,104 +1,64 @@
-"""Dispatch the composition of two transformations to a composer.
+"""Dispatcher for composing two transformations.
 
-`compose(x1, x2)` returns the transform that maps ``x -> x1(x2(x))``: `x2`
-is applied first, then `x1`. Note the matrix order -- the operand applied
-first is written on the right, as it is in `x1 @ x2`. (A [`Sequence`][]
-reads the other way, in application order; the two orders meet at the one
-place this module delegates to a pair simplifier.)
+`compose(x1, x2)` is the map `x -> x1(x2(x))`, so `x2` is applied
+first, in the same order as the matrix product `x1 @ x2`. A
+[`Sequence`][brainhops.datamodel.transformations.Sequence] lists its
+elements in the opposite order, the order of application, and the two
+conventions meet where the pair simplifier is called. Composition
+cannot decline: a failure raises [`CompositionError`][] and never
+returns None, unlike a two-argument simplifier.
 
-Composition is *obligatory*: a caller wants a single transform back, and
-"these two cannot be combined" is a [`CompositionError`][], not a return
-value. That contract is what separates a composer from a two-argument
-simplifier, which may decline with `None` (see the `simplify` module).
+Composition proceeds in two tiers. The first tier is a cost-free
+rewrite by the pair simplifiers of [`simplify`][], such as
+`X @ X^-1 -> Identity` or `Id @ T -> T`. This tier is not a policy
+option. It is the only answer for the composition of a field with the
+inverse of a field, which cannot be materialized, and it guarantees
+that a lazy inverse is never materialized when it could cancel. The
+second tier consists of the registered composers, which read the
+parameters, for example to multiply matrices or resample fields.
 
-Tiers
------
-1. **The cost-free rewrite.** `compose` first asks the pair simplifiers
-   whether the two collapse for free -- `X @ X^-1 -> Identity`, `Id @ T ->
-   T`. This is not a policy knob: a cost-free rewrite is always the right
-   answer when one applies, and for a pair such as `~field @ field` it is
-   the *only* answer that exists, since the inverse of a coordinate field
-   cannot be materialized at all. Asking first is therefore what guarantees
-   a lazy inverse is never materialized when it could have cancelled.
-
-2. **The registered composers.** These read parameters -- they multiply
-   matrices and resample fields.
-
-Dispatch within tier 2
-----------------------
-The registered composers are a [`bagof.dispatchers`][] function keyed by the
-pair of operand types (which may be [`Union`][typing.Union]s -- the library
-reads a union hint natively). For a concrete pair, the single *most specific*
-composer is chosen -- position by position, so a composer on `(Sequence,
-Sequence)` beats one on `(Sequence, Transformation)` because `Sequence` is a
-subtype of `Transformation`. A genuine specificity tie -- two composers
-neither of which is more specific for the concrete pair in hand -- is *not*
-resolved by registration order: the library raises
+The composers are dispatched by a
+[`Function`][bagof.dispatchers.Function] keyed by the pair of operand
+types, which may be unions. The most specific method wins position by
+position, so `(Sequence, Sequence)` beats `(Sequence, Transformation)`.
+A genuine tie raises
 [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError], which
-propagates out of `compose`. We would rather surface a real ambiguity than
-silently pick a bad composer by registration accident.
+propagates out of `compose` instead of being resolved by registration
+order. The only structural near-tie, between
+`(Sequence, Transformation)` and `(Transformation, Sequence)`, overlaps
+at `(Sequence, Sequence)`, where a dedicated composer wins.
 
-The one structural near-tie the composers contain is the pair `(Sequence,
-Transformation)` and `(Transformation, Sequence)`, which are mutually
-incomparable as *rules*. But their only concrete overlap is a `(Sequence,
-Sequence)` operand pair, and the registered `(Sequence, Sequence)` composer
-is strictly more specific there and wins it outright, so no concrete pair
-actually raises. (Since bagof-dispatchers 0.3.1, ambiguity is reported only
-at a call that hits it, so this dominated pair no longer draws a spurious
-import-time `RuntimeWarning`.)
-
-A composer raises [`CompositionError`][] to refuse -- "the types are right
-but these two cannot be combined" (for example, two subspace transforms whose
-axes do not line up). That propagates straight out, stopping composition. If
-no composer applies at all, `compose` raises [`CompositionError`][] too,
-after checking whether the two ends of the shared boundary merely disagree.
-
-Unlike the bespoke registry this replaced, the library selects one winner
-rather than a nearest-first chain: there is no `NotImplemented`-decline
-hand-off to a less specific composer, because no registered composer needs
-one (each concrete pair has a single most specific composer that always
-produces a result or refuses with `CompositionError`). A general
-chain-of-responsibility mode is the enhancement proposed for
-`bagof.dispatchers` in `docs/design/bagof-dispatchers-migration.md`; a
-composer returning `NotImplemented` is treated here as "no composer applies".
-
-`compose` itself knows nothing about modes. Gating which adjacent
-transforms are handed to `compose` is the sequence engine's job, not the
-composers'.
+A composer that receives operands of the right types but cannot
+combine them, such as subspace transformations with misaligned axes,
+raises [`CompositionError`][], which stops the composition. The
+function knows nothing of modes: which adjacent transformations reach
+`compose` is decided by the sequence engine.
 """
 
-# dependencies
 import typing_extensions as tx
 from bagof.dispatchers import Function, NoMethodError
 
-# api
 from brainhops.errors import CompositionError
 
-# internals
 from .simplify import ANALYTIC_FLOOR, simplify
 from .utils import boundary_disagrees
 
-# typing
 if tx.TYPE_CHECKING:
     from ..base import Transformation
 
 
 _compose: Function = Function("compose")
-"""The dispatched function every registered composer joins."""
+"""Dispatched function on which every composer is registered."""
 
 
 def composer(func: tx.Callable) -> tx.Callable:
-    """Register a function as a composer of two transformations.
+    """Register a composer, keyed by the hints of its two parameters.
 
-    The composer's declared parameter types (read off its two parameters'
-    hints, which may be unions) key it in the dispatcher. A composer *reads
-    parameters*; a rewrite that decides from types and object identity alone
-    belongs in `simplifiers`, which `compose` consults first.
-
-    Composers carry no `priority`: a genuine specificity tie is left to raise
-    [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError] rather
-    than be resolved by registration order, so a real ambiguity surfaces
-    instead of silently picking a bad composer (see the module docstring).
+    A composer reads the parameters of its operands. Decisions that follow
+    from types or identity alone belong in `simplifiers`, which `compose`
+    consults first. Genuine ties between composers raise
+    [`AmbiguousMethodError`][bagof.dispatchers.AmbiguousMethodError]
+    rather than being resolved by priority.
     """
     _compose.register(func)
     return func
@@ -108,26 +68,34 @@ def compose(
     x1: "Transformation",
     x2: "Transformation",
 ) -> "Transformation":
-    """Compose two transformations.
+    """Compose two transformations into `x -> x1(x2(x))`.
 
-    `x2` is applied first, then `x1`, so the result maps ``x -> x1(x2(x))``.
-    A cost-free rewrite is tried first (see the module docstring); failing
-    that, the single most specific registered composer is chosen and run. A
-    composer that raises [`CompositionError`][] stops composition; if none
-    applies, `compose` raises [`CompositionError`][].
+    A cost-free rewrite is tried first, then the most specific composer.
+
+    Parameters
+    ----------
+    x1
+        Transformation applied second.
+    x2
+        Transformation applied first.
+
+    Returns
+    -------
+    Transformation
+        The composed transformation.
+
+    Raises
+    ------
+    CompositionError
+        If the composer refuses the pair, or if no composer applies.
     """
-    # Tier 1. The pair simplifiers read in application order, so the
-    # operands are flipped: `x2` is the one applied first.
+    # Pair simplifiers use the order of application.
     result = simplify(x2, x1, policy=ANALYTIC_FLOOR)
     if result is not None:
         return result
 
-    # Tier 2. The registered, parameter-reading composers. The library picks
-    # the single most specific one; a `CompositionError` it raises propagates
-    # out and stops composition. Only `NoMethodError` -- "no composer applies"
-    # -- is caught here; an `AmbiguousMethodError` from a genuine specificity
-    # tie is a real registry fault the maintainer wants surfaced, so it is
-    # deliberately NOT caught and propagates out unchanged.
+    # Only NoMethodError means that no composer applies. AmbiguousMethodError
+    # is deliberately left uncaught, since it reveals a fault in the registry.
     t1, t2 = type(x1), type(x2)
     try:
         result = _compose(x1, x2)
@@ -137,9 +105,8 @@ def compose(
         return result
 
     if boundary_disagrees(x2, x1):
-        # The composers assume the two ends of the boundary line up, and
-        # these two do not. Say so, rather than reporting it as a missing
-        # composer: the fix is to reconcile the boundary, not to write one.
+        # The fix is to reconcile the boundary, not to write a composer, so the
+        # error says so.
         raise CompositionError(
             f"Cannot compose a {t1.__name__} with a {t2.__name__}: they "
             f"disagree on the system they share ({x2.output} vs "

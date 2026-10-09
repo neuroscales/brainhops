@@ -1,8 +1,7 @@
-"""The operations on transformations, and what implements them.
+"""Operations on transformations.
 
-A transformation knows what it *is*; this subpackage knows what can be
-*done* with one. Each operation comes as a pair of modules: the dispatcher
-that defines it, and the implementations registered against it.
+Each operation is split into a dispatcher and a module of registered
+implementations.
 
 | Operation  | Dispatcher    | Implementations |
 | ---------- | ------------- | --------------- |
@@ -12,13 +11,10 @@ that defines it, and the implementations registered against it.
 | product    | `compose`     | `composers`     |
 | restriction| `restrict`    | `restrictors`   |
 
-`adaptors` reconciles two consecutive transformations whose systems merely
-reorder, rescale or flip their shared axes; `factor` rewrites a
-transformation into its axis-group normal form; `separable` plans a
-resampling as a sequence of per-axis passes; and `utils` holds what more
-than one of them reads (axis counts, endpoints, the refusals).
-
-Nothing here is imported for its own sake: the implementation modules
-register themselves when they are imported, which `_transformations`
-does, so importing the package is what makes the operations work.
+The `adaptors` module bridges consecutive transformations whose systems
+differ by a reordering, rescaling or flip of shared axes. The `factor`
+module rewrites a transformation into a normal form over groups of
+axes, `separable` plans a resampling as passes along single axes, and
+`utils` holds shared helpers. The implementation modules register
+themselves on import, which the parent package performs.
 """

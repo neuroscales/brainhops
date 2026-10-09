@@ -1,20 +1,17 @@
-"""The restriction and embedding rules of the built-in transformations.
+"""Restriction and embedding rules for the built-in transformation types.
 
-Each rule restricts one type of transformation to a decoupled block of its
-axes, or embeds one into a wider space. See the `restrict` module for the
-contract they share. `rows` / `cols` are sorted output / input positions
-of the block, among the `no` outputs and `ni` inputs of `t`, and a
-restriction returns `None` for an identity piece.
+Each rule restricts one type to a decoupled block of axes, or embeds it into
+a wider space, under the contract described in the `restrict` module. In a
+restriction rule, `rows` and `cols` are the sorted block positions among the
+`no` outputs and the `ni` inputs of `t`, and None stands for an identity
+piece.
 """
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# api
 from brainhops.errors import RestrictionError
 
-# internals
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -40,10 +37,8 @@ from .utils import UNREADABLE, affine_matrix, axis_list
 def _(
     t: Transformation, rows: tx.List[int], cols: tx.List[int], ni: int, no: int
 ) -> tx.Optional[Transformation]:
-    # The affine family (`Affine`, `Linear`, `Rotation`), and any other
-    # transformation read through its affine: the matrix sub-block. A
-    # matrix-less transform is the identity. A transform with no affine
-    # reading cannot be restricted, and is refused rather than dropped.
+    # The generic rule takes a sub-block of the affine matrix. An element
+    # without an affine reading is refused instead of dropped.
     return _affine_block(t, rows, cols)
 
 
@@ -84,8 +79,8 @@ def _(
     for r in rows:
         source = int(permutation[r])
         if source not in col_pos:
-            # A row reads outside the block's columns: fall back to the
-            # affine sub-block.
+            # A row reads outside the block, so the cheaper type cannot be
+            # kept.
             return _affine_block(t, rows, cols)
         new_perm.append(col_pos[source])
     return Permutation(permutation=np.asarray(new_perm, dtype=int))
@@ -99,8 +94,8 @@ def _(
     ni: int,
     no: int,
 ) -> Transformation:
-    # A raw field couples the whole space, so it is its own single group
-    # and is kept whole.
+    # A raw field couples the whole space, so it forms a single group and is
+    # kept whole.
     return t
 
 
@@ -112,11 +107,8 @@ def _(
     if forward is None:
         return None
     if len(rows) == no and len(cols) == ni:
-        # The block covers the whole inverse: return the object itself, so
-        # it stays lazy and cancels by identity.
+        # The same object stays lazy and still cancels by identity.
         return t
-    # A block-diagonal inverse: restrict the forward over the swapped
-    # block and invert that, which stays lazy.
     inner = restrict(forward, cols, rows, no, ni)
     if inner is None:
         return None
@@ -131,53 +123,43 @@ def _(
     ni: int,
     no: int,
 ) -> tx.Optional[Transformation]:
-    # A subspace acts on its named axes and passes every other axis through
-    # (in order). Its piece for a block is the same subspace re-expressed
-    # over the block's *local* axes: the acted axes that fall in the block
-    # keep their inner (restricted, when the block holds only part of a
-    # separable inner), and any pass-through axis the block also holds --
-    # one coupled to the acted axes by another stage -- stays pass-through.
+    # The piece is the same subspace re-expressed over the local axes of the
+    # block. Pass-through axes that the block holds, because another stage
+    # couples them, stay pass-through.
     in_axes = axis_list(t.input_axes)
     out_axes = axis_list(t.output_axes)
     inner = t.transformation
     interpolates = _interpolates(inner)
     if not in_axes or not out_axes:
         if interpolates:
-            # Unreachable from the factor pass, whose reader refuses such a
-            # subspace.
+            # The reader of the factor pass refuses such a subspace, so this
+            # case is not reached from it.
             return t
         return _affine_block(t, rows, cols)
     local_in = [j for j, a in enumerate(in_axes) if a in cols]
     local_out = [j for j, a in enumerate(out_axes) if a in rows]
     if not local_in and not local_out:
-        # The block only holds pass-through axes of this subspace, which it
-        # maps in order: an identity piece.
         return None
     whole = len(local_in) == len(in_axes) and len(local_out) == len(out_axes)
     if whole or interpolates:
-        # The block holds every acted axis (an interpolating inner couples
-        # all of them, so it is never split across blocks): keep the inner
-        # as the very same object, so `Sub(warp) . Sub(warp^-1)` still
-        # cancels by identity, materializing no field.
+        # An interpolating inner couples all its axes and is never split.
+        # Keeping it as the same object lets Sub(warp) . Sub(warp^-1) cancel by
+        # identity without materializing a field.
         piece = inner
     elif inner is None:
         piece = None
     else:
-        # Partial overlap of a non-interpolating (hence separable) inner:
-        # restrict the inner over its own local axes, which keeps the
-        # cheaper type (a diagonal `Sub(Scaling, ...)` restricts to a
-        # `Scaling`, not a rank-deficient affine sub-block).
+        # A non-interpolating inner is separable. Restricting it keeps the
+        # cheaper type: a diagonal Sub(Scaling) gives a Scaling, not a rank-
+        # deficient affine block.
         piece = restrict(
             inner, local_out, local_in, len(in_axes), len(out_axes)
         )
     sub_in = [cols.index(in_axes[j]) for j in local_in]
     sub_out = [rows.index(out_axes[j]) for j in local_out]
     if sub_in == list(range(len(cols))) and sub_out == list(range(len(rows))):
-        # The acted axes are the whole block, in order: the piece is the
-        # (restricted) inner itself.
         return piece
     if piece is None and sub_in == sub_out:
-        # An identity inner over axes the block maps in order.
         return None
     return embed(piece, sub_in, sub_out, len(cols), len(rows))
 
@@ -186,13 +168,10 @@ def _(
 def _(
     t: Sequence, rows: tx.List[int], cols: tx.List[int], ni: int, no: int
 ) -> tx.Optional[Transformation]:
-    # A nested sub-chain (a subspace inner that composed only partially,
-    # or the forward of a lazy inverse). When the block covers all of it,
-    # it is kept whole, as the same object. Otherwise it is restricted
-    # member by member: the block is carried through the chain along each
-    # member's dependency pattern, and every member must keep it decoupled
-    # (no output that reads the block also reads an axis outside it), or
-    # the sequence is refused rather than cut unsoundly.
+    # A nested sub-chain is a partially composed subspace inner or the forward
+    # of a lazy inverse. The block is carried along the dependency pattern of
+    # each member, and a member that couples it to other axes raises instead of
+    # being cut unsoundly.
     if len(rows) == no and len(cols) == ni:
         return t
     pieces: tx.List[Transformation] = []
@@ -242,8 +221,6 @@ def _(
     ni: int,
     no: int,
 ) -> Transformation:
-    # An affine-ish transform embeds as a plain affine over the wider space.
-    # One that interpolates, or that has no affine reading, stays wrapped.
     if not _interpolates(t):
         matrix = affine_matrix(t)
         if matrix is not UNREADABLE:
@@ -255,7 +232,6 @@ def _(
 def _(
     t: None, in_axes: tx.List[int], out_axes: tx.List[int], ni: int, no: int
 ) -> Affine:
-    # The identity: a reindex of `in_axes` onto `out_axes`.
     return embed_matrix(None, in_axes, out_axes, ni, no)
 
 
@@ -267,8 +243,7 @@ def _(
     ni: int,
     no: int,
 ) -> SubspaceTransformation:
-    # A lazy inverse is left wrapped: reading its matrix would materialize
-    # it.
+    # Reading the matrix of a lazy inverse would materialize it.
     return _wrap(t, in_axes, out_axes)
 
 
@@ -280,9 +255,6 @@ def _(
 def _affine_block(
     t: Transformation, rows: tx.List[int], cols: tx.List[int]
 ) -> tx.Optional[Affine]:
-    # The `(rows, cols)` sub-block of the affine matrix of `t`, with its
-    # translation column. `None` for a matrix-less (identity) transform.
-    # One with no affine reading is refused.
     matrix = affine_matrix(t)
     if matrix is UNREADABLE:
         raise RestrictionError(
@@ -302,11 +274,11 @@ def embed_matrix(
     ni: int,
     no: int,
 ) -> Affine:
-    """The `(no, ni + 1)` affine that embeds `matrix` over some axes.
+    """Embed an affine matrix over some axes into a wider space.
 
-    It applies `matrix` (an identity when `None`) from the input axes
-    `in_axes` to the output axes `out_axes`, and passes every other axis
-    through, in order.
+    The returned Affine has a `(no, ni + 1)` matrix that applies `matrix` from
+    `in_axes` to `out_axes` and passes the other axes through in order. A
+    `matrix` of None stands for the identity, which gives a reindex.
     """
     embedded = np.zeros((no, ni + 1))
     pass_in = [c for c in range(ni) if c not in in_axes]

@@ -1,12 +1,8 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# core
 from brainhops._core.magic import replace, stores
 from brainhops.backends import get_array_backend
-
-# datamodel
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import (
     CompositionError,
@@ -14,7 +10,6 @@ from brainhops.errors import (
     LossyConversionError,
 )
 
-# locals
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -42,7 +37,6 @@ from ..tangents import (
 from .convert import convert, converter
 from .utils import get_ndim
 
-# typing
 TRANSFORMATION = tx.TypeVar("TRANSFORMATION", bound=Transformation)
 DISP = tx.TypeVar("DISP", bound=DisplacementField)
 COORD = tx.TypeVar("COORD", bound=CoordinatesField)
@@ -53,7 +47,6 @@ SCALING = tx.TypeVar("SCALING", bound=Scaling)
 PERMUTATION = tx.TypeVar("PERMUTATION", bound=Permutation)
 TRANSLATION = tx.TypeVar("TRANSLATION", bound=Translation)
 IDENTITY = tx.TypeVar("IDENTITY", bound=Identity)
-# - tangents
 SVF = tx.TypeVar("SVF", bound=StationaryVelocityField)
 AFFINE_EXP = tx.TypeVar("AFFINE_EXP", bound=AffineExponential)
 LINEAR_EXP = tx.TypeVar("LINEAR_EXP", bound=LinearExponential)
@@ -66,11 +59,10 @@ def smart_replace(
     cls: tx.Optional[tx.Type[TRANSFORMATION]] = None,
     **kwargs,
 ) -> TRANSFORMATION:
-    """
-    Rebuild `t` as `cls`, with `kwargs` on top of the fields it holds.
+    """Rebuild a transformation as `cls`, overriding fields with `kwargs`.
 
-    A request that changes neither the class nor a field is answered with
-    `t` itself: a conversion that has nothing to do copies nothing.
+    The transformation itself is returned, without a copy, when no field is
+    overridden and `cls` is either missing or the type of `t`.
     """
     doit = kwargs or (cls and cls is not type(t))
     return replace(t, cls, **kwargs) if doit else t
@@ -86,15 +78,10 @@ def smart_replace(
 def _(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
-    # A same-type conversion with no overrides is a pass-through; with
-    # overrides it rebuilds the transform of the same type, applying the
-    # named fields on top of the existing ones.
-    #
-    # This is the catch-all, which every request reaches, so a `cls` from
-    # another family is dropped rather than built: a field rebuilt as an
-    # `Affine` would hold the field array as its matrix. What comes back
-    # is then of the wrong type, which is how `convert` reports a
-    # conversion nothing can make.
+    # Every request can reach this catch-all, so a target from an unrelated
+    # family is discarded instead of built (an Affine would receive a field
+    # array as its matrix). The result keeps the type of `t`, which is how
+    # `convert` signals an impossible conversion.
     if not (issubclass(cls, type(t)) or issubclass(type(t), cls)):
         cls = None
     return smart_replace(t, cls, **kwargs)
@@ -103,10 +90,8 @@ def _(
 def _convert_withdata(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
-    # A view (`matrix=`, `field=`, ...) is the map, and fills `data`, so
-    # the `data` the rebuild would carry over is cleared and the view is
-    # what lands. A caller who names both is left to the constructor,
-    # which refuses the two together.
+    # A view such as `matrix=` fills `data`, so the carried-over data is
+    # cleared. Passing both is left to the constructor, which rejects it.
     if "data" not in kwargs and set(cls.derived_fields) & set(kwargs):
         kwargs["data"] = None
     return smart_replace(t, cls, **kwargs)
@@ -115,29 +100,23 @@ def _convert_withdata(
 def _convert_withlog(
     t: Transformation, cls: tx.Type[TRANSFORMATION], _fallback: str, **kwargs
 ) -> TRANSFORMATION:
-    # If log<->exp conversion, transfer the exponentiated parameter
-    # (as `data` has different semantics with and without log).
-    #
-    # A family with no `log` flag -- a coordinates field -- has no tangent
-    # to cross to, so both sides read as the map and nothing is
-    # transferred.
+    # Crossing between log and exp transfers the exponentiated parameter,
+    # because `data` means different things on each side. Families without a
+    # `log` flag have no tangent, so nothing is transferred.
     out_log = kwargs.get("log", _is_tangent(cls))
     crossing = getattr(t, "log", False) != out_log
-    # A transform that *derives* its `data` -- a reader whose matrix comes
-    # from the file it parsed, a grid that builds its coordinates from
-    # `shape` -- does not keep it under the name a rebuild reads, so a
-    # rebuild as a class that is not one of its own is handed the map
-    # through `_fallback` instead.
+    # Transformations that derive their data (a file reader, a grid built from
+    # a shape) do not store it under the name the rebuild reads, so a foreign
+    # class receives the map through `_fallback`.
     derived = not stores(type(t), "_data") and not issubclass(cls, type(t))
     if crossing or derived:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
             kwargs.setdefault(_fallback, getattr(t, _fallback))
         if crossing:
-            # The rebuild carries the flag over from `t`, and crossing the
-            # boundary is what this conversion does, so it is named.
+            # Crossing is what this conversion does, so the flag is set instead
+            # of carried over.
             kwargs["log"] = out_log
-    # If a data-like field is provided, set `data=None` to avoid conflicts
     return _convert_withdata(t, cls, **kwargs)
 
 
@@ -147,10 +126,9 @@ _SPLINE_FLAGS = ("degree", "bound", "store")
 def _convert_withsplines(
     t: Transformation, cls: tx.Type[TRANSFORMATION], **kwargs
 ) -> TRANSFORMATION:
-    # The encoding asked for, beside the one `t` has. Each flag is taken
-    # out of `kwargs` and written back only if it changed: a flag that is
-    # the one `t` already has says nothing, and a class whose flags are
-    # derived -- a lazy inverse reports its forward's -- does not take it.
+    # A spline flag is written back only if it differs from that of `t`: an
+    # unchanged flag carries no information, and classes with derived flags (a
+    # lazy inverse) reject it.
     before = tuple(getattr(t, name) for name in _SPLINE_FLAGS)
     after = tuple(
         kwargs.pop(name, value) for name, value in zip(_SPLINE_FLAGS, before)
@@ -161,21 +139,18 @@ def _convert_withsplines(
         if old != new
     )
 
-    # Ensure we are working in the same log/exp domain. The conversion is
-    # a no-op when the field is already in the one asked for, and a
-    # coordinates field has no tangent domain at all.
+    # Move to the requested log or exp domain first.
     logkwargs = {"log": kwargs.pop("log")} if "log" in kwargs else {}
     t = _convert_withlog(t, cls, "field", **logkwargs)
     cls = type(t)
 
-    # If the spline flags differ, ensure that it is the values that
-    # are transferred, so that spline fitting is correctly triggered.
+    # Changed flags require the values, not the data, so that the coefficients
+    # are fitted again.
     if before != after:
         fields = set(cls.data_fields) | set(cls.derived_fields)
         if not (fields & set(kwargs)):
             kwargs.setdefault("values", t.values)
 
-    # If a data-like field is provided, set `data=None` to avoid conflicts
     return _convert_withdata(t, cls, **kwargs)
 
 
@@ -248,8 +223,8 @@ def _(t: DisplacementField, cls: tx.Type[DISP], **kwargs) -> DISP:
 
 @converter
 def _(t: DisplacementField, cls: tx.Type[SVF], **kwargs) -> SVF:
-    # A type is not an encoding: a field becomes a velocity with
-    # `.to(log=True)`, which says what it does to the stored `data`.
+    # A type is not an encoding: a field becomes a velocity through
+    # `.to(log=True)`.
     raise ConversionError(
         f"A {type(t).__name__} is converted to a StationaryVelocityField "
         f"with t.to(log=True), not t.to(StationaryVelocityField). A field "
@@ -275,10 +250,8 @@ def _(t: CoordinatesField, cls: tx.Type[COORD], **kwargs) -> COORD:
 
 @converter
 def _(t: CartesianField, cls: tx.Type[COORD], **kwargs) -> COORD:
-    # A grid generates its coordinates from `shape`, and does not store
-    # them, so a rebuild as a class that *does* store them has to be
-    # handed the generated array -- as values, which the result encodes
-    # under its own flags.
+    # A grid generates its coordinates from its shape, so a storing class must
+    # receive them as `values`, encoded under its own flags.
     kwargs.setdefault("values", t.values)
     return _convert_withsplines(t, cls, **kwargs)
 
@@ -287,11 +260,8 @@ def _(t: CartesianField, cls: tx.Type[COORD], **kwargs) -> COORD:
 def _(
     t: CartesianField, cls: tx.Type[CartesianField], **kwargs
 ) -> CartesianField:
-    # A CartesianField generates its `field` and its `data` on demand
-    # from `shape` and the flags, so neither is a constructor argument
-    # here, and nothing needs re-encoding. A rebuild carries `shape` over
-    # and lets the new instance regenerate them, and any `field` or
-    # `data` override is dropped.
+    # A CartesianField regenerates its field and data from its shape and flags,
+    # which are not constructor arguments, so overrides of them are dropped.
     for key in cls.derived_fields:
         kwargs.pop(key, None)
     return smart_replace(t, cls, **kwargs)
@@ -301,16 +271,13 @@ def _(
 def _(
     t: SubspaceTransformation, cls: tx.Type[SubspaceTransformation], **kwargs
 ) -> SubspaceTransformation:
-    # FIXME: Can we not simply pass all kwargs that are not fields
-    # of the meta class to the inner class? Should we do this for all
-    # meta classes?
+    # TODO: pass keywords that are not meta-class fields to the inner
+    # transformation, perhaps for all meta classes.
     if "log" in kwargs:
-        # The encoding of the inner transformation; the map is kept. When
-        # the subspace reads and writes the same axes, the axes it does not
-        # act on are the identity, whose tangent is zero, so the padded
-        # inner tangent is the tangent of the whole. A subspace that
-        # reindexes its axes has no such tangent of its own, and only its
-        # inner transformation is re-encoded.
+        # `log` re-encodes the inner transformation and keeps the map.
+        # Untouched axes are an identity with zero tangent, so the padded inner
+        # tangent is the whole tangent; a reindexing subspace has no tangent of
+        # its own.
         log = kwargs.pop("log")
         inner = kwargs.get("transformation", t.transformation)
         if inner is not None:
@@ -321,18 +288,15 @@ def _(
 # ----------------------------------------------------------------------
 #   LOSSLESS
 # ----------------------------------------------------------------------
-# Each of these hands over a view of the map -- `matrix=`, `scale=`,
-# `translation=` -- so each goes through `_convert_withdata`, which
-# clears the `data` the rebuild would otherwise carry over: the stored
-# parameter of one family is not the stored parameter of another.
+# Each lossless converter supplies a view and goes through `_convert_withdata`,
+# which clears `data`, because the stored parameter differs between families.
 
 
 def _sized(
     t: Identity, make: tx.Callable[[int], tx.Any]
 ) -> tx.Optional[tx.Any]:
-    # The identity parameter of a family, at the axis count of `t`. An
-    # identity whose endpoints do not say how many axes it has converts
-    # with its parameter unset, which reads as the identity too.
+    # When the endpoints give no axis count, the parameter is left unset, which
+    # also reads as the identity.
     ndim = get_ndim(t)
     return None if ndim is None else make(ndim)
 
@@ -414,9 +378,8 @@ def _(t: Linear, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
     if t.is_identity():
         return convert(convert(t, Identity), cls, **kwargs)
     if "matrix" not in kwargs:
-        # The affine of a `(No, Ni)` matrix is that matrix with a zero
-        # translation column, whatever its endpoints say -- and they may
-        # say nothing. It is built on the backend the matrix lives on.
+        # Append a zero translation column, whatever the (possibly unspecified)
+        # endpoints.
         ba = get_array_backend(t.matrix)
         zeros = ba.zeros((*t.matrix.shape[:-1], 1), dtype=t.matrix.dtype)
         kwargs["matrix"] = ba.concatenate([t.matrix, zeros], axis=-1)
@@ -425,14 +388,11 @@ def _(t: Linear, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
 
 @converter
 def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
-    # FIXME: Do we need to be a bit more generic, like in the other cases?
-    # (use smart_replace?)
+    # TODO: make this converter generic like the others (smart_replace?).
 
-    # Embed the inner transform, reduced to an affine, into a full-size
-    # affine over the whole space. The inner transform occupies the rows
-    # and columns of the acted-on axes. Every other axis passes through as
-    # the identity, mapping each input pass-through axis to the output
-    # pass-through axis in the same position in the ordering.
+    # The inner affine occupies the rows and columns of the acted axes. The
+    # other axes form an identity mapping the i-th pass-through input axis to
+    # the i-th pass-through output axis.
     n_in = get_axes(t.input).ndim
     n_out = get_axes(t.output).ndim
     if n_in is None or n_out is None:
@@ -484,34 +444,22 @@ def _(t: SubspaceTransformation, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
 
 @converter
 def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
-    # FIXME: Do we need to be a bit more generic, like in the other cases?
-    # (use smart_replace?)
+    # TODO: make this converter generic like the others (smart_replace?).
 
-    # The map a sequence describes, as one affine over its endpoints.
-    #
-    # `compute()` (every kind admitted) hands each adjacent pair to
-    # `compose` and keeps the two side by side only when the composer
-    # raises `CompositionError` (`sequence._compose_mode`). Among pieces
-    # that each have an affine form, the one composer that does so is
-    # `SubspaceTransformation @ SubspaceTransformation` when the axes the
-    # second writes are not the axes the first reads -- such as the
-    # spatial and the temporal subspace a 4D NIfTI image is read as. An
-    # affine-like piece next to a subspace composes with it, and every
-    # other refusal involves a piece with no affine form (a field, bare or
-    # in a subspace, or a `Projection`). So a sequence that `compute()`
-    # leaves is reduced here only when it is a chain of subspace
-    # transforms: each is embedded in an affine over its full space, and
-    # their product is the affine of the sequence (block-diagonal when the
-    # axes are disjoint). Anything else has no affine form.
+    # `compute()` leaves adjacent pieces separate only when composition raises
+    # CompositionError. For pieces with an affine form, this happens only
+    # between subspace transformations whose written and read axes differ
+    # (spatial and temporal parts of a 4D NIfTI); other refusals involve pieces
+    # without an affine form. A leftover sequence therefore reduces only if it
+    # is a chain of subspace transformations, whose embedded affines are
+    # multiplied.
     reduced = t.compute()
     if not isinstance(reduced, Sequence):
         return convert(reduced, cls)
     pieces = reduced.transformations
-    # The space between two pieces is one, so the number of axes a piece
-    # does not state is read from its neighbour, carried along the chain
-    # from the start of the sequence, and from its end for the last piece.
-    # The endpoints are those of `t`: a sequence that `compute()` leaves
-    # is a new one, which does not carry the endpoints `t` declares.
+    # Neighbouring pieces share a space, so unknown axis counts are propagated
+    # along the chain. The endpoints are those of `t`, because the result of
+    # `compute()` lacks the declared ones.
     n = get_axes(t.input).ndim
     n_end = get_axes(t.output).ndim
     matrix = None
@@ -542,15 +490,11 @@ def _(t: Sequence, cls: tx.Type[AFFINE], **kwargs) -> AFFINE:
 
 @converter
 def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
-    # FIXME: Do we need to be a bit more generic, like in the other cases?
-    # (use smart_replace?)
+    # TODO: make this converter generic like the others (smart_replace?).
 
-    # The coordinate of a grid point is the point plus its displacement.
-    # The result keeps the encoding of `t` (its `store`, `degree` and
-    # `bound`). Fitting spline coefficients is linear, so the encoded
-    # arrays add up the same way the values do: the coordinates' `data`
-    # is the displacements' `data` plus the grid, encoded under the same
-    # flags. Nothing is decoded, and a field of coefficients stays one.
+    # Coordinates are the grid plus the displacement, in the encoding of `t`.
+    # Spline fitting is linear, so the encoded grid is added to the encoded
+    # data without decoding.
     flags = dict(store=t.store, degree=t.degree, bound=t.bound)
     data = t.data
     if data is None:
@@ -564,9 +508,8 @@ def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
 # ----------------------------------------------------------------------
 #   LOSSY
 # ----------------------------------------------------------------------
-# A lossy conversion builds the result first and checks the promise it
-# makes afterwards, so the transform it would have produced is what
-# travels on the `LossyConversionError`.
+# The result is built before the promise is checked, so that it travels with
+# the LossyConversionError.
 
 
 @converter
@@ -596,7 +539,7 @@ def _(t: Linear, cls: tx.Type[SCALING], **kwargs) -> SCALING:
     if t.is_identity():
         return convert(convert(t, Identity), Scaling, **kwargs)
     ba = get_array_backend(t.matrix)
-    scale = ba.diagonal(t.matrix)  # TODO: use svd instead?
+    scale = ba.diagonal(t.matrix)  # TODO: use SVD instead?
     kwargs.setdefault("scale", scale)
     u = _convert_withdata(t, cls, **kwargs)
     if not t.is_scaling(compute=True):
@@ -606,10 +549,9 @@ def _(t: Linear, cls: tx.Type[SCALING], **kwargs) -> SCALING:
 
 @converter
 def _(t: Linear, cls: tx.Type[ROTATION], **kwargs) -> ROTATION:
-    # A `Rotation` stores the same matrix as a `Linear`, but promises it is
-    # orthogonal with determinant +1 -- which is what lets it invert by
-    # transposing instead of solving. The promise is checked, so converting
-    # a matrix that does not keep it is lossy.
+    # A Rotation promises an orthogonal matrix with determinant +1 (inverted by
+    # transposition); a matrix that breaks the promise makes the conversion
+    # lossy.
     if t.is_identity():
         return convert(convert(t, Identity), Rotation, **kwargs)
     u = smart_replace(t, cls, **kwargs)
@@ -643,13 +585,10 @@ def _(t: Affine, cls: tx.Type[Linear], **kwargs) -> Linear:
 
 
 def _make_converter_chain(*types: type) -> None:
-    """
-    Register the converter that walks from the first type to the last.
+    """Register a converter that walks from the first type to the last one.
 
-    The types between them are the hops it goes through, each a concrete
-    class: `convert` builds an instance of the class it is handed, so a
-    `TypeVar` named here stands for its bound. The endpoints only key the
-    registration, and may stay `TypeVar`s.
+    The intermediate hops are converted to in order; a TypeVar hop stands for
+    its bound. The endpoints only key the registration.
     """
     first, *hops, last = types
     hops = tuple(_concrete(hop) for hop in hops)
@@ -658,21 +597,18 @@ def _make_converter_chain(*types: type) -> None:
     def _(t: Transformation, cls: type, **kwargs) -> Transformation:
         for hop in hops:
             t = convert(t, hop)
-        t = convert(t, cls, **kwargs)  # only use cls/kwargs on the last hop
+        t = convert(t, cls, **kwargs)  # applied on the last hop only
         return t
 
 
 def _concrete(hop: tx.Any) -> type:
-    """The class a hop names: a `TypeVar` stands for its bound."""
     return hop.__bound__ if isinstance(hop, tx.TypeVar) else hop
 
 
-# Lossless
 _make_converter_chain(SCALING, LINEAR, AFFINE)
 _make_converter_chain(PERMUTATION, LINEAR, AFFINE)
 _make_converter_chain(SVF, DISP, COORD)
 
-# Lossy
 _make_converter_chain(AFFINE, LINEAR, ROTATION)
 _make_converter_chain(AFFINE, LINEAR, SCALING)
 _make_converter_chain(AFFINE, LINEAR, PERMUTATION)

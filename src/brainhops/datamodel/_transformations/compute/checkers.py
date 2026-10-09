@@ -1,39 +1,32 @@
-"""Kind-membership checkers, registered into `check.is_kind`.
+"""Checkers for kind membership.
 
-This is to `check` what `composers` is to `compose` and `converters` is to
-`convert`: the machinery lives in `check`, and every concrete checker
-implementation lives here and registers at import time. It also holds the
-lattice-fact tables the wrapper checkers reason with (as module-level data
-keyed by node, not attributes on the kind classes) and the field/wrapper
-name aliases.
+The checkers defined here register themselves with
+[`is_kind`][] on import; this module relates to `check` as `composers`
+relates to `compose`. A checker is written in the form in which it is
+called, and its key is read from its first two type hints:
 
-A checker is written the way it is called -- `(query, kind, compute)`, with
-the pair it is keyed by read from the first two hints:
+```python
+@checker
+def _(query: Affine, kind: type[kinds.Translation], compute: bool) -> bool
+```
 
-    @checker
-    def _(query: Affine, kind: type[kinds.Translation], compute: bool) -> bool
-
-Each checker is *sound*: it returns True only when membership is genuinely
-(or, at analytic, optimistically from shape) established, so OR-ing the
-applicable ones (see `check.is_kind`) is correct -- and each is registered
-against the *smallest* set it decides, since `is_kind` reaches every
-superset of a set it establishes.
+Each checker returns True only when membership is genuinely
+established, or presumed from the shape at the analytic level, so
+combining the applicable checkers with a logical OR is sound. Each
+checker is registered against the smallest set it decides, since
+[`is_kind`][] reaches every superset. The module also holds the
+lattice facts that wrapper checkers rely on, as tables keyed by node,
+and registers aliases for field and wrapper kinds.
 """
 
-# stdlib
 from functools import lru_cache, wraps
 
-# dependencies
 import typing_extensions as tx
 
-# core
 from brainhops._core.typing import ArrayProtocol
-
-# datamodel
 from brainhops.backends import get_array_backend
 from brainhops.datamodel import kinds
 
-# internals
 from ..base import Transformation
 from ..concrete import (
     Affine,
@@ -58,12 +51,11 @@ from .check import checker, is_kind, register_kind_alias
 
 
 def identity_from(field: str) -> tx.Callable:
-    """Decorator that reads an unset parameter as the identity.
+    """Make a checker return True when the attribute `field` is unset.
 
-    A leaf that holds no parameter *is* the identity map, so it is a member
-    of every set that contains the identity -- which is every set a checker
-    wrapped in this decorator is registered against. No value is read, so
-    the answer holds at analytic as well as at numeric.
+    An unset parameter denotes the identity map, which belongs to every
+    set that a wrapped checker is registered against. No value is read, so
+    the shortcut is valid at both levels.
     """
 
     def decorator(func: tx.Callable) -> tx.Callable:
@@ -89,13 +81,9 @@ def identity_from(field: str) -> tx.Callable:
 #
 # ======================================================================
 
-# --- Identity ---------------------------------------------------------
-# The identity is the bottom of the lattice, a member of nearly every set in
-# it, so these checkers answer far more questions than their own node: they
-# are what establishes a parameterless `Scaling` in the translations, a
-# unit-diagonal `Linear` in the rotations, and a zero field in the affines.
-# Every other checker in this module is written against the smallest set it
-# decides, for the same reason.
+# Identity is the bottom of the lattice, so these checkers answer for much more
+# than their own node: a parameterless Scaling is a translation, and a zero
+# field is affine.
 
 IdentityType = tx.Type[kinds.Identity]
 
@@ -165,18 +153,10 @@ def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
     return False
 
 
-# <<< special case >>>
-# A [`CartesianField`][] is the identity map over its own grid: its `field`
-# is the coordinates of the grid points themselves. So a grid establishes
-# membership in the identity set -- and, through it, in every set that
-# contains the identity.
-#
-# But *only* numerically. Structurally, a grid whose `shape` is set carries
-# a parameter, exactly as a `Translation` whose vector is set does, and a
-# parameter is not read at analytic. This matters: it is what keeps a grid
-# from being downcast to `Identity` (and its sampling domain lost) by a
-# structural pass. Only `shape` is ever read, never the derived `field`, so
-# a membership question never builds the meshgrid.
+# A CartesianField is the identity over its own grid, but only numerically:
+# structurally, a set `shape` is a parameter, and treating it as identity would
+# let a structural pass downcast a grid to Identity and lose its sampling
+# domain. Only the shape is read, so no meshgrid is built.
 
 
 @checker
@@ -184,8 +164,6 @@ def _(query: CoordinatesField, kind: IdentityType, compute: bool) -> bool:
 def _(query: CartesianField, kind: IdentityType, compute: bool) -> bool:
     return bool(compute)
 
-
-# --- Translation ------------------------------------------------------
 
 TranslationType = tx.Type[kinds.Translation]
 
@@ -213,8 +191,6 @@ def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
     return False
 
 
-# --- Scaling ----------------------------------------------------------
-
 ScaleType = tx.Type[kinds.Diagonal]
 
 
@@ -240,27 +216,18 @@ def _(query: Affine, kind: ScaleType, compute: bool) -> bool:
         if cols != rows + 1:
             return False
         ab = get_array_backend(matrix)
-        # `eye(rows + 1)[:-1]` has the same shape as the affine matrix and
-        # marks its diagonal, so the mask keeps every off-diagonal entry
-        # *and* the translation column: a diagonal affine has neither.
+        # The mask keeps the off-diagonal entries and the translation column,
+        # both of which vanish for a diagonal affine.
         return not bool((matrix * (1 - ab.eye(rows + 1)[:-1])).any())
     return False
 
 
-# <<< special cases >>>
-# <<< refinements of the diagonal set >>>
-#
-# Every fact below is a property of the diagonal *vector*, so it is written
-# once, as a predicate on that vector, and registered for every leaf that
-# can produce one: a `Scaling` reads it off its `scale`, and a `Linear` or
-# `Affine` off the diagonal of a matrix already established as diagonal.
-# Writing them as predicates rather than as one checker per (leaf, node)
-# pair is what keeps a `Linear` that happens to be diagonal from refining
-# any less far than the `Scaling` it is equivalent to.
+# Refinements of the diagonal set are predicates on the diagonal vector,
+# registered for every leaf that can produce one, so that a diagonal Linear
+# refines as far as the equivalent Scaling.
 
 
 def _isotropic(scale: ArrayProtocol) -> bool:
-    # Every factor equal: the scaling is a multiple of the identity.
     return bool((scale == scale[:1]).all())
 
 
@@ -298,17 +265,9 @@ _DIAGONAL_FACTS: tx.Dict[type, tx.Callable[[ArrayProtocol], bool]] = {
     kinds.PositiveMultiplicative: _diag_iso_pos,
 }
 
-# Invertibility is the one fact assumed optimistically from structure: a
-# scaling is presumed non-degenerate until its values say otherwise, the
-# same optimism the matrix leaves get from their shape (see
-# `_matrix_invertible`). Every other refinement needs the values.
-#
-# So the only node a `Scaling` is established in structurally is the
-# invertible *diagonal* set: diagonality is its whole parameter, and
-# invertibility is the optimistic part. `InvertibleMultiplicative` is not
-# here, even though it too is an invertible node -- it also asserts
-# isotropy, which is a property of the values, and which `Multiplicative`
-# itself (rightly) declines to establish at analytic.
+# Invertibility is the only fact presumed from structure, as matrix leaves
+# presume it from their shape. InvertibleMultiplicative is excluded because it
+# also asserts isotropy, a value property.
 _OPTIMISTIC = (kinds.InvertibleDiagonal,)
 
 _DATAFIELD = {
@@ -321,11 +280,9 @@ _DATAFIELD = {
 def _diagonal_values(
     query: Transformation,
 ) -> tx.Optional[ArrayProtocol]:
-    # The diagonal a leaf represents, read from its values, or `None` when
-    # it does not represent a diagonal map at all. This reads the matrix
-    # directly rather than asking `is_kind`, because the refinements below
-    # are themselves subsets of the diagonal set: routing through `is_kind`
-    # would ask them the question they are answering.
+    # Read the matrix directly rather than through is_kind: the refinements are
+    # subsets of the diagonal set, so is_kind would ask them the very question
+    # they answer.
     scale = getattr(query, "scale", None)
     if scale is not None:
         return scale
@@ -335,30 +292,27 @@ def _diagonal_values(
     ab = get_array_backend(matrix)
     if isinstance(query, Affine):
         if bool(matrix[:, -1].any()):
-            return None  # a translation: not linear, so not diagonal
+            return None  # a translation: not diagonal
         matrix = matrix[:, :-1]
     rows, cols = matrix.shape
     if rows != cols:
         return None
     if bool((matrix * (1 - ab.eye(rows))).any()):
-        return None  # an off-diagonal entry
+        return None
     return ab.diagonal(matrix)
 
 
 def _diagonal_checker(source: type, node: type) -> tx.Callable:
-    # The checker deciding "is this `source` a member of `node`", for one of
-    # the refinements above. Registered explicitly rather than by hints: the
-    # pair it is keyed by is the loop variable, not something a generated
-    # closure could annotate.
+    # Registered explicitly rather than by hints, because the pair is a loop
+    # variable that a generated closure cannot annotate.
     fact = _DIAGONAL_FACTS[node]
     optimistic = node in _OPTIMISTIC
 
     @identity_from(_DATAFIELD[source])
     def _checker(query: Transformation, kind: type, compute: bool) -> bool:
         if not compute:
-            # Structure alone establishes diagonality only for a
-            # `Scaling`, whose whole parameter is the diagonal. A matrix
-            # has to be read.
+            # Only for a Scaling is the diagonal the whole parameter; a matrix
+            # must be read.
             return optimistic and isinstance(query, Scaling)
         scale = _diagonal_values(query)
         return scale is not None and fact(scale)
@@ -371,8 +325,6 @@ for _node in _DIAGONAL_FACTS:
         checker(_src, _node)(_diagonal_checker(_src, _node))
 del _node, _src
 
-
-# --- Permutation ------------------------------------------------------
 
 PermType = tx.Type[kinds.Permutation]
 
@@ -415,9 +367,6 @@ def _(query: Affine, kind: PermType, compute: bool) -> bool:
     return False
 
 
-# <<< special cases >>>
-
-
 EvenPermType = tx.Type[kinds.EvenPermutation]
 OddPermType = tx.Type[kinds.OddPermutation]
 
@@ -436,16 +385,13 @@ def _(query: Permutation, kind: EvenPermType, compute: bool) -> bool:
 
 @checker
 def _(query: Permutation, kind: OddPermType, compute: bool) -> bool:
-    # The identity is even, so -- unlike every other checker here -- an
-    # unset parameter establishes nothing.
+    # The identity is even, so an unset parameter establishes nothing here.
     if query.permutation is None:
         return False
     return is_kind(query, kinds.Permutation, compute) and not is_kind(
         query, kinds.EvenPermutation, compute
     )
 
-
-# --- Rotation ---------------------------------------------------------
 
 RotType = tx.Type[kinds.SpecialOrthogonal]
 
@@ -484,8 +430,6 @@ def _(query: Affine, kind: RotType, compute: bool) -> bool:
     return False
 
 
-# --- Linear ---------------------------------------------------------
-
 LinType = tx.Type[kinds.Linear]
 
 
@@ -504,12 +448,8 @@ def _(query: Permutation, kind: LinType, compute: bool) -> bool:
 def _(query: Affine, kind: LinType, compute: bool) -> bool:
     if not compute:
         return False
-    # An affine is linear when its translation column vanishes. The
-    # linear block may be rectangular, so no squareness is required.
+    # The linear block may be rectangular.
     return bool((query.matrix[:, -1] == 0).all())
-
-
-# <<< special cases >>>
 
 
 PosLinType = tx.Type[kinds.PositiveLinear]
@@ -548,10 +488,9 @@ def _(query: Linear, kind: SLType, compute: bool) -> bool:
 
 
 def _is_conformal(matrix: ArrayProtocol) -> bool:
-    # `A A' = c**2 I` for some `c > 0`: a positive multiple of an orthogonal
-    # matrix, which is what "preserves angles" means. Such an `A` has
-    # `||A||_F = c sqrt(n)`, so dividing it out turns the question into a
-    # plain orthogonality test and the scale never has to be recovered.
+    # A conformal matrix satisfies A A' = c**2 I with c > 0. Since ||A||_F = c
+    # sqrt(n), normalizing by the Frobenius norm reduces the test to
+    # orthogonality.
     rows, cols = matrix.shape
     if rows != cols:
         return False
@@ -579,8 +518,7 @@ def _(query: Linear, kind: CSOType, compute: bool) -> bool:
     matrix = query.matrix
     if not _is_conformal(matrix):
         return False
-    # The *special* conformal group is the component with positive
-    # determinant; normalising by a positive factor cannot change its sign.
+    # Normalizing by a positive factor preserves the sign of det.
     ab = get_array_backend(matrix)
     return bool(ab.linalg.det(matrix) > 0)
 
@@ -599,8 +537,6 @@ def _(query: Linear, kind: OType, compute: bool) -> bool:
 
 
 def _is_monomial(matrix: ArrayProtocol) -> bool:
-    # A monomial (generalized permutation) matrix: exactly one non-zero
-    # entry in every row and in every column.
     rows, cols = matrix.shape
     if rows != cols:
         return False
@@ -621,8 +557,6 @@ def _(query: Linear, kind: MonomialType, compute: bool) -> bool:
 def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
     if not compute:
         return False
-    # A signed permutation is a monomial matrix whose non-zero entries
-    # are all +1 or -1.
     matrix = query.matrix
     if not _is_monomial(matrix):
         return False
@@ -638,10 +572,11 @@ def _(query: Linear, kind: SignedMonomialType, compute: bool) -> bool:
 
 
 def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
-    """`(Ni, No)` of a matrix leaf from the stored `matrix.shape`, or `None`.
+    """Return `(ni, no)` for a matrix leaf, or None.
 
-    `Affine`: the matrix is `(No, Ni + 1)`; `Linear`/`Rotation`: `(No, Ni)`.
-    Reads only the shape, never a value; never called on an `Inverse`.
+    The dimensions are read from the shape of the stored matrix, which is
+    `(no, ni + 1)` for an `Affine` and `(no, ni)` for a `Linear`. No values
+    are read.
     """
     matrix = getattr(t, "matrix", None)
     if matrix is None:
@@ -652,9 +587,8 @@ def _matrix_dims(t: Transformation) -> tx.Optional[tx.Tuple[int, int]]:
 
 
 def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
-    # The linear block whose rank decides injectivity/surjectivity at
-    # `numeric`. `None` for a parameter that is invertible by declaration
-    # (`Permutation`, `Translation`, `Identity`) or has no matrix.
+    # None when there is no matrix, or when the leaf is invertible by
+    # declaration.
     if isinstance(t, Affine):
         return None if t.matrix is None else t.matrix[:, :-1]
     if isinstance(t, Linear):  # includes Rotation
@@ -668,9 +602,8 @@ def _linear_part(t: Transformation) -> tx.Optional[ArrayProtocol]:
 
 
 def _matrix_rank(linear: ArrayProtocol) -> int:
-    # The rank of a linear block. `matrix_rank` is the single rank test,
-    # with a `det`-based fallback for a square matrix when a backend lacks
-    # it (a non-zero determinant means full rank).
+    # Without matrix_rank, a square determinant only distinguishes full rank
+    # from deficiency, which is all the callers compare.
     ab = get_array_backend(linear)
     matrix_rank = getattr(getattr(ab, "linalg", None), "matrix_rank", None)
     if matrix_rank is not None:
@@ -686,8 +619,6 @@ def _matrix_rank(linear: ArrayProtocol) -> int:
 
 @identity_from("matrix")
 def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
-    # A square matrix leaf: optimistically invertible from shape, confirmed
-    # by full rank at `numeric`.
     dims = _matrix_dims(t)
     if dims is None:
         return False
@@ -704,7 +635,6 @@ def _matrix_invertible(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
-    # Wide or square: optimistically full row rank (onto), confirmed by rank.
     dims = _matrix_dims(t)
     if dims is None:
         return False
@@ -719,8 +649,6 @@ def _matrix_surjective(t: Transformation, kind: type, compute: bool) -> bool:
 
 @identity_from("matrix")
 def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
-    # Tall or square: optimistically full column rank (one-to-one),
-    # confirmed by rank.
     dims = _matrix_dims(t)
     if dims is None:
         return False
@@ -733,14 +661,9 @@ def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
     return _matrix_rank(linear) == ni
 
 
-# --- The linear part of an affine -------------------------------------
-# An `Affine` whose translation column vanishes *is* its linear part, so it
-# is established in exactly the sets that part is established in. Written
-# once, rather than as one checker per (Affine, node) pair: the fact is about
-# the representation, not about any particular set. Without it the facts an
-# `Affine` can establish would stop at the handful of nodes given a checker
-# of their own, and a translation-free affine could not be shown orthogonal,
-# special-linear, monomial, and so on.
+# An Affine with a vanishing translation column is its linear part, so it
+# belongs to exactly the sets that part belongs to. Without this rule, affine
+# facts would stop at nodes that have a checker of their own.
 
 
 def _affine_is_linear_part(
@@ -748,44 +671,30 @@ def _affine_is_linear_part(
 ) -> bool:
     matrix = query.matrix
     if matrix is None:
-        # The identity -- a member of every set that *holds* the identity,
-        # which is not every set on the linear side: `OddPermutation` is one
-        # it is not in. So this is tested, not assumed (unlike
-        # `identity_from`, whose checkers are each registered against a set
-        # known to contain it).
+        # A missing matrix is the identity. Not every linear set contains the
+        # identity (OddPermutation does not), so the test is explicit.
         return issubclass(kinds.Identity, kind)
     if not compute:
-        # Reading the translation column is reading a value.
+        # Reading the translation column reads a value.
         return False
     if bool(matrix[:, -1].any()):
-        return False  # a genuine translation: not linear at all
+        return False  # a genuine translation: not linear
     return is_kind(Linear(matrix=matrix[:, :-1]), kind, compute)
 
 
-# Registered only where an `Affine` has no checker of its own: one key holds
-# one checker, so registering this against a node the sections above already
-# cover would *replace* the specialised one -- which decides the same
-# question, but knows things this cannot (a `Scaling`-like diagonal is
-# established from its own parameter, and an unset one is the identity).
+# Register only where an Affine has no checker of its own: one key holds one
+# checker, and the specialized checker knows more.
 for _node in kinds.all_sets():
     if issubclass(_node, kinds.Linear) and (Affine, _node) not in is_kind:
         checker(Affine, _node)(_affine_is_linear_part)
 del _node
 
 
-# --- Shape-established facts ------------------------------------------
-# Invertibility, injectivity and surjectivity are the facts a matrix leaf
-# establishes from the *shape* of its matrix, optimistically: a square
-# matrix is presumed invertible, a wide one onto, a tall one one-to-one.
-# Numeric confirms or retracts each with the rank of the linear block.
-#
-# Only the *invertible* node of each family is registered, never the
-# bijective root directly: a query about a superset reaches the nearest
-# subset that is registered, so `InvertibleAffine` already answers
-# `Bijective` for a square affine. `Injection` and `Surjection` are
-# registered on their own because they are *not* supersets of an invertible
-# node only -- a rectangular matrix is one-to-one or onto without being
-# invertible, and no invertible node covers that.
+# Invertibility, injectivity and surjectivity are presumed from the matrix
+# shape and confirmed or retracted by the rank. Only the invertible node of
+# each family is registered, since superset queries reach it. Injection and
+# Surjection are registered separately, because a rectangular matrix can be
+# one-to-one or onto without being invertible.
 
 checker(Affine, kinds.InvertibleAffine)(_matrix_invertible)
 checker(Linear, kinds.InvertibleLinear)(_matrix_invertible)
@@ -800,14 +709,13 @@ checker(Linear, kinds.Injection)(_matrix_injective)
 #                        L A T T I C E   F A C T S
 #
 # ======================================================================
-# Facts about the lattice, used to reason about the wrappers (an embedding
-# of, a permutation of, an inversion of an inner set). Kept as module tables
-# keyed by node, so [`kinds`][] stays pure set/group theory.
+# Lattice facts about embedding, permutation, inversion and square roots, used
+# by the wrapper checkers. They are kept here so that `kinds` stays pure set
+# theory.
 
 
 def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
-    # The maximal (largest) sets under inclusion: drop any node that is a
-    # strict subset of another node in the set.
+    # Maximal sets under inclusion.
     nodes = list(nodes)
     return [
         n
@@ -818,9 +726,8 @@ def _maximal(nodes: tx.Iterable[type]) -> tx.List[type]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def _embed_targets(node: type) -> tx.Tuple[type, ...]:
-    # `blockdiag(inner, I) in node` iff `inner in M` for some M in these
-    # targets. If `node` is embeddable it is its own target; else the maximal
-    # embeddable strict subnodes of `node`.
+    # blockdiag(inner, I) is in node iff inner is in one of these targets: node
+    # itself if embeddable, else its maximal embeddable strict subsets.
     if kinds.is_embeddable(node):
         return (node,)
     return tuple(
@@ -838,8 +745,8 @@ def _embed_targets(node: type) -> tx.Tuple[type, ...]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
-    # `P @ blockdiag(...) in node` (P a coordinate permutation of the given
-    # parity) iff the embedded map in M for some M in these targets.
+    # P @ blockdiag(...) is in node, for a coordinate permutation P of the
+    # given parity, iff the embedded map is in one of these targets.
     perm = kinds.EvenPermutation if even else kinds.Permutation
 
     def is_closed(node: type) -> bool:
@@ -858,9 +765,9 @@ def _permute_targets(node: type, even: bool) -> tx.Tuple[type, ...]:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
-    # The inverse of `T` is in `node` iff `T in M` for some M in these
-    # targets: `node` itself when it is bijective (closed under inversion),
-    # else the maximal bijective subnodes of `node`.
+    # inv(T) is in node iff T is in one of these targets: node itself if
+    # bijective, since such sets are closed under inversion, else its maximal
+    # bijective subsets.
     if issubclass(node, kinds.Bijection):
         return (node,)
     return tuple(
@@ -873,14 +780,12 @@ def _bijective_targets(node: type) -> tx.Tuple[type, ...]:
 
 
 def _reindex_is_even(input_axes: tx.Any, output_axes: tx.Any) -> bool:
-    """
-    Parity of the coordinate permutation a reindexing subspace applies:
-    position `input_axes[j]` maps to `output_axes[j]`.
+    """Return whether a reindexing permutes the coordinates evenly.
 
-    Returns True for an even permutation (det +1).
-
-    A length or set mismatch is treated as odd (det-sign nodes are then
-    dropped by the caller's `even=False` path).
+    The reindexing maps `input_axes[j]` to `output_axes[j]`, and an even
+    permutation has determinant +1. The result is True when either list is
+    None, and False when the lists differ in length or content, which
+    sends the caller down the path for odd permutations.
     """
     if input_axes is None or output_axes is None:
         return True
@@ -908,19 +813,15 @@ def _reindex_is_even(input_axes: tx.Any, output_axes: tx.Any) -> bool:
 #                        W R A P P E R   C H E C K E R S
 #
 # ======================================================================
-# Each wrapper's membership depends on its contents, so it is decided by a
-# checker that recurses into the wrapped transform via `is_kind` (carrying
-# `compute` through). One function decides "is this wrapper a member of
-# `node`" for every node, reasoning from the lattice facts above rather than
-# from a table of registrations.
+# Membership of a wrapper depends on its contents, so each wrapper has one
+# checker that recurses into the wrapped transformation and reasons from the
+# lattice facts above.
 
 
 def _inner_member(
     inner: tx.Optional[Transformation], m: type, compute: bool
 ) -> bool:
-    # Membership of a subspace's inner in node `m`. A `None` inner is the
-    # identity (`blockdiag(I, I) = I`), a member of `m` exactly when `m`
-    # contains the identity node.
+    # A missing inner transformation is the identity.
     if inner is None:
         return issubclass(kinds.Identity, m)
     return is_kind(inner, m, compute)
@@ -929,11 +830,8 @@ def _inner_member(
 def _subspace_member(
     sub: SubspaceTransformation, node: type, compute: bool
 ) -> bool:
-    # A subspace is `P @ blockdiag(inner, I)`: an embedding of `inner` into
-    # the full space, optionally composed with a coordinate permutation `P`
-    # when it reindexes axes. Its membership in `node` follows from the
-    # inner's membership in the embedding (and permutation) targets of
-    # `node`.
+    # A subspace is P @ blockdiag(inner, I), where the permutation P is present
+    # only when the axes are reindexed.
     inner = sub.transformation
     same = (sub.input_axes is None and sub.output_axes is None) or (
         sub.input_axes is not None
@@ -953,10 +851,8 @@ def _subspace_member(
 
 
 def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
-    # Establish injectivity/surjectivity/identity from the axis lists. A
-    # projection that only drops axes is surjective; one that only creates
-    # axes is injective; one that does both establishes nothing beyond
-    # `Transformation`.
+    # Dropping axes only is surjective, creating axes only is injective, and
+    # doing neither is the identity.
     dropped = 0 if proj.dropped is None else len(proj.dropped)
     created = 0 if proj.created is None else len(proj.created)
     if not dropped and not created:
@@ -969,10 +865,8 @@ def _projection_member(proj: Projection, node: type, compute: bool) -> bool:
 
 
 def _bijection_member(bij: Bijection, node: type, compute: bool) -> bool:
-    # Delegate to the forward map (or the inverse of the backward when no
-    # forward is given). A `Bijection` is declared bijective, so a node that
-    # only its invertible variant would establish (e.g. `Affine` when the
-    # forward is a bare affine) is relaxed to that non-invertible set.
+    # A Bijection is declared bijective, so a node that only the invertible
+    # variant would establish is relaxed to the unrestricted set.
     f = bij.forward
     if f is None and bij.backward is not None:
         f = Inverse(forward=bij.backward)
@@ -985,12 +879,9 @@ def _bijection_member(bij: Bijection, node: type, compute: bool) -> bool:
 
 
 def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
-    # An inverse never reads its own parameter, at any level. Every set under
-    # `Bijective` is closed under inversion, so `Inverse(T) in N` for such an
-    # `N` exactly when `T in N`; for a general node it holds when `T` is in
-    # the bijective sub-set of `N`. For `Injective`/`Surjective`,
-    # `_bijective_targets` is `(Bijective,)`: the inverse of a non-bijection
-    # is not a function.
+    # Inverse never reads its own parameter. For Injection or Surjection the
+    # only target is Bijection, since the inverse of a non-bijection is not a
+    # function.
     if inv.forward is None:
         return issubclass(kinds.Identity, node)
     return any(
@@ -1000,14 +891,9 @@ def _inverse_member(inv: Inverse, node: type, compute: bool) -> bool:
 
 @lru_cache(maxsize=None)  # noqa: UP033
 def _sqrt_targets(node: type) -> tx.Tuple[type, ...]:
-    # The principal square root of `T` is in `node` if `T in M` for some M
-    # in these targets: `node` itself when it is closed under the principal
-    # square root, else its maximal closed subnodes. Every set of the
-    # lattice is closed under it -- a root of a rotation is a rotation, of a
-    # positive scaling a positive scaling, and a set whose members have no
-    # principal root, such as the reflections, is closed vacuously -- except
-    # the permutations that are not diagonal: the root of a permutation is
-    # not a permutation.
+    # A node qualifies when it is closed under the principal square root; every
+    # GeneralizedPermutation subset that is not diagonal is treated as not
+    # closed.
     def is_closed(n: type) -> bool:
         return not issubclass(n, kinds.GeneralizedPermutation) or issubclass(
             n, kinds.Diagonal
@@ -1023,17 +909,15 @@ def _sqrt_targets(node: type) -> tx.Tuple[type, ...]:
 
 
 def _sqrt_member(op: Sqrt, node: type, compute: bool) -> bool:
-    # An operator never reads its own parameter, at any level: computing it
-    # is what `compute()` is for, and it may not even be defined.
+    # The operator itself is never computed here; that is the job of compute,
+    # and the root may be undefined.
     return any(is_kind(op.forward, m, compute) for m in _sqrt_targets(node))
 
 
 def _register_wrapper(source: type, member: tx.Callable) -> None:
-    # A wrapper reasons about whichever node it is asked about, so the same
-    # function serves them all -- but it must be registered against every
-    # one of them: a question about `C` is answered by the nearest checker
-    # registered against a *subset* of `C`, and only an exact registration
-    # is nearer than the leaf checkers the wrapper must shadow.
+    # One function serves every node, but it must be registered on each one:
+    # only an exact registration shadows the leaf checkers of the wrapped
+    # class.
     for node in kinds.all_sets():
         checker(source, node)(member)
 
@@ -1050,17 +934,9 @@ _register_wrapper(Sqrt, _sqrt_member)
 #                        K I N D   A L I A S E S
 #
 # ======================================================================
-# The alias table names the kinds a [`kinds`][] NAME or SYMBOL does not
-# already name, and only those: a wrapper, a field, a container. They have no
-# kind node, because membership depends on their contents rather than on a
-# set they belong to, so a name that resolves to one is matched by
-# `isinstance`. One name resolves to one class -- `"field"` names the base
-# the two field types share, not both of them.
-#
-# A friendlier spelling of a *node* does not belong here: it belongs in that
-# node's `NAME`, which is what `TransformationKind.parse` reads. `"scaling"`
-# and `"positivescaling"` are already names of the diagonal and positive
-# diagonal sets, so they need no entry.
+# Wrapper, field and container kinds have no node, so their names are matched
+# by isinstance. Friendlier spellings of a node belong in the NAME of that node
+# instead.
 register_kind_alias("inverse", Inverse)
 register_kind_alias("subspace", SubspaceTransformation)
 register_kind_alias("projection", Projection)
