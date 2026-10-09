@@ -7,6 +7,7 @@ from io import BytesIO
 # dependencies
 import nibabel as nb
 import typing_extensions as tx
+from nibabel.filebasedimages import FileBasedHeader, FileBasedImage
 
 from brainhops._core import path
 from brainhops._core.streams import open_compressed
@@ -328,7 +329,7 @@ class NiftiReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
     @classmethod
     def sniff_nibabel(
         cls,
-        nifti: object,
+        nifti: tx.Union[FileBasedImage, FileBasedHeader],
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
@@ -343,8 +344,8 @@ class NiftiReaderWriter(DataModelBase, BinaryFileReader, BinaryFileWriter):
 
         Parameters
         ----------
-        nifti : object
-            The object to test, usually a nibabel image or header.
+        nifti : FileBasedImage or FileBasedHeader
+            The nibabel image or header to test.
         error : bool or type[Exception], default=False
             Whether to raise an error when the object does not match. With
             `True`, the error is a `SnifferContentError`; an exception
