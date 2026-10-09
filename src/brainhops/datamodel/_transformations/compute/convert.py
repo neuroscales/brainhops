@@ -1,18 +1,22 @@
 """Dispatcher for converting a transformation to a requested type.
 
-`convert(x, cls)` runs exactly one converter: the one whose input type
-is the nearest supertype of `type(x)` and whose output type is the
-nearest supertype of `cls`. There is no fall-through, so a lossy
-conversion raises
-[`LossyConversionError`][brainhops.errors.LossyConversionError]
-instead of handing over to another converter.
+`convert(x, cls)` turns a transformation `x` into a transformation of
+type `cls` by running exactly one converter. The chosen converter is the
+one whose input type is the nearest supertype of `type(x)` and whose
+output type is the nearest supertype of `cls`. If that converter cannot
+convert without loss, it raises
+[`LossyConversionError`][brainhops.errors.LossyConversionError]; the
+request is never handed over to another converter.
 
-The dispatch selects on `cls`, a type passed as a value, through a
-parameter annotated `type[Out]`, which the dispatching
-[`Function`][bagof.dispatchers.Function] matches against the nearest
-ancestor of the class. Converters are called as `(x, cls, **kwargs)`,
-because the requested class may be finer than the key: an `Affine` to
-`Affine` converter rebuilds its result as the requested subclass.
+The converter is chosen from the type of `x` and also from `cls`, which
+is a class passed as a value. To make this possible, each converter
+annotates its second parameter as `type[Out]`, and the dispatching
+[`Function`][bagof.dispatchers.Function] selects the converter whose
+`Out` is the nearest ancestor of `cls`. Converters receive `cls` as an
+argument, `(x, cls, **kwargs)`, because the requested class may be a
+subclass of the output type that the converter is registered for. For
+example, the converter from `Affine` to `Affine` also answers a request
+for a subclass of `Affine`, and it builds its result as that subclass.
 """
 
 from functools import partial
@@ -38,7 +42,7 @@ _convert: Function = Function("convert")
 
 @tx.overload
 def converter(func: Converter) -> Converter:
-    """Register a converter keyed by its type hints."""
+    """Register a converter for the types named by its hints."""
     ...
 
 
@@ -46,7 +50,7 @@ def converter(func: Converter) -> Converter:
 def converter(
     inp: TransformationType, out: TransformationType
 ) -> tx.Callable[[Converter], Converter]:
-    """Return a decorator that registers a converter for `inp -> out`."""
+    """Return a decorator that registers a converter from `inp` to `out`."""
     ...
 
 
@@ -55,10 +59,10 @@ def converter(*args: tx.Any) -> tx.Any:
 
     In the bare form, `@converter`, the input type is read from the hint of
     the first parameter and the output type from the return hint. The
-    explicit form, `@converter(Linear, Affine)`, serves generated
-    converters without hints. A key may also be a type variable, which
-    stands for its bound. The original function is returned, so decorators
-    can be stacked.
+    explicit form, `@converter(Linear, Affine)`, is meant for generated
+    converters, which have no hints. Either type may also be given as a
+    type variable, which then stands for its bound. The original function
+    is returned, so decorators can be stacked.
 
     Raises
     ------
@@ -77,7 +81,7 @@ def converter(*args: tx.Any) -> tx.Any:
 
 
 def _is_key(arg: tx.Any) -> bool:
-    """Return whether a value can key a converter."""
+    """Return whether a value can serve as a converter's input or output."""
     return isinstance(arg, (type, tx.TypeVar))
 
 
@@ -90,11 +94,12 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
     """Convert a transformation to another type.
 
     !!! note
-        A converter whose output is a supertype of `cls` also qualifies,
-        and the catch-all converter between transformations matches every
-        request. The type of the result is therefore checked, so that an
-        unproducible type is refused rather than silently answered with
-        the original type.
+        A converter whose output type is a supertype of `cls` also matches
+        the request, and the catch-all converter from `Transformation` to
+        `Transformation` matches every request. The type of the result is
+        therefore checked, so that a request for a type that no converter
+        can produce is refused instead of being answered silently with a
+        transformation of the original type.
 
     Parameters
     ----------
@@ -131,8 +136,9 @@ def convert(x: FROM, cls: tx.Type[TO], **kwargs: tx.Any) -> TO:
 def _key_from_func(func: Converter) -> tx.Tuple[type, type]:
     """Read the input and output types from the hints of a converter.
 
-    The output type is the return hint, which is also the class that `cls`
-    is a `type[...]` of.
+    The input type is the hint of the first parameter. The output type is
+    the return hint, which names the same class as the `type[...]` hint of
+    the `cls` parameter.
     """
     hints = tx.get_type_hints(func)
     out = hints.pop("return")
@@ -143,10 +149,12 @@ def _key_from_func(func: Converter) -> tx.Tuple[type, type]:
 def _register(inp: type, out: type, func: Converter) -> Converter:
     """Register `func` for the conversion `inp -> out`.
 
-    The method is keyed by the input type and, through its `type[out]`
-    parameter, by the requested class. Every converter is named `_`, so its
-    qualified name is set to `convert[In -> Out]` for error messages; a
-    converter registered for several pairs keeps the last name.
+    The converter is registered for the argument types `(inp, type[out])`,
+    so the dispatcher chooses it from the type of the transformation and
+    from the requested class. Every converter is defined under the name
+    `_`, so its qualified name is replaced with `convert[In -> Out]` to
+    make error messages readable. A converter registered for several pairs
+    keeps the name of the last pair.
     """
     func.__qualname__ = f"convert[{_name(inp)} -> {_name(out)}]"
     _convert.register((inp, tx.Type[out]))(func)
