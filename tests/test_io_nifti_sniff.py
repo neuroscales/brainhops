@@ -188,7 +188,7 @@ def _mgh() -> "nb.MGHImage":
 def test_sniff_nibabel_rejects_other_objects(
     make: "Callable[[], object]",
 ) -> None:
-    """A non-NIfTI object gives the requested error (#375)."""
+    """A non-NIfTI object gives the requested error."""
     obj = make()
     name = type(obj).__name__
     assert NiftiReaderWriter.sniff_nibabel(obj) == Confidence.NO
