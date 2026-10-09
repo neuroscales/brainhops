@@ -413,7 +413,7 @@ def smartsetter(fset):
 
     Parameters
     ----------
-    fset
+    fset : callable or str
         The setter, whose name names the private attribute, or an explicit
         name: `@smartsetter("data")` reads `_data` whatever the setter is
         called. In both cases, the class binds the property under the name

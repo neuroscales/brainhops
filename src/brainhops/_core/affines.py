@@ -70,9 +70,9 @@ def inv(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 
@@ -108,9 +108,9 @@ def axis_scales(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 
@@ -139,13 +139,13 @@ def matmul(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    B
+    B : ArrayProtocol
         Affines, with shape `(..., N, P+1)`.
-    *Cs
+    *Cs : ArrayProtocol
         Further affines, the first of which has shape `(..., P, Q+1)`.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 
@@ -222,11 +222,11 @@ def matvec(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    b
+    b : ArrayProtocol
         Vectors, with shape `(..., N)`.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 
@@ -260,15 +260,15 @@ def lmdiv(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    B
+    B : ArrayProtocol
         Affines, with shape `(..., M, P+1)`, or vectors, with shape
         `(..., M)`.
-    vector
+    vector : bool, default=False
         Whether `B` holds vectors. A one-dimensional `B` is always treated
         as a vector.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 
@@ -314,11 +314,11 @@ def rmdiv(
 
     Parameters
     ----------
-    A
+    A : ArrayProtocol
         Affines, with shape `(..., M, N+1)`.
-    B
+    B : ArrayProtocol
         Affines, with shape `(..., P, N+1)`.
-    backend
+    backend : str or module, optional
         Array backend, given by name or as a module. By default, the backend
         is inferred from `A`.
 

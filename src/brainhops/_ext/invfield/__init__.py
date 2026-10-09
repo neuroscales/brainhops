@@ -24,7 +24,7 @@ def inverse(field: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    field
+    field : np.ndarray
         Displacements in voxels, with shape `(Nx, Ny, Nz, 3)` or
         `(Nx, Ny, 2)`. The last axis is ordered `[x, y, z]` or `[x, y]`.
 

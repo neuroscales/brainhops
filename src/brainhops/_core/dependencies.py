@@ -156,17 +156,17 @@ def _lazy_import(
 
     Parameters
     ----------
-    namespace
+    namespace : dict of str to Any
         Namespace in which the names are stored, usually `globals()`.
-    query
+    query : str
         Name whose lookup triggered the import: the qualified module name,
         its short alias, or the name of its flag.
-    qualname
+    qualname : str, optional
         Name of the module to import. The default is `query`.
-    shortname
+    shortname : str, optional
         Name under which the module is stored. The default is the last
         component of `qualname`, in lower case.
-    uppername
+    uppername : str, optional
         Suffix of the flag name. The default is the components of
         `qualname`, in upper case and joined by underscores.
 

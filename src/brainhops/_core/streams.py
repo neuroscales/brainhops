@@ -28,7 +28,7 @@ def preserve_position(file: tx.IO) -> tx.Generator[tx.IO, None, None]:
 
     Parameters
     ----------
-    file
+    file : IO
         Stream to protect.
 
     Yields
@@ -115,7 +115,7 @@ def open_compressed(file: tx.BinaryIO) -> tx.IO:
 
     Parameters
     ----------
-    file
+    file : BinaryIO
         Binary stream, read from its current position.
 
     Returns

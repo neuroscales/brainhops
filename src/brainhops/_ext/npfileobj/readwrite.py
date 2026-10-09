@@ -118,9 +118,9 @@ def writeslice(
         Shape of the full array.
     dtype : dtype-like
         Data type of the array.
-    offset : int
+    offset : int, default=0
         Byte offset of the array in the file.
-    order : {"C", "F"}
+    order : {"C", "F"}, default="C"
         Memory layout of the array.
     heuristic : callable, optional
         Function of a slice, an axis length and a stride that returns
