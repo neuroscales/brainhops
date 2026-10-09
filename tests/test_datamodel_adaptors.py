@@ -775,7 +775,7 @@ def test_axes_match_by_unit_when_names_differ() -> None:
 
 
 # ----------------------------------------------------------------------
-#   REGRESSION: PAIRING DOES NOT DEPEND ON THE ORDER OF THE AXES (#385)
+#   REGRESSION: PAIRING DOES NOT DEPEND ON THE ORDER OF THE AXES
 # ----------------------------------------------------------------------
 
 
@@ -851,9 +851,9 @@ def test_a_pair_by_unit_frees_the_remaining_candidate() -> None:
 
 def test_a_bridge_reports_both_ambiguous_axes_in_every_order() -> None:
     # The bridge fails because the unit match is ambiguous, and it reports
-    # both target axes as unmatched, whatever their order. Before #385,
-    # the first target axis took the source axis and only the second one
-    # was reported.
+    # both target axes as unmatched, whatever their order. The first
+    # target axis used to take the source axis, and only the second
+    # one was reported.
     source = CoordinateSystem(
         axes=[SpaceAxis(name="a", unit="mm"), SpaceAxis(name="b")]
     )

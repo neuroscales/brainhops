@@ -260,7 +260,7 @@ def _match_axes(
     Apart from the pairing by position, the result does not depend on the
     order in which the axes are listed. When several target axes have the
     same single candidate in a tier, the match is ambiguous and none of
-    these target axes is paired by that tier (#385).
+    these target axes is paired by that tier.
     """
 
     # Axes with different types never match, because a shared name, unit or
