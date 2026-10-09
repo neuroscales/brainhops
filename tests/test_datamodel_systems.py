@@ -1240,7 +1240,7 @@ def test_an_open_system_in_millimetres_closes_to_a_physical_one() -> None:
 # ----------------------------------------------------------------------
 # A C-ordered grid lists the axes of the matching F-ordered grid in
 # reverse order, and each anatomical direction keeps its name in both
-# memory orders (#393).
+# memory orders.
 
 
 @pytest.mark.parametrize(
