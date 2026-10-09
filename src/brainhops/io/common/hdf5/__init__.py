@@ -10,11 +10,11 @@ imported by the formats that need it.
 """
 
 __all__ = [
-    "Hdf5Parser",
-    "Hdf5ParserWriter",
+    "Hdf5Reader",
+    "Hdf5ReaderWriter",
     "DelayedH5Array",
     "H5Like",
 ]
 
 from ._delayed import DelayedH5Array
-from ._parsers import H5Like, Hdf5Parser, Hdf5ParserWriter
+from ._parsers import H5Like, Hdf5Reader, Hdf5ReaderWriter

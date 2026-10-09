@@ -109,6 +109,8 @@ class Sequence(SequenceMixin, Transformation):
 
     data_fields = ("transformations",)
 
+    # --- attributes ---------------------------------------------------
+
     # The chain is stored under a private name so that `replace()` carries over
     # what was given rather than what the property reports. In a subclass that
     # derives its chain, the copy would otherwise serve a stale chain that
@@ -132,10 +134,14 @@ class Sequence(SequenceMixin, Transformation):
             return self.transformations[-1].output
         return None
 
+    # --- factory ------------------------------------------------------
+
     def __new__(cls, *args, **kwargs) -> tx.Type[tx.Self]:
         if cls is Sequence:
             return MutableSequence(*args, **kwargs)
         return super().__new__(cls)
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         # Return a plain `Sequence` rather than `type(self)`, because not every
@@ -180,22 +186,21 @@ class Sequence(SequenceMixin, Transformation):
     ) -> Transformation:
         """Convert the chain to another type or encoding.
 
-        A chain has no tangent of its own, because the tangent of a composition
-        is not the sum of the tangents. A `log=` keyword therefore re-encodes
-        the transformation that the chain reduces to, which is possible in
-        three cases:
+        A chain has no tangent of its own, because the tangent of a
+        composition is not the sum of the tangents. A `log=` keyword
+        therefore re-encodes the transformation that the chain reduces
+        to, which is possible in three cases:
 
-        - A chain that simplifies to a single transformation is converted as
-          that transformation.
-        - A change of coordinates `[P, *X, P^-1]` (see
-          [`Sequence.sqrt`][brainhops.datamodel.transformations.Sequence.sqrt])
-          keeps its ends and re-encodes `X`, which is exact because the flow of
-          a velocity commutes with a change of coordinates.
+        - A chain that simplifies to a single transformation is converted
+          as that transformation.
+        - A change of coordinates `[P, *X, P^-1]` (see [`Sequence.sqrt`][])
+          keeps its ends and re-encodes `X`, which is exact because the
+          flow of a velocity commutes with a change of coordinates.
         - A chain of affine transformations is composed.
 
         Any other chain raises a [`ConversionError`][] before anything is
         computed. Without `log=`, the conversion follows
-        [`Transformation.to`][brainhops.datamodel.transformations.Transformation.to].
+        [`Transformation.to`][Transformation.to].
         """
         if "log" in kwargs:
             return _chain_to(self, cls, kwargs)
@@ -246,12 +251,139 @@ class Sequence(SequenceMixin, Transformation):
             return _simplify(self, policy=policy)
         return _compute_sequence(self, modes, policy, factor=factor)
 
-    def _flattened(self) -> tx.Self:
-        # Flatten nested sequences and push the endpoints of the sequence onto
-        # its first and last elements. Subclasses with a fixed shape, such as
-        # geometries, override this method.
+    def bridge(self) -> tx.Self:
+        """Reconcile the coordinate systems at every boundary of the chain.
+
+        Two neighbours in a chain share a coordinate system: the output
+        system of one is the input system of the next. Where the two
+        disagree, as when one works in millimetres and the next in voxels,
+        or when the two name the same axes in a different order, a bridge is
+        inserted between them. A bridge reads no parameter, so bridging
+        costs nothing, and two opposite bridges cancel when the chain is
+        simplified.
+
+        Bridging is also the only pass that lengthens a chain, which is why
+        [`compute`][] runs it before anything else: a bridge reads its
+        neighbours, and a reversed array-index axis needs the extent of the
+        adjacent grid, which composition may drop.
+
+        A nested sequence is bridged in place and stays nested, so a
+        boundary that it hides is reconciled inside it. Call [`flatten`][]
+        afterwards for a flat chain. A sequence with a fixed shape, such as
+        a geometry or a multiscale field, is left alone. A generic
+        [`Inverse`][] is replaced by the typed inverse of its forward
+        transformation, so that the engine can compute it and cancellation
+        can recognize it. No leaf has its endpoints rebuilt.
+
+        Returns
+        -------
+        Sequence
+            The chain, with a bridge at each boundary that needed one.
+
+        Raises
+        ------
+        AdaptationError
+            If a boundary cannot be bridged, because an axis that must be
+            matched has no counterpart on the other side.
+        """
         if self.transformations is None:
             return self
+        return self.to(
+            transformations=_insert_bridges(list(self.transformations))
+        )
+
+    def factor(
+        self,
+        *,
+        compute: tx.Union[ModeLike, bool, None] = False,
+        simplify: SimplifyLike = False,
+    ) -> Transformation:
+        """Rewrite the chain as one factor per group of axes.
+
+        The axes of a chain often fall into groups that never interact, as
+        when each axis is scaled on its own and two axes are then swapped.
+        Factoring finds those groups and rewrites the chain as
+        `[grid?, F_1, ..., F_m, Pi_perm?]`, with one axis-preserving factor
+        `F_i = Subspace(inner_i, A_i, A_i)` per group, ordered by their
+        first axis, and a trailing permutation that carries each group to
+        the axes that it occupies at the output (see [`factor_sequence`][]).
+        Nothing is composed across groups, so the coordinates of
+        independent axes are never tiled into a grid over all of them, and
+        each group can be resampled on its own.
+
+        The chain is unnested first, and a leading [`CartesianField`][] is
+        the sampling grid, which is kept as the same object. Every other
+        element is cut into one piece per group, and an element that lies
+        within a single group is kept as it is, so a lazy inverse stays
+        lazy and still cancels with its forward transformation.
+
+        !!! note
+            This is a single pass. It is idempotent on a chain that is
+            already in normal form, and [`compute`][] with `factor=True` is
+            what repeats it until the chain settles.
+
+        Parameters
+        ----------
+        compute : ModeLike or bool or None, default=False
+            Kinds of transformation that may be composed inside a group,
+            with the values accepted by the `mode` argument of
+            [`compute`][]. The default, `False`, composes nothing, so each
+            factor holds the sub-chain of its own group, whereas `True`
+            leaves each factor holding a single transformation.
+        simplify : SimplifyLike, default=False
+            How hard to simplify the pieces of each group, with the values
+            accepted by the `simplify` argument of [`compute`][].
+
+        Returns
+        -------
+        Transformation
+            The normal form, or `self` when the chain is already in normal
+            form or does not factor at all, as when it forms a single
+            group, its two ends differ in dimension, a grid sits inside it,
+            or one of its elements cannot be read or restricted. An
+            [`Identity`][] is returned when no factor is left.
+        """
+        return factor_sequence(self, compute, simplify=simplify)
+
+    def flatten(self, endpoints: bool = True) -> tx.Self:
+        """Splice the nested sequences of the chain into the chain itself.
+
+        A chain whose elements are themselves chains applies exactly as the
+        flat chain of their elements, so flattening changes nothing about
+        what the transformation does. It is what lets the simplifier and
+        the composers see two leaves as neighbours when a nesting boundary
+        sits between them.
+
+        A nested child is asked to flatten itself, so a child with a shape
+        of its own contributes what it chooses: a geometry contributes its
+        grid and its transformation, and a multiscale field contributes the
+        elements of its finest scale.
+
+        Parameters
+        ----------
+        endpoints : bool, default=True
+            Whether to push the coordinate systems of the chain onto its
+            first and last element, which is where the composers read them.
+            A child with a shape of its own may contribute a sequence, so
+            one level of nesting can survive this mode, and the next pass
+            splices it. With `endpoints=False`, nesting is unwound all the
+            way to the leaves in one pass, no leaf is rebuilt and each one
+            stays the same object, so that a transformation still cancels
+            with the lazy inverse that names it; a generic [`Inverse`][] is
+            then also replaced by the typed inverse of its forward
+            transformation.
+
+        Returns
+        -------
+        Sequence
+            The flattened chain.
+        """
+        # Subclasses with a fixed shape, such as geometries, override this
+        # method.
+        if self.transformations is None:
+            return self
+        if not endpoints:
+            return self.to(transformations=_unnest(self.transformations))
         inp, out = self.input, self.output
         flattened = []
         for i, t in enumerate(self.transformations):
@@ -263,7 +395,7 @@ class Sequence(SequenceMixin, Transformation):
                 # A nested child, such as a geometry that contributes a grid
                 # and then a transformation, may leave one level of nesting.
                 # The next pass of `_compute_sequence` flattens that level.
-                flattened.extend(t._flattened().transformations or [])
+                flattened.extend(t.flatten().transformations or [])
             else:
                 flattened.append(t)
         return self.to(transformations=flattened)
@@ -345,6 +477,7 @@ def _compute_sequence(
     iteration = 0
     max_iter = 0
     while True:
+        # --- 1. bridge ---
         # Bridge the direct children before flattening, because a nested
         # sequence carries its endpoints on itself. Flattening then has no
         # endpoint to rebuild, so every leaf stays the same object and
@@ -361,8 +494,9 @@ def _compute_sequence(
         # only if the sequence declares any. In the common case without
         # endpoints, every leaf therefore stays the same object.
         if seq.input is not None or seq.output is not None:
-            seq = seq._flattened()
+            seq = seq.flatten()
 
+        # --- 2. simplify ---
         simplified = _simplify(seq, policy=policy)
         if not isinstance(simplified, Sequence):
             # The chain collapsed to a single transformation, so nothing is
@@ -370,6 +504,7 @@ def _compute_sequence(
             return simplified
         seq = simplified
 
+        # --- 2b. factor ---
         if factor:
             factored = factor_sequence(
                 seq, modes, simplify=policy, cache=cache
@@ -378,6 +513,7 @@ def _compute_sequence(
                 return factored
             seq = factored
 
+        # --- 3. compose ---
         memo: tx.Set[Family] = set()
         for submode in modes:
             result = _compose_mode(seq, submode, memo, factor)
@@ -420,17 +556,23 @@ def _compose_mode(
     # coarser ones. For example, with `mode="affine"`, adjacent translations
     # fold into a single translation before they are widened to an affine.
 
+    # --- Flatten sequence
     if not _is_flat(seq):
-        seq = seq._flattened()
+        seq = seq.flatten()
 
+    # --- Check if nothing to do
     if not seq.transformations:
         return seq
 
     # A mode that was already visited has nothing left to fold.
+
+    # --- A mode already visited has nothing left to fold
     if mode in memo:
         return seq
 
     # Fold the finer child modes first.
+
+    # --- First, fold every child mode (finer kinds first)
     for child in mode_children(mode):
         seq = _compose_mode(seq, child, memo, factor)
         if not isinstance(seq, Sequence):
@@ -438,6 +580,8 @@ def _compose_mode(
 
     # Never visit this mode again.
     memo.add(mode)
+
+    # --- Compose transformations that belong to this mode in order
 
     inputs = list(getattr(seq, "transformations", [seq]))
     outputs = []
@@ -603,7 +747,7 @@ def _undoes(first: Transformation, last: Transformation) -> bool:
     # composed to decide.
     if isinstance(_simplify(first, last), Identity):
         return True
-    if not (is_kind(first, kinds.Affine) and is_kind(last, kinds.Affine)):
+    if not (first.is_affine() and last.is_affine()):
         return False
     try:
         product = compose(last, first)
@@ -643,8 +787,8 @@ def _is_flat(self: Sequence) -> bool:
 
 def _unnest(transformations: tx.Optional[tx.List[Transformation]]) -> list:
     # Flatten nested sequences without touching any endpoint (unlike
-    # `_flattened`, which may rebuild the first or last element and so read a
-    # lazy field). Generic inverses are expanded along the way.
+    # `flatten()`, which may rebuild the first or last element and so read
+    # a lazy field). Generic inverses are expanded along the way.
     flattened = []
     for t in transformations or []:
         t = _normalize_inverse(t)

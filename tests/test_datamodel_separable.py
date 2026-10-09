@@ -1260,6 +1260,9 @@ def _reslice_equal(
 # A non-interpolating inner transform gives a finer partition.
 
 
+# --- Non-interpolating inner: the finer partition is kept and reslices. ---
+
+
 def test_subspace_wrapping_diagonal_scaling_splits_into_singletons() -> None:
     # A diagonal scaling mixes nothing, so every axis is its own group.
     inner = Scaling(
@@ -1366,6 +1369,9 @@ def test_reverting_subspace_recursion_to_all_ones_over_couples(
 
 
 # An interpolating inner transform keeps its axes in one block.
+
+
+# --- Interpolating inner: the acted-on axes stay one coupled block. ---
 
 
 def test_subspace_wrapping_raw_field_couples_all_its_axes() -> None:

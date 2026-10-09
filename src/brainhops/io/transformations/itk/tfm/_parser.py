@@ -9,7 +9,7 @@ from brainhops._core.peek import peekable_lines
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
 )
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
@@ -26,9 +26,9 @@ _PARAMETERS_RE = re.compile(r"^Parameters:\s*(?P<values>.*)$")
 _FIXEDPARAMETERS_RE = re.compile(r"^FixedParameters:\s*(?P<values>.*)$")
 
 
-class TfmTransformParser(
+class TfmTransformReader(
     Magic,
-    TextFileParser,
+    TextFileReader,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
@@ -41,6 +41,8 @@ class TfmTransformParser(
     transformation are listed in application order, which is the reverse of
     their order in the file, because ITK applies the last block first.
     """
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_line(
@@ -67,6 +69,8 @@ class TfmTransformParser(
                 error = SnifferContentError
             raise error(f"Not an ITK transform block: {line!r}")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_lines(

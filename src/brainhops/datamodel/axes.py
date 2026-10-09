@@ -188,6 +188,9 @@ class Axis(DataModelBase, polymorphic=True):
         return cls(**_merge_with(first, second))
 
 
+# --- Helpers ----------------------------------------------------------
+
+
 def _field_names(axis: Axis) -> tx.List[str]:
     return [field.name for field in fields(type(axis))]
 
@@ -238,6 +241,8 @@ def _merge_with(first: Axis, second: Axis) -> tx.Dict[str, tx.Any]:
 #
 # ======================================================================
 
+# --- Dispatch helpers -------------------------------------------------
+
 
 def _is_not_none(obj: tx.Any) -> bool:
     return obj is not None
@@ -263,6 +268,9 @@ def _has_value(value: str) -> tx.Callable[[tx.Optional[Orientation]], bool]:
         return getattr(orientation, "value", None) == value
 
     return _check
+
+
+# --- API --------------------------------------------------------------
 
 
 class SpaceAxis(Axis, on={"type": "space"}):
@@ -402,6 +410,7 @@ class SuperiorToInferiorAxis(
     orientation: NoRepr[SuperiorToInferior] = SuperiorToInferior()
 
 
+# --- Aliases ----------------------------------------------------------
 # The aliases are classes rather than instances, because axes are mutable and
 # a shared instance would leak changes between systems. An axis is built with
 # `R(unit='mm')` and tested with `isinstance(axis, R)`.

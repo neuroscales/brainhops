@@ -21,7 +21,7 @@ from brainhops.io.base.parsers import (
     WriterError,
 )
 from brainhops.io.common._geometry import Arrangement, declared_axes
-from brainhops.io.common.mrtrix import MrtrixHeader, MrtrixParser
+from brainhops.io.common.mrtrix import MrtrixHeader, MrtrixReaderWriter
 from brainhops.io.common.mrtrix._codecs import (
     default_layout,
     dtype_to_mrtrix,
@@ -31,7 +31,7 @@ from brainhops.io.common.mrtrix._geometry import (
     split_voxel_to_scanner,
     voxel_to_ras,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 _INDEX = "index"
 _MM = "millimeter"
@@ -63,7 +63,7 @@ def _mrtrix_axes(ndim: int) -> tx.List[Axis]:
 
 
 @register_format
-class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
+class MrtrixImage(MrtrixReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in an MRtrix file (`.mif`, `.mif.gz` or `.mih`).
 
     The data are indexed `[x, y, z, ...]` in Fortran order, whatever
@@ -84,6 +84,8 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".mif", ".mif.gz", ".mih")
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def _score_header(cls, header: MrtrixHeader) -> float:
         """Score a header as a plain image.
@@ -94,6 +96,8 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
         if header.ndim == 4 and header.dim[3] == 3:
             return Confidence.WEAK
         return Confidence.LIKELY
+
+    # --- data model ---------------------------------------------------
 
     @property
     def data(self) -> tx.Optional[tx.Any]:
@@ -139,6 +143,8 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
     @transformations.setter
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
+
+    # --- writing ------------------------------------------------------
 
     def _mrtrix_geometry(self) -> tx.Tuple[tx.Any, Arrangement]:
         """Return the data and the geometry with axes placed for MRtrix.
@@ -218,6 +224,7 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             raise WriterError("MRtrix cannot store a zero-dimensional array.")
         source = self.header
 
+        # --- geometry -------------------------------------------------
         transform, spatial_vox = split_voxel_to_scanner(arranged.matrix)
         vox = list(spatial_vox[: min(3, ndim)])
         extra = _mapped_vox(arranged, ndim)
@@ -225,6 +232,7 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             extra = _extra_vox(self.transformations, source, ndim)
         vox += extra[len(vox) :]
 
+        # --- storage --------------------------------------------------
         if layout is None:
             if source is not None and len(source.layout) == ndim:
                 strides = source.layout
@@ -244,6 +252,7 @@ class MrtrixImage(MrtrixParser, WritableFileBasedImage, SingleScaleImage):
             datatype = getattr(data, "dtype", np.float32)
         datatype = dtype_to_mrtrix(datatype)
 
+        # --- free-form keys -------------------------------------------
         merged = dict(source.keyval) if source is not None else {}
         for key, value in (keyval or {}).items():
             if value is None:

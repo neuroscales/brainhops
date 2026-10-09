@@ -13,13 +13,13 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     WriterError,
 )
-from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
 from brainhops.io.common.zarr._parsers import _as_node
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 @register_format
-class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
+class ZarrImage(ZarrReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored as a plain Zarr array.
 
     A plain array has no world geometry, so the image is read with an identity
@@ -41,6 +41,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
             return backend.asarray(node[...])
         return None
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def _score_store(cls, node: ZarrNode) -> float:
         # A plain array is very likely meant as an image. A group is not an
@@ -48,6 +50,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         if isinstance(node, ZarrArray):
             return Confidence.LIKELY
         return Confidence.NO
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_node(
@@ -76,6 +80,8 @@ class ZarrImage(ZarrParserWriter, WritableFileBasedImage, SingleScaleImage):
         if transformation is not None:
             image.transformation = transformation
         return image
+
+    # --- save ---------------------------------------------------------
 
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
         wrapped = _as_node(node)

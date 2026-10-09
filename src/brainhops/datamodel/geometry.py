@@ -31,6 +31,8 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 
 
 class _GeometryFields(DataModelBase):
+    # --- attributes ---------------------------------------------------
+
     # The `Sequence` base exposes this slot as `transformations`, which is
     # also the name of the constructor argument.
     _transformations: tx.Annotated[
@@ -63,6 +65,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
     A geometry pairs the Cartesian field on which the image is sampled
     with the transformation from voxel to world coordinates.
     """
+
+    # --- properties ---------------------------------------------------
 
     @property
     def transformation(self) -> Transformation:
@@ -98,6 +102,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
                 output=self.grid.output,
             )
 
+    # --- operators ----------------------------------------------------
+
     def __rmatmul__(self, other: Transformation) -> tx.Self:
         """Return the geometry with `other` applied after its transformation.
 
@@ -129,6 +135,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
             )
         )
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -142,7 +150,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
         transformation. The grid is kept, so the sampling domain of the
         image is never lost.
         """
-        flat = self._flattened()
+        flat = self.flatten()
         transformation = flat.transformation.compute(
             mode, simplify=simplify, factor=factor
         )
@@ -152,17 +160,24 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=self.output,
         )
 
-    def _flattened(self) -> tx.Self:
+    def flatten(self, endpoints: bool = True) -> tx.Self:
+        """Return the geometry with its transformation flattened.
+
+        A geometry keeps its shape, so the result is a geometry: the grid
+        and the voxel-to-world transformation stay two separate elements,
+        and only the transformation is flattened.
+        """
         # Only the transformation is flattened, and the grid is never merged
         # into it. The systems of the geometry are propagated onto both parts,
-        # as in `Sequence._flattened`.
+        # as in `Sequence.flatten`.
         grid, transformation = self.grid, self.transformation
-        if grid.input is None and self.input is not None:
-            grid = grid.to(input=self.input)
-        if transformation.output is None and self.output is not None:
-            transformation = transformation.to(output=self.output)
+        if endpoints:
+            if grid.input is None and self.input is not None:
+                grid = grid.to(input=self.input)
+            if transformation.output is None and self.output is not None:
+                transformation = transformation.to(output=self.output)
         if isinstance(transformation, Sequence):
-            flat_seq = transformation._flattened()
+            flat_seq = transformation.flatten(endpoints)
             flat = flat_seq.transformations or []
             transformation = flat[0] if len(flat) == 1 else flat_seq
         return Geometry(

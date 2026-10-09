@@ -21,7 +21,7 @@ from brainhops.io.common._geometry import (
     RAS_FROM_ORIENTATION,
     reduce_to_affine,
 )
-from brainhops.io.common.nrrd import NrrdHeader, NrrdParser
+from brainhops.io.common.nrrd import NrrdHeader, NrrdReaderWriter
 from brainhops.io.common.nrrd._codecs import (
     _format_float,
     _format_strings,
@@ -33,7 +33,7 @@ from brainhops.io.common.nrrd._constants import (
     _SPACE_NAMES,
     SPACES,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 _INDEX = "index"
 
@@ -331,7 +331,7 @@ def _nrrd_to_transformations(header: NrrdHeader) -> tx.List[Transformation]:
 # ----------------------------------------------------------------------
 
 
-class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
+class NrrdImage(NrrdReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a NRRD file, attached or detached.
 
     This class is the unregistered base of [`AttachedNrrdImage`][] and
@@ -347,6 +347,8 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         `data` field follows the defaulted fields of the parser, and so
         that the lazy properties of this class take precedence.
     """
+
+    # --- data model ---------------------------------------------------
 
     @property
     def data(self) -> tx.Optional[tx.Any]:
@@ -389,6 +391,8 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
     @transformations.setter
     def transformations(self, value: tx.List[Transformation]) -> None:
         self._transformations = value
+
+    # --- writing ------------------------------------------------------
 
     def _storage(
         self,
@@ -482,6 +486,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         source = self.header
         fields: tx.Dict[str, str] = {}
 
+        # --- storage --------------------------------------------------
         sizes = [0] * ndim
         for j, i in enumerate(perm):
             sizes[i] = shape[j]
@@ -504,6 +509,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
             raise WriterError(f"Unknown NRRD endian: {endian!r}")
         fields["endian"] = endian
 
+        # --- per-axis fields of the source ----------------------------
         matched = (
             source is not None
             and len(kinds) == ndim
@@ -528,6 +534,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
                 if name in source.fields:
                     fields[name] = source.fields[name]
 
+        # --- geometry -------------------------------------------------
         spatial = [perm[j] for j, r in enumerate(roles) if r == "space"]
         geometry = _geometry(self, roles, space, source)
         if geometry is not None:
@@ -564,6 +571,7 @@ class NrrdImage(NrrdParser, WritableFileBasedImage, SingleScaleImage):
         if "space directions" not in fields:
             fields.pop("measurement frame", None)
 
+        # --- key/value pairs ------------------------------------------
         merged = dict(source.keyvalue) if source is not None else {}
         for key, value in (keyvalue or {}).items():
             if value is None:

@@ -32,9 +32,9 @@ data in a single local file are memory-mapped when read from a path.
 """
 
 __all__ = [
-    "NrrdParser",
+    "NrrdReaderWriter",
     "NrrdHeader",
 ]
 
 from ._header import NrrdHeader
-from ._parsers import NrrdParser
+from ._parsers import NrrdReaderWriter

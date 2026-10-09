@@ -75,6 +75,8 @@ class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
     swapped.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _operator: tx.ClassVar[str] = "inverse"
     _reverses: tx.ClassVar[bool] = True
 
@@ -84,8 +86,12 @@ class Inverse(Operation, tx.Generic[TRANSFORMATION], polymorphic=True):
     # predicates of the subclasses, so nothing needs to be registered.
     _resultof: _TypeReference = None
 
+    # --- attributes ---------------------------------------------------
+
     forward: NotKwOnly[tx.Optional[TRANSFORMATION]] = None
     """The transformation whose inverse this is."""
+
+    # --- methods ------------------------------------------------------
 
     def inverse(self, compute: bool = False, **kwargs) -> Transformation:
         """Return the forward transformation, with its endpoints restored.
@@ -288,13 +294,18 @@ class InverseDisplacementField(
         interior and a few tenths near the border.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _resultof: _TypeReference = DisplacementField
 
     derived_fields: _FieldNames = ("data", "field", "values", "coefficients")
 
+    # --- attributes ---------------------------------------------------
+
     forward: NotKwOnly[tx.Optional[DisplacementField]] = None
     """The displacement field whose inverse this is."""
 
+    # --- derived attributes -------------------------------------------
     # The fields below derive from the forward, so they are kept out of
     # `__init__`.
 

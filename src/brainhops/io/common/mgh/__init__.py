@@ -21,7 +21,7 @@ read from the raw bytes so that a file round-trips.
 """
 
 __all__ = [
-    "MghParser",
+    "MghReaderWriter",
 ]
 
-from ._parsers import MghParser
+from ._parsers import MghReaderWriter

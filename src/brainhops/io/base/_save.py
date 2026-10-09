@@ -16,11 +16,12 @@ from bagof.magic import fields
 from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.transformations import Transformation
-from brainhops.io.base._base import WritableFileBasedObject
+from brainhops.io.base._base import Format
 from brainhops.io.base._dispatch import _match_name, _tiers, _to_filename
 from brainhops.io.base.parsers import (
     AmbiguousFormatError,
-    FileSniffer,
+    FileReader,
+    FileWriter,
     WriterError,
 )
 
@@ -67,13 +68,18 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
 
     !!! note "Two passes, one conversion"
         Steps 3 and 4 are two passes only until every writable
-        transformation format has converters. Until then, step 3 is what
-        writes a transformation to a format without them, by copying it
-        into a file-backed version of its data model. For the formats
-        that have converters (`NiftiVoxelToRAS`, `NiftiRASToVoxel`,
+        transformation format has exact converters (#312). Until then,
+        step 3 writes a transformation to a format without exact
+        converters by copying it into a file-backed version of its data
+        model. Step 4 refuses to rebuild a transformation as such a
+        format with the same parameters, because the result could mean
+        a different map. For the formats that have exact converters
+        (`NiftiVoxelToRAS`, `NiftiRASToVoxel`,
         `NiftiRASDisplacementField`, `NiftiRASCoordinatesField`,
         `SpmCoordinatesField`), `from_instance` is `obj.to(Format)`, so
-        both passes run the same conversion.
+        both passes run the same conversion. `NiftyRegAffine` converts
+        an affine between world spaces, or between unknown spaces, in
+        step 4.
 
     Parameters
     ----------
@@ -96,7 +102,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
     """
     name = _to_filename(file)
     if name is None:
-        if isinstance(obj, WritableFileBasedObject):
+        if isinstance(obj, Format) and isinstance(obj, FileWriter):
             obj.save(file, **kwargs)
             return
         raise WriterError(
@@ -105,7 +111,7 @@ def save(obj: tx.Any, file: path.FileLike, **kwargs) -> None:
             f"file, or build the format you want and save that."
         )
 
-    registry = WritableFileBasedObject._REGISTRY
+    registry = (fmt for fmt in Format._REGISTRY if issubclass(fmt, FileWriter))
     matches = ((fmt, _match_name(name, fmt)) for fmt in registry)
     claimed = [(fmt, match) for fmt, match in matches if match is not None]
     if not claimed:
@@ -196,12 +202,12 @@ def _first_writer(
 def _model(cls: type) -> tx.Optional[type]:
     """Return the data model that `cls` instantiates, or `None`.
 
-    This is the first class in the MRO that is a data model but not a sniffer,
+    This is the first class in the MRO that is a data model but not I/O,
     such as `SingleScaleImage` for `NiftiImage`.
     """
     for base in cls.__mro__:
         if issubclass(base, DataModelBase) and not issubclass(
-            base, FileSniffer
+            base, (Format, FileReader, FileWriter)
         ):
             return base
     return None

@@ -9,7 +9,8 @@ from brainhops._core import path
 from brainhops._core.streams import preserve_position
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     SnifferContentError,
@@ -61,9 +62,10 @@ class _Variable(tx.NamedTuple):
     """The offset of the first value in the content."""
 
 
-class MatTransformParser(
+class MatTransformReaderWriter(
     Magic,
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
@@ -72,6 +74,8 @@ class MatTransformParser(
     Every block of the file is parsed into a transformation and stored
     directly in `transformations`.
     """
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -121,6 +125,8 @@ class MatTransformParser(
                 f"an ITK transform class.",
             )
         return Confidence.CERTAIN
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_bytes(
@@ -199,6 +205,8 @@ class MatTransformParser(
         obj = cls()
         obj.transformations = _application_order(blocks, composites, position)
         return obj
+
+    # --- to -----------------------------------------------------------
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.

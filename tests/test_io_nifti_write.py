@@ -10,6 +10,8 @@ import warnings
 import numpy as np
 import pytest
 
+from brainhops.io.base.parsers import FileWriter
+
 nb = pytest.importorskip("nibabel")
 
 from bagof.magic import replace  # noqa: E402
@@ -316,9 +318,10 @@ def test_a_nonaffine_geometry_cannot_be_written(tmp_path) -> None:  # noqa: ANN0
 
 
 def test_the_writer_is_registered_for_the_image_kind() -> None:
-    from brainhops.io.images.base import WritableFileBasedImage
+    from brainhops.io.images.base import ImageFormat
 
-    assert NiftiImage in WritableFileBasedImage._REGISTRY
+    assert issubclass(NiftiImage, FileWriter)
+    assert NiftiImage in ImageFormat._REGISTRY
     assert issubclass(NiftiImage, SingleScaleImage)
 
 

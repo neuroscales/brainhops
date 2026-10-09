@@ -326,20 +326,24 @@ def default_axes(ndim: int, channel: bool = False) -> tx.List[Axis]:
 
     The axes are named `x`, `y`, `z`, `t` and `c`, in that order, for as
     many dimensions as there are, and any further axis `i` is named
-    `dim<i>`. With `channel=True`, the last axis is a channel axis, and
-    the other axes follow the same defaults.
+    `dim<i>`. With `channel=True`, the last axis is the channel axis `c`.
+    The other axes are then named `x`, `y`, `z` and `t`, and any further
+    axis `i` among them is named `dim<i>`, so that `c` appears only once
+    and the names stay unique for every number of dimensions.
     """
-    if channel and ndim >= 1:
-        others = default_axes(ndim - 1)
-        return others + [Axis("c", "channel", unit=_INDEX)]
     names = [("x", "space"), ("y", "space"), ("z", "space")]
-    names += [("t", "time"), ("c", "channel")]
+    names += [("t", "time")]
+    if not channel:
+        names += [("c", "channel")]
+    nother = ndim - 1 if channel and ndim >= 1 else ndim
     axes = [
         Axis(*names[i], unit=_INDEX)
         if i < len(names)
         else Axis(f"dim{i}", unit=_INDEX)
-        for i in range(ndim)
+        for i in range(nother)
     ]
+    if nother < ndim:
+        axes.append(Axis("c", "channel", unit=_INDEX))
     return axes
 
 

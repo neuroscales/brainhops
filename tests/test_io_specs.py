@@ -8,13 +8,14 @@ from brainhops._core.path import Path
 from brainhops.datamodel.images import Image
 from brainhops.io.base import (
     ImageSpec,
+    OperationSpec,
     Parser,
     SourceSpec,
     TransformationSpec,
     format_hints,
     parser_for,
 )
-from brainhops.io.images.base import FileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 def test_source_spec_is_a_magic_model_with_a_path() -> None:
@@ -161,21 +162,49 @@ def test_parameterless_operation_rejects_a_value() -> None:
         TransformationSpec.from_arg("warp|inv:other.nii")
 
 
+def test_operation_registered_on_a_subclass_stays_in_that_subclass() -> None:
+    # Each subclass keeps its own registry of operations. All classes
+    # used to share a single registry.
+    class WarpSpec(TransformationSpec, frozen=True):
+        pass
+
+    class SiblingSpec(TransformationSpec, frozen=True):
+        pass
+
+    class LeafSpec(WarpSpec, frozen=True):
+        pass
+
+    @WarpSpec.register_operation("halve")
+    class HalveOperation(OperationSpec, frozen=True):
+        def apply(self, value: tx.Any) -> tx.Any:
+            return value / 2
+
+    for spec_class in (WarpSpec, LeafSpec):
+        spec = spec_class.from_arg("warp|halve|inv")
+        assert [type(op) for op in spec.operations][0] is HalveOperation
+        assert [op.name for op in spec.operations] == ["halve", "inv"]
+    for spec_class in (TransformationSpec, SiblingSpec):
+        spec = spec_class.from_arg("warp|halve")
+        assert spec.operations == ()
+        assert spec.hints == ("halve",)
+    assert "halve" not in vars(TransformationSpec)["_OPERATIONS"]
+
+
 def test_registered_parser_is_inherited_by_subclasses() -> None:
     class DerivedImage(Image):
         pass
 
-    assert parser_for(DerivedImage) is FileBasedImage
+    assert parser_for(DerivedImage) is ImageFormat
 
 
 def test_explicit_parser_wins_for_a_union() -> None:
     annotation = tx.Annotated[tx.Union[Image, str], Parser(Image)]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_unique_registered_union_parser_is_found_automatically() -> None:
     annotation = tx.Union[object, Image]
-    assert parser_for(annotation) is FileBasedImage
+    assert parser_for(annotation) is ImageFormat
 
 
 def test_hints_are_qualified_along_individual_inheritance_branches() -> None:

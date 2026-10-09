@@ -80,6 +80,8 @@ class Operation(Transformation):
     whether the operator reverses the direction of the map.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _operator: tx.ClassVar[tx.Optional[str]] = None
     """Name of the [`Transformation`][] method that applies the operator.
 
@@ -105,8 +107,12 @@ class Operation(Transformation):
 
     data_fields: _FieldNames = ("forward",)
 
+    # --- attributes ---------------------------------------------------
+
     forward: NotKwOnly[tx.Optional[Transformation]] = None
     """Transformation that the operator acts on."""
+
+    # --- properties ---------------------------------------------------
 
     # Endpoints are inferred from the forward, swapped if the operator reverses
     # direction; an endpoint declared on the wrapper takes precedence.
@@ -124,6 +130,8 @@ class Operation(Transformation):
         if forward is None:
             return None
         return forward.input if self._reverses else forward.output
+
+    # --- methods ------------------------------------------------------
 
     def compute(
         self,
@@ -195,6 +203,8 @@ class Operation(Transformation):
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
+
+    # --- helpers ------------------------------------------------------
 
     def _undo(self, compute: bool = False, **kwargs) -> Transformation:
         """Return the forward with the endpoints of the wrapper restored.

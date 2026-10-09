@@ -1,19 +1,20 @@
-"""Base classes that let a format sniff, read and write itself.
+"""Independent sniffing, reading and writing capabilities for file formats.
+
+Native format parsers compose readers and writers independently. Dispatchers
+have their own selection API and share only the private adapter mixins.
+Writers do not inherit reading or sniffing.
 
 The errors that these classes raise are also importable from here.
 """
 
 __all__ = [
     "Confidence",
-    "FileSniffer",
-    "FileParser",
-    "FileParserWriter",
-    "BinaryFileSniffer",
-    "BinaryFileParser",
-    "BinaryFileParserWriter",
-    "TextFileSniffer",
-    "TextFileParser",
-    "TextFileParserWriter",
+    "FileReader",
+    "FileWriter",
+    "BinaryFileReader",
+    "BinaryFileWriter",
+    "TextFileReader",
+    "TextFileWriter",
 ]
 
 from collections.abc import Iterable
@@ -75,14 +76,15 @@ class Confidence:
 # ----------------------------------------------------------------------
 
 
-class FileSniffer:
-    """Class that can sniff files to decide whether they are of its type.
+# ---- sniff -----------------------------------------------------------
 
-    Sniffing a file means inspecting its content and returning a confidence
-    score between 0 and 1. The `sniff*` methods form a chain in which each
-    method turns its input into a simpler form and passes it on, from a path
-    to an open file, then to content, and finally to [`sniff_bytes`][] or
-    [`sniff_line`][], which a concrete format overrides.
+
+class _FileSniffAdapters:
+    """Input adaptation for sniffing, with no format-selection policy.
+
+    Public sniffers and dispatchers share these adapters, but declare their
+    own contracts: a sniffer scores one format, a dispatcher selects a class.
+    A dispatcher's concrete subclasses use the adapters as fallbacks.
     """
 
     _READ_MODE: str = "r"
@@ -327,13 +329,16 @@ class FileSniffer:
         )
 
 
+# ---- from ------------------------------------------------------------
+
+
 def _passthrough_from_fileobj(func: tx.Callable) -> tx.Callable:
     """Mark a `from_fileobj` as a passthrough.
 
     A passthrough implementation does not read the stream itself. Instead, it
     ends up passing the whole stream to `from_bytes`, as the default
     implementation does, or as a mixin does when it only forwards the call to
-    `super()`. [`FileParser.from_bytes`][] never falls back to a passthrough,
+    `super()`. [`FileReader.from_bytes`][] never falls back to a passthrough,
     because the fallback would loop.
     """
     func._passthrough_from_fileobj = True
@@ -365,8 +370,8 @@ def _overrides_from_fileobj(cls: type) -> bool:
     return False
 
 
-class FileParser(FileSniffer):
-    """Class that can read files of its type."""
+class _FileReadAdapters:
+    """Reusable input adapters, independent of parsing and format selection."""
 
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
@@ -531,8 +536,19 @@ class FileParser(FileSniffer):
         )
 
 
-class FileParserWriter(FileParser):
-    """Class that can read and write files of its type."""
+class FileReader(_FileReadAdapters, _FileSniffAdapters):
+    """Read one format, with sniffing that returns a confidence score.
+
+    Format dispatchers independently use the adapter mixins; they do not
+    inherit this reader API.
+    """
+
+
+# ---- to --------------------------------------------------------------
+
+
+class FileWriter:
+    """Output adapters, independent of reading and sniffing."""
 
     _WRITE_MODE = "w"
 
@@ -634,7 +650,7 @@ class FileParserWriter(FileParser):
 # ----------------------------------------------------------------------
 
 
-class TextFileSniffer(FileSniffer):
+class _TextSniffAdapters(_FileSniffAdapters):
     """Class that can sniff text files for its type."""
 
     _READ_MODE: str = "rt"
@@ -699,7 +715,7 @@ def _not_text(
     return Confidence.NO
 
 
-class TextFileParser(TextFileSniffer, FileParser):
+class _TextReadAdapters(_FileReadAdapters):
     """Class that can read text files of its type."""
 
     @classmethod
@@ -712,8 +728,12 @@ class TextFileParser(TextFileSniffer, FileParser):
         return cls.from_text(content.decode(encoding), **kwargs)
 
 
-class TextFileParserWriter(TextFileParser, FileParserWriter):
-    """Class that can read and write text files of its type."""
+class TextFileReader(_TextReadAdapters, _TextSniffAdapters, FileReader):
+    """Read one text format and score its content."""
+
+
+class TextFileWriter(FileWriter):
+    """Output adapters for text, without any reading methods."""
 
     def to_bytes(self, **kwargs) -> bytes:
         """Return the text of the file, encoded.
@@ -729,19 +749,13 @@ class TextFileParserWriter(TextFileParser, FileParserWriter):
 # ----------------------------------------------------------------------
 
 
-class BinaryFileSniffer(FileSniffer):
-    """Class that can sniff binary files for its type."""
+class BinaryFileReader(FileReader):
+    """Class that can read binary files of its type."""
 
     _READ_MODE: str = "rb"
 
 
-class BinaryFileParser(BinaryFileSniffer, FileParser):
-    """Class that can read binary files of its type."""
-
-    ...
-
-
-class BinaryFileParserWriter(BinaryFileParser, FileParserWriter):
-    """Class that can read and write binary files of its type."""
+class BinaryFileWriter(FileWriter):
+    """Output adapters for binary files, without any reading methods."""
 
     _WRITE_MODE: str = "wb"

@@ -18,9 +18,9 @@ NF = [grid]? . F_1 . F_2 . ... . F_m . [Pi_perm]?
   positions `A_i` of its group, called its work positions. The work
   positions of different factors are disjoint, and the factors are ordered
   by their smallest position. The inner transformation of a factor is the
-  part of the chain that concerns its group, composed according to the `mode`
-  argument of [`factor_sequence`][]. A factor whose inner transformation
-  is the identity is dropped.
+  part of the chain that concerns its group, composed according to the
+  `compute` argument of [`factor_sequence`][]. A factor whose inner
+  transformation is the identity is dropped.
 - `Pi_perm` is a [`Permutation`][] that moves the work axes of each group to
   its data axes, that is, to the positions that the group occupies in the
   output of the chain. It is omitted when it is the identity.
@@ -75,9 +75,9 @@ if tx.TYPE_CHECKING:
 
 def factor_sequence(
     seq: "Sequence",
-    mode: "ModeLike" = True,
+    compute: "ModeLike" = False,
     *,
-    simplify: "SimplifyLike" = "analytic",
+    simplify: "SimplifyLike" = False,
     cache: tx.Optional["PatternCache"] = None,
 ) -> Transformation:
     """Rewrite a sequence into its axis-group normal form.
@@ -101,11 +101,16 @@ def factor_sequence(
     seq : Sequence
         Chain to factor. Nested sequences are flattened, and a leading
         [`CartesianField`][] is the sampling grid, kept as is.
-    mode : ModeLike, default=True
-        Kinds of transformation allowed to compose inside a group, as in
-        [`Sequence.compute`][].
-    simplify : SimplifyLike, default="analytic"
-        Simplification policy for composing the pieces of each group.
+    compute : ModeLike, default=False
+        Kinds of transformation that may be composed inside a group, with
+        the values accepted by the `mode` argument of
+        [`Sequence.compute`][]. The groups never depend on it: they are
+        found before it is read, and nothing is ever composed across them.
+        The default, `False`, composes nothing, so each factor holds the
+        sub-chain of its group, whereas `True` leaves each factor holding a
+        single transformation.
+    simplify : SimplifyLike, default=False
+        Simplification policy for the pieces of each group.
     cache : PatternCache, optional
         Cache of dependency patterns, shared across the rounds of one
         computation. A fresh cache is used if it is omitted.
@@ -126,9 +131,9 @@ def factor_sequence(
 
     Examples
     --------
-    A diagonal scaling followed by an axis swap gives one factor per scaled
-    axis and a trailing permutation. The last axis has a unit scale, so its
-    factor is dropped.
+    A diagonal scaling followed by an axis swap gives one factor per axis
+    and a trailing permutation. Each factor holds the sub-chain of its own
+    axis, because nothing is composed by default.
 
     ```pycon
     >>> import numpy as np
@@ -141,6 +146,19 @@ def factor_sequence(
     ...     Permutation(permutation=np.array([1, 0, 2])),
     ... ])
     >>> nf = factor_sequence(seq)
+    >>> grid, *body = nf.transformations
+    >>> [f.input_axes.tolist() for f in body[:-1]]
+    [[0], [1], [2]]
+    >>> type(body[-1]).__name__
+    'Permutation'
+    ```
+
+    With `compute=True`, each group is composed into a single
+    transformation, and the factor of the last axis, whose scale is one, is
+    dropped because its group composes to the identity.
+
+    ```pycon
+    >>> nf = factor_sequence(seq, compute=True)
     >>> grid, *body = nf.transformations
     >>> [type(t).__name__ for t in body]
     ['SubspaceTransformation', 'SubspaceTransformation', 'Permutation']
@@ -184,7 +202,7 @@ def factor_sequence(
         return seq
 
     try:
-        factors = _build_factors(groups, stages, mode, simplify)
+        factors = _build_factors(groups, stages, compute, simplify)
     except RestrictionError:
         # When an element cannot be cut into group pieces safely, the chain
         # is left unfactored rather than losing one of the pieces.
@@ -391,7 +409,8 @@ def _subspace_pattern(
         # axes, so input_axes[k] feeds output_axes[k] and the other axes pass
         # through in order. When the input and output axes differ, the
         # subspace is a reindexing, which every reader interprets the same
-        # way.
+        # way. The affine converter and both subspace composers have agreed
+        # on this interpretation since #110.
         inner_dep = np.eye(ko, dtype=bool)
     elif interpolates:
         inner_dep = np.ones((ko, ki), dtype=bool)
@@ -567,7 +586,7 @@ def _inner_is_identity(inner: tx.Optional[Transformation]) -> bool:
 def _build_factors(
     groups: tx.List[_Group],
     stages: tx.List[_Stage],
-    mode: "ModeLike",
+    compute: "ModeLike",
     simplify: "SimplifyLike",
 ) -> tx.Optional[tx.List[SubspaceTransformation]]:
     from ..sequence import Sequence
@@ -577,12 +596,12 @@ def _build_factors(
         sub = _restrict_group(group, stages)
         if not sub:
             continue
-        # The pieces are composed under the mode and the simplification
-        # policy of the caller, so a restricted transformation and its
-        # inverse cancel before anything else is composed.
+        # The pieces are composed under the kinds and the simplification
+        # policy that the caller admits, so a restricted transformation and
+        # its inverse cancel before anything else is composed.
         try:
             inner = Sequence(transformations=sub).compute(
-                mode, simplify=simplify, factor=False
+                compute, simplify=simplify, factor=False
             )
         except (ConversionError, CompositionError):
             # Factoring is an optimization, so returning the chain unchanged is

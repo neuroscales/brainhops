@@ -8,12 +8,12 @@ other array-based formats share the same parsers.
 
 The functions ([`read_text_array`][], [`read_npy`][], [`read_mat`][],
 ...) each parse one container. The parsers, one per container, derive
-from [`ArrayParser`][] and hand the array to `from_array`, which a
+from [`ArrayReader`][] and hand the array to `from_array`, which a
 format class implements. A format mixes in one parser per container,
 for example:
 
 ```python
-class NpyMatrixAffine(NpyArrayParser, MatrixAffine): ...
+class NpyMatrixAffine(NpyArrayReader, MatrixAffine): ...
 ```
 
 All readers take the whole content as bytes or lines, never a path, so
@@ -23,16 +23,16 @@ MATLAB cells and structs are skipped.
 
 __all__ = [
     "ArrayContainerError",
-    "ArrayParser",
-    "CsvArrayParser",
-    "Mat73ArrayParser",
-    "MatArrayParser",
-    "MatLegacyArrayParser",
-    "NpyArrayParser",
-    "NpzArrayParser",
-    "TextArrayParser",
-    "TsvArrayParser",
-    "TxtArrayParser",
+    "ArrayReader",
+    "CsvArrayReader",
+    "Mat73ArrayReader",
+    "MatArrayReader",
+    "MatLegacyArrayReader",
+    "NpyArrayReader",
+    "NpzArrayReader",
+    "TextArrayReader",
+    "TsvArrayReader",
+    "TxtArrayReader",
     "detect_container",
     "is_numeric_array",
     "read_mat",
@@ -56,13 +56,13 @@ from brainhops._core import path
 from brainhops._core.peek import peekable_lines
 from brainhops._core.streams import preserve_position
 from brainhops.io.base.parsers import (
-    BinaryFileParser,
+    BinaryFileReader,
     Confidence,
-    FileParser,
+    FileReader,
     ParserContentError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParser,
+    TextFileReader,
     _not_text,
 )
 
@@ -392,7 +392,7 @@ _Reader = tx.Callable[
 """A container reader, which returns one array or a mapping of named arrays."""
 
 
-class ArrayParser(FileParser):
+class ArrayReader(FileReader):
     """
     The abstract base of the readers of one generic array container.
 
@@ -553,7 +553,7 @@ class ArrayParser(FileParser):
         return score
 
 
-class TextArrayParser(ArrayParser, TextFileParser):
+class TextArrayReader(ArrayReader, TextFileReader):
     """
     The base of the readers of two-dimensional text arrays.
 
@@ -649,13 +649,13 @@ class TextArrayParser(ArrayParser, TextFileParser):
             raise ParserContentError(f"Not text: {e}") from e
 
 
-class TxtArrayParser(TextArrayParser):
+class TxtArrayReader(TextArrayReader):
     """
     The reader of whitespace-separated text arrays (`.txt`).
 
     This is the layout of `numpy.loadtxt` and `numpy.savetxt`, and also of
     AFNI `.1D` files and of the `.dat` files many tools write. Without a
-    matching file name, content that [`TsvArrayParser`][] reads is left to
+    matching file name, content that [`TsvArrayReader`][] reads is left to
     that reader.
     """
 
@@ -665,13 +665,13 @@ class TxtArrayParser(TextArrayParser):
 
     @classmethod
     def _has_signature(cls, lines: tx.List[str]) -> bool:
-        tsv = TsvArrayParser
+        tsv = TsvArrayReader
         return not (
             tsv._has_signature(lines) and _reads(lines, tsv.SEPARATORS)
         )
 
 
-class CsvArrayParser(TextArrayParser):
+class CsvArrayReader(TextArrayReader):
     """
     The reader of comma-separated text arrays (`.csv`).
 
@@ -687,7 +687,7 @@ class CsvArrayParser(TextArrayParser):
         return any("," in line for line in lines)
 
 
-class TsvArrayParser(TextArrayParser):
+class TsvArrayReader(TextArrayReader):
     """
     The reader of tab-separated text arrays (`.tsv`).
 
@@ -703,7 +703,7 @@ class TsvArrayParser(TextArrayParser):
         return any("\t" in line for line in lines)
 
 
-class _BinaryArrayParser(ArrayParser, BinaryFileParser):
+class _BinaryArrayReader(ArrayReader, BinaryFileReader):
     """An array container that is never text."""
 
     @classmethod
@@ -722,7 +722,7 @@ class _BinaryArrayParser(ArrayParser, BinaryFileParser):
         )
 
 
-class NpyArrayParser(_BinaryArrayParser):
+class NpyArrayReader(_BinaryArrayReader):
     """The reader of the single array of a `.npy` file."""
 
     CONTAINER: tx.ClassVar[str] = "npy"
@@ -744,7 +744,7 @@ class NpyArrayParser(_BinaryArrayParser):
         return cls.from_array(array, key=name, **kwargs)
 
 
-class NpzArrayParser(_BinaryArrayParser):
+class NpzArrayReader(_BinaryArrayReader):
     """The reader of one array of a `.npz` file, selected by `key`."""
 
     CONTAINER: tx.ClassVar[str] = "npz"
@@ -766,13 +766,13 @@ class NpzArrayParser(_BinaryArrayParser):
         return cls.from_array(array, key=name, **kwargs)
 
 
-class MatArrayParser(_BinaryArrayParser):
+class MatArrayReader(_BinaryArrayReader):
     """
     The reader of one variable of a MATLAB `.mat` file of any version.
 
     Two unrelated containers hide behind the extension:
-    [`MatLegacyArrayParser`][] reads versions 4 to 7 and
-    [`Mat73ArrayParser`][] reads version 7.3, an HDF5 file. This class
+    [`MatLegacyArrayReader`][] reads versions 4 to 7 and
+    [`Mat73ArrayReader`][] reads version 7.3, an HDF5 file. This class
     dispatches between its [`VARIANTS`][]: `sniff_bytes` returns their best
     score, and `from_bytes` reads with the variant whose container matches.
 
@@ -806,7 +806,7 @@ class MatArrayParser(_BinaryArrayParser):
         return (v73 if is_v73 else legacy).from_bytes(content, **kwargs)
 
 
-class MatLegacyArrayParser(MatArrayParser):
+class MatLegacyArrayReader(MatArrayReader):
     """
     The reader of one variable of a MATLAB v4 to v7 `.mat` file.
 
@@ -831,7 +831,7 @@ class MatLegacyArrayParser(MatArrayParser):
         return cls.from_array(array, key=name, **kwargs)
 
 
-class Mat73ArrayParser(MatArrayParser):
+class Mat73ArrayReader(MatArrayReader):
     """
     The reader of one variable of a MATLAB v7.3 `.mat` file, with h5py.
 
@@ -856,7 +856,7 @@ class Mat73ArrayParser(MatArrayParser):
         return cls.from_array(array, key=name, **kwargs)
 
 
-MatArrayParser.VARIANTS = (MatLegacyArrayParser, Mat73ArrayParser)
+MatArrayReader.VARIANTS = (MatLegacyArrayReader, Mat73ArrayReader)
 
 
 # ----------------------------------------------------------------------

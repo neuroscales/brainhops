@@ -56,6 +56,8 @@ class Transformation(
         transformations.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
@@ -99,6 +101,8 @@ class Transformation(
             if (value := arguments.get(name)) is not None:
                 setattr(self, name, value)
 
+    # --- attributes ---------------------------------------------------
+
     # The input and output systems are stored under private names, so that
     # `replace()` carries over the systems given to the constructor rather
     # than the values that the `input` and `output` properties report. A
@@ -117,6 +121,8 @@ class Transformation(
 
     input = smartproperty("input")
     output = smartproperty("output")
+
+    # --- methods ------------------------------------------------------
 
     def compute(
         self,
@@ -192,6 +198,51 @@ class Transformation(
             The simplified transformation.
         """
         return self.compute(compute, simplify=policy)
+
+    def factor(
+        self,
+        *,
+        compute: tx.Union[ModeLike, bool, None] = False,
+        simplify: SimplifyLike = False,
+    ) -> "Transformation":
+        """Rewrite the transformation as one factor per group of axes.
+
+        The axes of a transformation often fall into groups that never
+        interact, as with a diagonal matrix, whose axes each scale on their
+        own. Factoring finds those groups and gives each one a factor that
+        acts on its axes alone, which lets a resampler work group by group
+        rather than over the whole grid. The transformation is factored as
+        a chain of one element, so a diagonal affine splits into one factor
+        per axis. See [`Sequence.factor`][] for the normal form that the
+        pass produces and for what is left unfactored.
+
+        Parameters
+        ----------
+        compute : ModeLike or bool or None, default=False
+            Kinds of transformation that may be composed inside a group,
+            with the values accepted by the `mode` argument of
+            [`compute`][]. It decides nothing about what is factored, and
+            the default composes nothing.
+        simplify : SimplifyLike, default=False
+            How hard to simplify the pieces of each group, with the values
+            accepted by the `simplify` argument of [`compute`][].
+
+        Returns
+        -------
+        Transformation
+            The factored transformation, or `self` when it does not factor.
+        """
+        # The sequence owns the pass, and it never asks its elements to
+        # factor themselves, so this call does not recurse.
+        factored = nocycles.SEQUENCE([self]).factor(
+            compute=compute, simplify=simplify
+        )
+        leaves = getattr(factored, "transformations", None) or ()
+        if len(leaves) == 1 and leaves[0] is self:
+            # The chain of one did not factor, so the wrapper is dropped
+            # rather than handed back as a chain of one element.
+            return self
+        return factored
 
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         """Return the inverse of the transformation.
@@ -355,6 +406,8 @@ class Transformation(
         """
         return type(self)
 
+    # --- kind checks --------------------------------------------------
+
     def is_kind(
         self, kind: tx.Type[kinds.Kind], compute: bool = False
     ) -> bool:
@@ -454,6 +507,8 @@ class Transformation(
         [`kinds.Affine`][brainhops.datamodel.kinds.Affine] or the identity.
         """
         return self.is_kind(kinds.Affine, compute)
+
+    # --- operators ----------------------------------------------------
 
     @tx.overload
     def __call__(

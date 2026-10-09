@@ -1,8 +1,7 @@
 """Readers and writers for image file formats."""
 
 __all__ = [
-    "FileBasedImage",
-    "WritableFileBasedImage",
+    "ImageFormat",
     "afni",
     "base",
     "load",
@@ -22,7 +21,7 @@ from brainhops._core.dependencies import (
 from brainhops.io.base._dispatch import register_missing_format
 
 from . import afni, base, mrtrix, nrrd
-from .base import FileBasedImage, WritableFileBasedImage, load, sniff
+from .base import ImageFormat, load, sniff
 
 # Formats register themselves when their module is imported, and the
 # registry only knows imported classes, so every available format is

@@ -1,21 +1,23 @@
-__all__ = ["FileBasedTransformation", "WritableFileBasedTransformation"]
+__all__ = ["TransformationFormat"]
 
-from brainhops.datamodel.transformations import Transformation
+from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base._base import (
-    FileBasedObject,
-    WritableFileBasedObject,
+    Format,
     _FileBasedModelMixin,
     format_registry,
 )
 
-from ._formats import TransformationFormat
-
 
 @format_registry
-class FileBasedTransformation(
-    _FileBasedModelMixin, TransformationFormat, Transformation, FileBasedObject
+class TransformationFormat(
+    _FileBasedModelMixin,
+    DataModelBase,
+    Format,
+    reverse=True,
+    eq=False,
+    kw_only=True,
 ):
-    """Base class of transformations that are stored in files.
+    """Format dispatcher and common base for stored transformations.
 
     Loading a file through this class selects the concrete format that
     matches the file and delegates the reading to it. A reader of a concrete
@@ -24,9 +26,4 @@ class FileBasedTransformation(
     select that reader.
     """
 
-
-@format_registry
-class WritableFileBasedTransformation(
-    FileBasedTransformation, WritableFileBasedObject
-):
-    """File-based transformation that can also be written."""
+    HINTS = ("xform",)

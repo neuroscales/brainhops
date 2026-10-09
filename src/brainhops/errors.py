@@ -4,6 +4,9 @@ if tx.TYPE_CHECKING:
     from .datamodel._transformations.base import Transformation
 
 
+# --- transformations --------------------------------------------------
+
+
 class AdaptationError(TypeError):
     """A coordinate system cannot be adapted to another.
 
@@ -72,12 +75,34 @@ class LossyConversionError(ConversionError):
         self.result = result
 
 
+class IncompatibleSystemError(ConversionError):
+    """Error raised when a class refuses the endpoint it is given.
+
+    Some classes are bound to coordinate systems. For example,
+    `VoxelToRAS` maps voxel coordinates to RAS millimetres. Such a class
+    accepts only endpoints that are compatible with its systems, and
+    raises this error for any other endpoint. Building
+    `VoxelToRAS(input=LPSmm())` raises it, and so does
+    `t.to(VoxelToRAS)` when `t` maps between LPS spaces.
+
+    The error is a [`ConversionError`][] because `t.to(VoxelToRAS)`
+    rebuilds `t` as the bound class, and that conversion cannot be made
+    without changing what `t` means.
+    """
+
+
+# --- IO helpers --------------------------------------------------------
+
+
 class AxisError(ValueError):
     """A list of axes cannot be read as a vector field.
 
     The axes of a vector field must include exactly one vector axis, whose
     type is `displacement` or `coordinate`. The other axes are grid axes.
     """
+
+
+# ---- sniff -----------------------------------------------------------
 
 
 class SnifferError(Exception):
@@ -108,6 +133,9 @@ class SnifferNotImplementedError(SnifferError, NotImplementedError):
     """A sniffer function is not implemented."""
 
     pass
+
+
+# ---- from ------------------------------------------------------------
 
 
 class ParserError(Exception):
@@ -152,6 +180,9 @@ class AmbiguousFormatError(ParserError):
     """
 
     pass
+
+
+# ---- to ------------------------------------------------------------
 
 
 class WriterError(ParserError):

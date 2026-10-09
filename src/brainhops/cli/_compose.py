@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 
+import typing_extensions as tx
+
 from ._errors import CliError
 
 
@@ -48,7 +50,7 @@ def add_parser(
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
+def run(args: argparse.Namespace) -> tx.NoReturn:
     """Run the `compose` command, which raises a [`CliError`][]."""
     raise CliError(
         "'brainhops compose' is not implemented yet. It depends on a "

@@ -30,6 +30,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
     grid.
     """
 
+    # --- attributes ---------------------------------------------------
+
     scales: NotKwOnly[tx.List[SINGLE_SCALE]] = ()
     """Scales, from finest to coarsest."""
 
@@ -43,6 +45,8 @@ class Multiscale(DataModelBase, tx.Generic[SINGLE_SCALE]):
         # Return the finest scale, or `None` if there are no scales.
         scales = self.scales
         return scales[0] if scales else None
+
+    # --- methods ------------------------------------------------------
 
     def to_singlescale(self, index: int = 0) -> SINGLE_SCALE:
         """Return the scale at `index`, where 0 is the finest.
@@ -86,6 +90,8 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     supports no item assignment, insertion or deletion.
     """
 
+    # --- attributes ---------------------------------------------------
+
     scales: NotKwOnly[tx.List[Sequence]] = ()
     """Scales, from finest to coarsest.
 
@@ -122,6 +128,8 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
     input = smartproperty("input")
     output = smartproperty("output")
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -147,6 +155,18 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             output=self.input,
         )
 
+    def flatten(self, endpoints: bool = True) -> Sequence:
+        """Return the finest scale, flattened, as a plain sequence.
+
+        A multiscale field behaves as its finest scale, so a field spliced
+        into a surrounding chain contributes the elements of that scale.
+        """
+        # A multiscale field spliced into a surrounding sequence contributes
+        # the elements of its finest scale.
+        return self._finest.flatten(endpoints)
+
+    # --- helpers ------------------------------------------------------
+
     def _as_sequence(self) -> Sequence:
         # Return the finest scale as a plain sequence that carries the
         # endpoints of the container. The simplifier works on this sequence,
@@ -157,11 +177,6 @@ class MultiscaleField(Multiscale[Sequence], ImmutableSequence):
             input=self.input,
             output=self.output,
         )
-
-    def _flattened(self) -> Sequence:
-        # A multiscale field spliced into a surrounding sequence contributes
-        # the elements of its finest scale.
-        return self._finest._flattened()
 
     def _level_resolution(self, index: int) -> tx.Optional[ArrayProtocol]:
         # The resolution of a scale is read from its leading world-to-voxel

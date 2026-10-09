@@ -1,4 +1,4 @@
-__all__ = ["X5Transform", "X5TransformParser"]
+__all__ = ["X5Transform", "X5TransformReaderWriter"]
 
 from warnings import warn
 
@@ -14,8 +14,8 @@ from brainhops.io.base.parsers import (
     ParserContentError,
     SnifferContentError,
 )
-from brainhops.io.common.hdf5 import Hdf5ParserWriter
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.common.hdf5 import Hdf5ReaderWriter
+from brainhops.io.transformations.base import TransformationFormat
 
 from ._blocks import node_to_transformation, transformation_to_nodes
 from ._struct import (
@@ -28,9 +28,9 @@ from ._struct import (
 )
 
 
-class X5TransformParser(
+class X5TransformReaderWriter(
     Magic,
-    Hdf5ParserWriter,
+    Hdf5ReaderWriter,
     repr=HIDE_IF_NONE,
 ):
     """A parser that reads and writes the raw content of a BIDS X5 file."""
@@ -56,6 +56,8 @@ class X5TransformParser(
     file: tx.Optional[h5py.File] = None
     """The open HDF5 file, when it was read with `keep_open=True`."""
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_h5(
         cls,
@@ -70,6 +72,8 @@ class X5TransformParser(
                 error = SnifferContentError
             raise error("HDF5 file is not an X5 file: no Format='X5'.")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_h5(
@@ -125,6 +129,8 @@ class X5TransformParser(
             **kwargs,
         )
 
+    # --- to -----------------------------------------------------------
+
     def _h5_writer(self, **kwargs) -> tx.Callable[[h5py.File], None]:
         header, nodes = self.to_struct()
         return lambda h5file: write_x5(h5file, header, nodes)
@@ -148,9 +154,9 @@ class X5TransformParser(
 
 @register_format
 class X5Transform(
-    X5TransformParser,
+    X5TransformReaderWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 ):
     """A transformation stored in a BIDS X5 (`.x5`) file.
 
@@ -182,6 +188,8 @@ class X5Transform(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".x5",)
     HINTS = ("x5", "bids")
+
+    # --- chain --------------------------------------------------------
 
     @property
     def selection(self) -> tx.Tuple[int, ...]:
@@ -235,6 +243,8 @@ class X5Transform(
         decoded chain, and the assigned chain is what the writer encodes.
         """
         return tuple(self.node_transformation(i) for i in self.selection)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self) -> tx.Tuple[X5Header, tx.List[X5Node]]:
         """Return the header and nodes that encode this transformation.

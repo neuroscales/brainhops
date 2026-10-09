@@ -82,6 +82,9 @@ class InvalidatorInMethod(Invalidator):
         return method()
 
 
+# --- lazyproperty -----------------------------------------------------
+
+
 @tx.overload
 def lazyproperty(fget: _Getter) -> property: ...
 
@@ -133,6 +136,9 @@ def lazyproperty(
 
 def lazyproperty(fget=None, doc=None, unset=None):
     return smartproperty(fget, fset=False, cache=True, doc=doc, unset=unset)
+
+
+# --- smartproperty ----------------------------------------------------
 
 
 @tx.overload
@@ -369,6 +375,9 @@ def _make_fset_settable_cacheable(name: str) -> _Setter:
     return fset
 
 
+# --- invalidates ------------------------------------------------------
+
+
 def _wrap_fset_invalidator(
     fset: _Setter, invalidates: tx.Tuple[str]
 ) -> _Setter:
@@ -392,6 +401,9 @@ def _wrap_fset_invalidator(
 
     fset_invalidator.__name__ = fset.__name__
     return fset_invalidator
+
+
+# --- smartsetter ------------------------------------------------------
 
 
 @tx.overload
@@ -446,6 +458,9 @@ def smartsetter(fset):
 def _smartsetter(name: str, fset: _Setter) -> property:
     fget = _make_fget_settable(name, None, _is_none)
     return property(fget, fset, None, fset.__doc__)
+
+
+# --- unset ------------------------------------------------------------
 
 
 def _unset_predicate(unset: UnsetLike) -> _IsUnset:

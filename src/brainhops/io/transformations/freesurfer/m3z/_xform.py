@@ -1,4 +1,4 @@
-__all__ = ["M3zFormat", "M3zParser", "M3zMorph"]
+__all__ = ["M3zFormat", "M3zReaderWriter", "M3zMorph"]
 
 import zlib
 
@@ -13,13 +13,14 @@ from brainhops.datamodel import transformations as _xforms
 from brainhops.datamodel.enums import BoundaryCondition, InterpolationOrder
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     UnrepresentableTransformationError,
     WriterError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
 from brainhops.io.transformations.base.fields import (
     RASCoordinatesField,
@@ -49,9 +50,10 @@ class M3zFormat(FreesurferTransformationFormat):
     HINTS = ("m3z",)
 
 
-class M3zParser(
+class M3zReaderWriter(
     Magic,
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     repr=HIDE_IF_NONE,
     eq=False,
 ):
@@ -65,6 +67,8 @@ class M3zParser(
 
     See [`M3zStruct`][].
     """
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -105,6 +109,8 @@ class M3zParser(
             raise error("Not a FreeSurfer morph (m3z) file.")
         return Confidence.NO
 
+    # --- from ---------------------------------------------------------
+
     @classmethod
     def from_bytes(cls, content: bytes, **kwargs) -> tx.Self:
         """Build a parser from the bytes of a `.m3z` or `.m3d` file."""
@@ -114,6 +120,8 @@ class M3zParser(
     def from_struct(cls, struct: M3zStruct, **kwargs) -> tx.Self:
         """Build a parser from the raw content of a morph."""
         return cls(struct=struct, **kwargs)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self, **kwargs) -> M3zStruct:
         """Return the raw content that encodes this object."""
@@ -146,9 +154,9 @@ class M3zParser(
 @register_format
 class M3zMorph(
     M3zFormat,
-    M3zParser,
+    M3zReaderWriter,
     _xforms.ImmutableSequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 ):
     """Non-linear transformation stored in a FreeSurfer morph.
 
@@ -183,6 +191,8 @@ class M3zMorph(
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".m3z", ".m3d")
+
+    # --- chain --------------------------------------------------------
 
     @property
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
@@ -227,6 +237,8 @@ class M3zMorph(
             _xforms.CoordinatesField(input=voxel, output=voxel, **options),
             VoxelToRAS(matrix=struct.image_geometry.vox2ras[:3]),
         )
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(
         self,

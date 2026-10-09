@@ -17,7 +17,8 @@ from brainhops.backends import get_array_backend
 from brainhops.datamodel.base import DataModelBase
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserExistsError,
     SnifferContentError,
@@ -56,12 +57,14 @@ from ._utils import (
 _MghObject = tx.Union[_mgh.MGHHeader, _mgh.MGHImage]
 
 
-class MghParser(DataModelBase, FreesurferFormat, BinaryFileParserWriter):
+class MghReaderWriter(
+    DataModelBase, FreesurferFormat, BinaryFileReader, BinaryFileWriter
+):
     """
     The base class of objects encoded as MGH or MGZ files.
 
-    As in [`NiftiParser`][brainhops.io.common.nifti.NiftiParser], the
-    object holds a nibabel image or header, together with the raw
+    As in [`NiftiReaderWriter`][brainhops.io.common.nifti.NiftiReaderWriter],
+    the object holds a nibabel image or header, together with the raw
     `goodRASFlag` and the trailing tags. It exposes the voxels, their
     coordinate system, and the voxel-to-RAS matrices that FreeSurfer
     derives from the header.

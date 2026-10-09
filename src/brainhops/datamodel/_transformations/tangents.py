@@ -102,10 +102,14 @@ class StationaryVelocityField(
         flow.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _tangentof: tx.ClassVar[tx.Type[Transformation]] = DisplacementField
 
     _base_metadata_fields: _FieldNames = DisplacementField.metadata_fields
     metadata_fields: _FieldNames = (*_base_metadata_fields, "steps")
+
+    # --- attributes ---------------------------------------------------
 
     _steps: tx.Optional[int] = None
     """Number of squaring steps.
@@ -124,7 +128,11 @@ class StationaryVelocityField(
             )
         super().__post_init__(arguments)
 
+    # --- attribute views ----------------------------------------------
+
     steps = _invalidating_property("steps")
+
+    # --- views --------------------------------------------------------
 
     @property
     def _compute_steps(self) -> tx.Optional[int]:
@@ -150,6 +158,8 @@ class StationaryVelocityField(
         """
         flags = self.store, self.degree, self.bound
         return _integrate_field(self.data, *flags, self._compute_steps)
+
+    # --- methods ------------------------------------------------------
 
     def sqrt(self, compute: bool = False, **kwargs) -> Transformation:
         # Half the velocity needs one squaring fewer. A number of steps that
@@ -192,6 +202,8 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
     negative real axis.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _tangentof: tx.ClassVar[tx.Type[Transformation]] = Affine
 
     derived_fields: _FieldNames = (
@@ -200,14 +212,20 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
         "homogeneous_logmatrix",
     )
 
+    # --- attributes ---------------------------------------------------
+
     _logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Logarithm of the matrix, an init-only alias of `data`."""
 
     _homogeneous_logmatrix: InitVar[tx.Optional[npmatrix[Real]]] = None
     """Homogeneous form of the logarithm, of shape `(No+1, Ni+1)`."""
 
+    # --- attribute views ----------------------------------------------
+
     data = _invalidating_property("data")
     log = _invalidating_property("log", fset=False)
+
+    # --- views --------------------------------------------------------
 
     logmatrix = _alias("logmatrix", "data")
 
@@ -366,6 +384,9 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
             what = f"The logarithm of this {self._tangentof.__name__}"
             require_positive(value, what)
             self.logscale = get_array_backend(value).log(value)
+
+
+# --- helpers ----------------------------------------------------------
 
 
 _FIRST_STEP = 0.125

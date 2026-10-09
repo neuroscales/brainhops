@@ -166,20 +166,44 @@ class TransformationSpec(SourceSpec, frozen=True):
     def register_operation(
         cls, name: str
     ) -> tx.Callable[[tx.Type[OperationSpec]], tx.Type[OperationSpec]]:
-        """Register an operation under `name` for this class and subclasses."""
+        """Register an operation under `name` for this class and subclasses.
+
+        Each class keeps its own registry, which is created the first
+        time an operation is registered on that class. An operation
+        registered on a subclass is therefore not recognised by its
+        parent classes or by its sibling classes.
+        """
 
         def decorator(
             operation: tx.Type[OperationSpec],
         ) -> tx.Type[OperationSpec]:
+            if "_OPERATIONS" not in vars(cls):
+                cls._OPERATIONS = {}
             cls._OPERATIONS[name.lower()] = operation
             return operation
 
         return decorator
 
     @classmethod
+    def _lookup_operation(
+        cls, name: str
+    ) -> tx.Optional[tx.Type[OperationSpec]]:
+        """Return the operation registered under `name`, or `None`.
+
+        The registries are searched along the method resolution order,
+        so an operation registered on a class takes precedence over an
+        operation of the same name registered on one of its parents.
+        """
+        for klass in cls.__mro__:
+            registry = vars(klass).get("_OPERATIONS")
+            if registry is not None and name in registry:
+                return registry[name]
+        return None
+
+    @classmethod
     def _parse_operation(cls, segment: str) -> tx.Optional[OperationSpec]:
         name = segment.split(":", 1)[0].lower()
-        operation = cls._OPERATIONS.get(name)
+        operation = cls._lookup_operation(name)
         return operation.from_arg(segment) if operation else None
 
     def apply_operations(self, value: tx.Any) -> tx.Any:

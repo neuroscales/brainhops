@@ -167,10 +167,11 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     """Return the base name of the file that `other` names, or `None`.
 
     The name is taken from the text of the path without touching storage,
-    because `os.fspath` raises on remote paths and downloads cloud paths. For a
-    URL, the name is the last segment of its path, without query or fragment;
-    for an fsspec chain such as `simplecache::s3://...`, it comes from the last
-    link.
+    because `os.fspath` raises on remote paths and downloads cloud paths.
+    For a URL, the name is the last segment of its path, without query or
+    fragment, so `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an
+    fsspec chain such as `simplecache::s3://...`, the name comes from the
+    last link.
     """
     # TODO: move to brainhops._core.path, and rename, since it returns a
     # base name rather than a file name.
@@ -250,7 +251,7 @@ def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
 def _registry_depth(cls: type) -> int:
     """Count the dispatcher levels above a format.
 
-    A format registered under `FileBasedImage` is classified more finely than
+    A format registered under `ImageFormat` is classified more finely than
     one registered only under the root, and therefore wins a tie. Only the
     ancestors that own a registry are counted, rather than all ancestors,
     because the depth of the class hierarchy says nothing about how well a
@@ -505,6 +506,7 @@ def parse(
     if ok:
         return result
 
+    # --- Brute force ---------------------------------------------------
     if brute:
         for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
@@ -513,6 +515,7 @@ def parse(
             if ok:
                 return result
 
+    # --- Failure) Raise -----------------------------------------------
     raise _failure(source, list(allowed), errors)
 
 

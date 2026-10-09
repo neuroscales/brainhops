@@ -266,11 +266,15 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
     raises a ValueError when it is given an order.
     """
 
+    # --- construction -------------------------------------------------
+
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         # Each subclass declares its own default for `axes`, and `axes=None`
         # must be read as that default.
         bind_axes_default(cls)
+
+    # --- validation ---------------------------------------------------
 
     def __post_init__(self) -> None:
         if self.axes is None:
@@ -290,6 +294,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
                 f"which the order selects whenever the axes allow one."
             )
 
+    # --- properties ---------------------------------------------------
+
     @property
     def ndim(self) -> tx.Optional[int]:
         """The number of axes, or `None` for an open system.
@@ -305,6 +311,8 @@ class CoordinateSystem(DataModelBase, polymorphic=True):
             ```
         """
         return self.axes.ndim
+
+    # --- operations ---------------------------------------------------
 
     def expand(self, ndim: int) -> tx.Self:
         """Return the closed system of `ndim` axes that this system describes.
@@ -538,6 +546,8 @@ class PhysicalCoordinateSystem(CoordinateSystem):
 #   ARRAY COORDINATE SYSTEMS
 # ----------------------------------------------------------------------
 
+# --- factories --------------------------------------------------------
+
 
 def _index_axis(i: int) -> Axis:
     return Axis(f"dim{i}", unit=_INDEX)
@@ -560,6 +570,9 @@ class _AxesFactory(Factory):
 class _ArrayAxesFactory(_AxesFactory):
     def __init__(self, ndim: int) -> None:
         super().__init__(ndim, _index_axis)
+
+
+# --- API --------------------------------------------------------------
 
 
 class ArrayCoordinateSystem(CoordinateSystem):

@@ -22,14 +22,15 @@ from brainhops.datamodel.transformations import (
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     ParserContentError,
     ParserExistsError,
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.tiff import _utils as backend
 
@@ -551,6 +552,8 @@ class _TiffMixin:
             backend.TiffSource(content=bytes(content)), **kwargs
         )
 
+    # --- writing ------------------------------------------------------
+
     def to_fileobj(self, file: tx.IO, **kwargs) -> None:
         """Write the image to an open binary file.
 
@@ -612,6 +615,8 @@ class _TiffMixin:
 
     def _writer(self, **kwargs) -> tx.Callable[[tx.Any], None]:
         raise NotImplementedError  # pragma: no cover
+
+    # --- writing helpers ----------------------------------------------
 
     def _level_storage(
         self,
@@ -863,8 +868,9 @@ def _wrap_write(function: tx.Callable[[], None]) -> None:
 @register_format
 class TiffImage(
     _TiffMixin,
-    BinaryFileParserWriter,
-    WritableFileBasedImage,
+    BinaryFileReader,
+    BinaryFileWriter,
+    ImageFormat,
     SingleScaleImage,
 ):
     """One image of a TIFF file, read and written with tifffile.
@@ -878,6 +884,8 @@ class TiffImage(
     read on first access, and the
     metadata attributes are written back on save as far as they still apply.
     """
+
+    # --- format-specific metadata -------------------------------------
 
     dialect: tx.Annotated[
         tx.Optional[str],
@@ -948,6 +956,8 @@ class TiffImage(
         data, _ = raster.to_canonical(raw, self.storage_axes)
         return data
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_fileobj(
         cls,
@@ -964,6 +974,8 @@ class TiffImage(
         if cls._sniff_head(file, error):
             return Confidence.LIKELY
         return Confidence.NO
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_source(
@@ -1052,6 +1064,8 @@ class TiffImage(
         image._read_options = (mmap, lazy)
         image._ome_index = metadata.ome_index
         return image
+
+    # --- save ---------------------------------------------------------
 
     def _writer(
         self,

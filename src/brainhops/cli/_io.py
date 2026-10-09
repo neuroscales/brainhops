@@ -10,6 +10,7 @@ import typing_extensions as tx
 
 from brainhops import io
 from brainhops.datamodel.images import Image
+from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import ImageSpec, TransformationSpec, format_hints
 from brainhops.io.base.parsers import AmbiguousFormatError, WriterError
 
@@ -18,10 +19,10 @@ from ._errors import CliError, WritingUnavailable
 
 def _image_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
     """Map each image format hint to the registered image formats."""
-    from brainhops.io.images.base import FileBasedImage
+    from brainhops.io.images.base import ImageFormat
 
     result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedImage, "_REGISTRY", set()):
+    for fmt in getattr(ImageFormat, "_REGISTRY", set()):
         for hint in format_hints(fmt):
             result.setdefault(hint, set()).add(fmt)
     return result
@@ -68,10 +69,10 @@ def load_image(source: tx.Union[str, ImageSpec]) -> Image:
 
 def _transform_formats_by_hint() -> tx.Dict[str, tx.Set[type]]:
     """Map each transformation format hint to the registered formats."""
-    from brainhops.io.transformations.base import FileBasedTransformation
+    from brainhops.io.transformations.base import TransformationFormat
 
     result: tx.Dict[str, tx.Set[type]] = {}
-    for fmt in getattr(FileBasedTransformation, "_REGISTRY", set()):
+    for fmt in getattr(TransformationFormat, "_REGISTRY", set()):
         for hint in format_hints(fmt):
             result.setdefault(hint, set()).add(fmt)
     return result
@@ -85,7 +86,7 @@ def transform_format_hints() -> tx.Set[str]:
 def load_transform(
     source: tx.Union[str, TransformationSpec],
     hint: tx.Optional[tx.Union[str, tx.Iterable[str]]] = None,
-) -> tx.Any:
+) -> Transformation:
     """Read a transformation from a path or a source specification.
 
     The format is detected from the file unless format hints are supplied,

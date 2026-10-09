@@ -134,6 +134,25 @@ def test_default_axes() -> None:
     assert axes[-1].type == "channel"
 
 
+@pytest.mark.parametrize("ndim", [1, 4, 5, 6, 7, 8])
+def test_default_axes_channel_names_are_unique(ndim: int) -> None:
+    # From six dimensions on, the channel axis `c` used to appear
+    # twice.
+    axes = raster.default_axes(ndim, channel=True)
+    names = [a.name for a in axes]
+    assert len(names) == ndim
+    assert len(set(names)) == ndim
+    assert names[-1] == "c"
+    assert [a.type for a in axes].count("channel") == 1
+
+
+def test_default_axes_channel_names() -> None:
+    names = [a.name for a in raster.default_axes(7, channel=True)]
+    assert names == ["x", "y", "z", "t", "dim4", "dim5", "c"]
+    names = [a.name for a in raster.default_axes(7)]
+    assert names == ["x", "y", "z", "t", "c", "dim5", "dim6"]
+
+
 def test_image_axes() -> None:
     axes = raster.default_axes(2)
     system = CoordinateSystem(axes=axes)

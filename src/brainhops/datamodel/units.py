@@ -5,11 +5,12 @@ A [`Unit`][] is created from a name, for example `Unit("mm")` or
 interned: any two spellings of the same unit, such as `"mm"` and
 `"millimeter"`, produce the same object.
 
-Names are parsed by a private pint registry, which adds index units
-(`index`, `voxel` and `pixel`), the arbitrary unit (`a.u.`) and the
-Hounsfield unit (`HU`) to pint's defaults. The registry is built the first
-time a name needs pint, not when brainhops is imported. Pint types appear
-only through [`Unit.to_pint`][] and [`Unit.from_pint`][].
+Names are parsed by a private [pint](https://pint.readthedocs.io)
+registry, which adds index units (`index`, `voxel` and `pixel`), the
+arbitrary unit (`a.u.`) and the Hounsfield unit (`HU`) to pint's defaults.
+The registry is built the first time a name needs pint, not when brainhops
+is imported. Pint types appear only through [`Unit.to_pint`][] and
+[`Unit.from_pint`][].
 
 ## Units restricted to a dimension
 

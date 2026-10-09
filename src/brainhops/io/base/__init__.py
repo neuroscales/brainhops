@@ -1,12 +1,7 @@
 """Format-independent machinery shared by every kind of file-based object."""
 
 __all__ = [
-    "FileBasedObject",
-    "WritableFileBasedObject",
-    "TextFileBasedObject",
-    "BinaryFileBasedObject",
-    "WritableTextFileBasedObject",
-    "WritableBinaryFileBasedObject",
+    "Format",
     "format_registry",
     "load",
     "save",
@@ -25,12 +20,7 @@ __all__ = [
 
 from . import parsers
 from ._base import (
-    BinaryFileBasedObject,
-    FileBasedObject,
-    TextFileBasedObject,
-    WritableBinaryFileBasedObject,
-    WritableFileBasedObject,
-    WritableTextFileBasedObject,
+    Format,
     format_registry,
     register_format,
 )

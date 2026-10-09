@@ -1,5 +1,18 @@
 """Format-independent affine transformations between the standard voxel,
 RAS and LPS coordinate systems.
+
+Each class is bound to the coordinate systems that its name states, and
+it checks, when it is built, that its endpoints are compatible with
+those systems. The names of the axes are not compared. An endpoint with
+fewer axes than the system is compared with the first axes of the
+system, because the world of a 2-D image is made of the first two axes
+of RAS or LPS. An endpoint that is not known, or whose axes are not
+known, is accepted.
+
+The check means that a transformation between other systems cannot be
+given one of these classes while keeping its parameters. For example,
+`Scaling(input=LPSmm(), output=LPSmm()).to(VoxelToRAS)` raises an
+[`IncompatibleSystemError`][brainhops.errors.IncompatibleSystemError].
 """
 
 import typing_extensions as tx
@@ -7,6 +20,8 @@ from bagof.magic import KwOnly
 
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel.axes import Axis
+from brainhops.errors import IncompatibleSystemError
 
 
 class VoxelToRAS(_xforms.Affine):
@@ -16,6 +31,11 @@ class VoxelToRAS(_xforms.Affine):
         _systems.VoxelCoordinateSystem()
     )
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _RAS)
 
 
 class RASToVoxel(_xforms.Affine):
@@ -31,6 +51,11 @@ class RASToVoxel(_xforms.Affine):
     # second, links the two classes both ways.
     _reverseof: tx.ClassVar[type] = VoxelToRAS
 
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _VOXEL)
+
 
 class VoxelToLPS(_xforms.Affine):
     """Affine transformation from voxel coordinates to LPS millimetres."""
@@ -39,6 +64,11 @@ class VoxelToLPS(_xforms.Affine):
         _systems.VoxelCoordinateSystem()
     )
     _output: KwOnly[_systems.CoordinateSystem] = _systems.LPSmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _VOXEL)
+        _check_endpoint(self, "output", _LPS)
 
 
 class LPSToVoxel(_xforms.Affine):
@@ -50,6 +80,11 @@ class LPSToVoxel(_xforms.Affine):
     )
 
     _reverseof: tx.ClassVar[type] = VoxelToLPS
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _LPS)
+        _check_endpoint(self, "output", _VOXEL)
 
 
 class RASToRAS(_xforms.Affine):
@@ -65,3 +100,90 @@ class RASToRAS(_xforms.Affine):
 
     _input: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
     _output: KwOnly[_systems.CoordinateSystem] = _systems.RASmm()
+
+    def __post_init__(self, arguments: tx.Any) -> None:
+        super().__post_init__(arguments)
+        _check_endpoint(self, "input", _RAS)
+        _check_endpoint(self, "output", _RAS)
+
+
+# ----------------------------------------------------------------------
+#   HELPERS
+# ----------------------------------------------------------------------
+
+_VOXEL = _systems.VoxelCoordinateSystem()
+"""The voxels of a grid."""
+
+_RAS = _systems.RASmm()
+"""The RAS world, in millimetres."""
+
+_LPS = _systems.LPSmm()
+"""The LPS world, in millimetres."""
+
+
+def _check_endpoint(
+    t: _xforms.Transformation, name: str, expected: _systems.CoordinateSystem
+) -> None:
+    """
+    Refuse an endpoint of `t` that cannot be the system its class names.
+
+    The endpoint must be compatible with `expected`, in the sense of
+    [`CoordinateSystem.compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with],
+    with two allowances. First, the names of the axes are not compared,
+    because a name only labels an axis. For example, `RASmm` calls its
+    axes `x`, `y` and `z`, whereas `RASCoordinateSystem` calls them by
+    their orientation. Second, a system with fewer axes is compared with
+    the first axes of `expected`, because the world of a 2-D image is
+    made of the first two axes of RAS or LPS.
+
+    Parameters
+    ----------
+    t : Transformation
+        The transformation whose endpoint is checked.
+    name : str
+        The endpoint to check, either `"input"` or `"output"`.
+    expected : CoordinateSystem
+        The system that the class of `t` is bound to on that side.
+
+    Raises
+    ------
+    IncompatibleSystemError
+        If the endpoint is not compatible with `expected`.
+    """
+    system = getattr(t, name)
+    if _compatible(system, expected):
+        return
+    raise IncompatibleSystemError(
+        f"The {name} of a {type(t).__name__} is the {expected.name} "
+        f"system, and {system!r} is not compatible with it. A "
+        f"transformation between other systems is not relabelled as a "
+        f"{type(t).__name__}: bridge its systems first, or keep it as a "
+        f"plain transformation."
+    )
+
+
+def _compatible(
+    system: tx.Optional[_systems.CoordinateSystem],
+    expected: _systems.CoordinateSystem,
+) -> bool:
+    if system is None:
+        return True
+    axes = [axis if axis is ... else _unnamed(axis) for axis in system.axes]
+    wanted = [_unnamed(axis) for axis in expected.axes]
+    if all(axis is not ... for axis in axes):
+        wanted = wanted[: len(axes)]
+    wanted = _systems.CoordinateSystem(axes=wanted)
+    return wanted.compatible_with(_systems.CoordinateSystem(axes=axes))
+
+
+def _unnamed(axis: Axis) -> Axis:
+    # Rebuild the axis without its name. An anatomical axis cannot be
+    # left unnamed, so it takes the name of its orientation, and every
+    # axis with that orientation that is rebuilt here takes the same
+    # name.
+    return Axis(
+        type=axis.type,
+        unit=axis.unit,
+        discrete=axis.discrete,
+        orientation=axis.orientation,
+    )

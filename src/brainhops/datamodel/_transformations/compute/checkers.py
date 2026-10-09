@@ -87,6 +87,7 @@ def identity_from(field: str) -> tx.Callable:
 #
 # ======================================================================
 
+# --- Identity ---------------------------------------------------------
 # The identity map belongs to every set of the hierarchy, so these checkers
 # answer for many more sets than their own node. For example, a Scaling without
 # parameters is a translation, and a displacement field of zeros is affine.
@@ -172,6 +173,8 @@ def _(query: CartesianField, kind: IdentityType, compute: bool) -> bool:
     return bool(compute)
 
 
+# --- Translation ------------------------------------------------------
+
 TranslationType = tx.Type[kinds.Translation]
 
 
@@ -197,6 +200,8 @@ def _(query: DisplacementField, kind: TranslationType, compute: bool) -> bool:
         return bool((field == field[first]).all())
     return False
 
+
+# --- Scaling ----------------------------------------------------------
 
 ScaleType = tx.Type[kinds.Diagonal]
 
@@ -338,6 +343,8 @@ for _node in _DIAGONAL_FACTS:
 del _node, _src
 
 
+# --- Permutation ------------------------------------------------------
+
 PermType = tx.Type[kinds.Permutation]
 
 
@@ -406,6 +413,8 @@ def _(query: Permutation, kind: OddPermType, compute: bool) -> bool:
     )
 
 
+# --- Rotation ---------------------------------------------------------
+
 RotType = tx.Type[kinds.SpecialOrthogonal]
 
 
@@ -442,6 +451,8 @@ def _(query: Affine, kind: RotType, compute: bool) -> bool:
         return is_orthogonal and is_posdef
     return False
 
+
+# --- Linear ---------------------------------------------------------
 
 LinType = tx.Type[kinds.Linear]
 
@@ -679,6 +690,7 @@ def _matrix_injective(t: Transformation, kind: type, compute: bool) -> bool:
     return _matrix_rank(linear) == ni
 
 
+# --- The linear part of an affine -------------------------------------
 # An Affine whose translation column is zero equals its linear part, so it
 # belongs to exactly the sets that its linear part belongs to. Without this
 # rule, an Affine could be recognized only in the sets that have an Affine
@@ -710,6 +722,7 @@ for _node in kinds.all_sets():
 del _node
 
 
+# --- Shape-established facts ------------------------------------------
 # Invertibility, injectivity and surjectivity are presumed from the shape of
 # the matrix at the analytic level, and the rank confirms or retracts the
 # presumption at the numeric level. For each matrix class, only the invertible

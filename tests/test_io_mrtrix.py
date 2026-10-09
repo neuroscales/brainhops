@@ -16,9 +16,10 @@ import brainhops.io as io
 from brainhops.datamodel.images import SingleScaleImage
 from brainhops.datamodel.systems import CoordinateSystem
 from brainhops.datamodel.transformations import Affine
-from brainhops.io.base import FileBasedObject, WritableFileBasedObject
+from brainhops.io.base import Format
 from brainhops.io.base.parsers import (
     Confidence,
+    FileWriter,
     ParserContentError,
     ParserError,
 )
@@ -28,7 +29,7 @@ from brainhops.io.common.mrtrix._codecs import (
     mrtrix_dtype,
     parse_layout,
 )
-from brainhops.io.images import FileBasedImage, WritableFileBasedImage
+from brainhops.io.images import ImageFormat
 from brainhops.io.images.mrtrix import MrtrixImage
 
 # ----------------------------------------------------------------------
@@ -424,10 +425,9 @@ def test_other_content_is_not_mrtrix() -> None:
 
 
 def test_the_format_is_registered() -> None:
-    assert MrtrixImage in FileBasedObject._REGISTRY
-    assert MrtrixImage in FileBasedImage._REGISTRY
-    assert MrtrixImage in WritableFileBasedObject._REGISTRY
-    assert MrtrixImage in WritableFileBasedImage._REGISTRY
+    assert MrtrixImage in Format._REGISTRY
+    assert MrtrixImage in ImageFormat._REGISTRY
+    assert issubclass(MrtrixImage, FileWriter)
 
 
 # ----------------------------------------------------------------------

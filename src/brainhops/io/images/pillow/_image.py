@@ -9,12 +9,13 @@ from brainhops.datamodel.images import SingleScaleImage
 from brainhops.io.base._base import register_format
 from brainhops.io.base._dispatch import _to_filename
 from brainhops.io.base.parsers import (
-    BinaryFileParserWriter,
+    BinaryFileReader,
+    BinaryFileWriter,
     Confidence,
     SnifferContentError,
     WriterError,
 )
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.base import _utils_raster as raster
 from brainhops.io.images.pillow._utils import (
     EXTENSIONS,
@@ -54,7 +55,10 @@ def _dpi_pair(dpi: tx.Any) -> tx.Tuple[float, float]:
 
 @register_format
 class PillowImage(
-    BinaryFileParserWriter, WritableFileBasedImage, SingleScaleImage
+    BinaryFileReader,
+    BinaryFileWriter,
+    ImageFormat,
+    SingleScaleImage,
 ):
     """A two-dimensional raster image, read and written with Pillow.
 
@@ -68,6 +72,8 @@ class PillowImage(
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = EXTENSIONS
     HINTS = ("pillow",)
+
+    # --- format-specific metadata -------------------------------------
 
     image_format: tx.Annotated[
         tx.Optional[str],
@@ -99,6 +105,8 @@ class PillowImage(
         tx.Optional[int],
         tx.Doc("The number of frames in the file."),
     ] = None
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -132,6 +140,8 @@ class PillowImage(
     ) -> float:
         """Return the confidence that bytes hold an image that Pillow reads."""
         return cls.sniff_fileobj(BytesIO(content), error=error, **kwargs)
+
+    # --- load ---------------------------------------------------------
 
     @classmethod
     def from_fileobj(
@@ -221,6 +231,8 @@ class PillowImage(
         The options are those of `from_fileobj`.
         """
         return cls.from_fileobj(BytesIO(content), **kwargs)
+
+    # --- save ---------------------------------------------------------
 
     def _storage(
         self,

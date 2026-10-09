@@ -2,6 +2,7 @@ import numpy as np
 import typing_extensions as tx
 
 from brainhops._core.magic import replace, stores
+from brainhops._core.typing import ArrayProtocol
 from brainhops.backends import get_array_backend
 from brainhops.datamodel._sugar import get_axes
 from brainhops.errors import (
@@ -21,6 +22,7 @@ from ..concrete import (
     Permutation,
     Rotation,
     Scaling,
+    TransformationField,
     Translation,
     _is_tangent,
     _values2data,
@@ -517,14 +519,47 @@ def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
     # The coordinates are the identity grid plus the displacement, expressed
     # in the spline encoding of `t`. Because spline fitting is linear, the
     # encoded grid can be added to the encoded data without decoding either.
+    # This is exact as data, but not as a map outside the grid, nor near its
+    # border for degree 3 (#313).
     flags = dict(store=t.store, degree=t.degree, bound=t.bound)
     data = t.data
-    if data is None:
-        return cls(input=t.input, output=t.output, **flags)
+    if data is not None:
+        data = data + _encoded_grid(t)
+    u = cls(data=data, input=t.input, output=t.output, **flags)
+    # Requested flags (`store="values"`) re-encode the result within its type.
+    return convert(u, cls, **kwargs) if kwargs else u
+
+
+@converter
+def _(t: CoordinatesField, cls: tx.Type[DISP], **kwargs) -> DISP:
+    # The displacement is the coordinates minus the grid, in the encoding of
+    # `t`: the inverse of the converter above, with the same caveat (#313).
+    flags = dict(store=t.store, degree=t.degree, bound=t.bound)
+    data = t.data
+    if data is not None:
+        data = data - _encoded_grid(t)
+    u = cls(data=data, input=t.input, output=t.output, **flags)
+    # Requested flags (`store="values"`) re-encode the result within its type.
+    return convert(u, cls, **kwargs) if kwargs else u
+
+
+@converter
+def _(t: CoordinatesField, cls: tx.Type[SVF], **kwargs) -> SVF:
+    # Coordinates minus the grid are a displacement, not a velocity.
+    raise ConversionError(
+        f"A {type(t).__name__} converts to a DisplacementField, not to a "
+        f"StationaryVelocityField: coordinates minus the grid are a "
+        f"displacement, whose logarithm brainhops does not compute."
+    )
+
+
+def _encoded_grid(t: TransformationField) -> ArrayProtocol:
+    """Return the identity grid of the nodes of `t`, encoded like its data."""
+    data = t.data
     ba = get_array_backend(data)
     grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
-    grid = _values2data(ba.stack(grid, axis=-1).astype(data.dtype), **flags)
-    return cls(data=data + grid, input=t.input, output=t.output, **flags)
+    grid = ba.stack(grid, axis=-1).astype(data.dtype)
+    return _values2data(grid, t.store, t.degree, t.bound)
 
 
 # ----------------------------------------------------------------------

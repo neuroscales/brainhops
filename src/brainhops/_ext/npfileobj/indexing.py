@@ -160,7 +160,7 @@ def is_fullslice(index, shape, do_neg2pos=True):
             index = neg2pos(index, shape)
         return index == 0 and shape == 1
     elif isinstance(index, oob_slice):
-        return oob_slice.newaxis
+        return index.newaxis
     else:
         index = expand_index(index, shape)
         # `None` consumes no dimension.
@@ -353,14 +353,17 @@ def expand_index(
     positive, so that the result contains only `None`, integers, slices and
     [`oob_slice`][] objects. Unlike `nibabel.fileslice.canonical_slicers`,
     the function rejects floating-point indices and keeps negative steps.
-    Zero-dimensional integer arrays and tensors are accepted as integers.
+    Zero-dimensional integer arrays are accepted as integers, and so are
+    zero-dimensional integer tensors when PyTorch is installed. PyTorch is
+    not required.
 
     Raises
     ------
     TypeError
-        If an element of `index` is not a supported index.
+        If an element of `index` is not a supported index, which includes
+        arrays that are not scalars.
     ValueError
-        If `index` contains more than one ellipsis or a non-scalar array.
+        If `index` contains more than one ellipsis.
     IndexError
         If an integer index is out of bounds.
     """
@@ -368,8 +371,10 @@ def expand_index(
     shape = list(shape)
     nb_dim = len(shape)
 
-    def is_int(elem: _tx.Any) -> bool:
-        if torch.is_tensor(elem):
+    def is_int(elem: object) -> bool:
+        # PyTorch is optional, so tensors are only checked when it is
+        # installed.
+        if torch is not None and torch.is_tensor(elem):
             return elem.dtype in (torch.int32, torch.int64) and not elem.shape
         elif np and isinstance(elem, np.ndarray):
             return elem.dtype in (np.int32, np.int64) and not elem.shape
@@ -414,15 +419,11 @@ def expand_index(
             nb_dim_in.append(-1)
             nb_dim_out.append(-1)
         elif is_int(ind):
-            ind = torch.as_tensor(ind, dtype=torch.int64)
-            if ind.dim() > 0:
-                raise ValueError(
-                    "Integer indices should be scalars "
-                    f"Got array with shape {ind.shape}."
-                )
+            # `is_int` accepts only scalars, which `operator.index`
+            # converts to a Python integer without PyTorch.
             nb_dim_in.append(1)
-            nb_dim_out.append(ind.dim())
-            index[n_ind] = ind.item()
+            nb_dim_out.append(0)
+            index[n_ind] = operator.index(ind)
         else:
             raise TypeError(
                 "Indices should be integers, slices "
@@ -533,6 +534,7 @@ def compose_index(
                 continue
             if isinstance(c, oob_slice):
                 new_parent.append(oob_slice(newaxis=True))
+                continue
             raise AssertionError(f"p is None and c is {c}")
 
         if isinstance(p, oob_slice):
@@ -592,6 +594,7 @@ def compose_index(
                 continue
             if isinstance(c, oob_slice):
                 new_parent.append(c)
+                continue
             raise AssertionError(f"p is slice and c is {c}")
 
     while child:

@@ -3,9 +3,10 @@ Conversion of a bare matrix into an affine transformation.
 
 The conventions stated by the caller are applied in this order: a row-vector
 matrix is transposed, the matrix is completed to homogeneous form, an inverse
-matrix is inverted, 1-based voxel indices are shifted to 0-based ones, and a
-voxel endpoint that comes with an image is mapped to the world space of that
-image.
+matrix is inverted, 1-based voxel indices are shifted to the 0-based indices
+of the data model, and a voxel endpoint that comes with an image is mapped to
+the world space of that image. In the 0-based indices of the data model, an
+integer index is the centre of a voxel (see #201).
 """
 
 import numpy as np
@@ -272,6 +273,7 @@ def to_affine(
     in_system = make_system(input, n)
     out_system = make_system(output, n)
 
+    # --- 1-based voxel indices -> 0-based ---------------------------
     in_base, out_base = check_index_base(index_base)
     scalar = not isinstance(index_base, (tuple, list))
     in_index, out_index = map(is_index_system, (in_system, out_system))
@@ -298,6 +300,7 @@ def to_affine(
     if out_base:
         homog = _shift(n, -1.0) @ homog
 
+    # --- voxel endpoints -> image world spaces -----------------------
     for image, end in ((source, "input"), (target, "output")):
         if image is None:
             continue

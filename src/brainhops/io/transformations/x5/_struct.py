@@ -283,6 +283,7 @@ def _read_domain(group: h5py.Group) -> X5Domain:
     return domain
 
 
+# --- fslpy's earlier layout -------------------------------------------
 # The earlier fslpy layout (Version 0.1.0) holds a single transform: a root
 # Type attribute (linear or nonlinear), a /Transform group with a Matrix
 # dataset, and the image spaces /A and /B. A deformation also stores its grid

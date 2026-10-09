@@ -16,7 +16,7 @@ from brainhops.datamodel.transformations import (
 )
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._constants import (
     _NIFTI_FIELD_INTENTS,
     _NIFTI_INTENT_NONE,
@@ -30,20 +30,20 @@ from brainhops.io.common.nifti._header import (
     _NiftiObject,
 )
 from brainhops.io.common.nifti._units import nifti_to_unit
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 
 
 @register_format
-class NiftiImage(NiftiParser, WritableFileBasedImage, SingleScaleImage):
+class NiftiImage(NiftiReaderWriter, ImageFormat, SingleScaleImage):
     """An image stored in a NIfTI file.
 
     !!! note "Why the bases are in this order"
-        `SingleScaleImage.data` has no default, while [`NiftiParser`][]
+        `SingleScaleImage.data` has no default, while [`NiftiReaderWriter`][]
         contributes the defaulted fields `image` and `_header`. Fields are
         collected in reverse method resolution order, so
         [`SingleScaleImage`][] must come last; otherwise `data` would
         follow a defaulted field and `bagof` would reject the signature.
-        Leading with [`NiftiParser`][] also lets its lazy `data` and
+        Leading with [`NiftiReaderWriter`][] also lets its lazy `data` and
         `system` properties, which are read from the nibabel image on
         demand, take precedence over plain fields.
     """
@@ -172,6 +172,8 @@ def _nifti_to_transformations(
 
     xforms = []
 
+    # --- preliminaries ------------------------------------------------
+
     axes = _nifti_to_axes(header)
     # Units go through the single NIfTI-to-brainhops converter, which reads
     # an unknown spatial unit as millimeters and leaves an unknown time
@@ -191,6 +193,8 @@ def _nifti_to_transformations(
         for i, axis in enumerate(axes)
         if axis.name is not None and axis.type == "space"
     ]
+
+    # --- coordinate systems -------------------------------------------
 
     named_axes = [axis for axis in axes if axis.name is not None]
 
@@ -230,6 +234,7 @@ def _nifti_to_transformations(
     ]
     ras_space = CoordinateSystem(name="RAS", axes=ras_axes)
 
+    # --- voxel-to-physical --------------------------------------------
     vox2phys = Scaling(input=voxel_space, output=phys_space, scale=zooms)
     xforms.append(vox2phys)
 
@@ -314,6 +319,7 @@ def _nifti_to_transformations(
             )
         return Sequence(transformations=steps, input=voxel_space, output=world)
 
+    # --- qform --------------------------------------------------------
     # get_qform and get_sform return None for a form whose code is 0, and
     # only one of the two forms is required.
     qmatrix, qcode = header.get_qform(coded=True)
@@ -323,6 +329,7 @@ def _nifti_to_transformations(
         qform = _coded_affine(qmatrix, "qform")
         xforms.append(qform)
 
+    # --- sform --------------------------------------------------------
     smatrix, scode = header.get_sform(coded=True)
     sform = None
     if smatrix is not None:
@@ -330,6 +337,7 @@ def _nifti_to_transformations(
         sform = _coded_affine(smatrix, "sform")
         xforms.append(sform)
 
+    # --- named & best affines -----------------------------------------
     # The last transformation must be nibabel's best affine, named after
     # its code. It is rebuilt under that name rather than renamed, so that
     # the world space is named consistently in every step of a sequence.

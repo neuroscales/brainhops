@@ -1,6 +1,7 @@
 """Tests for NRRD images (.nrrd, and .nhdr with data files).
 
-Headers are written by hand from the specification, and the data is encoded
+Headers are written by hand from the specification
+(https://teem.sourceforge.net/nrrd/format.html), and the data is encoded
 independently of the writer. pynrrd cross-checks both directions when it is
 installed.
 """
@@ -22,7 +23,7 @@ from brainhops.io.base.parsers import (
 )
 from brainhops.io.common.nrrd import NrrdHeader
 from brainhops.io.common.nrrd._codecs import dtype_to_nrrd, nrrd_dtype
-from brainhops.io.images import FileBasedImage
+from brainhops.io.images import ImageFormat
 from brainhops.io.images.nrrd import (
     AttachedNrrdImage,
     DetachedNrrdImage,
@@ -432,7 +433,7 @@ def test_sniff_and_hints(lps_file, tmp_path) -> None:  # noqa: ANN001
     name, _ = lps_file
     assert AttachedNrrdImage.sniff(name) == Confidence.LIKELY
     assert DetachedNrrdImage.sniff(name) == Confidence.NO
-    assert FileBasedImage.sniff(name) is AttachedNrrdImage
+    assert ImageFormat.sniff(name) is AttachedNrrdImage
     assert isinstance(io.load(name, hint="nrrd"), AttachedNrrdImage)
     # The content decides, not the name.
     renamed = tmp_path / "renamed.bin"

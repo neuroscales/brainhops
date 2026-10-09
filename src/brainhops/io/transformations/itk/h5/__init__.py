@@ -71,7 +71,7 @@ them `TranformParameters` and `TranformFixedParameters`, and both
 spellings are read.
 """
 
-__all__ = ["H5Transform", "H5Header", "H5TransformParser", "DelayedH5Array"]
+__all__ = ["H5Transform", "H5Header", "H5TransformReader", "DelayedH5Array"]
 
-from ._parser import DelayedH5Array, H5Header, H5TransformParser
+from ._parser import DelayedH5Array, H5Header, H5TransformReader
 from ._xform import H5Transform

@@ -17,9 +17,9 @@ from brainhops.datamodel.systems import AxisList, CoordinateSystem
 from brainhops.datamodel.transformations import Transformation
 from brainhops.io.base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.zarr import StoreLike, ZarrParserWriter
+from brainhops.io.common.zarr import StoreLike, ZarrReaderWriter
 from brainhops.io.common.zarr._parsers import _as_node
-from brainhops.io.images.base import WritableFileBasedImage
+from brainhops.io.images.base import ImageFormat
 from brainhops.io.images.zarr import _axisorder
 from brainhops.io.transformations.zarr import _map
 
@@ -60,7 +60,7 @@ class OmeZarrLevel(ZarrImage):
 
 
 @register_format
-class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
+class OmeZarrImage(ZarrReaderWriter, ImageFormat, MultiScaleImage):
     """Multiscale image backed by an OME-Zarr pyramid.
 
     Each level is a single-scale image placed by the coordinate
@@ -71,6 +71,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
     """
 
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".zarr", ".ome.zarr")
+
+    # ---- attributes --------------------------------------------------
 
     _axes: tx.Annotated[
         tx.Optional[AxisList[tx.Union[Axis, _Ellipsis]]],
@@ -89,6 +91,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         tx.Optional[Multiscale],
         tx.Doc("The OME multiscale metadata, normalized to 0.6."),
     ] = None
+
+    # ---- properties --------------------------------------------------
 
     @property
     def node(self) -> ZarrGroup:
@@ -134,6 +138,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         # list is empty when the levels sit directly in world space.
         return list(self._layout["commons"])
 
+    # ---- load --------------------------------------------------------
+
     @classmethod
     def from_node(cls, node: tx.Any, **kwargs) -> tx.Self:
         """Read a pyramid from an opened Zarr group.
@@ -144,6 +150,8 @@ class OmeZarrImage(ZarrParserWriter, WritableFileBasedImage, MultiScaleImage):
         image = super().from_node(node, **kwargs)
         _ = image._layout
         return image
+
+    # ---- workers  ----------------------------------------------------
 
     @smartproperty(cache=True, fset=False)
     def _layout(self) -> tx.Dict[str, tx.Any]:

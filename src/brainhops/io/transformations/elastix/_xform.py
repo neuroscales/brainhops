@@ -22,10 +22,11 @@ from brainhops.io.base.parsers import (
     ParserExistsError,
     ParserNotImplementedError,
     SnifferContentError,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.itk._common import ItkStruct
 
 from ._blocks import fixed_geometry, map_to_block, transformation_to_map
@@ -44,12 +45,12 @@ from ._parser import (
 _NO_INITIAL = "NoInitialTransform"
 
 
-# `TextFileParserWriter` bridges bytes and text, so it must precede
-# `WritableFileBasedTransformation`, whose writer knows no encoding.
+# Text adapters supply byte decoding and encoding before the generic bases.
 class ElastixTransform(
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     _xforms.Sequence,
-    WritableFileBasedTransformation,
+    TransformationFormat,
     repr=HIDE_IF_NONE,
     reverse=False,  # keep `transformations` the first positional field
 ):
@@ -90,6 +91,8 @@ class ElastixTransform(
     `initial` when reading is kept here as it is.
     """
 
+    # --- syntax -------------------------------------------------------
+
     @classmethod
     def _read_map(cls, lines: tx.Iterable[str]) -> ParameterMap:
         raise NotImplementedError
@@ -97,6 +100,8 @@ class ElastixTransform(
     @classmethod
     def _format_map(cls, pmap: ParameterMap) -> tx.Iterator[str]:
         raise NotImplementedError
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_lines(
@@ -132,6 +137,8 @@ class ElastixTransform(
     ) -> float:
         """Score the text of a file, as in [`sniff_lines`][]."""
         return cls.sniff_lines(text.splitlines(), error=error, **kwargs)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_fileobj(cls, file: tx.IO, **kwargs) -> tx.Self:
@@ -238,6 +245,8 @@ class ElastixTransform(
         obj.block  # noqa: B018
         return obj
 
+    # --- chain --------------------------------------------------------
+
     @property
     def initial_filename(self) -> tx.Optional[str]:
         """The file name of the initial transform, if the map names one."""
@@ -278,6 +287,8 @@ class ElastixTransform(
         `Direction`, and its transformation maps voxels to LPS millimetres.
         """
         return fixed_geometry(self.parameter_map)
+
+    # --- to -----------------------------------------------------------
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.

@@ -149,6 +149,8 @@ class DataModelBase(
             return cls(other, *args, **kwargs)
 
 
+# --- helpers ----------------------------------------------------------
+
 # The source has no value for the field.
 _ABSENT = object()
 
@@ -337,6 +339,7 @@ def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
         )
 
 
+# --- Converter --------------------------------------------------------
 # The converter lets fields that are data models be set from mappings or
 # compatible instances.
 

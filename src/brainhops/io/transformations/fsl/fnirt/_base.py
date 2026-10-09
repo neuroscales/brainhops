@@ -9,7 +9,7 @@ from brainhops.datamodel.enums import StoreEnum
 from brainhops.datamodel.images import Image
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence, WriterError
-from brainhops.io.common.nifti import NiftiParser
+from brainhops.io.common.nifti import NiftiReaderWriter
 from brainhops.io.common.nifti._header import (
     _apply_like,
     _apply_overrides,
@@ -17,7 +17,7 @@ from brainhops.io.common.nifti._header import (
     _nifti_vector_field,
     _NiftiObject,
 )
-from brainhops.io.transformations.base import WritableFileBasedTransformation
+from brainhops.io.transformations.base import TransformationFormat
 from brainhops.io.transformations.base.fields import voxel_grid_coordinates
 
 from .._affines import _ImageGeometry
@@ -60,7 +60,7 @@ _SPLINE_DEGREE = {
 _ImageLike = tx.Union[_NiftiObject, Image]
 
 
-class _WritableNifti(WritableFileBasedTransformation, NiftiParser):
+class _WritableNifti(TransformationFormat, NiftiReaderWriter):
     """
     A transformation read from or written to a NIfTI file.
 
@@ -141,7 +141,8 @@ class FnirtWarpField(
             return Confidence.CERTAIN
         return Confidence.NO
 
-    # `NiftiParser.from_file` forwards keyword arguments to `nibabel.load`,
+    # --- image keyword handling ---------------------------------------
+    # `NiftiReaderWriter.from_file` forwards keywords to `nibabel.load`,
     # which rejects `moving=` and `reference=`, so these are set after parsing.
 
     @classmethod
@@ -221,6 +222,8 @@ class FnirtWarpField(
         return StoreEnum.from_coefficients(
             _nifti_intent(self.header) in _COEFFICIENT_INTENTS
         )
+
+    # --- intent-driven behaviour --------------------------------------
 
     def _intent(self) -> tx.Optional[int]:
         if self.header is None:
@@ -343,6 +346,8 @@ class FnirtWarpField(
             'deformation_type must be "absolute", "relative" or None, '
             f"not {deformation_type!r}."
         )
+
+    # --- the chain ----------------------------------------------------
 
     def _resolvable(self) -> bool:
         if self.header is None or self.moving is None:

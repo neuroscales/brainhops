@@ -12,8 +12,8 @@ from brainhops._core import path
 from brainhops.datamodel.base import DataModelBase
 from brainhops.io.base.parsers import (
     Confidence,
-    FileParser,
-    FileParserWriter,
+    FileReader,
+    FileWriter,
     ParserExistsError,
     ParserTypeError,
     WriterError,
@@ -23,7 +23,7 @@ from brainhops.io.base.parsers import (
 StoreLike = tx.Union[str, path.PathLike, tx.Any]
 
 
-class ZarrParser(DataModelBase, FileParser):
+class ZarrReader(DataModelBase, FileReader):
     """Base class for parsers that read a Zarr store.
 
     A concrete parser lists this class before its file-based bases and
@@ -120,7 +120,7 @@ class ZarrParser(DataModelBase, FileParser):
         """Read an object from a Zarr store location.
 
         The keyword arguments `mode` and `driver` are passed to `abczarr.open`,
-        and the remaining ones to [`from_node`][ZarrParser.from_node].
+        and the remaining ones to [`from_node`][ZarrReader.from_node].
 
         Raises
         ------
@@ -171,33 +171,52 @@ class ZarrParser(DataModelBase, FileParser):
         raise NotImplementedError
 
 
-class ZarrParserWriter(ZarrParser, FileParserWriter):
+class ZarrReaderWriter(ZarrReader, FileWriter):
     def to_node(self, node: tx.Any, **kwargs) -> ZarrNode:
         """Copy the stored object into an opened Zarr array or group.
 
-        The parser must hold a node. A native object is wrapped first. Despite
-        the annotation, the method returns `None`.
+        The parser must hold a node. A native object is wrapped first,
+        and the method returns the wrapped node that was written into.
 
         Raises
         ------
         WriterError
-            If `node` is a path or cannot be wrapped.
+            If the parser holds no node, or if `node` is a path or
+            cannot be wrapped.
         """
+        source = self._node_to_write()
         wrapped = _as_node(node)
         if wrapped is None:
             raise WriterError(
                 "to_node expects an opened Zarr array or group; "
                 "pass a store path to to_store instead."
             )
-        self.node.store_path.copy(wrapped.store_path)
+        source.store_path.copy(wrapped.store_path)
+        return wrapped
 
     def to_store(self, location: StoreLike, **kwargs) -> None:
         """Copy the stored object to a Zarr store location.
 
-        Nothing is written when the parser holds no node.
+        Raises
+        ------
+        WriterError
+            If the parser holds no node.
         """
-        if self.node is not None:
-            self.node.store_path.copy(location)
+        self._node_to_write().store_path.copy(location)
+
+    def _node_to_write(self) -> ZarrNode:
+        """Return the node that the writers copy.
+
+        Raises
+        ------
+        WriterError
+            If the parser holds no node.
+        """
+        if self.node is None:
+            raise WriterError(
+                "This parser holds no Zarr node, so there is nothing to write."
+            )
+        return self.node
 
     def to_file(self, file: path.FileLike, **kwargs) -> None:
         if isinstance(file, str):

@@ -14,7 +14,7 @@ import pytest
 nb = pytest.importorskip("nibabel")
 
 import brainhops.io as io  # noqa: E402
-from brainhops.io.common.nifti import NiftiParser  # noqa: E402
+from brainhops.io.common.nifti import NiftiReaderWriter  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
 
@@ -117,14 +117,14 @@ def test_the_nifti_sniffer_declines_a_non_nifti_quietly(
     name: str,
 ) -> None:
     data = make(tmp_path, name).read_bytes()
-    assert not _no_warnings(NiftiParser.sniff_bytes, data)
+    assert not _no_warnings(NiftiReaderWriter.sniff_bytes, data)
 
 
 def test_a_header_sized_without_magic_is_declined() -> None:
     header = bytearray(nb.Nifti1Header().binaryblock)
     header[344:348] = b"xxx\0"
-    assert not NiftiParser.sniff_bytes(bytes(header))
-    assert not NiftiParser.sniff_bytes(gzip.compress(bytes(header)))
+    assert not NiftiReaderWriter.sniff_bytes(bytes(header))
+    assert not NiftiReaderWriter.sniff_bytes(gzip.compress(bytes(header)))
 
 
 # ----------------------------------------------------------------------
@@ -148,7 +148,7 @@ def test_a_nifti_is_still_sniffed_and_loaded(
 ) -> None:
     file = tmp_path / name
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert NiftiParser.sniff_bytes(file.read_bytes())
+    assert NiftiReaderWriter.sniff_bytes(file.read_bytes())
     image = _no_warnings(io.images.load, file)
     np.testing.assert_array_equal(np.asarray(image.data), _volume())
 
@@ -158,7 +158,7 @@ def test_the_header_of_a_pair_is_sniffed(tmp_path: Path, cls: type) -> None:
     """The .hdr file of a pair carries the ni1 or ni2 magic."""
     file = tmp_path / "x.hdr"
     nb.save(cls(_volume(), np.eye(4)), str(file))
-    assert _no_warnings(NiftiParser.sniff_bytes, file.read_bytes())
+    assert _no_warnings(NiftiReaderWriter.sniff_bytes, file.read_bytes())
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -168,4 +168,4 @@ def test_the_magic_is_found_in_either_byte_order(
 ) -> None:
     cls = {1: nb.Nifti1Header, 2: nb.Nifti2Header}[version]
     header = cls(endianness=order)
-    assert NiftiParser.sniff_bytes(header.binaryblock)
+    assert NiftiReaderWriter.sniff_bytes(header.binaryblock)

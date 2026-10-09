@@ -1,4 +1,5 @@
-r"""TIFF images, read and written with tifffile.
+r"""TIFF images, read and written with
+[tifffile](https://github.com/cgohlke/tifffile).
 
 This module handles plain TIFF, BigTIFF, OME-TIFF, ImageJ hyperstacks and
 pyramidal TIFF, and needs the `tiff` extra (see [Without

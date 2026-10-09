@@ -1,11 +1,10 @@
 """Format-independent base classes and loaders for file-based images."""
 
 __all__ = [
-    "FileBasedImage",
-    "WritableFileBasedImage",
+    "ImageFormat",
     "load",
     "sniff",
 ]
 
-from ._base import FileBasedImage, WritableFileBasedImage
+from ._base import ImageFormat
 from ._load import load, sniff

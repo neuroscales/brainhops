@@ -57,6 +57,9 @@ flip shifts the origin by the extent minus one.
 """
 
 
+# --- Bridge -----------------------------------------------------------
+
+
 def bridge(
     source: tx.Optional[CoordinateSystem],
     target: tx.Optional[CoordinateSystem],
@@ -65,6 +68,7 @@ def bridge(
     allow_positional: bool = False,
     allow_type_grouped_positional: bool = False,
 ) -> Transformation:
+    # --- special cases ------------------------------------------------
     """Return the transformation that carries `source` coordinates to `target`.
 
     The bridge maps every point expressed in `source` to the same point
@@ -131,6 +135,7 @@ def bridge(
     if source == target:
         return Identity(input=source, output=target)
 
+    # --- dimensionality check -----------------------------------------
     if source.ndim != target.ndim:
         source_name = source.name or "the source system"
         target_name = target.name or "the target system"
@@ -147,6 +152,7 @@ def bridge(
             f"names, units, or orientations so they can be identified."
         )
 
+    # --- matching -----------------------------------------------------
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -156,6 +162,7 @@ def bridge(
     if any(i is None for i in match):
         _unmatched_report(source, target, match)
 
+    # --- compute parameters -------------------------------------------
     permutation = [int(i) for i in match]
     scales = []
     translations = []
@@ -172,12 +179,14 @@ def bridge(
             offset = float(_extent(extents, j, target_axis) - 1)
         translations.append(offset)
 
+    # --- positional warning -------------------------------------------
     # Warn only once every pair has a sign, a ratio and an offset, so that a
     # bridge that fails above does not also warn. The stack level points at the
     # caller of `bridge`.
     if positional_warning is not None:
         warnings.warn(positional_warning, stacklevel=2)
 
+    # --- build transformations and systems ----------------------------
     # Each primitive declares its own input and output systems, and only the
     # last primitive outputs `target` itself. The permutation outputs the
     # source axes rearranged into target order. When a translation follows,
@@ -191,6 +200,7 @@ def bridge(
 
     elements: tx.List[Transformation] = []
     current = source
+    # --- permutation --------------------------------------------------
     if needs_perm:
         elements.append(
             Permutation(
@@ -200,6 +210,7 @@ def bridge(
             )
         )
         current = permuted_system
+    # --- scale --------------------------------------------------------
     if needs_scale:
         scaled_system = (
             CoordinateSystem(axes=target_axes) if needs_offset else target
@@ -212,6 +223,7 @@ def bridge(
             )
         )
         current = scaled_system
+    # --- offset -------------------------------------------------------
     if needs_offset:
         elements.append(
             Translation(
@@ -222,6 +234,7 @@ def bridge(
         )
         current = target
 
+    # --- returns ------------------------------------------------------
     if not elements:
         return Identity(input=source, output=target)
     if len(elements) == 1:
@@ -404,6 +417,9 @@ def _cannot_bridge_report(
     )
 
 
+# --- Adapt ------------------------------------------------------------
+
+
 @register_adapt
 def adapt(
     first: Transformation,
@@ -451,6 +467,7 @@ def adapt(
     source = first.output
     target = second.input
 
+    # --- systems match: short circuit ---------------------------------
     if not systems_disagree(source, target):
         return Sequence(
             transformations=[first, second],
@@ -458,6 +475,7 @@ def adapt(
             output=second.output,
         )
 
+    # --- compute extents for grid coordinate systems ------------------
     if extents is None:
         extents = _grid_extents(first, at_output=True)
         extents.update(_grid_extents(second, at_output=False))
@@ -468,6 +486,7 @@ def adapt(
     seq_input = first.input
     seq_output = second.output
 
+    # --- dimensionality mismatch: build the embedding -----------------
     # An open system has no definite number of axes, so only two closed
     # systems can differ in size. An open system that disagrees with the other
     # side is refused by `bridge` below.
@@ -501,6 +520,7 @@ def adapt(
                     "clean subset of the other's axes."
                 )
 
+    # --- same dimensionality: build the bridge ------------------------
     else:
         reconciler = bridge(
             source,
@@ -516,6 +536,7 @@ def adapt(
         else:
             pieces = [first, reconciler, second]
 
+    # --- return -------------------------------------------------------
     return Sequence(transformations=pieces, input=seq_input, output=seq_output)
 
 
@@ -568,6 +589,7 @@ def embed(
         bridge, extents=extents, allow_type_grouped_positional=True
     )
 
+    # --- special cases ------------------------------------------------
     if isinstance(transform, CartesianField):
         return None
     # The embedding is determined by the axes that the fuller system has and
@@ -599,6 +621,7 @@ def embed(
     if positions is None:
         return None
 
+    # --- discrete check -----------------------------------------------
     # An interpolating transformation reads values between samples, which a
     # discrete axis does not have.
     if _interpolates(transform):
@@ -614,6 +637,7 @@ def embed(
 
     sub_full = CoordinateSystem(axes=[full_axes[i] for i in positions])
 
+    # --- embed input --------------------------------------------------
     if side == "input":
         sub_bridge = make_bridge(sub_full, sub_input)
         if sub_bridge.is_identity():
@@ -630,6 +654,7 @@ def embed(
         wrapper_input = full
         wrapper_output = CoordinateSystem(axes=out_full_axes)
 
+    # --- embed output -------------------------------------------------
     else:
         sub_bridge = make_bridge(sub_output, sub_full)
         if sub_bridge.is_identity():
@@ -646,6 +671,7 @@ def embed(
         wrapper_input = CoordinateSystem(axes=in_full_axes)
         wrapper_output = full
 
+    # --- return -------------------------------------------------------
     return SubspaceTransformation(
         transformation=inner,
         input_axes=positions,
@@ -691,6 +717,8 @@ def _subset_positions(
             return None
     return positions
 
+
+# --- Orientation ------------------------------------------------------
 
 _OrientationLike = tx.Union[Axis, Orientation, str, None]
 
@@ -779,6 +807,8 @@ def _orientation_sign(
     target_value = _orientation(target)
     return 1 if source_value == target_value else -1
 
+
+# --- Units ------------------------------------------------------------
 
 _UnitLike = tx.Union[Axis, Unit, None]
 
@@ -870,6 +900,9 @@ def _same_unit_kind(source: _UnitLike, target: _UnitLike) -> bool:
     return source_unit.type == target_unit.type
 
 
+# --- Shape ------------------------------------------------------------
+
+
 def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
     """Return whether an axis indexes an array rather than a world coordinate.
 
@@ -943,6 +976,8 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
         return _grid_extents(edge, at_output)
     return {}
 
+
+# --- Type -------------------------------------------------------------
 
 _TypeLike = tx.Union[Axis, str, None]
 _TypeGroup = tx.Dict[tx.Optional[str], tx.List[int]]

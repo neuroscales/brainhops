@@ -6,13 +6,13 @@ from bagof.magic import HIDE_IF_NONE, Factory, Magic
 from brainhops.io.base.parsers import Confidence, SnifferContentError
 
 # io
-from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Parser
+from brainhops.io.common.hdf5 import DelayedH5Array, Hdf5Reader
 from brainhops.io.common.hdf5._delayed import delayed_dataset
 from brainhops.io.common.hdf5._parsers import read_string
 
 from .._common import ItkStruct, ItkTransformClass, _application_order
 
-__all__ = ["DelayedH5Array", "H5Header", "H5TransformParser"]
+__all__ = ["DelayedH5Array", "H5Header", "H5TransformReader"]
 
 
 class H5Header(
@@ -35,9 +35,9 @@ class H5Header(
     """The operating system version, such as `"6.1.0-1007-oem"`."""
 
 
-class H5TransformParser(
+class H5TransformReader(
     Magic,
-    Hdf5Parser,
+    Hdf5Reader,
     convert=True,
     repr=HIDE_IF_NONE,
 ):
@@ -49,6 +49,8 @@ class H5TransformParser(
 
     file: tx.Optional[h5py.File] = None
     header: H5Header = Factory(H5Header)
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_h5(
@@ -65,6 +67,8 @@ class H5TransformParser(
                 error = SnifferContentError
             raise error("HDF5 file is not an ITK transform file")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_h5(

@@ -14,21 +14,27 @@ import typing_extensions as tx
 from bagof.magic import Factory, fields
 
 from brainhops._core import path
+from brainhops._core.enum import enum_name
 from brainhops.datamodel import systems as _systems
 from brainhops.datamodel import transformations as _xforms
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     UnrepresentableTransformationError,
 )
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
-    WritableFileBasedTransformation,
+    TransformationFormat,
 )
 
 from .._formats import FreesurferTransformationFormat
 from ._enums import LtaType, LtaValidity
-from ._matrix_utils import _get_phys2phys, _get_ras2ras, _get_vox2vox
+from ._matrix_utils import (
+    _get_phys2phys,
+    _get_ras2ras,
+    _get_vox2vox,
+)
 from ._struct import LtaStruct
 from ._systems import LtaCoordinateSystem, LtaPhysicalSystem, LtaVoxelSystem
 
@@ -51,14 +57,14 @@ class LtaFormat(FreesurferTransformationFormat, AffineTransformationFormat):
     HINTS = ("lta",)
 
 
-# `TextFileParserWriter` bridges bytes and text, which the writer of
-# `WritableFileBasedTransformation` cannot do, so it must come first.
+# Text adapters supply byte decoding and encoding before the generic bases.
 @register_format
 class LtaTransformation(
     LtaFormat,
-    TextFileParserWriter,
+    TextFileReader,
+    TextFileWriter,
     _xforms.Affine,
-    WritableFileBasedTransformation,
+    TransformationFormat,
     reverse=False,  # `struct` must be the last field
 ):
     """Transformation that can be encoded as a Linear Transform Array.
@@ -109,7 +115,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.src)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.src)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {enum_name(self.struct.type)}"
+        )
 
     @property
     def output(self) -> LtaCoordinateSystem:
@@ -128,7 +136,9 @@ class LtaTransformation(
             return _system(LtaVoxelSystem, self.struct.dst)
         elif self.struct.type == LtaType.LINEAR_PHYSVOX_TO_PHYSVOX:
             return _system(LtaPhysicalSystem, self.struct.dst)
-        raise AssertionError(f"unsupported LTA type: {self.struct.type}")
+        raise AssertionError(
+            f"unsupported LTA type: {enum_name(self.struct.type)}"
+        )
 
     @property
     def data(self) -> np.ndarray:
@@ -153,6 +163,8 @@ class LtaTransformation(
     def data(self, value: np.ndarray) -> None:
         self._data = value
 
+    # --- sniff --------------------------------------------------------
+
     @classmethod
     def sniff_line(
         cls,
@@ -162,6 +174,8 @@ class LtaTransformation(
     ) -> float:
         """Score a line as the first line of an LTA file."""
         return LtaStruct.sniff_line(line, error=error, **kwargs)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_(cls, other: tx.Any) -> tx.Self:
@@ -207,6 +221,8 @@ class LtaTransformation(
         constructor and override the file.
         """
         return cls.from_struct(LtaStruct.from_lines(lines), **kwargs)
+
+    # --- to -----------------------------------------------------------
 
     def to_struct(self) -> LtaStruct:
         """Return the [`LtaStruct`][] that encodes the transformation.

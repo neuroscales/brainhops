@@ -71,8 +71,7 @@ def write_segments(
             nb_written = fileobj.write(dat)
         if nb_written != length:
             raise ValueError(
-                f"Expected to write {length} bytes but",
-                f" wrote {nb_written}.",
+                f"Expected to write {length} bytes but wrote {nb_written}."
             )
         return
     # Several segments consume the data sequentially.

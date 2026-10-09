@@ -14,6 +14,8 @@ if tx.TYPE_CHECKING:
     from .sequence import Sequence
 
 
+# --- operators --------------------------------------------------------
+
 OPERATORS: tx.Dict[str, tx.Type["Operation"]] = {}
 """Entry-point classes of the lazy operators, indexed by method name.
 
@@ -52,6 +54,8 @@ def register_operator(name: str) -> tx.Callable[[type], type]:
     return decorate
 
 
+# --- adapt ------------------------------------------------------------
+
 ADAPT: tx.Optional[tx.Callable[..., "Sequence"]] = None
 """Routine that reconciles two consecutive transformations.
 
@@ -78,6 +82,8 @@ def register_adapt(func: tx.Callable[..., "Sequence"]) -> None:
     return func
 
 
+# --- sequence ---------------------------------------------------------
+
 SEQUENCE: tx.Optional[tx.Type["Sequence"]] = None
 """The registered [`Sequence`][] class, or `None` until it is registered."""
 
@@ -87,6 +93,8 @@ def register_sequence(cls: tx.Type["Sequence"]) -> None:
     SEQUENCE = cls
     return cls
 
+
+# --- base -------------------------------------------------------------
 
 # The root of the concrete hierarchy is registered so that code below `base`,
 # such as `simplify`, can recognise a transformation without importing `base`
