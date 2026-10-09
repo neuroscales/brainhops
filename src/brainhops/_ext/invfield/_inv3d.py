@@ -1,19 +1,36 @@
 # This module inverts a dense displacement field.
 #
 # The method is explained here in two dimensions; in three dimensions,
-# tetrahedra take the place of triangles. The grid is split into unit cells
-# coloured red and black like a checkerboard, and each cell is cut into two
-# triangles along a diagonal that alternates between neighbouring cells:
+# tetrahedra take the place of triangles. The drawing below shows a grid of
+# 5 x 5 vertices, each labelled by its (i,j) index:
 #
-#     (0,0)                   (0,4)
-#       +-----+-----+-----+-----+
-#       | \   |   / | \   |   / |
-#       |   \ | /   |   \ | /   |
-#       +-----+-----+-----+-----+
-#       |   / | \   |   / | \   |
-#       | /   |   \ | /   |   \ |
-#       +-----+-----+-----+-----+
-#     (2,0)                   (2,4)
+# (0,0) - (0,1) - (0,2) - (0,3) - (0,4)
+#   |  \    |    /  |  \    |    /  |
+#   |   \   |   /   |   \   |   /   |
+#   |    \  |  /    |    \  |  /    |
+# (1,0) - (1,1) - (1,2) - (1,3) - (1,4)
+#   |    /  |  \    |    /  |  \    |
+#   |   /   |   \   |   /   |   \   |
+#   |  /    |    \  |  /    |    \  |
+# (2,0) - (2,1) - (2,2) - (2,3) - (2,4)
+#   |  \    |    /  |  \    |    /  |
+#   |   \   |   /   |   \   |   /   |
+#   |    \  |  /    |    \  |  /    |
+# (3,0) - (3,1) - (3,2) - (3,3) - (3,4)
+#   |    /  |  \    |    /  |  \    |
+#   |   /   |   \   |   /   |   \   |
+#   |  /    |    \  |  /    |    \  |
+# (4,0) - (4,1) - (4,2) - (4,3) - (4,4)
+#
+# The grid is split into unit cells coloured red and black like a
+# checkerboard. For example, the cell {(0,0),(0,1),(1,0),(1,1)} is red, and
+# its neighbours {(0,1),(0,2),(1,1),(1,2)} and {(1,0),(1,1),(2,0),(2,1)}
+# are black. Each cell is cut into two triangles along one of its
+# diagonals, and the diagonal alternates between neighbouring cells. A red
+# cell is cut from its top-left to its bottom-right corner, which gives the
+# triangles {(0,0),(1,0),(1,1)} and {(0,0),(0,1),(1,1)}. A black cell is
+# cut from its top-right to its bottom-left corner, which gives the
+# triangles {(1,1),(0,1),(0,2)} and {(1,1),(1,2),(0,2)}.
 #
 # Because the pattern is regular, batches of triangles that share the same
 # vertex layout can be extracted by slicing the field.
@@ -23,7 +40,8 @@
 #
 # Reference: J. Ashburner, J. L. R. Andersson and K. J. Friston, "Image
 # Registration Using a Symmetric Prior - in Three Dimensions", Human Brain
-# Mapping, 2000. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6871943/
+# Mapping, 2000.
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf
 import numpy as np
 import typing_extensions as _tx
 from scipy.ndimage import gaussian_filter
@@ -35,8 +53,9 @@ def inverse3d(disp: np.ndarray) -> np.ndarray:
     The voxel grid is treated as a tetrahedral mesh in which each
     tetrahedron defines an affine map, following the appendix of Ashburner,
     Andersson and Friston (Human Brain Mapping, 2000,
-    https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6871943/). Voxels that no
-    displaced tetrahedron covers are filled by smoothing their neighbours.
+    https://pmc.ncbi.nlm.nih.gov/articles/PMC6871943/pdf/HBM-9-212.pdf).
+    Voxels that no displaced tetrahedron covers are filled by smoothing
+    their neighbours.
 
     Parameters
     ----------
@@ -520,9 +539,24 @@ def yield_red(
     x110: np.ndarray,
     x111: np.ndarray,
 ) -> _tx.Generator:
-    # A red cube is cut into five tetrahedra: four trirectangular ones,
-    # whose tips are at 000, 011, 101 and 110, and a regular one formed by
-    # the remaining vertices.
+    # A red cube is cut into five tetrahedra. Four of them are
+    # trirectangular tetrahedra, which have three right angles at their tip
+    # vertex (https://en.wikipedia.org/wiki/Trirectangular_tetrahedron).
+    # Their tips are at 000, 011, 101 and 110, which are two opposite
+    # corners of the top face of the cube and two opposite corners of its
+    # bottom face.
+    # The drawing below sketches these four tetrahedra, numbered #1 to #4:
+    #
+    #            _______  #2
+    #      /           /|         |
+    # #1  /________   / |         |
+    #    |              |      #3 |_______   |
+    #    |                       /           | /
+    #    |                      /    ________|/
+    #                                         #4
+    #
+    # The fifth tetrahedron is regular. Its vertices are the four corners
+    # of the cube that are not the tip of any of the other four tetrahedra.
 
     # Tip at 000
     yield _truncate_and_stack3d(x000, x001, x010, x100)
@@ -550,9 +584,22 @@ def yield_black(
     x110: np.ndarray,
     x111: np.ndarray,
 ) -> _tx.Generator:
-    # A black cube is cut into five tetrahedra: four trirectangular ones,
-    # whose tips are at 010, 001, 100 and 111, and a regular one formed by
-    # the remaining vertices.
+    # A black cube is also cut into five tetrahedra. Four of them are
+    # trirectangular tetrahedra whose tips are at 010, 001, 100 and 111,
+    # which are the four corners that are not tips in a red cube. The
+    # drawing below sketches these four tetrahedra, numbered #1 to #4:
+    #
+    #    #1  ________
+    #      /|          /                       |
+    #     / |  _______/                        |
+    #       |         | #2      |      ________| #4
+    #                 |         | /           /
+    #                 |         |/________   /
+    #                        #3
+    #
+    # As in a red cube, the fifth tetrahedron is regular. Its vertices are
+    # the four corners of the cube that are not the tip of any of the other
+    # four tetrahedra.
 
     # Tip at 010
     yield _truncate_and_stack3d(x010, x011, x000, x110)

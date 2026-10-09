@@ -44,9 +44,9 @@ headers, or brainhops images. The conventions are applied in a fixed
 order: transposition, then inversion, then the index shift, and finally
 the placement in image space. The result is always an affine that maps
 column vectors and uses 0-based indices, in which an integer index is the
-centre of a voxel. The raw matrix and the conventions it was read with are
-kept on the object, as `raw_matrix`, `variable`, `vector`, `direction` and
-`index_base`.
+centre of a voxel (see #201). The raw matrix and the conventions it was
+read with are kept on the object, as `raw_matrix`, `variable`, `vector`,
+`direction` and `index_base`.
 
 ```python
 from brainhops import io

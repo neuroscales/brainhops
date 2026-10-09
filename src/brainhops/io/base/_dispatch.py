@@ -167,10 +167,11 @@ def _to_filename(other: tx.Any) -> tx.Optional[str]:
     """Return the base name of the file that `other` names, or `None`.
 
     The name is taken from the text of the path without touching storage,
-    because `os.fspath` raises on remote paths and downloads cloud paths. For a
-    URL, the name is the last segment of its path, without query or fragment;
-    for an fsspec chain such as `simplecache::s3://...`, it comes from the last
-    link.
+    because `os.fspath` raises on remote paths and downloads cloud paths.
+    For a URL, the name is the last segment of its path, without query or
+    fragment, so `https://host/x.nii.gz?token=...` names `x.nii.gz`. For an
+    fsspec chain such as `simplecache::s3://...`, the name comes from the
+    last link.
     """
     # TODO: move to brainhops._core.path, and rename, since it returns a
     # base name rather than a file name.

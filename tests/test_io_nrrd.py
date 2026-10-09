@@ -1,6 +1,7 @@
 """Tests for NRRD images (.nrrd, and .nhdr with data files).
 
-Headers are written by hand from the specification, and the data is encoded
+Headers are written by hand from the specification
+(https://teem.sourceforge.net/nrrd/format.html), and the data is encoded
 independently of the writer. pynrrd cross-checks both directions when it is
 installed.
 """

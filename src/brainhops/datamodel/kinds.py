@@ -320,31 +320,44 @@ def as_unrestricted(cls: _Type) -> _Type:
 
 
 def group(cls: _Type) -> _Type:
-    """Mark a set as a group under composition."""
+    """Mark a set as a
+    [group](https://en.wikipedia.org/wiki/Group_(mathematics)) under
+    composition.
+    """
     GROUPS.add(cls)
     return cls
 
 
 def liegroup(cls: _Type) -> _Type:
-    """Mark a set as a Lie group, and therefore a group."""
+    """Mark a set as a [Lie group](https://en.wikipedia.org/wiki/Lie_group),
+    and therefore a group.
+    """
     LIE_GROUPS.add(cls)
     return group(cls)
 
 
 def connected(cls: _Type) -> _Type:
-    """Mark a set as connected."""
+    """Mark a set as
+    [connected](https://en.wikipedia.org/wiki/Connected_space).
+    """
     CONNECTED.add(cls)
     return cls
 
 
 def simplyconnected(cls: _Type) -> _Type:
-    """Mark a set as simply connected, and therefore connected."""
+    """Mark a set as [simply
+    connected](https://en.wikipedia.org/wiki/Simply_connected_space), and
+    therefore connected.
+    """
     SIMPLYCONNECTED.add(cls)
     return connected(cls)
 
 
 def invertible_subset_of(cls: _Type) -> _Decorator:
-    """Mark the decorated set as the invertible subset of `cls`."""
+    """Mark the decorated set as the
+    [invertible](https://en.wikipedia.org/wiki/Inverse_element) subset of
+    `cls`.
+    """
 
     def decorator(subcls: _Type) -> _Type:
         INVERTIBLE_OF[cls] = subcls
@@ -355,7 +368,10 @@ def invertible_subset_of(cls: _Type) -> _Decorator:
 
 
 def closedunder(cls: _Type) -> _Decorator:
-    """Declare `cls` closed under composition with the decorated set."""
+    """Declare `cls`
+    [closed](https://en.wikipedia.org/wiki/Closure_(mathematics)) under
+    composition with the decorated set.
+    """
 
     def decorator(subcls: _Type) -> _Type:
         CLOSEDUNDER.setdefault(cls, set()).add(subcls)
@@ -365,7 +381,10 @@ def closedunder(cls: _Type) -> _Decorator:
 
 
 def closed(cls: _Type) -> _Type:
-    """Mark a set as closed under composition with itself."""
+    """Mark a set as
+    [closed](https://en.wikipedia.org/wiki/Closure_(mathematics)) under
+    composition with itself.
+    """
     return closedunder(cls)(cls)
 
 
@@ -756,19 +775,25 @@ class OrientationPreserving(Transformation):
 @alias("Conformal", "ConformalMap", "ConformalTransformation")
 @alias("AnglePreservingTransformation", "AnglePreservingMap")
 class AnglePreserving(Transformation):
-    """A transformation that preserves angles ((Df)ᵀ Df = λ(x) I)."""
+    """A transformation that [preserves
+    angles](https://en.wikipedia.org/wiki/Conformal_map) ((Df)ᵀ Df = λ(x) I).
+    """
 
 
 @closed  # Closure assumes matching domains.
 @alias("Injective", "InjectiveMap", "InjectiveTransformation")
 class Injection(Transformation):
-    """A one-to-one transformation."""
+    """A [one-to-one](https://en.wikipedia.org/wiki/Injective_function)
+    transformation.
+    """
 
 
 @closed  # Closure assumes matching codomains.
 @alias("Surjective", "SurjectiveMap", "SurjectiveTransformation")
 class Surjection(Transformation):
-    """An onto transformation, which reaches every point of its codomain."""
+    """An [onto](https://en.wikipedia.org/wiki/Surjective_function)
+    transformation, which reaches every point of its codomain.
+    """
 
 
 @group
@@ -776,19 +801,25 @@ class Surjection(Transformation):
 @alias("Bijective", "BijectiveTransformation", "BijectiveMap")
 @alias("Invertible", "InvertibleTransformation", "InvertibleMap")
 class Bijection(Injection, Surjection):
-    """An invertible transformation, both injective and surjective."""
+    """A [bijection](https://en.wikipedia.org/wiki/Bijection), which is an
+    invertible transformation that is both injective and surjective.
+    """
 
 
 @group
 @public
 class Homeomorphism(Bijection):
-    """A continuous bijection with a continuous inverse."""
+    """A [homeomorphism](https://en.wikipedia.org/wiki/Homeomorphism), which is
+    a continuous bijection with a continuous inverse.
+    """
 
 
 @group
 @public
 class Diffeomorphism(Homeomorphism):
-    """A smooth homeomorphism with a smooth inverse."""
+    """A [diffeomorphism](https://en.wikipedia.org/wiki/Diffeomorphism), which
+    is a smooth homeomorphism with a smooth inverse.
+    """
 
     SYMBOL = "Diff"
     FSYMBOL = "Diff(ℝ^{n})"
@@ -838,14 +869,18 @@ class SpecialDiffeomorphism(
 @closed
 @alias("MatrixTransformation")
 class Matrix(Transformation):
-    """A transformation given by a matrix (on homogeneous coordinates)."""
+    """A transformation given by a
+    [matrix](https://en.wikipedia.org/wiki/Transformation_matrix) (on
+    homogeneous coordinates).
+    """
 
 
 @group
 @invertible_subset_of(Matrix)
 @alias("InvertibleMatrixTransformation")
 class InvertibleMatrix(Matrix, Diffeomorphism):
-    """An invertible matrix transformation.
+    """An [invertible matrix](https://en.wikipedia.org/wiki/Invertible_matrix)
+    transformation.
 
     The matrix kinds join the smooth kinds of the lattice at this class,
     because every invertible affine transformation is a diffeomorphism.
@@ -875,7 +910,10 @@ class VolumePreservingMatrix(VolumePreservingDiffeomorphism, InvertibleMatrix):
 @closed
 @alias("AffineTransformation", "AffineMap", "AffineMatrix")
 class Affine(Matrix):
-    """An affine transformation, possibly not invertible."""
+    """An [affine
+    transformation](https://en.wikipedia.org/wiki/Affine_transformation),
+    possibly not invertible.
+    """
 
 
 @liegroup
@@ -896,7 +934,9 @@ class InvertibleAffine(Affine, InvertibleMatrix):
 @alias("PositiveAffineMatrix", "PositiveAffineGroup")
 @alias("PositiveAffineTransformation", "PositiveAffineMap")
 class PositiveAffine(InvertibleAffine, OrientationPreservingMatrix):
-    """An affine map with a positive determinant (Aff+ = GL+ ⋉ T)."""
+    """An [affine map](https://en.wikipedia.org/wiki/Affine_group) with a
+    positive determinant (Aff+ = GL+ ⋉ T).
+    """
 
     SYMBOL = "Aff+"
     FSYMBOL = "Aff+(ℝ^{n})"
@@ -921,7 +961,11 @@ class VolumePreservingAffine(InvertibleAffine, VolumePreservingMatrix):
 class SpecialAffine(
     PositiveAffine, VolumePreservingAffine, SpecialDiffeomorphism
 ):
-    """An affine transformation with a determinant of 1 (SAff = SL ⋉ T)."""
+    """An affine transformation with a determinant of 1, forming the [special
+    affine
+    group](https://en.wikipedia.org/wiki/Affine_group#Special_affine_group)
+    SAff = SL ⋉ T.
+    """
 
     SYMBOL = "SAff"
     FSYMBOL = "SAff({n})"
@@ -965,7 +1009,10 @@ class ConformalEuclidean(InvertibleAffine, ConformalDiffeomorphism):
     "DirectAffineSimilitude",
 )
 class SpecialConformalEuclidean(ConformalEuclidean, PositiveAffine):
-    """A direct similarity, which preserves orientation (Sim+ = CO+ ⋉ T)."""
+    """A direct
+    [similarity](https://en.wikipedia.org/wiki/Similarity_(geometry)#In_Euclidean_space),
+    which preserves orientation (Sim+ = CO+ ⋉ T).
+    """
 
     SYMBOL = "Sim+"
     FSYMBOL = "Sim+({n})"
@@ -992,7 +1039,10 @@ class Euclidean(ConformalEuclidean, VolumePreservingAffine):
     "RigidTransformation",
 )
 class SpecialEuclidean(SpecialConformalEuclidean, Euclidean, SpecialAffine):
-    """A rigid transformation, with a determinant of 1 (SE = SO ⋉ T)."""  # noqa: E501
+    """A [rigid
+    transformation](https://en.wikipedia.org/wiki/Euclidean_group#Direct_and_indirect_isometries),
+    with a determinant of 1 (SE = SO ⋉ T).
+    """  # noqa: E501
 
     SYMBOL = "SE"
     FSYMBOL = "SE({n})"
@@ -1007,7 +1057,8 @@ class SpecialEuclidean(SpecialConformalEuclidean, Euclidean, SpecialAffine):
 )
 class Dilation(ConformalEuclidean):
     """A [dilation](https://en.wikipedia.org/wiki/Dilation_(metric_space)),
-    that is, a homothety combined with a translation (ℝ* ⋉ T).
+    that is, a [homothety](https://en.wikipedia.org/wiki/Homothety) combined
+    with a translation (ℝ* ⋉ T).
     """
 
     SYMBOL = "ℝ* ⋉ T"
@@ -1019,7 +1070,9 @@ class Dilation(ConformalEuclidean):
 @nonembeddable
 @public
 class PositiveDilation(Dilation, SpecialConformalEuclidean):
-    """A dilation with a positive scale factor (ℝ+ ⋉ T)."""
+    """A [dilation](https://en.wikipedia.org/wiki/Dilation_(metric_space)) with
+    a positive scale factor (ℝ+ ⋉ T).
+    """
 
     SYMBOL = "ℝ+ ⋉ T"
     FSYMBOL = "ℝ+ ⋉ T({n})"
@@ -1029,7 +1082,9 @@ class PositiveDilation(Dilation, SpecialConformalEuclidean):
 @simplyconnected
 @public
 class Translation(PositiveDilation, SpecialEuclidean):
-    """A translation."""
+    """A
+    [translation](https://en.wikipedia.org/wiki/Translation_(geometry)#As_a_group).
+    """
 
     SYMBOL = "T"
     FSYMBOL = "T({n})"
@@ -1076,7 +1131,8 @@ class PositiveLinear(InvertibleLinear, PositiveAffine):
 @connected
 @alias("SpecialLinearTransformation", "SpecialLinearMap")
 class SpecialLinear(PositiveLinear, SpecialAffine):
-    """A linear transformation with a determinant of 1 (SL).
+    """A linear transformation with a determinant of 1, forming the [special
+    linear group](https://en.wikipedia.org/wiki/Special_linear_group) SL.
 
     SL lies inside SAff = SL ⋉ T, and it is through SAff that SL lies inside
     the volume-preserving diffeomorphisms.
@@ -1117,7 +1173,9 @@ class ConformalOrthogonal(InvertibleLinear, ConformalEuclidean):
 class SpecialConformalOrthogonal(
     ConformalOrthogonal, PositiveLinear, SpecialConformalEuclidean
 ):
-    """A linear transformation that preserves angles and orientation (CO+).
+    """A linear transformation that preserves angles and orientation, forming
+    the orientation-preserving part CO+ of the [conformal
+    group](https://en.wikipedia.org/wiki/Orthogonal_group#Conformal_group).
 
     !!! note
         A scaled rotation cR has the determinant cⁿ, which is positive but
@@ -1155,7 +1213,10 @@ class SpecialOrthogonal(
     SpecialEuclidean,
     SpecialLinear,
 ):
-    """An orthogonal matrix with a determinant of 1 (SO), that is, a rotation.
+    """An orthogonal matrix with a determinant of 1, that is, a rotation,
+    forming the [special orthogonal
+    group](https://en.wikipedia.org/wiki/Orthogonal_group#Special_orthogonal_group)
+    SO.
 
     !!! note
         SL is listed as a direct base because no ancestor provides that
@@ -1191,7 +1252,11 @@ class GeneralizedPermutation(InvertibleLinear):
     "SignedPermutationMatrix", "SignedPermutationGroup", "HyperoctahedralGroup"
 )
 class SignedPermutation(GeneralizedPermutation, Orthogonal):
-    """A generalized permutation with entries of ±1 (B = C₂ⁿ ⋊ S)."""  # noqa: E501
+    """A generalized permutation with entries of ±1, forming the [signed
+    permutation
+    group](https://en.wikipedia.org/wiki/Generalized_permutation_matrix#Signed_permutation_group)
+    B = C₂ⁿ ⋊ S.
+    """  # noqa: E501
 
     SYMBOL = "B"
     FSYMBOL = "B_{n}"
@@ -1200,7 +1265,9 @@ class SignedPermutation(GeneralizedPermutation, Orthogonal):
 @liegroup
 @alias("PermutationMatrix", "PermutationGroup", "SymmetricGroup")
 class Permutation(SignedPermutation, Orthogonal):
-    """A permutation matrix, forming the symmetric group S."""
+    """A [permutation](https://en.wikipedia.org/wiki/Permutation_group) matrix,
+    forming the symmetric group S.
+    """
 
     SYMBOL = "S"
     FSYMBOL = "S_{n}"
@@ -1209,7 +1276,8 @@ class Permutation(SignedPermutation, Orthogonal):
 @liegroup
 @alias("AlternatingGroup", "EvenPermutationGroup")
 class EvenPermutation(Permutation, SpecialOrthogonal):
-    """An even permutation, forming the alternating group A.
+    """An even permutation, forming the [alternating
+    group](https://en.wikipedia.org/wiki/Alternating_group) A.
 
     Even permutations are exactly the permutation matrices in SO(n), so a
     rotation reindexed by an even permutation stays a rotation.
@@ -1221,11 +1289,14 @@ class EvenPermutation(Permutation, SpecialOrthogonal):
 
 @public
 class OddPermutation(Permutation):
-    r"""An odd permutation, with a determinant of -1.
+    r"""An odd [permutation](https://en.wikipedia.org/wiki/Permutation_group),
+    with a determinant of -1.
 
     !!! note
-        The odd permutations form the coset S \ A, which is not a group,
-        because composing two odd permutations gives an even one.
+        The odd permutations form the coset S \ A of the [alternating
+        group](https://en.wikipedia.org/wiki/Alternating_group) A. This coset
+        is not a group, because composing two odd permutations gives an even
+        one.
     """
 
     SYMBOL = "S \\ A"
@@ -1240,7 +1311,11 @@ class OddPermutation(Permutation):
     "ScalingTransformation",
 )
 class Diagonal(Linear):
-    """A diagonal matrix (a scaling), possibly not invertible."""
+    """A [diagonal matrix](https://en.wikipedia.org/wiki/Diagonal_matrix),
+    which represents a
+    [scaling](https://en.wikipedia.org/wiki/Scaling_(geometry)) that is
+    possibly not invertible.
+    """
 
 
 @liegroup
@@ -1340,7 +1415,10 @@ class Multiplicative(Diagonal):
 class InvertibleMultiplicative(
     Multiplicative, InvertibleDiagonal, ConformalOrthogonal
 ):
-    """An isotropic scaling by a non-zero factor, or homothety (ℝ*).
+    """An isotropic scaling by a non-zero factor, or
+    [homothety](https://en.wikipedia.org/wiki/Homothety), forming the
+    [multiplicative group](https://en.wikipedia.org/wiki/Multiplicative_group)
+    ℝ*.
 
     Since cI equals |c| times the orthogonal matrix sign(c)I, an isotropic
     scaling preserves angles, and ℝ* therefore lies in CO.
@@ -1363,7 +1441,9 @@ class InvertibleMultiplicative(
 class PositiveMultiplicative(
     InvertibleMultiplicative, PositiveDiagonal, SpecialConformalOrthogonal
 ):
-    """An isotropic scaling by a positive factor (ℝ+), a subgroup of ℝ*."""
+    """An isotropic [scaling](https://en.wikipedia.org/wiki/Scaling_(geometry))
+    by a positive factor (ℝ+), a subgroup of ℝ*.
+    """
 
     SYMBOL = "ℝ+"
     FSYMBOL = "ℝ+({n})"
@@ -1388,7 +1468,9 @@ class Identity(
     PositiveMultiplicative,
     SpecialOrthogonal,
 ):
-    """The identity transformation."""
+    """The [identity](https://en.wikipedia.org/wiki/Identity_function)
+    transformation.
+    """
 
     SYMBOL = "I"
     FSYMBOL = "I({n})"

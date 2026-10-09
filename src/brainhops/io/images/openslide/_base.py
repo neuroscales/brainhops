@@ -409,7 +409,7 @@ class OpenSlideFormat:
 
     Each vendor format derives from this class, so that the hint `"openslide"`
     selects every vendor and `"openslide.<vendor>"` selects one. See
-    [OpenSlide](https://openslide.org).
+    [OpenSlide](https://openslide.org/).
     """
 
     HINTS = ("openslide",)

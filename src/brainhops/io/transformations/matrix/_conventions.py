@@ -3,9 +3,10 @@ Conversion of a bare matrix into an affine transformation.
 
 The conventions stated by the caller are applied in this order: a row-vector
 matrix is transposed, the matrix is completed to homogeneous form, an inverse
-matrix is inverted, 1-based voxel indices are shifted to 0-based ones, and a
-voxel endpoint that comes with an image is mapped to the world space of that
-image.
+matrix is inverted, 1-based voxel indices are shifted to the 0-based indices
+of the data model, and a voxel endpoint that comes with an image is mapped to
+the world space of that image. In the 0-based indices of the data model, an
+integer index is the centre of a voxel (see #201).
 """
 
 import numpy as np

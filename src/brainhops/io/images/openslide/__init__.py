@@ -1,6 +1,6 @@
 """Whole-slide images, read with OpenSlide.
 
-[OpenSlide](https://openslide.org) reads, but does not write, the pyramidal
+[OpenSlide](https://openslide.org/) reads, but does not write, the pyramidal
 images of slide scanners. The `openslide` extra installs openslide-python and
 openslide-bin, which provides the OpenSlide library as wheels. On a platform
 for which openslide-bin has no wheel, the OpenSlide library can be installed

@@ -391,7 +391,8 @@ def _subspace_pattern(
         # axes, so input_axes[k] feeds output_axes[k] and the other axes pass
         # through in order. When the input and output axes differ, the
         # subspace is a reindexing, which every reader interprets the same
-        # way.
+        # way. The affine converter and both subspace composers have agreed
+        # on this interpretation since #110.
         inner_dep = np.eye(ko, dtype=bool)
     elif interpolates:
         inner_dep = np.ones((ko, ki), dtype=bool)
