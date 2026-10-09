@@ -1,4 +1,4 @@
-"""Format-family markers used for NiftyReg dispatch hints."""
+"""Format families that select NiftyReg readers by hint."""
 
 from brainhops.io.transformations.base import (
     AffineTransformationFormat,
@@ -7,7 +7,7 @@ from brainhops.io.transformations.base import (
 
 
 class NiftyRegTransformationFormat(TransformationFormat):
-    """A transformation stored in a NiftyReg format."""
+    """Transformation stored in a NiftyReg format."""
 
     HINTS = ("niftyreg",)
 
@@ -15,4 +15,4 @@ class NiftyRegTransformationFormat(TransformationFormat):
 class NiftyRegAffineFormat(
     NiftyRegTransformationFormat, AffineTransformationFormat
 ):
-    """An affine transformation stored in a NiftyReg format."""
+    """Affine stored in a NiftyReg format."""

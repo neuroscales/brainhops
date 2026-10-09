@@ -1,14 +1,11 @@
 __all__ = ["LtaStruct"]
 
-# externals
 import typing_extensions as tx
 from bagof.magic import Factory
 
-# internals
 from ._enums import LtaMatrixType, LtaType, LtaValidity
 from ._parser import LtaParser, MatrixParser, VolumeInfoParser
 
-# type hints
 _2Ints = tx.Tuple[int, int]
 _3Ints = tx.Tuple[int, int, int]
 _3Floats = tx.Tuple[float, float, float]
@@ -18,30 +15,27 @@ _Matrix = tx.Union[_MatrixFloat, _MatrixComplex]
 
 
 class LtaStruct(LtaParser):
-    """
-    In-memory representation of an LTA file.
+    """In-memory representation of an LTA file.
 
-    The parsing mechanisms are implemented in the parent classes:
-    `LtaParser`, `MatrixParser`, and `VolumeInfoParser`.
+    Parsing is implemented by the parent classes `LtaParser`, `MatrixParser`
+    and `VolumeInfoParser`.
 
-    :: note "Reference"
+    !!! note "Reference"
         https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/LtaFormat
     """
 
     class Affine(MatrixParser):
-        """A matrix, encoded in ASCII.
+        """ASCII-encoded matrix.
 
-        This encoding is ubiquitous in Freesurfer (not only in LTA files)
-        and can represent any 2D matrix of real or complex numbers, as
-        indicated by the first value in the header (1 => real, 2 => complex).
-        The second and third numbers indicate the number of rows and columns.
+        This encoding is used throughout FreeSurfer, not only in LTA files, and
+        can hold any two-dimensional real or complex matrix. The first header
+        value is 1 for a real matrix and 2 for a complex one, and the second
+        and third values are the numbers of rows and columns. In an LTA file
+        the matrix is always a real 4x4 matrix, but the parser handles any size
+        and type. The `matrix` attribute is a tuple of tuples, not a NumPy
+        array.
 
-        In LTA files, they are always 4x4 real matrices, but the parser
-        is flexible enough to handle any size and type.
-
-        The `matrix` attribute is a tuple of tuples, not a NumPy array.
-
-        :: example "Example"
+        !!! example "Example"
             A 4x4 real matrix:
             ```
             1 4 4
@@ -58,13 +52,14 @@ class LtaStruct(LtaParser):
             -0.019849 +0.0   +1.142709 +0.0   +0.150979 +0.0   -29.566288 +0.0
             -0.010058 +0.0   -0.155729 +0.0   +0.919673 +0.0   +26.393215 +0.0
             +0.000000 +0.0   +0.000000 +0.0   +0.000000 +0.0   +1.000000 +0.0
+            ```
         """
 
         matrix: _Matrix = ()
 
         @property
         def matrix_type(self) -> LtaMatrixType:
-            """Determines the type of the matrix based on its contents."""
+            """The type of the matrix, determined from its contents."""
             if not self.matrix:
                 return LtaMatrixType.UNKNOWN_MATRIX
             if isinstance(self.matrix[0][0], complex):
@@ -75,11 +70,10 @@ class LtaStruct(LtaParser):
 
         @property
         def dtype(self) -> tx.Optional[type]:
-            """
-            The Python type corresponding to the matrix type.
+            """The Python type of the elements.
 
-            Either `float` for real matrices, `complex` for complex matrices,
-            or `None` if unknown.
+            The type is `float` for a real matrix, `complex` for a complex one,
+            and `None` when the type is unknown.
             """
             if self.matrix_type == LtaMatrixType.COMPLEX_MATRIX:
                 return complex
@@ -89,7 +83,7 @@ class LtaStruct(LtaParser):
 
         @property
         def shape(self) -> _2Ints:
-            """The shape of the matrix as a tuple (rows, columns)."""
+            """The number of rows and columns."""
             if not self.matrix:
                 return (0, 0)
             if not self.matrix[0]:
@@ -97,24 +91,24 @@ class LtaStruct(LtaParser):
             return (len(self.matrix), len(self.matrix[0]))
 
     class VolumeInfo(VolumeInfoParser):
-        """The geometry of a volume."""
+        """Geometry of a volume."""
 
         valid: LtaValidity = LtaValidity.VOLUME_INFO_INVALID
-        filename: str = ""  # Filename of the volume
-        volume: _3Ints = (0, 0, 0)  # 3D shape
-        voxelsize: _3Floats = (1.0, 1.0, 1.0)  # Voxel size
-        xras: _3Floats = (1.0, 0.0, 0.0)  # Columns of the phys2ras matrix
-        yras: _3Floats = (0.0, 1.0, 0.0)  # "
-        zras: _3Floats = (0.0, 0.0, 1.0)  # "
-        cras: _3Floats = (0.0, 0.0, 0.0)  # "
+        filename: str = ""  # file name of the volume
+        volume: _3Ints = (0, 0, 0)  # 3-D shape
+        voxelsize: _3Floats = (1.0, 1.0, 1.0)  # voxel size
+        xras: _3Floats = (1.0, 0.0, 0.0)  # columns of the phys2ras matrix
+        yras: _3Floats = (0.0, 1.0, 0.0)
+        zras: _3Floats = (0.0, 0.0, 1.0)
+        cras: _3Floats = (0.0, 0.0, 0.0)
 
     class SrcVolumeInfo(VolumeInfo):
-        """The geometry of the source volume."""
+        """Geometry of the source volume."""
 
         NAME = "src"
 
     class DstVolumeInfo(VolumeInfo):
-        """The geometry of the destination volume."""
+        """Geometry of the destination volume."""
 
         NAME = "dst"
 
@@ -122,7 +116,7 @@ class LtaStruct(LtaParser):
     nxforms: int = 1
     mean: _3Floats = (0.0, 0.0, 0.0)
     sigma: float = 0.0
-    affine: Affine = Factory(Affine)  # Affine matrix
-    label: tx.Optional[int] = None  # Optional label
-    src: tx.Optional[SrcVolumeInfo] = None  # Source volume
-    dst: tx.Optional[DstVolumeInfo] = None  # Destination volume
+    affine: Affine = Factory(Affine)
+    label: tx.Optional[int] = None
+    src: tx.Optional[SrcVolumeInfo] = None
+    dst: tx.Optional[DstVolumeInfo] = None

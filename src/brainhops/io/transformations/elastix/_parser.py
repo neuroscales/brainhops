@@ -1,41 +1,29 @@
-"""Read and write the parameter maps of elastix parameter files.
+"""Reading and writing of the parameter maps of elastix parameter files.
 
-An elastix parameter file is a flat map from parameter names to lists of
-values. elastix knows two spellings of it (see
-`Common/ParameterFileParser/itkParameterFileParser.cxx`):
+A parameter map is a flat map from names to values, spelled in one of two
+syntaxes (`itkParameterFileParser.cxx`): classic text (`.txt`), one
+`(Name value ...)` per line with `//` comments, or TOML (`.toml`), one
+`Name = value` or `Name = [value, ...]` per line with `#` comments.
 
-- the classic text syntax (`.txt`), one parameter per line:
-  `(Name value value ...)`, where a value is a number or a
-  double-quoted string, and `//` starts a comment;
-- a TOML syntax (`.toml`), one parameter per line too:
-  `Name = value` or `Name = [value, value, ...]`, where `#` starts a
-  comment.
-
-Both are parsed here into the same `dict`, which maps each name to a
-tuple of values: a quoted value is a `str`, an unquoted one a number
-(`int` or `float`) when it reads as one, and a `str` otherwise. The
-transform parameters, which can run to millions of values for a
-B-spline, are parsed straight into a `float64` array instead.
+Both are parsed into a dictionary from names to tuples, in which a quoted
+value is a `str` and an unquoted one is an `int` or `float` when it reads
+as a number. Transform parameters, millions of values for B-splines, are
+parsed directly into a float64 array.
 """
 
-# stdlib
 import math
 import re
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 
-# io
 from brainhops.io.base.parsers import ParserContentError
 
-#: Parameters parsed into a float64 array rather than a tuple.
+#: Parameters parsed into a float64 array instead of a tuple.
 _ARRAYS = ("TransformParameters", "ITKTransformParameters")
 
-#: A parameter whose presence says that a map describes a transform
-#: (as written by elastix, or read by transformix) rather than a
-#: registration. elastix's registration parameter files also name a
-#: `Transform`, but carry none of these.
+#: Parameters that mark a transform. Registration parameter files also
+#: name a `Transform`, but have none of these.
 _TRANSFORM_KEYS = (
     "TransformParameters",
     "ITKTransformParameters",
@@ -43,7 +31,8 @@ _TRANSFORM_KEYS = (
 )
 
 _INT_RE = re.compile(r"^[+-]?\d+$")
-# elastix rejects a name holding any of these (`GetParameterFromLine`).
+# elastix rejects a name containing any of these characters
+# (`GetParameterFromLine`).
 _INVALID_NAME_RE = re.compile(r"[.,:;!@#$%^&\-+|<>?]")
 _TOML_LINE_RE = re.compile(r"^(?P<name>[A-Za-z0-9_]+)\s*=\s*(?P<value>.*)$")
 
@@ -56,21 +45,21 @@ ParameterMap = tx.Dict[str, tx.Any]
 
 
 def _number(token: str) -> tx.Union[int, float, str]:
-    """An unquoted token, as a number when it reads as one."""
+    """Read an unquoted token as a number, if it is one."""
     if _INT_RE.match(token):
         return int(token)
     try:
         value = float(token)
     except ValueError:
         return token
-    # elastix's `IsNumber` refuses "nan" and "inf", so they are words.
+    # elastix `IsNumber` refuses "nan" and "inf", so they stay words.
     if math.isfinite(value):
         return value
     return token
 
 
 def _values(name: str, values: tx.List[tx.Any]) -> tx.Any:
-    """Store a parameter's values: an array for transform parameters."""
+    """Store a parameter's values, as an array for transform parameters."""
     if name in _ARRAYS:
         try:
             return np.asarray(values, dtype=np.float64)
@@ -130,10 +119,10 @@ def _split_text(line: str) -> tx.List[tx.Tuple[str, bool]]:
 
 
 def _strip_text(line: str) -> str:
-    """Remove the comment, tabs and surrounding blanks of a text line.
+    """Remove the comment, tabs and surrounding blanks from a text line.
 
-    elastix cuts the line at the first `//` wherever it is. Here a `//`
-    inside a quoted string is kept, so that a URL or a UNC path survives.
+    Unlike elastix, which cuts at the first `//`, a `//` inside quotes is
+    kept, so that URLs and UNC paths survive.
     """
     line = line.replace("\t", " ")
     quoted = False
@@ -147,7 +136,7 @@ def _strip_text(line: str) -> str:
 
 
 def read_text_map(lines: tx.Iterable[str]) -> ParameterMap:
-    """Parse the lines of a classic (`.txt`) elastix parameter file."""
+    """Parse the lines of a classic `.txt` parameter file."""
     pmap: ParameterMap = {}
     for raw in lines:
         line = _strip_text(raw)
@@ -175,13 +164,13 @@ def _format_value(value: tx.Any, toml: bool = False) -> str:
         if toml:
             value = value.replace("\\", "\\\\").replace('"', '\\"')
         elif '"' in value:
-            # The text syntax has no escape: a quote always ends a string.
+            # The text syntax has no escapes: a quote always ends a string.
             raise ValueError(
                 f"An elastix text parameter cannot hold a quote: {value!r}"
             )
         return '"' + value + '"'
     if isinstance(value, (bool, np.bool_)):
-        # elastix writes a boolean as a word, which the text syntax quotes.
+        # elastix writes booleans as words, which the text syntax quotes.
         text = "true" if value else "false"
         return text if toml else f'"{text}"'
     if isinstance(value, (int, np.integer)):
@@ -194,7 +183,7 @@ def _format_value(value: tx.Any, toml: bool = False) -> str:
 
 
 def format_text_map(pmap: ParameterMap) -> tx.Iterator[str]:
-    """The lines of a classic (`.txt`) elastix parameter file."""
+    """Yield the lines of a classic `.txt` parameter file."""
     for name, values in pmap.items():
         if isinstance(values, (str, int, float)):
             values = (values,)
@@ -204,14 +193,10 @@ def format_text_map(pmap: ParameterMap) -> tx.Iterator[str]:
 # ----------------------------------------------------------------------
 #   TOML SYNTAX
 # ----------------------------------------------------------------------
-#
-# elastix writes a TOML parameter file one parameter per line, with a
-# scalar or a one-line array (`Conversion::ParameterMapToString`), and
-# reads it with a full TOML parser (toml++). Python only ships a TOML
-# parser from 3.11, so the subset that elastix writes -- bare keys,
-# basic strings, numbers, booleans and one-line arrays of those -- is
-# parsed here. Anything else (tables, multi-line arrays, dates) is
-# refused rather than misread.
+# elastix writes one parameter per line and reads TOML with toml++.
+# Python parses TOML only from 3.11, so the subset that elastix writes
+# (bare keys, basic strings, numbers, booleans and one-line arrays) is
+# parsed here, and anything else is refused rather than misread.
 
 
 def _split_toml_array(text: str, line: str) -> tx.List[str]:
@@ -242,7 +227,7 @@ def _split_toml_array(text: str, line: str) -> tx.List[str]:
     if last or items:
         items.append(last)
     if items and items[-1] == "":
-        items.pop()  # a trailing comma is allowed
+        items.pop()
     return items
 
 
@@ -282,7 +267,7 @@ def _strip_toml(line: str) -> str:
 
 
 def read_toml_map(lines: tx.Iterable[str]) -> ParameterMap:
-    """Parse the lines of a TOML (`.toml`) elastix parameter file."""
+    """Parse the lines of a TOML `.toml` parameter file."""
     pmap: ParameterMap = {}
     for raw in lines:
         line = _strip_toml(raw)
@@ -308,7 +293,7 @@ def read_toml_map(lines: tx.Iterable[str]) -> ParameterMap:
 
 
 def format_toml_map(pmap: ParameterMap) -> tx.Iterator[str]:
-    """The lines of a TOML (`.toml`) elastix parameter file."""
+    """Yield the lines of a TOML `.toml` parameter file."""
     for name, values in pmap.items():
         if isinstance(values, (str, int, float)):
             values = (values,)
@@ -325,14 +310,14 @@ def format_toml_map(pmap: ParameterMap) -> tx.Iterator[str]:
 
 
 def is_transform_map(pmap: ParameterMap) -> bool:
-    """Whether a parameter map describes a transform."""
+    """Return whether a parameter map describes a transform."""
     return "Transform" in pmap and any(k in pmap for k in _TRANSFORM_KEYS)
 
 
 def get_string(
     pmap: ParameterMap, name: str, default: tx.Optional[str] = None
 ) -> tx.Optional[str]:
-    """The first value of a parameter, as text."""
+    """Return the first value of a parameter as text."""
     values = pmap.get(name, ())
     if isinstance(values, np.ndarray):
         values = values.tolist()
@@ -345,7 +330,7 @@ def get_string(
 
 
 def get_floats(pmap: ParameterMap, name: str) -> tx.Optional[np.ndarray]:
-    """The values of a parameter, as a float64 vector, if it is set."""
+    """Return the values of a parameter as a float64 vector, if it is set."""
     if name not in pmap:
         return None
     try:
@@ -358,7 +343,7 @@ def get_floats(pmap: ParameterMap, name: str) -> tx.Optional[np.ndarray]:
 
 
 def get_bool(pmap: ParameterMap, name: str, default: bool = False) -> bool:
-    """A boolean parameter, which elastix writes `"true"` or `"false"`."""
+    """Read a boolean parameter, which elastix writes as "true" or "false"."""
     value = get_string(pmap, name)
     if value is None:
         return default

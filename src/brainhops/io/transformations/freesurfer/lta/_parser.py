@@ -1,25 +1,20 @@
-# stdlib
 import re
 from enum import Enum
 from warnings import warn
 
-# dependencies
 import typing_extensions as tx
 from bagof.magic import Magic, fields
 
-# core
 from brainhops._core.path import FileOrContentLike, Path, PathLike, exists
 from brainhops._core.peek import peekable_lines
-
-# io
 from brainhops.io.base.parsers import (
     Confidence,
     SnifferContentError,
     TextFileParserWriter,
 )
 
-# The first line of an LTA file, once comments are stripped: the type of
-# the transformation, as an integer.
+# Once comments are stripped, the first line of an LTA file gives the
+# integer transformation type.
 _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 
 
@@ -29,26 +24,20 @@ _FIRST_LINE = re.compile(r"^type\s*=\s*\d+$")
 
 
 class LtaParser(Magic, TextFileParserWriter):
-    """Mixin that gives a class the ability to sniff, read and write itself
-    in LTA format.
+    """Mixin that lets a class be sniffed, read and written as LTA.
 
-    `LtaStruct` and the blocks it is made of inherit their `sniff*`,
-    `from_*` and `to_*` methods from this class. It follows the shared
-    parser contract of [`TextFileParserWriter`][]:
-    the front doors are `load`, `save`, `to_bytes` and `to_fileobj`, and
-    every format-specific step is implemented in `sniff_line`,
-    `from_lines` and `to_lines`.
+    `LtaStruct` and its blocks inherit their `sniff*`, `from_*` and `to_*`
+    methods from this class, which follows the contract of
+    [`TextFileParserWriter`][]: front doors such as `load` and `save`, and
+    the format steps `sniff_line`, `from_lines` and `to_lines`.
 
-    A struct is read field by field, in declaration order: a field whose
-    type is itself an `LtaParser` reads its own block of lines, and any
-    other field reads one `key = value(s)` line (or one `value(s)` line,
-    in a block that has no keys). Comments (`# ...`) and blank lines are
-    skipped.
+    A struct is read field by field, in declaration order. A field whose type
+    is an `LtaParser` reads its own block, and any other field reads one
+    `key = value(s)` line, or a `value(s)` line in a block without keys.
+    Comments and blank lines are skipped.
     """
 
     _HAS_KEYS = True
-
-    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_line(
@@ -57,24 +46,22 @@ class LtaParser(Magic, TextFileParserWriter):
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """
-        Score how likely a line is to be the first line of an LTA file.
+        """Score the likelihood that a line is the first line of an LTA file.
 
-        The first line of an LTA file, once comments are stripped, is its
-        type: `type = <int>`.
+        With comments stripped, that line reads `type = <int>`.
 
         Parameters
         ----------
         line : str
-            The first line that is not blank or a comment.
-        error : bool | type[Exception], optional
-            If not False, raise an error if the line is not the first
-            line of an LTA file.
+            The first line that is neither blank nor a comment.
+        error : bool or type of Exception, optional
+            If not `False`, raise an error when the line is not the first line
+            of an LTA file.
 
         Returns
         -------
         float
-            Confidence that the line opens an LTA file, in `[0, 1]`.
+            A confidence between 0 and 1.
         """
         if line and _FIRST_LINE.match(line.split("#", 1)[0].strip()):
             return Confidence.LIKELY
@@ -86,28 +73,19 @@ class LtaParser(Magic, TextFileParserWriter):
             )
         return Confidence.NO
 
-    # --- from ---------------------------------------------------------
-
     @classmethod
     def from_(cls, other: FileOrContentLike) -> tx.Self:
-        """
-        Build an object from a file, or from its content.
+        """Build an object from a file or from its content.
 
         !!! warning "Deprecated"
-            Use `load` for a file, a file object or bytes, and
-            `from_text` or `from_lines` for content held in memory.
-            Unlike `load`, `from_` reads a string that names no existing
-            file as LTA content.
+            Use `load` for a file, a file object or bytes, and `from_text` or
+            `from_lines` for content in memory. Unlike `load`, `from_` reads a
+            string that names no existing file as LTA content.
 
         Parameters
         ----------
-        other : str | PathLike | IO | bytes | Iterable[str]
-            Input file, or its content.
-
-        Returns
-        -------
-        obj
-            The parsed object.
+        other : str, PathLike, IO, bytes or iterable of str
+            The file, or its content.
         """
         warn(
             f"{cls.__name__}.from_() is deprecated: use load() for a file, "
@@ -117,9 +95,9 @@ class LtaParser(Magic, TextFileParserWriter):
             stacklevel=2,
         )
         if isinstance(other, str):
-            # The one place a `str` may hold content rather than a path:
-            # this is what `from_` always did. Multi-line content is too
-            # long a name to look up, so it is content, not a missing file.
+            # Only here may a string hold content rather than a path.
+            # Multi-line content is too long to be a name, so it is not a
+            # missing file.
             if not exists(other):
                 return cls.from_text(other)
             other = Path(other)
@@ -131,19 +109,7 @@ class LtaParser(Magic, TextFileParserWriter):
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        """
-        Build an object from an iterable over lines of an LTA file.
-
-        Parameters
-        ----------
-        lines : Iterable[str]
-            Iterable content of an LTA file.
-
-        Returns
-        -------
-        obj
-            The parsed object.
-        """
+        """Build an object from an iterable of LTA lines."""
         if kwargs:
             raise TypeError(
                 f"{cls.__name__}.from_lines() takes no options, but was "
@@ -158,19 +124,10 @@ class LtaParser(Magic, TextFileParserWriter):
             setattr(obj, field.name, parse(lines))
         return obj
 
-    # --- to -----------------------------------------------------------
-
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """
-        Convert the object to an iterable over lines of an LTA file.
+        """Yield the LTA lines of the object.
 
-        Additional keyword arguments are passed to the underlying field
-        formatter.
-
-        Returns
-        -------
-        Iterator[str]
-            An iterable over lines of an LTA file representing the object.
+        Extra keyword arguments are passed to the underlying field formatter.
         """
         for field in fields(type(self)):
             value = getattr(self, field.name)
@@ -179,47 +136,25 @@ class LtaParser(Magic, TextFileParserWriter):
             yield from write(value)
 
     def to_text(self, **kwargs) -> str:
-        """
-        Convert the object to a string in LTA format, ending with a
-        newline.
-
-        Returns
-        -------
-        str
-            The string representation of the object in LTA format.
-        """
+        """Return the LTA text of the object, ending with a newline."""
         return super().to_text(**kwargs) + "\n"
 
 
 class VolumeInfoParser(LtaParser):
-    """Parses the volume-geometry block of an LTA file.
+    """Parser of a volume-geometry block.
 
-    A volume-geometry block opens with a `"<NAME> volume info"` header
-    line, followed by the fields that describe a source or destination
-    volume.
+    The block opens with a `"<NAME> volume info"` header line, followed by the
+    fields that describe the source or destination volume.
     """
 
     @classmethod
     def from_lines(
         cls, lines: tx.Iterable[str], **kwargs
     ) -> tx.Optional[tx.Self]:
-        """
-        Build a volume-geometry block from an iterable over lines of an
-        LTA file.
+        """Build the block from LTA lines positioned at its start.
 
-        Returns `None`, without consuming any line, if the next line is
-        not this block's header.
-
-        Parameters
-        ----------
-        lines : Iterable[str]
-            Iterable content of an LTA file, positioned at the start of
-            the block.
-
-        Returns
-        -------
-        obj or None
-            The parsed volume-geometry block, or `None`.
+        If the next line is not the header of this block, `None` is returned
+        and no line is consumed.
         """
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
@@ -228,52 +163,33 @@ class VolumeInfoParser(LtaParser):
             return None
         if line != (f"{cls.NAME} volume info"):
             return None
-        next(lines)  # consume line
+        next(lines)
         return super().from_lines(lines, **kwargs)
 
     def to_lines(self, **kwargs) -> tx.Generator[str]:
-        """
-        Convert the volume-geometry block to an iterable over lines of
-        an LTA file, header included.
-        """
+        """Yield the lines of the block, including its header."""
         yield f"{self.NAME} volume info"
         yield from super().to_lines(fmt={float: "{:.15e}"}, **kwargs)
 
 
 class MatrixParser(LtaParser):
-    """Parses the affine matrix block of an LTA file.
+    """Parser of an affine matrix block.
 
-    The block opens with a line giving the element count and the number
-    of rows and columns, followed by that many rows of matrix entries.
+    The first line gives the element type and the numbers of rows and
+    columns, and that many rows of entries follow.
     """
 
     @classmethod
     def from_lines(cls, lines: tx.Iterable[str], **kwargs) -> tx.Self:
-        """
-        Build the matrix block from an iterable over lines of an LTA
-        file.
-
-        Parameters
-        ----------
-        lines : Iterable[str]
-            Iterable content of an LTA file, positioned at the start of
-            the block.
-
-        Returns
-        -------
-        obj
-            The parsed matrix block.
-        """
+        """Build the matrix block from LTA lines positioned at its start."""
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
 
-        # Read first line to check affine shape
         line = next(lines, None)
         if not line:
             warn("expected affine block, but got nothing", stacklevel=1)
             return cls()
 
-        # Parse shape
         shape = _read_values(line, (int,) * 3)
         if not shape:
             warn(
@@ -284,22 +200,18 @@ class MatrixParser(LtaParser):
         nelem, nrow, ncol = shape
         dtype = {1: float, 2: complex}.get(nelem)
 
-        # Parse affines
         matrix = []
         for _ in range(nrow):
             row = _read_values(next(lines), (dtype,) * (ncol))
             matrix.append(row)
 
-        # Return object
         return cls(matrix=tuple(matrix))
 
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
-        """Convert the matrix block to an iterable over lines of an LTA
-        file.
+        """Yield the lines of the matrix block.
 
-        Entries are written at full double precision, so that a matrix
-        survives a round trip unchanged. FreeSurfer writes six decimals,
-        but reads either.
+        Entries are written at full double precision so that the matrix
+        survives a round trip. FreeSurfer writes six decimals but reads either.
         """
         dtype = self.dtype
         fmt = "{:+.15e} {:+.15e}   " if dtype is complex else "{:+.15e}  "
@@ -314,38 +226,33 @@ class MatrixParser(LtaParser):
 
 
 class LtaFieldParser:
-    """Reads a single field of an LTA struct from a line, or a block of
-    lines, of an LTA file.
+    """Reader of a single field of an LTA struct.
 
-    Calling the parser consumes as many lines as the field needs, and
-    returns the parsed value.
+    Calling the reader consumes as many lines as the field needs, which is
+    one line or a block of lines, and returns the parsed value.
     """
 
     def __init__(self, key: tx.Optional[str], type: tx.Any) -> None:
-        """
-        Parameters
+        """Parameters
         ----------
         key : str or None
-            If not None, the line should be in `key = *values` format,
-            and the key should match this value.
-            If None, the line should be in `*values` format.
+            If given, the line must read `key = *values` with a matching key.
+            Otherwise the line reads `*values`.
         type : type hint
-            The type of the value to be parsed.
-            Can be a plain type, a `Tuple` or an `Optional` type hint.
-            If the type is optional, the parser will return None if the
-            line is missing or empty.
+            The type of the value, which is a plain type, a `Tuple` or an
+            `Optional`. For an `Optional` type, the reader returns `None` when
+            the line is missing or empty.
         """
         self.key = key
         self.optional, self.type = _is_optional(type)
 
     def __call__(self, lines: tx.Iterator[str]) -> tx.Any:
-        """Consume the field's line, or block of lines, and return its
-        parsed value."""
+        """Consume the lines of the field and return its parsed value."""
         if not isinstance(lines, peekable_lines):
             lines = peekable_lines(lines)
         types = self.type
 
-        # If field is a struct, defer
+        # A field that is a struct defers to the parser of that struct.
         if isinstance(types, type) and issubclass(types, LtaParser):
             value = types.from_lines(lines)
             if value is None and not self.optional:
@@ -354,13 +261,11 @@ class LtaFieldParser:
                 )
             return value
 
-        # Convert type hint to actual type(s) for parsing
         if tx.get_origin(types) in (tx.Tuple, tuple):
             types = tx.get_args(types)
         if isinstance(types, tuple) and len(types) == 1:
             types = types[0]
 
-        # Read line
         line = lines.peek()
         if not line:
             if self.optional:
@@ -369,17 +274,15 @@ class LtaFieldParser:
                 f'expected line for key "{self.key}", but got EOF'
             )
 
-        # Parse key = value(s)
         if self.key:
             key, value = _read_key(line, {self.key: types})
             if key != self.key:
                 if self.optional:
                     return None
                 raise ValueError(f'expected key "{self.key}", but got "{key}"')
-            next(lines)  # consume line
+            next(lines)
             return value
 
-        # Parse value(s)
         else:
             value = _read_values(line, types)
             if value is None:
@@ -388,31 +291,28 @@ class LtaFieldParser:
                 raise ValueError(
                     f'expected value(s) of type "{types}", but got: "{line}"'
                 )
-            next(lines)  # consume line
+            next(lines)
             return value
 
 
 class LtaFieldWriter:
-    """Writes a single field of an LTA struct as a line, or a block of
-    lines, of an LTA file.
+    """Writer of a single field of an LTA struct.
 
-    Calling the writer yields the lines that represent the field's value.
+    Calling the writer yields the line, or the block of lines, of a value.
     """
 
     def __init__(self, key: tx.Optional[str], **kwargs) -> None:
-        """
-        Parameters
+        """Parameters
         ----------
         key : str or None
-            If not None, the line should be in `key = value` format,
-            and the key should match this value.
-            If None, the line should be in `*values` format.
+            If given, the line reads `key = value`. Otherwise the line reads
+            `*values`.
         """
         self.key = key
         self.kwargs = kwargs
 
     def __call__(self, value: tx.Any, **kwargs) -> tx.Iterator[str]:
-        """Yield the line, or lines, that represent `value`."""
+        """Yield the lines of `value`."""
         if value is None:
             return
         if isinstance(value, LtaParser):
@@ -429,7 +329,6 @@ class LtaFieldWriter:
 #   Low level parsers and writers
 # ----------------------------------------------------------------------
 
-# Regex patterns for different value types
 _INT = r"(\d+)"
 _FLOAT = r"([\+\-]?\d+\.?\d*(?:[eE][\+\-]?\d+)?)"
 _COMPLEX = f"(?P<real>{_FLOAT})" + r"\s+" + f"(?P<imag>{_FLOAT})"
@@ -451,7 +350,7 @@ _COMPILED_PATTERNS = {
 
 
 def _get_pattern(type_: tx.Any, compiled: bool = False) -> re.Pattern:
-    # Handle enums by using the pattern of their underlying type
+    # An enum uses the pattern of its underlying type.
     if isinstance(type_, type):
         if issubclass(type_, int):
             type_ = int
@@ -472,17 +371,12 @@ def _to_type(value: str, type_: tx.Any) -> tx.Any:
 def _read_key(
     line: str, key_dict: tx.Optional[dict] = None
 ) -> tx.Tuple[tx.Optional[str], tx.Optional[str]]:
-    """Read one `key = value` line from an LTA file
+    """Read a `key = value` line.
 
-    Parameters
-    ----------
-    line : str
-    format : type in {int, float, str}
-
-    Returns
-    -------
-    object or tuple or None
-
+    `key_dict` maps known keys to the type, or sequence of types, of their
+    values. The value of a known key is converted, and the value of any other
+    key is returned as a string. `(None, None)` is returned when the line is
+    not a `key = value` line.
     """
     key_dict = key_dict or dict()
 
@@ -501,7 +395,7 @@ def _read_key(
             )
         match = pattern.match(value)
         if match:
-            if match.groupdict():  # complex
+            if match.groupdict():
                 value = complex(*map(float, match.groupdict().values()))
             elif isinstance(format, type):
                 value = _to_type(match.group(1), format)
@@ -515,18 +409,10 @@ def _read_key(
 def _read_values(
     line: str, format: tx.Union[type, tx.Sequence[type]]
 ) -> tx.Optional[tx.Union[str, int, float, tx.Tuple]]:
-    """Read one `*values` line from an LTA file
+    """Read a `*values` line, given the type or types of the values.
 
-    Parameters
-    ----------
-    line : str
-    format : [sequence of] type
-        One of {int, float, str}
-
-    Returns
-    -------
-    object or tuple or None
-
+    The result is a single value, a tuple of values, or `None` when the line
+    does not match.
     """
     pattern = _get_pattern("whitespace")
     if isinstance(format, type):
@@ -553,27 +439,19 @@ def _write_key(
     sep: tx.Union[int, str] = 1,
     fmt: tx.Optional[tx.Union[str, tx.Dict[tx.Type, str]]] = None,
 ) -> str:
-    """Write a `key = value` line in an LTA file.
+    """Write a `key = value` line.
 
     Parameters
     ----------
     key : str
-        Key to write.
-    value : [sequence of] int or float or str or enum
-        Value(s) to write.
-    sep : int | str
-        The separator to use between values.
-        If an integer, use that many spaces.
-    fmt : str or dict | None
-        The format string(s) to use for values.
-        If a string, use that for all values.
-        If a dict, use the format corresponding to the type of each value.
-        If None, use a default format based on the type of each value.
-
-    Returns
-    -------
-    str
-
+        The key.
+    value : int, float, str, Enum or sequence of these
+        The value or values.
+    sep : int or str
+        The separator between values. An integer gives a number of spaces.
+    fmt : str, dict or None
+        The format of the values. A string applies to all values, a dictionary
+        maps value types to formats, and `None` uses a default for each type.
     """
     return f"{key:9s} = {_write_values(value, sep, fmt)}".rstrip()
 
@@ -585,67 +463,46 @@ def _write_values(
     sep: tx.Union[int, str] = 1,
     fmt: tx.Optional[tx.Union[str, tx.Dict[tx.Type, str]]] = None,
 ) -> str:
-    """Write a `*values` line in an LTA file.
+    """Write a `*values` line.
 
-    Parameters
-    ----------
-    value : [sequence of] int or float or str or enum
-        Value(s) to write.
-    sep : int | str
-        The separator to use between values.
-        If an integer, use that many spaces.
-    fmt : str or dict | None
-        The format string(s) to use for values.
-        If a string, use that for all values.
-        If a dict, use the format corresponding to the type of each value.
-        If None, use a default format based on the type of each value.
-
-    Returns
-    -------
-    str
-
+    The parameters are those of [`_write_key`][].
     """
     fmt = fmt or {}
 
     if isinstance(value, Enum):
-        # Enum -> defer to its value + comment with its name
+        # An enum is written as its value, with its name in a trailing
+        # comment.
         return str(value.value) + f"  # {value.name}"
 
     if isinstance(value, str):
-        # Str -> use appropriate format
         if isinstance(fmt, dict):
             fmt = fmt.get(str, "{:s}")
         return fmt.format(value)
 
     if isinstance(value, int):
-        # Int -> use appropriate format
         if isinstance(fmt, dict):
             fmt = fmt.get(int, "{:d}")
         return fmt.format(value)
 
     if isinstance(value, float):
-        # Float -> use appropriate format
         if isinstance(fmt, dict):
             fmt = fmt.get(float, "{:6.4f}")
         return fmt.format(value)
 
     if isinstance(value, complex):
-        # Complex -> write as two values, separated by a single space.
+        # A complex number is written as two values separated by a space.
         if isinstance(fmt, dict):
             fmt = fmt.get(complex, "{:+.6f} {:+.6f}   ")
         return fmt.format(value.real, value.imag)
 
     else:
-        # Sequence of values -> separate by sep.
         if isinstance(sep, int):
             sep = " " * sep
         return sep.join([_write_values(v, fmt=fmt) for v in value])
 
 
 def _is_optional(type_: tx.Any) -> tx.Tuple[bool, tx.Any]:
-    """
-    Check if a type hint is optional, and return the underlying type.
-    """
+    """Return whether a type hint is optional, and the underlying type."""
     if tx.get_origin(type_) is tx.Optional:
         return True, tx.get_args(type_)[0]
     if tx.get_origin(type_) is tx.Union and type(None) in tx.get_args(type_):

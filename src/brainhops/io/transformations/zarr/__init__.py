@@ -1,4 +1,4 @@
-"""Readers for OME-Zarr transformation fields."""
+"""Readers and writers for transformation fields stored as OME-Zarr."""
 
 __all__ = ["OmeZarrField", "OmeFieldError"]
 

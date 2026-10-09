@@ -1,10 +1,9 @@
-"""
-The raw content of a FreeSurfer morph (`.m3z`), as stored.
+"""Raw content of a FreeSurfer morph (`.m3z`), as it is stored.
 
-These structs mirror the file one to one -- every node, every tag -- so
-that a file read and written back is the same file. The layout is that of
-`__m3zRead` and `__m3zWrite` in FreeSurfer's `utils/gcamorph.cpp` (see
-the package documentation for the full specification).
+The structs mirror the file one to one, so that reading and writing a
+file reproduces it. The layout follows `__m3zRead` and `__m3zWrite` in
+FreeSurfer's `utils/gcamorph.cpp`; the package documentation gives the
+full specification.
 """
 
 __all__ = [
@@ -17,20 +16,14 @@ __all__ = [
     "write_m3z",
 ]
 
-# stdlib
 import gzip
 import struct as _struct
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
-
-# externals
 from bagof.magic import HIDE_IF_NONE, Magic, field
 
 from brainhops.io.base.parsers import ParserContentError
-
-# io
 from brainhops.io.common.freesurfer import (
     FS_DEFAULT_XRAS,
     FS_DEFAULT_YRAS,
@@ -39,12 +32,11 @@ from brainhops.io.common.freesurfer import (
     fs_vox2ras,
 )
 
-# type hints
 _3Ints = tx.Tuple[int, int, int]
 _3Floats = tx.Tuple[float, float, float]
 
 GCAM_VERSION = 1.0
-"""The only version FreeSurfer reads and writes (`GCAM_VERSION`)."""
+"""The only morph version that FreeSurfer reads and writes."""
 
 GCAM_RAS = 1
 """Node positions are scanner RAS coordinates of the source image."""
@@ -58,31 +50,28 @@ TAG_GCAMORPH_LABELS = 12
 TAG_MGH_XFORM = 31
 
 _TAGS = (TAG_GCAMORPH_GEOM, TAG_GCAMORPH_TYPE, TAG_GCAMORPH_LABELS)
-"""Tags this module decodes, besides `TAG_MGH_XFORM`."""
+"""The tags that this module decodes, besides `TAG_MGH_XFORM`."""
 
 MATRIX_STRLEN = 4 * 4 * 100
-"""Length of the text buffer FreeSurfer writes a matrix into."""
+"""Length of the text buffer into which FreeSurfer writes a matrix."""
 
 _FNAME_LEN = 512
-"""Length of the file name buffer of a volume geometry."""
+"""Length of the file-name buffer of a volume geometry."""
 
-# Every value is big-endian, whatever the machine. `__m3zWrite` writes
-# through `znzwriteInt`/`znzwriteFloat`/`znzwriteLong` (FreeSurfer's
-# `utils/fio.cpp`), which byte-swap on little-endian hosts
-# (`#if (BYTE_ORDER == LITTLE_ENDIAN)`) and write as is on big-endian
-# ones; `__m3zRead` reads through `znzreadInt`/`znzreadFloat`, which
-# swap back the same way. A morph is therefore always big-endian.
+# A morph is always big-endian: `__m3zWrite` writes through `znzwriteInt`
+# and related functions (`fio.cpp`), which swap bytes on little-endian
+# hosts, and `__m3zRead` swaps back.
 
 # version (float), width, height, depth, spacing (int), exp_k (float)
 _HEADER = _struct.Struct(">f4if")
 
-# One node: origx, origy, origz, x, y, z (float), xn, yn, zn (int).
+# origx, origy, origz, x, y, z (float), then xn, yn, zn (int)
 _NODE = np.dtype(
     [("orig", ">f4", (3,)), ("pos", ">f4", (3,)), ("index", ">i4", (3,))]
 )
 
 # valid, width, height, depth (int), then 15 floats: xsize, ysize, zsize,
-# x_r, x_a, x_s, y_r, y_a, y_s, z_r, z_a, z_s, c_r, c_a, c_s.
+# the cosines x_r to z_s, and c_r, c_a, c_s
 _GEOM = _struct.Struct(">4i15f")
 _GEOM_SIZE = _GEOM.size + _FNAME_LEN
 
@@ -95,49 +84,47 @@ _GZIP_MAGIC = b"\x1f\x8b"
 
 
 class M3zGeometry(Magic, frozen=True, repr=HIDE_IF_NONE):
-    """
-    The geometry of a volume, as a morph stores it (`VOL_GEOM`).
+    """Geometry of a volume, as a morph stores it (`VOL_GEOM`).
 
-    The defaults are FreeSurfer's (`initVolGeom`): an invalid 256^3
-    volume of 1 mm voxels in coronal LIA orientation, centred on the
-    origin -- the geometry a morph has when its file records none.
+    The defaults, used when a file records no geometry, are those of
+    FreeSurfer's `initVolGeom`: an invalid volume of 256³ voxels of 1 mm,
+    coronal LIA, centred on the origin.
     """
 
     valid: int = 0
-    """Whether the geometry is valid (1) or not (0)."""
+    """1 if the geometry is valid, 0 otherwise."""
 
     shape: _3Ints = (256, 256, 256)
-    """The shape of the volume, `(width, height, depth)`."""
+    """The shape `(width, height, depth)`."""
 
     voxel_size: _3Floats = (1.0, 1.0, 1.0)
     """The voxel size, in millimetres."""
 
     xras: _3Floats = FS_DEFAULT_XRAS
-    """Direction cosine of the first voxel axis, in RAS."""
+    """Direction cosines of the first voxel axis, in RAS."""
 
     yras: _3Floats = FS_DEFAULT_YRAS
-    """Direction cosine of the second voxel axis, in RAS."""
+    """Direction cosines of the second voxel axis, in RAS."""
 
     zras: _3Floats = FS_DEFAULT_ZRAS
-    """Direction cosine of the third voxel axis, in RAS."""
+    """Direction cosines of the third voxel axis, in RAS."""
 
     cras: _3Floats = (0.0, 0.0, 0.0)
-    """The RAS coordinates of the centre of the volume (voxel
-    `shape / 2`)."""
+    """RAS coordinates of the centre of the volume (voxel `shape / 2`)."""
 
     fname: bytes = field(
         default=b"unknown".ljust(_FNAME_LEN, b"\0"), repr=False
     )
-    """The 512-byte, `NUL`-padded file name buffer, as stored."""
+    """The 512-byte, NUL-padded file-name buffer, as stored."""
 
     @property
     def filename(self) -> str:
-        """The file name of the volume."""
+        """The file name of the volume, decoded from its buffer."""
         return self.fname.split(b"\0", 1)[0].decode("utf-8", "replace")
 
     @property
     def vox2ras(self) -> np.ndarray:
-        """The `(4, 4)` voxel-to-scanner-RAS matrix of the volume."""
+        """The `(4, 4)` voxel-to-scanner-RAS matrix."""
         return fs_vox2ras(
             self.shape,
             self.voxel_size,
@@ -155,8 +142,10 @@ class M3zGeometry(Magic, frozen=True, repr=HIDE_IF_NONE):
         valid: int = 1,
         filename: tx.Union[str, bytes] = "",
     ) -> tx.Self:
-        """The geometry of a volume of shape `shape` placed by
-        `vox2ras` (see [`fs_geometry_from_vox2ras`][])."""
+        """Return the geometry of a volume of `shape` placed by `vox2ras`.
+
+        See `fs_geometry_from_vox2ras`.
+        """
         shape = tuple(int(s) for s in shape)
         size, xras, yras, zras, cras = fs_geometry_from_vox2ras(vox2ras, shape)
         if isinstance(filename, str):
@@ -174,28 +163,26 @@ class M3zGeometry(Magic, frozen=True, repr=HIDE_IF_NONE):
 
 
 class M3zXform(Magic, frozen=True, repr=HIDE_IF_NONE):
-    """
-    The matrix of a `TAG_MGH_XFORM` tag: the linear transform the morph
-    was initialised with.
+    """Matrix of a `TAG_MGH_XFORM` tag.
 
-    FreeSurfer writes it as text, in a fixed-size buffer, behind a tag
-    of its own and a length. Recent versions write the tag `0` and the
-    keyword `Matrix`, FreeSurfer 6 and 7.1 the tag `TAG_AUTO_ALIGN`
-    (33) and the keyword `AutoAlign`. The buffer is kept verbatim.
+    The matrix is the linear transform that initialised the morph, written
+    as text into a fixed-size buffer behind its own tag and length: tag 0
+    and keyword `Matrix` in recent FreeSurfer, `TAG_AUTO_ALIGN` (33) and
+    `AutoAlign` in FreeSurfer 6 and 7.1. The buffer is kept verbatim.
     """
 
     tag: int = 0
     """The inner tag."""
 
     length: int = MATRIX_STRLEN
-    """The length the inner tag records."""
+    """The length that the inner tag records."""
 
     buffer: bytes = field(default=b"\0" * MATRIX_STRLEN, repr=False)
     """The text buffer, as stored."""
 
     @property
     def matrix(self) -> np.ndarray:
-        """The `(4, 4)` matrix the buffer encodes."""
+        """The `(4, 4)` matrix that the buffer encodes."""
         text = self.buffer.split(b"\0", 1)[0].decode("ascii", "replace")
         values = text.split()[1:17]
         if len(values) != 16:
@@ -214,63 +201,38 @@ class M3zXform(Magic, frozen=True, repr=HIDE_IF_NONE):
 
 
 class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
-    """
-    The content of a morph file, as `M3zMorph.struct` holds it.
+    """Content of a morph file, as `M3zMorph.struct` holds it.
 
-    The node arrays are indexed by node `[x, y, z]`, the order in which
-    FreeSurfer writes them (x slowest), which is the F order of the node
-    grid: `positions[i, j, k]` is the node at column `i`, row `j` and
-    slice `k`. Equality is identity, since the arrays are large.
+    Node arrays are indexed `[x, y, z]` with x slowest, the Fortran order of
+    the node grid. Structs compare by identity, because the arrays are large.
 
     Attributes
     ----------
     version : float
-        The file version, always `1.0`.
+        Always `1.0`.
     spacing : int
-        The distance between nodes, in atlas voxels: node `n` is atlas
-        voxel `n * spacing`.
+        Node `n` is atlas voxel `n * spacing`.
     exp_k : float
-        The exponent of the morph's area-preserving penalty.
+        Exponent of the area-preserving penalty.
     original : (W, H, D, 3) float32 array
-        The node positions before the non-linear registration
-        (`origx, origy, origz`), in the units of `positions`.
+        Positions before registration, in the units of `positions`.
     positions : (W, H, D, 3) float32 array
-        The node positions (`x, y, z`), in source voxels (`GCAM_VOX`)
-        or source scanner RAS (`GCAM_RAS`).
+        Node positions, in source voxels (`GCAM_VOX`) or scanner RAS
+        (`GCAM_RAS`).
     index : (W, H, D, 3) int32 array
-        The GCA node each node maps to (`xn, yn, zn`).
-    image : M3zGeometry or None
-        The geometry of the source image (`TAG_GCAMORPH_GEOM`), or
-        `None` if the file has no such tag.
-    atlas : M3zGeometry or None
-        The geometry of the atlas, the target (`TAG_GCAMORPH_GEOM`), or
-        `None` if the file has no such tag.
+        The GCA node to which each node maps.
+    image, atlas : M3zGeometry or None
+        Source and target geometries from `TAG_GCAMORPH_GEOM`, or `None`.
     type : int or None
-        `GCAM_VOX` or `GCAM_RAS` (`TAG_GCAMORPH_TYPE`), or `None` if the
-        file has no such tag, in which case positions are voxels.
+        `GCAM_VOX` or `GCAM_RAS` from `TAG_GCAMORPH_TYPE`. `None` means voxels.
     labels : (W, H, D) int32 array or None
-        The label of each node (`TAG_GCAMORPH_LABELS`).
+        Node labels, from `TAG_GCAMORPH_LABELS`.
     xform : M3zXform or None
-        The linear transform the morph records (`TAG_MGH_XFORM`); its
-        `(4, 4)` matrix is `xform.matrix`.
+        The linear transform of `TAG_MGH_XFORM`.
     tags : tuple of int
-        The tags, in the order the file stores them.
+        The tags, in file order.
     trailing : bytes
-        Bytes that follow a tag FreeSurfer does not know, verbatim.
-    shape : (int, int, int)
-        Read-only: the shape of the node grid, `(W, H, D)`.
-    coordinates : int
-        Read-only: `GCAM_VOX` or `GCAM_RAS`, the units of the positions.
-    image_geometry : M3zGeometry
-        Read-only: `image`, or FreeSurfer's default geometry if `None`.
-        Its voxel-to-scanner-RAS matrix is `image_geometry.vox2ras`.
-    atlas_geometry : M3zGeometry
-        Read-only: `atlas`, or FreeSurfer's default geometry if `None`.
-        Its voxel-to-scanner-RAS matrix is `atlas_geometry.vox2ras`.
-    invalid : (W, H, D) bool array
-        Read-only: the nodes FreeSurfer marks invalid
-        (`GCAM_POSITION_INVALID`), whose positions and original
-        positions are all zero.
+        The bytes after an unknown tag, kept verbatim.
     """
 
     version: float = GCAM_VERSION
@@ -289,31 +251,33 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
 
     @property
     def shape(self) -> _3Ints:
-        """The shape of the node grid, `(width, height, depth)`."""
+        """The shape `(W, H, D)` of the node grid."""
         if self.positions is None:
             return (0, 0, 0)
         return tuple(int(s) for s in self.positions.shape[:3])
 
     @property
     def coordinates(self) -> int:
-        """`GCAM_VOX` or `GCAM_RAS`: the units of the positions."""
+        """`GCAM_VOX` or `GCAM_RAS`: the units of `positions`."""
         return GCAM_VOX if self.type is None else int(self.type)
 
     @property
     def image_geometry(self) -> M3zGeometry:
-        """The source geometry, or FreeSurfer's default if none."""
+        """The source geometry, or the FreeSurfer default if there is none."""
         return self.image if self.image is not None else M3zGeometry()
 
     @property
     def atlas_geometry(self) -> M3zGeometry:
-        """The atlas geometry, or FreeSurfer's default if none."""
+        """The atlas geometry, or the FreeSurfer default if there is none."""
         return self.atlas if self.atlas is not None else M3zGeometry()
 
     @property
     def invalid(self) -> np.ndarray:
-        """`(W, H, D)` bool: the nodes FreeSurfer marks invalid
-        (`GCAM_POSITION_INVALID`), whose positions and original
-        positions are all zero. FreeSurfer does not sample there."""
+        """The `(W, H, D)` mask of the nodes that FreeSurfer marks invalid.
+
+        These nodes (`GCAM_POSITION_INVALID`) have all-zero positions and
+        originals, and FreeSurfer does not sample through them.
+        """
         zero = (self.original == 0).all(-1) & (self.positions == 0).all(-1)
         return np.asarray(zero)
 
@@ -324,13 +288,16 @@ class M3zStruct(Magic, frozen=True, eq=False, repr=HIDE_IF_NONE):
 
 
 def is_gzip(content: bytes) -> bool:
-    """Whether the bytes are gzip-compressed."""
+    """Return whether bytes are gzip-compressed."""
     return bytes(content[:2]) == _GZIP_MAGIC
 
 
 def read_header(content: bytes) -> tx.Optional[tx.Tuple]:
-    """The decoded header `(version, width, height, depth, spacing,
-    exp_k)`, or `None` if it is not that of a morph."""
+    """Decode a morph header.
+
+    The result is `(version, width, height, depth, spacing, exp_k)`, or `None`
+    if the bytes do not start with a morph header.
+    """
     if len(content) < _HEADER.size:
         return None
     version, width, height, depth, spacing, exp_k = _HEADER.unpack_from(
@@ -364,13 +331,12 @@ def _need(content: bytes, offset: int, size: int, what: str) -> None:
 
 
 def read_m3z(content: bytes) -> M3zStruct:
-    """
-    Decode the bytes of a morph file, gzipped (`.m3z`) or not (`.m3d`).
+    """Decode the bytes of a morph, gzipped (`.m3z`) or not (`.m3d`).
 
     Raises
     ------
     ParserContentError
-        If the bytes are not those of a morph.
+        If the bytes are not a morph.
     """
     content = bytes(content)
     if is_gzip(content):
@@ -393,9 +359,9 @@ def read_m3z(content: bytes) -> M3zStruct:
     fields: tx.Dict[str, tx.Any] = {}
     tags: tx.List[int] = []
     trailing = b""
-    # Tags follow until the end of the file, or a zero tag. The tags of
-    # a morph have no length, so a tag FreeSurfer does not know cannot
-    # be skipped: what follows it is kept verbatim.
+    # Tags follow until the end of the file or a zero tag. Morph tags have no
+    # length, so an unknown tag cannot be skipped, and whatever follows it is
+    # kept verbatim.
     while len(content) >= offset + 4:
         (tag,) = _struct.unpack_from(">i", content, offset)
         if tag == 0:
@@ -468,12 +434,10 @@ def _write_geometry(geom: M3zGeometry) -> bytes:
 
 
 def write_m3z(struct: M3zStruct, compress: bool = True) -> bytes:
-    """
-    Encode a morph as FreeSurfer's `__m3zWrite` does.
+    """Encode a morph as FreeSurfer's `__m3zWrite` does.
 
-    The tags are written in the order `struct.tags` lists them; a tag
-    whose content the struct holds but that it does not list is written
-    after them, in FreeSurfer's order (geometry, type, labels, matrix).
+    Tags are written in the order of `struct.tags`, followed by any tag whose
+    content the struct holds but does not list, in FreeSurfer's order.
     """
     positions = np.asarray(struct.positions)
     shape = tuple(positions.shape[:3])
