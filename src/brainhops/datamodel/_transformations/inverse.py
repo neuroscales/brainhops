@@ -168,7 +168,9 @@ class FieldInverseMixin(ConcreteInverseMixin):
 
 
 class InverseTranslation(
-    ConcreteInverseMixin, Inverse[Translation], Translation,
+    ConcreteInverseMixin,
+    Inverse[Translation],
+    Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
 ):
     """The inverse of a [`Translation`][], resolved on demand."""
@@ -182,7 +184,9 @@ class InverseTranslation(
 
 
 class InverseScaling(
-    ConcreteInverseMixin, Inverse[Scaling], Scaling,
+    ConcreteInverseMixin,
+    Inverse[Scaling],
+    Scaling,
     on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
 ):
     """The inverse of a [`Scaling`][], resolved on demand."""
@@ -199,7 +203,9 @@ class InverseScaling(
 
 
 class InversePermutation(
-    ConcreteInverseMixin, Inverse[Permutation], Permutation,
+    ConcreteInverseMixin,
+    Inverse[Permutation],
+    Permutation,
     on={"forward": partial(isinstance, PLACEHOLDER, Permutation)},
 ):
     """The inverse of a [`Permutation`][], resolved on demand."""
@@ -213,7 +219,9 @@ class InversePermutation(
 
 
 class InverseRotation(
-    ConcreteInverseMixin, Inverse[Rotation], Rotation,
+    ConcreteInverseMixin,
+    Inverse[Rotation],
+    Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
     # A `Rotation` is a `Linear`, so `Inverse(forward=rotation)` matches
     # `InverseLinear` just as well. The more specific wrapper wins: it
@@ -234,7 +242,9 @@ class InverseRotation(
 
 
 class InverseLinear(
-    ConcreteInverseMixin, Inverse[Linear], Linear,
+    ConcreteInverseMixin,
+    Inverse[Linear],
+    Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
 ):
     """The inverse of a [`Linear`][] transformation, resolved on demand."""
@@ -251,7 +261,9 @@ class InverseLinear(
 
 
 class InverseAffine(
-    ConcreteInverseMixin, Inverse[Affine], Affine,
+    ConcreteInverseMixin,
+    Inverse[Affine],
+    Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)},
 ):
     """The inverse of an [`Affine`][] transformation, resolved on demand."""
@@ -272,7 +284,9 @@ class InverseAffine(
 
 
 class InverseDisplacementField(
-    FieldInverseMixin, Inverse[DisplacementField], DisplacementField,
+    FieldInverseMixin,
+    Inverse[DisplacementField],
+    DisplacementField,
     on={"forward": partial(isinstance, PLACEHOLDER, DisplacementField)},
 ):
     """The inverse of a [`DisplacementField`][], resolved on demand.
@@ -326,7 +340,9 @@ class InverseDisplacementField(
 
 
 class InverseCoordinatesField(
-    FieldInverseMixin, Inverse[CoordinatesField], CoordinatesField,
+    FieldInverseMixin,
+    Inverse[CoordinatesField],
+    CoordinatesField,
     on={"forward": partial(isinstance, PLACEHOLDER, CoordinatesField)},
 ):
     """The inverse of a [`CoordinatesField`][], resolved on demand.
@@ -383,7 +399,9 @@ class InverseCoordinatesField(
 
 
 class InverseAffineExponential(
-    ConcreteInverseMixin, Inverse[AffineExponential], AffineExponential,
+    ConcreteInverseMixin,
+    Inverse[AffineExponential],
+    AffineExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, AffineExponential)},
 ):
     """The inverse of an [`AffineExponential`][]: the tangent negated."""
@@ -409,7 +427,9 @@ class InverseAffineExponential(
 
 
 class InverseLinearExponential(
-    ConcreteInverseMixin, Inverse[LinearExponential], LinearExponential,
+    ConcreteInverseMixin,
+    Inverse[LinearExponential],
+    LinearExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, LinearExponential)},
 ):
     """The inverse of a [`LinearExponential`][]: the tangent negated."""
@@ -427,7 +447,9 @@ class InverseLinearExponential(
 
 
 class InverseRotationExponential(
-    ConcreteInverseMixin, Inverse[RotationExponential], RotationExponential,
+    ConcreteInverseMixin,
+    Inverse[RotationExponential],
+    RotationExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, RotationExponential)},
     # `InverseRotation` matches a `RotationExponential` too, with its own
     # priority; the deeper subclass wins the tie.
@@ -448,7 +470,9 @@ class InverseRotationExponential(
 
 
 class InverseScalingExponential(
-    ConcreteInverseMixin, Inverse[ScalingExponential], ScalingExponential,
+    ConcreteInverseMixin,
+    Inverse[ScalingExponential],
+    ScalingExponential,
     on={"forward": partial(isinstance, PLACEHOLDER, ScalingExponential)},
 ):
     """The inverse of a [`ScalingExponential`][]: the tangent negated."""

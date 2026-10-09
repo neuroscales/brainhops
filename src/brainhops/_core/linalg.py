@@ -32,6 +32,7 @@ def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     nx = get_array_backend(matrix)
     return nx.linalg.inv(matrix)
 
+
 def sqrtm(
     matrix: "ArrayProtocol", what: str = "The square root of this matrix"
 ) -> "ArrayProtocol":
@@ -72,7 +73,6 @@ def logm(
 
 
 class _BoolWithMessage:
-
     def __new__(
         cls, value: bool, message: str = "", return_reason: bool = True
     ) -> "_BoolWithMessage":
@@ -156,7 +156,8 @@ def is_principal(linear: ArrayProtocol, return_reason: bool = False):
     )
     if bool(negative.any()):
         return _BoolWithMessage(
-            False, "has an eigenvalue on the negative real axis",
+            False,
+            "has an eigenvalue on the negative real axis",
             return_reason,
         )
     return _BoolWithMessage(True, "is principal", return_reason)

@@ -826,9 +826,7 @@ class VoxelCoordinateSystem(
     """A coordinate system for 3D voxel grids."""
 
     name: tx.Optional[str] = "voxel"
-    axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory(
-        "dim0", "dim1", "dim2"
-    )
+    axes: Axes[_3SpatialAxes] = _SpaceArrayAxesFactory("dim0", "dim1", "dim2")
 
 
 @CArrayCoordinateSystem2D.register_polymorph(axes=_is_spatial)

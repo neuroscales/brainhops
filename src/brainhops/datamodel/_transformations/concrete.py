@@ -98,8 +98,10 @@ def _alias(name: str, source: str, fset: bool = True) -> property:
     fget.__name__ = name
 
     if fset and len(path) == 1:
+
         def fset(self: tx.Any, value: tx.Any) -> None:
             setattr(self, source, value)
+
         fset.__name__ = name
     else:
         fset = None
@@ -283,7 +285,7 @@ class TransformationField(ConcreteTransformation):
 
     map_field: tx.ClassVar[str] = "field"
 
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     metadata_fields: _FieldNames = "degree", "bound", "store"
     derived_fields: _FieldNames = "field", "values", "coefficients", "_inverse"
 
@@ -498,7 +500,10 @@ class DisplacementField(TransformationField, polymorphic=True):
     # --- class attributes ---------------------------------------------
 
     _base_metadata_fields: _FieldNames = TransformationField.metadata_fields
-    metadata_fields: _FieldNames = (*_base_metadata_fields, "log",)
+    metadata_fields: _FieldNames = (
+        *_base_metadata_fields,
+        "log",
+    )
 
     # --- attributes ---------------------------------------------------
 
@@ -641,7 +646,7 @@ class CartesianField(CoordinatesField):
 
     _base_derivied_fields: _FieldNames = CoordinatesField.derived_fields
     derived_fields: _FieldNames = (*_base_derivied_fields, "data")
-    data_fields: _FieldNames = "shape",
+    data_fields: _FieldNames = ("shape",)
 
     # --- attributes ---------------------------------------------------
 
@@ -737,10 +742,13 @@ class Affine(ConcreteTransformation, polymorphic=True):
 
     map_field: tx.ClassVar[str] = "matrix"
 
-    data_fields: _FieldNames = "data",
-    metadata_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    metadata_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = (
-        "matrix", "homogeneous_matrix", "_sqrt", "_inverse"
+        "matrix",
+        "homogeneous_matrix",
+        "_sqrt",
+        "_inverse",
     )
 
     # --- attributes ---------------------------------------------------
@@ -850,8 +858,8 @@ class Linear(ConcreteTransformation, polymorphic=True):
 
     map_field: tx.ClassVar[str] = "matrix"
 
-    data_fields: _FieldNames = "data",
-    metadata_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    metadata_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "matrix", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -969,7 +977,7 @@ class Permutation(ConcreteTransformation):
 
     map_field: tx.ClassVar[str] = "permutation"
 
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "permutation", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1053,8 +1061,8 @@ class Scaling(ConcreteTransformation, polymorphic=True):
 
     map_field: tx.ClassVar[str] = "scale"
 
-    data_fields: _FieldNames = "data",
-    metadata_fields: _FieldNames = "log",
+    data_fields: _FieldNames = ("data",)
+    metadata_fields: _FieldNames = ("log",)
     derived_fields: _FieldNames = "scale", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1133,7 +1141,7 @@ class Translation(ConcreteTransformation):
 
     map_field: tx.ClassVar[str] = "translation"
 
-    data_fields: _FieldNames = "data",
+    data_fields: _FieldNames = ("data",)
     derived_fields: _FieldNames = "translation", "_sqrt", "_inverse"
 
     # --- attributes ---------------------------------------------------
@@ -1145,7 +1153,7 @@ class Translation(ConcreteTransformation):
     transformation.
     """
 
-    _translation:InitVar[tx.Optional[npvector[Real]]] = None
+    _translation: InitVar[tx.Optional[npvector[Real]]] = None
     """The translation vector: a convenience for `data`."""
 
     # --- views --------------------------------------------------------

@@ -2,6 +2,7 @@
 This module contains utilities for working with "compact" affine matrices,
 i.e., M x (N+1) matrices that do not contain the homogeneous row.
 """
+
 __all__ = [
     "to_homogeneous",
     "to_compact",
@@ -391,7 +392,6 @@ def expm(
     the tangent `[0, t]`.
     """
     return to_compact(_expm(to_homogeneous(matrix, tangent=True), what))
-
 
 
 def logm(

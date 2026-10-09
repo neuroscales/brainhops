@@ -91,9 +91,9 @@ class Transformation(
     derived_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """The attributes that are derived from other attributes."""
 
-    mutually_exclusive_fields: tx.ClassVar[
-        tx.Optional[tx.Tuple[str, ...]]
-    ] = None
+    mutually_exclusive_fields: tx.ClassVar[tx.Optional[tx.Tuple[str, ...]]] = (
+        None
+    )
     """
     Arguments that cannot be set together in `__init__`.
 
@@ -114,7 +114,8 @@ class Transformation(
             # -- sets them together, so the default group does not apply.
             mutex = (
                 self.data_fields + self.derived_fields
-                if len(self.data_fields) <= 1 else ()
+                if len(self.data_fields) <= 1
+                else ()
             )
         _mutually_exclusive(self, arguments, mutex)
         self._set_derived_fields(arguments)
@@ -479,7 +480,6 @@ class Transformation(
         """
         return self.is_kind(kinds.Translation, compute)
 
-
     def is_scaling(self, compute: bool = False) -> bool:
         """Return whether a transformation is a pure scaling.
 
@@ -491,7 +491,6 @@ class Transformation(
         transformation is also inspected for a diagonal structure.
         """
         return self.is_kind(kinds.Diagonal, compute)
-
 
     def is_permutation(self, compute: bool = False) -> bool:
         """Return whether a transformation is a pure permutation of axes.
@@ -505,7 +504,6 @@ class Transformation(
         one-per-column structure.
         """
         return self.is_kind(kinds.Permutation, compute)
-
 
     def is_rotation(self, compute: bool = False) -> bool:
         """Return whether a transformation is a pure rotation.
@@ -521,7 +519,6 @@ class Transformation(
         """
         return self.is_kind(kinds.SpecialOrthogonal, compute)
 
-
     def is_linear(self, compute: bool = False) -> bool:
         """Return whether a transformation is linear, without a translation.
 
@@ -533,7 +530,6 @@ class Transformation(
         is also inspected for a zero translation component.
         """
         return self.is_kind(kinds.Linear, compute)
-
 
     def is_affine(self, compute: bool = False) -> bool:
         """Return whether a transformation is affine.

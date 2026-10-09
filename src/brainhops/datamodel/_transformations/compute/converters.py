@@ -64,7 +64,7 @@ SCALING_EXP = tx.TypeVar("SCALING_EXP", bound=ScalingExponential)
 def smart_replace(
     t: Transformation,
     cls: tx.Optional[tx.Type[TRANSFORMATION]] = None,
-    **kwargs
+    **kwargs,
 ) -> TRANSFORMATION:
     """
     Rebuild `t` as `cls`, with `kwargs` on top of the fields it holds.
@@ -326,6 +326,7 @@ def _(
 # clears the `data` the rebuild would otherwise carry over: the stored
 # parameter of one family is not the stored parameter of another.
 
+
 def _sized(
     t: Identity, make: tx.Callable[[int], tx.Any]
 ) -> tx.Optional[tx.Any]:
@@ -557,9 +558,7 @@ def _(t: DisplacementField, cls: tx.Type[COORD], **kwargs) -> COORD:
     ba = get_array_backend(data)
     grid = ba.meshgrid(*(ba.arange(s) for s in data.shape[:-1]), indexing="ij")
     grid = _values2data(ba.stack(grid, axis=-1).astype(data.dtype), **flags)
-    return cls(
-        data=data + grid, input=t.input, output=t.output, **flags
-    )
+    return cls(data=data + grid, input=t.input, output=t.output, **flags)
 
 
 # ----------------------------------------------------------------------

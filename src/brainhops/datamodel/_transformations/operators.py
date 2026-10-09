@@ -387,7 +387,9 @@ class ConcreteSqrtMixin:
 
 
 class SqrtTranslation(
-    ConcreteSqrtMixin, Sqrt, Translation,
+    ConcreteSqrtMixin,
+    Sqrt,
+    Translation,
     on={"forward": partial(isinstance, PLACEHOLDER, Translation)},
 ):
     """The square root of a [`Translation`][]: half the translation."""
@@ -404,7 +406,9 @@ class SqrtTranslation(
 
 
 class SqrtScaling(
-    ConcreteSqrtMixin, Sqrt, Scaling,
+    ConcreteSqrtMixin,
+    Sqrt,
+    Scaling,
     on={"forward": partial(isinstance, PLACEHOLDER, Scaling)},
 ):
     """The square root of a [`Scaling`][], for positive scales only."""
@@ -421,7 +425,9 @@ class SqrtScaling(
 
 
 class SqrtRotation(
-    ConcreteSqrtMixin, Sqrt, Rotation,
+    ConcreteSqrtMixin,
+    Sqrt,
+    Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
     # A `Rotation` is a `Linear`, so `SqrtLinear` matches it too. The
     # square root of a rotation is a rotation, which this wrapper keeps.
@@ -445,7 +451,9 @@ class SqrtRotation(
 
 
 class SqrtLinear(
-    ConcreteSqrtMixin, Sqrt, Linear,
+    ConcreteSqrtMixin,
+    Sqrt,
+    Linear,
     on={"forward": partial(isinstance, PLACEHOLDER, Linear)},
 ):
     """The principal square root of a [`Linear`][] transformation."""
@@ -462,7 +470,9 @@ class SqrtLinear(
 
 
 class SqrtAffine(
-    ConcreteSqrtMixin, Sqrt, Affine,
+    ConcreteSqrtMixin,
+    Sqrt,
+    Affine,
     on={"forward": partial(isinstance, PLACEHOLDER, Affine)},
 ):
     """The principal square root of an [`Affine`][] transformation."""

@@ -369,9 +369,7 @@ def test_cancellation_does_not_materialize() -> None:
     # cancellation touched the field it would raise. It collapses to the
     # identity instead, which proves the pair is removed before any
     # numeric inversion.
-    df = DisplacementField(
-        data=_small_field(), degree=3, store="coefficients"
-    )
+    df = DisplacementField(data=_small_field(), degree=3, store="coefficients")
     result = Sequence(transformations=[df, df.inverse()]).compute()
     assert isinstance(result, Identity)
 
@@ -503,9 +501,7 @@ def test_is_identity_compute_false_does_not_materialize() -> None:
     # inverse never can. is_identity(compute=False) must answer from the
     # operand without reading the lazy field, so it must not raise.
     for operand in (
-        DisplacementField(
-            data=_small_field(), degree=3, store="coefficients"
-        ),
+        DisplacementField(data=_small_field(), degree=3, store="coefficients"),
         CoordinatesField(field=_small_field()),
     ):
         inv = operand.inverse()

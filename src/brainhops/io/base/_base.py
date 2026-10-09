@@ -474,6 +474,7 @@ class FileBasedObject(FormatDispatcher):
     registry, so both the scoped and the generic entry points see them.
     The dispatching itself is described in `FormatDispatcher`.
     """
+
     # FIXME: `FileBasedObject` inherits from `FormatDispatcher` but not
     # from `FileParser`, whereas `WritableFileBasedObject` inherits from
     # `FileParserWriter`. This is asymmetric and counter inttuitive.

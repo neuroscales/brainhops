@@ -115,7 +115,7 @@ class Sequence(SequenceMixin, Transformation):
         * `Sequence([t1, t2, t3]) @ x` is equivalent to `t3 @ t2 @ t1 @ x`.
     """
 
-    data_fields = "transformations",
+    data_fields = ("transformations",)
 
     # --- attributes ---------------------------------------------------
 
@@ -128,9 +128,9 @@ class Sequence(SequenceMixin, Transformation):
     # `replace()` freeze the derived chain into a declared one, so a copy
     # made with a new parameter would keep serving the chain built from
     # the old one, and would share that very list with the original.
-    _transformations: NotKwOnly[
-        tx.Optional[tx.Sequence[Transformation]]
-    ] = None
+    _transformations: NotKwOnly[tx.Optional[tx.Sequence[Transformation]]] = (
+        None
+    )
     """
     A list of transformations, in the order in which they are applied to
     an input coordinate system.
@@ -341,9 +341,9 @@ class ImmutableSequence(Sequence):
     """
 
     # NOTE: this makes `transformations` a tuple instead of any sequence
-    _transformations: NotKwOnly[
-        tx.Optional[tx.Tuple[Transformation, ...]]
-    ] = None
+    _transformations: NotKwOnly[tx.Optional[tx.Tuple[Transformation, ...]]] = (
+        None
+    )
 
 
 # ======================================================================

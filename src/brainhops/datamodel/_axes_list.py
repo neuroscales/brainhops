@@ -2,7 +2,6 @@
 import abc
 import sys
 from numbers import Integral
-from types import EllipsisType as _Ellipsis
 
 # datamodel
 import typing_extensions as tx
@@ -11,6 +10,13 @@ from bagof.magic import ConvertTo, fields
 
 # datamodel
 from .axes import Axis
+
+if tx.TYPE_CHECKING:
+    from types import EllipsisType as _Ellipsis
+
+else:
+    _Ellipsis: tx.TypeAlias = type(Ellipsis)
+    # The type of `...`. Python 3.10 names it `types.EllipsisType`.
 
 # typing
 

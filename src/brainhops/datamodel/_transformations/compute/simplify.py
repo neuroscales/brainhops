@@ -323,9 +323,8 @@ def simplify(
         )
 
     Transformation = nocycles.TRANSFORMATION
-    if (
-        Transformation is not None
-        and not all(isinstance(t, Transformation) for t in transformations)
+    if Transformation is not None and not all(
+        isinstance(t, Transformation) for t in transformations
     ):
         raise TypeError(
             "simplify() takes transformations positionally and its policy "

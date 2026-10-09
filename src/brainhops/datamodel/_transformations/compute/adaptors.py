@@ -45,6 +45,7 @@ There are two entry points:
    transform in the fuller space instead, so it acts on those axes and
    leaves the extra axes unchanged.
 """
+
 __all__ = ["bridge", "adapt"]
 
 # externals

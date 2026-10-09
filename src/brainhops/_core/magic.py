@@ -112,7 +112,6 @@ def replace(obj: tx.Any, cls: tx.Optional[type], **changes: tx.Any) -> tx.Any:
     return cls(*positional, **keyword)
 
 
-
 def _field_table(obj: tx.Any, caller: str) -> tx.Dict[str, Field]:
     """Every field of an instance's class, pseudo-fields included.
 
@@ -179,12 +178,11 @@ def _stored(obj: tx.Any, field: Field) -> tx.Tuple[bool, tx.Any]:
 
 
 class _HasFactory:
-
     def __init__(self, factory: callable) -> None:
         self.factory = factory
 
     def __repr__(self) -> str:
-        return '<factory>'
+        return "<factory>"
 
     def __call__(self) -> tx.Any:
         return self.factory()

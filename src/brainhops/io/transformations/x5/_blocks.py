@@ -185,10 +185,12 @@ class X5CoordinatesField(_xforms.ImmutableSequence):
         """Build the field from RAS coordinates and their grid."""
         vox2ras = np.asarray(vox2ras, dtype=np.float64)
         compact = vox2ras[:-1]
-        return cls((
-            RASToVoxel(matrix=_affines.inv(compact)),
-            RASCoordinatesField(field=coordinates),
-        ))
+        return cls(
+            (
+                RASToVoxel(matrix=_affines.inv(compact)),
+                RASCoordinatesField(field=coordinates),
+            )
+        )
 
     @property
     def ras2voxel(self) -> _xforms.Transformation:

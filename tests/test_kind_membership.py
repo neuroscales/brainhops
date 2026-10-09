@@ -414,7 +414,8 @@ def test_analytic_membership_calls_no_numeric_routines() -> None:
         )
         stack.enter_context(
             mock.patch.object(
-                _concrete, "inverse_disp",
+                _concrete,
+                "inverse_disp",
                 bump(_concrete.inverse_disp),
             )
         )

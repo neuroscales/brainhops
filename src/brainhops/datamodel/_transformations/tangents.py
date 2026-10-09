@@ -229,7 +229,9 @@ class AffineExponential(TangentMixin, Affine, on={"_log": True}):
     _tangentof: tx.ClassVar[tx.Type[Transformation]] = Affine
 
     derived_fields: _FieldNames = (
-        *Affine.derived_fields, "logmatrix", "homogeneous_logmatrix"
+        *Affine.derived_fields,
+        "logmatrix",
+        "homogeneous_logmatrix",
     )
 
     # --- attributes ---------------------------------------------------
@@ -306,7 +308,9 @@ class MatrixTangentMixin(TangentMixin):
 
 @kinds.PositiveLinear
 class LinearExponential(
-    MatrixTangentMixin, Linear, on={"_log": True},
+    MatrixTangentMixin,
+    Linear,
+    on={"_log": True},
     # A `RotationExponential` is a `Linear` too, and `log=True` is all
     # either of them claims, so `Linear(log=True)` would otherwise build
     # the deeper of the two. It builds this one.
@@ -384,6 +388,7 @@ class ScalingExponential(TangentMixin, Scaling, on={"_log": True}):
     `scale`, and `Scaling.to(log=True)` takes the logarithm of the factors,
     which is refused (`DomainError`) unless they are all positive.
     """
+
     _tangentof: tx.ClassVar[tx.Type[Transformation]] = Scaling
 
     derived_fields: _FieldNames = (*Scaling.derived_fields, "logscale")

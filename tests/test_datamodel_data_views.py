@@ -100,9 +100,7 @@ def test_the_field_view_is_the_values(
 
 @pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
 def test_a_decoded_view_is_cached(cls: type) -> None:
-    t = cls(
-        data=_coefficients(_values()), degree=DEGREE, store="coefficients"
-    )
+    t = cls(data=_coefficients(_values()), degree=DEGREE, store="coefficients")
     assert t.field is t.field
 
 
@@ -179,9 +177,7 @@ def test_a_new_encoding_is_reached_by_conversion(cls: type) -> None:
 @pytest.mark.parametrize("store", ["values", "coefficients"])
 def test_the_grid_view_is_the_grid(store: str) -> None:
     shape = (6, 7)
-    t = CartesianField(
-        shape=shape, degree=DEGREE, bound=BOUND, store=store
-    )
+    t = CartesianField(shape=shape, degree=DEGREE, bound=BOUND, store=store)
     np.testing.assert_array_equal(np.asarray(t.field), _grid(shape))
     expected = _grid(shape).astype(float)
     if store == "coefficients":
@@ -477,9 +473,7 @@ def test_replace_with_a_convenience_keyword_meets_the_data(
 
 @pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
 def test_a_new_field_is_stored_in_the_current_encoding(cls: type) -> None:
-    t = cls(
-        data=_coefficients(_values()), degree=DEGREE, store="coefficients"
-    )
+    t = cls(data=_coefficients(_values()), degree=DEGREE, store="coefficients")
     values = _values(seed=1)
     u = t.to(field=values)
     assert u.store == "coefficients"
@@ -565,9 +559,7 @@ def test_an_unchanged_encoding_is_a_pass_through(
 ) -> None:
     # Asking for the encoding a field already has neither fits nor
     # decodes anything: the same stored array comes back.
-    t = DisplacementField(
-        data=_values(), degree=DEGREE, store="coefficients"
-    )
+    t = DisplacementField(data=_values(), degree=DEGREE, store="coefficients")
 
     def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         raise AssertionError("the stored coefficients were refitted")
@@ -622,9 +614,7 @@ def test_coordinates_from_coefficients_match_those_from_values() -> None:
     )
     np.testing.assert_allclose(np.asarray(a.field), u + _grid((12, 13)))
     assert (a.store, a.degree, a.bound) == ("values", d.degree, d.bound)
-    assert (b.store, b.degree, b.bound) == (
-        "coefficients", c.degree, c.bound
-    )
+    assert (b.store, b.degree, b.bound) == ("coefficients", c.degree, c.bound)
 
 
 @pytest.mark.parametrize("bound", ["nearest", "constant", "reflect"])
@@ -637,9 +627,7 @@ def test_coordinates_keep_the_encoding_of_the_displacements(
     )
     b = c.to(CoordinatesField)
     assert type(b) is CoordinatesField
-    assert (b.store, b.degree, b.bound) == (
-        "coefficients", DEGREE, c.bound
-    )
+    assert (b.store, b.degree, b.bound) == ("coefficients", DEGREE, c.bound)
     np.testing.assert_allclose(
         np.asarray(b.field), u + _grid(u.shape[:-1]), atol=1e-10
     )

@@ -1,5 +1,6 @@
 """The base classes that give a format the ability to sniff, read and
 write itself, and the errors they raise."""
+
 __all__ = [
     "Confidence",
     "FileSniffer",

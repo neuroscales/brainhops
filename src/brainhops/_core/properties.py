@@ -85,6 +85,8 @@ class InvalidatorInMethod(Invalidator):
 
 @tx.overload
 def lazyproperty(fget: _Getter) -> property: ...
+
+
 # A property that computes its value on first access and caches it.
 # Variant: bare decorator.
 
@@ -94,6 +96,8 @@ def lazyproperty(
     *,
     unset: UnsetLike = None,
 ) -> tx.Callable[[_Getter], property]: ...
+
+
 # A property that computes its value on first access and caches it.
 # Variant: decorator factory (with options).
 
@@ -105,6 +109,8 @@ def lazyproperty(
     *,
     unset: UnsetLike = None,
 ) -> tx.Callable[[_Getter], property]: ...
+
+
 # A property that computes its value on first access and caches it.
 # Variant: functional decorator factory.
 
@@ -145,6 +151,8 @@ def lazyproperty(fget=None, doc=None, unset=None):
 
 @tx.overload
 def smartproperty(fget: _Getter) -> property: ...
+
+
 # Bare decorator
 
 
@@ -155,6 +163,8 @@ def smartproperty(
     cache: bool = False,
     invalidates: tx.Union[str, tx.Iterable[str], None] = (),
 ) -> tx.Callable[[_Getter], property]: ...
+
+
 # Decorator factory (with options).
 
 
@@ -169,6 +179,8 @@ def smartproperty(
     cache: bool = False,
     invalidates: tx.Union[str, tx.Iterable[str], None] = (),
 ) -> tx.Callable[[_Getter], property]: ...
+
+
 # Functional decorator factory
 
 
@@ -255,8 +267,13 @@ def smartproperty(
         # than directly: return the decorator the function is handed to.
         def decorate(func: tx.Callable) -> property:
             return smartproperty(
-                func, fset, fdel, doc,
-                unset=unset, cache=cache, invalidates=invalidates
+                func,
+                fset,
+                fdel,
+                doc,
+                unset=unset,
+                cache=cache,
+                invalidates=invalidates,
             )
 
         return decorate

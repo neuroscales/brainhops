@@ -79,6 +79,7 @@ read a lazy inverse's parameters, and it would return a new object where
 object identity must be kept. A dispatched operation has none of these
 problems.
 """
+
 __all__ = ["restrict", "restrictor", "embed", "embedder"]
 
 # dependencies

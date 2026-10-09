@@ -245,9 +245,7 @@ def test_replace_coordinates_field_round_trips_explicit_field() -> None:
     # Guard against regressing the base: CoordinatesField takes `data` as
     # a normal init field, so replace carries the stored array over as is.
     values = np.zeros((5, 6, 2))
-    cf = CoordinatesField(
-        data=values.copy(), degree=3, store="coefficients"
-    )
+    cf = CoordinatesField(data=values.copy(), degree=3, store="coefficients")
     replaced = replace(cf, degree=1)
     assert isinstance(replaced, CoordinatesField)
     assert not isinstance(replaced, CartesianField)
@@ -363,9 +361,7 @@ def test_store_conversion_runs_once(monkeypatch) -> None:  # noqa: ANN001
 
     monkeypatch.setattr(xconcrete, "value2coeff_field", spy)
     values = np.zeros((5, 6, 2))
-    field = DisplacementField(
-        field=values.copy(), degree=3, store="values"
-    )
+    field = DisplacementField(field=values.copy(), degree=3, store="values")
     coeffs = field.to(store="coefficients")
     assert coeffs.store == "coefficients"
     assert calls["count"] == 1

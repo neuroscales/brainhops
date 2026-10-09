@@ -442,9 +442,7 @@ def test_a_velocity_converts_to_its_displacement() -> None:
     velocity = _velocity_field()
     displacement = velocity.to(log=False)
     assert type(displacement) is DisplacementField
-    assert (displacement.degree, displacement.store) == (
-        DEGREE, "values"
-    )
+    assert (displacement.degree, displacement.store) == (DEGREE, "values")
     np.testing.assert_array_equal(displacement.data, velocity.field)
 
 
@@ -480,9 +478,7 @@ def test_a_velocity_converts_to_the_coordinates_of_its_flow() -> None:
     velocity = _velocity_field().to(store="coefficients")
     coordinates = velocity.to(CoordinatesField)
     assert type(coordinates) is CoordinatesField
-    assert (coordinates.store, coordinates.degree) == (
-        "coefficients", DEGREE
-    )
+    assert (coordinates.store, coordinates.degree) == ("coefficients", DEGREE)
     assert not hasattr(coordinates, "steps")
     np.testing.assert_allclose(
         coordinates.field[INTERIOR],
@@ -768,9 +764,7 @@ def test_the_resolved_steps() -> None:
     # what the integration uses: the rule fills in the one it was not.
     velocity = _velocity_field()
     assert velocity.steps is None
-    assert velocity._compute_steps == _tangents._squaring_steps(
-        velocity.data
-    )
+    assert velocity._compute_steps == _tangents._squaring_steps(velocity.data)
     declared = _velocity_field(steps=3)
     assert (declared.steps, declared._compute_steps) == (3, 3)
     assert StationaryVelocityField().steps is None

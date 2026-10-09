@@ -51,6 +51,7 @@ TO = tx.TypeVar("TO", bound=Transformation, default=Transformation)
 _convert: Function = Function("convert")
 """The dispatched function every registered converter joins."""
 
+
 @tx.overload
 def converter(func: Converter) -> Converter:
     """Register a converter, reading `(input, output)` from its hints."""
