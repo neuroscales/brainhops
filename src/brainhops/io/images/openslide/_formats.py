@@ -1,9 +1,8 @@
-"""
-One format class per OpenSlide vendor, each with a single-scale (one
-level) and a multiscale (pyramid) image.
+"""Whole-slide image formats, one per OpenSlide vendor.
 
-They differ only in the vendor they accept (`VENDOR`, as
-`OpenSlide.detect_format` names it), their extensions and their hints.
+Each format class has a single-scale and a multiscale image. The formats differ
+only in their vendor name (as `OpenSlide.detect_format` reports it), their
+extensions and their hints.
 """
 
 __all__ = [
@@ -42,10 +41,8 @@ __all__ = [
     "GenericTiffMultiScaleImage",
 ]
 
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import Confidence
 from brainhops.io.images.openslide._base import (
@@ -61,10 +58,11 @@ from brainhops.io.images.openslide._base import (
 
 
 class AperioFormat(OpenSlideFormat):
-    """
-    Leica (Aperio) ScanScope Virtual Slide: a tiled TIFF whose first
-    `ImageDescription` starts with `Aperio`, with a thumbnail, a label and
-    a macro image.
+    """Aperio ScanScope Virtual Slide (SVS), now from Leica.
+
+    An SVS file is a tiled TIFF whose first `ImageDescription` starts with
+    `Aperio`. Besides the pyramid, it holds a thumbnail, a label and a macro
+    image.
     """
 
     VENDOR = "aperio"
@@ -74,14 +72,18 @@ class AperioFormat(OpenSlideFormat):
 
 @register_format
 class AperioImage(AperioFormat, OpenSlideImage):
-    """One level of a Aperio SVS slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of an Aperio SVS slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class AperioMultiScaleImage(AperioFormat, OpenSlideMultiScaleImage):
-    """A Aperio SVS slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """An Aperio SVS slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -90,10 +92,10 @@ class AperioMultiScaleImage(AperioFormat, OpenSlideMultiScaleImage):
 
 
 class HamamatsuFormat(OpenSlideFormat):
-    """
-    Hamamatsu NanoZoomer slides: NDPI (a TIFF-like file with 64-bit
-    offsets), and VMS/VMU (an index file and the JPEG or raw files it
-    names, all in one directory).
+    """Hamamatsu NanoZoomer slides.
+
+    NDPI files are TIFF-like files with 64-bit offsets. VMS and VMU slides are
+    an index file together with JPEG or raw files in the same directory.
     """
 
     VENDOR = "hamamatsu"
@@ -103,14 +105,18 @@ class HamamatsuFormat(OpenSlideFormat):
 
 @register_format
 class HamamatsuImage(HamamatsuFormat, OpenSlideImage):
-    """One level of a Hamamatsu slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Hamamatsu slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class HamamatsuMultiScaleImage(HamamatsuFormat, OpenSlideMultiScaleImage):
-    """A Hamamatsu slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Hamamatsu slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -119,9 +125,10 @@ class HamamatsuMultiScaleImage(HamamatsuFormat, OpenSlideMultiScaleImage):
 
 
 class MiraxFormat(OpenSlideFormat):
-    """
-    3DHISTECH MIRAX slides: an `.mrxs` file and a directory of the same
-    name holding `Slidedat.ini` and the data files.
+    """3DHISTECH MIRAX slides.
+
+    A slide is a `.mrxs` file together with a directory of the same name, which
+    holds `Slidedat.ini` and the data files.
     """
 
     VENDOR = "mirax"
@@ -131,14 +138,18 @@ class MiraxFormat(OpenSlideFormat):
 
 @register_format
 class MiraxImage(MiraxFormat, OpenSlideImage):
-    """One level of a MIRAX slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a MIRAX slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class MiraxMultiScaleImage(MiraxFormat, OpenSlideMultiScaleImage):
-    """A MIRAX slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A MIRAX slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -147,9 +158,10 @@ class MiraxMultiScaleImage(MiraxFormat, OpenSlideMultiScaleImage):
 
 
 class LeicaFormat(OpenSlideFormat):
-    """
-    Leica SCN slides: a BigTIFF whose `ImageDescription` is the Leica
-    XML describing the collection and its images.
+    """Leica SCN slides.
+
+    An SCN file is a BigTIFF whose `ImageDescription` is Leica XML that
+    describes the collection and its images.
     """
 
     VENDOR = "leica"
@@ -159,14 +171,18 @@ class LeicaFormat(OpenSlideFormat):
 
 @register_format
 class LeicaImage(LeicaFormat, OpenSlideImage):
-    """One level of a Leica SCN slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Leica SCN slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class LeicaMultiScaleImage(LeicaFormat, OpenSlideMultiScaleImage):
-    """A Leica SCN slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Leica SCN slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -175,9 +191,10 @@ class LeicaMultiScaleImage(LeicaFormat, OpenSlideMultiScaleImage):
 
 
 class PhilipsFormat(OpenSlideFormat):
-    """
-    Philips TIFF slides (exported from iSyntax): a tiled TIFF whose
-    `ImageDescription` is the Philips `DataObject` XML.
+    """Philips TIFF slides, exported from iSyntax.
+
+    A Philips TIFF is a tiled TIFF whose `ImageDescription` is Philips
+    DataObject XML.
     """
 
     VENDOR = "philips"
@@ -187,14 +204,18 @@ class PhilipsFormat(OpenSlideFormat):
 
 @register_format
 class PhilipsImage(PhilipsFormat, OpenSlideImage):
-    """One level of a Philips TIFF slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Philips TIFF slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class PhilipsMultiScaleImage(PhilipsFormat, OpenSlideMultiScaleImage):
-    """A Philips TIFF slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Philips TIFF slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -203,9 +224,10 @@ class PhilipsMultiScaleImage(PhilipsFormat, OpenSlideMultiScaleImage):
 
 
 class VentanaFormat(OpenSlideFormat):
-    """
-    Roche (Ventana) BIF slides: a tiled BigTIFF with Ventana XMP
-    metadata, whose tiles may overlap.
+    """Roche (Ventana) BIF slides.
+
+    A BIF file is a tiled BigTIFF with Ventana XMP metadata, whose tiles may
+    overlap.
     """
 
     VENDOR = "ventana"
@@ -215,14 +237,18 @@ class VentanaFormat(OpenSlideFormat):
 
 @register_format
 class VentanaImage(VentanaFormat, OpenSlideImage):
-    """One level of a Ventana BIF slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Ventana BIF slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class VentanaMultiScaleImage(VentanaFormat, OpenSlideMultiScaleImage):
-    """A Ventana BIF slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Ventana BIF slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -231,8 +257,9 @@ class VentanaMultiScaleImage(VentanaFormat, OpenSlideMultiScaleImage):
 
 
 class SakuraFormat(OpenSlideFormat):
-    """
-    Sakura VisionTek slides: an SQLite database of JPEG tiles.
+    """Sakura VisionTek slides (SVSlide).
+
+    An SVSlide file is an SQLite database of JPEG tiles.
     """
 
     VENDOR = "sakura"
@@ -242,14 +269,18 @@ class SakuraFormat(OpenSlideFormat):
 
 @register_format
 class SakuraImage(SakuraFormat, OpenSlideImage):
-    """One level of a Sakura SVSlide slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Sakura SVSlide file.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class SakuraMultiScaleImage(SakuraFormat, OpenSlideMultiScaleImage):
-    """A Sakura SVSlide slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Sakura SVSlide file, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -258,9 +289,10 @@ class SakuraMultiScaleImage(SakuraFormat, OpenSlideMultiScaleImage):
 
 
 class TrestleFormat(OpenSlideFormat):
-    """
-    Trestle slides: a tiled TIFF with Trestle metadata, and sidecar files
-    (`.slidedat`, `.lgm`, ...) beside it.
+    """Trestle slides.
+
+    A Trestle slide is a tiled TIFF with Trestle metadata, accompanied by
+    sidecar files (`.slidedat`, `.lgm` and others) in the same directory.
     """
 
     VENDOR = "trestle"
@@ -270,14 +302,18 @@ class TrestleFormat(OpenSlideFormat):
 
 @register_format
 class TrestleImage(TrestleFormat, OpenSlideImage):
-    """One level of a Trestle TIFF slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Trestle TIFF slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class TrestleMultiScaleImage(TrestleFormat, OpenSlideMultiScaleImage):
-    """A Trestle TIFF slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Trestle TIFF slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -286,10 +322,7 @@ class TrestleMultiScaleImage(TrestleFormat, OpenSlideMultiScaleImage):
 
 
 class ZeissFormat(OpenSlideFormat):
-    """
-    Zeiss CZI slides (brightfield RGB mosaics), as OpenSlide 4 reads
-    them.
-    """
+    """Zeiss CZI slides, the brightfield RGB mosaics that OpenSlide 4 reads."""
 
     VENDOR = "zeiss"
     EXTENSIONS: tx.ClassVar[tx.Tuple[str, ...]] = (".czi",)
@@ -298,14 +331,18 @@ class ZeissFormat(OpenSlideFormat):
 
 @register_format
 class ZeissImage(ZeissFormat, OpenSlideImage):
-    """One level of a Zeiss CZI slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a Zeiss CZI slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class ZeissMultiScaleImage(ZeissFormat, OpenSlideMultiScaleImage):
-    """A Zeiss CZI slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A Zeiss CZI slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -314,10 +351,10 @@ class ZeissMultiScaleImage(ZeissFormat, OpenSlideMultiScaleImage):
 
 
 class DicomWsiFormat(OpenSlideFormat):
-    """
-    DICOM whole-slide images: a series of `.dcm` files (one per level,
-    plus associated images) in one directory; OpenSlide is given any one
-    of them.
+    """DICOM whole-slide images.
+
+    A DICOM WSI is a series of `.dcm` files in one directory, one per level and
+    one per associated image. Any one of the files can be given to OpenSlide.
     """
 
     VENDOR = "dicom"
@@ -327,14 +364,18 @@ class DicomWsiFormat(OpenSlideFormat):
 
 @register_format
 class DicomWsiImage(DicomWsiFormat, OpenSlideImage):
-    """One level of a DICOM WSI slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a DICOM whole-slide image.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class DicomWsiMultiScaleImage(DicomWsiFormat, OpenSlideMultiScaleImage):
-    """A DICOM WSI slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A DICOM whole-slide image, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
 # ----------------------------------------------------------------------
@@ -343,11 +384,12 @@ class DicomWsiMultiScaleImage(DicomWsiFormat, OpenSlideMultiScaleImage):
 
 
 class GenericTiffFormat(OpenSlideFormat):
-    """
-    A tiled TIFF of no known vendor, whose levels are the following
-    tiled directories. tifffile reads these too, with more metadata, so
-    this format only scores `MAYBE` and is chosen by hint
-    (`hint="openslide"`), or when tifffile and Pillow are absent.
+    """Tiled TIFF files of no known vendor.
+
+    The levels of such a slide are the tiled directories that follow the first
+    one. tifffile reads these files too, with more metadata, so this format
+    scores only `MAYBE`. OpenSlide is therefore chosen only by hint
+    (`hint="openslide"`), or when neither tifffile nor Pillow is installed.
     """
 
     VENDOR = "generic-tiff"
@@ -359,17 +401,22 @@ class GenericTiffFormat(OpenSlideFormat):
 
 @register_format
 class GenericTiffImage(GenericTiffFormat, OpenSlideImage):
-    """One level of a generic tiled TIFF slide (see
-    [`OpenSlideImage`][brainhops.io.images.openslide.OpenSlideImage])."""
+    """A single level of a generic tiled TIFF slide.
+
+    See [`OpenSlideImage`][].
+    """
 
 
 @register_format
 class GenericTiffMultiScaleImage(GenericTiffFormat, OpenSlideMultiScaleImage):
-    """A generic tiled TIFF slide, as a pyramid (see
-    [`OpenSlideMultiScaleImage`][brainhops.io.images.openslide.OpenSlideMultiScaleImage])."""
+    """A generic tiled TIFF slide, as a pyramid.
+
+    See [`OpenSlideMultiScaleImage`][].
+    """
 
 
-# The single-scale class each multiscale class builds its levels with.
+# Vendor name -> single-scale class, with which each multiscale class builds
+# its levels.
 _LEVEL_CLASSES.update(
     {
         cls.VENDOR: cls

@@ -1,9 +1,7 @@
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops._core.dependencies import HAS_H5PY
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.images import SingleScaleImage
@@ -24,7 +22,7 @@ _PHYSICAL = "physical"
 """Name of the scaled voxel space."""
 
 _WORLD = "world"
-"""Name of the MINC world (RAS) space, the preferred one."""
+"""Name of the MINC world (RAS) space, the preferred world space."""
 
 _RAS_ORIENTATION = {
     "x": "left-to-right",
@@ -36,48 +34,32 @@ _UNIT_TYPES = {"space": SpaceUnit, "time": TimeUnit}
 
 
 class MincImage(MincParser, FileBasedImage, SingleScaleImage):
-    """
-    An image that is encoded by a MINC file (MINC1 or MINC2).
+    """An image stored in a MINC file, of version 1 or 2.
 
-    This class reads both versions and hands a file to
-    [`Minc1Image`][brainhops.io.images.minc.Minc1Image] or
-    [`Minc2Image`][brainhops.io.images.minc.Minc2Image], which are the
-    classes registered for dispatch. It answers to the hint `"minc"`.
+    This class answers to the hint `"minc"` and reads both versions,
+    handing the file to [`Minc1Image`][] or [`Minc2Image`][], which are the
+    classes registered for dispatch. The voxels are read with nibabel and
+    scaled to real values. They are in Fortran order, so a file with
+    dimensions `zspace, yspace, xspace` gives data indexed `(x, y, z)`.
 
-    The voxels are read with `nibabel`, scaled to real values (MINC's
-    `image-min`/`image-max`, per slice or global), and presented in F
-    order: the dimensions are reversed from the order the file lists
-    them in, so that a `zspace, yspace, xspace` file reads as
-    `(x, y, z)`. The voxel axes are named after the MINC dimensions
-    (`xspace` -> `x`, `yspace` -> `y`, `zspace` -> `z`, `time` -> `t`),
-    whatever their order in the file.
-
-    The transformations are, in order:
-
-    1. a [`Scaling`][brainhops.datamodel.transformations.Scaling] from
-       voxels to the scaled voxel space `"physical"`: the absolute `step`
-       of each dimension, in its `units` (millimetres by default for the
-       spatial ones);
-    2. the voxel-to-world affine, whose output is the RAS space named
-       `"world"`: each spatial dimension runs along its direction
-       cosines, scaled by its (signed) `step`, from its `start`. It is
-       the preferred transformation. It is only recorded for a volume
-       with the three spatial dimensions.
-
-    MINC cannot be written: `nibabel` only reads it.
+    The transformations are, in order, a [`Scaling`][] to `"physical"` by
+    the absolute step of each dimension, in its unit (millimeters by
+    default for spatial dimensions), and the preferred [`Affine`][] to the
+    RAS space `"world"`, which moves along the direction cosines of each
+    spatial dimension by its signed step from `start`. The affine is
+    recorded only for volumes with three spatial dimensions. MINC files
+    cannot be written.
 
     !!! note "Why the bases are in this order"
-        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage]:
-        `SingleScaleImage.data` has no default, so it comes last, and
-        `MincParser` leads so that its lazy `data`/`system` properties
-        win.
+        As for [`NiftiImage`][brainhops.io.images.nifti.NiftiImage],
+        [`SingleScaleImage`][] comes last because its `data` field has no
+        default, and [`MincParser`][] comes first so that its lazy
+        properties take precedence.
     """
 
     @property
     def transformations(self) -> tx.List[Transformation]:
-        """The voxel-to-physical and voxel-to-world transformations
-        recorded by the dimensions, decoded on first access unless set
-        explicitly."""
+        """Transformations decoded from the dimensions, unless set."""
         if getattr(self, "_transformations", None):
             return self._transformations
         if not self.dimensions:
@@ -91,12 +73,10 @@ class MincImage(MincParser, FileBasedImage, SingleScaleImage):
 
 @register_format
 class Minc1Image(MincImage):
-    """
-    An image that is encoded by a MINC1 file: a NetCDF classic file,
-    possibly gzipped (`.mnc.gz`).
+    """An image read from a MINC1 (NetCDF classic) file.
 
-    It answers to the hints `"minc1"` and `"minc.1"`. See
-    [`MincImage`][brainhops.io.images.minc.MincImage].
+    The file may be gzipped. Besides `"minc"`, this class answers to the
+    hints `"minc1"` and `"minc.1"`. See [`MincImage`][].
     """
 
     HINTS = ("minc1", "1")
@@ -105,12 +85,10 @@ class Minc1Image(MincImage):
 
 
 class Minc2Image(MincImage):
-    """
-    An image that is encoded by a MINC2 file: an HDF5 file with a
-    `/minc-2.0` group. Reading it needs `h5py`.
+    """An image read from a MINC2 (HDF5) file, which needs `h5py`.
 
-    It answers to the hints `"minc2"` and `"minc.2"`. See
-    [`MincImage`][brainhops.io.images.minc.MincImage].
+    Besides `"minc"`, this class answers to the hints `"minc2"` and
+    `"minc.2"`. See [`MincImage`][].
     """
 
     HINTS = ("minc2", "2")
@@ -119,8 +97,8 @@ class Minc2Image(MincImage):
 
 MincImage.VARIANTS = (Minc1Image, Minc2Image)
 
-# MINC2 is HDF5: without h5py, it is not registered, and asking for it by
-# hint says what to install (see the package's `__init__`).
+# Without h5py, MINC2 is not registered, and a request by hint says what
+# to install instead (see the package `__init__`).
 if HAS_H5PY:
     register_format(Minc2Image)
 
@@ -131,9 +109,12 @@ if HAS_H5PY:
 
 
 def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
-    """The unit of a dimension's `step`: its `units` when they are a
-    unit of the axis' type, else millimetres for a spatial dimension and
-    none for any other."""
+    """Return the unit of the step of a dimension.
+
+    The unit is the `units` of the dimension if it is a physical unit of
+    the axis type, and otherwise millimeters for a spatial dimension and
+    `None` for any other.
+    """
     kind = _UNIT_TYPES.get(axis_type)
     if kind is None:
         return None
@@ -153,13 +134,11 @@ def _unit(dimension: MincDimension, axis_type: tx.Optional[str]) -> tx.Any:
 
 
 def _minc_to_transformations(image: MincParser) -> tx.List[Transformation]:
-    """Convert the dimensions of a MINC image to its list of
-    transformations: voxel-to-physical scaling and voxel-to-world."""
+    """Return the voxel-to-physical and voxel-to-world transformations."""
     voxel_space = image.system
     axes = list(voxel_space.axes)
     dimensions = list(reversed(image.dimensions))
 
-    # >> Physical space: the same axes, in the dimensions' units.
     phys_axes = [
         replace(axis, unit=_unit(dim, axis.type))
         for axis, dim in zip(axes, dimensions)
@@ -168,7 +147,6 @@ def _minc_to_transformations(image: MincParser) -> tx.List[Transformation]:
     scale = [abs(dim.spacing) for dim in dimensions]
     xforms = [Scaling(input=voxel_space, output=phys_space, scale=scale)]
 
-    # >> World space: RAS, with the unit of the spatial dimensions.
     vox2world = image.vox2world
     if vox2world is None:
         return xforms
@@ -184,8 +162,8 @@ def _minc_to_transformations(image: MincParser) -> tx.List[Transformation]:
         for name, value in _RAS_ORIENTATION.items()
     ]
     world_space = CoordinateSystem(name=_WORLD, axes=world_axes)
-    # The matrix has a column per voxel axis: the non-spatial ones (such
-    # as time) do not move a point in the world.
+    # Non-spatial voxel axes, such as time, have zero columns and do not
+    # move a world point.
     matrix = np.zeros((3, len(axes) + 1))
     matrix[:, keep] = vox2world[:3, :3]
     matrix[:, -1] = vox2world[:3, 3]

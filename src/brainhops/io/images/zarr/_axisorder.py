@@ -1,70 +1,57 @@
-"""The axis-order seam between brainhops and OME-Zarr.
+"""The axis order of OME-Zarr images, and its conversion to the brainhops
+order.
 
-All axis-order reconciliation between the brainhops data model and an
-OME-Zarr store passes through this module, and through nowhere else. A
-brainhops object uses nibabel's F-order: the spatial axes first, then
-time, then the channel axis. An OME-Zarr store uses C-order, most often
-``(t, c, z, y, x)``. The two are reconciled by a permutation computed over
-the full ordered axis list, not the spatial axes alone.
+Every reconciliation of axis orders between brainhops and OME-Zarr goes through
+this module. brainhops follows the F-ordered convention of nibabel, with the
+spatial axes first, then time, channels and any other axes. An OME-Zarr store
+is C-ordered, most often `(t, c, z, y, x)`. The two orders are reconciled by a
+permutation of the full list of axes, not of the spatial axes alone:
+[`to_canonical`][] reorders the stored axes when reading, and [`to_storage`][]
+reorders the brainhops axes when writing.
 
-The component axis of a field, whose values are the components of a
-displacement or a coordinate vector, is not a separate trailing role. It
-occupies the same position as the channel axis, in the brainhops order and
-in the store. This matches how nibabel and OME-Zarr both store a field:
-the displacement components share the dimension a channel would use. The
-component values are not reordered when the axes are permuted, since a
-field's components are expressed in its output coordinate system, which the
-seam keeps fixed while it permutes the array's own axes.
+Both orders sort axes by their type, never by their name, since OME RFC-3
+allows extra axes with arbitrary names. A name only breaks ties between spatial
+axes, which sort as x, y, z in brainhops and as z, y, x in the store. Other
+ties keep the original order, so that writing and then reading restores the
+brainhops order.
 
-[to_canonical][brainhops.io.images.zarr._axisorder.to_canonical] permutes
-a store's axes into the brainhops order, and is used when reading.
-[to_storage][brainhops.io.images.zarr._axisorder.to_storage] permutes
-brainhops axes into the store order, and is used when writing. Each of the
-two orders sorts the axes by the same axis-type ranking, and one order
-reverses the other, so a value written and read back is returned unchanged.
-
-The ordering keys on the axis *type*, never on the axis name. OME RFC-3
-allows further, arbitrarily named axes, so a name is consulted only to
-break ties between spatial axes of the same type.
+The component axis of a field (the vector components of a displacement or
+coordinate field) is not a separate trailing axis: it takes the position of the
+channel axis, in brainhops as in the store, as in nibabel and OME-Zarr.
+Permuting the axes does not reorder the component values, because the
+components of a field live in its output coordinate system, which this module
+leaves untouched.
 """
 
-# dependencies
 import typing_extensions as tx
 
-# internals
 from brainhops.datamodel.axes import Axis
 
 _T = tx.TypeVar("_T")
 
-#: The brainhops canonical axis order, most significant group first. The
-#: spatial axes lead, then time, then the channel group.
+# Most significant group first.
 CANONICAL_ORDER = ("space", "time", "channel", "other")
 
-#: The OME-Zarr storage axis order, most significant group first. The
-#: non-spatial axes lead and the spatial axes trail, giving ``(t, c, z, y,
-#: x)`` for a plain image.
+# Non-spatial axes lead and spatial axes trail, giving (t, c, z, y, x) for a
+# plain image.
 STORAGE_ORDER = ("time", "channel", "other", "space")
 
-#: The axis types whose axis is a vector component axis. A field stores its
-#: displacement or coordinate components along such an axis, in the
-#: position a channel axis would otherwise occupy.
+# Axis types of vector components, which a field stores where a channel axis
+# would sit.
 _VECTOR_TYPES = ("displacement", "coordinate")
 
-#: The canonical position of a named spatial axis, used only to break ties
-#: between spatial axes, so they sort into x, y, z.
+# Tie-breaks between named spatial axes, so that they sort x, y, z.
 _CANONICAL_SPACE = {"x": 0, "y": 1, "z": 2}
 
-#: The storage position of a named spatial axis, used only to break ties
-#: between spatial axes, so they sort into z, y, x.
+# Tie-breaks between named spatial axes, so that they sort z, y, x.
 _STORAGE_SPACE = {"z": 0, "y": 1, "x": 2}
 
 
 def _group(axis: Axis) -> str:
-    """The role group of an axis, one of the names in the order tuples.
+    """Return the group of an axis, as named in the order tuples.
 
-    A displacement or coordinate component axis is grouped with the
-    channel axis, since a field stores its components where a channel
-    would sit.
+    Component axes of displacement and coordinate fields are grouped with
+    channels, since a field stores its components where a channel would sit.
     """
     type_ = getattr(axis, "type", None)
     if type_ in _VECTOR_TYPES or type_ == "channel":
@@ -75,10 +62,8 @@ def _group(axis: Axis) -> str:
 
 
 def _space_name_rank(axis: Axis, table: tx.Mapping[str, int]) -> int:
-    # The within-space position of a spatial axis, read from its name. An
-    # unnamed spatial axis, or one whose name is not in the table, sorts
-    # after the named ones and keeps its original order. The name only ever
-    # breaks a tie between spatial axes; it never decides the group.
+    # The name only breaks ties within a group. Unnamed spatial axes, and those
+    # with unknown names, sort after the named ones, in their original order.
     name = getattr(axis, "name", None)
     if isinstance(name, str) and name in table:
         return table[name]
@@ -90,9 +75,8 @@ def _permutation(
     order: tx.Sequence[str],
     space: tx.Mapping[str, int],
 ) -> tx.List[int]:
-    # The permutation that sorts `axes` into `order`, breaking ties by the
-    # within-space name table and then by original position, so the sort is
-    # stable and the two directions invert each other.
+    # Ties are broken by the name table and then by the original position, so
+    # that the sort is stable.
     def key(item: tx.Tuple[int, Axis]) -> tx.Tuple[int, int, int]:
         position, axis = item
         group = _group(axis)
@@ -103,24 +87,23 @@ def _permutation(
 
 
 def to_canonical(axes: tx.Sequence[Axis]) -> tx.List[int]:
-    """Return the permutation that reorders store `axes` into brainhops order.
+    """Return the permutation that reorders stored axes into the brainhops
+    order.
 
-    The result is a list of indices. Element ``i`` is the position, in the
-    stored order, of the axis that becomes axis ``i`` in the brainhops
-    order. The same permutation reorders the array, the axis list, and any
-    per-axis vector such as a scale or a translation.
+    Element `i` is the position, in the stored order, of the axis that becomes
+    axis `i` in the brainhops order. The same permutation reorders the array,
+    the list of axes and per-axis vectors such as scales and translations.
     """
     return _permutation(axes, CANONICAL_ORDER, _CANONICAL_SPACE)
 
 
 def to_storage(axes: tx.Sequence[Axis]) -> tx.List[int]:
-    """Return the permutation that reorders brainhops `axes` into store order.
+    """Return the permutation that reorders brainhops axes into the stored
+    order.
 
-    The result is a list of indices. Element ``i`` is the position, in the
-    brainhops order, of the axis that becomes axis ``i`` in the stored
-    order. This permutation reverses the reordering that
-    [to_canonical][brainhops.io.images.zarr._axisorder.to_canonical]
-    applies when reading.
+    Element `i` is the position, in the brainhops order, of the axis that
+    becomes axis `i` in the stored order. Reading the result back with
+    [`to_canonical`][] restores the brainhops order.
     """
     return _permutation(axes, STORAGE_ORDER, _STORAGE_SPACE)
 

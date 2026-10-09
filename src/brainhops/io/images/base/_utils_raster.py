@@ -1,56 +1,34 @@
-"""
-Conventions shared by every headerless raster image format.
+"""Conventions shared by the raster image formats.
 
-A raster format -- PNG, JPEG, BMP, GIF, WebP, TIFF and their kin -- stores
-an array of samples and, at most, a pixel size. It records no origin, no
-orientation and no world space. This module holds the conventions such a
-format is read and written with, so that every raster reader (the Pillow
-reader, the TIFF reader, ...) agrees on them. It mirrors
-[`brainhops.io.base.nifti`][], which holds what the NIfTI-based images and
-transformations share. Nothing in it depends on a particular decoding
-library: a backend (Pillow, tifffile) decodes the file into a C-ordered
-array and a description of its axes, and this module does the rest.
+Raster formats such as PNG, JPEG, TIFF or WebP store an array of samples
+and at most a pixel size, without an origin, an orientation or a world
+space. This module defines how every raster reader interprets such files,
+as [`brainhops.io.common.nifti`][brainhops.io.common.nifti] does for NIfTI.
+A backend only decodes the file to a C-ordered array and a description of
+its axes.
 
-## Conventions
-
-1. **Index space.** Coordinates are 0-based and an integer coordinate is
-   the *centre* of a pixel, as in NIfTI and ITK. The pixel `(0, 0)` covers
-   `[-0.5, 0.5] x [-0.5, 0.5]` in index space.
-2. **Axis order.** A decoding library returns a C-ordered array, whose
-   last axis changes fastest -- `(rows, columns)`, or `(y, x)`, for a
-   plain image. Readers return a *view* of that array transposed into the
-   brainhops order (`to_canonical`)
-   -- the spatial axes first, fastest first (`x, y[, z]`), then time, then
-   the channel axis, then anything else -- without copying it, as nibabel
-   does for NIfTI. Writers transpose back
-   (`to_storage`).
-3. **Row 0 is at the top.** The first row of a raster file is the top of
-   the picture, so `y` points *down*. This is documented, not encoded: the
-   reader attaches no orientation to its axes.
-4. **Channels.** Colour (or any per-pixel sample) components are put on a
+1. An integer index is the centre of a pixel, as in NIfTI and ITK, so
+   pixel `(0, 0)` covers `[-0.5, 0.5]` along both axes.
+2. Readers return a view of the decoded `(y, x)` array in the brainhops
+   order ([`to_canonical`][]): spatial axes first, fastest first, then
+   time, channels and other axes. Writers transpose back
+   ([`to_storage`][]).
+3. Row zero is the top row, so `y` points down. No orientation is
+   attached to the axes.
+4. The components of a pixel lie along a
    [`ChannelAxis`][brainhops.datamodel.axes.ChannelAxis] named `"c"`,
-   after the spatial axes. A single-component image has no channel axis.
-5. **Pixel size.** The voxel-to-world transformation is a single
-   [`Scaling`][brainhops.datamodel.transformations.Scaling] from the
-   pixel (or voxel) system, whose axes count samples, to a system named
-   `"physical"`. When the format records a meaningful pixel size the
-   scaling carries it, and the physical axes carry its unit.
-6. **Unknown size.** When the size is absent, or is one of the
-   placeholders writers put in when they know nothing (72 or 96 dpi, or
-   tifffile's 1 dpi), it is *unknown*: the scaling is the identity and the
-   physical axes have no unit (`None`, "unspecified"). A physical size is
-   never invented.
-7. **Overrides.** Every reader takes the keywords `pixel_size` and `unit`
-   (`resolve_pixel_size`),
-   which take precedence over the file's metadata.
+   which a single-component image does not have.
+5. The voxel-to-world transformation is one
+   [`Scaling`][brainhops.datamodel.transformations.Scaling] onto a system
+   named `"physical"`, which carries the pixel size and unit when the
+   format records a meaningful size.
+6. When the size is absent or a placeholder (72, 96 or 1 dpi), the scaling
+   is the identity and the physical axes have no unit.
+7. The `pixel_size` and `unit` options of every reader override the file
+   metadata ([`resolve_pixel_size`][]).
 
-## Building a reader on this module
-
-A reader decodes its file into a C-ordered array, the storage axes of that
-array (a string of single-letter codes such as `"YX"`, `"YXS"` or
-`"TZCYX"`, as tifffile spells them, or a list of
-[`Axis`][brainhops.datamodel.axes.Axis]), and whatever pixel size its
-metadata records, as a mapping from axis name to `(size, unit)`. Then:
+A reader proceeds as follows, with storage axes given as codes spelled as
+in tifffile or as a list of [`Axis`][brainhops.datamodel.axes.Axis]:
 
 ```python
 axes = storage_axes("ZYXS")                    # C order
@@ -59,18 +37,8 @@ scales = resolve_pixel_size(axes, metadata, pixel_size=..., unit=...)
 transformations = raster_transformations(axes, scales)
 ```
 
-A reader of a richer format adds what it knows to `scales`: a time
-interval on the `"t"` axis, say. Each level of a multiscale pyramid is
-built the same way, with its own sizes.
-
-A writer does the converse: it finds the canonical axes of the image
-(`image_axes`), transposes the data
-into its storage order
-(`to_storage`) and reads the pixel
-size back from the preferred transformation
-(`physical_pixel_size`),
-which is `None` when the size is unknown or the transformation is more
-than a scaling.
+A writer uses [`image_axes`][], [`to_storage`][] and
+[`physical_pixel_size`][] in the converse direction.
 """
 
 __all__ = [
@@ -98,16 +66,13 @@ __all__ = [
     "size_to_dpi",
 ]
 
-# stdlib
 import math
 from numbers import Number
 
-# dependencies
 import numpy as np
 import typing_extensions as tx
 from bagof.magic import replace
 
-# internals
 from brainhops._core.typing import ArrayProtocol
 from brainhops.datamodel.axes import Axis
 from brainhops.datamodel.systems import CoordinateSystem
@@ -128,58 +93,49 @@ from brainhops.datamodel.units import (
 # ----------------------------------------------------------------------
 
 MM_PER_INCH: float = 25.4
-"""The number of millimetres in an inch, which converts a resolution in
-dots per inch to a pixel size: `size_mm = 25.4 / dpi`."""
+"""Millimeters per inch, which relate a resolution to a pixel size."""
 
 DEFAULT_DPIS: tx.Tuple[float, ...] = (1.0, 72.0, 96.0)
-"""
-Resolutions that say nothing about the physical size of a pixel.
+"""Resolutions that carry no physical meaning.
 
-Writers that know nothing about the pixel size still have to fill the
-resolution fields of some formats, and put in a placeholder: 72 dpi (the
-historical screen resolution, and the default of many editors), 96 dpi
-(Windows' screen resolution) or 1 (tifffile's default, which is "one pixel
-per unit"). A resolution equal to one of these is read as *unknown*.
+Writers without size information use 72 dpi (the historical default of
+screens), 96 dpi (Windows) or 1 dpi (tifffile). A resolution equal to one
+of these is read as unknown.
 """
 
 _DPI_TOLERANCE = 1e-3
-# PNG stores pixels per metre as an integer, so 72 dpi comes back as
-# 72.009 (2835 pixels per metre). A resolution this close to a placeholder,
-# relatively, is the placeholder.
+# PNG stores an integer number of pixels per meter, so 72 dpi comes back
+# as 72.009 (2835 px/m). A resolution relatively close to a placeholder
+# therefore counts as that placeholder.
 
 _INDEX = "index"
-# The unit of an axis that counts samples, i.e. an array axis.
 
 AxisScale = tx.Tuple[float, tx.Optional[tx.Union[str, Unit]]]
-"""
-The size of one sample along an axis, and the unit it is measured in.
+"""The size of one sample along an axis, and its unit.
 
-The unit is `None` when it is unspecified, in which case the size has no
-physical meaning.
+A unit of `None` means that the unit is unspecified, in which case the size
+has no physical meaning.
 """
 
 _AxesLike = tx.Union[str, tx.Sequence[Axis]]
 
-# Single-letter storage codes, as tifffile spells them, and the axis each
-# one stands for: its name and its type. A code that is not listed is an
-# axis of unknown type, named after the code.
+# Single-letter storage codes, spelled as in tifffile, mapped to an axis
+# name and type. Unlisted codes give an axis of unknown type.
 _CODE_ROLES: tx.Dict[str, tx.Tuple[str, tx.Optional[str]]] = {
     "X": ("x", "space"),
     "Y": ("y", "space"),
     "Z": ("z", "space"),
     "T": ("t", "time"),
     "C": ("c", "channel"),
-    "S": ("c", "channel"),  # "samples per pixel", e.g. RGB components
+    "S": ("c", "channel"),  # samples per pixel, as in RGB
 }
 
-# The canonical (brainhops) order of axis groups, as in NIfTI and in the
-# Zarr reader: space, then time, then channels, then the rest.
+# Canonical order of the axis groups, as in the NIfTI and Zarr readers.
 _GROUPS = ("space", "time", "channel", "other")
 
-# The position of a named spatial axis within the spatial group.
 _SPACE_RANK = {"x": 0, "y": 1, "z": 2}
 
-# A channel-like axis: colour components, or the components of a vector.
+# Axis types whose components are colours or vector components.
 _CHANNEL_TYPES = ("channel", "displacement", "coordinate")
 
 
@@ -189,32 +145,19 @@ _CHANNEL_TYPES = ("channel", "displacement", "coordinate")
 
 
 def storage_axes(codes: _AxesLike) -> tx.List[Axis]:
-    """
-    The axes of a C-ordered array, from their storage codes.
+    """Build the axes of a C-ordered array from its storage codes.
 
-    Each character of `codes` names one axis of the array, slowest first,
-    as tifffile spells them: `X`, `Y` and `Z` are spatial axes, `T` is
-    time, `C` (channels) and `S` (samples per pixel, such as the RGB
-    components of a pixel) are channel axes. Any other letter is an axis
-    of unknown type, named after the letter in lower case. Every axis
-    counts samples: its unit is the index unit.
+    Each character describes one axis, slowest first, spelled as in
+    tifffile. `X`, `Y` and `Z` are spatial and `T` is time. `C` and `S`
+    (samples per pixel) give a channel axis `"c"`, except that `S` becomes
+    `"s"` when `C` is also present. Other letters give axes of unknown type,
+    named in lower case, and repeated names are numbered (`"q"`, `"q1"`).
+    A sequence of [`Axis`][] is returned unchanged as a list.
 
-    The channel axis is named `"c"`. When a file has both a `C` and an
-    `S` axis, the `S` axis is named `"s"`. A name that would repeat is
-    numbered (`"q"`, `"q1"`, ...).
-
-    A list of [`Axis`][brainhops.datamodel.axes.Axis] is returned as a
-    list, unchanged.
-
-    Parameters
-    ----------
-    codes : str | Sequence[Axis]
-        The storage codes, such as `"YX"`, `"YXS"` or `"TZCYX"`.
-
-    Returns
-    -------
-    list[Axis]
-        One axis per dimension, in the storage (C) order.
+    Raises
+    ------
+    TypeError
+        If a sequence contains an element that is not an [`Axis`][].
     """
     if not isinstance(codes, str):
         axes = list(codes)
@@ -241,12 +184,9 @@ def storage_axes(codes: _AxesLike) -> tx.List[Axis]:
 
 
 def axis_group(axis: Axis) -> str:
-    """
-    The group an axis is sorted into: `"space"`, `"time"`, `"channel"` or
-    `"other"`.
+    """Return the group of an axis: space, time, channel or other.
 
-    A displacement or coordinate axis, which holds the components of a
-    vector, is grouped with the channels.
+    Displacement and coordinate axes belong to the channel group.
     """
     type_ = getattr(axis, "type", None)
     if type_ in _CHANNEL_TYPES:
@@ -257,32 +197,18 @@ def axis_group(axis: Axis) -> str:
 
 
 def spatial_axes(axes: tx.Sequence[Axis]) -> tx.List[Axis]:
-    """The spatial axes among `axes`, in order."""
+    """Return the spatial axes among `axes`, in their order."""
     return [axis for axis in axes if axis_group(axis) == "space"]
 
 
 def canonical_permutation(axes: _AxesLike) -> tx.List[int]:
-    """
-    The permutation that reorders storage axes into the brainhops order.
+    """Return the permutation from storage axes to the brainhops order.
 
-    The brainhops order lists the spatial axes first (`x`, `y`, `z`), then
-    time, then the channel axes, then the others. Within a group, axes
-    are listed fastest first, i.e. in the reverse of their storage order,
-    except that named spatial axes always sort into `x, y, z`. So a
-    `"ZYX"` array is simply reversed, and a `"YXS"` (RGB) array becomes
-    `x, y, c`.
-
-    Parameters
-    ----------
-    axes : str | Sequence[Axis]
-        The storage axes, slowest first.
-
-    Returns
-    -------
-    list[int]
-        Element `i` is the storage position of the axis that becomes axis
-        `i` in the brainhops order. The same permutation reorders the
-        array (`array.transpose(perm)`) and the list of axes.
+    Spatial axes come first, then time, channels and other axes. Within a
+    group, axes are sorted fastest first, except that named spatial axes
+    always sort as `x`, `y`, `z`. A `"YXS"` array thus becomes `x`, `y`,
+    `c`. Element `i` of the result is the storage position of the axis
+    that becomes axis `i`, for both the array and the list of axes.
     """
     axes = storage_axes(axes)
     n = len(axes)
@@ -301,24 +227,23 @@ def canonical_permutation(axes: _AxesLike) -> tx.List[int]:
 def to_canonical(
     array: ArrayProtocol, axes: _AxesLike
 ) -> tx.Tuple[ArrayProtocol, tx.List[Axis]]:
-    """
-    Transpose a C-ordered array into the brainhops order, without a copy.
+    """Transpose a C-ordered array to the brainhops order without a copy.
 
-    Parameters
-    ----------
-    array : ArrayProtocol
-        The array, as the decoding library returns it.
-    axes : str | Sequence[Axis]
-        Its storage axes, slowest first (see
-        `storage_axes`).
+    The storage axes are listed slowest first, as for
+    [`storage_axes`][]. A `"YX"` image or a `"ZYX"` volume comes back
+    exactly in Fortran order.
 
     Returns
     -------
-    data : ArrayProtocol
-        A transposed view of `array`. A plain (`"YX"`) or volumetric
-        (`"ZYX"`) image comes back exactly F-ordered.
-    axes : list[Axis]
-        The axes of `data`, in order.
+    data : array
+        Transposed view.
+    axes : list of Axis
+        Axes of `data`.
+
+    Raises
+    ------
+    ValueError
+        If the number of axes differs from the number of dimensions.
     """
     axes = storage_axes(axes)
     if len(axes) != len(array.shape):
@@ -333,33 +258,19 @@ def to_canonical(
 def storage_permutation(
     axes: tx.Sequence[Axis], codes: _AxesLike
 ) -> tx.List[int]:
-    """
-    The permutation that reorders brainhops axes into a storage order.
+    """Return the permutation from brainhops axes to a storage order.
 
-    Each storage axis is matched to an axis of `axes` with the same name
-    or, failing that, to the first one left of the same type (so an
-    unnamed spatial axis still matches `X`). This is the converse of
-    `canonical_permutation`
-    for a writer that has a fixed storage order, such as `"YXS"`.
-
-    Parameters
-    ----------
-    axes : Sequence[Axis]
-        The axes of the image, in the brainhops order.
-    codes : str | Sequence[Axis]
-        The storage axes the file wants, slowest first.
-
-    Returns
-    -------
-    list[int]
-        Element `i` is the position, in `axes`, of the axis stored at
-        position `i`.
+    This function is the converse of [`canonical_permutation`][], for
+    writers with a fixed storage order such as `"YXS"`. Each storage axis
+    takes the image axis with the same name. Failing that, a storage axis
+    named `x`, `y` or `z` takes the first, second or third spatial axis,
+    and any other takes the first remaining axis of its group. Element `i`
+    of the result is the position in `axes` of the axis stored at `i`.
 
     Raises
     ------
     ValueError
-        If the two do not have the same number of axes, or an axis cannot
-        be matched.
+        If the numbers of axes differ, or if a storage axis has no match.
     """
     targets = storage_axes(codes)
     if len(targets) != len(axes):
@@ -370,15 +281,11 @@ def storage_permutation(
     space = [i for i, axis in enumerate(axes) if axis_group(axis) == "space"]
     perm: tx.List[tx.Optional[int]] = [None] * len(targets)
     left = list(range(len(axes)))
-    # First, match by name.
     for j, target in enumerate(targets):
         name = getattr(target, "name", None)
         if name is not None and name in names and names.index(name) in left:
             perm[j] = names.index(name)
             left.remove(perm[j])
-    # Then, a spatial axis named x, y or z is the first, second or third
-    # spatial axis of the image, and anything else is the first axis left
-    # of the same group.
     for j, target in enumerate(targets):
         if perm[j] is not None:
             continue
@@ -405,24 +312,20 @@ def storage_permutation(
 def to_storage(
     array: ArrayProtocol, axes: tx.Sequence[Axis], codes: _AxesLike
 ) -> ArrayProtocol:
-    """
-    Transpose an image's data from the brainhops order into a storage
-    order.
+    """Transpose data from the brainhops order to a storage order.
 
-    The result is a view. Pass it to `numpy.ascontiguousarray` if the
-    writer needs C-contiguous memory.
+    The result is a view, which may need
+    [`numpy.ascontiguousarray`][numpy.ascontiguousarray].
     """
     return array.transpose(storage_permutation(axes, codes))
 
 
 def default_axes(ndim: int, channel: bool = False) -> tx.List[Axis]:
-    """
-    The axes to assume for an array that comes with no description.
+    """Return the axes assumed for an array that is not described.
 
-    The spatial axes `x, y, z` come first (as many as there are, up to
-    three), then time, then a channel axis, then unknown axes. With
-    `channel=True`, the last axis is a channel axis and the others are
-    spatial (up to three) or unknown.
+    The axes are `x`, `y`, `z`, `t` and `c`, as far as there are
+    dimensions, then `dim<i>`. With `channel=True`, the last axis is a
+    channel axis and the others follow the same defaults.
     """
     if channel and ndim >= 1:
         others = default_axes(ndim - 1)
@@ -441,14 +344,11 @@ def default_axes(ndim: int, channel: bool = False) -> tx.List[Axis]:
 def image_axes(
     ndim: int, system: tx.Optional[CoordinateSystem] = None
 ) -> tx.Optional[tx.List[Axis]]:
-    """
-    The axes of an image's data, in the brainhops order, if they are known.
+    """Return the axes of `system` if it has one per dimension, else `None`.
 
-    They are the axes of the input system of the image's preferred
-    transformation, when that system lists exactly one axis per dimension.
-    Otherwise, they are not known, and `None` is returned so that the
-    writer can apply its own default (see
-    `default_axes`).
+    The system is usually the input of the preferred transformation. When
+    the result is `None`, the writer applies its own default (see
+    [`default_axes`][]).
     """
     axes = getattr(system, "axes", None)
     if axes is None:
@@ -468,12 +368,10 @@ def image_axes(
 
 
 def pixel_system(axes: tx.Sequence[Axis]) -> CoordinateSystem:
-    """
-    The coordinate system of a raster's index space.
+    """Return the coordinate system of the raster index space.
 
-    Its axes are `axes`, each counting samples, listed F-ordered (fastest
-    first). It is named `"pixel"` when the raster has two spatial axes, and
-    `"voxel"` otherwise, as a NIfTI image's index space is.
+    The axes count samples, fastest first. The system is named `"pixel"`
+    with two spatial axes and `"voxel"` otherwise.
     """
     axes = [replace(axis, unit=_INDEX) for axis in axes]
     name = "pixel" if len(spatial_axes(axes)) == 2 else "voxel"
@@ -484,13 +382,9 @@ def physical_system(
     axes: tx.Sequence[Axis],
     units: tx.Optional[tx.Mapping[str, tx.Any]] = None,
 ) -> CoordinateSystem:
-    """
-    The coordinate system a raster's pixel size maps its index space to.
+    """Return the `"physical"` system onto which pixel sizes map indices.
 
-    It is named `"physical"`, and has the same axes as the index space,
-    each measured in the unit `units` gives for its name, or in no unit at
-    all (`None`, "unspecified") when it gives none. An axis is never left
-    counting samples: the system measures, it does not index.
+    Each axis takes the unit that `units` gives for its name, or no unit.
     """
     units = dict(units or {})
     out = [replace(axis, unit=units.get(axis.name)) for axis in axes]
@@ -503,7 +397,7 @@ def physical_system(
 
 
 def _meters(unit: tx.Any) -> tx.Optional[float]:
-    """The length of a unit of space in metres, or `None`."""
+    """Return the meters per unit of a length unit, or `None`."""
     if unit is None:
         return None
     if not isinstance(unit, Unit):
@@ -520,13 +414,12 @@ def _meters(unit: tx.Any) -> tx.Optional[float]:
 
 
 def convert_length(value: float, src: tx.Any, dst: tx.Any) -> float:
-    """
-    Convert a length from one unit of space to another.
+    """Convert a length between two space units.
 
     Raises
     ------
     ValueError
-        If either unit is not a known unit of length.
+        If either unit is not a known length unit.
     """
     a, b = _meters(src), _meters(dst)
     if a is None or b is None:
@@ -563,42 +456,27 @@ def resolve_pixel_size(
     ] = None,
     unit: tx.Optional[tx.Union[str, Unit]] = None,
 ) -> tx.Dict[str, tx.Tuple[float, tx.Optional[Unit]]]:
-    """
-    Decide the size of a pixel along each spatial axis.
+    """Decide the pixel size of each spatial axis.
 
-    This applies the caller's keywords over what the file records.
-
-    * `pixel_size` wins over the metadata. It is one size for every
-      spatial axis, one per spatial axis (`x, y[, z]`, the brainhops
-      order), or a mapping from axis name to size, which overrides only
-      the axes it names. Its unit is `unit` if given, or else the unit the
-      metadata records for a spatial axis, or else unspecified.
-    * Otherwise, the metadata's sizes are used. Given `unit`, they are
-      converted to it; if the metadata records no unit, they are taken to
-      be in `unit`.
-    * `unit` alone, with no size from either, does not make one up: the
-      size stays unknown.
-
-    Parameters
-    ----------
-    axes : Sequence[Axis]
-        The axes of the image, in the brainhops order.
-    metadata : Mapping[str, AxisScale], optional
-        What the file records, by axis name: `(size, unit)`. A reader
-        leaves out the axes whose size is unknown, and passes nothing at
-        all when it knows none.
-    pixel_size : float | Sequence[float] | Mapping[str, float], optional
-        The caller's pixel size.
-    unit : str | Unit, optional
-        The caller's unit of length.
+    The caller's `pixel_size` takes precedence over the file metadata. It
+    is one size for every spatial axis, one size per spatial axis, or a
+    mapping that overrides the named axes only. Its unit is `unit`, or
+    else the unit that the metadata records for a spatial axis. Spatial
+    metadata sizes are converted to `unit` when it is given, and taken to
+    be in `unit` if they have no unit. `unit` alone never makes up a size.
 
     Returns
     -------
-    dict[str, tuple[float, Unit | None]]
-        `(size, unit)` by axis name, for the axes whose size is known.
-        Empty when no size is known. The metadata may also list
-        non-spatial axes, such as a time interval, which are passed
-        through unchanged.
+    dict
+        Mapping from axis name to `(size, unit)` for the axes of known
+        size. Metadata of other axes, such as a time interval, is passed
+        through.
+
+    Raises
+    ------
+    ValueError
+        If a size is not positive and finite, or if `pixel_size` does not
+        match the spatial axes.
     """
     unit = _as_unit(unit)
     space = spatial_axes(axes)
@@ -609,7 +487,6 @@ def resolve_pixel_size(
     out: tx.Dict[str, tx.Tuple[float, tx.Optional[Unit]]] = {}
     space_names = [axis.name for axis in space]
 
-    # The metadata, in `unit` if one is given.
     for name, (size, u) in metadata.items():
         if unit is not None and name in space_names:
             if u is not None:
@@ -619,7 +496,6 @@ def resolve_pixel_size(
     if pixel_size is None:
         return out
 
-    # The caller's sizes, over the metadata.
     if isinstance(pixel_size, tx.Mapping):
         unknown = set(pixel_size) - set(space_names)
         if unknown:
@@ -658,31 +534,12 @@ def raster_transformations(
     axes: tx.Sequence[Axis],
     scales: tx.Optional[tx.Mapping[str, AxisScale]] = None,
 ) -> tx.List[Transformation]:
-    """
-    The voxel-to-world transformations of a raster image.
+    """Return the voxel-to-world transformations of a raster image.
 
-    The list holds a single
-    [`Scaling`][brainhops.datamodel.transformations.Scaling] from the index
-    space (`pixel_system`) to the
-    physical space
-    (`physical_system`). An
-    axis listed in `scales` is scaled by its size and measured in its unit;
-    any other axis is scaled by one and has no unit. So an image whose size
-    is unknown gets the identity, onto a space with no units: one pixel is
-    one unit of nothing in particular.
-
-    Parameters
-    ----------
-    axes : Sequence[Axis]
-        The axes of the image, in the brainhops order.
-    scales : Mapping[str, AxisScale], optional
-        The size and unit of a sample, by axis name (see
-        `resolve_pixel_size`).
-
-    Returns
-    -------
-    list[Transformation]
-        The transformations, the preferred one last.
+    The list holds one [`Scaling`][] from [`pixel_system`][] to
+    [`physical_system`][]. Axes listed in `scales` are scaled by their
+    size and take its unit; the other axes are scaled by one, without a
+    unit.
     """
     scales = dict(scales or {})
     pixel = pixel_system(axes)
@@ -699,19 +556,13 @@ def level_transformation(
     factors: tx.Sequence[float],
     origin: tx.Mapping[str, float],
 ) -> Transformation:
-    """
-    The pixel-to-physical transformation of one level of a pyramid.
+    """Return the pixel-to-physical transformation of a pyramid level.
 
-    `scales` are the sizes of the full-resolution pixels, by axis name
-    (`resolve_pixel_size`), `factors` the downsampling factor of the level
-    along each axis, and `origin` the position of the first
-    full-resolution pixel, by axis name, in the unit of its size.
-
-    A level downsampled by `f` along an axis has pixels `f` times as large
-    as the base level's, and covers the same extent: the edges of the
-    first and last pixels coincide. So its pixel `i` is centred on the
-    base level's (fractional) pixel `f * i + (f - 1) / 2`, and lands at
-    `size * (f * i + (f - 1) / 2) + origin`.
+    A level downsampled by `f` has pixels `f` times larger and the same
+    extent, so its pixel `i` is centred on base pixel `f * i + (f - 1) / 2`.
+    `scales` holds the full-resolution sizes and `origin` the position of
+    the first full-resolution pixel, by axis name. The result is a
+    [`Scaling`][], or an [`Affine`][] when there is a translation.
     """
     level_scales = {}
     translation = []
@@ -732,8 +583,7 @@ def level_transformation(
 
 
 def _diagonal(xform: Transformation) -> tx.Optional[np.ndarray]:
-    """The per-axis scale of a transformation that is a pure scaling (up
-    to a translation), or `None`."""
+    """Return the scale of each axis of a pure scaling, or `None`."""
     if isinstance(xform, Sequence):
         try:
             xform = xform.compute()
@@ -768,30 +618,12 @@ def physical_pixel_size(
     axes: tx.Sequence[Axis],
     unit: tx.Union[str, Unit] = "mm",
 ) -> tx.Optional[tx.Dict[str, float]]:
-    """
-    The physical size of a pixel along each spatial axis, if it is known.
+    """Return the physical pixel size of each spatial axis, if known.
 
-    It is known when the transformation maps the image's index space by a
-    scaling -- possibly with a translation, which a raster format cannot
-    store anyway -- onto axes measured in a unit of length. A rotation or
-    a shear has no pixel size to give, and an axis with no unit (as an
-    image read without one has) has no physical size. A flip is a
-    negative scale, whose magnitude is the size.
-
-    Parameters
-    ----------
-    xform : Transformation, optional
-        The image's preferred voxel-to-world transformation.
-    axes : Sequence[Axis]
-        The axes of the image's data, in the brainhops order.
-    unit : str | Unit
-        The unit to give the sizes in.
-
-    Returns
-    -------
-    dict[str, float] | None
-        The size along each spatial axis, by name, in `unit`; or `None`
-        when it is not known for every spatial axis.
+    The size is known when `xform` is a scaling, possibly with a
+    translation, onto axes in a length unit. The magnitude of a negative
+    scale (a flip) is the size. The result is `None` for a rotation or
+    shear, or when any spatial axis has no length unit.
     """
     if xform is None:
         return None
@@ -825,12 +657,11 @@ def physical_pixel_size(
 
 
 def is_default_dpi(dpi: tx.Any) -> bool:
-    """
-    Whether a resolution is a placeholder that says nothing about the
-    pixel size (see `DEFAULT_DPIS`).
+    """Whether a resolution is a placeholder that says nothing of size.
 
-    A pair is a placeholder when both of its values are. A missing,
-    zero, negative or non-finite resolution is a placeholder too.
+    A resolution is a placeholder when every value matches one of
+    [`DEFAULT_DPIS`][], or when it is missing or has a value that is not
+    positive and finite.
     """
     if dpi is None:
         return True
@@ -847,7 +678,7 @@ def is_default_dpi(dpi: tx.Any) -> bool:
 
 
 def dpi_to_size(dpi: float, unit: tx.Union[str, Unit] = "mm") -> float:
-    """The size of a pixel, in `unit`, at a resolution in dots per inch."""
+    """Return the pixel size, in `unit`, at a resolution in dpi."""
     dpi = float(dpi)
     if not math.isfinite(dpi) or dpi <= 0:
         raise ValueError(f"A resolution must be positive, not {dpi!r}.")
@@ -855,7 +686,7 @@ def dpi_to_size(dpi: float, unit: tx.Union[str, Unit] = "mm") -> float:
 
 
 def size_to_dpi(size: float, unit: tx.Union[str, Unit] = "mm") -> float:
-    """The resolution, in dots per inch, of pixels of a size in `unit`."""
+    """Return the resolution in dpi of pixels of a size given in `unit`."""
     mm = convert_length(float(size), unit, "mm")
     if not math.isfinite(mm) or mm <= 0:
         raise ValueError(f"A pixel size must be positive, not {size!r}.")

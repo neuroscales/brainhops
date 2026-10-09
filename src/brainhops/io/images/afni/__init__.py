@@ -1,15 +1,11 @@
-"""
-Readers and writers for images stored as AFNI datasets.
+"""AFNI datasets.
 
-[`AfniImage`][brainhops.io.images.afni.AfniImage] reads and writes AFNI's
-native datasets, with no dependency beyond numpy: a text header,
-`prefix+view.HEAD`, and the voxel values, `prefix+view.BRIK`, which may
-be compressed (`.BRIK.gz`, `.BRIK.bz2`). Either file, or the dataset's
-name without extension, can be given.
-
-The header format, and every convention checked against the AFNI
-sources, is described in [`brainhops.io.base.afni`][brainhops.io.base.afni],
-which the image reader shares with the AFNI transformation formats.
+[`AfniImage`][brainhops.io.images.afni.AfniImage] reads and writes native
+AFNI datasets with numpy alone. A dataset is a text header,
+`prefix+view.HEAD`, together with a file of voxel values,
+`prefix+view.BRIK`, which may be compressed. Either file, or the bare
+dataset name, can be loaded. The header format is described in
+[`brainhops.io.common.afni`][brainhops.io.common.afni].
 
 ```python
 import brainhops.io as io
@@ -23,54 +19,31 @@ image.save("copy+orig.BRIK.gz")        # .HEAD + gzipped .BRIK
 io.save(image, "epi.nii.gz")           # or any other image format
 ```
 
-**Data.** The sub-bricks are stored one after the other, `x` fastest:
-the array is indexed `[x, y, z]`, or `[x, y, z, sub-brick]` when there
-are several sub-bricks, in F order. The fourth axis is `t` (of type
-time) for a time series -- a dataset with a `TAXIS_NUMS` attribute --
-and `brick` otherwise. The data of an uncompressed local BRIK stay
-memory-mapped until they are indexed; a compressed BRIK, or one whose
-sub-bricks have different types, is read into memory. The scaling
-factor of each sub-brick (`BRICK_FLOAT_FACS`, zero meaning none) is
-applied when `data` is first accessed; `dataobj` holds the stored
-values.
-
-**Coordinate systems.** AFNI's world is "DICOM order": LPS millimetres
-(`x` to the left, `y` to the back, `z` up), which AFNI calls RAI. The
-world spaces are named after the dataset's *view*: `orig`, `acpc` or
-`tlrc`. The transformations are, in order:
-
-1. `voxel` -> `physical`: a `Scaling` by the voxel sizes (`|DELTA|`),
-   and by the repetition time of a time series;
-2. `voxel` -> `<view>-cardinal`: the cardinal grid AFNI programs compute
-   on, from `ORIENT_SPECIFIC`, `ORIGIN` and `DELTA`;
-3. `voxel` -> `<view>`: the true, possibly oblique, geometry of
-   `IJK_TO_DICOM_REAL` (the cardinal grid when the header has none). It
-   is the preferred transformation, and the matrix AFNI itself exports
-   to NIfTI (`3dAFNItoNIFTI`) and `nibabel` reads.
-
-The two affines are the same unless the dataset is oblique.
-
-**Writing.** The preferred transformation is converted to
-voxel-to-DICOM (an RAS world is flipped) and written as
-`IJK_TO_DICOM_REAL`; its closest cardinal grid becomes
-`ORIENT_SPECIFIC`, `ORIGIN`, `DELTA` and `IJK_TO_DICOM`, as AFNI computes
-it when it reads a NIfTI file. A 3D array is one sub-brick, and a 4D
-array has one sub-brick per volume. Writer options set the `view`
-(default: from the file name, `out+tlrc.HEAD`, else from the name of the
-world space, else the view read, else `orig`), the stored `datatype`
-(default: the data's own type, or the closest AFNI has) and extra or
-removed `attributes`. The attributes read from the source header
-(`HISTORY_NOTE`, `BRICK_LABS`, ...) are written back, except those that
-no longer describe the data. The data are written unscaled, in
-little-endian order, and a `.BRIK.gz` or `.BRIK.bz2` name compresses
-them.
-
 !!! note "One class for every view"
-    The view (`+orig`, `+acpc`, `+tlrc`) is a property of the dataset --
-    the world space its coordinates are in, recorded in `SCENE_DATA` --
-    not a different file format: the three views are read and written
-    the same way, so a single class reads them all, and names its world
-    space after the view.
+    The view (`+orig`, `+acpc` or `+tlrc`) is a property of the dataset
+    rather than a different file format, so one class reads and writes
+    every view and names the world space after it.
+
+The array is indexed `[x, y, z]`, or `[x, y, z, sub-brick]` in Fortran
+order. The fourth axis is `t` if the dataset has `TAXIS_NUMS`, and `brick`
+otherwise. The scale factors of `BRICK_FLOAT_FACS` are applied to `data`,
+while `dataobj` holds the stored values.
+
+The AFNI world is LPS in millimeters, and an image carries three
+transformations, the last of which is preferred:
+
+1. voxel to `physical`, a scaling by `|DELTA|` and by the TR of a time
+   series;
+2. voxel to `<view>-cardinal`, the cardinal grid defined by
+   `ORIENT_SPECIFIC`, `ORIGIN` and `DELTA`;
+3. voxel to `<view>`, the possibly oblique geometry of
+   `IJK_TO_DICOM_REAL`, which AFNI exports to NIfTI.
+
+When an image is written, the preferred transformation becomes
+`IJK_TO_DICOM_REAL` and its closest cardinal grid defines the other
+geometry attributes. The `view`, `datatype` and `attributes` options
+control the view, the stored type and extra header attributes. Valid
+attributes of the source header are written back.
 """
 
 __all__ = ["AfniImage"]
