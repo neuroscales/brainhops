@@ -497,8 +497,9 @@ class _FileBasedModelMixin:
 
     A path, an open file, binary content or a [`SourceSpec`][] is read with
     `load`, and any other value is passed to the data model. This mixin,
-    inherited by `ImageFormat` and `TransformationFormat`, must precede
-    `DataModelBase` in each concrete class's MRO. The format dispatcher
+    inherited by `ImageFormat`, `TransformationFormat` and
+    `MetadataFormat`, must precede `DataModelBase` in each concrete class's
+    MRO. The format dispatcher
     supplies file handling; the concrete class supplies its data model.
     Keeping this mixin separate from the input adapters lets native parsers
     retain their specialized methods without hiding file-aware construction.
@@ -554,6 +555,10 @@ class _FileBasedModelMixin:
         default is kept, because the same field name holds something different.
         Converting NIfTI to MGH on save therefore converts the data model only,
         and the writer rebuilds the format state.
+
+        Within one format, the `raw` field of an object carries its data, so
+        `data` is not copied when `raw` is set. The copy then holds the same
+        `raw` as `other`, which stays lazy if it is a proxy.
         """
         for field in _foreign_format_fields(cls, other):
             if field.factory is True:
@@ -561,6 +566,15 @@ class _FileBasedModelMixin:
             else:
                 default = field.default
             kwargs.setdefault(field.public_name, default)
+        # Within a format, `raw` carries the data, so the view `data` is not
+        # read. Passing it would decode the whole array, and since `data`
+        # takes precedence over `raw`, the copy would lose the lazy proxy.
+        if (
+            isinstance(other, cls)
+            and getattr(other, "raw", None) is not None
+            and any(field.public_name == "data" for field in fields(cls))
+        ):
+            kwargs.setdefault("data", None)
         return super().from_instance(other, *args, **kwargs)
 
 
@@ -574,6 +588,11 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     declare it, because `other` then holds a meaningful value for that field.
     Only keyword fields that the constructor accepts and that have a default
     are returned.
+
+    A dispatcher is not counted among the formats that declare a field.
+    `MetadataFormat` declares the `raw` field of every metadata format, but
+    the record of one format means nothing to another, so `raw` is reset
+    when metadata is copied from another format.
     """
     if isinstance(other, cls):
         return []
@@ -581,6 +600,8 @@ def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
     owners: tx.Dict[str, tx.List[type]] = {}
     for klass in cls.__mro__:
         if not (isinstance(klass, type) and issubclass(klass, DataModelBase)):
+            continue
+        if "_REGISTRY" in klass.__dict__:
             continue
         names = [field.name for field in fields(klass)]
         if issubclass(klass, (Format, FileReader, FileWriter)):

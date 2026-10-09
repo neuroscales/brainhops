@@ -214,7 +214,9 @@ def smartproperty(
         Whether to cache the computed value.
     invalidates
         Names of other properties whose cached values the setter deletes, or
-        an [`Invalidator`][] that reads these names from the object.
+        an [`Invalidator`][] that reads these names from the object. A
+        setter given later with the `setter` decorator of the property
+        deletes the same cached values.
 
     Returns
     -------
@@ -278,7 +280,57 @@ def smartproperty(
     if invalidates and fset is not None:
         fset = _wrap_fset_invalidator(fset, invalidates)
 
-    return property(fget, fset, fdel, doc)
+    return _SmartProperty(fget, fset, fdel, doc, invalidates=invalidates)
+
+
+class _SmartProperty(property):
+    """Property that keeps its invalidation when its setter is replaced.
+
+    The `setter` decorator of a plain [`property`][property] copies the
+    getter and takes the new setter as it is. A setter written with
+    `@name.setter` under a [`smartproperty`][] would therefore no longer
+    delete the cached values named by `invalidates`. This class wraps such
+    a setter in the same way as a setter given with `fset=`. The `getter`
+    and `deleter` decorators keep the invalidation too, so that a later
+    `setter` still applies it.
+    """
+
+    def __init__(
+        self,
+        fget: tx.Optional[_Getter] = None,
+        fset: tx.Optional[_Setter] = None,
+        fdel: tx.Optional[_Deleter] = None,
+        doc: tx.Optional[str] = None,
+        invalidates: tx.Union[tx.Tuple[str, ...], Invalidator] = (),
+    ) -> None:
+        super().__init__(fget, fset, fdel, doc)
+        self.invalidates = invalidates
+
+    def getter(self, fget: _Getter) -> property:
+        """Return a copy of the property with another getter."""
+        return _SmartProperty(
+            fget, self.fset, self.fdel, self.__doc__, self.invalidates
+        )
+
+    def setter(self, fset: _Setter) -> property:
+        """Return a copy of the property with another setter.
+
+        The setter deletes the cached values named by `invalidates` after
+        it runs, as a setter given with `fset=` does. The cached value of
+        the property itself is deleted only if the property names itself
+        in `invalidates`.
+        """
+        if self.invalidates:
+            fset = _wrap_fset_invalidator(fset, self.invalidates)
+        return _SmartProperty(
+            self.fget, fset, self.fdel, self.__doc__, self.invalidates
+        )
+
+    def deleter(self, fdel: _Deleter) -> property:
+        """Return a copy of the property with another deleter."""
+        return _SmartProperty(
+            self.fget, self.fset, fdel, self.__doc__, self.invalidates
+        )
 
 
 def _make_fget(
