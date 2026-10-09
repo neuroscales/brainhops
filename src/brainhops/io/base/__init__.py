@@ -1,5 +1,4 @@
-"""The format-independent base shared by every file-based object, whatever
-its kind."""
+"""Format-independent machinery shared by every kind of file-based object."""
 
 __all__ = [
     "FileBasedObject",
@@ -32,8 +31,7 @@ from brainhops._core.dependencies import (
     has_abczarr_driver,
 )
 
-# FIXME: do not import anything from common here. Have "clients" import
-# from common directly.
+# TODO: stop importing from common here; import from brainhops.io.common.
 from ..common import afni, freesurfer, mgh, minc, mrtrix
 from . import parsers
 from ._base import (
@@ -64,9 +62,7 @@ if HAS_NIBABEL:
 
     __all__ += ["mgh", "minc", "nifti"]
 
-# The Zarr store adapter needs abczarr and at least one backend driver.
-# abczarr alone cannot open a store, so the adapter is exposed only when a
-# driver is present.
+# abczarr cannot open a store without a backend driver.
 if has_abczarr_driver():
     from ..common import zarr
 

@@ -1,4 +1,7 @@
-"""Structured file-source specifications and field parser registration."""
+"""Structured file sources, written `path|hint|key:value`.
+
+The module also registers the parsers that convert option values.
+"""
 
 __all__ = [
     "ImageSpec",
@@ -22,17 +25,20 @@ from brainhops._core.path import Path
 
 
 class Parser(Magic, frozen=True):
-    """``Annotated`` metadata selecting the parser for a field.
+    """Annotation metadata choosing the parser of a field.
 
-    The value may be a registered target type or a parser callable/class.
-    An explicit ``Parser`` always takes precedence over registry lookup.
+    The value is a registered target or a parser, and takes precedence over the
+    registry.
     """
 
     value: tx.Any
 
 
 class SourceSpec(Magic, frozen=True):
-    """A source path plus format hints and typed named options."""
+    """An immutable source path with format hints and named options.
+
+    Option values are strings or nested specifications.
+    """
 
     path: ConvertTo[Path]
     hints: tx.Tuple[str, ...] = ()
@@ -40,12 +46,18 @@ class SourceSpec(Magic, frozen=True):
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
-        """Parse ``path|hint|key:value`` CLI syntax.
+        """Parse a source argument written as `path|hint|key:value`.
 
-        Brackets delimit a nested source specification. Colons are syntax
-        only in modifier segments, so URI schemes in source values remain
-        intact. A literal pipe must be percent-encoded as ``%7C`` because
-        ``|`` is always structural.
+        Later segments are hints (also given as `hint:a,b`), options, or
+        operations that the class declares. Brackets delimit a nested
+        specification. Colons are syntax only in later segments, so URI schemes
+        in values survive. A literal pipe is written `%7C`.
+
+        Raises
+        ------
+        ValueError
+            If the path is missing, a segment is empty, or an option is unnamed
+            or repeated.
         """
         segments = _split_top_level(text)
         if not segments or not segments[0]:
@@ -91,38 +103,44 @@ class SourceSpec(Magic, frozen=True):
 
     @classmethod
     def _parse_operation(cls, segment: str) -> tx.Optional["OperationSpec"]:
-        """Parse a class-owned operation, if this spec type declares it."""
+        """Parse a segment as a declared operation, or return `None`."""
         return None
 
 
 class ImageSpec(SourceSpec, frozen=True):
-    """A structured source specification for an image."""
+    """Source specification of an image."""
 
 
 class OperationSpec(Magic, frozen=True):
-    """A validated operation attached to a structured source."""
+    """A named operation applied to a loaded source."""
 
     name: str
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
-        """Parse this operation's segment from a source argument."""
+        """Parse the segment of this operation.
+
+        Raises
+        ------
+        ValueError
+            If the segment gives the operation a value.
+        """
         if ":" in text:
             name = text.split(":", 1)[0]
             raise ValueError(f"Operation {name!r} takes no value.")
         return cls(name=text.lower())
 
     def apply(self, value: tx.Any) -> tx.Any:
-        """Apply this operation to a loaded source value."""
+        """Apply the operation to a loaded value."""
         raise NotImplementedError
 
 
 class TransformationSpec(SourceSpec, frozen=True):
-    """A transformation source with validated transformation operations.
+    """Transformation source with operations.
 
-    The hint `svf` is an alias of `displacements|log:true`: a field of
-    displacements that holds the stationary velocity of the map. It
-    combines with other options, as in `warp.nii.gz|svf|steps:6`.
+    The hint `svf` stands for `displacements|log:true`, a displacement field
+    holding the stationary velocity of the map, as in
+    `warp.nii.gz|svf|steps:6`.
     """
 
     operations: tx.Tuple[OperationSpec, ...] = ()
@@ -130,15 +148,17 @@ class TransformationSpec(SourceSpec, frozen=True):
 
     @classmethod
     def from_arg(cls, text: str) -> tx.Self:
-        """Parse ``path|hint|key:value`` CLI syntax (see
-        [`SourceSpec.from_arg`][]), expanding the `svf` alias."""
+        """Parse a source argument, expanding the `svf` alias.
+
+        The syntax is that of [`SourceSpec.from_arg`][].
+        """
         return _expand_svf(super().from_arg(text))
 
     @classmethod
     def register_operation(
         cls, name: str
     ) -> tx.Callable[[tx.Type[OperationSpec]], tx.Type[OperationSpec]]:
-        """Register an operation understood by this source-spec class."""
+        """Register an operation under `name` for this class and subclasses."""
 
         def decorator(
             operation: tx.Type[OperationSpec],
@@ -155,7 +175,7 @@ class TransformationSpec(SourceSpec, frozen=True):
         return operation.from_arg(segment) if operation else None
 
     def apply_operations(self, value: tx.Any) -> tx.Any:
-        """Apply registered operations in their written order."""
+        """Apply the operations in written order."""
         for operation in self.operations:
             value = operation.apply(value)
         return value
@@ -163,15 +183,14 @@ class TransformationSpec(SourceSpec, frozen=True):
 
 @TransformationSpec.register_operation("inv")
 class InvertOperation(OperationSpec, frozen=True):
-    """Invert a loaded transformation."""
+    """Invert a loaded transformation (`inv`)."""
 
     def apply(self, value: tx.Any) -> tx.Any:
         return value.inverse()
 
 
 def _expand_svf(spec: TransformationSpec) -> TransformationSpec:
-    # `svf` is `displacements|log:true`, which says the field holds a
-    # velocity. An explicit `log:` would contradict or repeat it.
+    # svf already means log:true.
     if "svf" not in spec.hints:
         return spec
     if "log" in spec.options:
@@ -195,17 +214,15 @@ def _parse_hints(value: str) -> tx.List[str]:
 
 
 def _decode_pipe(value: str) -> str:
-    """Decode the one percent escape reserved by the source grammar."""
+    """Decode `%7C`, the only escape of the grammar, into a pipe."""
     return re.sub("%7c", "|", value, flags=re.IGNORECASE)
 
 
 def _split_top_level(text: str) -> tx.List[str]:
-    """Split on pipes outside bracketed option values.
+    """Split on the pipes outside nested specifications.
 
-    A bracket is structural only when ``[`` immediately follows an option
-    tag in a modifier segment. Its matching ``]`` must end that source value:
-    it is followed by a pipe, the end of an enclosing source, or the end of
-    the argument. Other brackets are ordinary path characters.
+    A bracket is structural only right after an option tag `key:` in a later
+    segment, and its match must end that value. Other brackets belong to paths.
     """
     parts: tx.List[str] = []
     start = 0
@@ -251,7 +268,7 @@ def _split_top_level(text: str) -> tx.List[str]:
 def _starts_nested_source(
     text: str, segment_start: int, bracket: int, segment_number: int
 ) -> bool:
-    """Whether ``text[bracket]`` opens a bracketed option value."""
+    """Whether `text[bracket]` opens a nested specification."""
     if segment_number == 0:
         return False
     tag = text[segment_start:bracket]
@@ -262,7 +279,7 @@ def _starts_nested_source(
 
 
 def _ends_nested_source(text: str, bracket: int) -> bool:
-    """Whether a closing bracket is at a nested-source boundary."""
+    """Whether `text[bracket]` closes a nested specification."""
     return bracket + 1 == len(text) or text[bracket + 1] in "|]"
 
 
@@ -272,7 +289,7 @@ _PARSERS: tx.Dict[tx.Hashable, tx.Any] = {}
 def register_parser(
     target: tx.Hashable,
 ) -> tx.Callable[[tx.Any], tx.Any]:
-    """Register a default parser for ``target`` as a class decorator."""
+    """Register a decorated parser as the default for `target`."""
 
     def decorator(parser: tx.Any) -> tx.Any:
         _PARSERS[target] = parser
@@ -287,12 +304,16 @@ _FALSE = frozenset({"false", "no", "off", "0"})
 
 @register_parser(bool)
 def parse_bool(spec: SourceSpec) -> bool:
-    """Parse a boolean option, such as the `log:true` of a transformation.
+    """Parse a boolean option such as `log:true`.
 
-    An option reaches a field as text, and every non-empty string is
-    truthy, so `log:false` would read as true without this parser. It
-    takes `true`/`false`, `yes`/`no`, `on`/`off` and `1`/`0`, in any case,
-    and refuses anything else.
+    Every non-empty string is truthy, so `log:false` would otherwise read as
+    true. `true`, `yes`, `on`, `1` and their opposites are accepted in any
+    case.
+
+    Raises
+    ------
+    ValueError
+        For any other value, or if hints or options are given.
     """
     text = str(spec.path).strip().lower()
     if spec.hints or spec.options or (text not in _TRUE | _FALSE):
@@ -303,7 +324,10 @@ def parse_bool(spec: SourceSpec) -> bool:
 
 
 def parser_for(annotation: tx.Any) -> tx.Optional[tx.Any]:
-    """Resolve explicit parser metadata or the best registered parser."""
+    """Return the explicit or registered parser for an annotation, or `None`.
+
+    A union uses the parser of its members if they share exactly one.
+    """
     annotation, explicit = _unwrap_annotated(annotation)
     if explicit is not None:
         value = explicit.value
@@ -345,7 +369,7 @@ def _unwrap_annotated(
 
 
 def _hint_paths(cls: type) -> tx.Set[tx.Tuple[str, ...]]:
-    """Build namespace paths along individual inheritance branches."""
+    """Build the hint paths of `cls` along each inheritance branch."""
     declared = tuple(
         str(hint).lower() for hint in cls.__dict__.get("HINTS", ())
     )
@@ -363,7 +387,10 @@ def _hint_paths(cls: type) -> tx.Set[tx.Tuple[str, ...]]:
 
 
 def format_hints(cls: type) -> tx.FrozenSet[str]:
-    """Collect leaf and qualified hints along semantic inheritance branches."""
+    """Return the plain and dotted hints of a format.
+
+    For example, a format may answer to `itk` and `itk.displacements`.
+    """
     paths: tx.Set[tx.Tuple[str, ...]] = set()
     for base in cls.__mro__:
         paths.update(_hint_paths(base))
