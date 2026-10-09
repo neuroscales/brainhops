@@ -1236,6 +1236,36 @@ def test_an_open_system_in_millimetres_closes_to_a_physical_one() -> None:
 
 
 # ----------------------------------------------------------------------
+#   ANATOMICAL VOXEL SPACES
+# ----------------------------------------------------------------------
+# A C-ordered grid lists the axes of the matching F-ordered grid in
+# reverse order, and each anatomical direction keeps its name in both
+# memory orders (#393).
+
+
+@pytest.mark.parametrize(
+    "c_cls, f_cls",
+    [
+        (_systems.CRASCoordinateSystem, _systems.FRASCoordinateSystem),
+        (_systems.CLPSCoordinateSystem, _systems.FLPSCoordinateSystem),
+        (_systems.CRSACoordinateSystem, _systems.FRSACoordinateSystem),
+    ],
+    ids=["RAS", "LPS", "RSA"],
+)
+def test_c_and_f_grids_give_each_orientation_the_same_name(
+    c_cls: type, f_cls: type
+) -> None:
+    c_axes = list(c_cls().axes)
+    f_axes = list(f_cls().axes)
+    assert [type(axis) for axis in c_axes] == [
+        type(axis) for axis in reversed(f_axes)
+    ]
+    c_names = {type(axis): axis.name for axis in c_axes}
+    f_names = {type(axis): axis.name for axis in f_axes}
+    assert c_names == f_names
+
+
+# ----------------------------------------------------------------------
 #   AXIS CONTAINERS
 # ----------------------------------------------------------------------
 # AxisSequence is a read-only base whose API AxisTuple and AxisList share.
