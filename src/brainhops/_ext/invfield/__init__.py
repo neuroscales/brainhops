@@ -44,6 +44,6 @@ def inverse(field: np.ndarray) -> np.ndarray:
         return inverse3d(field)
     else:
         raise NotImplementedError(
-            f"Displcement field inversion is only implemented for 2D "
+            f"Displacement field inversion is only implemented for 2D "
             f"and 3D fields, but got field with shape {field.shape}."
         )

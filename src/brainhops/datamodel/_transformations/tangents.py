@@ -128,7 +128,7 @@ class StationaryVelocityField(
         if arguments.get("field") is not None:
             raise NotImplementedError(
                 f"{type(self).__name__}() got field=, which is the map, "
-                f"as  displacement values: storing it as a velocity "
+                f"as displacement values: storing it as a velocity "
                 f"needs the logarithm of a field, which is not implemented. "
                 f"Pass the velocity as data=."
             )
