@@ -21,6 +21,8 @@ __all__ = [
 from brainhops._core.enum import IntEnum, StrEnum
 
 
+# ruff: disable[E501]
+# fmt: off
 class SimplifyPolicy(StrEnum):
     """How far a transformation may be inspected when it is simplified.
 
@@ -36,11 +38,21 @@ class SimplifyPolicy(StrEnum):
       may be materialized when a transformation is rewritten as the
       cheapest type that it belongs to. The rank replaces the assumption
       based on the shape, so a singular square matrix is not invertible.
+
+    The members and their values are listed in the following table.
+
+    | Name       | Value        | Description                                                        |
+    |------------|--------------|--------------------------------------------------------------------|
+    | `none`     | `"none"`     | Only the declared type is used; nothing is inspected or rewritten. |
+    | `analytic` | `"analytic"` | The structure is inspected, but no value is read.                  |
+    | `numeric`  | `"numeric"`  | Values are read as well, for zero, diagonality and rank tests.     |
     """
 
     none = "none"
     analytic = "analytic"
     numeric = "numeric"
+# fmt: on
+# ruff: enable[E501]
 
 
 # ruff: disable[E501]
@@ -48,16 +60,17 @@ class SimplifyPolicy(StrEnum):
 class BoundaryCondition(StrEnum):
     """Boundary conditions for interpolation and resampling.
 
-    | Value         | Aliases                        | Description                     |
-    |---------------|--------------------------------|---------------------------------|
-    | `nearest`     | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
-    | `reflect`     | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
-    | `mirror`      | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
-    | `grid-wrap`   | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
-    | `wrap`        |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
-    | `constant`    | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
+    The following table lists every member with its value, its aliases and
+    the padding pattern that it produces around the values `a b c d`.
 
-    The value `"grid-wrap"` is the member `gridwrap`.
+    | Name       | Value         | Aliases                        | Description                                          |
+    |------------|---------------|--------------------------------|------------------------------------------------------|
+    | `nearest`  | `"nearest"`   | `edge`, `border`               | <code>(a a a a &vert; a b c d &vert; d d d d)</code> |
+    | `reflect`  | `"reflect"`   | `symmetric`, `dct2`            | <code>(d c b a &vert; a b c d &vert; d c b a)</code> |
+    | `mirror`   | `"mirror"`    | `dct1`                         | <code>  (d c b &vert; a b c d &vert; c b a)  </code> |
+    | `gridwrap` | `"grid-wrap"` | `circular`, `circulant`, `dft` | <code>(a b c d &vert; a b c d &vert; a b c d)</code> |
+    | `wrap`     | `"wrap"`      |                                | <code>(d b c d &vert; a b c d &vert; b c a b)</code> |
+    | `constant` | `"constant"`  | `zero`, `zeros`                | <code>(0 0 0 0 &vert; a b c d &vert; 0 0 0 0)</code> |
     """
 
     nearest = edge = border = "nearest"
@@ -70,19 +83,21 @@ class BoundaryCondition(StrEnum):
 # ruff: enable[E501]
 
 
+# ruff: disable[E501]
+# fmt: off
 class StoreEnum(StrEnum):
     """What the `data` of a transformation field holds.
 
     The member is given by the `store` flag of
     [`TransformationField`][brainhops.datamodel.transformations.TransformationField].
 
-    - `"values"`: `data` holds the values of the field, and the `field`
-      view of the transformation is `data` itself.
-    - `"coefficients"`: `data` holds spline coefficients, and the `field`
-      view of the transformation decodes them into values.
+    The following table lists each member with its aliases, its value and
+    what `data` holds when the member is used.
 
-    Each member also has an upper-case alias, and `coefficients` is also
-    spelled `coeffs`.
+    | Name           | Aliases                            | Value            | Description                                                           |
+    |----------------|------------------------------------|------------------|-----------------------------------------------------------------------|
+    | `coefficients` | `COEFFICIENTS`, `COEFFS`, `coeffs` | `"coefficients"` | `data` holds spline coefficients, and `field` decodes them to values. |
+    | `values`       | `VALUES`                           | `"values"`       | `data` holds the field's values, and `field` is `data` itself.        |
     """
 
     COEFFICIENTS = COEFFS = coefficients = coeffs = "coefficients"
@@ -96,6 +111,8 @@ class StoreEnum(StrEnum):
         and this method turns that boolean into a member.
         """
         return cls.coefficients if coefficients else cls.values
+# fmt: on
+# ruff: enable[E501]
 
 
 class InterpolationOrder(IntEnum):
@@ -235,24 +252,97 @@ class SpaceEnum(StrEnum):
     """Known labels of a world space.
 
     The labels are used by the metadata fields `space`, `input_space` and
-    `output_space`. An unlisted label is kept as a plain string. The
-    members are grouped as follows.
+    `output_space`. An unlisted label is kept as a plain string.
 
-    - NIfTI names of the `sform_code` and `qform_code` values:
-      `scanner` (1, scanner-based anatomical coordinates), `aligned`
-      (2, aligned to another file), `talairach` (3, Talairach-Tournoux
-      atlas), `mni` (4, MNI 152) and `template` (5, another template).
-    - BIDS standard volume templates, used for `SpatialReference` and the
-      `space-` entity of file names: `ICBM452AirSpace`,
-      `ICBM452Warp5Space`, `IXI549Space`, `MNI152Lin`,
-      `MNI152NLin2009{a,b,c}{Asym,Sym}`, `MNI152NLin6Asym`,
-      `MNI152NLin6Sym`, `MNI305`, `MNIColin27`, `MNIInfant`,
-      `MNIPediatricAsym`, `NMT31Sym`, `OASIS30AntsOASISAnts`,
-      `OASIS30Atropos`, `Talairach` and `UNCInfant`.
-    - BIDS standard surface templates: `fsaverage`, `fsaverage3` to
-      `fsaverage6`, `fsaveragesym`, `fsLR` and `fsnative`.
-    - BIDS non-standard spaces: `orig`, `anat`, `T1w`, `T2w`,
-      `individual` and `study`.
+    The first five members are the names that NIfTI gives to the values of
+    `sform_code` and `qform_code`. They are followed by the BIDS standard
+    templates, which BIDS uses for `SpatialReference` and for the `space-`
+    entity of file names, and by the non-standard spaces that BIDS defines
+    without a template. Every member is listed in the following table.
+
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | Member                 | Value                    | Meaning                                                  |
+    +========================+==========================+==========================================================+
+    | `scanner`              | `"scanner"`              | NIfTI xform code 1: scanner-based anatomical coordinates |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `aligned`              | `"aligned"`              | NIfTI xform code 2: aligned to another file              |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `talairach`            | `"talairach"`            | NIfTI xform code 3: Talairach-Tournoux atlas             |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `mni`                  | `"mni"`                  | NIfTI xform code 4: MNI 152                              |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `template`             | `"template"`             | NIfTI xform code 5: another template                     |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `ICBM452AirSpace`      | `"ICBM452AirSpace"`      | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `ICBM452Warp5Space`    | `"ICBM452Warp5Space"`    | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `IXI549Space`          | `"IXI549Space"`          | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152Lin`            | `"MNI152Lin"`            | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009aAsym`  | `"MNI152NLin2009aAsym"`  | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009aSym`   | `"MNI152NLin2009aSym"`   | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009bAsym`  | `"MNI152NLin2009bAsym"`  | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009bSym`   | `"MNI152NLin2009bSym"`   | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009cAsym`  | `"MNI152NLin2009cAsym"`  | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin2009cSym`   | `"MNI152NLin2009cSym"`   | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin6Asym`      | `"MNI152NLin6Asym"`      | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI152NLin6Sym`       | `"MNI152NLin6Sym"`       | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNI305`               | `"MNI305"`               | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNIColin27`           | `"MNIColin27"`           | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNIInfant`            | `"MNIInfant"`            | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `MNIPediatricAsym`     | `"MNIPediatricAsym"`     | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `NMT31Sym`             | `"NMT31Sym"`             | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `OASIS30AntsOASISAnts` | `"OASIS30AntsOASISAnts"` | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `OASIS30Atropos`       | `"OASIS30Atropos"`       | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `Talairach`            | `"Talairach"`            | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `UNCInfant`            | `"UNCInfant"`            | BIDS standard template (volume)                          |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaverage`            | `"fsaverage"`            | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaverage3`           | `"fsaverage3"`           | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaverage4`           | `"fsaverage4"`           | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaverage5`           | `"fsaverage5"`           | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaverage6`           | `"fsaverage6"`           | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsaveragesym`         | `"fsaveragesym"`         | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsLR`                 | `"fsLR"`                 | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `fsnative`             | `"fsnative"`             | BIDS standard template (surface)                         |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `orig`                 | `"orig"`                 | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `anat`                 | `"anat"`                 | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `T1w`                  | `"T1w"`                  | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `T2w`                  | `"T2w"`                  | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `individual`           | `"individual"`           | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
+    | `study`                | `"study"`                | BIDS non-standard space                                  |
+    +------------------------+--------------------------+----------------------------------------------------------+
     """
 
     # NIfTI
@@ -310,24 +400,104 @@ class IntentEnum(StrEnum):
     The intent states what the values of an image represent. The members
     are the NIfTI intent names as nibabel spells them, and each value is
     the member name with its underscores replaced by spaces. An unlisted
-    intent is kept as a plain string. The NIfTI codes are listed below.
+    intent is kept as a plain string.
 
-    - Statistical distributions: `correlation` (2), `t_test` (3),
-      `f_test` (4), `z_score` (5), `chi2` (6), `beta` (7), `binomial` (8),
-      `gamma` (9), `poisson` (10), `normal` (11), `non_central_f_test`
-      (12), `non_central_chi2` (13), `logistic` (14), `laplace` (15),
-      `uniform` (16), `non_central_t_test` (17), `weibull` (18), `chi`
-      (19), `inverse_gaussian` (20), `extreme_value_1` (21), `p_value`
-      (22), `log_p_value` (23) and `log10_p_value` (24).
-    - Other kinds of values: `estimate` (1001), `label` (1002),
-      `neuroname` (1003), `general_matrix` (1004), `symmetric_matrix`
-      (1005), `displacement_vector` (1006), `vector` (1007), `pointset`
-      (1008), `triangle` (1009), `quaternion` (1010), `dimensionless`
-      (1011), `time_series` (2001), `node_index` (2002), `rgb_vector`
-      (2003), `rgba_vector` (2004) and `shape` (2005).
-    - FSL intents: `fnirt_disp_field` (2006), `fnirt_cubic_spline_coef`
-      (2007), `fnirt_dct_coef` (2008), `fnirt_quad_spline_coef` (2009) and
-      `topup_field` (2018).
+    NIfTI codes 2 to 24 name statistical distributions, codes 1001 to 2005
+    name other kinds of values, and the codes from 2006 onwards are
+    specific to FSL. The following table lists every member with its value
+    and its NIfTI code.
+
+    +---------------------------+-----------------------------+------------+
+    | Member                    | Value                       | NIfTI code |
+    +===========================+=============================+============+
+    | `correlation`             | `"correlation"`             | 2          |
+    +---------------------------+-----------------------------+------------+
+    | `t_test`                  | `"t test"`                  | 3          |
+    +---------------------------+-----------------------------+------------+
+    | `f_test`                  | `"f test"`                  | 4          |
+    +---------------------------+-----------------------------+------------+
+    | `z_score`                 | `"z score"`                 | 5          |
+    +---------------------------+-----------------------------+------------+
+    | `chi2`                    | `"chi2"`                    | 6          |
+    +---------------------------+-----------------------------+------------+
+    | `beta`                    | `"beta"`                    | 7          |
+    +---------------------------+-----------------------------+------------+
+    | `binomial`                | `"binomial"`                | 8          |
+    +---------------------------+-----------------------------+------------+
+    | `gamma`                   | `"gamma"`                   | 9          |
+    +---------------------------+-----------------------------+------------+
+    | `poisson`                 | `"poisson"`                 | 10         |
+    +---------------------------+-----------------------------+------------+
+    | `normal`                  | `"normal"`                  | 11         |
+    +---------------------------+-----------------------------+------------+
+    | `non_central_f_test`      | `"non central f test"`      | 12         |
+    +---------------------------+-----------------------------+------------+
+    | `non_central_chi2`        | `"non central chi2"`        | 13         |
+    +---------------------------+-----------------------------+------------+
+    | `logistic`                | `"logistic"`                | 14         |
+    +---------------------------+-----------------------------+------------+
+    | `laplace`                 | `"laplace"`                 | 15         |
+    +---------------------------+-----------------------------+------------+
+    | `uniform`                 | `"uniform"`                 | 16         |
+    +---------------------------+-----------------------------+------------+
+    | `non_central_t_test`      | `"non central t test"`      | 17         |
+    +---------------------------+-----------------------------+------------+
+    | `weibull`                 | `"weibull"`                 | 18         |
+    +---------------------------+-----------------------------+------------+
+    | `chi`                     | `"chi"`                     | 19         |
+    +---------------------------+-----------------------------+------------+
+    | `inverse_gaussian`        | `"inverse gaussian"`        | 20         |
+    +---------------------------+-----------------------------+------------+
+    | `extreme_value_1`         | `"extreme value 1"`         | 21         |
+    +---------------------------+-----------------------------+------------+
+    | `p_value`                 | `"p value"`                 | 22         |
+    +---------------------------+-----------------------------+------------+
+    | `log_p_value`             | `"log p value"`             | 23         |
+    +---------------------------+-----------------------------+------------+
+    | `log10_p_value`           | `"log10 p value"`           | 24         |
+    +---------------------------+-----------------------------+------------+
+    | `estimate`                | `"estimate"`                | 1001       |
+    +---------------------------+-----------------------------+------------+
+    | `label`                   | `"label"`                   | 1002       |
+    +---------------------------+-----------------------------+------------+
+    | `neuroname`               | `"neuroname"`               | 1003       |
+    +---------------------------+-----------------------------+------------+
+    | `general_matrix`          | `"general matrix"`          | 1004       |
+    +---------------------------+-----------------------------+------------+
+    | `symmetric_matrix`        | `"symmetric matrix"`        | 1005       |
+    +---------------------------+-----------------------------+------------+
+    | `displacement_vector`     | `"displacement vector"`     | 1006       |
+    +---------------------------+-----------------------------+------------+
+    | `vector`                  | `"vector"`                  | 1007       |
+    +---------------------------+-----------------------------+------------+
+    | `pointset`                | `"pointset"`                | 1008       |
+    +---------------------------+-----------------------------+------------+
+    | `triangle`                | `"triangle"`                | 1009       |
+    +---------------------------+-----------------------------+------------+
+    | `quaternion`              | `"quaternion"`              | 1010       |
+    +---------------------------+-----------------------------+------------+
+    | `dimensionless`           | `"dimensionless"`           | 1011       |
+    +---------------------------+-----------------------------+------------+
+    | `time_series`             | `"time series"`             | 2001       |
+    +---------------------------+-----------------------------+------------+
+    | `node_index`              | `"node index"`              | 2002       |
+    +---------------------------+-----------------------------+------------+
+    | `rgb_vector`              | `"rgb vector"`              | 2003       |
+    +---------------------------+-----------------------------+------------+
+    | `rgba_vector`             | `"rgba vector"`             | 2004       |
+    +---------------------------+-----------------------------+------------+
+    | `shape`                   | `"shape"`                   | 2005       |
+    +---------------------------+-----------------------------+------------+
+    | `fnirt_disp_field`        | `"fnirt disp field"`        | 2006       |
+    +---------------------------+-----------------------------+------------+
+    | `fnirt_cubic_spline_coef` | `"fnirt cubic spline coef"` | 2007       |
+    +---------------------------+-----------------------------+------------+
+    | `fnirt_dct_coef`          | `"fnirt dct coef"`          | 2008       |
+    +---------------------------+-----------------------------+------------+
+    | `fnirt_quad_spline_coef`  | `"fnirt quad spline coef"`  | 2009       |
+    +---------------------------+-----------------------------+------------+
+    | `topup_field`             | `"topup field"`             | 2018       |
+    +---------------------------+-----------------------------+------------+
     """
 
     correlation = "correlation"
@@ -384,6 +554,30 @@ class Manufacturer(StrEnum):
     The names follow the BIDS `Manufacturer` field, spelled as converters
     such as dcm2niix normalise the DICOM Manufacturer tag. Other
     manufacturers are kept as plain strings.
+
+    The members and their values are listed in the following table.
+
+    +---------------+-----------------+
+    | Member        | Value           |
+    +===============+=================+
+    | `Siemens`     | `"Siemens"`     |
+    +---------------+-----------------+
+    | `GE`          | `"GE"`          |
+    +---------------+-----------------+
+    | `Philips`     | `"Philips"`     |
+    +---------------+-----------------+
+    | `Canon`       | `"Canon"`       |
+    +---------------+-----------------+
+    | `Toshiba`     | `"Toshiba"`     |
+    +---------------+-----------------+
+    | `Hitachi`     | `"Hitachi"`     |
+    +---------------+-----------------+
+    | `Bruker`      | `"Bruker"`      |
+    +---------------+-----------------+
+    | `UIH`         | `"UIH"`         |
+    +---------------+-----------------+
+    | `MRSolutions` | `"MRSolutions"` |
+    +---------------+-----------------+
     """
 
     Siemens = "Siemens"
@@ -402,6 +596,22 @@ class IlluminationType(StrEnum):
 
     The members are those of the OME `Channel.IlluminationType`
     enumeration. Other values are kept as plain strings.
+
+    The members and their values are listed in the following table.
+
+    +-------------------+---------------------+
+    | Member            | Value               |
+    +===================+=====================+
+    | `Transmitted`     | `"Transmitted"`     |
+    +-------------------+---------------------+
+    | `Epifluorescence` | `"Epifluorescence"` |
+    +-------------------+---------------------+
+    | `Oblique`         | `"Oblique"`         |
+    +-------------------+---------------------+
+    | `NonLinear`       | `"NonLinear"`       |
+    +-------------------+---------------------+
+    | `Other`           | `"Other"`           |
+    +-------------------+---------------------+
     """
 
     Transmitted = "Transmitted"
@@ -416,6 +626,30 @@ class ContrastMethod(StrEnum):
 
     The members are those of the OME `Channel.ContrastMethod` enumeration.
     Other values are kept as plain strings.
+
+    The members and their values are listed in the following table.
+
+    +-----------------------+-------------------------+
+    | Member                | Value                   |
+    +=======================+=========================+
+    | `Brightfield`         | `"Brightfield"`         |
+    +-----------------------+-------------------------+
+    | `Phase`               | `"Phase"`               |
+    +-----------------------+-------------------------+
+    | `DIC`                 | `"DIC"`                 |
+    +-----------------------+-------------------------+
+    | `HoffmanModulation`   | `"HoffmanModulation"`   |
+    +-----------------------+-------------------------+
+    | `ObliqueIllumination` | `"ObliqueIllumination"` |
+    +-----------------------+-------------------------+
+    | `PolarizedLight`      | `"PolarizedLight"`      |
+    +-----------------------+-------------------------+
+    | `Darkfield`           | `"Darkfield"`           |
+    +-----------------------+-------------------------+
+    | `Fluorescence`        | `"Fluorescence"`        |
+    +-----------------------+-------------------------+
+    | `Other`               | `"Other"`               |
+    +-----------------------+-------------------------+
     """
 
     Brightfield = "Brightfield"
