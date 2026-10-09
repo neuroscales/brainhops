@@ -1,23 +1,29 @@
 """Simplifier rules, registered with `simplify.simplifier`.
 
-The machinery lives in `simplify`, as one dispatched function with two
-arities, and the rules live here and are registered at import.
+Simplification rewrites a transformation, or a chain of transformations,
+into a cheaper equivalent without computing anything new. The `simplify`
+module provides the machinery, a single function that accepts either one
+transformation or two consecutive ones. This module holds the rules, which
+are registered when it is imported.
 
-A rule with one input is a downcast: it rewrites a transformation as the
-cheapest type that it is established to belong to, so that an Affine with a
-diagonal matrix becomes a Scaling. The resolved [`SimplifyPolicy`][]
-decides how hard a parameter may be inspected: an analytic policy reads
-structure only, a numeric policy reads values, and a policy of none leaves
-the transformation alone. A rule with two inputs is a collapse: it replaces
-two consecutive transformations by one when this costs nothing, such as a
-transformation next to its lazy inverse. `first` is applied before
-`second`, as in a [`Sequence`][], and a rule returns None to decline.
+A rule that takes one transformation is a downcast. It rewrites the
+transformation as the cheapest type that the transformation is known to
+belong to, so that an Affine with a diagonal matrix becomes a Scaling. The
+resolved [`SimplifyPolicy`][] decides how closely the parameters may be
+inspected: an analytic policy reads only the structure, a numeric policy
+also reads the values, and a policy of none leaves the transformation
+alone. A rule that takes two transformations is a collapse. It replaces
+two consecutive transformations by one when doing so costs nothing, for
+example when a transformation is next to its lazy inverse. As in a
+[`Sequence`][], `first` is applied before `second`, and a rule returns None
+when it does not apply.
 
-A simplifier never reads values that the policy forbids, never
-materializes a lazy inverse (that is the job of [`Inverse.compute`][],
-gated by the composition mode), and never lengthens a sequence or
-reconciles a boundary, which is the job of composition. The note above
-`_collapse_pass` explains why nothing is lost.
+A simplifier never reads values that the policy forbids. It never
+materializes a lazy inverse, because that is the job of
+[`Inverse.compute`][], which the composition mode controls. It also never
+makes a sequence longer or reconciles the coordinate systems of two
+neighbours, which is the job of composition. The note above
+`_collapse_pass` explains why declining such pairs loses nothing.
 """
 
 import typing_extensions as tx
@@ -62,9 +68,11 @@ NUMERIC = SimplifyPolicy.numeric
 #
 # ======================================================================
 
-# Cheapest first. A transformation becomes the first rung whose set it belongs
-# to, unless it is already an instance of that rung's class, so a Rotation is
-# never widened to a Linear.
+# The downcast ladder pairs each kind, that is, each set of transformations
+# such as the diagonal maps, with the class that represents it, from the
+# cheapest to the most general. A transformation becomes the first rung whose
+# kind it belongs to, unless it is already an instance of the class of that
+# rung. For this reason, a Rotation is never widened to a Linear.
 _LADDER: tx.Tuple[tx.Tuple[kinds.Kind, tx.Type[Transformation]], ...] = (
     (kinds.Identity, Identity),
     (kinds.Translation, Translation),
@@ -87,14 +95,16 @@ def _(t: Transformation, policy: SimplifyTable) -> Transformation:
         if not is_kind(t, node, compute):
             continue
         if isinstance(t, cls):
-            # Rebuilding would return a new object and break the `forward is`
-            # link by which a lazy inverse cancels.
+            # Rebuilding the transformation would return a new object, and a
+            # lazy inverse that refers to the original object through
+            # `forward` would then no longer cancel with it.
             return t
         try:
             return t.to(cls)
         except ConversionError:
-            # The set has no representation in its class (no converter, or a
-            # lossy one), so nothing cheaper exists.
+            # The transformation belongs to the kind but cannot be expressed
+            # in its class, because no converter exists or the conversion
+            # would lose information. Nothing cheaper is available.
             return t
     return t
 
@@ -113,11 +123,13 @@ def _(t: CartesianField, policy: SimplifyTable) -> Transformation:
 
 @simplifier
 def _(t: Inverse, policy: SimplifyTable) -> Transformation:
-    """Simplify the forward transformation of an inverse, unresolved.
+    """Simplify the forward transformation of an inverse without resolving it.
 
-    Resolving the inverse is the job of [`Inverse.compute`][]. The inverse of
-    an identity is an identity; otherwise the result is the `inverse()` of the
-    simplified forward transformation, a typed wrapper of its new family.
+    Resolving the inverse is the job of [`Inverse.compute`][]. When the
+    forward transformation simplifies to the identity, the result is an
+    identity. Otherwise, the result is the `inverse()` of the simplified
+    forward transformation, which is the lazy inverse typed for its new
+    class.
     """
     if policy.resolve(t) is NONE:
         return t
@@ -134,12 +146,13 @@ def _(t: Inverse, policy: SimplifyTable) -> Transformation:
 
 @simplifier
 def _(t: Sqrt, policy: SimplifyTable) -> Transformation:
-    """Simplify the forward transformation of a square root, unresolved.
+    """Simplify the transformation under a square root without resolving it.
 
-    Resolving the square root is the job of [`Sqrt.compute`][]. The square root
-    of an identity is an identity; otherwise the result is the `sqrt()` of the
-    simplified forward transformation. If that square root is refused, the
-    wrapper is kept, because a simplifier never raises.
+    Resolving the square root is the job of [`Sqrt.compute`][]. When the
+    forward transformation simplifies to the identity, the result is an
+    identity. Otherwise, the result is the `sqrt()` of the simplified forward
+    transformation. If the simplified transformation refuses to take a square
+    root, the wrapper is kept, because a simplifier never raises.
     """
     if policy.resolve(t) is NONE:
         return t
@@ -161,8 +174,9 @@ def _(t: SubspaceTransformation, policy: SimplifyTable) -> Transformation:
     """Simplify the transformation that a subspace embeds.
 
     A subspace over the same input and output axes whose inner transformation
-    is the identity is the identity on the full space. A reindexing subspace
-    still permutes the coordinates, so it is kept.
+    is the identity is the identity on the full space. A subspace whose input
+    and output axes differ still permutes the coordinates, so it is kept even
+    when its inner transformation is the identity.
     """
     resolved = policy.resolve(t)
     if resolved is NONE:
@@ -214,8 +228,8 @@ def _(t: MultiscaleField, policy: SimplifyTable) -> Transformation:
     """Simplify a multiscale field through its finest scale.
 
     The elements of a multiscale field are derived from its scales and cannot
-    be rebuilt one by one, so the field is simplified as the scale it
-    presents, as in [`MultiscaleField.compute`][].
+    be rebuilt one by one. The field is therefore simplified in the form of
+    the scale that it presents, as in [`MultiscaleField.compute`][].
     """
     if policy.resolve(t) is NONE:
         return t
@@ -224,12 +238,14 @@ def _(t: MultiscaleField, policy: SimplifyTable) -> Transformation:
 
 @simplifier
 def _(t: Sequence, policy: SimplifyTable) -> Transformation:
-    """Simplify a sequence by downcasting its leaves and collapsing free pairs.
+    """Simplify a sequence by downcasting and collapsing its elements.
 
-    Each pass can expose work for the other, so both run until a fixpoint. The
-    collapse runs first in each round, so that a transformation cancels with
-    its lazy inverse before a downcast can rebuild either side and break the
-    link. Nothing is composed or bridged, so the sequence only gets shorter.
+    Nested sequences are flattened first. Each of the two passes can create
+    new opportunities for the other, so both run in rounds until a round
+    changes nothing. The collapse runs first in each round, so that a
+    transformation cancels with its lazy inverse before a downcast can
+    rebuild either side and break the link between them. Nothing is composed
+    or bridged, so the sequence can only get shorter.
     """
     if policy.is_noop():
         return t
@@ -251,10 +267,13 @@ def _(t: Sequence, policy: SimplifyTable) -> Transformation:
 #
 # ======================================================================
 
-# An identity contributes only an endpoint. The survivor is rebuilt, with
-# `replace` and never compute(), only when that endpoint is set and different,
-# because a new object breaks the `forward is` link by which a lazy inverse
-# cancels.
+# --- Identity ---------------------------------------------------------
+# An identity next to another transformation contributes nothing except an
+# endpoint, that is, an input or output coordinate system, so it is dropped.
+# The other transformation takes over that endpoint, but it is rebuilt only
+# when the endpoint is set and differs from its own. A new object would break
+# the `forward is` link by which a lazy inverse cancels. The rebuild uses
+# `replace` and never `compute()`, which would resolve a lazy inverse.
 
 
 @simplifier
@@ -285,8 +304,10 @@ def _(
     return replace(first, output=second.output)
 
 
-# An Inverse names its forward transformation, so an O(1) identity check
-# suffices.
+# --- Cancellation -----------------------------------------------------
+# A transformation next to its own lazy inverse cancels with it. An Inverse
+# refers to the transformation that it undoes through `forward`, so the test
+# is an O(1) check of object identity that materializes neither side.
 
 
 @simplifier
@@ -307,6 +328,9 @@ def _(
     return Identity(input=first.input, output=second.output)
 
 
+# --- Subspace pairs ---------------------------------------------------
+
+
 @simplifier
 def _(
     first: SubspaceTransformation,
@@ -315,11 +339,13 @@ def _(
 ) -> tx.Optional[Transformation]:
     """Collapse a subspace-wrapped transformation next to its inverse.
 
-    The pair annihilates when the axes written by `first` are those read by
-    `second`, the net map introduces no reindex, and the inner transformations
-    cancel: one is the lazy inverse of the other, both are identities, or they
-    are sequences whose chained elements cancel. A wrapped field then cancels
-    with its wrapped inverse instead of being resampled.
+    The pair collapses to the identity when three conditions hold. The axes
+    written by `first` must be those read by `second`, the pair as a whole
+    must not reindex any axis, and the inner transformations must cancel. The
+    inner transformations cancel when one is the lazy inverse of the other,
+    when both are identities, or when they are sequences whose elements
+    cancel once chained together. As a result, a wrapped field cancels with
+    its wrapped inverse instead of being resampled.
     """
     if (
         first.output_axes is None
@@ -327,9 +353,9 @@ def _(
         or list(first.output_axes) != list(second.input_axes)
     ):
         return None
-    # A reindexing inverse pair is deliberately not annihilated: it is not a
-    # bare identity, and the composers fold it into one reindexing subspace
-    # transformation.
+    # A pair whose net effect reindexes the axes is deliberately not
+    # collapsed here. Such a pair is not the identity, and the composers fold
+    # it into a single reindexing subspace transformation.
     same_axes = (first.input_axes is None) == (
         second.output_axes is None
     ) and (
@@ -344,9 +370,10 @@ def _(
         inner_first, inner_second, policy
     ):
         return Identity(input=first.input, output=second.output)
-    # Only structure is checked: this rule runs for every adjacent subspace
-    # pair in each round, and a numeric check would scan a whole field each
-    # time. A numerically zero field has already been downcast to an Identity.
+    # Only the structure is checked, because this rule runs for every pair
+    # of adjacent subspaces in each round, and a numeric check would scan a
+    # whole field each time. Under a numeric policy, a field that is
+    # numerically the identity has already been downcast to an Identity.
     both_identity = (
         inner_first is None or inner_first.is_identity(False)
     ) and (inner_second is None or inner_second.is_identity(False))
@@ -363,10 +390,11 @@ def _(
 
 
 def _cancels(first: Transformation, second: Transformation) -> bool:
-    """Whether `[first, second]` cancels to the identity for free.
+    """Return whether `[first, second]` cancels to the identity for free.
 
     The pair cancels when either transformation is the lazy inverse of the
-    other, typed or generic. The check is an O(1) identity test.
+    other, whether that inverse is a typed one such as InverseScaling or a
+    generic Inverse. The check is an O(1) test of object identity.
     """
     if isinstance(second, Inverse) and second.forward is first:
         return True
@@ -380,11 +408,12 @@ def _chain_cancels(
     second: tx.Optional[Transformation],
     policy: SimplifyTable,
 ) -> bool:
-    """Whether `[first, second]` cancels when either is a sequence.
+    """Return whether `[first, second]` cancels when either is a sequence.
 
     The inverse of a sequence is the sequence of the inverses in reverse
-    order, which [`_cancels`][] cannot detect. Chained together, the two
-    simplify to the identity when each element meets its own lazy inverse.
+    order, which [`_cancels`][] cannot detect. When the two transformations
+    are chained into one sequence, that sequence simplifies to the identity
+    if each element meets its own lazy inverse.
     """
     if first is None or second is None:
         return False
@@ -397,9 +426,10 @@ def _chain_cancels(
 
 
 def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:
-    # A grid is the identity map over its coordinates, so A @ grid @ B equals A
-    # @ B when both neighbours overwrite the coordinates. Other fields carry
-    # values that the neighbours do not reproduce.
+    # Decide whether `t` is a grid that its two neighbours make redundant. A
+    # grid is the identity map over its coordinates, so `A @ grid @ B` equals
+    # `A @ B` when both neighbours overwrite the coordinates. Other fields
+    # carry values that the neighbours do not reproduce.
     if not isinstance(t, CartesianField):
         return False
     if policy.resolve(t) is NONE:
@@ -407,27 +437,31 @@ def _droppable_grid(t: Transformation, policy: SimplifyTable) -> bool:
     return t.is_identity(compute=True)
 
 
-# Simplification reconciles no boundaries. A genuine cancelling pair never
-# needs it, since an Inverse takes the systems of its forward transformation.
-# Inside compute, the bridge step (see `_compute_sequence`) has already run,
-# and must run first because a bridge may read the extent of an adjacent grid
-# that the sweep below drops; since `adapt` also embeds, operands are already
-# comparable here. A standalone t.simplify() bridges nothing and declines a
-# pair that would need an embedding.
+# Simplification never reconciles the coordinate systems of two neighbours,
+# either by bridging or by embedding. A genuine cancelling pair never needs
+# it, because an Inverse takes the systems of its forward transformation.
+# Inside compute, the bridge step (see `_compute_sequence`) has already run
+# when simplification starts. The bridge step must run first, because a
+# bridge may read the extent of an adjacent grid that the sweep below drops.
+# Since `adapt` also embeds operands into the wider axis space, the operands
+# are already comparable here. A standalone t.simplify() bridges nothing, so
+# it declines a pair that only an embedding would make comparable.
 
 
 def _collapse_pass(
     leaves: tx.List[Transformation], policy: SimplifyTable
 ) -> tx.List[Transformation]:
-    # Adjacent pairs collapse over a stack, so each result is retried against
-    # the newly exposed neighbour.
+    # Collapse adjacent pairs in one sweep. The sweep uses a stack, so that
+    # each merged result is tried again against the neighbour that the merge
+    # exposes.
     stack: tx.List[Transformation] = []
     for nxt in leaves:
         while stack:
-            # An interior grid is dropped here because the condition is
-            # positional: a leading or trailing grid is the sampling domain and
-            # stays. len(stack) >= 2 means that something precedes the grid,
-            # and nxt follows it.
+            # An interior grid is dropped here rather than by a pair rule,
+            # because the condition depends on its position. A leading or
+            # trailing grid is the sampling domain and stays. The test
+            # len(stack) >= 2 means that something precedes the grid, and
+            # nxt follows it.
             if len(stack) >= 2 and _droppable_grid(stack[-1], policy):
                 stack.pop()
                 continue
@@ -443,8 +477,10 @@ def _collapse_pass(
 def _downcast_pass(
     leaves: tx.List[Transformation], policy: SimplifyTable
 ) -> tx.List[Transformation]:
-    # The id-keyed cache skips leaves already seen and lives for this sweep
-    # only, so ids cannot be reused.
+    # Downcast each element in one sweep. A cache keyed by `id` skips the
+    # elements that were already seen. The cache lives only for this sweep,
+    # during which `leaves` keeps every element alive, so an `id` cannot be
+    # reused by another object.
     cache: tx.Dict[int, Transformation] = {}
     out = []
     for t in leaves:

@@ -3,6 +3,8 @@
 import numpy as np
 import typing_extensions as tx
 
+from brainhops.datamodel import transformations as _xforms
+from brainhops.datamodel._transformations.compute.convert import converter
 from brainhops.io.base._base import register_format
 from brainhops.io.base.parsers import (
     Confidence,
@@ -14,6 +16,10 @@ from brainhops.io.base.parsers import (
 from brainhops.io.common._arrays import TxtArrayParser, is_numeric_array
 from brainhops.io.transformations.base import WritableFileBasedTransformation
 from brainhops.io.transformations.base.affines import RASToRAS
+from brainhops.io.transformations.base.conversions import (
+    format_options,
+    unrepresentable,
+)
 
 from ._formats import NiftyRegAffineFormat
 
@@ -66,6 +72,8 @@ class NiftyRegAffine(
     # rejected.
     SNIFF_LIMIT: tx.ClassVar[tx.Optional[int]] = 1 << 16
 
+    # --- ArrayParser hooks --------------------------------------------
+
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
         return is_numeric_array(array) and array.ndim == 2
@@ -95,6 +103,8 @@ class NiftyRegAffine(
             )
         return cls(matrix=array[:-1], **kwargs)
 
+    # --- writing ------------------------------------------------------
+
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the four lines of the file, one matrix row each."""
         matrix = self.homogeneous_matrix
@@ -108,3 +118,24 @@ class NiftyRegAffine(
             )
         for row in matrix:
             yield " ".join(repr(float(value)) for value in row)
+
+
+@converter
+def _(t: RASToRAS, cls: tx.Type[NiftyRegAffine], **kwargs) -> NiftyRegAffine:
+    """Copy an explicitly RAS-to-RAS affine into NiftyReg's format."""
+    format_options(t, cls, kwargs)
+    return cls(matrix=t.matrix)
+
+
+@converter
+def _(
+    t: _xforms.Affine, cls: tx.Type[NiftyRegAffine], **kwargs
+) -> NiftyRegAffine:
+    """Refuse affines that do not declare the format's RAS-to-RAS map."""
+    format_options(t, cls, kwargs)
+    raise unrepresentable(
+        t,
+        cls,
+        "NiftyReg stores an affine from RAS world coordinates to RAS world "
+        "coordinates, and this affine does not declare those endpoints.",
+    )

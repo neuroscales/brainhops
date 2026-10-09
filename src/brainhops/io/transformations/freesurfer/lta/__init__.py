@@ -1,8 +1,8 @@
 """Readers and writers of FreeSurfer Linear Transform Arrays (LTA).
 
 An LTA file stores an affine transformation together with the coordinate
-systems that it maps between. These systems are recorded as a type and as
-the geometries of the source and destination volumes.
+systems that it maps between. The file records these systems through a type
+code and through the geometries of the source and destination volumes.
 """
 
 __all__ = [

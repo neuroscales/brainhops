@@ -32,17 +32,19 @@ _CLASS_RE = re.compile(
     r"(?P<input_dim>\d+)_"
     r"(?P<output_dim>\d+)$"
 )
-# Five 32-bit integers: type, rows, columns, complex flag, name length.
+# A MATLAB v4 variable header is five 32-bit integers: the type, the number of
+# rows, the number of columns, the complex flag and the length of the name.
 _HEADER_SIZE = 20
-# ITK names are short; the cap only stops the sniffer from reading a whole
-# foreign file.
+# ITK names each variable after a transform class, which is short. The cap
+# only stops the sniffer from reading a whole foreign file to find a name.
 _MAX_NAME = 256
-# P digit of the type: the precision of the values.
+# The P digit of the type gives the precision of the stored values.
 _PRECISIONS = {0: "f8", 1: "f4"}
 _PRECISION_DIGITS = {ItkPrecision.Double: 0, ItkPrecision.Float: 1}
-# M digit of the type: the byte order of the header and the values.
+# The M digit of the type gives the byte order of the header and the values.
 _BYTE_ORDERS = {"<": 0, ">": 1}
-# O digit: MATLAB reserves 0, VNL writes 1; both mean a vector here.
+# MATLAB reserves the O digit as 0, while VNL writes 1 for a matrix stored row
+# by row. For the vectors that ITK writes, both values mean the same thing.
 _STORAGES = (0, 1)
 
 
@@ -54,9 +56,10 @@ class _Variable(tx.NamedTuple):
     count: int
     """The number of values."""
     cols: int
-    """The number of columns; ITK only reads column vectors."""
+    """The number of columns, which is one because ITK only reads column
+    vectors."""
     start: int
-    """The offset of the first value."""
+    """The offset of the first value in the content."""
 
 
 class MatTransformParser(
@@ -68,9 +71,11 @@ class MatTransformParser(
 ):
     """Parser and writer for ITK binary MATLAB (`.mat`) transform files.
 
-    Every block is parsed into a transformation and stored directly in
-    `transformations`.
+    Every block of the file is parsed into a transformation and stored
+    directly in `transformations`.
     """
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_fileobj(
@@ -79,7 +84,11 @@ class MatTransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Confidence that a binary file object holds an ITK MATLAB file."""
+        """Return the confidence that a binary file holds an ITK MATLAB file.
+
+        Only the header and the name of the first variable are needed, so the
+        sniffer reads no more bytes than those can occupy.
+        """
         with preserve_position(file):
             head = file.read(_HEADER_SIZE + _MAX_NAME)
         return cls.sniff_content(head, error=error, **kwargs)
@@ -101,7 +110,7 @@ class MatTransformParser(
         error: tx.Union[bool, tx.Type[Exception]] = False,
         **kwargs,
     ) -> float:
-        """Confidence that bytes hold an ITK MATLAB transform.
+        """Return the confidence that bytes hold an ITK MATLAB transform.
 
         The content must start with a MATLAB v4 header whose variable is named
         after an ITK transform class.
@@ -117,6 +126,8 @@ class MatTransformParser(
             )
         return Confidence.CERTAIN
 
+    # --- from ---------------------------------------------------------
+
     @classmethod
     def from_bytes(
         cls,
@@ -126,18 +137,22 @@ class MatTransformParser(
     ) -> tx.Self:
         """Parse the content of an ITK MATLAB file.
 
-        As in ITK, the variables are read in pairs, the second of each pair is
-        taken as the fixed parameters whatever its name, and anything other
-        than a column vector is refused.
+        ITK writes each block as two column vectors, which are its parameters
+        followed by its fixed parameters. As ITK does, this reader reads the
+        variables in pairs, takes the second variable of each pair as the
+        fixed parameters whatever its name, and refuses anything other than a
+        column vector.
 
         Parameters
         ----------
         content : bytes
             The content of the file.
         position : int, optional
-            The top-level transform to read: the composite when the file has
-            one, otherwise one of its blocks. By default the first one is read,
-            with a warning when there are several.
+            The index of the top-level transform to read. A file with a
+            composite holds the composite as its only top-level transform,
+            and a file without one holds one top-level transform per block.
+            By default the first one is read, with a warning when there are
+            several.
 
         Returns
         -------
@@ -171,8 +186,8 @@ class MatTransformParser(
                 )
 
             if match.group("type") == "CompositeTransform":
-                # A composite header has no parameters; its queue is the next
-                # blocks.
+                # A composite header has no parameters of its own, and its
+                # queue consists of the blocks that follow it.
                 composites.append(index // 2)
                 continue
 
@@ -190,6 +205,8 @@ class MatTransformParser(
         obj = cls()
         obj.transformations = _application_order(blocks, composites, position)
         return obj
+
+    # --- to -----------------------------------------------------------
 
     def to_filename(self, filename: path.FilenameLike, **kwargs) -> None:
         """Write the transformation to a file.
@@ -209,12 +226,13 @@ class MatTransformParser(
     ) -> bytes:
         """Return the content of an ITK MATLAB file for this transformation.
 
-        The transformation must hold a single block, as ANTs writes it. An
-        [`ItkStruct`][] is written as is, center included. Any other
-        transformation convertible to an
-        [`Affine`][brainhops.datamodel.transformations.Affine] between ITK
-        spaces (or unspecified spaces) is written as an `AffineTransform`
-        centered on the origin, which ITK reads as the same matrix.
+        The transformation must hold a single block, because ANTs writes one
+        block per file. An [`ItkStruct`][] is written as it is, including its
+        center. Any other transformation that can be converted to an
+        [`Affine`][brainhops.datamodel.transformations.Affine] is written as an
+        `AffineTransform` centered on the origin, which ITK reads back as the
+        same matrix. The endpoints of that affine must be the ITK space or left
+        unspecified.
 
         Parameters
         ----------
@@ -235,8 +253,8 @@ class MatTransformParser(
         Raises
         ------
         UnrepresentableTransformationError
-            If the transformation is not a single ITK block or affine between
-            ITK spaces.
+            If the transformation is not a single ITK block or a single affine
+            between ITK spaces.
         WriterError
             If `byteorder` is invalid.
         """
@@ -293,8 +311,9 @@ def _read_header(
                 content, dtype=order + "i4", count=5, offset=offset
             )
         )
-        # A header read in the wrong byte order disagrees with its own M digit,
-        # which tells the two orders apart.
+        # The type is the decimal number M*1000 + O*100 + P*10 + T. A header
+        # read in the wrong byte order disagrees with its own M digit, and
+        # this disagreement tells the two orders apart.
         if not 0 <= mopt < 10000:
             continue
         m, o, p, t = (
@@ -336,8 +355,8 @@ def _read_variables(
 ) -> tx.Iterator[tx.Tuple[_Variable, np.ndarray]]:
     """Yield the header and values of each variable, in file order.
 
-    A mapping would not do, since files with several blocks repeat `fixed` and
-    may repeat class names.
+    The variables are not returned as a mapping, because a file with several
+    blocks repeats the name `fixed` and may also repeat class names.
     """
     offset = 0
     while offset < len(content):
@@ -352,7 +371,8 @@ def _read_variables(
             count=variable.count,
             offset=variable.start,
         )
-        # A copy that owns its memory, in native byte order.
+        # The values are copied so that they own their memory and are in
+        # native byte order.
         yield variable, values.astype(variable.dtype.newbyteorder("="))
         offset = variable.start + variable.count * variable.dtype.itemsize
 
@@ -363,7 +383,11 @@ def _write_variable(
     byteorder: str,
     precision: ItkPrecision,
 ) -> bytes:
-    """Encode a column vector as a MATLAB v4 variable (`vnl_matlab_write`)."""
+    """Encode a column vector as a MATLAB v4 variable.
+
+    The encoding follows `vnl_matlab_write`: the header, the NUL-terminated
+    name and then the values, all in the byte order `byteorder`.
+    """
     digit = _PRECISION_DIGITS[precision]
     values = np.asarray(values, dtype=np.float64).reshape(-1)
     values = values.astype(byteorder + _PRECISIONS[digit])
@@ -376,7 +400,11 @@ def _write_variable(
 
 
 def _single_block(chain: tx.Any) -> ItkStruct:
-    """Return the single block of `chain`, as an ITK block if needed."""
+    """Return the single block of `chain`, converted to an ITK block if needed.
+
+    ANTs writes a single linear transform per `.mat` file, so a chain of
+    several transformations is refused.
+    """
     children = list(chain.transformations or [])
     if len(children) != 1:
         raise UnrepresentableTransformationError(
@@ -423,7 +451,9 @@ def _affine_block(xform: _xforms.Transformation) -> ItkStruct:
         precision=ItkPrecision.Double,
         ndim_input=ndim,
         ndim_output=ndim,
-        # With the center at the origin, the ITK translation is the affine one.
+        # ITK stores the matrix in row-major order, followed by the
+        # translation. With the center at the origin, the ITK translation is
+        # the translation of the affine.
         parameters=np.concatenate([matrix[:, :-1].ravel(), matrix[:, -1]]),
         fixed_parameters=np.zeros(ndim),
     )

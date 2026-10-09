@@ -1,10 +1,13 @@
 """OME-Zarr multiscale metadata of images.
 
-The metadata is parsed and validated by abczarr, then normalized to
-OME-NGFF 0.6, which has one transformation per level, whatever version
-the store uses. Each OME transformation becomes a brainhops
-transformation of the same kind rather than an affine, and metadata that
-contradicts the schema is rejected when it is parsed.
+OME-Zarr stores an image pyramid as a Zarr group whose metadata lists
+the array of each level and the transformations that place the levels in
+space. The metadata is parsed and validated by abczarr, so metadata that
+contradicts the schema is rejected when it is parsed. Whatever version
+the store uses, the metadata is then normalized to OME-NGFF 0.6, which
+describes each level by a single transformation. Each OME transformation
+becomes a brainhops transformation of the same kind rather than being
+flattened into an affine.
 """
 
 import typing_extensions as tx
@@ -33,7 +36,8 @@ from brainhops.io.transformations.zarr._axes import _to_axis
 # Spline degree of each OME interpolation name.
 _INTERPOLATION_DEGREE = {"nearest": 0, "linear": 1, "bspline-cubic": 3}
 
-# A level placement: the array path and its OME transformation.
+# An `_Entry` is the JSON description of one OME transformation, and a
+# `_Level` pairs the path of a level array with its entry.
 _Entry = tx.Dict[str, tx.Any]
 _Level = tx.Tuple[str, _Entry]
 
@@ -85,7 +89,8 @@ def read_multiscale(
         The first multiscale, or `None` if the group has no OME metadata or
         its metadata names no multiscale.
     source_version : str or None
-        The OME version found in the group, or `None` with no multiscale.
+        The OME version found in the group, or `None` when there is no
+        multiscale.
 
     Raises
     ------
@@ -116,8 +121,9 @@ def read_multiscale(
 
 
 def _output_system(multiscale: Multiscale) -> tx.Any:
-    # The output of the first dataset transformation that names a system, or
-    # else the first system.
+    # Return the system named by the output of the first dataset
+    # transformation that names one, or the first declared system when no
+    # transformation names a declared system.
     systems = list(multiscale.coordinateSystems)
     for dataset in multiscale.datasets:
         for transform in dataset.coordinateTransformations:
@@ -162,8 +168,9 @@ def system_axes(multiscale: Multiscale) -> tx.Dict[str, tx.List[Axis]]:
 def _make_read_field(
     node: tx.Optional[ZarrGroup], store_axes: tx.Optional[tx.Sequence[Axis]]
 ) -> tx.Optional[tx.Callable]:
-    # The shared OME field reader reads the node; this callback lays the field
-    # out in the brainhops order.
+    # Build the callback with which `_map.from_ome` reads a displacement or
+    # coordinate field. The callback reads the array that the transformation
+    # names from `node`, and lays the field out in the brainhops order.
     if node is None:
         return None
 
@@ -178,13 +185,14 @@ def _make_read_field(
         raw = _node.read_array(field_node)
         typed = _node.typed_axes(field_node, field_node.ndim)
         if typed is not None:
-            # Sorting typed axes into the brainhops order yields (*spatial,
-            # component).
+            # Sorting the typed axes into the brainhops order puts the spatial
+            # axes first and the component axis last.
             data = get_array_backend().transpose(
                 raw, _axisorder.to_canonical(typed)
             )
         else:
-            # A bare array only has dimension names.
+            # A field array without OME metadata can only be laid out from
+            # its dimension names.
             data = _field_from_names(raw, field_node, store_axes, kind, path)
         degree = _INTERPOLATION_DEGREE.get(
             getattr(transform, "interpolation", None), 1
@@ -204,7 +212,8 @@ def _field_from_names(
     kind: str,
     path: str,
 ) -> tx.Any:
-    # The one axis not named after an image axis holds the components.
+    # Every dimension named after an image axis is spatial, and the single
+    # remaining dimension holds the vector components.
     names = _node.dimension_names(field_node)
     if names is None:
         raise OmeImageError(
@@ -255,10 +264,12 @@ def level_transformation(
 ) -> Transformation:
     """Return the voxel-to-intrinsic transformation of one level.
 
-    Only the transformations of the dataset are mapped; the multiscale-wide
-    ones belong to the pyramid and are read by [`common_transformations`][].
-    Several transformations form a [`Sequence`][] in application order, and
-    a dataset without transformations yields an [`Identity`][].
+    A dataset is the metadata entry of one level. Only the transformations
+    declared on the dataset are mapped here. The transformations declared on
+    the whole multiscale belong to the pyramid and are read by
+    [`common_transformations`][]. Several transformations form a
+    [`Sequence`][] in application order, and a dataset without
+    transformations yields an [`Identity`][].
 
     Parameters
     ----------
@@ -305,14 +316,20 @@ def common_transformations(
 ) -> tx.List[Transformation]:
     """Return the intrinsic-to-world transformations shared by every level.
 
-    The common transformations of a multiscale form a graph of coordinate
-    systems, which is walked from the intrinsic space. A transformation that
-    leaves an already reached space extends the path of that space into a
-    [`Sequence`][]. The result holds one transformation per reached world
-    space, in the order of the last declaration reaching it, so that the
-    last one is preferred as
+    The common transformations of a multiscale are declared once for the
+    whole pyramid. They carry the intrinsic space, onto which every level
+    maps, to one or more world spaces. Each transformation goes from one
+    coordinate system to another, so together they form a graph, which is
+    walked starting from the intrinsic space. A transformation that starts
+    from a space reached by an earlier step extends the path to that space,
+    and the path then becomes a [`Sequence`][].
+
+    The result holds one transformation per world space reached, ordered by
+    the last declaration that reaches each space, so that the last
+    transformation is the preferred one, as
     [`MultiScaleImage`][brainhops.datamodel.images.MultiScaleImage]
-    expects. The list is usually empty.
+    expects. The list is empty when the multiscale declares no common
+    transformations, which is the usual case.
 
     Parameters
     ----------
@@ -329,13 +346,13 @@ def common_transformations(
     input : CoordinateSystem, optional
         Intrinsic coordinate system, from which the walk starts.
     systems : mapping of str to CoordinateSystem, optional
-        Named coordinate systems, attached as outputs.
+        Named coordinate systems, attached as the outputs of the results.
 
     Raises
     ------
     OmeImageError
-        If a transformation starts from a space that the intrinsic space
-        does not reach, or cannot be mapped.
+        If a transformation starts from a space that cannot be reached from
+        the intrinsic space, or if a transformation cannot be mapped.
     """
     common = getattr(multiscale, "coordinateTransformations", None)
     if not isinstance(common, list) or not common:
@@ -352,8 +369,9 @@ def common_transformations(
         for one in common
     ]
 
-    # Path from the intrinsic space to each reached space. `order` keeps
-    # declaration order, so the preferred space stays last.
+    # `paths` maps each reached space to the transformations that lead to it
+    # from the intrinsic space. `order` lists the reached spaces by their last
+    # declaration, so that the preferred space stays last.
     paths = {}  # type: tx.Dict[tx.Optional[str], tx.List[Transformation]]
     order = []  # type: tx.List[tx.Optional[str]]
     pending = list(edges)
@@ -362,7 +380,8 @@ def common_transformations(
         for edge in list(pending):
             source, target, transform = edge
             if source in paths:
-                # A chain within one space, as written by 0.4 and 0.5.
+                # The transformation continues a path that an earlier one
+                # started. Versions 0.4 and 0.5 write such chains.
                 prefix = paths[source]
             elif source is None or source == root:
                 prefix = []
@@ -425,11 +444,13 @@ def resolve_write_version(
 ) -> str:
     """Choose the OME-NGFF version to write.
 
-    An explicit `version` is used as given. Otherwise the source version is
-    used, and failing that `DEFAULT_WRITE_VERSION`. When `rich` is true, the
-    image is placed by a transformation that only later versions carry, such
-    as a rotation or an affine, and an implicitly chosen scale-only version
-    is raised to `NORMALIZED_VERSION`.
+    An explicit `version` is used as given. Otherwise, the version of the
+    source store is used, or `DEFAULT_WRITE_VERSION` when there is no source
+    version. A true `rich` states that the image is placed by a
+    transformation that only later versions can carry, such as a rotation
+    or an affine. In that case, a scale-only version that was chosen
+    implicitly is raised to `NORMALIZED_VERSION`, whereas a scale-only
+    version that was requested explicitly is refused.
 
     Raises
     ------
@@ -452,8 +473,9 @@ def resolve_write_version(
 # Name of the world coordinate system that the writer emits.
 WORLD_SYSTEM = "physical"
 
-# Name of the intrinsic system, emitted only with common transformations;
-# otherwise the levels map onto `WORLD_SYSTEM`.
+# Name of the intrinsic system. The writer emits the intrinsic system only
+# when there are common transformations. Otherwise, the levels map directly
+# onto `WORLD_SYSTEM`.
 INTRINSIC_SYSTEM = "intrinsic"
 
 
@@ -469,10 +491,10 @@ def resolve_world_names(
 ) -> tx.List[str]:
     """Name the world coordinate system of each common transformation.
 
-    Existing names are kept, so they survive a round trip, and unnamed
-    systems are called `WORLD_SYSTEM`. A name that is already taken,
-    including the intrinsic name, gets a number appended, so that every
-    system is named exactly once.
+    Existing names are kept, so that they survive a round trip. An unnamed
+    system is called `WORLD_SYSTEM`, followed by its position when it is not
+    the first one. A name that is already taken, including the intrinsic
+    name, gets a number appended, so that no two systems share a name.
     """
     used = {INTRINSIC_SYSTEM}
     resolved = []  # type: tx.List[str]
@@ -500,7 +522,8 @@ def build_ome(
 
     The metadata is built in OME-NGFF 0.6 and then converted to `version`.
     The intrinsic system is emitted only when `commons` is not empty, so
-    that lean versions are not given a graph they cannot express.
+    that scale-only versions are not given a graph of coordinate systems
+    that they cannot express.
 
     Parameters
     ----------
@@ -536,8 +559,8 @@ def build_ome(
         ],
     }  # type: tx.Dict[str, tx.Any]
     if commons:
-        # Several world spaces are siblings, not a chain, since every common
-        # transformation leaves the intrinsic space.
+        # Every common transformation starts from the intrinsic space, so
+        # several world spaces are siblings rather than links of a chain.
         block["coordinateTransformations"] = [
             dict(
                 entry,

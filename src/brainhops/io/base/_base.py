@@ -39,20 +39,23 @@ _T = tx.TypeVar("_T")
 def format_registry(cls: tx.Type[_T]) -> tx.Type[_T]:
     """Give a class its own format registry, which makes it a dispatcher.
 
-    On a dispatcher, the `sniff*` methods return the best-scoring registered
-    format, and `load` and the `from_*` methods choose that format and delegate
-    to it. The decorator is applied to the root [`FileBasedObject`][] and to
-    the base class of each kind, such as `FileBasedImage` and
-    `FileBasedTransformation`. Dispatchers are never registered into the
-    registries of their ancestors; only classes decorated with
+    A dispatcher is a class that does not read a format itself but chooses
+    among the formats registered under it. Its `sniff*` methods return the
+    best-scoring registered format, and its `load` and `from_*` methods choose
+    that format and delegate to it. The decorator is applied to the root
+    [`FileBasedObject`][] and to the base class of each kind of object, such
+    as `FileBasedImage` and `FileBasedTransformation`. A dispatcher is never
+    added to the registries of its ancestors; only classes decorated with
     [`register_format`][] are.
     """
-    # A decorator rather than a metaclass: data models already use the
-    # bagof.magic metaclass, which also runs on throwaway classes built for MRO
-    # computation and does not forward class keywords to __init_subclass__.
+    # Registration uses a decorator rather than a metaclass because data
+    # models already use the bagof.magic metaclass. A derived metaclass would
+    # also run on the throwaway classes that bagof builds to compute MROs, and
+    # class keywords do not work either, because that metaclass does not
+    # forward them to __init_subclass__.
 
-    # Set in cls.__dict__ so that owning a registry can be told apart from
-    # inheriting one.
+    # The registry is set in cls.__dict__ so that a class that owns a registry
+    # can be told apart from a class that inherits one.
     cls._REGISTRY = set()
     return cls
 
@@ -65,15 +68,16 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
     so re-importing a module is harmless.
 
     !!! note "Dispatchers are not formats"
-        Registries are flat: a format is in the registry of every ancestor and
-        a dispatcher in none, so each format is tried once per load.
-        Registering a dispatcher would make its formats be tried twice, and
-        would make `FileBasedObject.load` recurse.
+        Registries are flat. A format is in the registry of every ancestor,
+        whereas a dispatcher is in no registry at all, so each format is tried
+        once per load. If a dispatcher were registered, its formats would be
+        tried twice, once directly and once through the dispatcher, and
+        `FileBasedObject.load` would recurse into itself.
 
     !!! note "Order does not matter"
         A registry is an unordered set, because registration follows import
-        order, which is not stable. Dispatch never relies on it: candidates
-        that cannot be told apart raise
+        order, which is not stable. Dispatch never relies on registration
+        order: candidates that cannot be told apart raise
         [`AmbiguousFormatError`][brainhops.errors.AmbiguousFormatError].
 
     Raises
@@ -88,8 +92,8 @@ def register_format(cls: tx.Type[_T]) -> tx.Type[_T]:
             f"also be decorated with @register_format."
         )
     for base in cls.__mro__[1:]:
-        # __dict__ rather than hasattr, which would also see inherited
-        # registries.
+        # The test uses __dict__ rather than hasattr, because hasattr would
+        # also see registries that `base` merely inherits.
         if "_REGISTRY" in base.__dict__:
             base._REGISTRY.add(cls)
     return cls
@@ -137,9 +141,13 @@ class FormatDispatcher(FileReader):
         can be asked to score the input itself.
     """
 
+    # ---- helpers -----------------------------------------------------
+
     @classmethod
     def _is_dispatcher(cls) -> bool:
         return "_REGISTRY" in cls.__dict__
+
+    # ---- sniff -------------------------------------------------------
 
     @classmethod
     def sniff(
@@ -292,6 +300,8 @@ class FormatDispatcher(FileReader):
             **kwargs,
         )
 
+    # ---- from --------------------------------------------------------
+
     @classmethod
     def load(cls, other: path.FileOrContentLike, **kwargs) -> tx.Self:
         """Read an object from a file or its content.
@@ -328,7 +338,7 @@ class FormatDispatcher(FileReader):
     def from_file(cls, file: path.FileLike, **kwargs) -> tx.Self:
         """Read an object from a path or an open file.
 
-        A dispatcher reads it through the best-matching format.
+        A dispatcher reads the file through the best-matching format.
         """
         if not cls._is_dispatcher():
             return super().from_file(file, **kwargs)
@@ -501,11 +511,11 @@ class _FileBasedModelMixin:
         """Build an object from a file or any value the data model takes.
 
         A path, an open file (any object with a `read` method), `bytes`,
-        `bytearray` or a [`SourceSpec`][] is read with `load`: a dispatcher
-        chooses the best format, and a concrete format reads it as its own. Any
-        other value is passed to the `from_any` of the data model, which maps a
-        mapping field by field, copies an instance of a similar class, or calls
-        the constructor.
+        `bytearray` or a [`SourceSpec`][] is read with `load`. A dispatcher
+        then chooses the best format, and a concrete format reads the input as
+        an instance of its own class. Any other value is passed to the
+        `from_any` of the data model, which maps a mapping field by field,
+        copies an instance of a similar class, or calls the constructor.
 
         Parameters
         ----------
@@ -552,11 +562,15 @@ class _FileBasedModelMixin:
 
 
 def _foreign_format_fields(cls: type, other: tx.Any) -> tx.List[tx.Any]:
-    """Return the fields of `cls` that belong to other file formats.
+    """Return the fields of `cls` that belong to a different file format.
 
-    These are the fields that only file formats declare, excluding those that
-    `other` holds as an instance of a declaring format. A field that a plain
-    data model also declares is shared by all formats.
+    A field belongs to file formats when, in the MRO of `cls`, only file
+    parsers declare it. A field that a plain data model also declares is
+    shared by all formats and is never returned. A format field is
+    also left out when `other` is an instance of one of the formats that
+    declare it, because `other` then holds a meaningful value for that field.
+    Only keyword fields that the constructor accepts and that have a default
+    are returned.
     """
     if isinstance(other, cls):
         return []

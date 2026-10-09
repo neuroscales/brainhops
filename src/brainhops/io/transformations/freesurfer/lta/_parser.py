@@ -29,16 +29,19 @@ class LtaParser(Magic, TextFileParser, TextFileWriter):
 
     `LtaStruct` and its blocks inherit their `sniff*`, `from_*` and `to_*`
     methods from this class, which follows the contract of
-    [`TextFileParser`][] and [`TextFileWriter`][]: `load` and `save`, and
-    the format steps `sniff_line`, `from_lines` and `to_lines`.
+    [`TextFileParser`][] and [`TextFileWriter`][]. These bases provide the
+    public entry points, such as `load` and `save`, and this class implements
+    the format-specific steps: `sniff_line`, `from_lines` and `to_lines`.
 
     A struct is read field by field, in declaration order. A field whose type
-    is an `LtaParser` reads its own block, and any other field reads one
-    `key = value(s)` line, or a `value(s)` line in a block without keys.
-    Comments and blank lines are skipped.
+    is itself an `LtaParser` reads its own block of lines. Any other field
+    reads one line of the form `key = values`, or a line of bare values in a
+    block without keys. Comments and blank lines are skipped.
     """
 
     _HAS_KEYS = True
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_line(
@@ -49,7 +52,8 @@ class LtaParser(Magic, TextFileParser, TextFileWriter):
     ) -> float:
         """Score the likelihood that a line is the first line of an LTA file.
 
-        With comments stripped, that line reads `type = <int>`.
+        Once comments are stripped, the first line of an LTA file reads
+        `type = <int>`.
 
         Parameters
         ----------
@@ -74,6 +78,8 @@ class LtaParser(Magic, TextFileParser, TextFileWriter):
             )
         return Confidence.NO
 
+    # --- from ---------------------------------------------------------
+
     @classmethod
     def from_(cls, other: FileOrContentLike) -> tx.Self:
         """Build an object from a file or from its content.
@@ -96,9 +102,10 @@ class LtaParser(Magic, TextFileParser, TextFileWriter):
             stacklevel=2,
         )
         if isinstance(other, str):
-            # Only here may a string hold content rather than a path.
-            # Multi-line content is too long to be a name, so it is not a
-            # missing file.
+            # This method is the only one in which a string may hold
+            # content rather than a path. Multi-line content is usually too
+            # long to be a file name, so `exists` reports it as missing
+            # instead of raising an error.
             if not exists(other):
                 return cls.from_text(other)
             other = Path(other)
@@ -125,10 +132,12 @@ class LtaParser(Magic, TextFileParser, TextFileWriter):
             setattr(obj, field.name, parse(lines))
         return obj
 
+    # --- to -----------------------------------------------------------
+
     def to_lines(self, **kwargs) -> tx.Iterator[str]:
         """Yield the LTA lines of the object.
 
-        Extra keyword arguments are passed to the underlying field formatter.
+        Extra keyword arguments are passed to the writer of each field.
         """
         for field in fields(type(self)):
             value = getattr(self, field.name)
@@ -212,7 +221,8 @@ class MatrixParser(LtaParser):
         """Yield the lines of the matrix block.
 
         Entries are written at full double precision so that the matrix
-        survives a round trip. FreeSurfer writes six decimals but reads either.
+        survives a round trip. FreeSurfer itself writes six decimals, but it
+        reads both precisions.
         """
         dtype = self.dtype
         fmt = "{:+.15e} {:+.15e}   " if dtype is complex else "{:+.15e}  "

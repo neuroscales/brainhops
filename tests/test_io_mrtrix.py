@@ -69,7 +69,7 @@ def _reference_bytes(data, layout, fmt):  # noqa: ANN001, ANN202
 
 
 def _reference_bits(data, layout):  # noqa: ANN001, ANN202
-    """Booleans, 8 per byte, the first in the MSB (core/raw.h)."""
+    """Pack booleans 8 per byte, the first in the top bit (core/raw.h)."""
     values = _reference_order(data, layout)
     out = bytearray((len(values) + 7) // 8)
     for i, v in enumerate(values):
@@ -94,7 +94,7 @@ def _header_text(dim, layout, datatype, extra="", file=None):  # noqa: ANN001, A
 
 
 def _single_file(head, payload, pad=0):  # noqa: ANN001, ANN202
-    """A .mif file: header, 'file: . offset', END, padding and data."""
+    """Build a .mif file from header, offset line, END, padding and data."""
     offset = 0
     while True:
         text = (head + f"file: . {offset}\nEND\n").encode()

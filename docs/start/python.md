@@ -93,12 +93,29 @@ io.save(img, "copy.nii.gz")  # -> NIfTI
 io.save(img, "copy.zarr")  # -> Zarr
 ```
 
-An image computed in memory is written in the same way, since NIfTI and
-Zarr files both hold a plain image. However, `save` never changes the
-meaning of an object to fit a format. A general `Affine`, for instance, is
-not written as the voxel-to-RAS affine that a NIfTI file holds, because it
-would be read back as something it did not say. When a file should hold
-that format, the format is built explicitly:
+An image computed in memory is written the same way, since NIfTI and Zarr
+both hold a plain image. A transformation is converted to the format the
+name asks for, with the same converters as `t.to(Format)`, but only when
+the format holds the very same map. Its `input` and `output` are read,
+and bridged to the format's: an affine from voxels to LPS is written as
+the voxel-to-RAS affine of a NIfTI file, with its first two axes
+flipped, and an affine whose systems are not known is taken to map the
+format's. A field of displacements is written as a NIfTI displacement
+field, between its grid's world-to-voxel affine and its inverse, and a
+field of coordinates as a NIfTI (or, with a `y_` prefix, an SPM) field of
+coordinates:
+
+```python
+io.save(affine, "affine.nii.gz")  # -> NiftiVoxelToRAS
+io.save(warp, "warp.nii.gz")  # -> NiftiRASDisplacementField
+io.save(deformation, "y_deformation.nii")  # -> SpmCoordinatesField
+```
+
+Nothing is approximated to fit a format. An affine between two world
+spaces is not a voxel-to-RAS affine, and a field interpolated with cubic
+splines is not the linearly interpolated values a NIfTI file holds, so
+both are refused, with the reason each format gives. The same conversion
+can be asked for explicitly, or the format can be built directly:
 
 ```python
 import numpy as np
@@ -107,6 +124,7 @@ from brainhops.io.transformations.nifti import NiftiVoxelToRAS
 
 affine = Affine(np.eye(3, 4))
 NiftiVoxelToRAS.from_any(affine).save("affine.nii")
+affine.to(NiftiVoxelToRAS)  # the same conversion
 ```
 
 An LTA file states which coordinate systems its affine maps between. A

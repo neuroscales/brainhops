@@ -7,10 +7,11 @@ hierarchy, where subclasses are specialized types. The two hierarchies let the
 conceptual question "is this transformation linear?" be asked separately from
 the type question "is it a `Linear` instance?".
 
-Transformations map ℝⁿ to ℝᵐ and compose when domains and codomains match. Sets
-that are groups under composition are marked with [`group`][], and those that
-are also Lie groups (smooth manifolds with smooth composition and inversion)
-with [`liegroup`][].
+Transformations map ℝⁿ to ℝᵐ, and two transformations can be composed when
+the codomain of one matches the domain of the other. Sets that form a group
+under composition are marked with the [`group`][] decorator. Sets that are
+also Lie groups, that is, smooth manifolds on which composition and inversion
+are smooth, are marked with [`liegroup`][].
 
 The Lie groups form the following lattice:
 
@@ -34,19 +35,24 @@ CO ------------- Sim             Conformal          | Affine Conformal
  I ------------- T               Identity           | Translation
 ```
 
-The general groups (GL, CO and O) have two components, the identity component
-and a flipped one. The positive groups (GL+, CO+ and SO) are their identity
-components. Translations (⋉ T) extend the linear groups into affine groups.
+The general groups (GL, CO and O) each have two connected components: the
+component that contains the identity, and a flipped component. The positive
+groups (GL+, CO+ and SO) are the identity components of these general groups.
+Adding translations (⋉ T) extends each linear group into an affine group.
 
 !!! info
-    SE holds the rigid-body transformations, which preserve angles and volumes.
-    Sim+ holds the similitudes, which only preserve oriented angles.
+    SE contains the rigid-body transformations, which preserve angles and
+    volumes. Sim+ contains the similitudes, which only preserve oriented
+    angles.
 
 !!! warning
-    The MRO keeps the declared order of bases, which set inclusion does not
-    impose, so the MRO can fail even for acyclic inclusions. Reordering bases,
-    or listing an indirectly inherited ancestor, fixes such a failure without
-    changing the inclusions.
+    Python preserves the declared order of base classes in the method
+    resolution order (MRO), whereas set inclusion imposes no order between
+    unrelated supersets. The two kinds of constraint can therefore conflict,
+    and building the MRO can fail even when the inclusions are acyclic.
+    Reordering the bases, or explicitly listing an ancestor that is already
+    inherited indirectly, resolves such a failure without changing the
+    inclusions.
 """
 
 # ======================================================================
@@ -133,6 +139,8 @@ from bagof.magic import Magic, replace
 
 from brainhops._core.compat import PLACEHOLDER, partial
 
+# --- API helpers ------------------------------------------------------
+
 
 def public(obj: tx.Any) -> tx.Any:
     __all__.append(obj.__name__)
@@ -163,6 +171,9 @@ FSYMBOLTOCLASS: _StrMap = {}
 SYMBOLTOCLASS: _StrMap = {}
 INVERTIBLE_OF: _TypeMap = {}
 NONINVERTIBLE_OF: _TypeMap = {}
+
+
+# --- checks -----------------------------------------------------------
 
 
 @public
@@ -222,11 +233,13 @@ def is_closed(cls: _Type) -> bool:
 
 @public
 def is_transformation_set(cls: tx.Any) -> bool:
-    """Return whether an object is a set of this hierarchy.
+    """Return whether an object is one of the transformation sets of this
+    hierarchy.
 
-    Concrete transformations are only virtual subclasses of
-    [`TransformationKind`][], which leaves their MRO untouched, so the result
-    is false for them.
+    The result is true for the classes defined in this module and false for
+    concrete transformation types. A concrete transformation type is only a
+    virtual subclass of [`TransformationKind`][], and virtual registration
+    leaves its MRO untouched, so the test can tell the two apart.
     """
     if not isinstance(cls, type):
         return False
@@ -237,17 +250,23 @@ def is_transformation_set(cls: tx.Any) -> bool:
 def is_embeddable(cls: _Type) -> bool:
     """Return whether a set embeds into higher dimensions by identity padding.
 
-    Padding turns T into the block-diagonal T ⊕ I, and the set is embeddable
-    when the result stays in the set one dimension up. For example:
+    Padding with the identity turns a transformation T into the
+    block-diagonal transformation T ⊕ I, which acts as T on the original axes
+    and leaves the new axis unchanged. The set is embeddable when the padded
+    transformation still belongs to the set in one more dimension. For
+    example:
 
-    * Every element of SO(3) is an element of SO(4) that way.
-    * Most elements of ℝ*(3) (scaling by the same factor along every axis)
-      are not elements of ℝ*(4), since diag(2, 2, 2, 1) is not isotropic in
-      ℝ⁴.
+    * Every element of SO(3), once padded, is an element of SO(4).
+    * Most elements of ℝ*(3), which scale by the same factor along every
+      axis, are not elements of ℝ*(4) once padded. For instance,
+      diag(2, 2, 2, 1) is not isotropic in ℝ⁴.
     """
-    # Registered, not inferred: SO(3) has both embeddable and non-embeddable
-    # subgroups and supergroups.
+    # Embeddability is registered rather than inferred, because SO(3) has
+    # both embeddable and non-embeddable subgroups and supergroups.
     return cls not in NONEMBEDDABLE
+
+
+# --- generators -------------------------------------------------------
 
 
 @public
@@ -278,7 +297,7 @@ def as_invertible(cls: _Type) -> _Type:
     Raises
     ------
     TypeError
-        If the set is neither invertible nor has a known invertible subset.
+        If the set is not invertible and has no known invertible subset.
     """
     node = INVERTIBLE_OF.get(cls, cls)
     if not is_invertible(node):
@@ -290,8 +309,14 @@ def as_invertible(cls: _Type) -> _Type:
 
 @public
 def as_unrestricted(cls: _Type) -> _Type:
-    """Return the superset that also admits non-invertible maps, if any."""
+    """Return the superset that also contains non-invertible maps.
+
+    The set itself is returned when no such superset is registered.
+    """
     return NONINVERTIBLE_OF.get(cls, cls)
+
+
+# --- decorators -------------------------------------------------------
 
 
 def group(cls: _Type) -> _Type:
@@ -351,10 +376,12 @@ def nonembeddable(cls: _Type) -> _Type:
 
 
 def alias(cls: _Type, *names: str) -> _Type:
-    """Register additional names for a set, also as `@alias("Name", ...)`.
+    """Register additional names for a set.
 
-    The names are added to `ALIAS`, the name registry, the module namespace and
-    `__all__`.
+    The function is called either as `alias(cls, "Name", ...)` or as the
+    decorator `@alias("Name", ...)`. The names are added to the `ALIAS`
+    attribute of the class, to the name registry, to the module namespace and
+    to `__all__`.
     """
     if isinstance(cls, str):
         return partial(alias, PLACEHOLDER, cls, *names)
@@ -397,10 +424,14 @@ MISSING = object()
 class TransformationFamily(
     AbcSequence, Magic, eq=True, hash=True, frozen=True
 ):
-    """A kind of transformation with optional dimensions.
+    """A kind of transformation with optional input and output dimensions.
 
-    A family behaves as an immutable tuple `(kind, ndim, odim)`.
+    For example, the family `SO(3)` pairs the kind [`SpecialOrthogonal`][]
+    with the input and output dimension 3. A family behaves as an immutable
+    tuple `(kind, ndim, odim)`.
     """
+
+    # --- attributes ---------------------------------------------------
 
     kind: Kind
     """The kind of every transformation in the family."""
@@ -449,7 +480,9 @@ class TransformationFamily(
         fsymbol = fsymbol.format(n=ndim, m=odim)
         return fsymbol
 
-    # Sequence protocol, so that a family unpacks into three values.
+    # --- magic --------------------------------------------------------
+    # The family implements the sequence protocol, so that it unpacks into
+    # three values.
 
     def __len__(self) -> int:
         return 3
@@ -470,9 +503,13 @@ class TransformationFamily(
         yield self.ndim
         yield self.odim
 
+    # --- to -----------------------------------------------------------
+
     def to_tuple(self) -> tx.Tuple[Kind, Dim, Dim]:
         """Convert the family into a `(kind, ndim, odim)` tuple."""
         return (self.kind, self.ndim, self.odim)
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def parse(
@@ -482,16 +519,16 @@ class TransformationFamily(
         symbol.
 
         Explicit dimensions override those of `repr`, and an explicit `None`
-        makes them unknown. An integer gives a generic [`Transformation`][] of
-        that dimension, and a string is read as a name, then as a symbol. The
-        branches are ordered so that `issubclass` never sees an integer or a
-        string.
+        makes a dimension unknown. An integer gives a generic
+        [`Transformation`][] of that dimension. A string is first looked up as
+        a name and then, if no kind has that name, as a symbol.
 
         Raises
         ------
         ValueError
             If `repr` describes no kind or family.
         """
+        # --- already a family ---
         if isinstance(repr, TransformationFamily):
             updates = {}
             if ndim is not MISSING and repr.ndim != ndim:
@@ -502,6 +539,7 @@ class TransformationFamily(
                 repr = replace(repr, **updates)
             return repr
 
+        # --- a (kind, ndim) pair ---
         if isinstance(repr, tuple):
             if not is_family_tuple(repr):
                 raise ValueError(
@@ -510,21 +548,25 @@ class TransformationFamily(
                 )
             return cls.from_tuple(repr, ndim, odim)
 
-        # bool is an int, but not a dimension.
+        # --- a bare dimension ---
+        # A bool is an int in Python, but it is not a dimension.
         if isinstance(repr, int) and not isinstance(repr, bool):
             if ndim is MISSING:
                 ndim = repr
             return cls(Transformation, ndim, odim)
 
+        # --- a kind ---
         if isinstance(repr, type):
             return cls(repr, ndim, odim)
 
+        # --- a name or a symbol ---
         if isinstance(repr, str):
             try:
                 return cls.from_name(repr, ndim, odim)
             except ValueError:
                 return cls.from_symbol(repr, ndim, odim)
 
+        # --- error ---
         raise ValueError(f"Invalid transformation kind or family: {repr!r}")
 
     @classmethod
@@ -625,7 +667,11 @@ def is_family_tuple(value: tuple) -> bool:
 
 
 def _fsymbol_to_pattern(fsymbol: str) -> re.Pattern:
-    """Turn a symbol template into a regex with groups `n` and `m`."""
+    """Turn a symbol template into a regex with the groups `n` and `m`.
+
+    A template such as `"SO({n})"` may repeat a placeholder, and every
+    occurrence of the placeholder must then match the same number.
+    """
     pattern = re.escape(fsymbol)
     for name in ("n", "m"):
         slot = re.escape(f"{{{name}}}")
@@ -645,9 +691,12 @@ def _fsymbol_to_pattern(fsymbol: str) -> re.Pattern:
 class TransformationKind(ABC):
     """The root of the hierarchy of transformation kinds.
 
-    A subclass may declare `SYMBOL` (such as `"SO"`), `FSYMBOL` (such as
-    `"SO({n})"`) and `ALIAS` (plain-text names, also set by [`alias`][]). These
-    and the class name are registered for [`TransformationFamily.parse`][].
+    A subclass may declare a short mathematical symbol in `SYMBOL`, such as
+    `"SO"`, the same symbol with dimension placeholders in `FSYMBOL`, such as
+    `"SO({n})"`, and plain-text names in `ALIAS`. Names can also be added with
+    the [`alias`][] decorator. The class name, the symbols and the aliases are
+    registered when the subclass is created, so that
+    [`TransformationFamily.parse`][] can find the kind from any of them.
     """
 
     SYMBOL: str
@@ -668,7 +717,11 @@ class TransformationKind(ABC):
             SYMBOLTOCLASS[symb] = cls
 
     def __new__(cls, subcls: type) -> type:
-        """Register a concrete type as a virtual subclass of the set."""
+        """Register a concrete type as a virtual subclass of the set.
+
+        Calling a kind on a class, as in `Linear(MyType)`, registers the class
+        and returns it, rather than creating an instance of the kind.
+        """
         return cls.register(subcls)
 
     @classmethod
@@ -715,7 +768,7 @@ class Injection(Transformation):
 @closed  # Closure assumes matching codomains.
 @alias("Surjective", "SurjectiveMap", "SurjectiveTransformation")
 class Surjection(Transformation):
-    """An onto transformation."""
+    """An onto transformation, which reaches every point of its codomain."""
 
 
 @group
@@ -794,8 +847,8 @@ class Matrix(Transformation):
 class InvertibleMatrix(Matrix, Diffeomorphism):
     """An invertible matrix transformation.
 
-    The smooth part of the lattice attaches here: every invertible affine
-    transformation is a diffeomorphism.
+    The matrix kinds join the smooth kinds of the lattice at this class,
+    because every invertible affine transformation is a diffeomorphism.
     """
 
 
@@ -912,7 +965,7 @@ class ConformalEuclidean(InvertibleAffine, ConformalDiffeomorphism):
     "DirectAffineSimilitude",
 )
 class SpecialConformalEuclidean(ConformalEuclidean, PositiveAffine):
-    """A direct similarity, preserving orientation (Sim+ = CO+ ⋉ T)."""
+    """A direct similarity, which preserves orientation (Sim+ = CO+ ⋉ T)."""
 
     SYMBOL = "Sim+"
     FSYMBOL = "Sim+({n})"
@@ -939,7 +992,7 @@ class Euclidean(ConformalEuclidean, VolumePreservingAffine):
     "RigidTransformation",
 )
 class SpecialEuclidean(SpecialConformalEuclidean, Euclidean, SpecialAffine):
-    """A rigid transformation, of determinant 1 (SE = SO ⋉ T)."""  # noqa: E501
+    """A rigid transformation, with a determinant of 1 (SE = SO ⋉ T)."""  # noqa: E501
 
     SYMBOL = "SE"
     FSYMBOL = "SE({n})"
@@ -954,7 +1007,7 @@ class SpecialEuclidean(SpecialConformalEuclidean, Euclidean, SpecialAffine):
 )
 class Dilation(ConformalEuclidean):
     """A [dilation](https://en.wikipedia.org/wiki/Dilation_(metric_space)),
-    that is a homothety and a translation (ℝ* ⋉ T).
+    that is, a homothety combined with a translation (ℝ* ⋉ T).
     """
 
     SYMBOL = "ℝ* ⋉ T"
@@ -1025,8 +1078,8 @@ class PositiveLinear(InvertibleLinear, PositiveAffine):
 class SpecialLinear(PositiveLinear, SpecialAffine):
     """A linear transformation with a determinant of 1 (SL).
 
-    SL lies inside SAff = SL ⋉ T, and reaches the volume-preserving
-    diffeomorphisms through it.
+    SL lies inside SAff = SL ⋉ T, and it is through SAff that SL lies inside
+    the volume-preserving diffeomorphisms.
     """
 
     SYMBOL = "SL"
@@ -1067,8 +1120,9 @@ class SpecialConformalOrthogonal(
     """A linear transformation that preserves angles and orientation (CO+).
 
     !!! note
-        A scaled rotation cR has determinant cⁿ, so CO+ lies under GL+ but not
-        under SL, and does not preserve volumes.
+        A scaled rotation cR has the determinant cⁿ, which is positive but
+        differs from 1 unless c = 1. CO+ therefore lies under GL+ but not
+        under SL, and its elements do not preserve volumes in general.
     """
 
     SYMBOL = "CO+"
@@ -1079,7 +1133,7 @@ class SpecialConformalOrthogonal(
 @alias("OrthogonalTransformation", "OrthogonalMap", "OrthogonalGroup")
 class Orthogonal(ConformalOrthogonal, Euclidean):
     """An [orthogonal](https://en.wikipedia.org/wiki/Orthogonal_group) matrix
-    (A Aᵀ = I), forming O.
+    (A Aᵀ = I), forming the orthogonal group O.
     """
 
     SYMBOL = "O"
@@ -1101,11 +1155,13 @@ class SpecialOrthogonal(
     SpecialEuclidean,
     SpecialLinear,
 ):
-    """An orthogonal matrix with a determinant of 1 (SO), that is a rotation.
+    """An orthogonal matrix with a determinant of 1 (SO), that is, a rotation.
 
     !!! note
-        SL is a direct base because the conformal group of rotations does not
-        preserve volumes, so no ancestor carries that inclusion.
+        SL is listed as a direct base because no ancestor provides that
+        inclusion. A rotation has a determinant of 1, but none of the other
+        linear groups that contain the rotations, such as O and CO+, is a
+        subgroup of SL.
     """  # noqa: E501
 
     SYMBOL = "SO"
@@ -1168,7 +1224,8 @@ class OddPermutation(Permutation):
     r"""An odd permutation, with a determinant of -1.
 
     !!! note
-        The odd permutations form the coset S \ A, which is not a group.
+        The odd permutations form the coset S \ A, which is not a group,
+        because composing two odd permutations gives an even one.
     """
 
     SYMBOL = "S \\ A"
@@ -1193,7 +1250,7 @@ class Diagonal(Linear):
     "InvertibleDiagonalTransformation",
 )
 class InvertibleDiagonal(Diagonal, GeneralizedPermutation):
-    """An invertible diagonal matrix (Δ), with 2ⁿ components."""
+    """An invertible diagonal matrix (Δ), with 2ⁿ connected components."""
 
     SYMBOL = "Δ"
     FSYMBOL = "Δ({n})"
@@ -1285,7 +1342,8 @@ class InvertibleMultiplicative(
 ):
     """An isotropic scaling by a non-zero factor, or homothety (ℝ*).
 
-    Since cI is |c| times the orthogonal sign(c)I, ℝ* lies in CO.
+    Since cI equals |c| times the orthogonal matrix sign(c)I, an isotropic
+    scaling preserves angles, and ℝ* therefore lies in CO.
     """
 
     SYMBOL = "ℝ*"

@@ -39,25 +39,34 @@ class DataModelBase(
 ):
     """Base class of all data models.
 
-    A polymorphic class is built only from arguments that match its `on=`
-    condition and refuses the others, so `OrientedAxis(orientation=None)`
-    raises instead of building a contradictory axis. A field that a class
-    writes out keeps the type written there, so the discriminants of
-    subclasses are typed narrowly, as in `Literal["space"]`.
+    Every data model converts the values of its fields to their declared
+    types, and can be built from a mapping or from a similar instance with
+    [`from_any`][].
+
+    Some data models are polymorphic: calling a class such as `Axis`
+    builds the subclass that the arguments select, according to the `on=`
+    condition with which each subclass is declared. A polymorphic class is
+    built only from arguments that match its own condition and refuses the
+    others, so `OrientedAxis(orientation=None)` raises instead of building
+    an oriented axis without an orientation. A field that a class declares
+    itself keeps the type written there, so the fields that select a
+    subclass are typed narrowly, as in `Literal["space"]`.
     """
 
-    # Options set here apply to the whole hierarchy.
+    # The options given to the class statement apply to the whole hierarchy.
 
     @classmethod
     def from_dict(cls, other: tx.Mapping, *args, **kwargs) -> tx.Self:
         """Build an instance from a mapping.
 
         Only keys that name keyword fields or constructor-only keywords, such
-        as `matrix=` of an affine, are used; other keys are ignored, unlike in
+        as the `matrix=` keyword of an affine, are used. Other keys are
+        ignored, unlike in
         [`from_any`][brainhops.datamodel.base.DataModelBase.from_any]. A key
-        that names a fixed field is checked rather than passed on. The extra
-        arguments are passed to the constructor and take precedence over the
-        mapping.
+        that names a fixed field, that is, a field whose value the class sets
+        itself, is checked against that value rather than passed on. The
+        extra arguments are passed to the constructor and take precedence
+        over the mapping.
 
         Raises
         ------
@@ -112,11 +121,13 @@ class DataModelBase(
     def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
         """Build an instance from a mapping, a similar instance or an argument.
 
-        A similar instance belongs to this class, to a parent within the data
-        model, or to the same polymorphic family. The family matters because
-        calling `Axis` builds the selected subclass, so a generic axis is often
-        a sibling such as `TimeAxis`. Any other object, including an instance
-        of a parent outside the data model, is passed to the constructor.
+        A similar instance is an instance of this class, of one of its
+        parents within the data model, or of another class in the same
+        polymorphic family. The family matters because calling a polymorphic
+        class such as `Axis` builds the subclass that the arguments select, so
+        an axis built as a generic `Axis` is often an instance of a sibling
+        class such as `TimeAxis`. Any other object, including an instance of
+        a parent outside the data model, is passed to the constructor.
 
         Raises
         ------
@@ -137,6 +148,8 @@ class DataModelBase(
         else:
             return cls(other, *args, **kwargs)
 
+
+# --- helpers ----------------------------------------------------------
 
 # The source has no value for the field.
 _ABSENT = object()
@@ -182,8 +195,10 @@ def _build(
 def _fields(cls: type, init_vars: bool = False) -> tx.Tuple[tx.Any, ...]:
     """Return the fields of `cls`, and its constructor-only keywords if asked.
 
-    `fields` omits the `ClassVar` and `InitVar` pseudo-fields; an `InitVar`
-    is told apart from a `ClassVar` by being an init field.
+    The `fields` function of bagof omits the `ClassVar` and `InitVar`
+    pseudo-fields, so the constructor-only keywords are read from the field
+    table instead. An `InitVar` is told apart from a `ClassVar` because it
+    is an init field.
     """
     if not init_vars:
         return fields(cls)
@@ -226,22 +241,23 @@ def _check_fixed(
         )
 
 
-# Private bagof attributes, read for lack of a public accessor. The
-# registration holds `(owners, specs, priority, ...)`; without it, only the
-# fields that are not passed to the constructor are checked.
+# These private bagof attributes are read because bagof has no public
+# accessor for them. The registration of a polymorphic class holds
+# `(owners, specs, priority, ...)`. Without it, only the fields that are not
+# passed to the constructor are checked.
 _REGISTRATION = "__magic_registration__"
 
 _OPTIONS = "__magic_options__"
 
 
 def _is_polymorphic(cls: type) -> bool:
-    """Return whether calling `cls` builds the subclass selected."""
+    """Return whether calling `cls` builds the subclass that is selected."""
     options = getattr(cls, _OPTIONS, None)
     return bool(getattr(options, "polymorphic", False))
 
 
 def _same_family(cls: type, other: tx.Any) -> bool:
-    """Return whether `other` is in a polymorphic family of `cls`."""
+    """Return whether `other` shares a polymorphic base class with `cls`."""
     return any(
         isinstance(other, base)
         for base in cls.__mro__
@@ -252,7 +268,7 @@ def _same_family(cls: type, other: tx.Any) -> bool:
 
 
 def _selected_on(cls: type) -> tx.Dict[str, tx.List[tx.Any]]:
-    """Return the `on=` conditions of `cls` and its parents by field."""
+    """Return the `on=` conditions of `cls` and its parents, by field."""
     out: tx.Dict[str, tx.List[tx.Any]] = {}
     for base in cls.__mro__:
         registration = getattr(base, _REGISTRATION, None)
@@ -323,6 +339,7 @@ def _refuse_unknown_keys(cls: type, other: tx.Mapping) -> None:
         )
 
 
+# --- Converter --------------------------------------------------------
 # The converter lets fields that are data models be set from mappings or
 # compatible instances.
 

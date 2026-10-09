@@ -23,7 +23,8 @@ import SimpleITK as sitk
 
 HERE = Path(__file__).parent
 
-# ITK (x, y, z) order; distinct lengths make axis swaps visible.
+# The shape is in ITK (x, y, z) order, and its distinct lengths make axis
+# swaps visible.
 SHAPE = (2, 3, 4)
 
 
@@ -48,7 +49,6 @@ def write_displacement_field() -> None:
     sitk.WriteTransform(transform, str(HERE / "itk_displacement_ramp3d.tfm"))
 
     # `GetArrayFromImage` returns (z, y, x, component); the field is stored as
-    #
     # (x, y, z, component).
     expected = sitk.GetArrayFromImage(image).transpose(2, 1, 0, 3)
     np.save(HERE / "itk_displacement_ramp3d_expected.npy", expected)

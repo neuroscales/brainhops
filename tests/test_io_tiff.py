@@ -778,6 +778,9 @@ def test_write_multiscale_from_datamodel(tmp_path: Path) -> None:
 # File handles (#266)
 
 
+# --- file handles (#266) ----------------------------------------------
+
+
 def _resource_warnings(read: tx.Callable[[], None]) -> tx.List[str]:
     """The ResourceWarnings emitted by `read` and by collecting its garbage."""
     gc.collect()

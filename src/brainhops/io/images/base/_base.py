@@ -17,18 +17,21 @@ from brainhops.io.base.specs import register_parser
 class FileBasedImage(_FileBasedModelMixin, Image, FileBasedObject):
     """An image stored in a file.
 
-    [`FileBasedImage`][] dispatches between the image formats. A concrete
-    reader inherits from it and opts in with `@register_format`, which
-    makes [`load`][brainhops.io.images.load] find the reader without a
-    hand-maintained table.
+    [`FileBasedImage`][] is the common base of the image formats, and it
+    chooses which format reads a given file. A concrete reader inherits
+    from this class and registers itself with `@register_format`, so that
+    [`load`][brainhops.io.images.load] finds the reader without a
+    hand-maintained table of formats.
     """
 
     PRIORITY: tx.ClassVar[int] = 10
-    """Precedence of the image kind, used only to break ties.
+    """Precedence of images over other kinds of object, used to break ties.
 
-    Sniffers that score their input, for example by NIfTI intent codes,
-    normally decide first. A NIfTI file is both an image and a set of
-    affines, and the image wins when nothing else separates the two.
+    When a file could be read as several kinds of object, the readers that
+    score their input, for example by the NIfTI intent code, normally
+    decide first, and this priority matters only when nothing else does.
+    A NIfTI file, for instance, is both an image and a set of affines, and
+    it is read as an image when nothing else separates the two.
     """
 
 

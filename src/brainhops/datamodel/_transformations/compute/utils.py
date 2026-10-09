@@ -13,10 +13,10 @@ if tx.TYPE_CHECKING:
 def get_ndim(
     t: "Transformation", default: tx.Optional[int] = None
 ) -> tx.Optional[int]:
-    """Return the axis count of the input system of `t`, else of its output.
+    """Return the axis count of the input system of `t`, or of its output.
 
-    `default` is returned when neither system is closed, since a missing or
-    open system says nothing about the count.
+    `default` is returned when neither system is closed, because a missing
+    or open system says nothing about the count.
     """
     ndim = get_axes(t.input).ndim
     if ndim is None:
@@ -28,15 +28,15 @@ def systems_disagree(
     source: tx.Optional["CoordinateSystem"],
     target: tx.Optional["CoordinateSystem"],
 ) -> bool:
-    """Whether two adjacent coordinate systems need reconciling.
+    """Return whether two adjacent coordinate systems need reconciling.
 
     `source` is where one transformation leaves the coordinates and `target` is
     where the next one expects them. Two closed systems disagree when they are
     unequal. A missing or open system disagrees only when its stated axes are
     not
     [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]
-    those of its neighbour, because not knowing is never a reason to refuse.
-    [`adapt`][] removes a disagreement.
+    those of its neighbour, because an unknown axis is never a reason to
+    refuse. A disagreement is removed by [`adapt`][].
     """
     source_axes, target_axes = (
         get_axes(source),
@@ -50,7 +50,7 @@ def systems_disagree(
 def boundary_disagrees(
     first: "Transformation", second: "Transformation"
 ) -> bool:
-    """Whether `first` and `second` disagree on the system between them."""
+    """Return whether `first` and `second` disagree on their shared system."""
     return systems_disagree(first.output, second.input)
 
 
@@ -60,7 +60,7 @@ def with_endpoints(
     """Carry the endpoints that `like` declares onto `t`.
 
     When `like` declares none, `t` is returned as the same object, so that a
-    lazy inverse naming it still cancels.
+    lazy inverse that refers to it still cancels.
     """
     edits = {}
     if like._input is not None:
@@ -75,7 +75,7 @@ def require_endomorphism(t: "Transformation", operator: str) -> None:
 
     The square root, exponential and logarithm require an endomorphism. The
     check fails when the systems disagree or when the stated axis counts
-    differ; an unstated count is never a reason to refuse.
+    differ. A count that is not stated is never a reason to refuse.
 
     Raises
     ------
@@ -103,8 +103,8 @@ def require_endomorphism(t: "Transformation", operator: str) -> None:
 def axis_list(axes: tx.Optional[tx.Any]) -> tx.List[int]:
     """Return axis indices as a list of ints, empty for None.
 
-    The test is against None, because the truth value of an array is
-    ambiguous.
+    The argument is compared with None instead of being tested for truth,
+    because the truth value of an array is ambiguous.
     """
     if axes is None:
         return []
@@ -123,8 +123,9 @@ def axis_counts(
     * the length of `scale`, `translation` or `permutation`;
     * a field: the last dimension of a displacement field, the spatial rank and
       last dimension of a coordinates field, the rank of a grid;
-    * a lazy inverse: its forward's counts, swapped;
-    * a lazy square root, exponential or logarithm: its forward's counts;
+    * a lazy inverse: the counts of its forward transformation, swapped;
+    * a lazy square root, exponential or logarithm: the counts of its
+      forward transformation;
     * a sequence: its ends, reading past any leading (or trailing) member that
       preserves the dimension without stating it;
     * the declared input and output systems.
@@ -201,8 +202,8 @@ def axis_counts(
 def _sequence_ends(
     members: tx.List["Transformation"],
 ) -> tx.Tuple[tx.Optional[int], tx.Optional[int]]:
-    # A member that states neither count is read past only if it preserves the
-    # dimension.
+    # Read the axis counts at the two ends of a sequence. A member that
+    # states neither count is skipped only if it preserves the dimension.
     ni = _first_count(members, 0)
     no = _first_count(members[::-1], 1)
     return ni, no

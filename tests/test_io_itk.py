@@ -348,7 +348,8 @@ def test_warp_block_affines_are_compact(name: str) -> None:
     assert vox2lps.shape == (ndim, ndim + 1)
     assert lps2vox.shape == (ndim, ndim + 1)
 
-    # Voxel-to-LPS is direction @ diag(spacing), with the origin as offset.
+    # The voxel-to-LPS matrix is direction @ diag(spacing), and the origin
+    # is its offset.
     origin = np.asarray(block.fixed_parameters)[ndim : 2 * ndim]
     spacing = np.asarray(block.fixed_parameters)[2 * ndim : 3 * ndim]
     direction = np.asarray(block.fixed_parameters)[
@@ -376,7 +377,8 @@ def test_warp_block_computes(name: str) -> None:
 
     result = block.compute()
 
-    # World-to-voxel comes first, then the field in grid units.
+    # The world-to-voxel affine comes first, followed by the field in grid
+    # units.
     assert isinstance(result, xforms.Sequence)
     assert isinstance(result[0], xforms.Affine)
     np.testing.assert_allclose(
@@ -421,7 +423,8 @@ def test_warp_block_inverts(name: str) -> None:
 
 def test_warp_block_grid_is_read_at_its_own_dimensionality() -> None:
     """The grid geometry follows ndim_input rather than a 3-D layout."""
-    # Shape, origin, spacing and a 2x2 direction: 2 + 2 + 2 + 4 parameters.
+    # The shape, origin, spacing and a 2x2 direction make 2 + 2 + 2 + 4
+    # fixed parameters.
     block = itk.ItkStruct(
         type=itk.ItkTransformClass.DisplacementFieldTransform,
         precision="double",
@@ -645,7 +648,8 @@ def test_itk_systems_are_lps_millimetres_in_every_dimension(ndim: int) -> None:
 # A file [Composite, T0, T1] maps x to T0(T1(x)), since ITK applies the
 # queue back to front, while a brainhops sequence lists [T1, T0].
 
-# Two blocks that do not commute: scale, then translate by SHIFT.
+# The two blocks do not commute: one scales and the other translates
+# by SHIFT.
 SHIFT = [10.0, -20.0, 30.0]
 SCALE = [2.0, 3.0, 4.0]
 COMPOSITE = [
@@ -657,7 +661,7 @@ POINTS = np.array([[1.0, 2.0, 3.0], [-4.0, 5.0, -6.0], [0.0, 0.0, 0.0]])
 
 
 def _itk_order(points: np.ndarray) -> np.ndarray:
-    """Compute T0(T1(x)) by hand: scale first, translate second."""
+    """Compute T0(T1(x)) by hand, scaling first and translating second."""
     return points * SCALE + SHIFT
 
 

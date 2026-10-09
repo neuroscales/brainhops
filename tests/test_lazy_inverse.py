@@ -86,7 +86,7 @@ def test_empty_field_inverse_stays_eager() -> None:
 
 
 def test_meta_families_stay_eager() -> None:
-    # Identity is its own inverse and a Bijection carries its own.
+    # Identity is its own inverse, and a Bijection carries its own inverse.
     cases = [
         Identity(),
         Bijection(
@@ -142,7 +142,7 @@ def test_affine_materialization_matches_matrix_inverse() -> None:
 
 
 def test_affine_cancels_symbolically_with_zero_matrix_inversions() -> None:
-    # A^-1 @ A cancels without inverting a matrix.
+    # The product A^-1 @ A cancels without inverting any matrix.
     affine = Affine(matrix=[[2.0, 0.0, 3.0], [0.0, 4.0, 5.0]])
     calls = {"n": 0}
     real_inv = np.linalg.inv
@@ -222,7 +222,7 @@ def test_coefficient_inverse_is_a_coefficient_field() -> None:
     strict=False,
 )
 def test_coefficient_inverse_refits_to_coefficients() -> None:
-    # Depends on the bsplines fix (#63).
+    # This test depends on the bsplines fix (#63).
     degree, bound = 3, "nearest"
     values = _small_field(seed=7)
     df = DisplacementField(
@@ -485,7 +485,8 @@ def test_cancellation_after_interior_grid_drop() -> None:
     b = Translation(translation=[3.0, 4.0])
     seq = Sequence(transformations=[a, df, grid, df.inverse(), b])
     result = seq.compute()
-    # a and b combine; the field pair cancels across the grid.
+    # The translations a and b combine, and the field pair cancels across the
+    # grid.
     assert isinstance(result, (Translation, Identity))
 
 

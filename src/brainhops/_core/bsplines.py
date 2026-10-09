@@ -17,10 +17,13 @@ from brainhops.backends import (
 def _scipy_boundary(bound: tx.Union[str, float]) -> tx.Tuple[str, float]:
     """Translate a boundary condition into the `(mode, cval)` of SciPy.
 
-    A constant boundary, `"constant"` or a numeric fill value, becomes
-    `"grid-constant"`, so that every coordinate beyond the grid takes the
-    fill value at any degree, as in the zero padding of FNIRT coefficient
-    fields. The `"constant"` mode of SciPy differs above degree 1.
+    A constant boundary, whether it is given by the name `"constant"` or as
+    a numeric fill value, becomes the SciPy mode `"grid-constant"`. In that
+    mode, every coordinate beyond the grid takes the fill value for a spline
+    of any degree, which matches the zero padding with which FNIRT
+    coefficient fields are evaluated. The `"constant"` mode of SciPy is not
+    equivalent above degree 1, so it is not used. Other names are passed
+    through unchanged.
     """
     if isinstance(bound, str):
         return ("grid-constant" if bound == "constant" else str(bound)), 0.0
@@ -43,9 +46,10 @@ def _autoreshape(map_coordinates: tx.Callable) -> tx.Callable:
 def _map_coordinates_for(nx: ModuleType, nd: ModuleType) -> tx.Callable:
     """Return the `map_coordinates` function of a backend.
 
-    The dask function samples coordinates of shape `(ndim, *shape)` block
-    by block, so only the functions of other backends are wrapped to
-    flatten the coordinates.
+    The dask implementation samples coordinates of shape `(ndim, *shape)`
+    block by block and keeps their spatial layout, so it is returned as it
+    is. The functions of other backends are wrapped so that they flatten the
+    coordinates before sampling and restore the spatial shape afterwards.
     """
     if da is not None and nx is da:
         return nd.map_coordinates
@@ -62,9 +66,10 @@ def _over_batch(
 ) -> ArrayProtocol:
     """Apply a function to each item of the batch dimensions of an array.
 
-    Concrete arrays are filled item by item, into `output` when given.
-    Dask results are stacked instead, because assigning a dask array into
-    another rebuilds the graph of every chunk it covers.
+    The result has shape `(*batch, *shape)`. A concrete result is filled
+    item by item, into `output` when it is given. With dask, the results
+    are stacked instead, because assigning one dask array into another
+    rebuilds the graph of every chunk that the assignment covers.
     """
     indices = itertools.product(*[range(s) for s in batch])
     if da is not None and nx is da:
@@ -102,8 +107,8 @@ def pull(
         linear, 2 is quadratic, and so on.
     bound : str or float
         Boundary condition, given by name or as a constant fill value. A
-        number, or the name `"constant"` for zero, is the value beyond the
-        edge. The names are:
+        number gives the value beyond the edge, and the name `"constant"`
+        stands for a fill value of zero. The other names are:
 
           - 'nearest': nearest edge value   (a a a a | a b c d | d d d d)
           - 'reflect': reflect at edge      (d c b a | a b c d | d c b a)
@@ -153,10 +158,11 @@ def pull_axes(
 ) -> ArrayProtocol:
     """Interpolate an array along a subset of its axes.
 
-    The named axes, which the coordinates address in the order of their
-    components, are moved to the end, and [`pull`][] is applied. The other
-    axes become batch axes. A full-dimensional field of coordinates over a
-    large array is thereby avoided.
+    The axes listed in `axes` are moved to the end of the array, in the
+    order in which the components of the coordinates address them, and
+    [`pull`][] is then applied. The other axes become batch axes. In this
+    way, a large array can be resampled along a few of its axes without
+    building a field of coordinates over all of its dimensions.
 
     Parameters
     ----------
@@ -176,8 +182,9 @@ def pull_axes(
     Returns
     -------
     ArrayProtocol
-        The interpolated array. The unnamed axes come first, in their
-        original order, followed by the spatial axes of the output.
+        The interpolated array. The axes that are not listed in `axes`
+        come first, in their original order, and are followed by the
+        spatial axes of the output.
     """
     nx = best_backend(input, coords)
     axes = [int(a) % input.ndim for a in axes]
@@ -196,11 +203,12 @@ def spline_matrix(
 ) -> ArrayProtocol:
     """Return the weight matrix of a one-dimensional spline resampling.
 
-    Interpolation is linear, so the matrix `W`, applied along an axis of
-    length `n_in`, reproduces [`pull`][] at `coords_1d` with a single
-    contraction. When `coeff` is false, `W` includes the prefilter and maps
-    values. With a numeric `bound`, `W` only holds the contributions from
-    inside the array, and the fill value must be added as
+    Spline interpolation is linear in its input, so it can be written as a
+    matrix `W`. Multiplying an axis of length `n_in` by `W` gives the same
+    result as [`pull`][] at the coordinates `coords_1d`. When `coeff` is
+    false, `W` includes the prefilter, so that it maps values rather than
+    coefficients. With a numeric `bound`, `W` only holds the contributions
+    from inside the array, and the fill value must be added separately as
     `cval * (1 - W.sum(axis=1))`.
 
     Parameters
@@ -272,7 +280,7 @@ def coeff2value(
 ) -> ArrayLike:
     """Convert spline coefficients to values.
 
-    The conversion is the inverse of the spline filter, and is computed by
+    The conversion is the inverse of the spline filter. It is computed by
     interpolating the coefficients at the centres of the voxels.
 
     Parameters
@@ -299,8 +307,8 @@ def coeff2value(
         return input if inplace else copy_array(input)
     nx = get_array_backend(input)
     nd = get_ndimage_backend(nx)
-    # An ndim of 0 means that all axes are spatial; zero spatial axes would
-    # be meaningless for interpolation.
+    # An ndim of 0 means that all axes are spatial, since zero spatial axes
+    # would be meaningless for interpolation.
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     grid = nx.meshgrid(
@@ -329,8 +337,8 @@ def coeff2value_field(
 ) -> ArrayLike:
     """Convert the spline coefficients of a field to values.
 
-    The conversion is that of [`coeff2value`][], for a field with a trailing
-    axis of components.
+    The conversion is the one performed by [`coeff2value`][], applied to a
+    field whose last axis holds the components of each vector.
 
     Parameters
     ----------
@@ -383,7 +391,8 @@ def value2coeff(
     ArrayLike
         The coefficients, with the same shape as `input`.
     """
-    # Splines of degree 0 and 1 interpolate their coefficients.
+    # Splines of degree 0 and 1 interpolate their coefficients, so the
+    # values are the coefficients.
     if int(degree) < 2:
         return input if inplace else copy_array(input)
     nx = get_array_backend(input)
@@ -393,9 +402,10 @@ def value2coeff(
     ndim = ndim or input.ndim
     batch = input.shape[:-ndim]
     # The coefficients must be those that coeff2value interpolates exactly.
-    # The prefilter of SciPy yields them only where its evaluation extends the
-    # coefficients as the prefilter extends the values, so the coefficients
-    # are solved for in the other modes.
+    # The prefilter of SciPy computes them correctly only in the modes where
+    # the evaluation extends the coefficients beyond the edges in the same
+    # way as the prefilter extends the values. In the modes of _SOLVED_MODES,
+    # the prefilter is wrong or inexact, so the coefficients are solved for.
     mode, cval = _scipy_boundary(bound)
     if mode in _SOLVED_MODES:
         bound = 0.0 if mode == "grid-constant" else mode
@@ -425,19 +435,22 @@ def value2coeff(
 _SOLVED_MODES = ("nearest", "grid-constant", "reflect")
 """Modes whose coefficients are solved for rather than filtered.
 
-The prefilter of SciPy extends the values by reflection for `nearest` and
-by mirroring for a constant, whereas its evaluation clamps the
-coefficients or uses `cval`, so filtered coefficients do not interpolate
-the values near the edges (#250). The `reflect` prefilter is approximate
-near the edges of short axes, by up to 1e-4 at degree 5.
+For `nearest` and for a constant boundary, the prefilter of SciPy extends
+the values beyond the edges by reflection and by mirroring, respectively.
+The evaluation, however, clamps the coefficients for `nearest` and uses
+`cval` for a constant boundary. Because the two extensions differ, the
+filtered coefficients do not interpolate the values near the edges (#250).
+For `reflect`, the prefilter matches the evaluation, but it is only
+approximate near the edges of short axes, by up to 1e-4 at degree 5.
 """
 
 _EDGE = 48
 """Number of samples at each end of an axis that a boundary affects.
 
-A boundary changes the coefficients of these samples. The change decays as
-`pole**distance`. The largest pole, at degree 5, is 0.43, and `0.43**48` is
-about 3e-18.
+Farther from the edge, the effect of the boundary on the coefficients is
+negligible, because it decays as `pole**distance` with the distance to the
+edge. The largest pole, at degree 5, is 0.43, and `0.43**48` is about
+3e-18.
 """
 
 
@@ -452,15 +465,19 @@ def _boundary_solvers(
 ]:
     """Return how to solve for the coefficients of one axis under a boundary.
 
-    The values are the coefficients times the [`spline_matrix`][] `A` of
-    the boundary. A short axis is solved with `inv(A)`, the first item. A
-    long axis is filtered with the mirror prefilter of SciPy, of matrix
-    `M`, and corrected near each end: `inv(A) - inv(M)` is negligible
-    beyond `_EDGE` samples, and its corner blocks have a rank of one per
-    pole, since the boundary only changes the initial value of each
-    recursion. Each correction is a pair `(U, V)`, applied as
-    `U @ (V @ values)` to the first, or last, coefficients. The last item
-    is `inv(A) @ 1`, which a constant boundary needs. Results are cached.
+    The values along an axis are the coefficients multiplied by `A`, the
+    [`spline_matrix`][] of the boundary. For a short axis, the first item
+    is `inv(A)`, which gives the coefficients directly. A long axis is
+    instead filtered with the mirror prefilter of SciPy, whose matrix is
+    `M`, and the result is corrected near each end. The correction is
+    cheap because `inv(A) - inv(M)` is negligible farther than `_EDGE`
+    samples from either end, and because its corner blocks have a rank of
+    one per pole of the filter, since the boundary only changes the initial
+    value of each recursion. The second and third items are the
+    corrections at the low and the high end. Each correction is a pair
+    `(U, V)`, applied as `U @ (V @ values)` to the first or the last
+    coefficients. The last item is `inv(A) @ 1`, which a constant boundary
+    needs. The results are cached.
     """
     edge = _EDGE
     length = size if size <= 2 * edge else 4 * edge
@@ -472,10 +489,12 @@ def _boundary_solvers(
     mirror = np.asarray(spline_matrix(length, grid, degree, "mirror", True))
     correction = inverse - np.linalg.inv(mirror)
     low = _low_rank(correction[:edge, :edge])
-    # The high corner is trimmed from its far end, so it is flipped.
+    # _low_rank trims a block from its far end, so the high corner is
+    # flipped before the factorisation and the factors are flipped back.
     high = _low_rank(correction[-edge:, -edge:][::-1, ::-1])
     high = (high[0][::-1], high[1][:, ::-1])
-    # The mirror coefficients of a constant are that constant.
+    # Under the mirror boundary, the coefficients of a constant are that
+    # constant.
     ones = np.ones(size)
     ones[: low[0].shape[0]] += low[0] @ low[1].sum(axis=1)
     ones[size - high[0].shape[0] :] += high[0] @ high[1].sum(axis=1)
@@ -489,9 +508,11 @@ _CORRECTION_TOLERANCE = 1e-17
 def _low_rank(block: np.ndarray) -> tx.Tuple[np.ndarray, np.ndarray]:
     """Factor a corner block, starting at the edge, as `U @ V`.
 
-    The factors have the numerical rank of the block. The rows of `U` and
-    the columns of `V` are cut where they fall below the tolerance, relative
-    to the largest entry.
+    The factors have the numerical rank of the block, that is, its rank to
+    machine precision. The trailing rows of `U` and columns of `V` whose
+    contributions fall below `_CORRECTION_TOLERANCE` times the largest
+    entry of the block are then cut, so that the correction only covers the
+    samples that it actually reaches.
     """
     u, s, vt = np.linalg.svd(block)
     rank = max(1, int((s > s[0] * 1e-14).sum()))
@@ -520,11 +541,13 @@ def _edge_terms(
 ) -> tx.List[tx.Tuple[np.ndarray, ArrayProtocol]]:
     """Return the rank-one terms of the edge correction `U @ (V @ slab)`.
 
-    Each term is a pair `(u, w)`. The weights `w = V @ slab` are taken along
-    the axis, which is kept with length one. Each `u` is a column of `U` laid
-    along the axis and padded with zeros to `length`, at the start when the
-    edge is at the end. The product `u * w` then broadcasts to the corrected
-    part, without materialising anything larger than `w`.
+    Each term is a pair `(u, w)`. The weights `w` are one row of
+    `V @ slab`, computed along the axis, which is kept with a length of
+    one. The vector `u` is the matching column of `U`, laid along the axis
+    and padded with zeros to `length`. The padding goes at the start when
+    the edge is at the end of the axis. The product `u * w` then
+    broadcasts to the corrected part of the array without materialising
+    anything larger than `w`.
     """
     u, v = pair
     weights = nx.tensordot(
@@ -551,9 +574,11 @@ def _add_edges(
 ) -> ArrayProtocol:
     """Add edge corrections at both ends of an axis of a dask array.
 
-    Each correction is a pair `(U, V)` with the slab that `V` reads. Only
-    the chunks that a correction reaches are changed, by broadcasting its
-    rank-one terms, so the result keeps the chunks of `like`.
+    Each of `low` and `high` holds a correction pair `(U, V)` together with
+    the slab of values that `V` reads. The axis is split at chunk
+    boundaries. The chunks that a correction reaches are changed by
+    broadcasting its rank-one terms, and the chunks in between are passed
+    through unchanged, so the result keeps the chunks of `like`.
     """
     size = int(like.shape[axis])
     depth_low = int(low[0][0].shape[0])
@@ -595,11 +620,14 @@ def _constant_correction(
 ) -> tx.Iterator[tx.Tuple[tx.Tuple[slice, ...], np.ndarray]]:
     """Yield the corrections that turn a zero boundary into a constant one.
 
-    With `L` the solve along each axis and `ones[d] = L_d @ 1`, the
-    coefficients `L @ (values - cval) + cval` equal
-    `L @ values + cval * (1 - prod_d ones[d])`. Each `ones[d]` is one away
-    from the edges, so the corrections only cover slabs along the faces.
-    Pairs of slices and corrections are yielded, covering each sample once.
+    The coefficients are first computed as if the values beyond the edges
+    were zero, and they must then be changed so that they equal `cval`
+    beyond the edges. With `L` the solve along each axis and
+    `ones[d] = L_d @ 1`, the coefficients `L @ (values - cval) + cval`
+    equal `L @ values + cval * (1 - prod_d ones[d])`. Each `ones[d]` equals
+    one except near the edges, so the corrections are nonzero only on slabs
+    along the faces of the array. The function yields pairs of slices and
+    corrections, and each sample is covered by exactly one pair.
     """
     ndim = len(ones)
     edges = [np.flatnonzero(np.abs(o - 1) > 0) for o in ones]
@@ -644,14 +672,16 @@ def _interpolating_coefficients(
 ) -> ArrayProtocol:
     """Return the coefficients that interpolate values exactly.
 
-    The coefficients beyond the edges are clamped for `nearest`, reflected
-    for `reflect`, or equal to `cval` when `bound` is `0.0`. Each axis is
-    prefiltered in turn by the recursive filter of SciPy and corrected at
-    each end (see `_boundary_solvers`), so the cost is that of the filter.
-    NumPy arrays are filtered in place after the first axis, and dask
-    arrays keep their chunks. The solve is linear and separable, so
-    `cval` only changes the coefficients near the faces, where it is
-    applied (see `_constant_correction`).
+    The coefficients beyond the edges are clamped when `bound` is
+    `"nearest"`, reflected when it is `"reflect"`, and equal to `cval` when
+    it is `0.0`. The axes are processed in turn. A short axis is solved
+    with an inverse matrix, and a long axis is filtered by the recursive
+    prefilter of SciPy and then corrected near each end (see
+    `_boundary_solvers`), so the cost is that of the filter. NumPy arrays
+    are filtered in place after the first axis, and dask arrays keep their
+    chunks. Because the solve is linear and separable, `cval` only changes
+    the coefficients near the faces of the array, and that change is added
+    at the end (see `_constant_correction`).
     """
     nx = get_array_backend(values)
     nd = get_ndimage_backend(values)
@@ -665,7 +695,8 @@ def _interpolating_coefficients(
             coeff = _along(nx, inverse, coeff, axis)
         else:
             index = (slice(None),) * axis
-            # Corrections read the values before the in-place filter.
+            # The corrections read the values before the in-place filter
+            # overwrites them.
             low = (low, coeff[index + (slice(0, low[1].shape[1]),)])
             high = (
                 high,
@@ -727,8 +758,8 @@ def value2coeff_field(
 ) -> ArrayLike:
     """Convert the values of a field to spline coefficients.
 
-    The conversion is that of [`value2coeff`][], for a field with a trailing
-    axis of components.
+    The conversion is the one performed by [`value2coeff`][], applied to a
+    field whose last axis holds the components of each vector.
 
     Parameters
     ----------

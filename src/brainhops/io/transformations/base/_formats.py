@@ -1,7 +1,10 @@
-"""Semantic families of transformation formats.
+"""Marker classes for the families of transformation formats.
 
-Qualified dispatch hints of the form `"xform.<family>"` are derived from
-these marker classes.
+A hint is a name that can be passed to `load` as `hint=` to restrict the
+candidate formats. A format answers to the hints of the marker classes
+that it derives from. The hints of nested families are also joined with
+dots, so that an affine format answers to `"affine"` and also to
+`"xform.affine"`.
 """
 
 __all__ = ["TransformationFormat", "AffineTransformationFormat"]

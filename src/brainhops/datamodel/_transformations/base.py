@@ -56,6 +56,8 @@ class Transformation(
         transformations.
     """
 
+    # --- class attributes ---------------------------------------------
+
     data_fields: tx.ClassVar[tx.Tuple[str, ...]] = ()
     """Names of the attributes that parameterize the transformation."""
 
@@ -70,18 +72,22 @@ class Transformation(
     )
     """Constructor arguments that may not be given together.
 
-    The default, `None`, groups the single stored parameter with the views that
-    spell it (`data_fields` followed by `derived_fields`), and applies only to
-    a class with at most one data field. A class with several independent data
-    fields has no group unless it declares one.
+    A view is another name under which the stored parameter can be given, such
+    as `matrix` for the `data` of an affine transformation. The default,
+    `None`, makes the stored parameter and all of its views mutually exclusive,
+    so the group is `data_fields` followed by `derived_fields`. This default
+    applies only to a class with at most one data field. A class with several
+    independent data fields has no group unless it declares one.
     """
 
     def __post_init__(self, arguments: tx.Any) -> None:
         mutex = self.mutually_exclusive_fields
         if mutex is None:
-            # `data` and its views are names of one parameter, so two of them
-            # give the parameter twice. A class with several data fields (a
-            # subspace transformation, a bijection) sets them together.
+            # `data` and its views, such as `matrix`, are names for a single
+            # parameter, so giving two of them gives the parameter twice. A
+            # class with several data fields, such as a subspace
+            # transformation or a bijection, takes all of them together, so
+            # the default group does not apply to it.
             mutex = (
                 self.data_fields + self.derived_fields
                 if len(self.data_fields) <= 1
@@ -95,11 +101,16 @@ class Transformation(
             if (value := arguments.get(name)) is not None:
                 setattr(self, name, value)
 
-    # The endpoints are stored privately so that `replace()` carries over what
-    # was given, not what the property reports, which would freeze derived
-    # endpoints. They are keyword-only because positional order follows the
-    # MRO. bagof does not carry `KwOnly` to a redeclared field, so a subclass
-    # giving an endpoint a new default writes `KwOnly[...]`.
+    # --- attributes ---------------------------------------------------
+
+    # The input and output systems are stored under private names, so that
+    # `replace()` carries over the systems given to the constructor rather
+    # than the values that the `input` and `output` properties report. A
+    # subclass that derives its systems would otherwise have them frozen into
+    # fixed values by every `replace()`. The systems are keyword-only because
+    # the position of a positional field follows the MRO. bagof does not carry
+    # `KwOnly` over to a field that a subclass declares again, so a subclass
+    # that gives a system a new default must write `KwOnly[...]` itself.
 
     _input: tx.Optional[CoordinateSystem] = None
     """Input coordinate system, which may be inferred from context if unset."""
@@ -111,6 +122,8 @@ class Transformation(
     input = smartproperty("input")
     output = smartproperty("output")
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: ModeLike = True,
@@ -118,22 +131,26 @@ class Transformation(
         simplify: SimplifyLike = "analytic",
         factor: bool = False,
     ) -> tx.Self:
-        """Compute the transformation, materializing what is not yet defined.
+        """Compute the transformation, evaluating what is still lazy.
 
-        The base class raises `NotImplementedError`.
+        Computing a transformation composes and evaluates the parts that
+        `mode` admits, for example by multiplying matrices, sampling fields or
+        evaluating a lazy inverse. It also simplifies the result according to
+        `simplify`. The base class raises `NotImplementedError`.
 
         Parameters
         ----------
         mode : ModeLike, default=True
             Kinds of transformation that may be composed or materialized, given
             as types, names or symbols (`"affine"`, `"Aff"`, `"rigid"`,
-            `"SO(3)"`). The default, `True`, admits every kind. A concrete leaf
-            has nothing to compose and ignores the mode.
+            `"SO(3)"`). The default, `True`, admits every kind. A concrete
+            transformation, which holds its own parameters, has nothing to
+            compose and ignores the mode unless `factor` is true.
         simplify : SimplifyLike, default="analytic"
-            How hard to simplify. `"analytic"` (the default) reasons from the
-            structure of the types only, `"numeric"` (or `True`) also reads the
-            parameter values, and `False`, `"none"` or `None` disables
-            simplification.
+            How much effort to spend on simplification. `"analytic"` (the
+            default) decides from the types of the transformations alone,
+            `"numeric"` (or `True`) also reads their parameter values, and
+            `False`, `"none"` or `None` disables simplification.
         factor : bool, default=False
             Whether to rewrite the result as independent factors, one for each
             group of axes that transform together. Nothing is composed across
@@ -162,8 +179,8 @@ class Transformation(
         `t.simplify(policy, compute=mode)` is
         `t.compute(mode, simplify=policy)`. By default nothing is composed: no
         matrix is multiplied, no field is sampled and no lazy inverse is
-        materialized. Each leaf is only downcast to the cheapest type
-        compatible with it under `policy`.
+        evaluated. Each concrete transformation is only converted to the
+        cheapest type that still represents it, as far as `policy` can tell.
 
         Parameters
         ----------
@@ -171,9 +188,9 @@ class Transformation(
             How hard to simplify, with the values accepted by the `simplify`
             argument of [`compute`][].
         compute : ModeLike or bool or None, default=False
-            Compose mode, with the values accepted by the `mode` argument of
-            [`compute`][]. The default, `False`, composes nothing, whereas
-            `None` composes every kind.
+            Kinds of transformation that may be composed, with the values
+            accepted by the `mode` argument of [`compute`][]. The default,
+            `False`, composes nothing, whereas `None` composes every kind.
 
         Returns
         -------
@@ -185,9 +202,10 @@ class Transformation(
     def inverse(self, compute: bool = False, **kwargs) -> tx.Self:
         """Return the inverse of the transformation.
 
-        Some classes return a lazy inverse, evaluated when it is computed, so
-        that a transformation next to its inverse cancels for free. `~t` is
-        `t.inverse()`. The base class raises `NotImplementedError`.
+        Some classes return a lazy inverse, which is evaluated only when it is
+        computed. A transformation composed with its lazy inverse can then
+        cancel out without any arithmetic. `~t` is `t.inverse()`. The base
+        class raises `NotImplementedError`.
 
         Parameters
         ----------
@@ -334,13 +352,16 @@ class Transformation(
     ) -> tx.Type["Transformation"]:
         """Return the type that `to()` converts to when the caller names none.
 
-        It is normally the class of the transformation. A class selected by a
-        flag returns the class that the new value of the flag selects, so that
-        `log=False` on a tangent asks for the plain class. Choosing the type
-        here rather than in the converter lets `convert()` check what it
-        returns.
+        The type is normally the class of the transformation. Some classes are
+        chosen by a flag, as `log=True` chooses the tangent class of a family,
+        and such a class returns the class that the new value of the flag
+        selects. For example, `log=False` on a tangent class asks for the
+        plain class. Because the type is chosen here rather than in the
+        converter, `convert()` can check that it returns an instance of it.
         """
         return type(self)
+
+    # --- kind checks --------------------------------------------------
 
     def is_kind(
         self, kind: tx.Type[kinds.Kind], compute: bool = False
@@ -377,9 +398,10 @@ class Transformation(
         ([`CartesianField`][brainhops.datamodel.transformations.CartesianField])
         is the identity over itself. It is recognised as such with
         `compute=True`, but with `compute=False` only if its `shape` is unset,
-        since a shape is a parameter. No grid of coordinates is built. A grid
-        that is the identity is still a sampling domain, so the sequence
-        simplifier drops it only between two other transformations.
+        since a shape is a parameter. In neither case are the coordinates of
+        the grid built. A grid that is the identity still defines where a
+        sequence is sampled, so simplifying a sequence removes the grid only
+        when it lies between two other transformations.
         """
         return self.is_kind(kinds.Identity, compute)
 
@@ -440,6 +462,8 @@ class Transformation(
         [`kinds.Affine`][brainhops.datamodel.kinds.Affine] or the identity.
         """
         return self.is_kind(kinds.Affine, compute)
+
+    # --- operators ----------------------------------------------------
 
     @tx.overload
     def __call__(
@@ -533,11 +557,13 @@ class Transformation(
 def _mutually_exclusive(
     xform: Transformation, arguments: tx.Any, names: tx.Tuple[str, ...]
 ) -> None:
-    """Refuse a call that spells one parameter more than once.
+    """Refuse a constructor call that gives one parameter under two names.
 
-    `names` holds the stored parameter and the views that spell it, such as
-    `data` and `matrix`. A view fills `data`, so no two of them can be given
-    together. `replace()` reaches this check too, since it carries `data` over.
+    `names` holds the stored parameter and the views under which it can also
+    be given, such as `data` and `matrix`. Because a view fills `data`, no two
+    of these names can be given together. The check also applies to
+    `replace()`, which carries `data` over, so `replace(t, matrix=m)` is
+    refused as well.
 
     Raises
     ------

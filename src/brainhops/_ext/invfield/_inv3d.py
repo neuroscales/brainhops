@@ -1,4 +1,4 @@
-# Inversion of a dense displacement field.
+# This module inverts a dense displacement field.
 #
 # The method is explained here in two dimensions; in three dimensions,
 # tetrahedra take the place of triangles. The grid is split into unit cells
@@ -15,8 +15,8 @@
 #       +-----+-----+-----+-----+
 #     (2,0)                   (2,4)
 #
-# Because the pattern is regular, batches of
-# triangles that share a vertex layout are obtained by slicing the field.
+# Because the pattern is regular, batches of triangles that share the same
+# vertex layout can be extracted by slicing the field.
 # The inverse value at a voxel inside a displaced triangle is the mean of
 # the original vertices, weighted by the barycentric coordinates of the
 # voxel. In three dimensions, the cells are cubes cut into five tetrahedra.
@@ -100,11 +100,13 @@ BATCH_AXIS, VERTEX_AXIS, SPACE_AXIS = 0, 1, 2
 def _process_thetrahedron(
     src: np.ndarray, dst: np.ndarray, out: np.ndarray
 ) -> None:
-    """Scan-convert a batch of tetrahedra.
+    """Fill the voxels that a batch of displaced tetrahedra covers.
 
-    Each voxel inside a target-domain tetrahedron receives its source-domain
-    coordinates. `src` and `dst` have shape (N, 4, 3) and hold the vertices
-    in the source and target domains, and `out` is written in place.
+    Each voxel that lies inside a tetrahedron in the target domain receives
+    the coordinates of the corresponding point in the source domain. The
+    arrays `src` and `dst` have shape (N, 4, 3) and hold the vertices of
+    the tetrahedra in the source and target domains, and `out` is written
+    in place.
     """
     idx = np.argsort(dst[:, :, Z : Z + 1], axis=VERTEX_AXIS)
     ttr = np.take_along_axis(dst, idx, axis=VERTEX_AXIS)
@@ -128,20 +130,23 @@ def _process_thetrahedron(
         low_mask &= mask0
         del mask0
 
-        # Plane between vertices 0 and 1: the section is a triangle.
+        # When the plane lies between vertices 0 and 1, the section is a
+        # triangle.
         if low_mask.any():
             zm, srcm, dstm = z[low_mask], src[low_mask], dst[low_mask]
             tri = _find_lower_triangle(ttr[low_mask], zm)
             _process_triangle(srcm, dstm, zm, tri, out)
 
-        # Plane between vertices 1 and 2: a quadrilateral, cut in two.
+        # When the plane lies between vertices 1 and 2, the section is a
+        # quadrilateral, which is cut into two triangles.
         if mid_mask.any():
             zm, srcm, dstm = z[mid_mask], src[mid_mask], dst[mid_mask]
             quad = _find_quadrilateral(ttr[mid_mask], zm)
             _process_triangle(srcm, dstm, zm, quad[:, 0:3], out)
             _process_triangle(srcm, dstm, zm, quad[:, 1:4], out)
 
-        # Plane between vertices 2 and 3: the section is a triangle.
+        # When the plane lies between vertices 2 and 3, the section is a
+        # triangle.
         if upp_mask.any():
             zm, srcm, dstm = z[upp_mask], src[upp_mask], dst[upp_mask]
             tri = _find_upper_triangle(ttr[upp_mask], zm)
@@ -157,11 +162,11 @@ def _process_triangle(
     tri: np.ndarray,
     out: np.ndarray,
 ) -> None:
-    """Scan-convert a batch of triangles that lie in the z planes `z`.
+    """Fill the voxels that a batch of triangles in the planes `z` covers.
 
-    `tri` has shape (N, 3, 2) and holds the (x, y) vertices of the triangles
-    in the target domain. The other arguments are as in
-    `_process_thetrahedron`.
+    The array `tri` has shape (N, 3, 2) and holds the (x, y) coordinates of
+    the vertices of the triangles in the target domain. The other arguments
+    are the same as in `_process_thetrahedron`.
     """
 
     idx = np.argsort(tri[:, :, Y : Y + 1], axis=VERTEX_AXIS)
@@ -206,10 +211,11 @@ def _process_segment(
     seg: np.ndarray,
     out: np.ndarray,
 ) -> None:
-    """Scan-convert a batch of segments that lie on the rows `y`.
+    """Fill the voxels that a batch of segments on the rows `y` covers.
 
-    `seg` has shape (N, 2, 1) and holds the x coordinates of the endpoints in
-    the target domain. The other arguments are as in `_process_triangle`.
+    The array `seg` has shape (N, 2, 1) and holds the x coordinates of the
+    endpoints in the target domain. The other arguments are the same as in
+    `_process_triangle`.
     """
 
     idx = np.argsort(seg[:, :, X : X + 1], axis=VERTEX_AXIS)
@@ -221,7 +227,8 @@ def _process_segment(
         if not mask.any():
             break
 
-        # Barycentric coordinates of each voxel in its tetrahedron.
+        # Compute the barycentric coordinates of each voxel in its
+        # tetrahedron.
         xm, ym, zm = x[mask], y[mask], z[mask]
         vdst = np.stack((xm, ym, zm), axis=-1)  # (N, 3)
         bary = _barycoord(vdst, dst[mask])  # (N, 4)
@@ -236,8 +243,9 @@ def _process_segment(
 
 
 def _barycoord(x: np.ndarray, tetra: np.ndarray) -> np.ndarray:
-    # Barycentric coordinates (N, 4) of the points x (N, 3) with
-    # respect to the tetrahedra tetra (N, 4, 3).
+    # Return the barycentric coordinates, of shape (N, 4), of the points
+    # `x`, of shape (N, 3), with respect to the tetrahedra `tetra`, of
+    # shape (N, 4, 3).
 
     v0 = tetra[:, 0]
     v1 = tetra[:, 1]
@@ -274,8 +282,10 @@ def _find_segment(tri: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
-    # Section of a horizontal plane through the cone whose tip is the
-    # lowest vertex and whose edges pass through the other vertices.
+    # Return the triangle in which the plane `z` cuts each tetrahedron,
+    # when the plane lies between the lowest vertex and the next one. The
+    # corners of the triangle lie on the three edges that leave the lowest
+    # vertex.
 
     out = np.empty_like(dst, shape=(len(dst), 3, 2))
 
@@ -298,7 +308,9 @@ def _find_lower_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
 
 
 def _find_upper_triangle(dst: np.ndarray, z: np.ndarray) -> np.ndarray:
-    # Same as `_find_lower_triangle`, with the tip at the highest vertex.
+    # This function is the counterpart of `_find_lower_triangle` for a
+    # plane that lies between the two highest vertices. The corners of
+    # the triangle lie on the three edges that leave the highest vertex.
 
     out = np.empty_like(dst, shape=(len(dst), 3, 2))
 
@@ -365,15 +377,17 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     All the tetrahedra in a batch share the same vertex pattern, and each
     batch is an array of shape (N, 4, 3).
     """
-    # Only cubes on a common subgrid can be batched by slicing, so the
-    # grid is split by parity of offset into four red and four black
-    # subgrids.
+    # Cubes can be batched by slicing only when they lie on a common
+    # subgrid, so the grid is split into four red and four black subgrids
+    # according to the parity of their offsets.
 
     # =========== #
     #    R E D    #
     # =========== #
 
     # No shift
+
+    # --- no shift
 
     x000 = field[0::2, 0::2, 0::2]
     x001 = field[0::2, 0::2, 1::2]
@@ -388,6 +402,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in x and y
 
+    # --- xy shift
+
     x000 = field[1::2, 1::2, 0::2]
     x001 = field[1::2, 1::2, 1::2]
     x010 = field[1::2, 2::2, 0::2]
@@ -401,6 +417,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in y and z
 
+    # --- yz shift
+
     x000 = field[0::2, 1::2, 1::2]
     x001 = field[0::2, 1::2, 2::2]
     x010 = field[0::2, 2::2, 1::2]
@@ -413,6 +431,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_red(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in x and z
+
+    # --- xz shift
 
     x000 = field[1::2, 0::2, 1::2]
     x001 = field[1::2, 0::2, 2::2]
@@ -431,6 +451,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in x
 
+    # --- x shift
+
     x000 = field[1::2, 0::2, 0::2]
     x001 = field[1::2, 0::2, 1::2]
     x010 = field[1::2, 1::2, 0::2]
@@ -443,6 +465,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in y
+
+    # --- y shift
 
     x000 = field[0::2, 1::2, 0::2]
     x001 = field[0::2, 1::2, 1::2]
@@ -457,6 +481,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
 
     # Shift in z
 
+    # --- z shift
+
     x000 = field[0::2, 0::2, 1::2]
     x001 = field[0::2, 0::2, 2::2]
     x010 = field[0::2, 1::2, 1::2]
@@ -469,6 +495,8 @@ def _yield_thetrahedra(field: np.ndarray) -> _tx.Generator:
     yield from yield_black(x000, x001, x010, x011, x100, x101, x110, x111)
 
     # Shift in x, y and z
+
+    # --- xyz shift
 
     x000 = field[1::2, 1::2, 1::2]
     x001 = field[1::2, 1::2, 2::2]
@@ -492,9 +520,9 @@ def yield_red(
     x110: np.ndarray,
     x111: np.ndarray,
 ) -> _tx.Generator:
-    # Five tetrahedra of a red cube: four trirectangular ones, with tips
-    # at 000, 011, 101 and 110, and a regular one formed by the
-    # remaining vertices.
+    # A red cube is cut into five tetrahedra: four trirectangular ones,
+    # whose tips are at 000, 011, 101 and 110, and a regular one formed by
+    # the remaining vertices.
 
     # Tip at 000
     yield _truncate_and_stack3d(x000, x001, x010, x100)
@@ -522,9 +550,9 @@ def yield_black(
     x110: np.ndarray,
     x111: np.ndarray,
 ) -> _tx.Generator:
-    # Five tetrahedra of a black cube: four trirectangular ones, with
-    # tips at 010, 001, 100 and 111, and a regular one formed by the
-    # remaining vertices.
+    # A black cube is cut into five tetrahedra: four trirectangular ones,
+    # whose tips are at 010, 001, 100 and 111, and a regular one formed by
+    # the remaining vertices.
 
     # Tip at 010
     yield _truncate_and_stack3d(x010, x011, x000, x110)
@@ -545,7 +573,7 @@ def yield_black(
 def _generate_disp_field(
     shape: _tx.Sequence[int], magnitude: float = 1, fwhm: float = 5
 ) -> np.ndarray:
-    # Random smooth displacement field, for testing.
+    # Generate a random smooth displacement field for testing.
     from scipy.ndimage import gaussian_filter
 
     shape = tuple(shape) + (len(shape),)

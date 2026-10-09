@@ -183,7 +183,7 @@ def _points(name: str, region: str = "around") -> np.ndarray:
     ras = ijk @ VOX2RAS[:3, :3].T + VOX2RAS[:3, 3]
     if not name.startswith("itk"):
         return ras
-    return ras * np.array([-1.0, -1.0, 1.0])  # ITK maps LPS.
+    return ras * np.array([-1.0, -1.0, 1.0])  # ITK maps from LPS.
 
 
 def _kinds(chain: tx.Iterable[xforms.Transformation]) -> list:

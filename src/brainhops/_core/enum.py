@@ -16,12 +16,13 @@ class EnumConverter:
     therefore holds a `SpaceEnum` member when the text names a known space,
     and a plain string otherwise.
 
-    The converter is declared on each field because the union converter of
-    bagof keeps a string as it is, without trying the enum branch, and a
-    converter registered for the union would need one registration per
-    enum and per wrapping, such as `Optional[...]`. It is a class rather
-    than a closure so that it has a readable representation and can be
-    pickled with the field metadata.
+    The converter is declared on each field for two reasons. The union
+    converter of bagof keeps a string as it is, without trying the enum
+    branch of the union. A converter registered for the union type instead
+    would need one registration for each enum and for each wrapper around
+    it, such as `Optional[...]`. The converter is a class rather than a
+    closure so that it has a readable representation and can be pickled
+    with the field metadata.
 
     Examples
     --------

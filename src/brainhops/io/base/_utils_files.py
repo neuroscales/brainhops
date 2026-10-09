@@ -31,7 +31,10 @@ def open_path(file: tx.Any) -> tx.BinaryIO:
 
 
 def sibling(filename: tx.Any, name: str) -> tx.Any:
-    """Resolve `name` against the directory of `filename`, unless absolute."""
+    """Resolve `name` against the directory of `filename`, unless absolute.
+
+    An absolute `name` is returned as a path of its own.
+    """
     if os.path.isabs(name):
         return path.Path(name)
     if not isinstance(filename, path.PathLike):

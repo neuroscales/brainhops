@@ -124,6 +124,8 @@ class MatrixAffine(
     index_base: tx.Optional[tx.Tuple[int, int]] = None
     """The `(input, output)` voxel index base used when reading."""
 
+    # --- ArrayParser hooks ----------------------------------------------
+
     @classmethod
     def _accepts_array(cls, array: np.ndarray) -> bool:
         return is_numeric_array(array) and array.ndim == 2

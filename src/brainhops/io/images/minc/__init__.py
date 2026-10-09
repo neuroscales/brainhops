@@ -2,8 +2,9 @@ r"""MINC images.
 
 MINC is the volume format of the MNI and of pipelines such as CIVET and
 BigBrain. Two containers share the `.mnc` extension and are recognized
-from their content. The classes of this module only read files, and each
-of them answers to the hint `minc`.
+from their content. The classes of this module only read files. Each of
+them answers to the format hint `minc`, which is a format name that can
+be attached to a path to choose its reader.
 
 | Class        | Container                             | Hints             |
 | ------------ | ------------------------------------- | ----------------- |

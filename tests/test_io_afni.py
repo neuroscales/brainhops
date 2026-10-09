@@ -272,7 +272,8 @@ ORIENTS = [
     for flips in itertools.product((0, 1), repeat=3)
 ]
 
-# Code -> (DICOM axis, +1 toward L, P or S), as named in the README.
+# Each orientation code maps to its DICOM axis and to a sign that is +1
+# when the axis runs toward L, P or S, as named in the README.
 _DIRECTION = {
     0: (0, +1),
     1: (0, -1),
@@ -294,7 +295,8 @@ def test_the_cardinal_grid_follows_the_readme(orient) -> None:  # noqa: ANN001
         expected = np.zeros(3)
         for i, o in enumerate(orient):
             axis, _ = _DIRECTION[o]
-            # Voxel centre: ORIGIN + n * DELTA along the DICOM axis of axis n.
+            # The voxel centre lies at ORIGIN + n * DELTA along the DICOM
+            # axis of axis n.
             expected[axis] = origin[i] + index[i] * delta[i]
         assert np.allclose(matrix @ (*index, 1), (*expected, 1))
     back = afni_geometry_from_matrix(matrix)
@@ -320,7 +322,7 @@ def test_an_oblique_matrix_is_decomposed_as_afni_does() -> None:
     matrix[:3, 3] = (30.0, -40.0, 50.0)
     orient, origin, delta = afni_geometry_from_matrix(matrix)
     assert orient == (1, 4, 2)
-    # Sizes and origins are signed by orientation, as THD_daxes_from_mat44.
+    # Sizes and origins are signed by orientation, as in THD_daxes_from_mat44.
     assert np.allclose(delta, (-2.0, 3.0, -4.0))
     columns = matrix[:3, :3] / np.linalg.norm(matrix[:3, :3], axis=0)
     projections = columns.T @ matrix[:3, 3]

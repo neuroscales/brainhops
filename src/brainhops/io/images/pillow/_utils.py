@@ -1,10 +1,11 @@
 """Decoding and encoding raster images with Pillow.
 
-This backend turns a file into a C-ordered NumPy array, an axes description and
-a resolution, and back. Coordinate systems and transformations belong to the
-shared raster conventions of `brainhops.io.images.base._utils_raster`, so that
-every raster reader that decodes with Pillow (the Pillow reader, and the TIFF
-reader without tifffile) follows the same conventions.
+This module decodes a file into a C-ordered NumPy array, a description of its
+axes and a resolution, and it encodes such an array back into a file. It builds
+no coordinate systems or transformations. These are left to the shared raster
+conventions of `brainhops.io.images.base._utils_raster`, so that every raster
+reader that decodes with Pillow (the Pillow reader, and the TIFF reader
+without tifffile) follows the same conventions.
 
 !!! warning "Decompression bombs"
     Pillow refuses images larger than twice `PIL.Image.MAX_IMAGE_PIXELS` (about
@@ -13,7 +14,7 @@ reader without tifffile) follows the same conventions.
     Setting `PIL.Image.MAX_IMAGE_PIXELS = None` allows a trusted larger image.
 
 !!! note "No lazy access"
-    A whole frame is decoded, and read into memory, on open.
+    A whole frame is decoded and read into memory when the file is opened.
 """
 
 __all__ = [
@@ -96,7 +97,7 @@ extension, so that arbitrary binary data is not mistaken for them.
 DPI_FORMATS: tx.FrozenSet[str] = frozenset({"PNG", "JPEG", "BMP", "TIFF"})
 """The formats that can store a resolution in dots per inch."""
 
-# modes that store, per pixel, an index into a colour table
+# These modes store, for each pixel, an index into a colour table.
 _PALETTE_MODES = ("P", "PA")
 
 
@@ -129,8 +130,9 @@ class PillowRaster(Magic, frozen=True, eq=False):
     """The number of frames in the file."""
 
     dpi: tx.Optional[tx.Tuple[float, float]]
-    """The resolution recorded by the file, in dots per inch along x and y,
-    placeholders included.
+    """The resolution recorded by the file, in dots per inch along x and y.
+
+    Placeholder resolutions, such as 72 dpi, are kept.
     """
 
 
@@ -177,8 +179,8 @@ def sniff_pillow(
                 with Image.open(f, formats=formats) as im:
                     return im.format
             except Image.DecompressionBombError:
-                # an image of bomb size is still an image; the reader reports
-                # the limit
+                # An image beyond the size limit is still an image, and the
+                # reader reports the limit when it decodes the image.
                 return "unknown"
             except Exception:
                 return None
@@ -263,8 +265,8 @@ def pillow_dpi(
     """Return the resolution recorded in `info["dpi"]`, along x and y, or
     `None`.
 
-    Pillow reports it for PNG, JPEG, BMP and TIFF. A file that records only an
-    aspect ratio has no resolution.
+    Pillow reports the resolution for PNG, JPEG, BMP and TIFF. A file that
+    records only an aspect ratio has no resolution.
     """
     dpi = info.get("dpi")
     if dpi is None:
@@ -293,8 +295,9 @@ def read_pillow(
     file : str or PathLike or IO
         A path or a file object, which is not closed.
     frame : int, optional
-        The frame; a negative index counts from the end. Animated GIF frames
-        are composited, so frame `i` is the picture displayed at step `i`.
+        The index of the frame. A negative index counts from the end. Animated
+        GIF frames are composited, so frame `i` is the picture displayed at
+        step `i`.
     palette : bool, optional
         See [`pillow_to_array`][].
     formats : Sequence[str], optional
@@ -431,8 +434,8 @@ def array_to_pillow(array: tx.Any) -> "Image.Image":
     | `int32`, `(rows, columns)`                 | `I`                    |
     | `float32`, `(rows, columns)`               | `F`                    |
 
-    A trailing axis of one sample is dropped. Whether a format stores the
-    resulting mode is up to the format: JPEG cannot store `I;16`, for example.
+    A trailing axis of one sample is dropped. Whether the resulting mode can be
+    stored depends on the format; JPEG, for example, cannot store `I;16`.
 
     Raises
     ------
@@ -531,9 +534,10 @@ def encode_pillow(
     format : str
         The Pillow name of the format, such as `"PNG"`.
     dpi : tuple of float, optional
-        The resolution along x and y, passed only to [`DPI_FORMATS`][].
+        The resolution along x and y, which is passed only to the formats of
+        [`DPI_FORMATS`][].
     **options : Any
-        Passed to `Image.save`, such as `quality=95` for JPEG.
+        Options passed to `Image.save`, such as `quality=95` for JPEG.
 
     Raises
     ------

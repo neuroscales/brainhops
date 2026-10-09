@@ -80,9 +80,10 @@ grid. This is the chain held by
 a single block, as ANTs does, in little-endian double precision by
 default. A block read from an ITK file is written back unchanged, center
 included. Any other affine is written as an `AffineTransform` centered on
-the origin, which gives exactly `y = A x + t`; its endpoints must be the
-ITK space or unspecified, and an affine between RAS spaces is refused
-rather than reinterpreted. A chain must be composed first, with
+the origin, which gives exactly `y = A x + t`. The endpoints of such an
+affine must be the ITK space or left unspecified, and an affine between RAS
+spaces is refused rather than reinterpreted. A chain of several
+transformations must first be composed into one, for example with
 `.compute()`.
 
 ```python
@@ -108,18 +109,19 @@ transformations in point-application order, so it matches the ANTs list:
 
 Here `affine = io.load("out0GenericAffine.mat")` and
 `warp = io.load("out1Warp.nii.gz", hint="ants")`. The warps need the hint
-because their header does not say that they hold LPS vectors; they are
+because their header does not say that they hold LPS vectors, and they are
 read by [`brainhops.io.transformations.itk.nifti`][]. The `[file.mat,1]`
-syntax inverts a linear transform, which is `io.load("file.mat").inverse()`
-or `~`; ANTs writes inverse warps to their own files instead.
+syntax inverts a linear transform, which corresponds to
+`io.load("file.mat").inverse()` or to the `~` operator. For warps, ANTs
+writes the inverse to a separate file instead.
 
 A composite file (`<prefix>Composite.h5`) stores its blocks in the
 opposite order: the file `[Composite, T0, T1]` maps `x` to `T0(T1(x))`.
 Every ITK reader here lists composite blocks in application order, so the
 file reads as `Sequence([T1, T0])`, and `-t <prefix>Composite.h5` equals
-`-t T1 -t T0`. Blocks without a composite header are separate transforms,
-of which the first is read by default, with a warning, or another one with
-`position=`, as in `MatTransform.from_file(path, position=1)`.
+`-t T1 -t T0`. Blocks without a composite header are separate transforms.
+The first one is read by default, with a warning, and another one can be
+selected with `position=`, as in `MatTransform.from_file(path, position=1)`.
 """
 
 __all__ = ["MatTransform", "MatTransformParser"]

@@ -89,7 +89,6 @@ def test_getitem_preserves_geometry() -> None:
     assert sub.grid.shape == (2, 2, 4)
 
     # The origin of the sub-image is the world position of the first selected
-    #
     # voxel, and the spacing is unchanged.
     matrix = np.asarray(sub.transformation.compute().to(Affine).matrix)
     expected = np.asarray(_voxel_to_ras().matrix)
@@ -115,7 +114,6 @@ def test_reselecting_existing_transformation_does_not_duplicate() -> None:
     )
 
     # Selecting a transformation that is present moves it to the end, without
-    #
     # adding a copy.
     img.transformation = first
 
@@ -161,7 +159,6 @@ def test_multiscale_reslice_onto_own_grid() -> None:
     assert resliced.shape == level0.shape
     assert np.allclose(np.asarray(resliced), np.asarray(level0))
     # The pyramid-level transform is the identity, so the matrix is that of
-    #
     # the highest-resolution level.
     matrix = np.asarray(resliced.transformation.compute().to(Affine).matrix)
     assert np.allclose(matrix, np.asarray(_voxel_to_ras().matrix))
@@ -181,7 +178,6 @@ def test_multiscale_geometry_grid_lives_in_level_zero_voxel_space() -> None:
     geometry = pyramid.geometry
 
     # The grid lives in the voxel space of the highest-resolution level, not
-    #
     # in the model space.
     grid_space = getattr(geometry.grid.output, "name", None)
     voxel_space = getattr(level0.transformation.input, "name", None)
@@ -194,7 +190,6 @@ def test_reslice_selects_the_multiscale_level_that_matches_the_target() -> (
     None
 ):
     # A target twice as coarse selects the coarse level of a two-level
-    #
     # displacement field.
     import numpy as np
 
@@ -257,7 +252,6 @@ def test_multiscale_reslice_without_copy_may_share_the_level_data() -> None:
     resliced = pyramid.reslice(copy=False)
 
     # Reslicing onto the own grid only gathers, so the result is a view of the
-    #
     # selected level.
     assert np.shares_memory(resliced.data, pyramid.images[0].data)
 
@@ -299,7 +293,6 @@ def test_images_compare_by_identity() -> None:
 
 def test_every_image_type_compares_by_identity() -> None:
     # Identity holds even for format images, whose parser comes first in the
-    #
     # MRO.
     import brainhops.io  # noqa: F401  (registers every format)
     from brainhops.datamodel.images import Image

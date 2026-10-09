@@ -134,6 +134,8 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
 
     HINTS = ("itk", "ants")
 
+    # --- reading ------------------------------------------------------
+
     @classmethod
     def from_nibabel(cls, nifti: _NiftiObject, **kwargs) -> tx.Self:
         """
@@ -151,6 +153,7 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
             )
         return super().from_nibabel(nifti, **kwargs)
 
+    # --- endpoints ----------------------------------------------------
     # The endpoints are declared rather than read off the chain, which would
     # decode the data. They are the ITK LPS spaces, so a NIfTI warp and a .tfm
     # affine name the same space.
@@ -177,6 +180,8 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
         """The ITK physical space that the field maps to."""
         ndim = self._ndim()
         return None if ndim is None else _make_system(ndim)
+
+    # --- decoding -----------------------------------------------------
 
     def _grid(self) -> tx.Tuple[int, np.ndarray]:
         """
@@ -227,10 +232,14 @@ class ItkNiftiField(_xforms.ImmutableSequence, NiftiBasedTransformation):
     ) -> tx.Tuple[_systems.CoordinateSystem, _systems.CoordinateSystem]:
         return _make_system(ndim), _voxel_system(ndim)
 
+    # --- slots --------------------------------------------------------
+
     @property
     def lps2voxel(self) -> tx.Optional[_xforms.Transformation]:
         """The affine from LPS world coordinates to the voxels of the field."""
         return self.transformations[0]
+
+    # --- writing ------------------------------------------------------
 
     def _xform_codes(self) -> tx.Tuple[int, int]:
         """
@@ -347,6 +356,8 @@ class ItkNiftiDisplacementField(ItkNiftiField):
     bound: tx.ClassVar[BoundaryCondition] = BoundaryCondition.nearest
     """Boundary condition outside the field of view."""
 
+    # --- chain --------------------------------------------------------
+
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
@@ -392,6 +403,8 @@ class ItkNiftiDisplacementField(ItkNiftiField):
         The affine from the voxels of the field back to LPS world coordinates.
         """
         return self.transformations[2]
+
+    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides
@@ -466,6 +479,8 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
         """Never claim a file, since only a hint can select this reader."""
         return Confidence.NO
 
+    # --- chain --------------------------------------------------------
+
     @smartproperty(cache=True)
     def transformations(self) -> tx.Tuple[_xforms.Transformation, ...]:
         """
@@ -489,6 +504,8 @@ class ItkNiftiCoordinatesField(ItkNiftiField):
     def coordinates(self) -> tx.Optional[_xforms.Transformation]:
         """The field of LPS coordinates, on the grid of the field."""
         return self.transformations[1]
+
+    # --- writing ------------------------------------------------------
 
     def to_nibabel(
         self, like: tx.Any = None, **overrides

@@ -18,15 +18,15 @@ encoding differs from the RAS fields of
 
 An ITK field therefore maps `x_lps` to `x_lps + u_lps(x)`, and the same
 displacement in RAS is `(-u_x, -u_y, u_z)`. In 2-D, ITK negates the x and
-y rows of the geometry as well, so a 2-D image lives in (L, P) and the
-displacement `(u_x, u_y)` is `(-u_x, -u_y)` in (R, A). The same classes
+y rows of the geometry as well, so a 2-D image is expressed in (L, P) and
+the displacement `(u_x, u_y)` is `(-u_x, -u_y)` in (R, A). The same classes
 read both dimensionalities, and their endpoints are the ITK spaces used by
 the `.tfm` and `.h5` readers, so that a warp and an affine from ITK name
 the same space.
 
 ## Telling an ITK field from a RAS NIfTI field
 
-The header alone cannot always tell the frame:
+The header alone does not always reveal which frame a field uses:
 
 | Header                             | Read as, without a hint            |
 | ---------------------------------- | ---------------------------------- |
@@ -41,9 +41,10 @@ The header alone cannot always tell the frame:
 - The intent name `"Mapping"`, used by SPM12 `y_` deformations and by the
   brainhops RAS writer, is such evidence, since ITK never writes an
   intent name.
-- A hint decides: `load(path, hint="itk")` (or `"ants"`) reads the file as
-  an ITK displacement field whatever its intent, and
-  `hint="itk.coordinates"` as an ITK coordinates field. Calling
+- A hint settles the question. With `load(path, hint="itk")`, or with
+  `hint="ants"`, the file is read as an ITK displacement field whatever its
+  intent, and with `hint="itk.coordinates"` it is read as an ITK
+  coordinates field. Calling
   `ItkNiftiDisplacementField.from_file(path)` does the same. A
   three-component `DISPVECT` file read this way has its RAS vectors
   converted to LPS, as ITK does.
@@ -69,8 +70,8 @@ Sources
 - ANTs writes the `antsRegistration` warps (`<prefix><n>Warp.nii.gz`,
   `<prefix><n>InverseWarp.nii.gz`) with `itk::ImageFileWriter`
   (`itk::ants::WriteTransform` in `Utilities/itkantsReadWriteTransform.h`),
-  so they follow this encoding, and the readers answer `hint="ants"` as
-  they answer `hint="itk"`.
+  so they follow this encoding, and the readers treat `hint="ants"` in the
+  same way as `hint="itk"`.
 """
 
 __all__ = [

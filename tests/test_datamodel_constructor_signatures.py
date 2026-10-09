@@ -27,7 +27,6 @@ from brainhops.datamodel.transformations import (
 )
 
 # Positional parameters of each public transformation, in order, keyed by
-#
 # the defining module. All other parameters are keyword-only.
 POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.concrete": {
@@ -268,7 +267,6 @@ def _subclasses(cls: type) -> tx.List[type]:
 
 
 # Every transformation class defined by the package, but none defined by
-#
 # tests.
 ALL = sorted(
     (
@@ -280,7 +278,6 @@ ALL = sorted(
 )
 
 # A parameterized class such as `Inverse[Affine]` is reached through its
-#
 # origin class.
 PUBLIC = [
     cls
@@ -327,7 +324,6 @@ def test_every_public_transformation_is_pinned(cls: type) -> None:
 @pytest.mark.parametrize("cls", ALL, ids=_id)
 def test_the_endpoints_are_keyword_only(cls: type) -> None:
     # A subclass that redeclares an endpoint with its own default must also
-    #
     # write `KwOnly[...]`, which is not inherited.
     kinds = {p.name: p.kind for p in _parameters(cls)}
     for name in KEYWORD_ONLY:

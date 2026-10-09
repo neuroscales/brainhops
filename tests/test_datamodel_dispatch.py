@@ -99,7 +99,6 @@ def test_intermediate_axes_reach_their_subclasses(
 
 def test_an_anatomical_orientation_makes_a_spatial_axis() -> None:
     # An anatomical direction is a direction in space, so an axis that names
-    #
     # one is spatial, even when the axis counts samples.
     axis = ax.Axis(orientation=LeftToRight(), unit="index")
     assert type(axis) is ax.LeftToRightAxis
@@ -317,7 +316,6 @@ def test_ras_dispatch_follows_the_orientations() -> None:
 
 def test_a_physical_system_needs_physical_axes() -> None:
     # A physical system may be open or leave its unit unspecified (#112), so
-    #
     # its defaults are not refused.
     assert cs.PhysicalCoordinateSystem().axes == [...]
     assert cs.PhysicalCoordinateSystem(axes=[]).ndim == 0
@@ -415,7 +413,6 @@ def test_two_default_systems_share_no_axis_with_another_class(
 
 def test_the_singleton_orientations_are_frozen() -> None:
     # Every left-to-right axis holds the one `LeftToRight`, which no axis can
-    #
     # change.
     with pytest.raises(AttributeError):
         ax.R().orientation.value = "right-to-left"
@@ -449,7 +446,6 @@ _ORDERED = [
 
 def _bases(cls: type) -> tx.List[type]:
     # Every system class above `cls`, the root included, except an anatomical
-    #
     # parent that cannot hold the S, A, R axes of a C-ordered grid.
     anatomical = {
         cs.RASCoordinateSystem,
@@ -499,7 +495,6 @@ def test_an_ordered_class_is_reached_from_every_base(cls: type) -> None:
         (cs.CoordinateSystem, _plain(2), "C", cs.CArrayCoordinateSystem2D),
         (cs.CoordinateSystem, _plain(3), "F", cs.FArrayCoordinateSystem3D),
         # An order says that the axes index an array, so unitless spatial axes
-        #
         # suffice.
         (cs.CoordinateSystem, _space(2), "C", cs.CPixelCoordinateSystem),
         (

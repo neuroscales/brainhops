@@ -83,7 +83,7 @@ def test_a_field_without_an_intent_is_not_read_as_displacements(
 
 @pytest.mark.parametrize("hint", ["nifti.coordinates", "coordinates"])
 def test_a_hint_reads_a_dispvect_file_as_coordinates(tmp_path, hint) -> None:  # noqa: ANN001
-    """Older brainhops wrote coordinates as DISPVECT; a hint reads them."""
+    """A hint reads the DISPVECT coordinates that older brainhops wrote."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     loaded = io.transformations.load(path, hint=hint)
     assert type(loaded) is NiftiRASCoordinatesField
@@ -106,7 +106,7 @@ def test_a_field_shape_is_recognized_without_an_intent_code(
 
 
 def test_the_spm_prefix_wins_an_otherwise_exact_tie(tmp_path) -> None:  # noqa: ANN001
-    """The SPM and generic fields are byte-identical; y_ breaks the tie."""
+    """The SPM and generic fields are byte-identical, so y_ breaks the tie."""
     path = _write(tmp_path, "y_sub01.nii", (4, 5, 6, 1, 3), VECTOR)
     assert type(io.transformations.load(path)) is SpmCoordinatesField
 

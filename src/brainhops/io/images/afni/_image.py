@@ -135,6 +135,8 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         ".brik.bz2",
     )
 
+    # --- reading ------------------------------------------------------
+
     @classmethod
     def _from_header(
         cls, header: AfniHeader, bricks: np.ndarray, **kwargs
@@ -154,6 +156,8 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         if header.nvals == 3:
             return Confidence.WEAK
         return Confidence.LIKELY
+
+    # --- data model ---------------------------------------------------
 
     @smartproperty
     def data(self) -> tx.Optional[tx.Any]:
@@ -181,6 +185,8 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         if self.header is None:
             return list(getattr(self, "_transformations", None) or [])
         return _afni_to_transformations(self.header)
+
+    # --- writing ------------------------------------------------------
 
     def _afni_data(self) -> tx.Any:
         data = self.data
@@ -247,6 +253,7 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         nvals = shape[3] if len(shape) == 4 else 1
         source = self.header
 
+        # --- geometry -------------------------------------------------
         matrix = afni_voxel_to_dicom(self.transformation)
         if not np.all(np.isfinite(matrix)) or not np.linalg.det(matrix):
             raise WriterError(
@@ -264,6 +271,7 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
             orient, origin, delta = afni_geometry_from_matrix(matrix)
         cardinal = afni_cardinal_matrix(orient, origin, delta)
 
+        # --- view and type --------------------------------------------
         output = getattr(self.transformation, "output", None)
         name = getattr(output, "name", None)
         chosen = (
@@ -282,6 +290,7 @@ class AfniImage(AfniParser, WritableFileBasedImage, SingleScaleImage):
         stored = brick_dtype(datatype)
         taxis = _time_axis(self, source, nvals)
 
+        # --- attributes -----------------------------------------------
         attrs = OrderedDict()
         typestring, scene = _typestring_and_scene(source, nvals, taxis)
         attrs["TYPESTRING"] = typestring

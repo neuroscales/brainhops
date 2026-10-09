@@ -8,16 +8,13 @@ from brainhops._core.properties import lazyproperty, smartproperty, smartsetter
 
 def _box(unset: tx.Any = None, cache: bool = False) -> type:
     # A class with one property `value`, stored as `_value`, that counts how
-    #
     # often its value is computed.
     class Box:
         computed = 0
 
         def __init__(self, value: tx.Any = None) -> None:
-            # The constructor writes its argument through the setter, default
-            # included,
-            #
-            # as a data model does.
+            # The constructor writes its argument, including the default,
+            # through the setter, as a data model does.
             self.value = value
 
         @smartproperty(unset=unset, cache=cache)
@@ -39,7 +36,7 @@ def _odd(value: tx.Any) -> bool:
         (None, None, True),
         (None, [], False),
         (None, 0, False),
-        # "empty": only an empty container is unset, not None.
+        # With "empty", only an empty container is unset, not None.
         ("empty", [], True),
         ("empty", (), True),
         ("empty", {}, True),
@@ -48,11 +45,11 @@ def _odd(value: tx.Any) -> bool:
         ("empty", [0], False),
         ("empty", "", False),
         ("empty", None, False),
-        # A predicate.
+        # A predicate decides which values are unset.
         (_odd, 3, True),
         (_odd, 2, False),
         (_odd, None, False),
-        # A tuple: any member may match.
+        # With a tuple, any member may match.
         ((None, "empty"), None, True),
         ((None, "empty"), [], True),
         ((None, "empty"), [1], False),
@@ -152,9 +149,11 @@ def test_the_former_options_are_gone() -> None:
 # smartsetter
 
 
+# --- smartsetter ------------------------------------------------------
+
+
 def _setter_box() -> type:
     # `value` reads `_value`, named after its setter, and counts its calls;
-    #
     # `other` reads the given `_stored`.
     class Box:
         calls = 0
@@ -197,7 +196,6 @@ def test_smartsetter_reads_the_private_attribute() -> None:
 
 def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
     # As in the transformations: the field is stored privately, the constructor
-    #
     # takes the public name, and assignment runs the setter.
     from bagof.magic import Magic
 

@@ -15,6 +15,10 @@ from brainhops.io.common.nifti._header import (
 )
 from brainhops.io.transformations.base import AffineTransformationFormat
 from brainhops.io.transformations.base.affines import RASToVoxel, VoxelToRAS
+from brainhops.io.transformations.base.conversions import (
+    convert_instance,
+    converts_to,
+)
 from brainhops.io.transformations.nifti.base import NiftiBasedTransformation
 
 
@@ -116,6 +120,22 @@ class NiftiRASToVoxel(RASToVoxel, _NiftiAffine):
             self._data = None
             self._explicit_matrix = data
 
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
+
     def inverse(self, compute: bool = False, **kwargs) -> VoxelToRAS:
         """Return the inverse transformation, from voxel to RAS space."""
         if getattr(self, "_explicit_matrix", None) is None:
@@ -157,6 +177,22 @@ class NiftiVoxelToRAS(VoxelToRAS, _NiftiAffine):
         if data is not None:
             self._data = None
             self._explicit_matrix = data
+
+    # --- conversions --------------------------------------------------
+    # Another transformation is converted, as `t.to(cls)` converts it;
+    # anything else is read or copied as the bases do.
+
+    @classmethod
+    def from_any(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_any(other, *args, **kwargs)
+
+    @classmethod
+    def from_instance(cls, other: tx.Any, *args, **kwargs) -> tx.Self:
+        if converts_to(cls, other):
+            return convert_instance(cls, other, *args, **kwargs)
+        return super().from_instance(other, *args, **kwargs)
 
     def inverse(self, compute: bool = False, **kwargs) -> RASToVoxel:
         """Return the inverse transformation, from RAS to voxel space."""

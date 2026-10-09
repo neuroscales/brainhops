@@ -11,12 +11,13 @@ read from the normal form `[grid, F_1, ..., F_m, Pi_perm?]` returned by
 of grid axes and the trailing permutation sends the groups to the data
 axes.
 
-This module executes one step per group: a gather or a view for a group
-without interpolation (a flip or an integer shift), a precomputed weight
-matrix for a one-dimensional affine group, and an N-d pull over its own axes
-for any other group. The result equals the monolithic reslice within
-interpolation tolerance, and it is bit-identical when nothing is separable,
-because the monolithic pull is then used unchanged.
+This module executes one step per group. A group that needs no
+interpolation, such as a flip or an integer shift, is applied as a gather or
+a view. A one-dimensional affine group is applied with a precomputed weight
+matrix, and any other group is sampled by an N-d pull over its own axes. The
+result equals that of the monolithic reslice, a single N-d pull over all
+axes, within interpolation tolerance. It is bit-identical when nothing is
+separable, because the monolithic pull is then used unchanged.
 """
 
 import numpy as np
@@ -92,13 +93,15 @@ def pull_separable(
         # The monolithic pull writes into an array that it allocates.
         return _fresh(pull(data, seq.compute().field, **opt), data, copy, True)
 
-    # Work in floating point so that integer input is not rounded between
-    # steps; gather and pull preserve the dtype they are given.
+    # The steps work in floating point so that an integer input is not
+    # rounded between them. The gather and pull steps preserve the dtype that
+    # they are given, so an integer input is converted to float once here.
     ab = get_array_backend(data)
     out_dtype = np.dtype(data.dtype)
     floating = np.issubdtype(out_dtype, np.floating)
     arr = data if floating else data.astype(float)
-    # Only gather steps and the transpose can return a view of `data`.
+    # Only the gather steps and the transpose can return a view of `data`,
+    # so `fresh` records whether the result is known to be a new array.
     fresh = not floating or any(step["kind"] != "gather" for step in steps)
     labels: tx.List[tx.Any] = [("data", i) for i in range(data.ndim)]
     for step in steps:
@@ -106,16 +109,18 @@ def pull_separable(
 
     permutation = [labels.index(("grid", g)) for g in range(data.ndim)]
     arr = ab.transpose(arr, permutation)
-    # The monolithic pull reproduces scipy's map_coordinates, so integer and
-    # boolean output is finished as scipy does.
+    # The monolithic pull reproduces scipy's map_coordinates, so an integer
+    # or boolean output is converted back in the same way as in scipy.
     if arr.dtype != out_dtype:
         fresh = True
         if out_dtype.kind == "b":
-            # scipy truncates toward zero for boolean output (0.6 gives False).
+            # scipy truncates toward zero for a boolean output, so a value
+            # such as 0.6 becomes False.
             arr = ab.trunc(arr).astype(out_dtype)
         elif np.issubdtype(out_dtype, np.integer):
-            # scipy rounds integer output half away from zero, then clips it to
-            # the dtype range (saturating instead of wrapping).
+            # scipy rounds an integer output half away from zero, then clips
+            # it to the dtype range, so that an overshoot saturates instead
+            # of wrapping.
             rounded = ab.trunc(ab.where(arr > 0, arr + 0.5, arr - 0.5))
             info = np.iinfo(out_dtype)
             arr = ab.clip(rounded, info.min, info.max).astype(out_dtype)
@@ -138,9 +143,12 @@ def pull_separable(
 def _groups(
     nf: Transformation, ndim: int
 ) -> tx.Optional[tx.Tuple[CartesianField, tx.List[dict]]]:
-    # A group holds grid axes G, the paired data axes D and the inner
-    # transformation from G to D. The factor pass drops identity factors, so an
-    # unnamed grid axis forms its own group without an inner transformation.
+    # Read the sampling grid and the axis groups of a normal form, or return
+    # None when `nf` is not a normal form over `ndim` axes. A group holds its
+    # grid axes G, the data axes D that are paired with them, and the inner
+    # transformation from G to D. The factor pass drops identity factors, so
+    # a grid axis that no factor names forms its own group without an inner
+    # transformation.
     if isinstance(nf, CartesianField):
         grid, body = nf, []
     elif isinstance(nf, Sequence) and nf.transformations:
@@ -181,14 +189,18 @@ def _groups(
         )
     for a in free:
         groups.append({"G": [a], "D": [data_axis[a]], "inner": None})
-    # Planning in grid-axis order makes the run order of equal-cost steps, and
-    # hence the rounding, independent of the factors that the pass dropped.
+    # The steps are planned in grid-axis order. As a result, the order in
+    # which two steps of equal cost run, and therefore the rounding, does not
+    # depend on which factors the factor pass dropped.
     groups.sort(key=lambda group: min(group["G"]))
     return grid, groups
 
 
 def _line(inner: tx.Optional[Transformation]) -> tx.Optional[tuple]:
-    # None means that there is no affine reading, and the group is then pulled.
+    # Return the scale and shift of a one-dimensional inner transformation.
+    # None means that the inner transformation has no one-dimensional affine
+    # form, for example because the pieces of its group could not be
+    # composed, and the group is then sampled with a pull.
     if inner is None:
         return 1.0, 0.0
     try:
@@ -208,8 +220,11 @@ def _line(inner: tx.Optional[Transformation]) -> tx.Optional[tuple]:
 # ----------------------------------------------------------------------
 
 
-# Largest weight matrix (n_out * n_in elements, about 32 MiB at float64) before
-# a batched pull, which gives the same result, is used instead.
+# This constant is the largest number of elements, n_out * n_in, that the
+# weight matrix of a one-dimensional step may have. A larger matrix is not
+# built, and the axis is sampled by a batched pull instead, which gives the
+# same result without materializing the matrix. Four million elements take
+# about 32 MiB at float64.
 _MAX_WEIGHT_MATRIX_ELEMENTS = 4_000_000
 
 
@@ -223,6 +238,9 @@ def _classify(
     grid_system: tx.Optional[tx.Any],
     data_system: tx.Optional[tx.Any],
 ) -> dict:
+    # Build one executable step for a group. The step is a gather when no
+    # value is interpolated, a weight matrix for a one-dimensional affine
+    # group, and a batched pull for a coupled or interpolating group.
     grid_axes = group["G"]
     data_axes = group["D"]
     inner = group["inner"]
@@ -244,9 +262,12 @@ def _classify(
         # output sample to one input sample, so no interpolation is needed.
         integer_shift = abs(shift - round(shift)) < 1e-9
         unit = abs(abs(scale) - 1.0) == 0.0 and integer_shift
-        # A gather matches the monolithic pull only if the pull returns the
-        # input sample. It does not with coefficients at degree 2 or more, nor
-        # with scipy's `reflect` prefilter above degree 1.
+        # A gather returns the input sample itself, which matches the
+        # monolithic pull only when the pull returns the same sample. The
+        # pull returns a reconstruction instead when the data holds spline
+        # coefficients at degree 2 or more, and scipy's `reflect` prefilter
+        # is not exactly interpolating above degree 1. A continuous axis in
+        # those cases uses the weight matrix, which reproduces the pull.
         gather = degree <= 1 or (not coeff and bound != "reflect")
         # A discrete axis holds no value between samples, so a whole-sample map
         # along it is always an exact gather and is never blended.
@@ -292,14 +313,16 @@ def _discrete_axis(
     grid_system: tx.Optional[tx.Any],
     data_system: tx.Optional[tx.Any],
 ) -> tx.Tuple[bool, tx.Optional[str]]:
+    # Decide whether the group touches a discrete axis, such as a channel
+    # axis, and return the name of that axis.
     discrete = False
     name: tx.Optional[str] = None
     for axis_index, system in (
         (group["G"], grid_system),
         (group["D"], data_system),
     ):
-        # Positional access reads the axes that an open system states; an
-        # unknown axis is not discrete.
+        # Positional access reads the axes that an open system states, and
+        # an axis that the system does not state is treated as continuous.
         axes = get_axes(system)
         for a in axis_index:
             if axes.ndim is not None and a >= axes.ndim:
@@ -334,10 +357,11 @@ def _check_discrete(
 def _order_steps(
     steps: tx.List[dict], degree: int, coeff: bool
 ) -> tx.List[dict]:
-    # Steps act on disjoint axes and commute, so they are ordered to keep
-    # intermediates small. The ratio r is the output size over the input size,
-    # and w estimates the work per element. Shrinking steps come first, then
-    # size-preserving steps (free views first), then growing steps.
+    # The steps act on disjoint axes and commute, so they are ordered to keep
+    # the intermediate arrays small. The ratio r of a step is its output size
+    # over its input size, and its weight w estimates the work per element.
+    # Steps that shrink the array run first, and steps that keep its size run
+    # next, with the free views first. Steps that grow the array run last.
     for step in steps:
         k = step["k"]
         kind = step["kind"]
@@ -373,9 +397,11 @@ def _plan(
     bound: tx.Union[str, float],
     coeff: bool,
 ) -> tx.Optional[tx.List[dict]]:
-    # None when `seq` does not factor into at least two groups. An uncomputable
-    # transformation is left to the monolithic pull, which reports the
-    # malformed input.
+    # Return the ordered steps that reslice data of shape `data_shape`
+    # through `seq`, or None when `seq` does not factor into at least two
+    # groups, in which case the monolithic pull is used. A transformation
+    # that cannot be computed is also left to the monolithic pull, which
+    # reports the malformed input.
     try:
         nf = seq.compute(mode=kinds.Affine, factor=True)
     except Exception:
@@ -449,11 +475,14 @@ def _make_gather(
         ab = get_array_backend(arr)
         axis = labels.index(("data", d))
         coords = np.arange(n_out) * scale + shift
-        # Degree-0 weights map each output coordinate to the input sample it
-        # lands on; a row that sums to zero lies outside the grid. TODO:
-        # spline_matrix builds an n_in x n_in identity here, which takes
-        # O(n_in**2) memory; index arithmetic per boundary mode would avoid it
-        # but must reproduce scipy's boundary indices exactly.
+        # Degree-0 weights map each output coordinate to the input sample
+        # that it lands on. A row that sums to zero lies outside the grid
+        # and is filled with the boundary constant, or with zero when the
+        # boundary is given by name.
+        # TODO: spline_matrix builds an n_in x n_in identity here, which
+        # takes O(n_in**2) memory. Index arithmetic per boundary mode would
+        # avoid that cost, but it must reproduce scipy's boundary indices
+        # exactly.
         weights = np.asarray(spline_matrix(n_in, coords, 0, bound0, True))
         rowsum = weights.sum(1)
         idx = weights.argmax(1)

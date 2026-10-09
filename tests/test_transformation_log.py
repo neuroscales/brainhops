@@ -74,8 +74,9 @@ def _grid(shape: tuple = SHAPE) -> np.ndarray:
     return np.stack(np.meshgrid(*axes, indexing="ij"), -1)
 
 
-# A linear velocity x -> Lx + l in voxels, whose time-one flow is expm([[L, l],
-# [0, 0]]); the offset keeps it small near the centre.
+# A linear velocity v(x) = Lx + l in voxels, whose time-one flow is
+# expm([[L, l], [0, 0]]). The offset l is chosen so that the velocity is small
+# near the centre of the grid.
 FIELD_GENERATOR = np.array([[0.05, -0.2], [0.2, 0.03]])
 FIELD_OFFSET = np.array([0.3, -0.2]) - FIELD_GENERATOR @ np.full(2, 15.5)
 FIELD_TANGENT = np.concatenate([FIELD_GENERATOR, FIELD_OFFSET[:, None]], 1)
@@ -163,7 +164,8 @@ def test_steps_exist_only_on_a_velocity() -> None:
     ids=lambda x: getattr(x, "__name__", ""),
 )
 def test_a_map_class_refuses_the_flag(cls: type, data: np.ndarray) -> None:
-    # An instance cannot change its class; t.to(log=True) converts.
+    # An instance cannot change its class, so t.to(log=True) converts it
+    # instead.
     t = cls(data=data)
     with pytest.raises(AttributeError):
         t.log = True
@@ -274,7 +276,7 @@ def test_field_views_under_every_encoding() -> None:
     np.testing.assert_allclose(
         values.field[INTERIOR], _linear_flow()[INTERIOR], atol=5e-3
     )
-    # As in NiftyReg -vel -cpp.
+    # The same holds for spline coefficients, as in NiftyReg -vel -cpp.
     coeffs = StationaryVelocityField(
         data=coefficients, degree=DEGREE, store="coefficients"
     )
@@ -518,7 +520,8 @@ def test_the_inverse_of_a_velocity_integrates_its_negation() -> None:
     materialized = inverse.compute()
     assert type(materialized) is StationaryVelocityField
     np.testing.assert_array_equal(materialized.data, -velocity.data)
-    # Identity up to integration error.
+    # The inverse composed with the velocity is the identity up to
+    # integration error.
     residual = (materialized @ velocity).compute(simplify=False)
     np.testing.assert_allclose(residual.field[INTERIOR], 0, atol=1e-2)
 
@@ -782,7 +785,10 @@ def test_a_copy_of_a_velocity_into_a_displacement_is_integrated() -> None:
     np.testing.assert_array_equal(copied.field, velocity.field)
 
 
-# A velocity framed by a change of coordinates.
+# Wrap a transform in a change of coordinates and its inverse.
+
+
+# --- a chain between a change of coordinates --------------------------
 
 
 def _framed(middle: object) -> Sequence:

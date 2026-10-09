@@ -24,9 +24,12 @@ from brainhops._ext.npfileobj.indexing import IndexLike
 
 
 def full_heuristic(*args, **kwargs) -> _tx.Literal["full", "contiguous", None]:
-    """Heuristic that always chooses to read the full dimension.
+    """Heuristic that never reads bytes that the slice does not need.
 
-    The function calls `threshold_heuristic` with `skip_thresh=0`.
+    The function calls `threshold_heuristic` with `skip_thresh=0`, so that
+    every gap in memory is skipped rather than read and discarded. Despite
+    the name of the function, it returns `None` for every slice, and it
+    returns `"full"` only for an integer index on an axis of length 1.
     """
     return threshold_heuristic(*args, **kwargs, skip_thresh=0)
 
@@ -100,11 +103,12 @@ def writeslice(
 
     The file holds an array of shape `shape`, type `dtype` and layout
     `order`, stored contiguously from byte `offset`, and `dat` is written
-    into `array[sliceobj]`. Instead of many short writes separated by seeks,
-    it is sometimes faster to read a larger block, modify it in memory and
-    write it back. The `heuristic` decides between these strategies. It is
-    the same heuristic as for reading, which may be suboptimal because
-    reading and writing a block costs more than reading and discarding it.
+    into `array[sliceobj]`. Many short writes separated by seeks can be
+    slow, so it is sometimes faster to read a larger block, modify it in
+    memory and write it back. The `heuristic` decides between these two
+    strategies. The default heuristic is the one used for reading, which
+    may be suboptimal, because reading a block and writing it back costs
+    more than reading a block and discarding part of it.
 
     Parameters
     ----------
@@ -126,8 +130,9 @@ def writeslice(
         Function of a slice, an axis length and a stride that returns
         `"full"`, `"contiguous"` or `None`. See `threshold_heuristic`.
     lock : threading.Lock or lock-like, optional
-        Lock that guards each pair of seek and input or output calls. Threads
-        that share a file must share a lock. By default, no lock is used.
+        Lock that guards each `seek` call together with the read or write
+        that follows it. Threads that share a file must share a lock. By
+        default, no lock is used.
 
     Raises
     ------
@@ -319,7 +324,8 @@ def optimize_write_slicer(
             raise ValueError(f"Unexpected return {action} from heuristic")
         if is_int and action == "contiguous":
             raise ValueError("int index cannot be contiguous")
-        # On the slowest axis, a full read is downgraded.
+        # On the slowest axis, a full read is downgraded to a contiguous
+        # read, or to no read at all for an integer index.
         if is_slowest and action == "full":
             action = None if is_int else "contiguous"
         if action == "full":
@@ -335,7 +341,7 @@ def optimize_write_slicer(
                     slice(slicer.start, slicer.stop, 1),
                     slice(None, None, slicer.step),
                 )
-    # Default: make the step positive with the pre-slicer.
+    # By default, the pre-slicer only makes the step positive.
     if is_int:
         return None, slicer, slice(None)
     if slicer.step > 0:

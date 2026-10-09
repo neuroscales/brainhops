@@ -1,7 +1,11 @@
 """Choice of the registered parser that reads an input.
 
-Dispatch depends only on a registry, a set of parser classes, and on the input,
-not on the class hierarchy. This module explains why a parser was chosen.
+The functions in this module choose, among the parser classes collected in a
+registry, the one that reads a given input. The choice depends only on the
+registry and on the input, not on the class hierarchy. When no single parser
+can be chosen, the error message either reports the error raised by each
+parser that was tried, or lists the formats that could not be told apart and
+explains how to select one of them.
 """
 
 __all__ = ["Source", "parse", "sniff"]
@@ -28,8 +32,9 @@ from brainhops.io.base.specs import SourceSpec, format_hints, parser_for
 
 _T = tx.TypeVar("_T")
 
-# Formats left unregistered for lack of an optional dependency, by hint:
-# hint -> (package, extra).
+# Formats that are not registered because an optional dependency is missing.
+# Each entry maps a format hint to the package that the format needs and to the
+# brainhops extra that installs it.
 _MISSING_FORMATS: tx.Dict[str, tx.Tuple[str, str]] = {}
 
 
@@ -38,7 +43,8 @@ def register_missing_format(
 ) -> None:
     """Record that the formats answering to `hints` need `package`.
 
-    Requesting one of them by hint then names the extra to install.
+    When one of these formats is later requested by hint, the error message
+    names the extra to install.
     """
     for hint in hints:
         _MISSING_FORMATS[str(hint).lower()] = (package, extra)
@@ -56,12 +62,13 @@ def _missing_formats(hints: tx.Iterable[str]) -> str:
 
 
 class Source:
-    """A parse input that can be read again from the start.
+    """An input to parse, which can be read again from the start.
 
     Dispatch sniffs and parses an input with several parsers in turn, and each
-    attempt consumes it. Paths and in-memory content are returned as they are,
-    seekable streams are rewound, non-seekable streams are read once into
-    memory, and one-shot iterables of lines are materialized into a list.
+    attempt may consume the input. To make repeated reads possible, paths and
+    in-memory content are kept as they are, seekable streams are rewound
+    before each read, non-seekable streams are read once into memory, and
+    one-shot iterables of lines are collected into a list.
 
     A `str` is a path. Text held in memory must be wrapped with [`content`][],
     because the type alone cannot tell the two apart.
@@ -138,7 +145,7 @@ class Source:
         try:
             exists = filename.exists()
         except Exception:
-            return None  # Existence cannot be checked (remote store).
+            return None  # A remote store may not support existence checks.
         return None if exists else filename
 
     @property
@@ -184,21 +191,21 @@ def _base_name(text: str) -> str:
     """Return the last component of a local path or of the path of a URL."""
     # TODO: use bagof.paths.Path instead.
     if "::" in text and "://" in text:
-        # In an fsspec chain, the last link is the file and the others are
-        # layers
-        # such as caches or archives.
+        # In an fsspec chain, the last link is the file, and the other links
+        # are layers such as caches or archives.
         text = text.rsplit("::", 1)[-1]
     if _has_scheme(text):
-        # The query and fragment may contain slashes and dots.
+        # Only the path of the URL is kept, because the query and the
+        # fragment may contain slashes and dots.
         text = urlsplit(text).path
-        # Strip trailing slashes so that directory stores such as .zarr are
-        # named.
+        # Trailing slashes are stripped so that a directory store, such as a
+        # .zarr folder, still gets a name.
         return text.rstrip("/").rsplit("/", 1)[-1]
     return basename(text.rstrip("/" + sep))
 
 
 def _has_scheme(text: str) -> bool:
-    """Whether `text` starts with a URL scheme such as `s3:`.
+    """Return whether `text` starts with a URL scheme such as `s3:`.
 
     A scheme has at least two characters, so a drive such as `C:` is not one.
     """
@@ -217,9 +224,10 @@ def _match_name(name: str, cls: type) -> tx.Optional[tx.Tuple[int, int]]:
     """Measure how much of a file name a format accounts for.
 
     The result holds the lengths of the longest matching declared extension and
-    prefix, so that `.nii.gz` beats `.gz` and `iy_` beats `y_`. It is `None`
-    when no extension matches, or when the format declares prefixes and none
-    matches, because a prefix is a requirement rather than a hint.
+    prefix, so that `.nii.gz` beats `.gz` and `iy_` beats `y_`. The result is
+    `None` when no extension matches, or when the format declares prefixes
+    and none of them matches, because a prefix is a requirement rather than a
+    hint.
     """
     extension = None
     for ext in cls.EXTENSIONS:
@@ -243,9 +251,10 @@ def _registry_depth(cls: type) -> int:
     """Count the dispatcher levels above a format.
 
     A format registered under `FileBasedImage` is classified more finely than
-    one registered only under the root, and wins a tie. Registry levels are
-    counted rather than classes, because hierarchy depth says nothing about
-    match quality.
+    one registered only under the root, and therefore wins a tie. Only the
+    ancestors that own a registry are counted, rather than all ancestors,
+    because the depth of the class hierarchy says nothing about how well a
+    format matches.
     """
     return sum(1 for base in cls.__mro__ if "_REGISTRY" in base.__dict__)
 
@@ -255,7 +264,8 @@ def _drop_base_classes(
 ) -> tx.List[tx.Tuple[type, tx.Any]]:
     """Drop candidates that are base classes of another candidate.
 
-    The subclass is more specific, as in `functools.singledispatch`.
+    A subclass is more specific than its base class, so the base class is
+    dropped, as in `functools.singledispatch`.
     """
     classes = [cls for cls, _ in candidates]
     return [
@@ -280,13 +290,14 @@ def _specificity(
     1. the confidence of the sniffer;
     2. the length of the matching extension;
     3. the length of the matching required prefix;
-    4. the registry depth;
+    4. the registry depth, that is, the number of dispatchers above the
+       format;
     5. the narrowness of the declared extensions: a parser declaring `.lta`
        alone beats one declaring five, and both beat one declaring none;
     6. the explicit `PRIORITY`.
 
     Candidates with equal keys cannot be told apart, and dispatch does not
-    guess.
+    guess between them.
     """
     extension, prefix = match or (0, 0)
     return (
@@ -306,8 +317,9 @@ def _tiers(
 ) -> tx.List[tx.List[type]]:
     """Group candidates into tiers of equal specificity, best first.
 
-    A tier with several members holds parsers that nothing can separate, which
-    [`parse`][] treats as an ambiguity.
+    A tier with several members holds parsers that no criterion can separate.
+    [`parse`][] tries every member of such a tier and reports an ambiguity if
+    more than one of them succeeds.
     """
     groups = {}
     for cls, match in _drop_base_classes(candidates):
@@ -325,10 +337,10 @@ def _candidates(
 ) -> tx.List[tx.List[type]]:
     """Rank the formats that could read `source`, best tier first.
 
-    [`parse`][] and [`sniff`][] share this ranking, so they agree. Extension
-    and confidence are weighed together: ranking by extension first would put
-    every `.nii` reader into one ambiguous tier and discard the scores that
-    separate them.
+    [`parse`][] and [`sniff`][] share this ranking, so they always agree. The
+    sniffer score and the file name match are combined into a single ranking.
+    Ranking by extension alone would put every `.nii` reader into one
+    ambiguous tier and would discard the scores that separate them.
     """
     name = source.name
     scores: tx.Dict[type, float] = {}
@@ -347,9 +359,9 @@ def _candidates(
             if errors is not None:
                 errors.append((subclass, fn_sniff, e))
             score = 0.0
-        # Sniffers are optional and the name is evidence, so a matching
-        # extension
-        # keeps a parser in the running below anything that scored.
+        # Sniffers are optional and the file name is evidence too, so a
+        # parser whose extension matches stays in the running, ranked below
+        # every parser that scored.
         if score > 0 or match is not None:
             scores[subclass] = score
             candidates.append((subclass, match))
@@ -370,9 +382,10 @@ def parse(
 ) -> _T:
     """Read `source` with the registered parser that matches it best.
 
-    Formats are ranked by sniffer score and file name match, and tried from the
-    most specific. In a tie, every tied format is tried, and the result counts
-    only if exactly one succeeds. If `brute` is set and no ranked format
+    Formats are ranked by sniffer score and file name match, and they are
+    tried from the most specific. When several formats tie, every tied format
+    is tried: if exactly one succeeds, its result is returned, and if several
+    succeed, the input is ambiguous. If `brute` is set and no ranked format
     succeeds, every remaining allowed format is tried in turn.
 
     !!! note "Why brute force is opt-in"
@@ -392,12 +405,12 @@ def parse(
     brute : bool, default=False
         Whether to try every format when none recognizes the input.
     hints : str or iterable of str, default=()
-        Only formats answering to one of these hints are allowed, and they are
-        tried even if none sniffs the input positively.
+        Only formats that answer to one of these hints are allowed, and these
+        formats are tried even if none of them recognizes the input.
     hint : str or iterable of str, optional
         Further hints, merged with `hints` and applied in the same way.
     options : mapping, optional
-        Source options. Only formats accepting every option are allowed.
+        Source options. Only formats that accept every option are allowed.
 
     Raises
     ------
@@ -463,8 +476,8 @@ def parse(
                 if ok:
                     return True, result
                 continue
-            # If only one tier-mate reads the content, the tie was only
-            # apparent.
+            # If only one member of the tier can read the content, the tie
+            # was only apparent.
             winners = []
             for subclass in tier:
                 ok, result = attempt(subclass)
@@ -492,6 +505,7 @@ def parse(
     if ok:
         return result
 
+    # --- Brute force ---------------------------------------------------
     if brute:
         for subclass in sorted(allowed, key=lambda c: c.__qualname__):
             if subclass in tried:
@@ -500,6 +514,7 @@ def parse(
             if ok:
                 return result
 
+    # --- Failure) Raise -----------------------------------------------
     raise _failure(source, list(allowed), errors)
 
 
@@ -519,9 +534,10 @@ def _field_annotations(cls: type) -> tx.Dict[str, tx.Any]:
 
 
 def _option_fields(cls: type) -> tx.Dict[str, tx.Tuple[str, tx.Any]]:
-    """Map each source option name to a field name and annotation.
+    """Map each source option of `cls` to the field that it sets.
 
-    Option names are the public aliases of keyword fields.
+    Option names are the public aliases of keyword fields, and each name maps
+    to the public name and the annotation of its field.
     """
     try:
         magic_fields = fields(cls)
@@ -598,8 +614,9 @@ def _failure(
 ) -> Exception:
     """Build the error that reports why parsing failed.
 
-    Each parser's own complaint is listed, so that a bug in the correct reader
-    is not hidden, and the last one is chained. A missing file is reported as a
+    The message lists the error raised by each parser, so that a bug in the
+    correct reader is not hidden among the other failures, and the last error
+    is chained as the cause. A missing file is reported as a
     [`ParserExistsError`][] rather than as every parser failing to open it.
     """
     if not registry:
@@ -643,7 +660,8 @@ def sniff(
 ) -> tx.Optional[type]:
     """Identify the registered format that would read `source`.
 
-    The answer is a format, not a confidence, and is ranked as in [`parse`][].
+    The function returns a format class rather than a confidence score, and it
+    ranks formats in the same way as [`parse`][].
 
     !!! note "`None` is not the same as a failed load"
         [`parse`][] can resolve a tie by trying each candidate. This function
@@ -652,7 +670,8 @@ def sniff(
     Parameters
     ----------
     error : bool or type of Exception, default=False
-        If not false, raise instead of returning `None`.
+        Whether to raise instead of returning `None`. An exception class
+        replaces the default error type.
     what : str, default="input content"
         A description of the input for error messages.
 
@@ -722,8 +741,9 @@ def _selecting_hint(
 ) -> tx.Optional[str]:
     """Return the hint that selects `cls` among tied formats, or `None`.
 
-    Such a hint is one that no other tied format answers to; fewer dotted parts
-    and then shorter hints are preferred, so `itk` beats `itk.displacements`.
+    A selecting hint is one that no other tied format answers to. When several
+    hints qualify, the hint with the fewest dotted parts is preferred, and then
+    the shortest, so `itk` beats `itk.displacements`.
     """
     taken = set()
     for other in candidates:
@@ -783,7 +803,7 @@ def _normalize_hints(
 ) -> tx.FrozenSet[str]:
     """Merge `hint` and `hints` into one lowercase set.
 
-    Each may be a string or an iterable of strings.
+    Each argument may be a string or an iterable of strings.
     """
     result = [hints] if isinstance(hints, str) else list(hints)
     if hint is not None:

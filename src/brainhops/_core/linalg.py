@@ -21,6 +21,9 @@ error of the boundary are refused rather than given an inaccurate answer.
 """
 
 
+# --- linalg -----------------------------------------------------------
+
+
 def inv(matrix: "ArrayProtocol") -> "ArrayProtocol":
     """Return the inverse of a square matrix."""
     nx = get_array_backend(matrix)
@@ -61,13 +64,19 @@ def logm(
 ) -> ArrayProtocol:
     """Return the principal logarithm of a square matrix.
 
-    The logarithm is computed and checked as in [`sqrtm`][].
+    The logarithm is computed on the host and checked in the same way as
+    the root in [`sqrtm`][]. The `what` argument names the operation in the
+    [`DomainError`][] raised when the matrix is not square or has no real
+    principal logarithm.
     """
     host = to_host(matrix, dtype=np.float64)
     dtype = dtype_or_float64(matrix)
     require_square(host, what)
     require_principal(host, what)
     return to(ensure_real(scipy.linalg.logm(host)), matrix, dtype=dtype)
+
+
+# --- checks utils -----------------------------------------------------
 
 
 class _BoolWithMessage:
@@ -87,6 +96,9 @@ class _BoolWithMessage:
 
     def __bool__(self) -> bool:
         return self._value
+
+
+# --- checks -----------------------------------------------------------
 
 
 def is_positive(array: ArrayProtocol) -> bool:
@@ -168,9 +180,12 @@ def require_principal(linear: np.ndarray, what: str = "This") -> None:
         )
 
 
+# --- backend utils ----------------------------------------------------
+
+
 def to_host(array: ArrayProtocol, **kwargs) -> np.ndarray:
-    # Matrix functions run on the host, as small float64 NumPy arrays,
-    # whatever the backend of the input.
+    # The matrix functions run on the host, on NumPy arrays, whatever the
+    # backend of the input.
     backend = get_array_backend(array)
     if cp and backend is cp:
         array = array.get()
@@ -194,8 +209,9 @@ def dtype_or_float64(like: ArrayProtocol) -> np.dtype:
 def ensure_real(result: ArrayProtocol) -> ArrayProtocol:
     """Return the real part of an array whose imaginary part is negligible.
 
-    The imaginary part is negligible below `_RTOL` times the larger of one
-    and the largest magnitude, and a [`DomainError`][] is raised otherwise.
+    The imaginary part counts as negligible when it is below `_RTOL` times
+    the larger of one and the largest magnitude in the array. Otherwise, a
+    [`DomainError`][] is raised.
     """
     nx = get_array_backend(result)
     if nx.iscomplexobj(result):

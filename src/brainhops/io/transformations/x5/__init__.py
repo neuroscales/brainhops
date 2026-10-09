@@ -7,8 +7,8 @@ later (`Version = 1`, the current layout) and fslpy 3.x
 the current layout).
 
 !!! warning "A draft format"
-    What neither implementation defines is left unimplemented rather than
-    guessed; see "Not supported".
+    Anything that neither implementation defines is left unimplemented
+    rather than guessed. The section "Not supported" lists these cases.
 
 ## Layout
 
@@ -33,14 +33,15 @@ the current layout).
 
 ITK `.h5` files also have a `TransformGroup`, but no root `Format`
 attribute, so an X5 file named `.h5` is read by this reader and not by
-[`brainhops.io.transformations.itk.h5`][]. Arrays are read as h5py returns
-them, such as `(X, Y, Z, 3)`; a vector axis that `DimensionKinds` places
-elsewhere is moved last.
+[`brainhops.io.transformations.itk.h5`][]. Arrays are read in the shape
+that h5py returns, such as `(X, Y, Z, 3)`. When `DimensionKinds` places the
+vector axis elsewhere, that axis is moved last.
 
 ## Direction
 
-X5 has no named spaces: each transform maps the RAS millimetre world of an
-image A to that of an image B, and is read from `RASmm` to `RASmm`. Which
+X5 does not name its spaces. Each transform maps the RAS millimetre world
+of an image A to that of an image B, and it is read as a transformation from
+`RASmm` to `RASmm`. Which
 image A is depends on the writer. In nitransforms, A is the reference (fixed)
 image, on whose grid fields are sampled. In fslpy, A is the source image of
 a linear transform, but the reference image of a nonlinear one, as in FNIRT.
@@ -57,12 +58,14 @@ are dense fields:
 | `"deformations"` (fslpy `absolute`)   | [`X5CoordinatesField`][]   |
 
 `"coordinates"` and `"absolute"` are accepted as aliases of
-`"deformations"`. A displacement field is read as a chain from RAS to the
-`Domain` voxels, displacements in voxel units, and voxels back to RAS, as a
-NIfTI `DISPVECT` field is (see [`brainhops.io.transformations.nifti`][]).
-It is interpolated linearly, with the nearest value outside the grid.
-nitransforms uses cubic splines and no displacement outside the grid, so
-results differ away from the grid nodes.
+`"deformations"`. A displacement field is read as a chain of three
+transformations, in the same way as a NIfTI `DISPVECT` field (see
+[`brainhops.io.transformations.nifti`][]): a map from RAS to the voxels of
+the `Domain`, the displacements in voxel units, and a map from the voxels
+back to RAS. The field is interpolated linearly and takes its nearest value
+outside the grid. nitransforms instead interpolates with cubic splines and
+applies no displacement outside the grid, so the results of the two
+implementations differ away from the grid nodes.
 
 ## B-splines
 
@@ -77,16 +80,18 @@ transform. The degree is not stored, so only cubic splines are read.
 
 The B-spline is read as the same chain as a dense displacement field, with a
 field of cubic coefficients and a zero boundary. The knot grid follows the
-convention of the ITK `BSplineTransform` (see
-[`brainhops.io.transformations.itk`][]), which places it in LPS instead.
+same convention as the ITK `BSplineTransform` (see
+[`brainhops.io.transformations.itk`][]), except that ITK places its grid in
+LPS rather than RAS coordinates.
 On write, coefficients of another degree or boundary condition are refitted,
 and the knot grid serves as the `Domain` that nitransforms requires.
 
 ## Chains
 
 nitransforms stores a chain as a string such as `"0/1/2"` in
-`/TransformChain/<n>`, applied as `f2(f1(f0(x)))`. This is the order of a
-brainhops `Sequence`, so the chain is read as `Sequence([t0, t1, t2])`.
+`/TransformChain/<n>`, and the nodes of this chain are applied as
+`f2(f1(f0(x)))`. This is also the order of a brainhops `Sequence`, so the
+chain is read as `Sequence([t0, t1, t2])`.
 [`X5Transform.selection`][] describes which nodes are read.
 
 ## Metadata
@@ -103,8 +108,9 @@ still read and written back unchanged:
 
 - the `Type` `composite`, whose storage the draft does not specify and which
   no implementation writes;
-- an `ArrayLength` greater than 1, a stack of one affine per volume (the
-  nitransforms `LinearTransformsMapping`), which the datamodel cannot hold;
+- an `ArrayLength` greater than 1, which denotes a stack of one affine per
+  volume (the nitransforms `LinearTransformsMapping`) and which the
+  datamodel cannot hold;
 - domains that are not regular, 3-D and cartesian, such as surfaces.
 
 On write, a transformation is refused when it does not map `RASmm` to

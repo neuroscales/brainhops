@@ -29,7 +29,8 @@ def test_get_simplifiers_leaf_is_optional_callable() -> None:
     leaf = get_simplifiers(Identity)
     assert callable(leaf)
     assert type(leaf).__name__ != "Method"
-    # Every transform has a leaf through the Transformation catch-all.
+    # Every transformation finds a leaf rule through the catch-all rule for
+    # Transformation, but a type that is not a transformation finds none.
     assert get_simplifiers(int) is None
 
 
@@ -70,12 +71,13 @@ def test_public_api_is_collapsed() -> None:
 
 
 def test_pairs_carry_no_priority() -> None:
-    # Ties follow candidates(), not priorities.
+    # Pair rules carry no priority, so ties are ordered by candidates().
     assert all(m.priority == 0 for m in _S._simplify.methods)
 
 
 def test_chain_falls_through_when_the_most_specific_declines() -> None:
-    # Modelled on a fresh Function, independently of the real rules.
+    # The test uses a fresh Function so that it does not depend on the real
+    # rules.
     class A:
         pass
 

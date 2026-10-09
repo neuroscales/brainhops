@@ -16,7 +16,8 @@ from brainhops.datamodel import systems as _systems
 _SpaceLike = tx.Union[str, _systems.CoordinateSystem, None]
 _BaseLike = tx.Union[int, tx.Tuple[int, int]]
 
-# (3, 3) is either 3-D linear or 2-D homogeneous, so ndim decides.
+# A (3, 3) matrix is either a 3-D linear map or a 2-D homogeneous affine, so
+# the ndim argument decides between the two.
 _SHAPES = {(2, 3): 2, (3, 4): 3, (4, 4): 3, (3, 3): None}
 
 VECTORS = ("column", "row")
@@ -271,6 +272,7 @@ def to_affine(
     in_system = make_system(input, n)
     out_system = make_system(output, n)
 
+    # --- 1-based voxel indices -> 0-based ---------------------------
     in_base, out_base = check_index_base(index_base)
     scalar = not isinstance(index_base, (tuple, list))
     in_index, out_index = map(is_index_system, (in_system, out_system))
@@ -290,12 +292,14 @@ def to_affine(
             raise ValueError(
                 f"index_base is 1 for the {end}, which is not a voxel space."
             )
-    # x1 = x0 + 1, so a 1-based M1 is S(-1) @ M1 @ S(+1) in 0-based indices.
+    # A 1-based index is x1 = x0 + 1, so a 1-based matrix M1 becomes
+    # S(-1) @ M1 @ S(+1) in 0-based indices, where S(t) shifts by t.
     if in_base:
         homog = homog @ _shift(n, 1.0)
     if out_base:
         homog = _shift(n, -1.0) @ homog
 
+    # --- voxel endpoints -> image world spaces -----------------------
     for image, end in ((source, "input"), (target, "output")):
         if image is None:
             continue

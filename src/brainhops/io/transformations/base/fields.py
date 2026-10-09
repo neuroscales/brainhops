@@ -304,7 +304,12 @@ def homogeneous_matrix(
         if it does not have `ndim` dimensions.
     """
     try:
-        matrix = xform.to(_xforms.Affine).homogeneous_matrix
+        affine = (
+            xform
+            if isinstance(xform, _xforms.Affine)
+            else xform.to(_xforms.Affine)
+        )
+        matrix = affine.homogeneous_matrix
     except Exception as error:
         raise WriterError(
             f"The grid of {what[:1].lower() + what[1:]} must be an affine, "

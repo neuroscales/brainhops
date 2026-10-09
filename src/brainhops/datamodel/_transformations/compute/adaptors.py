@@ -57,6 +57,9 @@ flip shifts the origin by the extent minus one.
 """
 
 
+# --- Bridge -----------------------------------------------------------
+
+
 def bridge(
     source: tx.Optional[CoordinateSystem],
     target: tx.Optional[CoordinateSystem],
@@ -65,19 +68,21 @@ def bridge(
     allow_positional: bool = False,
     allow_type_grouped_positional: bool = False,
 ) -> Transformation:
+    # --- special cases ------------------------------------------------
     """Return the transformation that carries `source` coordinates to `target`.
 
     The bridge maps every point expressed in `source` to the same point
     expressed in `target`; its inverse is `bridge(target, source)`. Axes are
     matched by type and orientation, then by name, then by kind of unit,
-    and finally by position when permitted. The match yields a
-    [`Permutation`][], a [`Scaling`][] by the unit ratio and the
-    orientation sign, and, when a reversed axis indexes an array, a
-    [`Translation`][] by the extent minus one.
+    and finally by position when permitted. The bridge is then built from
+    a [`Permutation`][] that reorders the axes, a [`Scaling`][] that
+    applies the unit ratio and the orientation sign, and, when a reversed
+    axis indexes an array, a [`Translation`][] by the extent minus one.
+    A primitive that would have no effect is left out.
 
-    A missing system, or an open system whose axes hold `...`, describes
-    only some of its axes. The bridge is then an [`Identity`][] when the two
-    systems are
+    A missing system, or an open system whose axes hold `...`, does not
+    describe all of its axes. When either system is incomplete in this
+    way, the bridge is an [`Identity`][] if the two systems are
     [`compatible_with`][brainhops.datamodel.systems.CoordinateSystem.compatible_with]
     each other, and an [`AdaptationError`][] is raised otherwise.
 
@@ -91,14 +96,15 @@ def bridge(
         Number of samples along each target axis, needed only to reverse
         an array-index axis.
     allow_positional : bool, default=False
-        Pair the remaining axes by position, when both systems have the
-        same number of axes. This option takes precedence over
+        Whether to pair the remaining axes by position, when both systems
+        have the same number of axes. This option takes precedence over
         `allow_type_grouped_positional`.
     allow_type_grouped_positional : bool, default=False
-        Pair the remaining axes by their order within each type group. The
-        typeless group acts as a wildcard for the single remaining typed
-        group of the same size, and groups whose sizes differ on the two
-        sides stay unmatched.
+        Whether to pair the remaining axes by their order within each group
+        of axes that share a type. The axes without a type form a group of
+        their own, which can stand in for the single remaining typed group
+        of the same size. Groups whose sizes differ on the two sides stay
+        unmatched.
 
     Returns
     -------
@@ -118,8 +124,8 @@ def bridge(
     UserWarning
         If any pair of axes was formed by position.
     """
-    # Only two closed systems can be bridged. A missing system is open as well,
-    # since its axes read `[...]`.
+    # Only two closed systems can be bridged axis by axis. A missing system
+    # also counts as open, because its axes read `[...]`.
     source_axes = get_axes(source)
     target_axes = get_axes(target)
     if source_axes.is_open or target_axes.is_open:
@@ -129,6 +135,7 @@ def bridge(
     if source == target:
         return Identity(input=source, output=target)
 
+    # --- dimensionality check -----------------------------------------
     if source.ndim != target.ndim:
         source_name = source.name or "the source system"
         target_name = target.name or "the target system"
@@ -145,6 +152,7 @@ def bridge(
             f"names, units, or orientations so they can be identified."
         )
 
+    # --- matching -----------------------------------------------------
     match, positional_warning = _match_axes(
         source_axes,
         target_axes,
@@ -154,6 +162,7 @@ def bridge(
     if any(i is None for i in match):
         _unmatched_report(source, target, match)
 
+    # --- compute parameters -------------------------------------------
     permutation = [int(i) for i in match]
     scales = []
     translations = []
@@ -170,15 +179,19 @@ def bridge(
             offset = float(_extent(extents, j, target_axis) - 1)
         translations.append(offset)
 
+    # --- positional warning -------------------------------------------
     # Warn only once every pair has a sign, a ratio and an offset, so that a
     # bridge that fails above does not also warn. The stack level points at the
     # caller of `bridge`.
     if positional_warning is not None:
         warnings.warn(positional_warning, stacklevel=2)
 
-    # Each primitive names its own endpoints, and only the last one lands on
-    # `target`. The permutation lands on the source axes in target order, and a
-    # scaling followed by a shift lands on the target axes before the shift.
+    # --- build transformations and systems ----------------------------
+    # Each primitive declares its own input and output systems, and only the
+    # last primitive outputs `target` itself. The permutation outputs the
+    # source axes rearranged into target order. When a translation follows,
+    # the scaling outputs a plain system built from the target axes, and the
+    # translation then lands on `target`.
     permuted_axes = [source_axes[i] for i in permutation]
     permuted_system = CoordinateSystem(axes=permuted_axes)
     needs_scale = any(scale != 1 for scale in scales)
@@ -187,6 +200,7 @@ def bridge(
 
     elements: tx.List[Transformation] = []
     current = source
+    # --- permutation --------------------------------------------------
     if needs_perm:
         elements.append(
             Permutation(
@@ -196,6 +210,7 @@ def bridge(
             )
         )
         current = permuted_system
+    # --- scale --------------------------------------------------------
     if needs_scale:
         scaled_system = (
             CoordinateSystem(axes=target_axes) if needs_offset else target
@@ -208,6 +223,7 @@ def bridge(
             )
         )
         current = scaled_system
+    # --- offset -------------------------------------------------------
     if needs_offset:
         elements.append(
             Translation(
@@ -218,6 +234,7 @@ def bridge(
         )
         current = target
 
+    # --- returns ------------------------------------------------------
     if not elements:
         return Identity(input=source, output=target)
     if len(elements) == 1:
@@ -234,14 +251,15 @@ def _match_axes(
 ) -> tx.Tuple[tx.List[tx.Optional[int]], tx.Optional[str]]:
     """Match each target axis to the source axis that feeds it.
 
-    Returns `(match, warning)`, where `match[j]` is the index of the source
-    axis matched to target axis `j`, or None, and `warning` describes a
-    positional pairing, or is None. The warning is returned so that the
+    The result is a pair `(match, warning)`. `match[j]` is the index of the
+    source axis matched to target axis `j`, or None when no source axis
+    matches. `warning` describes a positional pairing, or is None when no
+    pair was formed by position. The warning is returned so that the
     caller can issue it once the pairing can no longer fail.
     """
 
-    # Axes with different types never match: a shared name, unit or position is
-    # a coincidence when the types definitely conflict.
+    # Axes with different types never match, because a shared name, unit or
+    # position is only a coincidence when the types definitely conflict.
     n_source, n_target = len(source_axes), len(target_axes)
     match: tx.List[tx.Optional[int]] = [None] * n_target
     used = [False] * n_source
@@ -251,8 +269,10 @@ def _match_axes(
         match[j] = i
         used[i] = True
 
-    # Tier 1: same type on the same orientation line, the strongest signal. It
-    # pairs right-to-left with left-to-right whatever the names.
+    # First tier: axes of the same type that lie along the same oriented line.
+    # This is the strongest signal, and it pairs a right-to-left axis with a
+    # left-to-right one regardless of their names. When several source axes
+    # qualify, a shared name breaks the tie.
     for j, target in enumerate(target_axes):
         line = _orientation_line(target)
         if line is None:
@@ -273,8 +293,9 @@ def _match_axes(
             if len(named) == 1:
                 take(j, named[0])
 
-    # Tier 2: same name, but never across different types or orientation lines,
-    # because a name cannot turn a rotation into a flip.
+    # Second tier: axes that share a name. Two axes of different types, or two
+    # axes oriented along different lines, are never paired by name, because a
+    # shared name cannot turn a rotation into a flip.
     for j, target in enumerate(target_axes):
         if match[j] is not None or target.name is None:
             continue
@@ -289,8 +310,9 @@ def _match_axes(
         if len(candidates) == 1:
             take(j, candidates[0])
 
-    # Tier 3: same kind of unit, when exactly one unused source axis qualifies.
-    # Pairs across types or orientation lines are excluded.
+    # Third tier: axes measured in the same kind of unit, when exactly one
+    # unused source axis qualifies. Two axes of different types, or two axes
+    # oriented along different lines, are again not paired.
     for j, target in enumerate(target_axes):
         if match[j] is not None:
             continue
@@ -305,8 +327,9 @@ def _match_axes(
         if len(candidates) == 1:
             take(j, candidates[0])
 
-    # Last tier: position. Positional pairing may hide a genuine mismatch, so
-    # it is opt-in and produces a warning.
+    # Last tier: axes at the same position. A positional pairing may hide a
+    # genuine mismatch, so it is used only when the caller permits it, and it
+    # produces a warning.
     if allow_positional and n_source == n_target:
         paired = False
         for j in range(n_target):
@@ -323,8 +346,9 @@ def _match_axes(
             )
 
     elif allow_type_grouped_positional:
-        # Implicit bridge: pair the remaining axes in order within each type
-        # group, leaving ambiguous groups unmatched rather than partially
+        # An implicit bridge pairs the remaining axes in order within each
+        # type group, so spatial axes pair with spatial axes and time with
+        # time. An ambiguous group is left unmatched rather than partially
         # paired.
         unmatched_source = [i for i in range(n_source) if not used[i]]
         unmatched_target = [j for j in range(n_target) if match[j] is None]
@@ -393,6 +417,9 @@ def _cannot_bridge_report(
     )
 
 
+# --- Adapt ------------------------------------------------------------
+
+
 @register_adapt
 def adapt(
     first: Transformation,
@@ -440,6 +467,7 @@ def adapt(
     source = first.output
     target = second.input
 
+    # --- systems match: short circuit ---------------------------------
     if not systems_disagree(source, target):
         return Sequence(
             transformations=[first, second],
@@ -447,6 +475,7 @@ def adapt(
             output=second.output,
         )
 
+    # --- compute extents for grid coordinate systems ------------------
     if extents is None:
         extents = _grid_extents(first, at_output=True)
         extents.update(_grid_extents(second, at_output=False))
@@ -457,15 +486,18 @@ def adapt(
     seq_input = first.input
     seq_output = second.output
 
-    # Only two closed systems can differ in their number of axes. An open
-    # system that disagrees is refused by `bridge` below.
+    # --- dimensionality mismatch: build the embedding -----------------
+    # An open system has no definite number of axes, so only two closed
+    # systems can differ in size. An open system that disagrees with the other
+    # side is refused by `bridge` below.
     n_source, n_target = (
         get_axes(source).ndim,
         get_axes(target).ndim,
     )
     if n_source is not None and n_target is not None and n_source != n_target:
-        # Try the fuller input side of `second` first, then the fuller output
-        # side of `first`.
+        # The embedding is first attempted on `second`, in the fuller system
+        # that `first` outputs. If that fails, it is attempted on `first`, in
+        # the fuller system that `second` expects.
         embedded = embed(second, full=source, side="input", extents=extents)
         if embedded is not None:
             pieces: tx.List[Transformation] = [first, embedded]
@@ -479,8 +511,8 @@ def adapt(
                 seq_input = embedded.input
             else:
                 # Neither side is a clean subset, so the mismatch is genuine.
-                # `bridge` raises its descriptive error about the axis counts;
-                # the error below is only a fallback.
+                # `bridge` raises its descriptive error about the axis counts,
+                # and the error below is only a fallback.
                 bridge(source, target, extents=extents)
                 raise AdaptationError(
                     "Cannot compose two transforms whose boundary systems "
@@ -488,6 +520,7 @@ def adapt(
                     "clean subset of the other's axes."
                 )
 
+    # --- same dimensionality: build the bridge ------------------------
     else:
         reconciler = bridge(
             source,
@@ -503,6 +536,7 @@ def adapt(
         else:
             pieces = [first, reconciler, second]
 
+    # --- return -------------------------------------------------------
     return Sequence(transformations=pieces, input=seq_input, output=seq_output)
 
 
@@ -522,7 +556,8 @@ def embed(
     `transform`; with `side="output"`, `full` is the system expected by a
     following transformation and is matched against the output axes. A
     [`bridge`][] over the subset, for example a flip between RAS and LPS,
-    is placed inside the wrapper on the fuller side of `transform`.
+    is placed inside the wrapper, on the side of `transform` that faces
+    the fuller space.
 
     Parameters
     ----------
@@ -554,10 +589,11 @@ def embed(
         bridge, extents=extents, allow_type_grouped_positional=True
     )
 
+    # --- special cases ------------------------------------------------
     if isinstance(transform, CartesianField):
         return None
-    # The embedding is read from the axes that the fuller system has and the
-    # subset lacks, so every system must be closed.
+    # The embedding is determined by the axes that the fuller system has and
+    # the subset lacks, so every system involved must be closed.
     sub_input = transform.input
     sub_output = transform.output
     full_axes = get_axes(full)
@@ -585,6 +621,7 @@ def embed(
     if positions is None:
         return None
 
+    # --- discrete check -----------------------------------------------
     # An interpolating transformation reads values between samples, which a
     # discrete axis does not have.
     if _interpolates(transform):
@@ -600,6 +637,7 @@ def embed(
 
     sub_full = CoordinateSystem(axes=[full_axes[i] for i in positions])
 
+    # --- embed input --------------------------------------------------
     if side == "input":
         sub_bridge = make_bridge(sub_full, sub_input)
         if sub_bridge.is_identity():
@@ -616,6 +654,7 @@ def embed(
         wrapper_input = full
         wrapper_output = CoordinateSystem(axes=out_full_axes)
 
+    # --- embed output -------------------------------------------------
     else:
         sub_bridge = make_bridge(sub_output, sub_full)
         if sub_bridge.is_identity():
@@ -632,6 +671,7 @@ def embed(
         wrapper_input = CoordinateSystem(axes=in_full_axes)
         wrapper_output = full
 
+    # --- return -------------------------------------------------------
     return SubspaceTransformation(
         transformation=inner,
         input_axes=positions,
@@ -655,9 +695,10 @@ def _subset_positions(
     absorbed as a pass-through axis.
     """
 
-    # Grouped positional pairing lets a subset of unnamed, unoriented axes of
-    # one type embed, as an implicit bridge would. The warning belongs to the
-    # bridge built over the subset, so it is discarded here.
+    # Grouped positional pairing allows a subset of unnamed and unoriented
+    # axes of a single type to be embedded, in the same way that an implicit
+    # bridge pairs such axes. The warning belongs to the bridge built over the
+    # subset, so it is discarded here.
     match, _ = _match_axes(
         full_axes,
         sub_axes,
@@ -676,6 +717,8 @@ def _subset_positions(
             return None
     return positions
 
+
+# --- Orientation ------------------------------------------------------
 
 _OrientationLike = tx.Union[Axis, Orientation, str, None]
 
@@ -765,6 +808,8 @@ def _orientation_sign(
     return 1 if source_value == target_value else -1
 
 
+# --- Units ------------------------------------------------------------
+
 _UnitLike = tx.Union[Axis, Unit, None]
 
 
@@ -831,9 +876,10 @@ def _unit_ratio(source: _UnitLike, target: _UnitLike) -> float:
             f"factor exists between them."
         )
     # For SI-prefixed units, the ratio is a power of ten computed from the
-    # exponents, so that mm to um is exactly 1000 and the product of a ratio
-    # and its reciprocal is exactly one; dividing the scales does not guarantee
-    # that. Other units, such as the inch, fall back to division.
+    # exponents. The conversion from mm to um is then exactly 1000, and the
+    # product of a ratio and its reciprocal is exactly one, which dividing the
+    # scales does not guarantee. Other units, such as the inch, fall back to
+    # division.
     source_log10 = getattr(source_unit, "log10_scale", None)
     target_log10 = getattr(target_unit, "log10_scale", None)
     if isinstance(source_log10, int) and isinstance(target_log10, int):
@@ -852,6 +898,9 @@ def _same_unit_kind(source: _UnitLike, target: _UnitLike) -> bool:
     if source_unit is None or target_unit is None:
         return False
     return source_unit.type == target_unit.type
+
+
+# --- Shape ------------------------------------------------------------
 
 
 def _is_array_side(system: tx.Optional[CoordinateSystem], axis: Axis) -> bool:
@@ -907,9 +956,10 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
 
     A [`CartesianField`][] next to the boundary carries the extents as its
     shape. The counts are keyed by axis name and read on the output side
-    when `at_output` is true, or on the input side otherwise. A
-    [`Sequence`][] is searched through its element on that side, and the
-    mapping is empty when no grid is found.
+    when `at_output` is true, or on the input side otherwise. For a
+    [`Sequence`][], the search continues into its first or last element,
+    whichever lies on that side. The mapping is empty when no grid is
+    found.
     """
     if isinstance(t, CartesianField) and t.shape is not None:
         axes = get_axes(t.output if at_output else t.input)
@@ -926,6 +976,8 @@ def _grid_extents(t: Transformation, at_output: bool) -> tx.Dict[tx.Any, int]:
         return _grid_extents(edge, at_output)
     return {}
 
+
+# --- Type -------------------------------------------------------------
 
 _TypeLike = tx.Union[Axis, str, None]
 _TypeGroup = tx.Dict[tx.Optional[str], tx.List[int]]
@@ -957,7 +1009,7 @@ def _group_by_type(
 ) -> _TypeGroup:
     """Group axis indices by axis type, keeping the given order.
 
-    Typeless axes form the group keyed by None.
+    Axes without a type are collected in the group whose key is None.
     """
     groups: _TypeGroup = {}
     for i in indices:
@@ -979,8 +1031,8 @@ def _pair_type_groups(
     The pairs are returned as `(target_index, source_index)`.
     """
 
-    # Both mappings are consumed as pairs are made; whatever remains has no
-    # counterpart and is reported by the caller.
+    # Groups are removed from both mappings as they are paired. Whatever
+    # remains has no counterpart and is left for the caller to report.
     pairs: tx.List[tx.Tuple[int, int]] = []
     for key in list(target_groups):
         sources = source_groups.get(key)
@@ -991,8 +1043,8 @@ def _pair_type_groups(
                 pairs.append((j, i))
 
     # A leftover typeless group is a wildcard, on either side, for the single
-    # typed group of the same size on the other side. When several typed groups
-    # or none qualify, the typeless group stays unpaired.
+    # typed group of the same size on the other side. When no typed group or
+    # more than one typed group qualifies, the typeless group stays unpaired.
     for wildcard, other, wildcard_is_source in (
         (source_groups, target_groups, True),
         (target_groups, source_groups, False),

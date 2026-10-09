@@ -38,7 +38,8 @@ class AxisSequence(tx.Sequence[AXIS]):
     This class is the read-only base of [`AxisList`][], which is mutable,
     and [`AxisTuple`][], which is immutable. Slicing and the methods that
     build new sequences return the type of the original sequence. The type
-    parameter is the item type, so `AxisSequence[Axis]` is closed.
+    parameter is the type of the items, so an `AxisSequence[Axis]`, whose
+    items are all axes, is closed.
 
     !!! note "Entries and axes"
         Length, iteration, equality, `axes[i]` and [`index`][] work on
@@ -104,8 +105,8 @@ class AxisSequence(tx.Sequence[AXIS]):
     def __getitem__(self, key: tx.Any) -> tx.Any:
         """Return an entry, a slice, or the explicit axis with a name.
 
-        Integers and slices index entries, as for a list; [`at`][] reads the
-        axis at a position in the space.
+        Integers and slices index entries, as they do for a list, whereas
+        [`at`][] reads the axis at a position in the space.
 
         !!! example
             ```pycon
@@ -206,6 +207,8 @@ class AxisSequence(tx.Sequence[AXIS]):
             ```
         """
         return tuple(... if axis is ... else _name(axis) for axis in self)
+
+    # --- axes ---------------------------------------------------------
 
     @property
     def ndim(self) -> tx.Optional[int]:
@@ -322,10 +325,11 @@ class AxisSequence(tx.Sequence[AXIS]):
     ) -> tx.Self:
         """Return the axes of a larger space in which these axes sit.
 
-        This is the inverse of [`restrict`][]: axis `j` sits at `positions[j]`,
-        and the other axes are unknown. An open sequence is first closed to
-        `len(positions)` axes, as by [`expand`][]. Positions refer to a space
-        that does not exist yet, so names are not accepted.
+        This method is the inverse of [`restrict`][]. Axis `j` of this
+        sequence sits at `positions[j]` in the larger space, and the other
+        axes of the larger space are unknown. An open sequence is first
+        closed to `len(positions)` axes, as by [`expand`][]. Positions refer
+        to a space that does not exist yet, so names are not accepted.
 
         !!! example
             ```pycon
@@ -434,14 +438,16 @@ class AxisSequence(tx.Sequence[AXIS]):
             return _pairwise(p1, p2[: len(p1)]) and _pairwise(
                 s1, p2[n - len(s1) :]
             )
-        # With enough axes behind each `...`, only the axes that both state at
-        # the start, or both at the end, meet.
+        # When both sequences are open, each `...` can stand for enough axes
+        # that only the axes that both sequences state at the start, or both
+        # state at the end, are compared.
         k = min(len(p1), len(p2))
         m = min(len(s1), len(s2))
         return _pairwise(p1[:k], p2[:k]) and _pairwise(
             s1[len(s1) - m :], s2[len(s2) - m :]
         )
 
+    # --- private helpers ----------------------------------------------
     # Positions in the space count from the first axis when non-negative and
     # from the last axis when negative.
 
@@ -545,8 +551,9 @@ class AxisTuple(tuple, AxisSequence, tx.Generic[tx.Unpack[AXES]]):
         ```
     """
 
-    # `tuple` comes first for storage, so the item and name reading of
-    # `AxisSequence` is bound explicitly.
+    # `tuple` comes first among the bases so that it provides the storage.
+    # The methods of `AxisSequence` that read items and names would then be
+    # hidden by those of `tuple`, so they are bound explicitly.
     __getitem__ = AxisSequence.__getitem__
     __contains__ = AxisSequence.__contains__
     index = AxisSequence.index
@@ -557,8 +564,9 @@ class AxisList(AxisSequence[AXIS], list):
     """Mutable [`AxisSequence`][] for systems with any number of axes.
 
     A list or tuple given to such a system is converted item by item to the
-    axis type of the system. The default, `[...]`, says nothing, and
-    `axes=None` reads as that default. `AxisList[Axis]` is closed.
+    axis type of the system. The default, `[...]`, says nothing about the
+    axes, and `axes=None` stands for that default. An `AxisList[Axis]` is
+    closed.
 
     !!! example
         ```pycon
@@ -572,7 +580,8 @@ class AxisList(AxisSequence[AXIS], list):
     """
 
     # `collections.abc.Sequence` sits between the bases in the MRO and would
-    # supply generic mixins and an abstract `__len__`.
+    # otherwise supply its generic mixin methods and an abstract `__len__`,
+    # so the methods of `list` are bound explicitly.
     __len__ = list.__len__
     __iter__ = list.__iter__
     __reversed__ = list.__reversed__
@@ -580,15 +589,20 @@ class AxisList(AxisSequence[AXIS], list):
     _entry = list.__getitem__
 
 
+# ---- converter -------------------------------------------------------
+
+
 class _NoneReadsAsDefault:
     """Field converter that reads `None` as the default of the field.
 
-    Other values go to the converter that the type hint would have had.
-    `axes=None` means the default, which is `[...]` for an open system and
-    its own axes for a fixed system. Only the field knows its default, so
-    each field gets its own converter, which `bind_axes_default` points at
-    the field. The converter is not registered for `AxisSequence`, since a
-    registered converter would be asked to convert itself.
+    Other values are passed to the converter that the type hint would have
+    had without this one. For example, `axes=None` means the default of the
+    `axes` field, which is `[...]` for an open system and the axes of the
+    system for a fixed system. Only the field knows its default, so each
+    field gets its own converter, and `bind_axes_default` links that
+    converter to its field. The converter is not registered for
+    `AxisSequence`, because the registry would then return this converter
+    when it is asked for the converter of the hint.
     """
 
     def __init__(self, hint: tx.Any) -> None:
@@ -606,14 +620,18 @@ class _NoneReadsAsDefault:
 
 
 class Axes:
-    """`Axes[hint]` types a field whose `None` reads as its default."""
+    """Annotation for an `axes` field in which `None` stands for the default.
+
+    `Axes[hint]` is the type `hint` with a converter that replaces `None`
+    by the default of the field.
+    """
 
     def __class_getitem__(cls, hint: tx.Any) -> tx.Any:
         return tx.Annotated[hint, ConvertTo(_NoneReadsAsDefault(hint))]
 
 
 def bind_axes_default(cls: type) -> None:
-    """Point the converter of the `axes` field of `cls` at the field."""
+    """Link the converter of the `axes` field of `cls` to that field."""
     for field in fields(cls):
         if field.name == "axes" and isinstance(
             field.converter, _NoneReadsAsDefault
@@ -621,11 +639,14 @@ def bind_axes_default(cls: type) -> None:
             field.converter.field = field
 
 
+# ---- private helpers -------------------------------------------------
+
+
 def _split(
     entries: tx.Iterable[tx.Any],
 ) -> tx.Tuple[tx.List[Axis], tx.Optional[tx.List[Axis]]]:
-    # Explicit axes before and after `...`; the second is `None` for a closed
-    # sequence.
+    # Return the explicit axes before and after `...`. The second list is
+    # `None` for a closed sequence.
     entries = list(entries)
     ellipses = [i for i, axis in enumerate(entries) if axis is ...]
     if not ellipses:

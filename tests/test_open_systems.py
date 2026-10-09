@@ -77,7 +77,7 @@ def _xyz() -> CS:
 
 
 def _scale_x(inner: tx.Optional[CS] = None) -> SubspaceTransformation:
-    # A subspace scaling of axis 0 that names no full-space system.
+    # Build a subspace scaling of axis 0 that names no full-space system.
     return SubspaceTransformation(
         transformation=Scaling(
             scale=np.array([2.0]), input=inner, output=inner
@@ -140,7 +140,8 @@ def test_a_subspace_closed_by_its_neighbour_keeps_its_axes() -> None:
 def test_a_neighbour_too_small_for_the_subspace_is_refused(
     inner: tx.Optional[CS],
 ) -> None:
-    # The neighbour lacks axis 3, and the count is not stretched.
+    # The neighbour has no axis 3, and the axis count is not stretched to
+    # include it.
     sub = SubspaceTransformation(
         transformation=Scaling(
             scale=np.array([2.0]), input=inner, output=inner

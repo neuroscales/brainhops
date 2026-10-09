@@ -1,14 +1,14 @@
 """Unary operators on transformations and their lazy results.
 
-A transformation `T` that maps a space onto itself has an inverse `U` (`U @ T`
-is the identity), a square `T @ T` and a principal square root `S`
-(`S @ S == T`, half of the map). A transformation stored in its tangent space,
-such as a
+A transformation `T` that maps a space onto itself has an inverse `U`, such
+that `U @ T` is the identity, a square `T @ T`, and a principal square root
+`S`, such that `S @ S == T`. The square root can be thought of as half of the
+map. A transformation stored in its tangent space, such as a
 [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField]
 or an
 [`AffineExponential`][brainhops.datamodel.transformations.AffineExponential],
-takes the square and the square root exactly in that space, by doubling or
-halving its tangent.
+forms the square and the square root exactly in that space: the square doubles
+its tangent and the square root halves it.
 
 Elsewhere, inversion and the square root are lazy. An
 [`Inverse`][brainhops.datamodel.transformations.Inverse] or a [`Sqrt`][] holds
@@ -80,30 +80,39 @@ class Operation(Transformation):
     whether the operator reverses the direction of the map.
     """
 
+    # --- class attributes ---------------------------------------------
+
     _operator: tx.ClassVar[tx.Optional[str]] = None
     """Name of the [`Transformation`][] method that applies the operator.
 
-    The front door passes the forward to this method, which picks the typed
-    wrapper for the family of the forward.
+    An untyped wrapper, such as a plain `Sqrt`, derives no parameter of its
+    own. It resolves by passing its forward to this method, which picks the
+    typed wrapper for the family of the forward.
     """
 
     _resultof: _TypeReference = None
     """Family of the result, set by each typed subclass.
 
     `_materialize` builds an instance of this family, carrying over the
-    parameters named by its `data_fields`. The front door leaves it as `None`.
+    parameters named by its `data_fields`. An untyped wrapper leaves it as
+    `None`.
     """
 
     _reverses: tx.ClassVar[bool] = False
     """Whether the operator maps the output of the forward back to its input.
 
-    Only inversion does so; its endpoints are those of the forward, swapped.
+    Only inversion does so, and the endpoints of an inverse are therefore those
+    of the forward, swapped.
     """
 
     data_fields: _FieldNames = ("forward",)
 
+    # --- attributes ---------------------------------------------------
+
     forward: NotKwOnly[tx.Optional[Transformation]] = None
     """Transformation that the operator acts on."""
+
+    # --- properties ---------------------------------------------------
 
     # Endpoints are inferred from the forward, swapped if the operator reverses
     # direction; an endpoint declared on the wrapper takes precedence.
@@ -122,6 +131,8 @@ class Operation(Transformation):
             return None
         return forward.input if self._reverses else forward.output
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: ModeLike = True,
@@ -133,8 +144,9 @@ class Operation(Transformation):
 
         Resolution happens only here and never in the simplifier, which applies
         only rewrites that cost nothing. When `mode` does not admit the
-        operator, the wrapper stays lazy so that an adjacent pair in a sequence
-        can still cancel, and it is only simplified according to `simplify`.
+        operator, the wrapper stays lazy, so that it can still cancel against
+        an adjacent transformation in a sequence. In that case, the wrapper is
+        only simplified according to `simplify`.
         """
         modes = normalize_modes(mode)
         if mode_admits(self, modes):
@@ -159,12 +171,13 @@ class Operation(Transformation):
         - The endpoints and the forward are edited on the wrapper itself.
         - Any other keyword edits the forward, and the operator stays lazy
           around the result. Because the new encoding may change the class of
-          the forward, the wrapper is chosen again, with the endpoints declared
-          on this one.
-        - The map itself cannot be set: passing a derived field of the family
-          raises a `TypeError` that points to editing the forward instead.
-        - A target class `cls` resolves the operator before converting the
-          result.
+          the forward, the typed wrapper is chosen again for the new forward,
+          and it keeps the endpoints declared on the original wrapper.
+        - The map itself cannot be set. Passing a derived field of the family,
+          such as `data`, raises a `TypeError` that suggests editing the
+          forward instead.
+        - Passing a target class `cls` resolves the operator first and then
+          converts the result.
         """
         if cls is None or cls is type(self):
             derived = [k for k in kwargs if k in type(self).derived_fields]
@@ -190,6 +203,8 @@ class Operation(Transformation):
         # Converting to any other type, even the family's own, resolves the
         # operator first.
         return self._materialize().to(cls, lossy=lossy, **kwargs)
+
+    # --- helpers ------------------------------------------------------
 
     def _undo(self, compute: bool = False, **kwargs) -> Transformation:
         """Return the forward with the endpoints of the wrapper restored.
@@ -218,8 +233,8 @@ class Operation(Transformation):
         """Apply the operator concretely.
 
         A typed wrapper builds its result family from the derived parameter and
-        its own endpoints. The front door delegates to the operator method of
-        the forward, which picks a typed wrapper.
+        its own endpoints. An untyped wrapper instead calls the operator method
+        of the forward, which picks a typed wrapper.
         """
         forward = self.forward
         family = type(self)._resultof
@@ -235,23 +250,26 @@ class Operation(Transformation):
             **{name: getattr(self, name) for name in family.data_fields},
         }
         if not self._reverses:
-            # Build the plain family type: the root of a `VoxelToLPS` maps
-            # voxels to no space that the type names.
+            # Build the plain family type rather than the class of the
+            # forward. For example, the square root of a `VoxelToLPS` does not
+            # map voxels to LPS, so it is not a `VoxelToLPS`.
             return family(**changes)
-        # Rebuilding from the forward keeps its extra state, such as the flags
-        # of a field. The rebuild needs a resolved forward, so a nested wrapper
-        # is resolved first.
+        # An inverse is rebuilt from the forward so that it keeps the extra
+        # state of the forward, such as the flags of a field. Rebuilding needs
+        # a resolved forward, so a forward that is itself a lazy wrapper is
+        # resolved first.
         if isinstance(forward, Operation):
             forward = forward._materialize()
-        # A type whose name states a direction inverts to the other half of its
-        # pair.
+        # A type whose name states a direction inverts to the type of its pair
+        # that names the opposite direction.
         reverseof = getattr(type(forward), "_reverseof", None)
         if reverseof is not None:
             return reverseof.from_instance(forward, **changes)
         return forward.to(**changes)
 
     def _resolve_through_forward(self) -> Transformation:
-        # The forward picks the typed wrapper; carry the endpoints over.
+        # Let the forward pick the typed wrapper, then carry the endpoints of
+        # this wrapper over to the result.
         resolved = getattr(self.forward, type(self)._operator)()
         edits = {}
         if self.input:
@@ -272,7 +290,7 @@ class Sqrt(Operation, polymorphic="strict"):
     [`DomainError`][brainhops.errors.DomainError]. A field has a square root
     only when it is stored as a
     [`StationaryVelocityField`][brainhops.datamodel.transformations.StationaryVelocityField],
-    which halves its velocity without a wrapper.
+    which takes its square root by halving its velocity, without a wrapper.
 
     Square roots are normally built with
     [`Transformation.sqrt`][brainhops.datamodel.transformations.Transformation.sqrt].
@@ -299,13 +317,13 @@ class Sqrt(Operation, polymorphic="strict"):
 
 
 class ConcreteSqrtMixin:
-    """Mixin that reads the parameter of a typed square root off its forward.
+    """Mixin that reads the parameter of a typed square root from its forward.
 
-    Each concrete family derives the parameter of its square root under `_sqrt`
-    and caches it, so the wrapper holds no array of its own. The forward clears
-    that cache whenever its data or a flag is assigned. Because the wrapper is
-    built from its forward only, the convenience keywords of the family, such
-    as `matrix=`, are not accepted.
+    Each concrete family computes the parameter of its own square root in the
+    cached property `_sqrt`, so the wrapper holds no array of its own. The
+    forward clears that cache whenever its data or a flag is assigned. Because
+    the wrapper is built from its forward only, the convenience keywords of
+    the family, such as `matrix=`, are not accepted.
     """
 
     data = _alias("data", "forward._sqrt", fset=False)
@@ -354,8 +372,8 @@ class SqrtRotation(
     Sqrt,
     Rotation,
     on={"forward": partial(isinstance, PLACEHOLDER, Rotation)},
-    # `SqrtLinear` also matches a rotation; the priority keeps the root a
-    # rotation.
+    # `SqrtLinear` also matches a rotation, so a higher priority is needed
+    # to keep the square root of a rotation a rotation.
     priority=1,
 ):
     """Principal square root of a [`Rotation`][], which is half the rotation.

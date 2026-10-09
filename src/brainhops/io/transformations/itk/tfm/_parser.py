@@ -37,10 +37,12 @@ class TfmTransformParser(
 
     The parser is a mixin for a sequence of transformations. Each block of the
     file becomes a brainhops transformation and is stored in the
-    `transformations` of that sequence. The blocks of a composite
+    `transformations` attribute of that sequence. The blocks of a composite
     transformation are listed in application order, which is the reverse of
     their order in the file, because ITK applies the last block first.
     """
+
+    # --- sniff --------------------------------------------------------
 
     @classmethod
     def sniff_line(
@@ -59,8 +61,7 @@ class TfmTransformParser(
         """
         # The version header is a comment, which peekable_lines has already
         # dropped, so the first line must be the Transform: line. A file that
-        # holds
-        # only the header yields an end sentinel that is not a str.
+        # holds only the header yields an end sentinel that is not a str.
         if isinstance(line, str) and _TRANSFORM_RE.match(line.strip()):
             return Confidence.CERTAIN
         if error:
@@ -68,6 +69,8 @@ class TfmTransformParser(
                 error = SnifferContentError
             raise error(f"Not an ITK transform block: {line!r}")
         return Confidence.NO
+
+    # --- from ---------------------------------------------------------
 
     @classmethod
     def from_lines(
@@ -134,9 +137,8 @@ class TfmTransformParser(
 
             index += 1
             if transform_type == "CompositeTransform":
-                # A composite header has no parameters of its own: its queue is
-                # made
-                # of the blocks that follow it.
+                # A composite header has no parameters of its own, because its
+                # queue is made of the blocks that follow it.
                 composites.append(index - 1)
                 continue
 

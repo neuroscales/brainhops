@@ -323,7 +323,8 @@ def test_malformed_fields_are_refused(
 #   B-SPLINES
 # ----------------------------------------------------------------------
 
-# Knots on an oblique grid, so coefficients in the wrong frame fail.
+# The knots lie on an oblique grid, so coefficients in the wrong frame
+# fail.
 KNOTS = np.array(
     [
         [3.5, -1.0, 0.5, -12.0],
@@ -788,7 +789,7 @@ def test_fslpy_nonlinear_is_read(tmp_path: Path, kind: str) -> None:
     points = _ras(IJK)
     expected = _ramp()[tuple(IJK.T)] + (points if kind == "relative" else 0)
     np.testing.assert_allclose(_apply(xform, points), expected, atol=1e-5)
-    # It is written back in the current layout.
+    # The transformation is written back in the current layout.
     out = tmp_path / "out.x5"
     xform.save(out)
     with h5py.File(out, "r") as f:

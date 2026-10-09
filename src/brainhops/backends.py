@@ -26,8 +26,10 @@ _PRIORITY = ("dask", "cupy", "numpy")
 def available_backends() -> tx.Tuple[str, ...]:
     """Return the names of the installed backends, most preferred first.
 
-    A backend is installed when both its array and ndimage packages are.
-    Dask uses [`brainhops._core.dask_ndimage`][], so it needs nothing else.
+    A backend counts as installed when both its array package and its
+    ndimage package are installed. The ndimage package of dask is
+    [`brainhops._core.dask_ndimage`][], which ships with brainhops, so dask
+    needs nothing else.
     """
     return tuple(
         name
@@ -40,7 +42,7 @@ _BACKEND = (available_backends() or ("numpy",))[0]
 
 
 def best_backend(*backends) -> ModuleType:
-    """Return the array module of the most preferred given backend.
+    """Return the array module of the most preferred of the given backends.
 
     Each argument is anything accepted by [`get_array_backend`][].
 
@@ -63,7 +65,8 @@ def backend(
 ) -> tx.Generator[str, None, None]:
     """Select a backend, given by name or module, inside a `with` block.
 
-    The previous backend is restored on exit. `None` keeps the current one.
+    The previous backend is restored on exit. Passing `None` keeps the
+    current backend.
 
     Yields
     ------
@@ -191,8 +194,9 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
     Numpy and cupy arrays use the conservative bounds check of their
     backend, so `False` means certainly disjoint. Host and device arrays
     never share memory. Dask arrays are immutable and writes rebind their
-    own graph, so distinct dask arrays never do. `None` is returned for an
-    array-like of unknown backend, such as a lazy file proxy.
+    own graph, so two distinct dask arrays never share memory. `None` is
+    returned for an array-like of unknown backend, such as a lazy file
+    proxy.
     """
     if x is y:
         return True
@@ -207,7 +211,8 @@ def may_share_memory(x: ArrayProtocol, y: ArrayProtocol) -> tx.Optional[bool]:
         else:
             return None
     if da in backends:
-        # A computed result that views a source numpy array is ignored.
+        # A dask array whose computed result would view a source numpy
+        # array is not counted as sharing memory with it.
         return False
     if backends[0] is not backends[1]:
         return False
@@ -228,8 +233,8 @@ def copy_array(x: ArrayProtocol) -> ArrayProtocol:
 def _ndimage_of(name: str) -> ModuleType:
     """Return the ndimage package of a backend name, or raise.
 
-    A missing package is never replaced: scipy would load a lazy dask
-    volume into memory.
+    A missing package is never replaced by another one, because scipy, for
+    example, would load a lazy dask volume into memory.
     """
     array, image = _MODULES[name]
     if array is None:

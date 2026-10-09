@@ -31,8 +31,10 @@ def _geometry_factory() -> tx.Tuple[CartesianField, Transformation]:
 
 
 class _GeometryFields(DataModelBase):
-    # `Sequence` serves this slot as `transformations`, which is also the
-    # name of the constructor argument.
+    # --- attributes ---------------------------------------------------
+
+    # The `Sequence` base exposes this slot as `transformations`, which is
+    # also the name of the constructor argument.
     _transformations: tx.Annotated[
         tx.Tuple[CartesianField, Transformation],
         tx.Doc("A cartesian field and a voxel-to-world transformation."),
@@ -64,6 +66,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
     with the transformation from voxel to world coordinates.
     """
 
+    # --- properties ---------------------------------------------------
+
     @property
     def transformation(self) -> Transformation:
         """Voxel-to-world transformation, the second element of the pair."""
@@ -76,7 +80,7 @@ class Geometry(_GeometryFields, ImmutableSequence):
 
     @property
     def grid(self) -> CartesianField:
-        """Cartesian field that defines the image grid, the first element."""
+        """Cartesian field of the image grid, the first element of the pair."""
         return self.transformations[0]
 
     @grid.setter
@@ -97,6 +101,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
                 input=self.grid.input,
                 output=self.grid.output,
             )
+
+    # --- operators ----------------------------------------------------
 
     def __rmatmul__(self, other: Transformation) -> tx.Self:
         """Return the geometry with `other` applied after its transformation.
@@ -129,6 +135,8 @@ class Geometry(_GeometryFields, ImmutableSequence):
             )
         )
 
+    # --- methods ------------------------------------------------------
+
     def compute(
         self,
         mode: tx.Optional[ModeLike] = None,
@@ -152,10 +160,12 @@ class Geometry(_GeometryFields, ImmutableSequence):
             output=self.output,
         )
 
+    # --- helpers ------------------------------------------------------
+
     def _flattened(self) -> tx.Self:
-        # Only the transformation is flattened, never merging the grid into
-        # it. The systems of the geometry are propagated onto both parts, as
-        # in `Sequence._flattened`.
+        # Only the transformation is flattened, and the grid is never merged
+        # into it. The systems of the geometry are propagated onto both parts,
+        # as in `Sequence._flattened`.
         grid, transformation = self.grid, self.transformation
         if grid.input is None and self.input is not None:
             grid = grid.to(input=self.input)
