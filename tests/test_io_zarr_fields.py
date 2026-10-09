@@ -1,8 +1,7 @@
 """Tests for the OME-Zarr field format.
 
-The field is exercised both from in-memory arrays and metadata and through
-real store round-trips. The placement is anisotropic and rotated so that
-the voxel-to-voxel normalization is visible.
+The placement is anisotropic and rotated, so that the voxel-to-voxel
+normalisation is visible.
 """
 
 from pathlib import Path
@@ -29,8 +28,7 @@ from brainhops.datamodel.transformations import (
     Scaling,
 )
 
-# `brainhops.io.transformations.zarr` imports abczarr itself, so the skip
-# has to come before the import, not after it.
+# The module imports abczarr itself, so the skip must come first.
 abczarr = pytest.importorskip("abczarr")
 
 from brainhops.errors import AxisError  # noqa: E402
@@ -48,10 +46,8 @@ def _write_field_store(
     transform: dict,
     name: str = "field.zarr",
 ) -> str:
-    """Write a standalone OME-Zarr field node and return its path.
-
-    The node carries its own typed OME metadata, naming the field's axes
-    and the coordinate transformation that places its one level.
+    """Write a standalone OME-Zarr field node whose typed metadata names its
+    axes and places its one level.
     """
     from abczarr.ome import v0_6 as v6
 
@@ -111,10 +107,10 @@ def test_from_node_reads_a_coordinate_field(tmp_path: Path) -> None:
         "space",
         "coordinate",
     ]
-    # The one level builds as a two-element coordinate sandwich.
+    # One level builds as a two-element coordinate sandwich.
     parts = reader.transformations
     assert isinstance(parts[-1], CoordinatesField)
-    # The metadata is kept exactly as read, so it re-emits the same object.
+    # The metadata is kept exactly as read.
     assert reader.to_ome() is reader.ome
 
 
@@ -135,13 +131,11 @@ def test_from_node_reads_a_scaled_displacement_field(tmp_path: Path) -> None:
 
     reader = OmeZarrField.from_node(node)
     assert isinstance(reader, MultiscaleField)
-    # The scale placement reduces to an affine, so the displacement level
-    # builds as the three-element sandwich around the field.
+    # A scale placement gives a three-element displacement sandwich.
     parts = reader.transformations
     assert len(parts) == 3
     assert isinstance(parts[1], DisplacementField)
-    # The outer parts reduce to affines, which is what lets the field be
-    # inverted and its vectors rotated.
+    # The outer parts reduce to affines, for inversion and vector rotation.
     assert _as_affine(parts[0]) is not None
     assert _as_affine(parts[2]) is not None
 
@@ -160,8 +154,6 @@ def test_field_is_a_registered_file_format() -> None:
         WritableFileBasedTransformation,
     )
 
-    # The field is a writable, file-based transformation, so load() and
-    # save() reach it the way they reach every other transformation format.
     assert issubclass(OmeZarrField, WritableFileBasedTransformation)
 
 
@@ -178,8 +170,6 @@ def test_load_discovers_the_field_format(tmp_path: Path) -> None:
         name="discover.zarr",
     )
 
-    # Dispatch recognizes the store as an OME-Zarr field and reads it, the
-    # same path any other transformation format is reached through.
     assert transformations.sniff(path) is OmeZarrField
     assert isinstance(transformations.load(path), OmeZarrField)
 
@@ -195,8 +185,7 @@ def test_coordinate_field_round_trips_through_a_store(tmp_path: Path) -> None:
         name="coord_src.zarr",
     )
 
-    # Read from a path, write back to a new path, and read again. The field
-    # is a real file format, so this round-trips its arrays and its geometry.
+    # Read, write to a new path and read again.
     read = OmeZarrField.from_store(path)
     out = str(tmp_path / "coord_dst.zarr")
     read.to_store(out)
@@ -288,7 +277,7 @@ def test_finest_displacement_level_is_the_three_element_sandwich() -> None:
     assert isinstance(parts[0], Affine)
     assert isinstance(parts[1], DisplacementField)
     assert isinstance(parts[2], Affine)
-    # The trailing voxel-to-world affine is the placement itself.
+    # The trailing vox-to-world affine is the placement itself.
     assert parts[2] is placement
 
 
@@ -316,14 +305,13 @@ def test_coordinate_level_stores_the_raw_array_without_a_copy() -> None:
     assert len(parts) == 2
     assert isinstance(parts[0], Affine)
     assert isinstance(parts[1], CoordinatesField)
-    # The coordinate field stores the raw world coordinates unchanged.
+    # A coordinates field stores the raw world coordinates unchanged.
     assert parts[1].field is raw
 
 
 def test_untouched_read_re_emits_metadata_unchanged() -> None:
     reader, _, _, _, _, metadata = _displacement_reader()
-    # The reader returns the identical metadata object, so a write after
-    # an untouched read re-emits the OME metadata byte for byte.
+    # An untouched read returns the very metadata object it read.
     assert reader.to_ome() is metadata
 
 
@@ -358,8 +346,7 @@ def test_reader_refuses_nonlinear_placed_displacement() -> None:
 
 def test_reader_selects_a_level_by_target_resolution() -> None:
     reader, placement, _, _, _, _ = _displacement_reader()
-    # The finest level's voxel size is (2, 0.5); the coarse level's grid
-    # is twice as large, so a doubled target selects the coarse level.
+    # The finest voxel size is (2, 0.5); a doubled target selects level 1.
     fine_target = placement
     coarse_target = (placement @ Scaling(scale=[2.0, 2.0])).compute()
     assert reader._nearest_level(fine_target) == 0
@@ -372,7 +359,7 @@ def test_to_axis_maps_each_ome_type() -> None:
     assert isinstance(_to_axis({"type": "channel"}), ChannelAxis)
     assert isinstance(_to_axis({"type": "displacement"}), DisplacementAxis)
     assert isinstance(_to_axis({"type": "coordinate"}), CoordinateAxis)
-    # An unrecognized type falls back to a plain axis carrying the type.
+    # An unrecognised type falls back to a plain axis carrying the type.
     other = _to_axis({"type": "array", "name": "c"})
     assert type(other) is Axis
     assert other.type == "array"

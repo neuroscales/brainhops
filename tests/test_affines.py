@@ -1,4 +1,4 @@
-"""Unit tests for compact affine operators against homogeneous baselines."""
+"""Tests of the compact affine operators against homogeneous matrices."""
 
 import numpy as np
 
@@ -6,7 +6,7 @@ from brainhops._core import affines
 
 
 def _to_homogeneous(A: np.ndarray) -> np.ndarray:
-    """Convert compact affine (..., M, N+1) to homogeneous (..., M+1, N+1)."""
+    """Convert a compact (..., M, N+1) affine to a homogeneous matrix."""
     *batch, m, np1 = A.shape
     H = np.zeros((*batch, m + 1, np1), dtype=A.dtype)
     H[..., :-1, :] = A
@@ -15,7 +15,7 @@ def _to_homogeneous(A: np.ndarray) -> np.ndarray:
 
 
 def _from_homogeneous(H: np.ndarray) -> np.ndarray:
-    """Convert homogeneous (..., M+1, N+1) to compact affine (..., M, N+1)."""
+    """Convert a homogeneous matrix back to a compact affine."""
     return H[..., :-1, :]
 
 
@@ -26,7 +26,7 @@ def _random_affine(
     batch: tuple = (),
     dtype: np.dtype = np.float64,
 ) -> np.ndarray:
-    """Generate random compact affine with shape (*batch, m, n+1)."""
+    """Return a random compact affine, well conditioned when square."""
     A = rng.normal(size=(*batch, m, n + 1)).astype(dtype)
     if m == n:
         A[..., :, :-1] += np.eye(n, dtype=dtype)
@@ -36,13 +36,13 @@ def _random_affine(
 def test_inv_matches_homogeneous_baseline_square_and_rectangular() -> None:
     rng = np.random.default_rng(0)
 
-    # Square linear part -> true inverse
+    # A square linear part has a true inverse.
     A_sq = _random_affine(rng, m=3, n=3)
     got_sq = affines.inv(A_sq, backend="numpy")
     exp_sq = _from_homogeneous(np.linalg.inv(_to_homogeneous(A_sq)))
     np.testing.assert_allclose(got_sq, exp_sq, rtol=1e-10, atol=1e-10)
 
-    # Rectangular linear part -> pseudoinverse baseline
+    # A rectangular linear part has a pseudoinverse.
     A_rect = _random_affine(rng, m=2, n=3)
     got_rect = affines.inv(A_rect, backend="numpy")
     exp_rect = _from_homogeneous(np.linalg.pinv(_to_homogeneous(A_rect)))
@@ -114,7 +114,7 @@ def test_lmdiv_matrix_matches_homogeneous_baseline() -> None:
 def test_rmdiv_matches_homogeneous_baseline() -> None:
     rng = np.random.default_rng(4)
 
-    # Matrix form: solve X @ B = A
+    # Right division solves X @ B = A.
     A = _random_affine(rng, m=2, n=3, batch=(3,))
     B = _random_affine(rng, m=3, n=3, batch=(3,))
     got_mat = affines.rmdiv(A, B, backend="numpy")
@@ -126,9 +126,9 @@ def test_rmdiv_matches_homogeneous_baseline() -> None:
 
 
 def test_axis_scales_of_a_rotated_anisotropic_matrix() -> None:
-    # The per-axis scale is the norm of each column of the linear part,
-    # and is invariant to rotation, so a rotated anisotropic affine
-    # reports its true voxel size on each axis.
+    # The scales are the column norms of the linear part, which a rotation
+    #
+    # does not change.
     theta = 0.4
     rot = np.array(
         [

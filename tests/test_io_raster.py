@@ -1,10 +1,8 @@
-"""
-Tests for the conventions shared by headerless raster image formats.
+"""Tests of the conventions shared by headerless raster formats.
 
-`brainhops.io.images.base._utils_raster` is backend-agnostic: it turns a
-C-ordered array, its storage axes and whatever pixel size a file records
-into the F-ordered data and the pixel-to-physical scaling every raster
-reader returns, and back again for writers.
+The backend-agnostic helpers turn a C-ordered array, its storage axes and a
+recorded pixel size into the F-ordered data and pixel-to-physical scaling
+that readers return, and back for writers.
 """
 
 import numpy as np
@@ -204,7 +202,7 @@ AXES2 = raster.default_axes(2)
 
 def test_resolve_nothing_known() -> None:
     assert raster.resolve_pixel_size(AXES2) == {}
-    # A unit alone does not make up a size.
+    # A unit alone is not a size.
     assert raster.resolve_pixel_size(AXES2, unit="mm") == {}
 
 
@@ -241,7 +239,7 @@ def test_resolve_pixel_size_keyword(
     meta = {"x": (0.1, "mm"), "y": (0.2, "mm")}
     out = raster.resolve_pixel_size(AXES2, meta, pixel_size=pixel_size)
     assert {k: v for k, (v, _) in out.items()} == expected
-    # The metadata's unit is kept when none is given.
+    # The unit from the metadata is kept when no unit is given.
     assert all(str(u) == "millimeter" for _, u in out.values())
 
 

@@ -1,13 +1,9 @@
-"""
-NiftyReg transformations: `reg_aladin` affines, and the NIfTI fields and
-control-point grids of `reg_f3d` and `reg_transform`.
+"""Tests for NiftyReg transformations.
 
-NiftyReg is not a Python dependency, so the fixtures are written with
-`nibabel` in the layout NiftyReg writes (`reg_createControlPointGrid`,
-`reg_createDeformationField`), and the expected maps are computed by
-NumPy ports of NiftyReg's own kernels: `reg_cubic_spline_getDeformationField3D`
-(composition branch, with `get_GridValues` sliding beyond the grid),
-`reg_linear_spline_getDeformationField3D`, and `reg_defField_compose3D`.
+These are reg_aladin affines, and the NIfTI fields and control-point grids
+of reg_f3d and reg_transform. NiftyReg is not a dependency, so the fixtures
+are written with nibabel in its layout, and the expected maps come from
+NumPy ports of the NiftyReg kernels.
 """
 
 import io as _io
@@ -47,9 +43,7 @@ from brainhops.io.transformations.niftyreg import (  # noqa: E402
 
 load = bio.transformations.load
 
-# A reference voxel-to-world affine with a permutation, a flip,
-# anisotropic spacing and an offset, so that a grid read the wrong way
-# cannot pass.
+# A permutation, flip, anisotropy and offset, so a misread grid fails.
 REF_VOX2RAS = np.array(
     [
         [0.0, -1.5, 0.0, 10.0],
@@ -60,7 +54,7 @@ REF_VOX2RAS = np.array(
 )
 REF_SHAPE = (9, 8, 7)
 SPACING = 3.0
-"""Control-point spacing, in reference voxels along every axis."""
+"""Control-point spacing, in reference voxels along each axis."""
 
 AFFINE = np.array(
     [
@@ -73,7 +67,6 @@ AFFINE = np.array(
 
 
 def _apply(xform, points: np.ndarray) -> np.ndarray:  # noqa: ANN001
-    """Map RAS points through a RAS-to-RAS transformation."""
     points = xforms.CoordinatesField(field=np.asarray(points, float))
     chain = list(xform) if isinstance(xform, xforms.Sequence) else [xform]
     out = xforms.Sequence(transformations=[points, *chain]).compute()
@@ -90,8 +83,7 @@ def _grid(shape, vox2world) -> np.ndarray:  # noqa: ANN001
 
 
 def _points(rng: np.random.RandomState, n: int, lo, hi) -> np.ndarray:  # noqa: ANN001
-    """Random world points whose reference voxel coordinates are in
-    `[lo, hi]` along every axis."""
+    """Random world points with reference voxel coordinates in [lo, hi]."""
     ijk = rng.uniform(lo, hi, size=(n, 3)) * (np.asarray(REF_SHAPE) - 1)
     return _world(ijk, REF_VOX2RAS)
 
@@ -102,9 +94,9 @@ def _points(rng: np.random.RandomState, n: int, lo, hi) -> np.ndarray:  # noqa: 
 
 
 def _slide(values: np.ndarray, vox2world: np.ndarray, idx) -> np.ndarray:  # noqa: ANN001
-    """`get_GridValues` / `get_SlidedValues` (positions): the value at an
-    integer index, or beyond the grid the nearest value shifted by the
-    world offset, so that its displacement is kept."""
+    """Port of get_GridValues and get_SlidedValues: beyond the grid, the
+    nearest value is shifted by the world offset.
+    """
     idx = np.asarray(idx)
     shape = np.asarray(values.shape[:3])
     clamped = np.clip(idx, 0, shape - 1)
@@ -113,7 +105,7 @@ def _slide(values: np.ndarray, vox2world: np.ndarray, idx) -> np.ndarray:  # noq
 
 
 def _bspline_basis(t: float) -> np.ndarray:
-    """`get_BSplineBasisValues`."""
+    """Port of get_BSplineBasisValues."""
     return np.array(
         [
             (1 - t) ** 3 / 6,
@@ -127,7 +119,7 @@ def _bspline_basis(t: float) -> np.ndarray:
 def _niftyreg_cubic(
     positions: np.ndarray, vox2world: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """`reg_cubic_spline_getDeformationField3D`, composition branch."""
+    """Port of reg_cubic_spline_getDeformationField3D (composition)."""
     world2vox = np.linalg.inv(vox2world)
     out = np.zeros_like(points)
     for n, point in enumerate(points):
@@ -147,8 +139,7 @@ def _niftyreg_cubic(
 def _niftyreg_linear(
     positions: np.ndarray, vox2world: np.ndarray, points: np.ndarray
 ) -> np.ndarray:
-    """`reg_defField_compose3D` (and the linear spline grid): trilinear,
-    sliding beyond the grid."""
+    """Port of reg_defField_compose3D: trilinear, sliding beyond the grid."""
     world2vox = np.linalg.inv(vox2world)
     out = np.zeros_like(points)
     for n, point in enumerate(points):
@@ -179,8 +170,7 @@ def _nreg_image(
     qform: bool = False,
     p2: float = 0.0,
 ) -> "nb.Nifti1Image":
-    """A NiftyReg transformation: `(X, Y, Z, 1, 3)` `VECTOR` image named
-    `NREG_TRANS`, with its type in `intent_p1`."""
+    """A NiftyReg transformation image, with its type in intent_p1."""
     image = nb.Nifti1Image(
         np.asarray(vectors, "f4")[:, :, :, None, :], vox2world
     )
@@ -194,8 +184,7 @@ def _nreg_image(
 
 
 def _cpp_vox2world(ref_vox2world: np.ndarray) -> np.ndarray:
-    """`reg_createControlPointGrid`: the reference orientation, scaled to
-    the spacing, with the origin one control point before."""
+    """As reg_createControlPointGrid: origin one control point before."""
     grid = ref_vox2world.copy()
     grid[:3, :3] = ref_vox2world[:3, :3] * SPACING
     grid[:3, 3] = _world([-1, -1, -1], grid)
@@ -207,8 +196,7 @@ def _cpp_shape() -> tuple:
 
 
 def _random_cpp(rng: np.random.RandomState, scale: float = 2.0):  # noqa: ANN202
-    """Control-point positions: the affine positions plus a random
-    perturbation, as `reg_f3d -aff` would start from and optimise."""
+    """Affine positions with a random perturbation, as reg_f3d -aff starts."""
     vox2world = _cpp_vox2world(REF_VOX2RAS)
     shape = _cpp_shape()
     identity = _grid(shape, vox2world)
@@ -228,7 +216,7 @@ def rng() -> np.random.RandomState:
 
 
 def _write_aladin(path: Path, matrix: np.ndarray) -> Path:
-    """`reg_tool_WriteAffineFile`: `%.7g`, space separated."""
+    """As reg_tool_WriteAffineFile: %.7g, separated by spaces."""
     with open(path, "w") as f:
         for row in matrix:
             f.write(" ".join(f"{value:.7g}" for value in row) + "\n")
@@ -238,8 +226,7 @@ def _write_aladin(path: Path, matrix: np.ndarray) -> Path:
 def test_aladin_affine_maps_reference_ras_to_floating_ras(
     tmp_path: Path,
 ) -> None:
-    """`Affine * Reference = Floating`: the matrix is read as it is, as a
-    RAS-to-RAS affine."""
+    """Affine * Reference = Floating: the matrix is read as RAS-to-RAS."""
     path = _write_aladin(tmp_path / "aff.txt", AFFINE)
     xform = load(path, hint="niftyreg")
     assert isinstance(xform, NiftyRegAffine)
@@ -260,8 +247,7 @@ def test_aladin_affine_hints(tmp_path: Path, hint: str) -> None:
 
 
 def test_aladin_affine_is_not_claimed_without_a_hint(tmp_path: Path) -> None:
-    """A bare `(4, 4)` matrix says nothing of NiftyReg: the generic
-    matrix reader keeps it."""
+    """A bare (4, 4) matrix stays with the generic matrix reader."""
     path = _write_aladin(tmp_path / "aff.txt", AFFINE)
     assert isinstance(load(path), TxtMatrixAffine)
     assert NiftyRegAffine.sniff_file(path) == Confidence.WEAK
@@ -298,8 +284,7 @@ def test_aladin_affine_is_written_from_a_matrix() -> None:
 
 
 def test_plain_affine_is_not_saved_as_niftyreg(tmp_path: Path) -> None:
-    """A plain `Affine` does not say it maps RAS to RAS, so `save` does
-    not write it as a NiftyReg affine."""
+    """A plain Affine does not declare RAS-to-RAS."""
     with pytest.raises(WriterError):
         bio.save(xforms.Affine(matrix=AFFINE[:3]), tmp_path / "a.txt")
 
@@ -385,8 +370,7 @@ def _deformation(rng: np.random.RandomState) -> np.ndarray:
 def test_deformation_field_matches_niftyreg(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """Positions at the voxels, trilinear in between, and the nearest
-    displacement slid beyond the grid (`reg_defField_compose3D`)."""
+    """Trilinear between voxels, sliding beyond the grid."""
     positions = _deformation(rng)
     path = tmp_path / "def.nii.gz"
     nb.save(_nreg_image(positions, REF_VOX2RAS, 0), path)
@@ -414,8 +398,7 @@ def test_deformation_field_matches_niftyreg(
 def test_displacement_field_matches_niftyreg(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """`displacement = deformation - position`, so the field maps
-    `x -> x + u(x)`."""
+    """The field maps x -> x + u(x)."""
     positions = _deformation(rng)
     disp = positions - _grid(REF_SHAPE, REF_VOX2RAS)
     path = tmp_path / "disp.nii.gz"
@@ -437,7 +420,7 @@ def test_qform_is_used_when_sform_code_is_zero(
 ) -> None:
     positions = _deformation(rng)
     image = _nreg_image(positions, REF_VOX2RAS, 0, sform=False, qform=True)
-    # A misleading sform with code 0: NiftyReg ignores it.
+    # NiftyReg ignores an sform with code 0 and uses the qform.
     image.header.set_sform(np.diag([5.0, 5.0, 5.0, 1.0]), code=0)
     path = tmp_path / "def.nii.gz"
     nb.save(image, path)
@@ -453,8 +436,7 @@ def test_qform_is_used_when_sform_code_is_zero(
 def test_no_xform_code_falls_back_to_pixel_sizes(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """With both codes zero, `nifti1_io` makes the qform a diagonal of
-    pixel sizes with no offset, and NiftyReg uses it."""
+    """With both codes zero, the qform is the diagonal of the pixel sizes."""
     vox2world = np.diag([2.0, 3.0, 1.5, 1.0])
     identity = _grid(REF_SHAPE, vox2world)
     positions = identity + rng.standard_normal(identity.shape)
@@ -497,8 +479,6 @@ def test_dense_fields_round_trip(
 def test_displacement_field_is_written_from_a_chain(
     rng: np.random.RandomState,
 ) -> None:
-    """A field built from the shared RAS displacement chain writes as a
-    NiftyReg displacement field."""
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -521,8 +501,7 @@ def test_displacement_field_is_written_from_a_chain(
 def test_control_point_grid_matches_niftyreg(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """The cubic B-spline of the control-point positions, placed by the
-    grid's header, and slid beyond the grid."""
+    """A cubic B-spline of control-point positions, sliding beyond the grid."""
     positions, vox2world = _random_cpp(rng)
     path = tmp_path / "cpp.nii.gz"
     nb.save(_nreg_image(positions, vox2world, 2), path)
@@ -543,8 +522,7 @@ def test_control_point_grid_matches_niftyreg(
 
 
 def test_identity_grid_is_the_identity(tmp_path: Path) -> None:
-    """`reg_createControlPointGrid` fills the grid with the positions of
-    its control points: the identity."""
+    """A grid of its own control-point positions is the identity."""
     vox2world = _cpp_vox2world(REF_VOX2RAS)
     positions = _grid(_cpp_shape(), vox2world)
     path = tmp_path / "cpp.nii.gz"
@@ -572,8 +550,7 @@ def test_linear_grid_matches_niftyreg(
 
 
 def _with_extension(image: "nb.Nifti1Image", matrix: np.ndarray) -> None:
-    """The affine extension of `reg_createSymmetricControlPointGrids`:
-    a raw `mat44` in a `NIFTI_ECODE_IGNORE` extension, twice."""
+    """The affine extension: a raw mat44 in two NIFTI_ECODE_IGNORE blocks."""
     content = np.asarray(matrix, "<f4").tobytes() + bytes(8)
     for _ in range(2):
         image.header.extensions.append(nb.nifti1.Nifti1Extension(0, content))
@@ -582,8 +559,7 @@ def _with_extension(image: "nb.Nifti1Image", matrix: np.ndarray) -> None:
 def test_grid_extension_affine_is_applied_first(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """`reg_spline_getDeformationField` maps the reference position
-    through the extension affine, then evaluates the spline there."""
+    """Reference positions go through the extension affine, then the spline."""
     positions, vox2world = _random_cpp(rng, scale=1.0)
     half = AFFINE.copy()
     half[:3, 3] *= 0.5
@@ -628,7 +604,7 @@ def test_grid_round_trips(
 
 
 def _written_field(grid, tmp_path: Path) -> np.ndarray:  # noqa: ANN001
-    # The values of the field a grid reads back as, once written.
+    # The values of the field that a written grid reads back as.
     out = tmp_path / "out.nii.gz"
     nb.save(grid.to_nibabel(), out)
     back = load(out)
@@ -640,7 +616,7 @@ def _written_field(grid, tmp_path: Path) -> np.ndarray:  # noqa: ANN001
 def test_a_grid_of_another_degree_is_refitted_to_a_cubic_one(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    # NiftyReg stores cubic and linear grids: a quadratic one is refitted.
+    # NiftyReg stores cubic and linear grids, so a quadratic is refitted.
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -661,8 +637,7 @@ def test_a_grid_of_another_degree_is_refitted_to_a_cubic_one(
 def test_sampled_values_are_written_as_coefficients(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    # A field of values written to a format of coefficients is encoded,
-    # and reads back as the same values.
+    # Sampled values written to the coefficient format read back the same.
     from brainhops.io.transformations.base.fields import (
         ras_displacement_chain,
     )
@@ -682,15 +657,14 @@ def test_stored_coefficients_are_written_without_refitting(
     rng: np.random.RandomState,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A grid already in the format's encoding is written as it is stored:
-    # nothing is fitted or decoded on the way out.
+    # A grid already in the encoding of the format is not refitted.
     from brainhops.datamodel._transformations import concrete
 
     positions, vox2world = _random_cpp(rng)
     path = tmp_path / "cpp.nii.gz"
-    nb.save(_nreg_image(positions, vox2world, 2), path)  # a cubic grid
+    nb.save(_nreg_image(positions, vox2world, 2), path)  # cubic grid
     grid = load(path)
-    list(grid)  # build the chain before the spline filters are disabled
+    list(grid)  # Build the chain before the spline filters are disabled.
 
     def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         raise AssertionError("the stored coefficients were refitted")
@@ -709,8 +683,7 @@ def test_stored_coefficients_are_written_without_refitting(
 # ----------------------------------------------------------------------
 
 
-# A world-space linear velocity about the centre of the reference grid,
-# `v(x) = L (x - c)`, whose flow at time one is `x -> c + expm(L) (x - c)`.
+# Linear velocity v(x) = L(x - c), whose flow is c + expm(L)(x - c).
 GENERATOR = np.array(
     [[0.02, -0.15, 0.03], [0.12, -0.01, 0.05], [-0.04, 0.06, 0.03]]
 )
@@ -730,9 +703,7 @@ def _velocity(world: np.ndarray) -> np.ndarray:
 def test_dense_velocity_integrates_to_its_flow(
     tmp_path: Path, rng: np.random.RandomState, kind: int, sign: int
 ) -> None:
-    """A dense velocity, as positions (3) or displacements (4), is read
-    as a stationary velocity field with `|intent_p2|` squaring steps; a
-    negative `intent_p2` (a backward field) integrates its negation."""
+    """|intent_p2| gives the squaring steps; a negative value integrates -v."""
     world = _grid(REF_SHAPE, REF_VOX2RAS)
     vectors = _velocity(world) + (world if kind == 3 else 0)
     path = tmp_path / "vel.nii.gz"
@@ -752,8 +723,7 @@ def test_dense_velocity_integrates_to_its_flow(
 def test_velocity_grid_integrates_to_its_flow(
     tmp_path: Path, rng: np.random.RandomState
 ) -> None:
-    """A velocity grid holds control-point positions: it is read as the
-    cubic coefficients of the velocity, refitted at each squaring."""
+    """A velocity grid of positions is refitted at each squaring."""
     vox2world = _cpp_vox2world(REF_VOX2RAS)
     world = _grid(_cpp_shape(), vox2world)
     positions = world + _velocity(world)
@@ -776,8 +746,7 @@ def test_unset_velocity_steps_use_the_default_rule(tmp_path: Path) -> None:
     path = tmp_path / "vel.nii.gz"
     nb.save(_nreg_image(_velocity(world), REF_VOX2RAS, 4, p2=0), path)
     xform = load(path)
-    # The file names no count (`intent_p2 = 0`), so the field integrates
-    # with the one the default rule picks.
+    # intent_p2 = 0 names no count, so the default rule applies.
     assert xform.steps is None
     velocity = xform.displacement
     assert velocity.steps is None
@@ -804,7 +773,7 @@ def test_velocity_with_an_affine_is_read_but_not_decoded(
     with pytest.raises(NotImplementedError, match="extensions"):
         xform.compute()
 
-    # It is written back as it was read.
+    # A velocity with an affine is written back as read.
     out = tmp_path / "out.nii.gz"
     xform.save(out)
     back = nb.load(out)
@@ -820,8 +789,7 @@ def test_velocity_with_an_affine_is_read_but_not_decoded(
 def test_velocity_is_written_from_a_chain(
     tmp_path: Path, cls: type, kind: int
 ) -> None:
-    """A velocity built from a chain is written as NiftyReg integrates
-    it: positions, with its squaring steps in `intent_p2`."""
+    """A velocity from a chain is written as positions with its steps."""
     vox2world = REF_VOX2RAS if kind == 3 else _cpp_vox2world(REF_VOX2RAS)
     shape = REF_SHAPE if kind == 3 else _cpp_shape()
     world = _grid(shape, vox2world)
@@ -889,8 +857,7 @@ def _dispvect(tmp_path: Path, vectors: np.ndarray) -> Path:
 def test_a_displacement_copied_to_a_velocity_is_refused(
     tmp_path: Path,
 ) -> None:
-    """A NIfTI displacement is not written back as a NiftyReg velocity:
-    its header is another format's, and a displacement has no logarithm."""
+    """A NIfTI displacement field has no logarithm to write as a velocity."""
     path = _dispvect(tmp_path, np.zeros((*REF_SHAPE, 3)) + 0.5)
     copied = NiftyRegVelocityField.from_instance(load(path))
     with pytest.raises(NotImplementedError, match="logarithm"):
@@ -917,8 +884,7 @@ def test_a_velocity_copied_to_niftyreg_keeps_its_steps(tmp_path: Path) -> None:
 def test_a_niftyreg_velocity_copied_to_nifti_is_integrated(
     tmp_path: Path,
 ) -> None:
-    """A velocity copied to a NIfTI displacement file is written as its
-    displacement, unless `log=True` is asked for when it is saved."""
+    """A velocity is written to NIfTI as displacements unless log=True."""
     from brainhops.io.transformations.nifti import NiftiRASDisplacementField
 
     world = _grid(REF_SHAPE, REF_VOX2RAS)

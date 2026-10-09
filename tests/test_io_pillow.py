@@ -1,9 +1,7 @@
-"""
-Tests for raster images (PNG, JPEG, BMP, GIF, WebP, ...) read and written
-with Pillow.
+"""Tests for raster images (PNG, JPEG, BMP, GIF, WebP, ...) read via Pillow.
 
-Fixtures are generated with Pillow itself, so that each test states the
-exact pixels, mode and resolution of the file it reads.
+The fixtures are written with Pillow, so that each test states the exact
+pixels, mode and resolution.
 """
 
 import io
@@ -52,7 +50,6 @@ GREY16 = RNG.integers(0, 2**16, (7, 12), dtype=np.uint16)
 
 
 def _write(tmp_path, name, array, **options):  # noqa: ANN001, ANN202
-    """Write `array` (C order) with Pillow, and return the path."""
     path = tmp_path / name
     Image.fromarray(array).save(path, **options)
     return path
@@ -106,7 +103,7 @@ def test_read_lossless_is_transposed_view(
     assert image.data.shape == expected.shape
     assert image.data.dtype == array.dtype
     np.testing.assert_array_equal(image.data, expected)
-    # x is the column, y the row
+    # x is the column and y the row.
     assert image.data[3, 2, ...].tolist() == array[2, 3, ...].tolist()
 
 
@@ -120,7 +117,8 @@ def test_read_axes_and_systems(tmp_path: Path) -> None:
     assert [a.name for a in pixel.axes] == ["x", "y", "c"]
     assert [a.type for a in pixel.axes] == ["space", "space", "channel"]
     assert all(is_indexunit(a.unit) for a in pixel.axes)
-    # Unknown size: identity onto axes with no unit.
+    # With an unknown pixel size, the scaling is an identity onto unit-less
+    # axes.
     np.testing.assert_array_equal(xform.scale, [1, 1, 1])
     assert xform.output.name == "physical"
     assert all(a.unit is None for a in xform.output.axes)
@@ -136,7 +134,7 @@ def test_read_grey_has_no_channel_axis(tmp_path: Path) -> None:
 
 def test_read_data_is_a_view_of_the_decoded_array(tmp_path: Path) -> None:
     image = load(_write(tmp_path, "a.png", GREY))
-    # The F-ordered data of a grey image is the transpose of a C array.
+    # F-ordered grey data is the transpose of the C-ordered array.
     assert image.data.flags.f_contiguous
     assert image.data.base is not None
     assert image.data.flags.writeable
@@ -160,7 +158,7 @@ def test_read_grey_alpha(tmp_path: Path) -> None:
 
 
 def test_read_int32_and_float32_tiff(tmp_path: Path) -> None:
-    # Pillow writes 32-bit integer and float images only as TIFF.
+    # Pillow writes 32-bit integers and floats only as TIFF.
     for array in (
         RNG.integers(-(2**31), 2**31 - 1, (7, 12), dtype=np.int32),
         RNG.random((7, 12)).astype(np.float32),
@@ -189,7 +187,7 @@ def test_read_palette_is_converted(tmp_path: Path) -> None:
     assert image.mode == "P"
     assert image.data.shape == (12, 7, 3)
     np.testing.assert_array_equal(image.data, expected.transpose(1, 0, 2))
-    # With palette=False, the indices are kept.
+    # palette=False keeps the indices.
     indices = load(path, palette=False)
     assert indices.data.shape == (12, 7)
     np.testing.assert_array_equal(indices.data, np.asarray(rgb).T)
@@ -248,7 +246,7 @@ def test_dpi_is_ignored_by_default(tmp_path: Path) -> None:
     image = load(_write(tmp_path, "a.png", GREY, dpi=(300, 150)))
     np.testing.assert_array_equal(image.transformation.scale, [1, 1])
     assert all(a.unit is None for a in image.transformation.output.axes)
-    # ... but kept as metadata.
+    # The dpi is not applied by default but is kept as metadata.
     assert image.info["dpi"] == pytest.approx((300, 150), rel=1e-4)
 
 
@@ -290,12 +288,12 @@ def test_pixel_size_overrides_dpi(tmp_path: Path) -> None:
     image = load(path, dpi=True, pixel_size=(0.5, 2.0))
     xform = image.transformation
     np.testing.assert_allclose(xform.scale, [0.5, 2.0, 1.0])
-    # The unit of the metadata is kept.
+    # The unit from the metadata is kept.
     assert str(xform.output.axes[0].unit) == "millimeter"
     image = load(path, pixel_size=3.0, unit="um")
     np.testing.assert_allclose(image.transformation.scale, [3.0, 3.0, 1.0])
     assert str(image.transformation.output.axes[0].unit) == "micrometer"
-    # Without a unit from anywhere, the size has none.
+    # Without a unit anywhere, the size is unit-less.
     image = load(path, pixel_size=3.0)
     assert image.transformation.output.axes[0].unit is None
 
@@ -358,8 +356,8 @@ def test_load_by_content_with_wrong_extension(tmp_path: Path) -> None:
 
 
 def test_tiff_falls_back_on_pillow() -> None:
-    # TIFF content is claimed by the dedicated TIFF reader (when it is
-    # registered); Pillow still reads it when asked to.
+    # The TIFF reader claims TIFF when registered, but Pillow reads it on
+    # request.
     content = _bytes(GREY16, "TIFF")
     assert PillowImage.sniff(content) == Confidence.WEAK
     image = bio.images.load(content, hint="pillow")
@@ -398,9 +396,8 @@ else:
 
 
 def test_pillow_reads_tiff_without_tifffile(tmp_path: Path) -> None:
-    # Without tifffile the TIFF reader is not registered: TIFF files are
-    # read by Pillow, whose weak TIFF sniff is then the only claim, and
-    # asking for the TIFF reader says what to install.
+    # Without tifffile, the weak TIFF sniff of Pillow is the only claim, and
+    # requesting the TIFF reader says what to install.
     script = tmp_path / "script.py"
     script.write_text(_WITHOUT_TIFFFILE)
     env = dict(os.environ)
@@ -438,7 +435,7 @@ def test_decompression_bomb(
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 10)
     with pytest.raises(Image.DecompressionBombError):
         PillowImage.load(path)
-    # It is still recognized as an image.
+    # The file is still recognised as an image.
     assert PillowImage.sniff(path) == Confidence.LIKELY
 
 
@@ -478,8 +475,7 @@ def test_write_round_trip(
     path = tmp_path / name
     image = SingleScaleImage(data=data)
     if name.endswith(".tif"):
-        # TIFF files are not claimed by the Pillow writer, but it can
-        # write one when asked to.
+        # The Pillow writer does not claim TIFF but writes it on request.
         PillowImage.from_instance(image).save(path)
     else:
         bio.save(image, path)
@@ -570,7 +566,7 @@ def test_write_refuses_a_volume(tmp_path: Path) -> None:
 
 
 def test_write_drops_singleton_axes(tmp_path: Path) -> None:
-    # A 2D slice of a volume, (x, y, z=1), as NIfTI stores one.
+    # A 2-D slice (x, y, z=1) of a volume, as NIfTI stores it.
     xform = raster.raster_transformations(raster.default_axes(3))
     image = SingleScaleImage(
         data=GREY.T[:, :, None].copy(), transformations=xform
@@ -646,7 +642,7 @@ def test_write_explicit_dpi(tmp_path: Path) -> None:
 
 
 def test_write_round_trips_file_dpi(tmp_path: Path) -> None:
-    # Read without using the resolution: it is still written back.
+    # A dpi that was read but not applied is still written back.
     image = load(_write(tmp_path, "a.png", GREY, dpi=(72, 72)))
     image.save(tmp_path / "b.png")
     assert _read(tmp_path / "b.png")[1]["dpi"] == pytest.approx(
@@ -655,7 +651,7 @@ def test_write_round_trips_file_dpi(tmp_path: Path) -> None:
 
 
 def test_write_round_trips_icc_profile(tmp_path: Path) -> None:
-    profile = b"\x00" * 128  # Pillow stores the profile as opaque bytes
+    profile = b"\x00" * 128  # Pillow stores the profile as opaque bytes.
     path = tmp_path / "a.png"
     Image.fromarray(RGB).save(path, icc_profile=profile)
     image = load(path)
@@ -680,7 +676,7 @@ def test_write_a_nifti_slice(tmp_path: Path) -> None:
 
 
 def test_write_a_sagittal_slice(tmp_path: Path) -> None:
-    # (x=1, y, z): y runs along the columns and z along the rows.
+    # (x=1, y, z): y along the columns and z along the rows.
     xform = raster.raster_transformations(raster.default_axes(3))
     image = SingleScaleImage(
         data=GREY.T[None, :, :].copy(), transformations=xform
@@ -704,7 +700,7 @@ def test_write_falls_back_on_png_for_read_only_formats() -> None:
 
 
 def test_png_scal_is_kept_but_not_applied(tmp_path: Path) -> None:
-    # Pillow does not write an sCAL chunk: insert one after IHDR.
+    # Pillow does not write sCAL, so the chunk is inserted after IHDR.
     png = _bytes(GREY, "PNG")
     data = b"\x01" + b"0.5\x000.25"
     chunk = len(data).to_bytes(4, "big") + b"sCAL" + data

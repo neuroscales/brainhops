@@ -1,4 +1,4 @@
-"""Tests for orientation datamodel compatibility."""
+"""Tests of orientation values."""
 
 from brainhops.datamodel.orientations import AnatomicalOrientation, LeftToRight
 

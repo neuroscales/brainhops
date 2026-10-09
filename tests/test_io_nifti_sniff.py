@@ -1,10 +1,7 @@
-"""
-Tests for the NIfTI sniffer on files that are, and are not, NIfTI.
+"""Tests of the NIfTI sniffer on NIfTI and other files.
 
-Every format is sniffed by the NIfTI parser when `io.load` looks for a
-reader. It checks the NIfTI magic before handing anything to `nibabel`,
-which would otherwise parse an MGH, a PNG or an LTA as a NIfTI header
-and warn about what it found there (issue #258).
+The sniffer checks the magic before nibabel, which would parse MGH, PNG or
+LTA files as a header and warn (#258).
 """
 
 import gzip
@@ -80,7 +77,7 @@ def _tfm(tmp_path: Path, name: str) -> Path:
 
 
 def _no_warnings(func, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-    """Call `func`, failing if it emits a `UserWarning`."""
+    """Call `func` and fail on any UserWarning."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = func(*args, **kwargs)
@@ -124,7 +121,6 @@ def test_the_nifti_sniffer_declines_a_non_nifti_quietly(
 
 
 def test_a_header_sized_without_magic_is_declined() -> None:
-    """`sizeof_hdr` alone is not enough: the magic must match too."""
     header = bytearray(nb.Nifti1Header().binaryblock)
     header[344:348] = b"xxx\0"
     assert not NiftiParser.sniff_bytes(bytes(header))
@@ -159,7 +155,7 @@ def test_a_nifti_is_still_sniffed_and_loaded(
 
 @pytest.mark.parametrize("cls", [nb.Nifti1Pair, nb.Nifti2Pair])
 def test_the_header_of_a_pair_is_sniffed(tmp_path: Path, cls: type) -> None:
-    """A `.hdr` carries the `ni1`/`ni2` magic of a header-image pair."""
+    """The .hdr file of a pair carries the ni1 or ni2 magic."""
     file = tmp_path / "x.hdr"
     nb.save(cls(_volume(), np.eye(4)), str(file))
     assert _no_warnings(NiftiParser.sniff_bytes, file.read_bytes())

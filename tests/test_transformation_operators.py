@@ -1,9 +1,7 @@
-"""Tests for the unary operators of a transformation (issue #47).
+"""Tests for the unary operators of #47: square and principal root.
 
-These cover the square and the principal square root: their algebraic
-identities, the kind each one keeps, their laziness, and the cases they
-refuse. The exponential and the logarithm are encodings (`log=True`), and
-are tested in `test_transformation_log.py`.
+The exponential and logarithm are encodings, tested in
+test_transformation_log.py.
 """
 
 from unittest import mock
@@ -46,8 +44,7 @@ from brainhops.io.transformations.base.affines import LPSToVoxel, VoxelToLPS
 #   FIXTURES
 # ----------------------------------------------------------------------
 
-# A well-conditioned affine whose linear part has no eigenvalue on the
-# negative real axis, so that it has a principal square root.
+# No eigenvalue on the negative real axis, so a principal root exists.
 AFFINE = np.array(
     [[1.2, 0.1, -0.2, 3.0], [0.05, 0.9, 0.3, -1.0], [0.1, -0.1, 1.1, 2.0]]
 )
@@ -55,7 +52,6 @@ LINEAR = AFFINE[:, :-1].copy()
 
 
 def _rotation(angle: float, axis: int = 2) -> np.ndarray:
-    # A 3D rotation by `angle` about one axis.
     c, s = np.cos(angle), np.sin(angle)
     plane = [i for i in range(3) if i != axis]
     matrix = np.eye(3)
@@ -64,7 +60,7 @@ def _rotation(angle: float, axis: int = 2) -> np.ndarray:
 
 
 ROTATION = _rotation(0.4, 0) @ _rotation(-0.7, 1) @ _rotation(1.1, 2)
-CYCLE = np.array([1, 2, 0])  # a 3-cycle: a rotation by a third of a turn
+CYCLE = np.array([1, 2, 0])  # a third of a turn
 
 
 def _matrix(t: Transformation) -> np.ndarray:
@@ -90,7 +86,6 @@ def _system(n: int, name: str = "a") -> CoordinateSystem:
 
 
 def _transforms() -> list:
-    # One parameterized transformation of every concrete matrix kind.
     return [
         Translation(translation=np.array([1.0, -2.0, 0.5])),
         Scaling(scale=np.array([2.0, 0.5, 1.5])),
@@ -102,9 +97,7 @@ def _transforms() -> list:
 
 
 def _rootable() -> list:
-    # The same, less the permutation: no reordering of axes is the half
-    # of another, so a permutation has no square root of its own kind
-    # and `Permutation.sqrt` refuses (see `test_a_permutation_has_no_root`).
+    # No reordering of axes is half of another.
     return [t for t in _transforms() if not isinstance(t, Permutation)]
 
 
@@ -128,11 +121,9 @@ def test_operator_returns_typed_lazy_wrapper(
 ) -> None:
     result = getattr(forward, method)()
     assert isinstance(result, wrapper)
-    # It stays an instance of the family of its result, so the compose
-    # engine and the kind checks treat it like any transform of that family.
+    # The compose engine and kind checks see through the wrapper.
     assert isinstance(result, family)
     assert result.forward is forward
-    # Computing it gives a plain instance of that family.
     computed = getattr(forward, method)(compute=True)
     assert not isinstance(computed, wrapper)
     assert isinstance(computed, family)
@@ -141,9 +132,7 @@ def test_operator_returns_typed_lazy_wrapper(
 def test_front_doors_build_typed_wrappers_and_refuse_the_rest() -> None:
     affine = Affine(matrix=AFFINE)
     assert type(Sqrt(affine)) is type(affine.sqrt())
-    # A family with no typed wrapper is refused when it is constructed,
-    # rather than building an opaque wrapper the compose engine cannot see
-    # through. The methods are the general entry point.
+    # A family without a typed wrapper is refused, not wrapped opaquely.
     with pytest.raises(TypeError):
         Sqrt(forward=Identity())
     with pytest.raises(TypeError):
@@ -161,14 +150,11 @@ def test_wrapper_endpoints_are_the_forward_endpoints() -> None:
 
 def test_nothing_is_computed_until_the_parameter_is_read() -> None:
     affine = Affine(matrix=AFFINE)
-    # The forward derives the square root of its own matrix, under
-    # `_sqrt`, and the wrapper reads it from there.
     with mock.patch.object(
         _concrete, "affine_sqrtm", side_effect=AssertionError("computed")
     ) as compute:
         root = affine.sqrt()
-        # Neither a kind check, a simplification, an endpoint edit, nor a
-        # compute under a mode that does not admit it resolves the wrapper.
+        # None of these resolves the wrapper.
         assert is_kind(root, kinds.Affine)
         assert is_kind(root, kinds.InvertibleAffine)
         assert not is_kind(root, kinds.Translation)
@@ -187,7 +173,7 @@ def test_operators_are_listed_by_name() -> None:
         result = operator(affine)
         expected = getattr(affine, name)()
         assert type(result) is type(expected)
-    # A subclass override is honoured, not bypassed.
+    # A subclass override is honoured.
     identity = Identity()
     assert UNARY_OPERATORS["sqrt"](identity) is identity
     with pytest.raises(TypeError):
@@ -205,14 +191,11 @@ def test_sqrt_squared_is_the_transform(t: Transformation) -> None:
     np.testing.assert_allclose(
         _matrix((root @ root).compute()), _matrix(t), atol=1e-12
     )
-    # And the lazy square of a lazy root is the transform itself.
     assert t.sqrt().square() is t
 
 
 def test_a_permutation_has_no_root() -> None:
-    # No reordering of axes is the half of another: the three-cycle is a
-    # third of a turn, so its root is a sixth of one, which permutes no
-    # axes. Read as the linear transform it stands for, it does have one.
+    # Its root, a sixth of a turn, permutes no axes.
     p = Permutation(permutation=CYCLE)
     with pytest.raises(NotImplementedError):
         p.sqrt()
@@ -220,7 +203,6 @@ def test_a_permutation_has_no_root() -> None:
     np.testing.assert_allclose(
         _matrix((root @ root).compute()), _matrix(p), atol=1e-12
     )
-    # The identity permutes nothing, and is its own root.
     identity = Permutation()
     assert identity.sqrt() is identity
 
@@ -240,12 +222,9 @@ def test_square_is_the_composition_with_itself(t: Transformation) -> None:
 
 
 def test_sqrt_is_the_principal_root() -> None:
-    # A rotation by an angle has two square roots in the plane (by half the
-    # angle, and by half the angle plus a half turn); the principal one is
-    # the half rotation.
+    # Of the two planar roots, the principal one is the half angle.
     root = Rotation(matrix=_rotation(2.0)).sqrt(compute=True)
     np.testing.assert_allclose(root.matrix, _rotation(1.0), atol=1e-12)
-    # A translation's root is half of it, a positive scaling's its root.
     half = Translation(translation=np.array([2.0, -4.0])).sqrt(compute=True)
     np.testing.assert_array_equal(half.translation, [1.0, -2.0])
     np.testing.assert_allclose(
@@ -279,9 +258,7 @@ def test_identity_is_fixed(method: str) -> None:
 
 @pytest.mark.parametrize("method", ["sqrt"])
 def test_operators_commute_with_a_change_of_coordinates(method: str) -> None:
-    # The displacement reading does not depend on the coordinates, so
-    # computing a conjugated chain first gives the same answer as applying
-    # the operator inside the change of coordinates.
+    # The displacement reading does not depend on coordinates.
     change = Affine(
         matrix=np.array(
             [[0.0, 2.0, 0.0, 5.0], [1.5, 0.0, 0.0, -3.0], [0, 0.0, 0.5, 1.0]]
@@ -300,8 +277,7 @@ def test_operators_commute_with_a_change_of_coordinates(method: str) -> None:
 
 @pytest.mark.parametrize("method", ["sqrt"])
 def test_operators_act_on_a_subspace_inner(method: str) -> None:
-    # The pass-through axes are the identity, which every operator fixes,
-    # so the operator of an embedding is the embedding of the operator.
+    # The pass-through axes are fixed by every operator.
     full = _system(4)
     sub = SubspaceTransformation(
         transformation=Affine(matrix=AFFINE),
@@ -369,13 +345,11 @@ def test_kind_membership_is_read_from_the_forward(
 
 
 def test_a_simplified_forward_rebuilds_a_cheaper_wrapper() -> None:
-    # An affine that holds a scaling is simplified to one numerically, and
-    # its root is rebuilt as the root of the scaling.
+    # The root is rebuilt as the root of the simplified scaling.
     root = Affine(matrix=np.diag([4.0, 9.0, 1.0, 1.0])[:3]).sqrt()
     simplified = root.simplify("numeric")
     assert isinstance(simplified, Sqrt) and isinstance(simplified, Scaling)
     np.testing.assert_allclose(simplified.scale, [2.0, 3.0, 1.0])
-    # The square root of an identity collapses to the identity.
     assert isinstance(
         Affine(matrix=np.eye(3, 4)).sqrt().simplify(True), Identity
     )
@@ -405,8 +379,7 @@ def test_domain_error_is_a_value_error() -> None:
 def test_sqrt_refuses_outside_the_principal_domain(
     t: Transformation, reason: str
 ) -> None:
-    # The refusal is a property of the value, so it is raised when the
-    # lazy result is resolved, never as a complex or non-principal answer.
+    # The refusal is raised when the lazy result is resolved.
     lazy = t.sqrt()
     with pytest.raises(DomainError, match=reason):
         lazy.compute()
@@ -484,8 +457,7 @@ VOX2LPS = np.array(
 
 
 def test_a_change_of_coordinates_is_recognized_exactly() -> None:
-    # Two affines built separately undo each other when their product is
-    # exactly the identity ...
+    # The ends cancel only when their product is exactly the identity...
     exact = np.linalg.inv(_homogeneous(VOX2LPS))[:3]
     np.testing.assert_array_equal(
         _homogeneous(exact) @ _homogeneous(VOX2LPS), np.eye(4)
@@ -496,9 +468,7 @@ def test_a_change_of_coordinates_is_recognized_exactly() -> None:
     )
     root = chain.sqrt()
     assert isinstance(root[1], Sqrt) and root[1].forward is inner
-    # ... but not when they are inverses only up to rounding: the operator
-    # would then act on a chain that is not quite the one given, so the
-    # chain is composed instead.
+    # ...not up to rounding, in which case the chain is composed.
     rounded = exact.copy()
     rounded[0, -1] += 1e-12
     chain = Sequence(
@@ -513,9 +483,7 @@ def _velocity_3d() -> StationaryVelocityField:
 
 
 def test_a_world_space_velocity_halves_inside_its_frame() -> None:
-    # A velocity stored in voxels between a voxel-to-world affine and its
-    # lazy inverse -- the form the readers build -- is a change of
-    # coordinates, and its square root halves the velocity inside it.
+    # The root halves the velocity inside the change of coordinates.
     voxel_to_world = VoxelToLPS(matrix=VOX2LPS)
     velocity = _velocity_3d()
     chain = Sequence([voxel_to_world.inverse(), velocity, voxel_to_world])
@@ -524,8 +492,7 @@ def test_a_world_space_velocity_halves_inside_its_frame() -> None:
     assert root[0] is chain[0] and root[2] is chain[2]
     assert isinstance(root[1], StationaryVelocityField)
     np.testing.assert_array_equal(root[1].data, velocity.data / 2)
-    # Rounded affine ends are not a change of coordinates, and a field
-    # between two affines does not compose to a single transformation.
+    # Rounded ends are not a change of coordinates.
     rounded = np.linalg.inv(_homogeneous(VOX2LPS))[:3]
     rounded[0, -1] += 1e-12
     chain = Sequence(
@@ -557,7 +524,6 @@ def test_operators_compose_lazily_in_a_sequence() -> None:
     np.testing.assert_allclose(
         _matrix(expression.compute()), _matrix(expected), atol=1e-12
     )
-    # A mode that does not admit the operators leaves them unresolved.
     partial = Sequence([b.sqrt(), b.sqrt()]).compute(mode="translation")
     assert all(isinstance(t, Sqrt) for t in partial)
 

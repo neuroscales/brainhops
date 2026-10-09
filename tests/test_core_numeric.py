@@ -1,5 +1,4 @@
-"""Tests for `brainhops._core.numeric`: the shortest decimal a file
-stores as the same single-precision number."""
+"""Tests of the shortest decimal that a file stores as the same float32."""
 
 import math
 
@@ -33,7 +32,7 @@ def test_milliseconds_read_as_seconds(ms: float) -> None:
     stored = np.float32(ms)
     seconds = shortest_decimal(float(stored) * 1e-3, lambda s: s / 1e-3)
     assert seconds == round(ms * 1e-3, 12)
-    # Written again, the value is stored as the same bits.
+    # Writing the value again stores the same bits.
     assert np.float32(seconds / 1e-3) == stored
 
 

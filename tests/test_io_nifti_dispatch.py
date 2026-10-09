@@ -1,9 +1,8 @@
-"""
-Integration tests for NIfTI dispatch.
+"""Integration tests of NIfTI dispatch.
 
-A NIfTI file is legitimately an image, a set of affines and sometimes a
-deformation field, all at once. These tests pin down how the intent
-code, the data shape and the filename decide which one you get.
+A NIfTI file can be an image, an affine and sometimes a deformation field at
+once. These tests pin how the intent code, the data shape and the file name
+decide between the readers.
 """
 
 import numpy as np
@@ -23,16 +22,15 @@ from brainhops.io.transformations.spm.y import (  # noqa: E402
 
 DISPVECT = 1006  # NIFTI_INTENT_DISPVECT
 VECTOR = 1007  # NIFTI_INTENT_VECTOR
-MAPPING = "Mapping"  # the intent name of a coordinates field
+MAPPING = "Mapping"  # intent name of a coordinates field
 NONE = 0  # NIFTI_INTENT_NONE
 
 
 def _write(tmp_path, name: str, shape: tuple, intent: int):  # noqa: ANN001, ANN202
-    """Write a NIfTI file with a given shape and intent code."""
     img = nb.Nifti1Image(np.zeros(shape, "float32"), np.eye(4))
     img.header["intent_code"] = intent
     if intent == VECTOR:
-        # A field of coordinates, named as SPM and brainhops name it.
+        # Coordinates fields are named as SPM and brainhops name them.
         img.header["intent_name"] = MAPPING
     target = tmp_path / name
     nb.save(img, str(target))
@@ -45,10 +43,7 @@ def _write(tmp_path, name: str, shape: tuple, intent: int):  # noqa: ANN001, ANN
 
 
 def test_a_plain_nifti_loads_as_its_affine(tmp_path) -> None:  # noqa: ANN001
-    """
-    Every NIfTI carries a voxel-to-RAS affine, and a plain image carries
-    nothing else a transformation could be built from.
-    """
+    """A plain image has no transformation besides its vox-to-RAS affine."""
     path = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
     assert type(io.transformations.load(path)) is NiftiVoxelToRAS
 
@@ -56,10 +51,7 @@ def test_a_plain_nifti_loads_as_its_affine(tmp_path) -> None:  # noqa: ANN001
 def test_a_displacement_intent_loads_as_a_displacement_field(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    The intent code outranks the affine that every NIfTI also has, and
-    `DISPVECT` means displacements, as the NIfTI-1 standard says.
-    """
+    """Per NIfTI-1, DISPVECT means displacements, which outrank the affine."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     assert io.transformations.sniff(path) is NiftiRASDisplacementField
     assert type(io.transformations.load(path)) is NiftiRASDisplacementField
@@ -67,17 +59,14 @@ def test_a_displacement_intent_loads_as_a_displacement_field(
 
 
 def test_a_vector_intent_loads_as_a_coordinates_field(tmp_path) -> None:  # noqa: ANN001
-    """`VECTOR` is what brainhops and SPM write for a coordinates field."""
+    """VECTOR is the intent that brainhops and SPM write for coordinates."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), VECTOR)
     assert io.transformations.sniff(path) is NiftiRASCoordinatesField
     assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
 
 
 def test_each_field_reader_declines_the_other_intent(tmp_path) -> None:  # noqa: ANN001
-    """
-    Displacements and coordinates are different maps of the same bytes,
-    so neither reader may claim the other's intent code on content.
-    """
+    """Neither field reader claims the intent of the other on content."""
     disp = _write(tmp_path, "disp.nii", (4, 5, 6, 1, 3), DISPVECT)
     coords = _write(tmp_path, "coords.nii", (4, 5, 6, 1, 3), VECTOR)
     assert NiftiRASCoordinatesField.sniff(disp) == 0
@@ -88,18 +77,13 @@ def test_each_field_reader_declines_the_other_intent(tmp_path) -> None:  # noqa:
 def test_a_field_without_an_intent_is_not_read_as_displacements(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """Without `DISPVECT` nothing says the vectors are displacements."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), NONE)
     assert NiftiRASDisplacementField.sniff(path) == 0
 
 
 @pytest.mark.parametrize("hint", ["nifti.coordinates", "coordinates"])
 def test_a_hint_reads_a_dispvect_file_as_coordinates(tmp_path, hint) -> None:  # noqa: ANN001
-    """
-    Fields of coordinates written by older brainhops carry `DISPVECT`.
-    Nothing in the file tells them apart from displacements, so they are
-    reached through an explicit hint rather than a guess.
-    """
+    """Older brainhops wrote coordinates as DISPVECT; a hint reads them."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     loaded = io.transformations.load(path, hint=hint)
     assert type(loaded) is NiftiRASCoordinatesField
@@ -115,20 +99,14 @@ def test_a_hint_selects_the_displacement_reader(tmp_path, hint) -> None:  # noqa
 def test_a_field_shape_is_recognized_without_an_intent_code(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    Intent codes are often left unset, so the trailing axis of length 3
-    has to carry the decision on its own.
-    """
+    """The intent is often unset, so a trailing axis of length 3 decides."""
     path = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), NONE)
     assert io.transformations.sniff(path) is NiftiRASCoordinatesField
     assert type(io.transformations.load(path)) is NiftiRASCoordinatesField
 
 
 def test_the_spm_prefix_wins_an_otherwise_exact_tie(tmp_path) -> None:  # noqa: ANN001
-    """
-    An SPM field and a generic one are byte-identical; the `y_` prefix
-    is the only evidence, and it decides.
-    """
+    """The SPM and generic fields are byte-identical; y_ breaks the tie."""
     path = _write(tmp_path, "y_sub01.nii", (4, 5, 6, 1, 3), VECTOR)
     assert type(io.transformations.load(path)) is SpmCoordinatesField
 
@@ -136,17 +114,12 @@ def test_the_spm_prefix_wins_an_otherwise_exact_tie(tmp_path) -> None:  # noqa: 
 def test_the_spm_prefix_does_not_override_a_displacement_intent(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    SPM writes its `y_` maps as `VECTOR`. A `DISPVECT` file holds
-    displacements whatever its name, and a name is weaker evidence than
-    the intent code.
-    """
+    """The file name is weaker evidence than a DISPVECT intent."""
     path = _write(tmp_path, "y_sub01.nii", (4, 5, 6, 1, 3), DISPVECT)
     assert type(io.transformations.load(path)) is NiftiRASDisplacementField
 
 
 def test_the_spm_prefix_works_without_an_intent_code(tmp_path) -> None:  # noqa: ANN001
-    """Fields written without an intent code are common too."""
     path = _write(tmp_path, "iy_sub01.nii", (4, 5, 6, 1, 3), NONE)
     assert type(io.transformations.load(path)) is SpmCoordinatesField
 
@@ -165,16 +138,13 @@ def test_the_spm_reader_does_not_claim_files_it_is_not_named_for(
 
 @pytest.mark.parametrize("suffix", [".nii", ".nii.gz"])
 def test_dispatch_is_the_same_compressed_or_not(tmp_path, suffix) -> None:  # noqa: ANN001
-    """
-    `nibabel` decides whether to decompress from the file *name*, so a
-    gzipped stream has to be detected from its magic bytes instead.
-    """
+    """nibabel decompresses by name, so gzip is detected by its magic bytes."""
     path = _write(tmp_path, "field" + suffix, (4, 5, 6, 1, 3), DISPVECT)
     assert type(io.transformations.load(path)) is NiftiRASDisplacementField
 
 
 def test_a_compressed_file_is_actually_decompressed(tmp_path) -> None:  # noqa: ANN001
-    """The image data must survive, not just the header."""
+    """The image data is decompressed, not only the header."""
     data = np.arange(4 * 5 * 6, dtype="float32").reshape(4, 5, 6)
     img = nb.Nifti1Image(data, np.eye(4))
     target = tmp_path / "scan.nii.gz"
@@ -196,7 +166,6 @@ def test_a_non_nifti_is_not_identified(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_a_field_scores_above_a_plain_image(tmp_path) -> None:  # noqa: ANN001
-    """The ranking these scores produce is what drives dispatch."""
     field = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), VECTOR)
     plain = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
     assert NiftiRASCoordinatesField.sniff(
@@ -205,14 +174,12 @@ def test_a_field_scores_above_a_plain_image(tmp_path) -> None:  # noqa: ANN001
 
 
 def test_sniff_identifies_the_format_without_parsing(tmp_path) -> None:  # noqa: ANN001
-    """Asking what a file is should not require building the object."""
     from brainhops.io.images.nifti import NiftiImage
 
     plain = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
     field = _write(tmp_path, "field.nii", (4, 5, 6, 1, 3), DISPVECT)
     assert io.sniff(plain) is NiftiImage
     assert io.sniff(field) is NiftiRASDisplacementField
-    # and it agrees with what `load` actually returns
     assert type(io.load(plain)) is io.sniff(plain)
     assert type(io.load(field)) is io.sniff(field)
 
@@ -233,10 +200,7 @@ def test_a_plain_nifti_loads_as_an_image(tmp_path) -> None:  # noqa: ANN001
 def test_a_field_shaped_volume_is_not_claimed_as_an_image(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    Reading a deformation field as a plain image is technically valid
-    and almost never what was wanted, so it must lose to the field.
-    """
+    """A field-shaped volume is a valid image but loads as the field."""
     vector = _write(tmp_path, "coords.nii", (4, 5, 6, 1, 3), VECTOR)
     dispvect = _write(tmp_path, "disp.nii", (4, 5, 6, 1, 3), DISPVECT)
     assert type(io.load(vector)) is NiftiRASCoordinatesField
@@ -246,11 +210,7 @@ def test_a_field_shaped_volume_is_not_claimed_as_an_image(
 def test_image_data_survives_the_reader_closing_the_file(
     tmp_path,  # noqa: ANN001
 ) -> None:
-    """
-    `nibabel` reads voxels lazily, long after `load` returns. Opening the
-    stream ourselves and closing it would leave the array proxy pointing
-    at a closed file.
-    """
+    """nibabel reads the voxels lazily, so the file must stay readable."""
     data = np.arange(4 * 5 * 6, dtype="float32").reshape(4, 5, 6)
     img = nb.Nifti1Image(data, np.eye(4))
     target = tmp_path / "scan.nii"
@@ -263,10 +223,6 @@ def test_image_data_survives_the_reader_closing_the_file(
 
 
 def test_transformations_are_derived_from_the_header(tmp_path) -> None:  # noqa: ANN001
-    """
-    The field defaults to an empty tuple, so the lazy derivation has to
-    treat "empty" as "not set" or it never runs.
-    """
     path = _write(tmp_path, "plain.nii", (4, 5, 6), NONE)
     loaded = io.images.load(path)
     names = [getattr(t.output, "name", None) for t in loaded.transformations]
@@ -275,7 +231,7 @@ def test_transformations_are_derived_from_the_header(tmp_path) -> None:  # noqa:
 
 
 def test_an_unset_qform_is_skipped_rather_than_crashing(tmp_path) -> None:  # noqa: ANN001
-    """`get_qform(coded=True)` returns `None` when the code is 0."""
+    """get_qform(coded=True) returns None when the qform code is 0."""
     img = nb.Nifti1Image(np.zeros((4, 5, 6), "float32"), np.eye(4))
     img.header.set_qform(None, code=0)
     target = tmp_path / "noqform.nii"
@@ -285,10 +241,7 @@ def test_an_unset_qform_is_skipped_rather_than_crashing(tmp_path) -> None:  # no
 
 
 def test_an_image_can_be_built_without_data(tmp_path) -> None:  # noqa: ANN001
-    """
-    `SingleScaleImage.data` is optional so that format readers can derive
-    it lazily from the file they hold, rather than supplying it upfront.
-    """
+    """Image data is optional, so that readers can derive it lazily."""
     from brainhops.datamodel.images import SingleScaleImage
     from brainhops.io.images.nifti import NiftiImage
 

@@ -1,11 +1,8 @@
-"""Tests for the stored `data` of concrete transformations and their views.
+"""Tests of the stored `data` of concrete transformations and of its views.
 
-Every concrete transformation stores one array, `data`, plus the flags
-that say how it is encoded. Its named views (`field`, `matrix`, `scale`,
-...) are always the map, as values. The views are checked under every
-encoding, with cubic splines for the fields: at the default linear
-degree, spline coefficients equal the values and would hide a view that
-reads the stored array as values.
+The named views, such as `field` or `matrix`, always hold the map as
+values, whatever the encoding of `data`. Fields use cubic splines, whose
+coefficients differ from the values.
 """
 
 import inspect
@@ -45,7 +42,7 @@ def _values(shape: tuple = (12, 13, 2), seed: int = 0) -> np.ndarray:
 
 
 def _small(shape: tuple = (8, 9, 2), seed: int = 0) -> np.ndarray:
-    # Small enough for the mesh inversion to be well behaved.
+    # Small, so that the mesh inversion behaves well.
     return 0.1 * np.random.default_rng(seed).normal(size=shape)
 
 
@@ -60,7 +57,7 @@ def _grid(shape: tuple) -> np.ndarray:
     )
 
 
-# The same matrix-family map, once per class: (class, view, values).
+# One map per class of the matrix family, as (class, view, values).
 MATRIX_FAMILY = [
     (Affine, "matrix", np.array([[2.0, 0.5, 1.0], [0.0, 3.0, -2.0]])),
     (Linear, "matrix", np.array([[2.0, 0.5], [0.0, 3.0]])),
@@ -92,7 +89,8 @@ def test_the_field_view_is_the_values(
     assert t.store == store
     np.testing.assert_allclose(np.asarray(t.field), values, atol=1e-10)
     if store == "coefficients":
-        # Cubic coefficients are not the values: the view did decode.
+        # Cubic coefficients differ from the values, so the view did decode
+        # them.
         assert np.abs(np.asarray(t.data) - values).max() > 1e-3
     else:
         assert t.data is t.field
@@ -109,14 +107,12 @@ def test_a_decoded_view_is_cached(cls: type) -> None:
 def test_assigning_data_or_a_flag_refreshes_the_view(
     cls: type, name: str
 ) -> None:
-    # The `field` view is cached; assigning what it is decoded from clears
-    # it, so the next read reflects the assignment. An assigned flag
-    # reinterprets the array stored in `data`.
+    # Assigning anything the cached view is decoded from clears the cache.
     coefficients = _coefficients(_values())
     t = cls(
         data=coefficients, degree=DEGREE, bound=BOUND, store="coefficients"
     )
-    before = t.field  # cached
+    before = t.field
     new = {
         "data": 2 * coefficients,
         "store": "values",
@@ -137,7 +133,7 @@ def test_assigning_data_or_a_flag_refreshes_the_view(
 def test_assigning_data_refreshes_a_cached_inverse() -> None:
     forward = DisplacementField(field=_small(), degree=DEGREE)
     inverse = forward.inverse()
-    before = inverse.field  # cached, on the forward
+    before = inverse.field
     forward.data = 2 * forward.data
     assert inverse.field is not before
     np.testing.assert_allclose(
@@ -150,7 +146,7 @@ def test_assigning_data_refreshes_a_cached_inverse() -> None:
 @pytest.mark.parametrize("name", ["shape", "store"])
 def test_assigning_the_shape_or_a_flag_refreshes_a_grid(name: str) -> None:
     t = CartesianField(shape=(6, 7), degree=DEGREE, bound=BOUND)
-    before = t.field, t.data  # cached
+    before = t.field, t.data
     setattr(t, name, {"shape": (4, 5), "store": "coefficients"}[name])
     assert t.data is not before[1]
     np.testing.assert_array_equal(np.asarray(t.field), _grid(t.shape))
@@ -268,10 +264,9 @@ def test_a_coordinates_inverse_keeps_the_encoding(store: str) -> None:
 def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
     start: dict, change: dict
 ) -> None:
-    # `inverse.to(...)` is `replace(inverse, forward=forward.to(...))`:
-    # the inverse stays lazy. It is computed from the values of the
-    # forward at its nodes, which no encoding changes, so it matches the
-    # inverse materialized first and encoded after, to round-off.
+    # The new encoding goes to the forward, and the inverse stays lazy but
+    #
+    # matches the inverse materialized first.
     forward = DisplacementField(field=_small(), degree=DEGREE).to(**start)
     inverse = forward.inverse()
     lazy = inverse.to(**change)
@@ -286,7 +281,7 @@ def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
     np.testing.assert_allclose(
         np.asarray(lazy.data), np.asarray(eager.data), atol=1e-12
     )
-    # An endpoint edit keeps the inverse lazy, and its forward as it is.
+    # Changing an endpoint keeps the inverse lazy and its forward unchanged.
     system = CoordinateSystem(name="elsewhere")
     moved = inverse.to(input=system)
     assert isinstance(moved, InverseDisplacementField)
@@ -302,8 +297,7 @@ def test_a_new_encoding_of_a_lazy_inverse_is_made_to_its_forward(
 def test_the_map_of_a_lazy_inverse_cannot_be_set(
     cls: type, view: str, values: np.ndarray, keyword: str
 ) -> None:
-    # The map of an inverse is derived from its forward: `data=` and the
-    # view's keyword are refused, and the error points at the forward.
+    # The map of an inverse derives from its forward and cannot be set.
     if cls is CoordinatesField:
         values = values + _grid(values.shape[:-1])
     inverse = cls(values).inverse()
@@ -318,7 +312,7 @@ def test_a_matrix_family_inverse_derives_its_data(
 ) -> None:
     if cls is Linear or cls is Affine:
         values = np.array(values, dtype=float)
-        values[:, 1] += 0.25  # keep it invertible and not orthogonal
+        values[:, 1] += 0.25  # Keep the matrix invertible and non-orthogonal.
     inverse = cls(values).inverse()
     np.testing.assert_array_equal(getattr(inverse, view), inverse.data)
     assert "data" not in inspect.signature(type(inverse)).parameters
@@ -332,7 +326,7 @@ def test_a_matrix_family_inverse_derives_its_data(
 
 @pytest.mark.parametrize("cls", FIELDS, ids=lambda c: c.__name__)
 def test_field_values_are_stored_as_the_flags_say(cls: type) -> None:
-    # The keyword is the map, as values; the flags describe its storage.
+    # The keyword gives the map as values; the flags describe the storage.
     values = _values()
     t = cls(field=values, degree=DEGREE, store="coefficients")
     expected = cls(field=values, degree=DEGREE).to(store="coefficients")
@@ -363,7 +357,7 @@ def test_field_and_data_build_the_same_field(cls: type) -> None:
     values = _values()
     a = cls(field=values, degree=DEGREE, bound=BOUND)
     b = cls(data=values, degree=DEGREE, bound=BOUND)
-    # `data` is the one positional parameter; the flags are keyword-only.
+    # `data` is the only positional parameter.
     c = cls(values, degree=DEGREE, bound=BOUND)
     for t in (a, b, c):
         assert t.data is values
@@ -457,11 +451,12 @@ def test_an_instance_is_read_through_its_data() -> None:
 def test_replace_with_a_convenience_keyword_meets_the_data(
     cls: type, view: str, values: np.ndarray
 ) -> None:
-    # `replace` carries `data` over, so the keyword meets it and the two
-    # are refused together. `t.to(view=...)` is the way to change the map.
+    # `replace` carries `data` over, so the keyword meets it and both are
+    #
+    # refused.
     with pytest.raises(TypeError):
         replace(cls(values), **{view: values})
-    # On a transformation with no data yet there is nothing to meet.
+    # Without data, there is nothing to meet.
     t = replace(cls(), **{view: values})
     np.testing.assert_array_equal(np.asarray(t.data), values)
 
@@ -533,8 +528,7 @@ def test_a_linear_converts_to_a_rotation() -> None:
     ],
 )
 def test_the_coefficients_dtype(cls: type, dtype: str, expected: str) -> None:
-    # Integer and boolean values are fitted in float32; floating values
-    # keep their dtype.
+    # Integer and boolean values are fitted in float32.
     values = (_grid((7, 8)) % 2).astype(dtype)
     t = cls(field=values, degree=DEGREE).to(store="coefficients")
     assert np.asarray(t.data).dtype == np.dtype(expected)
@@ -547,8 +541,7 @@ def test_the_coefficients_dtype(cls: type, dtype: str, expected: str) -> None:
 
 @pytest.mark.parametrize("store", ["values", "coefficients"])
 def test_the_grid_is_float64(store: str) -> None:
-    # A grid holds real coordinates: they, and their coefficients, are
-    # float64, the default floating dtype of NumPy.
+    # The grid holds real coordinates, stored as float64.
     t = CartesianField(shape=(7, 8), degree=DEGREE, store=store)
     assert np.asarray(t.field).dtype == np.float64
     assert np.asarray(t.data).dtype == np.float64
@@ -557,8 +550,7 @@ def test_the_grid_is_float64(store: str) -> None:
 def test_an_unchanged_encoding_is_a_pass_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Asking for the encoding a field already has neither fits nor
-    # decodes anything: the same stored array comes back.
+    # Asking for the current encoding returns the same stored array.
     t = DisplacementField(data=_values(), degree=DEGREE, store="coefficients")
 
     def refuse(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -576,9 +568,9 @@ def test_an_unchanged_encoding_is_a_pass_through(
 
 
 def test_the_translation_check_reads_values() -> None:
-    # Constant coefficients under a zero boundary are not a constant
-    # field: the values fall off near the edges. On main, the check read
-    # the coefficients as values, and called this a translation.
+    # Constant coefficients under a zero boundary do not make a constant
+    #
+    # field.
     data = np.ones((8, 9, 2))
     t = DisplacementField(
         data=data, degree=DEGREE, bound="constant", store="coefficients"
@@ -602,8 +594,7 @@ def test_the_identity_check_reads_values() -> None:
 
 
 def test_coordinates_from_coefficients_match_those_from_values() -> None:
-    # The reproducer of #294: on main the two differed by 10.7, and the
-    # result lost its encoding.
+    # Regression (#294): the two results differed and the encoding was lost.
     u = np.random.default_rng(0).normal(size=(12, 13, 2))
     d = DisplacementField(field=u, degree=3)
     c = d.to(store="coefficients")

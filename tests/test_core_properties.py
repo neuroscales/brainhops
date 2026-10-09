@@ -1,5 +1,4 @@
-"""Tests for `smartproperty` and `lazyproperty`: when the getter computes
-the value (`unset`), what the setter stores, and the cache."""
+"""Tests of `smartproperty`, `lazyproperty` and `smartsetter`."""
 
 import pytest
 import typing_extensions as tx
@@ -8,14 +7,17 @@ from brainhops._core.properties import lazyproperty, smartproperty, smartsetter
 
 
 def _box(unset: tx.Any = None, cache: bool = False) -> type:
-    # A plain class with one property, `value`, stored under `_value`, whose
-    # computed value counts how often it was computed.
+    # A class with one property `value`, stored as `_value`, that counts how
+    #
+    # often its value is computed.
     class Box:
         computed = 0
 
         def __init__(self, value: tx.Any = None) -> None:
-            # A constructor that writes its argument, the default included,
-            # through the setter -- as a data model does.
+            # The constructor writes its argument through the setter, default
+            # included,
+            #
+            # as a data model does.
             self.value = value
 
         @smartproperty(unset=unset, cache=cache)
@@ -33,11 +35,11 @@ def _odd(value: tx.Any) -> bool:
 @pytest.mark.parametrize(
     "unset, stored, computed",
     [
-        # `None` (the default): a stored `None` only.
+        # By default, only a stored None is unset.
         (None, None, True),
         (None, [], False),
         (None, 0, False),
-        # "empty": an empty container only -- not `None`.
+        # "empty": only an empty container is unset, not None.
         ("empty", [], True),
         ("empty", (), True),
         ("empty", {}, True),
@@ -50,7 +52,7 @@ def _odd(value: tx.Any) -> bool:
         (_odd, 3, True),
         (_odd, 2, False),
         (_odd, None, False),
-        # A tuple: any of them.
+        # A tuple: any member may match.
         ((None, "empty"), None, True),
         ((None, "empty"), [], True),
         ((None, "empty"), [1], False),
@@ -81,8 +83,7 @@ def test_the_setter_stores_the_value_as_given(unset: tx.Any) -> None:
 
 
 def test_an_unset_value_written_by_the_constructor_is_computed() -> None:
-    # The case `unset=(None, "empty")` is for: a constructor that writes an
-    # empty default through the setter does not shadow the getter.
+    # An empty default written by the constructor must not hide the getter.
     box = _box((None, "empty"))([])
     assert box.value == "computed"
     box.value = ["given"]
@@ -95,13 +96,13 @@ def test_the_cache_and_its_invalidation() -> None:
     cls = _box((None, "empty"), cache=True)
     box = cls([])
     assert box.value == "computed" and cls.computed == 1
-    assert box.value == "computed" and cls.computed == 1  # cached
-    # A set value is served, and setting clears the cache.
+    assert box.value == "computed" and cls.computed == 1
+    # A value that is set is served as is, and setting clears the cache.
     box.value = ["given"]
     assert box.value == ["given"] and not hasattr(box, "_cache_value")
     box.value = []
     assert box.value == "computed" and cls.computed == 2
-    # A predicate caches the same way.
+    # A predicate caches in the same way.
     cls = _box(_odd, cache=True)
     box = cls(1)
     assert box.value == "computed" and box.value == "computed"
@@ -148,13 +149,13 @@ def test_the_former_options_are_gone() -> None:
             smartproperty(**{option: True})
 
 
-# --- smartsetter ------------------------------------------------------
+# smartsetter
 
 
 def _setter_box() -> type:
-    # Two properties: `value`, which reads `_value`, the name of its
-    # setter, and `other`, which reads the `_stored` it is given. Each
-    # setter stores the value; `value`'s counts its calls.
+    # `value` reads `_value`, named after its setter, and counts its calls;
+    #
+    # `other` reads the given `_stored`.
     class Box:
         calls = 0
 
@@ -195,8 +196,9 @@ def test_smartsetter_reads_the_private_attribute() -> None:
 
 
 def test_smartsetter_on_a_magic_class_with_a_private_field() -> None:
-    # As the transformations use it: the field is stored privately, the
-    # constructor takes its public name, and an assignment runs the setter.
+    # As in the transformations: the field is stored privately, the constructor
+    #
+    # takes the public name, and assignment runs the setter.
     from bagof.magic import Magic
 
     class Model(Magic):

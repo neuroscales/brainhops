@@ -1,19 +1,11 @@
-"""
-Regression tests: the positional parameters of every transformation.
+"""Tests pinning the positional parameters of every transformation.
 
-bagof collects the fields of a class in MRO order, so the place of a
-parameter in `__init__` follows the order of the bases. Reordering them
-once turned the ITK formats' `(transformations, input, output)` into
-`(input, output, transformations)`, and `TfmTransform([scaling])` then
-silently read the list as the input coordinate system.
-
-Every field is therefore keyword-only by default -- `Transformation` is
-built with `kw_only=True` -- and only the fields that *define* a
-transformation opt back out with `NotKwOnly`: `data` (or `shape`,
-`forward`, `transformations`, ...) and, for a reader, the file it was
-parsed from. The positional parameters of each public class are pinned
-here: a change to a base that moves them fails this file instead of
-reaching users. An intended change updates `POSITIONAL`.
+Fields are collected in MRO order, so their position in `__init__`
+follows the order of the bases, and reordering the bases once made
+`TfmTransform([scaling])` read the list as the input coordinate system.
+Fields are therefore keyword-only by default, and only the defining
+fields, such as `data` or the parsed file of a reader, are positional.
+An intended change of signature must update `POSITIONAL`.
 """
 
 import importlib
@@ -23,7 +15,7 @@ import numpy as np
 import pytest
 import typing_extensions as tx
 
-# Import every family, so that walking the subclasses finds them all.
+# Import every family so that the subclass walk finds all of them.
 import brainhops.datamodel.geometry  # noqa: F401
 import brainhops.io.transformations  # noqa: F401
 from brainhops.datamodel.systems import RASmm
@@ -34,9 +26,9 @@ from brainhops.datamodel.transformations import (
     Transformation,
 )
 
-# The positional parameters of each public transformation class, in
-# order, keyed by the module that defines the class. Every other
-# parameter, `input` and `output` included, is keyword-only.
+# Positional parameters of each public transformation, in order, keyed by
+#
+# the defining module. All other parameters are keyword-only.
 POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
     "brainhops.datamodel._transformations.concrete": {
         "Affine": ("data",),
@@ -147,7 +139,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "FlirtTransform": ("flirt_matrix", "moving", "reference"),
     },
     "brainhops.io.transformations.fsl.fnirt._base": {
-        # The format's own fields come before `transformations` here.
+        # The fields of the format precede `transformations`.
         "FnirtWarpField": ("image", "header", "transformations"),
     },
     "brainhops.io.transformations.itk._common": {
@@ -217,7 +209,7 @@ POSITIONAL: tx.Dict[str, tx.Dict[str, tx.Tuple[str, ...]]] = {
         "NiftyRegAffine": ("data",),
     },
     "brainhops.io.transformations.niftyreg._fields": {
-        # The format's own fields come before `transformations` here.
+        # The fields of the format precede `transformations`.
         "NiftyRegControlPointGrid": ("image", "header", "transformations"),
         "NiftyRegDeformationField": ("image", "header", "transformations"),
         "NiftyRegDisplacementField": ("image", "header", "transformations"),
@@ -261,7 +253,7 @@ PINNED = [
     (module, name) for module in POSITIONAL for name in POSITIONAL[module]
 ]
 
-# The parameters that are keyword-only on every transformation.
+# Parameters that are keyword-only on every transformation.
 KEYWORD_ONLY = ("input", "output")
 
 
@@ -275,8 +267,9 @@ def _subclasses(cls: type) -> tx.List[type]:
     return out
 
 
-# Every transformation class that the package defines and that the
-# imports above register. The classes that tests define are left out.
+# Every transformation class defined by the package, but none defined by
+#
+# tests.
 ALL = sorted(
     (
         cls
@@ -286,8 +279,9 @@ ALL = sorted(
     key=lambda cls: (cls.__module__, cls.__qualname__),
 )
 
-# The classes whose name is public. A parameterized class
-# (`Inverse[Affine]`) is reached through the class it parameterizes.
+# A parameterized class such as `Inverse[Affine]` is reached through its
+#
+# origin class.
 PUBLIC = [
     cls
     for cls in ALL
@@ -317,7 +311,7 @@ def _id(cls: type) -> str:
 def test_the_positional_parameters_are_pinned(module: str, name: str) -> None:
     try:
         mod = importlib.import_module(module)
-    except ImportError as e:  # an optional dependency is missing
+    except ImportError as e:  # An optional dependency is missing.
         pytest.skip(str(e))
     assert _positional(getattr(mod, name)) == POSITIONAL[module][name]
 
@@ -332,9 +326,9 @@ def test_every_public_transformation_is_pinned(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", ALL, ids=_id)
 def test_the_endpoints_are_keyword_only(cls: type) -> None:
-    # bagof does not carry `KwOnly` over to a field that a subclass
-    # declares again, so a subclass that gives an endpoint a default of
-    # its own has to write `KwOnly[...]` too.
+    # A subclass that redeclares an endpoint with its own default must also
+    #
+    # write `KwOnly[...]`, which is not inherited.
     kinds = {p.name: p.kind for p in _parameters(cls)}
     for name in KEYWORD_ONLY:
         if name in kinds:
