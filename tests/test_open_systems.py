@@ -353,13 +353,13 @@ def test_an_explicit_endpoint_is_propagated(empty: CS) -> None:
 def test_a_known_endpoint_is_propagated_onto_a_missing_one() -> None:
     first = Scaling(scale=np.array([2.0, 2.0, 2.0]))
     seq = Sequence(transformations=[first], input=_xyz())
-    assert seq._flattened().transformations[0].input == _xyz()
+    assert seq.flatten().transformations[0].input == _xyz()
 
 
 def test_a_known_endpoint_does_not_replace_an_explicit_one(empty: CS) -> None:
     first = Scaling(scale=np.array([2.0, 2.0, 2.0]), input=empty)
     seq = Sequence(transformations=[first], input=_xyz())
-    assert seq._flattened().transformations[0].input is empty
+    assert seq.flatten().transformations[0].input is empty
 
 
 # ----------------------------------------------------------------------

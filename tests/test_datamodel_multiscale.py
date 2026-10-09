@@ -153,7 +153,7 @@ def test_composes_like_its_finest_level() -> None:
 def test_flattened_splices_the_finest_level() -> None:
     field, (l0, _), *_ = _two_level_displacement(np.random.default_rng(7))
     outer = Scaling(scale=[2.0, 2.0])
-    flattened = Sequence([field, outer])._flattened()
+    flattened = Sequence([field, outer]).flatten()
     # The three elements of the finest level, then the outer scaling.
     assert len(flattened.transformations) == len(l0) + 1
 
